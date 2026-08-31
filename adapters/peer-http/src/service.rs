@@ -28,14 +28,16 @@ use milkdrift_peer_protocol::{
     ArtifactChunk, ArtifactMetadataOffer, ArtifactTransferDecision, ArtifactTransferDirection,
     CancellationDisposition, CatalogEntry, CatalogSnapshot, DrainState, HandshakeRequest,
     HandshakeResponse, InvocationAcceptance, InvocationLookup, ObservationCategory,
-    ObservationPage, PeerAction, PeerCancellationAcknowledgement, PeerCancellationRequest,
-    PeerExecutionId, PeerInvocationRequest, PeerObservation, RemoteExecutionStatus, TransferId,
+    ObservationHistory, ObservationPage, PeerAction, PeerCancellationAcknowledgement,
+    PeerCancellationRequest, PeerExecutionId, PeerInvocationRequest, PeerObservation,
+    RemoteExecutionStatus, TransferId,
 };
 use milkdrift_persistence::{
     AttemptId, NodeExecutionId, PageSize, PeerAdmission, PeerAdmissionOutcome,
-    PeerAdmissionRejection, PeerCatalogState, PeerClaimOutcome, PeerDispatchClaimRequest,
-    PeerEntryOutcome, PeerEntryRequest, PeerExecutionPhase, PeerExecutionRecord,
-    PeerExecutionStore, PeerRelationshipState, WorkerId,
+    PeerAdmissionRejection, PeerArchivedDisposition, PeerCatalogState, PeerClaimOutcome,
+    PeerDispatchClaimRequest, PeerEntryOutcome, PeerEntryRequest, PeerExecutionPhase,
+    PeerExecutionRecord, PeerExecutionSnapshot, PeerExecutionStatus, PeerExecutionStore,
+    PeerRelationshipState, PeerRetentionRequest, TimestampMillis, WorkerId,
 };
 use milkdrift_workspace::RunId;
 use subtle::ConstantTimeEq as _;
@@ -45,7 +47,7 @@ use crate::{
     artifact::{PeerArtifactError, PeerArtifactStore},
     config::{PeerRelationship, PeerServerConfig},
     dispatch::PeerDispatchWorkers,
-    store::{acceptance, lookup as execution_lookup, public_status},
+    store::{acceptance, archived_summary, lookup as execution_lookup, snapshot_status},
 };
 
 /// Caller-supplied boundary clock for deterministic protocol and restart tests.
@@ -307,6 +309,7 @@ impl PeerService {
                 resumable_observations: true,
                 resumable_artifacts: true,
                 incremental_catalog: false,
+                archived_execution_replay: true,
             },
             limits: self.config.limits.intersect(request.limits),
             lease: self.config.lease,
@@ -401,6 +404,26 @@ impl PeerService {
         request: PeerInvocationRequest,
     ) -> Result<InvocationAcceptance, PeerHttpError> {
         let relationship = self.relationship(authenticated_peer)?;
+        request
+            .validate()
+            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        if let Some(existing) = self
+            .executions
+            .peer_execution_by_request(authenticated_peer, &request.request_id)
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+        {
+            return if existing.request_digest() == request.request_digest {
+                Ok(acceptance(&existing, true))
+            } else {
+                Ok(rejection(
+                    &request,
+                    "idempotency_conflict",
+                    "idempotency key was previously accepted with different request bytes",
+                    false,
+                    Some(existing.execution().clone()),
+                ))
+            };
+        }
         if self.drain_state() != DrainState::Ready {
             return Ok(rejection(
                 &request,
@@ -410,9 +433,6 @@ impl PeerService {
                 None,
             ));
         }
-        request
-            .validate()
-            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
         self.check_rate(
             &relationship,
             &format!("invoke:{}", request.selection.operation().as_str()),
@@ -484,7 +504,18 @@ impl PeerService {
                 accepted_at_unix_ms: now,
                 maximum_global_active: self.config.workers.maximum_global_active,
                 maximum_dispatch_queue: self.config.workers.maximum_dispatch_queue,
-                maximum_records: self.config.workers.maximum_records,
+                maximum_hot_terminal_records: self.config.workers.maximum_hot_terminal_records,
+                archive_batch_size: self.config.workers.archive_batch_size,
+                archive_terminal_before_or_at_unix_ms: now
+                    .saturating_sub(
+                        self.config
+                            .workers
+                            .observation_hot_retention
+                            .as_millis()
+                            .try_into()
+                            .unwrap_or(u64::MAX),
+                    )
+                    .max(1),
             })
             .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
         {
@@ -494,11 +525,11 @@ impl PeerService {
                 "idempotency_conflict",
                 "idempotency key was previously accepted with different request bytes",
                 false,
-                Some(record.execution),
+                Some(record.execution().clone()),
             )),
             PeerAdmissionOutcome::Accepted(record) => {
                 self.notify_workers();
-                Ok(acceptance(&record, false))
+                Ok(acceptance(&PeerExecutionSnapshot::Hot(record), false))
             }
             PeerAdmissionOutcome::Rejected(reason) => Ok(rejection(
                 &request,
@@ -556,7 +587,15 @@ impl PeerService {
             .executions
             .peer_observations(authenticated_peer, execution, after_sequence, limit)
             .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
-        let terminal = public_status(&page.record) == RemoteExecutionStatus::Terminal;
+        let status = snapshot_status(&page.execution);
+        let history = match &page.execution {
+            PeerExecutionSnapshot::Hot(_) => ObservationHistory::Hot,
+            PeerExecutionSnapshot::Archived(tombstone) => ObservationHistory::Archived {
+                summary: Box::new(archived_summary(tombstone)),
+            },
+        };
+        let terminal = status == RemoteExecutionStatus::Terminal;
+        let archived = matches!(page.execution, PeerExecutionSnapshot::Archived(_));
         let page = ObservationPage {
             execution: execution.clone(),
             after_sequence,
@@ -566,7 +605,8 @@ impl PeerService {
                 .map_or(after_sequence, |observation| observation.sequence),
             observations: page.observations,
             terminal,
-            closed: terminal,
+            closed: terminal || archived,
+            history,
         };
         page.validate(usize::from(self.config.limits.observation_items))
             .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
@@ -592,15 +632,57 @@ impl PeerService {
             .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
             .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
         let mut resources = RequestedResourceFacts::empty();
-        resources.capability = Some(before.request.selection.capability().clone());
-        resources.capability_operation = Some(before.request.selection.operation().clone());
-        resources.side_effect = before.request.selection.operation_contract().side_effect();
+        match &before {
+            PeerExecutionSnapshot::Hot(record) => {
+                resources.capability = Some(record.request.selection.capability().clone());
+                resources.capability_operation = Some(record.request.selection.operation().clone());
+                resources.side_effect = record.request.selection.operation_contract().side_effect();
+            }
+            PeerExecutionSnapshot::Archived(tombstone) => {
+                resources.capability = Some(tombstone.capability.clone());
+                resources.capability_operation = Some(tombstone.operation.clone());
+                resources.side_effect = tombstone.side_effect;
+            }
+        }
         self.require_operation(
             &relationship,
             AuthorityOperation::CancelPeerCapability,
             resources,
             AuthorityBudget::default(),
         )?;
+        if let PeerExecutionSnapshot::Archived(tombstone) = &before {
+            let acknowledgement = match &tombstone.disposition {
+                PeerArchivedDisposition::Terminal { observation } => {
+                    PeerCancellationAcknowledgement {
+                        request_id: request.request_id.clone(),
+                        execution: request.execution.clone(),
+                        disposition: CancellationDisposition::TooLate,
+                        terminal_boundary: true,
+                        terminal_evidence: Some((**observation).clone()),
+                        detail: Some(
+                            "terminal evidence is retained in archived summary".to_owned(),
+                        ),
+                    }
+                }
+                PeerArchivedDisposition::Uncertain { .. } => PeerCancellationAcknowledgement {
+                    request_id: request.request_id.clone(),
+                    execution: request.execution.clone(),
+                    disposition: CancellationDisposition::Unknown,
+                    terminal_boundary: false,
+                    terminal_evidence: None,
+                    detail: Some(
+                        "archived execution retains truthful outcome uncertainty".to_owned(),
+                    ),
+                },
+            };
+            acknowledgement
+                .validate()
+                .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+            return Ok(acknowledgement);
+        }
+        let PeerExecutionSnapshot::Hot(before) = before else {
+            unreachable!("archived execution returned above")
+        };
         let record = self
             .executions
             .request_peer_cancellation(authenticated_peer, request, self.clock.now_unix_ms().max(1))
@@ -701,7 +783,7 @@ impl PeerService {
             ArtifactTransferDirection::Upload => AuthorityOperation::PeerArtifactUpload,
             ArtifactTransferDirection::Download => AuthorityOperation::PeerArtifactDownload,
         };
-        let record = self
+        let snapshot = self
             .executions
             .peer_execution(authenticated_peer, &offer.execution)
             .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
@@ -710,6 +792,23 @@ impl PeerService {
                     "artifact is not bound to an execution owned by this peer".to_owned(),
                 )
             })?;
+        let record = match snapshot {
+            PeerExecutionSnapshot::Hot(record) => record,
+            PeerExecutionSnapshot::Archived(_)
+                if offer.direction == ArtifactTransferDirection::Download =>
+            {
+                return Err(PeerHttpError::NotFound(
+                    "archived execution observation-to-artifact history was compacted; core artifact retention is unchanged"
+                        .to_owned(),
+                ));
+            }
+            PeerExecutionSnapshot::Archived(tombstone) => {
+                return Err(PeerHttpError::Unauthorized(format!(
+                    "artifact upload cannot target archived execution {}",
+                    tombstone.execution
+                )));
+            }
+        };
         if offer.direction == ArtifactTransferDirection::Download {
             if offer.source_peer != self.config.local_peer {
                 return Err(PeerHttpError::Unauthorized(
@@ -951,11 +1050,45 @@ impl PeerService {
             }
         }
         self.executions
+            .verify_peer_execution_integrity()
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+        self.maintain_retention()?;
+        self.executions
+            .verify_peer_execution_integrity()
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+        self.executions
             .set_peer_admission_open(true)
             .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
         self.drain.store(0, Ordering::SeqCst);
         self.notify_workers();
         Ok(())
+    }
+
+    /// Compacts one bounded page beyond the configured hot observation horizon.
+    pub fn maintain_retention(&self) -> Result<PeerExecutionStatus, PeerHttpError> {
+        let now = self.clock.now_unix_ms().max(1);
+        let retention_ms = u64::try_from(self.config.workers.observation_hot_retention.as_millis())
+            .unwrap_or(u64::MAX);
+        self.executions
+            .archive_peer_executions(&PeerRetentionRequest {
+                terminal_before_or_at: TimestampMillis::new(
+                    now.saturating_sub(retention_ms).max(1),
+                ),
+                archived_at: TimestampMillis::new(now),
+                limit: PageSize::new(self.config.workers.archive_batch_size)
+                    .map_err(|error| PeerHttpError::Protocol(error.to_string()))?,
+            })
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+        self.executions
+            .peer_execution_status()
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))
+    }
+
+    /// Returns redacted serving execution accounting for daemon health projection.
+    pub fn execution_status(&self) -> Result<PeerExecutionStatus, PeerHttpError> {
+        self.executions
+            .peer_execution_status()
+            .map_err(|error| PeerHttpError::Persistence(error.to_string()))
     }
 
     fn relationship(&self, peer: &PeerId) -> Result<PeerRelationship, PeerHttpError> {
@@ -1423,6 +1556,9 @@ impl PeerService {
             .peer_execution(&entered.owner_peer, &entered.execution)
             .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
             .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
+        let PeerExecutionSnapshot::Hot(current) = current else {
+            return Ok(());
+        };
         if matches!(
             current.phase,
             PeerExecutionPhase::Terminal { .. } | PeerExecutionPhase::Uncertain { .. }
@@ -1456,6 +1592,9 @@ impl PeerService {
             .peer_execution(&claimed.owner_peer, &claimed.execution)
             .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
             .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
+        let PeerExecutionSnapshot::Hot(current) = current else {
+            return Ok(());
+        };
         let Some(claim) = current.phase.claim() else {
             return Ok(());
         };
@@ -1541,6 +1680,11 @@ impl PeerService {
             .peer_execution(&record.owner_peer, &record.execution)
             .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
             .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
+        let PeerExecutionSnapshot::Hot(current) = current else {
+            return Err(PeerHttpError::Persistence(
+                "active cancellation unexpectedly resolved an archived execution".to_owned(),
+            ));
+        };
         if let PeerExecutionPhase::Terminal { sequence, .. } = current.phase {
             return self
                 .terminal_observation(&record.owner_peer, &current)?

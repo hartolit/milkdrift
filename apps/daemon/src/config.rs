@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Current daemon configuration document version.
-pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 5;
+pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 6;
 
 /// Configuration load or deterministic validation failure.
 #[derive(Debug, Error)]
@@ -30,7 +30,7 @@ pub enum ConfigError {
     #[error("invalid daemon configuration JSON: {0}")]
     Json(String),
     /// The schema version is unsupported.
-    #[error("unsupported daemon configuration version {0}; supported version is 5")]
+    #[error("unsupported daemon configuration version {0}; supported version is 6")]
     UnsupportedVersion(u32),
     /// A host-safety invariant is invalid.
     #[error("invalid daemon configuration: {0}")]
@@ -228,6 +228,46 @@ pub struct PeerHostConfig {
     /// Explicit operator-configured relationships. Empty exposes nothing.
     #[serde(default)]
     pub relationships: Vec<PeerRelationshipConfig>,
+    /// Independent serving-peer worker, capacity, recovery, and observation-retention policy.
+    #[serde(default)]
+    pub serving: PeerServingConfig,
+}
+
+/// Independent bounded serving-peer execution lifecycle configuration.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerServingConfig {
+    /// Fixed serving worker thread count.
+    pub worker_threads: u16,
+    /// Global accepted nonterminal ceiling.
+    pub maximum_global_active: u32,
+    /// Durable pre-entry dispatch queue ceiling.
+    pub maximum_dispatch_queue: u32,
+    /// Complete terminal/uncertain records retaining detailed observations.
+    pub maximum_hot_terminal_records: u64,
+    /// Maximum records compacted in one atomic archival transaction.
+    pub archive_batch_size: u32,
+    /// Minimum terminal age before detailed observation rows are compacted.
+    pub observation_hot_retention_ms: u64,
+    /// Maximum prior-owner claims recovered in one transaction.
+    pub recovery_page: u16,
+    /// Idle durable dispatch poll interval.
+    pub poll_interval_ms: u64,
+}
+
+impl Default for PeerServingConfig {
+    fn default() -> Self {
+        Self {
+            worker_threads: 4,
+            maximum_global_active: 256,
+            maximum_dispatch_queue: 256,
+            maximum_hot_terminal_records: 10_000,
+            archive_batch_size: 256,
+            observation_hot_retention_ms: 86_400_000,
+            recovery_page: 128,
+            poll_interval_ms: 100,
+        }
+    }
 }
 
 /// One operator-configured authenticated remote peer relationship.
@@ -244,10 +284,10 @@ pub struct PeerRelationshipConfig {
     #[serde(default)]
     pub insecure_loopback_development: bool,
     /// Allowed protocol minimum minor on major version one.
-    #[serde(default)]
+    #[serde(default = "default_peer_protocol_minor")]
     pub minimum_minor: u16,
     /// Allowed protocol maximum minor on major version one.
-    #[serde(default)]
+    #[serde(default = "default_peer_protocol_minor")]
     pub maximum_minor: u16,
     /// Exact allowed protocol action families; empty denies all.
     #[serde(default)]
@@ -332,6 +372,10 @@ pub enum PeerSideEffectConfig {
 
 const fn default_peer_concurrency() -> u16 {
     4
+}
+
+const fn default_peer_protocol_minor() -> u16 {
+    1
 }
 
 const fn default_peer_requests_per_minute() -> u32 {
@@ -687,6 +731,26 @@ fn validate_peers(
     peers: &PeerHostConfig,
     secrets: &BTreeMap<String, SecretSourceConfig>,
 ) -> Result<(), ConfigError> {
+    let serving = &peers.serving;
+    if serving.worker_threads == 0
+        || serving.worker_threads > 256
+        || serving.maximum_global_active == 0
+        || serving.maximum_dispatch_queue == 0
+        || serving.maximum_dispatch_queue > serving.maximum_global_active
+        || serving.maximum_hot_terminal_records < u64::from(serving.maximum_global_active)
+        || serving.maximum_hot_terminal_records > 1_000_000
+        || serving.archive_batch_size == 0
+        || u64::from(serving.archive_batch_size) > serving.maximum_hot_terminal_records
+        || serving.observation_hot_retention_ms == 0
+        || serving.observation_hot_retention_ms > 31_536_000_000
+        || serving.recovery_page == 0
+        || serving.poll_interval_ms == 0
+        || serving.poll_interval_ms > 60_000
+    {
+        return Err(ConfigError::Invalid(
+            "peer serving active/queue/hot/archive/recovery bounds are invalid".to_owned(),
+        ));
+    }
     if !peers.enabled {
         if peers.local_peer_id.is_some() || !peers.relationships.is_empty() {
             return Err(ConfigError::Invalid(
@@ -714,6 +778,8 @@ fn validate_peers(
             || !identities.insert(&relationship.peer_id)
             || !secrets.contains_key(&relationship.credential_ref)
             || relationship.maximum_minor < relationship.minimum_minor
+            || relationship.minimum_minor > 1
+            || relationship.maximum_minor < 1
             || relationship.maximum_concurrent == 0
             || relationship.maximum_requests_per_minute == 0
             || relationship.maximum_requests_per_minute > 100_000
@@ -871,11 +937,11 @@ mod tests {
     use super::*;
 
     fn fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v5.json")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v6.json")
     }
 
     #[test]
-    fn schema_v5_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>>
+    fn schema_v6_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>>
     {
         let validated = DaemonConfig::load(&fixture_path())?;
         let actor = &validated.document.actors[0];
@@ -901,7 +967,7 @@ mod tests {
     fn old_and_future_config_versions_are_rejected_truthfully()
     -> Result<(), Box<dyn std::error::Error>> {
         let source = fs::read(fixture_path())?;
-        for unsupported in [1_u32, 2_u32, 3_u32, 4_u32, 6_u32] {
+        for unsupported in [1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 7_u32] {
             let directory = tempfile::tempdir()?;
             let mut value: serde_json::Value = serde_json::from_slice(&source)?;
             value["schema_version"] = serde_json::json!(unsupported);
@@ -934,13 +1000,39 @@ mod tests {
     }
 
     #[test]
+    fn peer_execution_retention_is_independent_from_application_receipts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(fixture_path())?)?;
+        let mut config: DaemonConfig = serde_json::from_value(value)?;
+        config.application_receipts.hot_receipt_bound = 1;
+        config.application_receipts.archive_batch_size = 1;
+        config.peers.serving.maximum_global_active = 64;
+        config.peers.serving.maximum_dispatch_queue = 32;
+        config.peers.serving.maximum_hot_terminal_records = 77;
+        config.peers.serving.archive_batch_size = 7;
+        let directory = tempfile::tempdir()?;
+        let validated = config.validate(directory.path())?;
+        assert_eq!(
+            validated
+                .document
+                .peers
+                .serving
+                .maximum_hot_terminal_records,
+            77
+        );
+        assert_eq!(validated.document.peers.serving.archive_batch_size, 7);
+        assert_eq!(validated.document.application_receipts.hot_receipt_bound, 1);
+        Ok(())
+    }
+
+    #[test]
     fn non_loopback_plaintext_is_rejected_before_storage() -> Result<(), Box<dyn std::error::Error>>
     {
         let directory = tempfile::tempdir()?;
         let secret = directory.path().join("token");
         fs::write(&secret, "secret")?;
         let config = DaemonConfig {
-            schema_version: 5,
+            schema_version: 6,
             data_root: directory.path().join("data"),
             bind: "0.0.0.0:9734".parse()?,
             secret_sources: BTreeMap::from([(

@@ -18,7 +18,7 @@ use milkdrift_control_protocol::{Command, CommandRequest, PageRequest, ProtocolV
 use milkdrift_daemon::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
     AuthorityPresetConfig, DaemonConfig, DaemonHost, PeerHostConfig, PeerRelationshipConfig,
-    PeerSideEffectConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
+    PeerServingConfig, PeerSideEffectConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
     ValidatedDaemonConfig, serve,
 };
 use milkdrift_peer_protocol::PeerAction;
@@ -50,6 +50,16 @@ impl RunningDaemon {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn authenticated_catalog_registers_and_disconnect_drains_remote_generation() -> TestResult {
+    exercise_peer_execution_turnover(5).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "manual release-mode peer retention longevity lane"]
+async fn peer_execution_retention_longevity_survives_turnover_and_restart() -> TestResult {
+    exercise_peer_execution_turnover(100).await
+}
+
+async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
     let root_a = tempfile::tempdir()?;
     let root_b = tempfile::tempdir()?;
     let listener_a = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
@@ -174,7 +184,7 @@ async fn authenticated_catalog_registers_and_disconnect_drains_remote_generation
                     .ok_or("serving peer omitted accepted execution")?;
                 let observations = peer_store.peer_observations(
                     &PeerId::new("peer-b")?,
-                    &record.execution,
+                    record.execution(),
                     0,
                     PageSize::new(128)?,
                 )?;
@@ -222,6 +232,38 @@ async fn authenticated_catalog_registers_and_disconnect_drains_remote_generation
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+
+    // Cross the tiny serving hot-history bound repeatedly before the restart half.
+    for index in 0..turnovers {
+        let run_id = format!("run-peer-turnover-{index}");
+        daemon_b
+            .client
+            .submit(&command(
+                &format!("peer-turnover-start-{index}"),
+                Command::StartRun {
+                    run_id: run_id.clone(),
+                    workflow_id: "daemon-peer-process".to_owned(),
+                    revision_id: revision.to_owned(),
+                },
+            ))
+            .await?;
+        let turnover_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+        loop {
+            let run = daemon_b.client.run(&run_id).await?;
+            if run.lifecycle == "terminal" {
+                assert_eq!(run.terminal.as_deref(), Some("succeeded"));
+                break;
+            }
+            if tokio::time::Instant::now() >= turnover_deadline {
+                return Err(format!("remote turnover run stalled: {run:?}").into());
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let serving_health = daemon_a.client.health().await?.peer_executions;
+    assert!(serving_health.tombstone_count >= u64::try_from(turnovers.saturating_sub(1))?);
+    assert!(serving_health.hot_terminal_count <= 2);
 
     daemon_b.stop().await?;
     daemon_a.stop().await?;
@@ -335,7 +377,7 @@ fn configuration(
         Vec::new()
     };
     DaemonConfig {
-        schema_version: 5,
+        schema_version: 6,
         data_root: root.path().join("data"),
         bind: "127.0.0.1:0".parse()?,
         secret_sources: BTreeMap::from([
@@ -369,13 +411,23 @@ fn configuration(
         peers: PeerHostConfig {
             enabled: true,
             local_peer_id: Some(local_peer.to_owned()),
+            serving: PeerServingConfig {
+                worker_threads: 2,
+                maximum_global_active: 2,
+                maximum_dispatch_queue: 2,
+                maximum_hot_terminal_records: 2,
+                archive_batch_size: 1,
+                observation_hot_retention_ms: 1,
+                recovery_page: 2,
+                poll_interval_ms: 5,
+            },
             relationships: vec![PeerRelationshipConfig {
                 peer_id: remote_peer.to_owned(),
                 endpoint: remote_endpoint.to_string(),
                 credential_ref: "credential:peer".to_owned(),
                 insecure_loopback_development: true,
-                minimum_minor: 0,
-                maximum_minor: 0,
+                minimum_minor: 1,
+                maximum_minor: 1,
                 actions: BTreeSet::from([
                     PeerAction::ReadCatalog,
                     PeerAction::Invoke,

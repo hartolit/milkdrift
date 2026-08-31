@@ -30,6 +30,7 @@ url.workspace = true
 
 [dev-dependencies]
 milkdrift-redb-store = { version = "=0.1.0", path = "../redb-store" }
+redb = "=2.6.3"
 tempfile.workspace = true
 
 [lints]

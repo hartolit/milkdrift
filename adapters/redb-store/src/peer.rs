@@ -4,13 +4,14 @@ use milkdrift_peer_protocol::{
     PeerRequestId,
 };
 use milkdrift_persistence::{
-    PEER_EXECUTION_RECORD_SCHEMA_VERSION_V1, PeerAdmission, PeerAdmissionOutcome,
-    PeerAdmissionRejection, PeerCancellationRecord, PeerCatalogState, PeerClaimOutcome,
+    PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2, PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1,
+    PeerAcceptedAuthoritySummary, PeerAdmission, PeerAdmissionOutcome, PeerAdmissionRejection,
+    PeerArchivedDisposition, PeerCancellationRecord, PeerCatalogState, PeerClaimOutcome,
     PeerDispatchClaim, PeerDispatchClaimRequest, PeerEntryEvidence, PeerEntryOutcome,
     PeerEntryRequest, PeerExecutionAccounting, PeerExecutionPhase, PeerExecutionRecord,
-    PeerExecutionRetention, PeerExecutionStore, PeerObservationAppend, PeerObservationPage,
-    PeerRecoveryResult, PeerRelationshipState, PeerRetentionPage, PeerRetentionRequest,
-    PersistenceError, StorageFailureClass, WorkerId,
+    PeerExecutionSnapshot, PeerExecutionStatus, PeerExecutionStore, PeerExecutionTombstone,
+    PeerObservationAppend, PeerObservationPage, PeerRecoveryResult, PeerRelationshipState,
+    PeerRetentionPage, PeerRetentionRequest, PersistenceError, StorageFailureClass, WorkerId,
 };
 use redb::{ReadableTable, ReadableTableMetadata};
 use serde::{Deserialize, Serialize};
@@ -21,23 +22,29 @@ use crate::{
     json,
     schema::{
         PEER_ACTIVE_CLAIMS, PEER_CATALOGS, PEER_DISPATCH_AVAILABLE, PEER_EXECUTION_ACCOUNTING,
-        PEER_EXECUTION_GLOBAL_ACCOUNTING_KEY, PEER_EXECUTIONS, PEER_EXECUTIONS_BY_REQUEST,
-        PEER_OBSERVATION_ARTIFACTS, PEER_OBSERVATIONS, PEER_RELATIONSHIPS, PEER_TERMINAL_INDEX,
+        PEER_EXECUTION_GLOBAL_ACCOUNTING_KEY, PEER_EXECUTION_LOCATIONS, PEER_EXECUTION_TOMBSTONES,
+        PEER_EXECUTIONS, PEER_EXECUTIONS_BY_REQUEST, PEER_OBSERVATION_ARTIFACTS, PEER_OBSERVATIONS,
+        PEER_RELATIONSHIPS, PEER_TERMINAL_INDEX,
     },
 };
 
-const PEER_ACCOUNTING_SCHEMA_VERSION: u32 = 1;
+const PEER_ACCOUNTING_SCHEMA_VERSION: u32 = 2;
 const MAX_UNCERTAINTY_REASON_BYTES: usize = 2_048;
+const LOCATION_HOT: u8 = 1;
+const LOCATION_ARCHIVED: u8 = 2;
+const OBSERVATION_DIGEST_DOMAIN: &[u8] = b"milkdrift.peer.observation-history.v1\0";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct GlobalPeerAccounting {
     schema_version: u32,
     next_acceptance_sequence: u64,
-    total_records: u64,
     active: u32,
     dispatch_queued: u32,
-    terminal_records: u64,
+    hot_terminal: u64,
+    tombstones: u64,
+    archive_generation: u64,
+    last_archived_at_unix_ms: Option<u64>,
     admission_open: bool,
 }
 
@@ -45,10 +52,12 @@ impl GlobalPeerAccounting {
     pub(crate) const EMPTY: Self = Self {
         schema_version: PEER_ACCOUNTING_SCHEMA_VERSION,
         next_acceptance_sequence: 1,
-        total_records: 0,
         active: 0,
         dispatch_queued: 0,
-        terminal_records: 0,
+        hot_terminal: 0,
+        tombstones: 0,
+        archive_generation: 0,
+        last_archived_at_unix_ms: None,
         admission_open: false,
     };
 }
@@ -162,7 +171,10 @@ impl PeerExecutionStore for RedbStore {
         &self,
         admission: &PeerAdmission<'_>,
     ) -> Result<PeerAdmissionOutcome, PersistenceError> {
-        validate_admission(admission)?;
+        admission
+            .request
+            .validate()
+            .map_err(|cause| invalid(&cause.to_string()))?;
         let write = self.database().begin_write().map_err(error::redb)?;
         let request_key = request_key(admission.owner_peer, &admission.request.request_id)?;
         let existing_execution = {
@@ -175,22 +187,24 @@ impl PeerExecutionStore for RedbStore {
                 .map(|value| value.value().to_owned())
         };
         if let Some(execution) = existing_execution {
-            let existing = execution_in_transaction_text(&write, &execution)?;
-            if existing.owner_peer != *admission.owner_peer
-                || existing.request.request_id != admission.request.request_id
+            let existing = snapshot_in_transaction_text(&write, &execution)?;
+            if existing.owner_peer() != admission.owner_peer
+                || existing.request_id() != &admission.request.request_id
             {
                 return Err(corruption(
                     "peer request index disagrees with its execution",
                 ));
             }
             return Ok(
-                if existing.request.request_digest == admission.request.request_digest {
+                if existing.request_digest() == admission.request.request_digest {
                     PeerAdmissionOutcome::Replayed(existing)
                 } else {
                     PeerAdmissionOutcome::Conflict(existing)
                 },
             );
         }
+
+        validate_admission(admission)?;
 
         let mut global = global_accounting(&write)?;
         if !global.admission_open {
@@ -240,12 +254,31 @@ impl PeerExecutionStore for RedbStore {
                 PeerAdmissionRejection::DispatchCapacity,
             ));
         }
-        if global.total_records >= admission.maximum_records {
+        let reserved_hot = global
+            .hot_terminal
+            .checked_add(u64::from(global.active))
+            .ok_or_else(|| corruption("peer reserved hot capacity overflowed"))?;
+        if reserved_hot >= admission.maximum_hot_terminal_records {
+            archive_eligible_in_transaction(
+                self,
+                &write,
+                admission.archive_terminal_before_or_at_unix_ms,
+                admission.accepted_at_unix_ms,
+                admission.archive_batch_size,
+            )?;
+            global = global_accounting(&write)?;
+        }
+        if global
+            .hot_terminal
+            .checked_add(u64::from(global.active))
+            .ok_or_else(|| corruption("peer reserved hot capacity overflowed"))?
+            >= admission.maximum_hot_terminal_records
+        {
             return Ok(PeerAdmissionOutcome::Rejected(
                 PeerAdmissionRejection::RetentionCapacity,
             ));
         }
-        if execution_optional_in_transaction(&write, admission.execution)?.is_some() {
+        if snapshot_optional_in_transaction(&write, admission.execution)?.is_some() {
             return Err(PersistenceError::ImmutableConflict {
                 entity: "peer_execution",
                 identity: admission.execution.to_string(),
@@ -255,10 +288,6 @@ impl PeerExecutionStore for RedbStore {
         global.next_acceptance_sequence = sequence
             .checked_add(1)
             .ok_or_else(|| corruption("peer acceptance sequence overflowed"))?;
-        global.total_records = global
-            .total_records
-            .checked_add(1)
-            .ok_or_else(|| corruption("peer record count overflowed"))?;
         global.active = global
             .active
             .checked_add(1)
@@ -276,7 +305,7 @@ impl PeerExecutionStore for RedbStore {
             .checked_add(1)
             .ok_or_else(|| corruption("per-peer accounting revision overflowed"))?;
         let record = PeerExecutionRecord {
-            schema_version: PEER_EXECUTION_RECORD_SCHEMA_VERSION_V1,
+            schema_version: PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2,
             owner_peer: admission.owner_peer.clone(),
             relationship_generation: admission.relationship_generation,
             request: admission.request.clone(),
@@ -290,7 +319,7 @@ impl PeerExecutionStore for RedbStore {
             cancellation: None,
             last_observation_sequence: 0,
             accounting: PeerExecutionAccounting::default(),
-            retention: PeerExecutionRetention::Retained,
+            observation_digest: observation_genesis_digest(),
             revision: 1,
         };
         validate_record(&record)?;
@@ -299,6 +328,11 @@ impl PeerExecutionStore for RedbStore {
             .open_table(PEER_EXECUTIONS_BY_REQUEST)
             .map_err(error::redb)?
             .insert(request_key.as_slice(), record.execution.as_str())
+            .map_err(error::redb)?;
+        write
+            .open_table(PEER_EXECUTION_LOCATIONS)
+            .map_err(error::redb)?
+            .insert(record.execution.as_str(), LOCATION_HOT)
             .map_err(error::redb)?;
         let available_key = available_key(&record)?;
         write
@@ -311,14 +345,14 @@ impl PeerExecutionStore for RedbStore {
         self.faults.check(FaultPoint::BeforePeerAdmissionCommit)?;
         write.commit().map_err(error::redb)?;
         self.faults.check(FaultPoint::AfterPeerAdmissionCommit)?;
-        Ok(PeerAdmissionOutcome::Accepted(record))
+        Ok(PeerAdmissionOutcome::Accepted(Box::new(record)))
     }
 
     fn peer_execution_by_request(
         &self,
         owner: &PeerId,
         request: &PeerRequestId,
-    ) -> Result<Option<PeerExecutionRecord>, PersistenceError> {
+    ) -> Result<Option<PeerExecutionSnapshot>, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
         let key = request_key(owner, request)?;
         let execution = read
@@ -330,8 +364,8 @@ impl PeerExecutionStore for RedbStore {
         let Some(execution) = execution else {
             return Ok(None);
         };
-        let record = execution_in_read_transaction_text(&read, &execution)?;
-        if record.owner_peer != *owner || record.request.request_id != *request {
+        let record = snapshot_in_read_transaction_text(&read, &execution)?;
+        if record.owner_peer() != owner || record.request_id() != request {
             return Err(corruption(
                 "peer request lookup returned mismatched primary record",
             ));
@@ -343,10 +377,27 @@ impl PeerExecutionStore for RedbStore {
         &self,
         owner: &PeerId,
         execution: &PeerExecutionId,
-    ) -> Result<Option<PeerExecutionRecord>, PersistenceError> {
+    ) -> Result<Option<PeerExecutionSnapshot>, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
-        let record = execution_optional_in_read_transaction(&read, execution)?;
-        Ok(record.filter(|record| record.owner_peer == *owner))
+        let record = snapshot_optional_in_read_transaction(&read, execution)?;
+        Ok(record.filter(|record| record.owner_peer() == owner))
+    }
+
+    fn peer_execution_status(&self) -> Result<PeerExecutionStatus, PersistenceError> {
+        let read = self.database().begin_read().map_err(error::redb)?;
+        let value = global_accounting_read(&read)?;
+        Ok(PeerExecutionStatus {
+            active: value.active,
+            dispatch_queued: value.dispatch_queued,
+            hot_terminal: value.hot_terminal,
+            tombstones: value.tombstones,
+            archive_generation: value.archive_generation,
+            last_archived_at_unix_ms: value.last_archived_at_unix_ms,
+        })
+    }
+
+    fn verify_peer_execution_integrity(&self) -> Result<(), PersistenceError> {
+        verify_integrity(self)
     }
 
     fn peer_observations(
@@ -357,14 +408,20 @@ impl PeerExecutionStore for RedbStore {
         limit: milkdrift_persistence::PageSize,
     ) -> Result<PeerObservationPage, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
-        let record = execution_optional_in_read_transaction(&read, execution)?
-            .filter(|record| record.owner_peer == *owner)
+        let snapshot = snapshot_optional_in_read_transaction(&read, execution)?
+            .filter(|record| record.owner_peer() == owner)
             .ok_or_else(|| missing("peer_execution", execution.as_str()))?;
-        if after_sequence > record.last_observation_sequence {
+        if after_sequence > snapshot.last_observation_sequence() {
             return Err(PersistenceError::InvalidCursor(
                 "peer observation cursor is beyond the durable head".to_owned(),
             ));
         }
+        let PeerExecutionSnapshot::Hot(record) = &snapshot else {
+            return Ok(PeerObservationPage {
+                execution: snapshot,
+                observations: Vec::new(),
+            });
+        };
         let observations_table = read.open_table(PEER_OBSERVATIONS).map_err(error::redb)?;
         let mut observations = Vec::with_capacity(limit.get() as usize);
         let mut sequence = after_sequence.saturating_add(1);
@@ -386,7 +443,7 @@ impl PeerExecutionStore for RedbStore {
             sequence = sequence.saturating_add(1);
         }
         Ok(PeerObservationPage {
-            record,
+            execution: snapshot,
             observations,
         })
     }
@@ -746,6 +803,7 @@ impl PeerExecutionStore for RedbStore {
             record.accounting.cost_micros = usage.cost_micros();
         }
         record.last_observation_sequence = observation.sequence;
+        record.observation_digest = observation_link_digest(&record.observation_digest, &bytes)?;
         record.accounting.observations = record
             .accounting
             .observations
@@ -778,9 +836,7 @@ impl PeerExecutionStore for RedbStore {
                     ));
                 }
             }
-            if let Some(uncertain_at) = was_uncertain_at
-                && matches!(record.retention, PeerExecutionRetention::Retained)
-            {
+            if let Some(uncertain_at) = was_uncertain_at {
                 remove_terminal_index(&write, execution, uncertain_at)?;
             }
             record.phase = PeerExecutionPhase::Terminal {
@@ -790,9 +846,7 @@ impl PeerExecutionStore for RedbStore {
             if was_active {
                 release_active_accounting(&write, &record.owner_peer, was_pre_entry)?;
             }
-            if matches!(record.retention, PeerExecutionRetention::Retained) {
-                insert_terminal_index(&write, &record, observation.observed_at_unix_ms)?;
-            }
+            insert_terminal_index(&write, &record, observation.observed_at_unix_ms)?;
         }
         bump_record(&mut record)?;
         put_execution(&write, &record)?;
@@ -1022,53 +1076,17 @@ impl PeerExecutionStore for RedbStore {
             return Err(invalid("peer archive boundary must be nonzero"));
         }
         let write = self.database().begin_write().map_err(error::redb)?;
-        let candidates = {
-            let terminal = write.open_table(PEER_TERMINAL_INDEX).map_err(error::redb)?;
-            terminal
-                .iter()
-                .map_err(error::redb)?
-                .map(|row| match row {
-                    Ok((key, execution)) => {
-                        Ok((key.value().to_vec(), execution.value().to_owned()))
-                    }
-                    Err(error) => Err(error::redb(error)),
-                })
-                .take(request.limit.get() as usize + 1)
-                .collect::<Result<Vec<_>, PersistenceError>>()?
-        };
-        let mut archived = 0_u32;
-        let mut more = false;
-        for (key, execution) in candidates {
-            let terminal_at = decode_ordered_time(&key)?;
-            if terminal_at > request.terminal_before_or_at.get() {
-                break;
-            }
-            let mut record = execution_in_transaction_text(&write, &execution)?;
-            if matches!(record.retention, PeerExecutionRetention::Archived { .. }) {
-                return Err(corruption(
-                    "peer terminal index points at an already archived record",
-                ));
-            }
-            if archived >= request.limit.get() {
-                more = true;
-                break;
-            }
-            if !matches!(
-                record.phase,
-                PeerExecutionPhase::Terminal { .. } | PeerExecutionPhase::Uncertain { .. }
-            ) {
-                return Err(corruption("peer terminal index points at an active record"));
-            }
-            remove_terminal_index(&write, &record.execution, terminal_at)?;
-            record.retention = PeerExecutionRetention::Archived {
-                archived_at_unix_ms: request.archived_at.get(),
-            };
-            bump_record(&mut record)?;
-            put_execution(&write, &record)?;
-            archived = archived.saturating_add(1);
-        }
+        let page = archive_eligible_in_transaction(
+            self,
+            &write,
+            request.terminal_before_or_at.get(),
+            request.archived_at.get(),
+            request.limit.get(),
+        )?;
+        self.faults.check(FaultPoint::BeforePeerArchiveCommit)?;
         write.commit().map_err(error::redb)?;
-        Ok(PeerRetentionPage { archived, more })
+        self.faults.check(FaultPoint::AfterPeerArchiveCommit)?;
+        Ok(page)
     }
 
     fn peer_observation_artifact(
@@ -1117,24 +1135,159 @@ fn execution_optional_in_transaction(
     write: &redb::WriteTransaction,
     execution: &PeerExecutionId,
 ) -> Result<Option<PeerExecutionRecord>, PersistenceError> {
-    write
+    let record = write
         .open_table(PEER_EXECUTIONS)
         .map_err(error::redb)?
         .get(execution.as_str())
         .map_err(error::redb)?
         .map(|bytes| decode_record(bytes.value()))
-        .transpose()
+        .transpose()?;
+    if record.is_some()
+        && execution_location_in_transaction(write, execution)? != Some(LOCATION_HOT)
+    {
+        return Err(corruption(
+            "hot peer execution disagrees with its location index",
+        ));
+    }
+    Ok(record)
 }
 
 fn execution_optional_in_read_transaction(
     read: &redb::ReadTransaction,
     execution: &PeerExecutionId,
 ) -> Result<Option<PeerExecutionRecord>, PersistenceError> {
-    read.open_table(PEER_EXECUTIONS)
+    let record = read
+        .open_table(PEER_EXECUTIONS)
         .map_err(error::redb)?
         .get(execution.as_str())
         .map_err(error::redb)?
         .map(|bytes| decode_record(bytes.value()))
+        .transpose()?;
+    if record.is_some()
+        && execution_location_in_read_transaction(read, execution)? != Some(LOCATION_HOT)
+    {
+        return Err(corruption(
+            "hot peer execution disagrees with its location index",
+        ));
+    }
+    Ok(record)
+}
+
+fn snapshot_optional_in_transaction(
+    write: &redb::WriteTransaction,
+    execution: &PeerExecutionId,
+) -> Result<Option<PeerExecutionSnapshot>, PersistenceError> {
+    match execution_location_in_transaction(write, execution)? {
+        None => {
+            let hot = write
+                .open_table(PEER_EXECUTIONS)
+                .map_err(error::redb)?
+                .get(execution.as_str())
+                .map_err(error::redb)?
+                .is_some();
+            let archived = write
+                .open_table(PEER_EXECUTION_TOMBSTONES)
+                .map_err(error::redb)?
+                .get(execution.as_str())
+                .map_err(error::redb)?
+                .is_some();
+            if hot || archived {
+                return Err(corruption("peer execution exists without a location index"));
+            }
+            Ok(None)
+        }
+        Some(LOCATION_HOT) => execution_optional_in_transaction(write, execution)?
+            .map(|record| PeerExecutionSnapshot::Hot(Box::new(record)))
+            .ok_or_else(|| corruption("peer hot location points at a missing record"))
+            .map(Some),
+        Some(LOCATION_ARCHIVED) => tombstone_optional_in_transaction(write, execution)?
+            .map(|tombstone| PeerExecutionSnapshot::Archived(Box::new(tombstone)))
+            .ok_or_else(|| corruption("peer archived location points at a missing tombstone"))
+            .map(Some),
+        Some(_) => Err(corruption("peer execution location has an unknown value")),
+    }
+}
+
+fn snapshot_optional_in_read_transaction(
+    read: &redb::ReadTransaction,
+    execution: &PeerExecutionId,
+) -> Result<Option<PeerExecutionSnapshot>, PersistenceError> {
+    match execution_location_in_read_transaction(read, execution)? {
+        None => {
+            let hot = read
+                .open_table(PEER_EXECUTIONS)
+                .map_err(error::redb)?
+                .get(execution.as_str())
+                .map_err(error::redb)?
+                .is_some();
+            let archived = read
+                .open_table(PEER_EXECUTION_TOMBSTONES)
+                .map_err(error::redb)?
+                .get(execution.as_str())
+                .map_err(error::redb)?
+                .is_some();
+            if hot || archived {
+                return Err(corruption("peer execution exists without a location index"));
+            }
+            Ok(None)
+        }
+        Some(LOCATION_HOT) => execution_optional_in_read_transaction(read, execution)?
+            .map(|record| PeerExecutionSnapshot::Hot(Box::new(record)))
+            .ok_or_else(|| corruption("peer hot location points at a missing record"))
+            .map(Some),
+        Some(LOCATION_ARCHIVED) => tombstone_optional_in_read_transaction(read, execution)?
+            .map(|tombstone| PeerExecutionSnapshot::Archived(Box::new(tombstone)))
+            .ok_or_else(|| corruption("peer archived location points at a missing tombstone"))
+            .map(Some),
+        Some(_) => Err(corruption("peer execution location has an unknown value")),
+    }
+}
+
+fn execution_location_in_transaction(
+    write: &redb::WriteTransaction,
+    execution: &PeerExecutionId,
+) -> Result<Option<u8>, PersistenceError> {
+    write
+        .open_table(PEER_EXECUTION_LOCATIONS)
+        .map_err(error::redb)?
+        .get(execution.as_str())
+        .map_err(error::redb)
+        .map(|value| value.map(|value| value.value()))
+}
+
+fn execution_location_in_read_transaction(
+    read: &redb::ReadTransaction,
+    execution: &PeerExecutionId,
+) -> Result<Option<u8>, PersistenceError> {
+    read.open_table(PEER_EXECUTION_LOCATIONS)
+        .map_err(error::redb)?
+        .get(execution.as_str())
+        .map_err(error::redb)
+        .map(|value| value.map(|value| value.value()))
+}
+
+fn tombstone_optional_in_transaction(
+    write: &redb::WriteTransaction,
+    execution: &PeerExecutionId,
+) -> Result<Option<PeerExecutionTombstone>, PersistenceError> {
+    write
+        .open_table(PEER_EXECUTION_TOMBSTONES)
+        .map_err(error::redb)?
+        .get(execution.as_str())
+        .map_err(error::redb)?
+        .map(|bytes| decode_tombstone(bytes.value()))
+        .transpose()
+}
+
+fn tombstone_optional_in_read_transaction(
+    read: &redb::ReadTransaction,
+    execution: &PeerExecutionId,
+) -> Result<Option<PeerExecutionTombstone>, PersistenceError> {
+    read.open_table(PEER_EXECUTION_TOMBSTONES)
+        .map_err(error::redb)?
+        .get(execution.as_str())
+        .map_err(error::redb)?
+        .map(|bytes| decode_tombstone(bytes.value()))
         .transpose()
 }
 
@@ -1151,17 +1304,30 @@ fn execution_in_transaction_text(
         .ok_or_else(|| corruption("peer index points at a missing primary record"))
 }
 
-fn execution_in_read_transaction_text(
+fn snapshot_in_transaction_text(
+    write: &redb::WriteTransaction,
+    execution: &str,
+) -> Result<PeerExecutionSnapshot, PersistenceError> {
+    let execution_id = parse_execution_id(execution)?;
+    snapshot_optional_in_transaction(write, &execution_id)?
+        .ok_or_else(|| corruption("peer index points at a missing execution authority"))
+}
+
+fn snapshot_in_read_transaction_text(
     read: &redb::ReadTransaction,
     execution: &str,
-) -> Result<PeerExecutionRecord, PersistenceError> {
-    let execution_id = PeerExecutionId::new(execution.to_owned()).map_err(|cause| {
+) -> Result<PeerExecutionSnapshot, PersistenceError> {
+    let execution_id = parse_execution_id(execution)?;
+    snapshot_optional_in_read_transaction(read, &execution_id)?
+        .ok_or_else(|| corruption("peer index points at a missing execution authority"))
+}
+
+fn parse_execution_id(execution: &str) -> Result<PeerExecutionId, PersistenceError> {
+    PeerExecutionId::new(execution.to_owned()).map_err(|cause| {
         corruption(format!(
             "stored peer execution identity is invalid: {cause}"
         ))
-    })?;
-    execution_optional_in_read_transaction(read, &execution_id)?
-        .ok_or_else(|| corruption("peer index points at a missing primary record"))
+    })
 }
 
 fn owned_execution_in_transaction(
@@ -1194,6 +1360,32 @@ fn decode_record(bytes: &[u8]) -> Result<PeerExecutionRecord, PersistenceError> 
     Ok(record)
 }
 
+fn put_tombstone(
+    write: &redb::WriteTransaction,
+    tombstone: &PeerExecutionTombstone,
+) -> Result<(), PersistenceError> {
+    validate_tombstone(tombstone)?;
+    let bytes = json::encode(tombstone, "peer execution tombstone")?;
+    if write
+        .open_table(PEER_EXECUTION_TOMBSTONES)
+        .map_err(error::redb)?
+        .insert(tombstone.execution.as_str(), bytes.as_slice())
+        .map_err(error::redb)?
+        .is_some()
+    {
+        return Err(corruption(
+            "peer tombstone insertion replaced an existing authority",
+        ));
+    }
+    Ok(())
+}
+
+fn decode_tombstone(bytes: &[u8]) -> Result<PeerExecutionTombstone, PersistenceError> {
+    let tombstone = json::decode(bytes, "peer execution tombstone")?;
+    validate_tombstone(&tombstone)?;
+    Ok(tombstone)
+}
+
 fn global_accounting(
     write: &redb::WriteTransaction,
 ) -> Result<GlobalPeerAccounting, PersistenceError> {
@@ -1205,7 +1397,29 @@ fn global_accounting(
         .map_err(error::redb)?
         .ok_or_else(|| corruption("peer global accounting is missing"))?;
     let value: GlobalPeerAccounting = json::decode(bytes.value(), "peer global accounting")?;
-    if value.schema_version != PEER_ACCOUNTING_SCHEMA_VERSION || value.next_acceptance_sequence == 0
+    validate_global_accounting(value)
+}
+
+fn global_accounting_read(
+    read: &redb::ReadTransaction,
+) -> Result<GlobalPeerAccounting, PersistenceError> {
+    let table = read
+        .open_table(PEER_EXECUTION_ACCOUNTING)
+        .map_err(error::redb)?;
+    let bytes = table
+        .get(PEER_EXECUTION_GLOBAL_ACCOUNTING_KEY)
+        .map_err(error::redb)?
+        .ok_or_else(|| corruption("peer global accounting is missing"))?;
+    let value: GlobalPeerAccounting = json::decode(bytes.value(), "peer global accounting")?;
+    validate_global_accounting(value)
+}
+
+fn validate_global_accounting(
+    value: GlobalPeerAccounting,
+) -> Result<GlobalPeerAccounting, PersistenceError> {
+    if value.schema_version != PEER_ACCOUNTING_SCHEMA_VERSION
+        || value.next_acceptance_sequence == 0
+        || (value.archive_generation == 0) != value.last_archived_at_unix_ms.is_none()
     {
         return Err(corruption("peer global accounting schema is invalid"));
     }
@@ -1273,10 +1487,10 @@ fn release_active_accounting(
             .checked_sub(1)
             .ok_or_else(|| corruption("peer dispatch count underflowed"))?;
     }
-    global.terminal_records = global
-        .terminal_records
+    global.hot_terminal = global
+        .hot_terminal
         .checked_add(1)
-        .ok_or_else(|| corruption("peer terminal count overflowed"))?;
+        .ok_or_else(|| corruption("peer hot terminal count overflowed"))?;
     peer.active = peer
         .active
         .checked_sub(1)
@@ -1368,6 +1582,218 @@ fn remove_terminal_index(
         .map(|value| value.value().to_owned());
     if removed.as_deref() != Some(execution.as_str()) {
         return Err(corruption("peer terminal index is missing or mismatched"));
+    }
+    Ok(())
+}
+
+fn archive_eligible_in_transaction(
+    store: &RedbStore,
+    write: &redb::WriteTransaction,
+    terminal_before_or_at: u64,
+    archived_at: u64,
+    limit: u32,
+) -> Result<PeerRetentionPage, PersistenceError> {
+    if terminal_before_or_at == 0 || archived_at == 0 || limit == 0 {
+        return Err(invalid(
+            "peer archival boundaries and limit must be nonzero",
+        ));
+    }
+    let candidates = {
+        let terminal = write.open_table(PEER_TERMINAL_INDEX).map_err(error::redb)?;
+        terminal
+            .iter()
+            .map_err(error::redb)?
+            .take(limit as usize + 1)
+            .map(|row| {
+                row.map(|(key, execution)| (key.value().to_vec(), execution.value().to_owned()))
+                    .map_err(error::redb)
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let mut archived = 0_u32;
+    let mut more = false;
+    for (terminal_key, execution_text) in candidates {
+        let terminal_at = decode_ordered_time(&terminal_key)?;
+        if terminal_at > terminal_before_or_at {
+            break;
+        }
+        if archived >= limit {
+            more = true;
+            break;
+        }
+        let execution = parse_execution_id(&execution_text)?;
+        if execution_location_in_transaction(write, &execution)? != Some(LOCATION_HOT) {
+            return Err(corruption(
+                "peer terminal index does not point at singular hot ownership",
+            ));
+        }
+        if tombstone_optional_in_transaction(write, &execution)?.is_some() {
+            return Err(corruption(
+                "peer execution has hot and tombstone dual ownership",
+            ));
+        }
+        let record = execution_optional_in_transaction(write, &execution)?
+            .ok_or_else(|| corruption("peer terminal index points at a missing hot record"))?;
+        if !matches!(
+            record.phase,
+            PeerExecutionPhase::Terminal { .. } | PeerExecutionPhase::Uncertain { .. }
+        ) {
+            return Err(corruption("peer terminal index points at an active record"));
+        }
+        let request_key = request_key(&record.owner_peer, &record.request.request_id)?;
+        let indexed_execution = write
+            .open_table(PEER_EXECUTIONS_BY_REQUEST)
+            .map_err(error::redb)?
+            .get(request_key.as_slice())
+            .map_err(error::redb)?
+            .map(|value| value.value().to_owned());
+        if indexed_execution.as_deref() != Some(record.execution.as_str()) {
+            return Err(corruption(
+                "peer request index disagrees before tombstone creation",
+            ));
+        }
+        let tombstone = tombstone_from_record(write, &record, archived_at)?;
+        put_tombstone(write, &tombstone)?;
+        store.faults.check(FaultPoint::AfterPeerTombstoneInsert)?;
+        let previous_location = write
+            .open_table(PEER_EXECUTION_LOCATIONS)
+            .map_err(error::redb)?
+            .insert(execution.as_str(), LOCATION_ARCHIVED)
+            .map_err(error::redb)?
+            .map(|value| value.value());
+        if previous_location != Some(LOCATION_HOT) {
+            return Err(corruption(
+                "peer archive location transition lost hot ownership",
+            ));
+        }
+        compact_observation_rows(write, &record)?;
+        store
+            .faults
+            .check(FaultPoint::AfterPeerObservationCleanup)?;
+        remove_terminal_index(write, &record.execution, terminal_at)?;
+        let mut hot = write.open_table(PEER_EXECUTIONS).map_err(error::redb)?;
+        let removed = hot.remove(execution.as_str()).map_err(error::redb)?;
+        if removed.is_none() {
+            return Err(corruption("peer hot record disappeared during archival"));
+        }
+        store.faults.check(FaultPoint::AfterPeerHotRemove)?;
+        let mut global = global_accounting(write)?;
+        global.hot_terminal = global
+            .hot_terminal
+            .checked_sub(1)
+            .ok_or_else(|| corruption("peer hot terminal count underflowed during archival"))?;
+        global.tombstones = global
+            .tombstones
+            .checked_add(1)
+            .ok_or_else(|| corruption("peer tombstone count overflowed"))?;
+        put_global_accounting(write, global)?;
+        store.faults.check(FaultPoint::AfterPeerArchiveAccounting)?;
+        archived = archived.saturating_add(1);
+    }
+    if archived > 0 {
+        let mut global = global_accounting(write)?;
+        global.archive_generation = global
+            .archive_generation
+            .checked_add(1)
+            .ok_or_else(|| corruption("peer archive generation overflowed"))?;
+        global.last_archived_at_unix_ms = Some(archived_at);
+        put_global_accounting(write, global)?;
+    }
+    Ok(PeerRetentionPage { archived, more })
+}
+
+fn tombstone_from_record(
+    write: &redb::WriteTransaction,
+    record: &PeerExecutionRecord,
+    archived_at_unix_ms: u64,
+) -> Result<PeerExecutionTombstone, PersistenceError> {
+    let disposition = match &record.phase {
+        PeerExecutionPhase::Terminal { sequence, .. } => {
+            let key = observation_key(&record.execution, *sequence)?;
+            let observations = write.open_table(PEER_OBSERVATIONS).map_err(error::redb)?;
+            let observation = observations
+                .get(key.as_slice())
+                .map_err(error::redb)?
+                .ok_or_else(|| corruption("terminal peer record lacks its final observation"))?;
+            let observation: PeerObservation =
+                json::decode(observation.value(), "peer observation")?;
+            PeerArchivedDisposition::Terminal {
+                observation: Box::new(observation),
+            }
+        }
+        PeerExecutionPhase::Uncertain {
+            uncertain_at_unix_ms,
+            reason,
+        } => PeerArchivedDisposition::Uncertain {
+            uncertain_at_unix_ms: *uncertain_at_unix_ms,
+            reason: reason.clone(),
+        },
+        _ => return Err(corruption("active peer record cannot become a tombstone")),
+    };
+    let operation = record.request.selection.operation_contract();
+    let tombstone = PeerExecutionTombstone {
+        schema_version: PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1,
+        owner_peer: record.owner_peer.clone(),
+        target_peer: record.request.delegation.target_peer.clone(),
+        delegation_ref: record.request.delegation.reference.clone(),
+        relationship_generation: record.relationship_generation,
+        request_id: record.request.request_id.clone(),
+        request_digest: record.request.request_digest.clone(),
+        execution: record.execution.clone(),
+        acceptance_sequence: record.acceptance_sequence,
+        accepted_at_unix_ms: record.accepted_at_unix_ms,
+        catalog_generation: record.request.catalog_generation,
+        catalog_digest: record.request.catalog_digest.as_str().to_owned(),
+        capability: record.request.selection.capability().clone(),
+        capability_generation: record.request.selection.descriptor_revision(),
+        capability_digest: record.request.selection.digest().to_owned(),
+        operation: record.request.selection.operation().clone(),
+        side_effect: operation.side_effect(),
+        idempotency: operation.idempotency(),
+        authority: PeerAcceptedAuthoritySummary {
+            decision: record.authority.request().decision.clone(),
+            actor: record.authority.request().actor.clone(),
+            grant: record.authority.request().grant.clone(),
+            grant_revision: record.authority.request().grant_revision,
+            grant_digest: record.authority.request().grant_digest.clone(),
+            revocation_generation: record.authority.request().revocation_generation,
+            policy: record.authority.policy().clone(),
+            policy_version: record.authority.policy_version(),
+            decision_digest: record.authority.digest().to_owned(),
+        },
+        provenance: record.request.delegation.provenance.clone(),
+        disposition,
+        cancellation: record.cancellation.clone(),
+        last_observation_sequence: record.last_observation_sequence,
+        observation_digest: record.observation_digest.clone(),
+        accounting: record.accounting,
+        compacted_through_sequence: record.last_observation_sequence,
+        archived_at_unix_ms,
+    };
+    validate_tombstone(&tombstone)?;
+    Ok(tombstone)
+}
+
+fn compact_observation_rows(
+    write: &redb::WriteTransaction,
+    record: &PeerExecutionRecord,
+) -> Result<(), PersistenceError> {
+    let mut observations = write.open_table(PEER_OBSERVATIONS).map_err(error::redb)?;
+    let mut artifacts = write
+        .open_table(PEER_OBSERVATION_ARTIFACTS)
+        .map_err(error::redb)?;
+    for sequence in 1..=record.last_observation_sequence {
+        let key = observation_key(&record.execution, sequence)?;
+        if observations
+            .remove(key.as_slice())
+            .map_err(error::redb)?
+            .is_none()
+        {
+            return Err(corruption(
+                "peer archival encountered a missing observation row",
+            ));
+        }
+        artifacts.remove(key.as_slice()).map_err(error::redb)?;
     }
     Ok(())
 }
@@ -1468,7 +1894,10 @@ fn validate_admission(value: &PeerAdmission<'_>) -> Result<(), PersistenceError>
         || value.accepted_at_unix_ms == 0
         || value.maximum_global_active == 0
         || value.maximum_dispatch_queue == 0
-        || value.maximum_records == 0
+        || value.maximum_hot_terminal_records == 0
+        || value.archive_batch_size == 0
+        || value.archive_terminal_before_or_at_unix_ms == 0
+        || value.maximum_hot_terminal_records < u64::from(value.maximum_global_active)
     {
         return Err(invalid("peer admission persistence facts are invalid"));
     }
@@ -1500,13 +1929,14 @@ fn validate_record(record: &PeerExecutionRecord) -> Result<(), PersistenceError>
         .request
         .validate()
         .map_err(|cause| corruption(format!("stored peer request is invalid: {cause}")))?;
-    if record.schema_version != PEER_EXECUTION_RECORD_SCHEMA_VERSION_V1
+    if record.schema_version != PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2
         || record.relationship_generation == 0
         || record.acceptance_sequence == 0
         || record.accepted_at_unix_ms == 0
         || record.revision == 0
         || u64::from(record.accounting.observations) != record.last_observation_sequence
         || record.last_observation_sequence > u64::from(record.request.limits.observations)
+        || !valid_prefixed_blake3(&record.observation_digest)
     {
         return Err(corruption(
             "stored peer execution primary facts are invalid",
@@ -1528,6 +1958,456 @@ fn validate_record(record: &PeerExecutionRecord) -> Result<(), PersistenceError>
         return Err(corruption(
             "stored peer cancellation phase disagrees with its facts",
         ));
+    }
+    Ok(())
+}
+
+fn validate_tombstone(tombstone: &PeerExecutionTombstone) -> Result<(), PersistenceError> {
+    if tombstone.schema_version != PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1
+        || tombstone.relationship_generation == 0
+        || tombstone.acceptance_sequence == 0
+        || tombstone.accepted_at_unix_ms == 0
+        || tombstone.catalog_generation == 0
+        || tombstone.capability_generation == 0
+        || tombstone.authority.grant_revision == 0
+        || tombstone.authority.policy_version == 0
+        || tombstone.archived_at_unix_ms == 0
+        || tombstone.compacted_through_sequence != tombstone.last_observation_sequence
+        || u64::from(tombstone.accounting.observations) != tombstone.last_observation_sequence
+        || !valid_prefixed_blake3(&tombstone.request_digest)
+        || !valid_prefixed_blake3(&tombstone.catalog_digest)
+        || !valid_capability_digest(&tombstone.capability_digest)
+        || !valid_prefixed_blake3(&tombstone.authority.decision_digest)
+        || !valid_prefixed_blake3(&tombstone.observation_digest)
+    {
+        return Err(corruption(
+            "stored peer execution tombstone facts are invalid",
+        ));
+    }
+    match &tombstone.disposition {
+        PeerArchivedDisposition::Terminal { observation } => {
+            observation.validate().map_err(|cause| {
+                corruption(format!("archived terminal summary is invalid: {cause}"))
+            })?;
+            if observation.execution != tombstone.execution
+                || observation.sequence != tombstone.last_observation_sequence
+                || observation.event.kind().terminal().is_none()
+                || observation.observed_at_unix_ms > tombstone.archived_at_unix_ms
+            {
+                return Err(corruption(
+                    "archived terminal summary disagrees with its tombstone",
+                ));
+            }
+        }
+        PeerArchivedDisposition::Uncertain {
+            uncertain_at_unix_ms,
+            reason,
+        } => {
+            if *uncertain_at_unix_ms == 0
+                || *uncertain_at_unix_ms > tombstone.archived_at_unix_ms
+                || reason.is_empty()
+                || reason.len() > MAX_UNCERTAINTY_REASON_BYTES
+            {
+                return Err(corruption("archived uncertainty summary is invalid"));
+            }
+        }
+    }
+    if tombstone.cancellation.as_ref().is_some_and(|cancellation| {
+        cancellation.request.execution != tombstone.execution
+            || cancellation
+                .acknowledgement
+                .as_ref()
+                .is_some_and(|acknowledgement| acknowledgement.execution != tombstone.execution)
+    }) {
+        return Err(corruption(
+            "archived cancellation facts target another execution",
+        ));
+    }
+    Ok(())
+}
+
+fn observation_genesis_digest() -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(OBSERVATION_DIGEST_DOMAIN);
+    hasher.update(b"genesis");
+    format!("b3_{}", hasher.finalize().to_hex())
+}
+
+fn observation_link_digest(
+    previous: &str,
+    observation_document: &[u8],
+) -> Result<String, PersistenceError> {
+    if !valid_prefixed_blake3(previous) {
+        return Err(corruption("peer observation history digest is invalid"));
+    }
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(OBSERVATION_DIGEST_DOMAIN);
+    hasher.update(previous.as_bytes());
+    hasher.update(observation_document);
+    Ok(format!("b3_{}", hasher.finalize().to_hex()))
+}
+
+fn verify_integrity(store: &RedbStore) -> Result<(), PersistenceError> {
+    let read = store.database().begin_read().map_err(error::redb)?;
+    let global = global_accounting_read(&read)?;
+    let hot = read.open_table(PEER_EXECUTIONS).map_err(error::redb)?;
+    let tombstones = read
+        .open_table(PEER_EXECUTION_TOMBSTONES)
+        .map_err(error::redb)?;
+    let locations = read
+        .open_table(PEER_EXECUTION_LOCATIONS)
+        .map_err(error::redb)?;
+    let requests = read
+        .open_table(PEER_EXECUTIONS_BY_REQUEST)
+        .map_err(error::redb)?;
+    let available = read
+        .open_table(PEER_DISPATCH_AVAILABLE)
+        .map_err(error::redb)?;
+    let claims = read.open_table(PEER_ACTIVE_CLAIMS).map_err(error::redb)?;
+    let terminal = read.open_table(PEER_TERMINAL_INDEX).map_err(error::redb)?;
+    let observations = read.open_table(PEER_OBSERVATIONS).map_err(error::redb)?;
+    let observation_artifacts = read
+        .open_table(PEER_OBSERVATION_ARTIFACTS)
+        .map_err(error::redb)?;
+
+    let mut active_count = 0_u32;
+    let mut dispatch_count = 0_u32;
+    let mut hot_terminal_count = 0_u64;
+    let mut available_index_count = 0_u64;
+    let mut claim_index_count = 0_u64;
+    let mut terminal_index_count = 0_u64;
+    let mut observation_count = 0_u64;
+    let mut observation_artifact_count = 0_u64;
+    for row in hot.iter().map_err(error::redb)? {
+        let (key, bytes) = row.map_err(error::redb)?;
+        let record = decode_record(bytes.value())?;
+        if key.value() != record.execution.as_str()
+            || locations
+                .get(record.execution.as_str())
+                .map_err(error::redb)?
+                .map(|value| value.value())
+                != Some(LOCATION_HOT)
+            || tombstones
+                .get(record.execution.as_str())
+                .map_err(error::redb)?
+                .is_some()
+        {
+            return Err(corruption(
+                "peer hot record key/location/tombstone ownership is inconsistent",
+            ));
+        }
+        let request_index_key = request_key(&record.owner_peer, &record.request.request_id)?;
+        if requests
+            .get(request_index_key.as_slice())
+            .map_err(error::redb)?
+            .map(|value| value.value().to_owned())
+            .as_deref()
+            != Some(record.execution.as_str())
+        {
+            return Err(corruption("peer hot record request index is inconsistent"));
+        }
+        let mut recomputed_digest = observation_genesis_digest();
+        observation_count = observation_count
+            .checked_add(record.last_observation_sequence)
+            .ok_or_else(|| corruption("peer integrity observation count overflowed"))?;
+        for sequence in 1..=record.last_observation_sequence {
+            let observation_key = observation_key(&record.execution, sequence)?;
+            let stored = observations
+                .get(observation_key.as_slice())
+                .map_err(error::redb)?
+                .ok_or_else(|| corruption("peer hot observation history has a missing row"))?;
+            let observation: PeerObservation = json::decode(stored.value(), "peer observation")?;
+            if observation.execution != record.execution || observation.sequence != sequence {
+                return Err(corruption(
+                    "peer observation row key/document integrity is inconsistent",
+                ));
+            }
+            let stored_artifact = observation_artifacts
+                .get(observation_key.as_slice())
+                .map_err(error::redb)?;
+            match (observation.event.kind().output(), stored_artifact) {
+                (Some((_name, expected)), Some(stored)) => {
+                    let stored: milkdrift_capability::ArtifactReference =
+                        json::decode(stored.value(), "peer observation artifact")?;
+                    if stored != *expected {
+                        return Err(corruption(
+                            "peer observation artifact mapping is inconsistent",
+                        ));
+                    }
+                    observation_artifact_count =
+                        observation_artifact_count.checked_add(1).ok_or_else(|| {
+                            corruption("peer integrity artifact mapping count overflowed")
+                        })?;
+                }
+                (None, None) => {}
+                (Some(_), None) | (None, Some(_)) => {
+                    return Err(corruption(
+                        "peer observation artifact mapping presence is inconsistent",
+                    ));
+                }
+            }
+            recomputed_digest = observation_link_digest(&recomputed_digest, stored.value())?;
+        }
+        if recomputed_digest != record.observation_digest {
+            return Err(corruption(
+                "peer observation history digest is inconsistent",
+            ));
+        }
+        if record.phase.is_active() {
+            active_count = active_count
+                .checked_add(1)
+                .ok_or_else(|| corruption("peer integrity active count overflowed"))?;
+            let accounting = peer_accounting_read(&read, &record.owner_peer)?;
+            if accounting.active == 0 {
+                return Err(corruption("active peer record has no per-peer accounting"));
+            }
+        }
+        match &record.phase {
+            PeerExecutionPhase::DispatchAvailable { .. }
+            | PeerExecutionPhase::CancellationRequested {
+                claim: None,
+                evidence: None,
+            } => {
+                dispatch_count = dispatch_count.saturating_add(1);
+                available_index_count = available_index_count.saturating_add(1);
+                let key = available_key(&record)?;
+                if available
+                    .get(key.as_slice())
+                    .map_err(error::redb)?
+                    .map(|value| value.value().to_owned())
+                    .as_deref()
+                    != Some(record.execution.as_str())
+                {
+                    return Err(corruption("peer dispatch-available index is inconsistent"));
+                }
+            }
+            PeerExecutionPhase::DispatchClaimed { claim } => {
+                dispatch_count = dispatch_count.saturating_add(1);
+                claim_index_count = claim_index_count.saturating_add(1);
+                verify_claim_index(&claims, &record, claim)?;
+            }
+            PeerExecutionPhase::Entered { claim, .. }
+            | PeerExecutionPhase::CancellationRequested {
+                claim: Some(claim), ..
+            } => {
+                claim_index_count = claim_index_count.saturating_add(1);
+                verify_claim_index(&claims, &record, claim)?;
+            }
+            PeerExecutionPhase::Terminal {
+                terminal_at_unix_ms,
+                ..
+            } => {
+                hot_terminal_count = hot_terminal_count.saturating_add(1);
+                terminal_index_count = terminal_index_count.saturating_add(1);
+                verify_terminal_index(&terminal, &record, *terminal_at_unix_ms)?;
+            }
+            PeerExecutionPhase::Uncertain {
+                uncertain_at_unix_ms,
+                ..
+            } => {
+                hot_terminal_count = hot_terminal_count.saturating_add(1);
+                terminal_index_count = terminal_index_count.saturating_add(1);
+                verify_terminal_index(&terminal, &record, *uncertain_at_unix_ms)?;
+            }
+            PeerExecutionPhase::CancellationRequested { .. } => {
+                return Err(corruption(
+                    "peer cancellation phase has inconsistent claim evidence",
+                ));
+            }
+        }
+    }
+
+    let mut tombstone_count = 0_u64;
+    for row in tombstones.iter().map_err(error::redb)? {
+        let (key, bytes) = row.map_err(error::redb)?;
+        let tombstone = decode_tombstone(bytes.value())?;
+        tombstone_count = tombstone_count.saturating_add(1);
+        if key.value() != tombstone.execution.as_str()
+            || locations
+                .get(tombstone.execution.as_str())
+                .map_err(error::redb)?
+                .map(|value| value.value())
+                != Some(LOCATION_ARCHIVED)
+            || hot
+                .get(tombstone.execution.as_str())
+                .map_err(error::redb)?
+                .is_some()
+        {
+            return Err(corruption(
+                "peer tombstone key/location/hot ownership is inconsistent",
+            ));
+        }
+        let request_index_key = request_key(&tombstone.owner_peer, &tombstone.request_id)?;
+        if requests
+            .get(request_index_key.as_slice())
+            .map_err(error::redb)?
+            .map(|value| value.value().to_owned())
+            .as_deref()
+            != Some(tombstone.execution.as_str())
+        {
+            return Err(corruption("peer tombstone request index is inconsistent"));
+        }
+        if tombstone.last_observation_sequence > 0 {
+            let last = observation_key(&tombstone.execution, tombstone.last_observation_sequence)?;
+            if observations
+                .get(last.as_slice())
+                .map_err(error::redb)?
+                .is_some()
+                || observation_artifacts
+                    .get(last.as_slice())
+                    .map_err(error::redb)?
+                    .is_some()
+            {
+                return Err(corruption(
+                    "archived peer execution retained a compacted hot observation row",
+                ));
+            }
+        }
+    }
+
+    if active_count != global.active
+        || dispatch_count != global.dispatch_queued
+        || hot_terminal_count != global.hot_terminal
+        || tombstone_count != global.tombstones
+        || available.len().map_err(error::redb)? != available_index_count
+        || claims.len().map_err(error::redb)? != claim_index_count
+        || terminal.len().map_err(error::redb)? != terminal_index_count
+        || observations.len().map_err(error::redb)? != observation_count
+        || observation_artifacts.len().map_err(error::redb)? != observation_artifact_count
+        || hot.len().map_err(error::redb)?
+            != u64::from(global.active).saturating_add(global.hot_terminal)
+        || locations.len().map_err(error::redb)?
+            != hot
+                .len()
+                .map_err(error::redb)?
+                .saturating_add(tombstone_count)
+        || requests.len().map_err(error::redb)? != locations.len().map_err(error::redb)?
+    {
+        return Err(corruption(
+            "peer global counters or primary index cardinality drifted",
+        ));
+    }
+
+    verify_peer_indexes(&read)?;
+    verify_per_peer_accounting(&read)?;
+    Ok(())
+}
+
+fn verify_claim_index(
+    claims: &impl ReadableTable<&'static [u8], &'static str>,
+    record: &PeerExecutionRecord,
+    claim: &PeerDispatchClaim,
+) -> Result<(), PersistenceError> {
+    let key = claim_key(&record.execution, claim)?;
+    if claims
+        .get(key.as_slice())
+        .map_err(error::redb)?
+        .map(|value| value.value().to_owned())
+        .as_deref()
+        != Some(record.execution.as_str())
+    {
+        return Err(corruption("peer active-claim index is inconsistent"));
+    }
+    Ok(())
+}
+
+fn verify_terminal_index(
+    terminal: &impl ReadableTable<&'static [u8], &'static str>,
+    record: &PeerExecutionRecord,
+    terminal_at: u64,
+) -> Result<(), PersistenceError> {
+    let key = ordered_key(terminal_at, record.execution.as_str())?;
+    if terminal
+        .get(key.as_slice())
+        .map_err(error::redb)?
+        .map(|value| value.value().to_owned())
+        .as_deref()
+        != Some(record.execution.as_str())
+    {
+        return Err(corruption("peer hot-terminal index is inconsistent"));
+    }
+    Ok(())
+}
+
+fn peer_accounting_read(
+    read: &redb::ReadTransaction,
+    peer: &PeerId,
+) -> Result<PerPeerAccounting, PersistenceError> {
+    let value = read
+        .open_table(PEER_EXECUTION_ACCOUNTING)
+        .map_err(error::redb)?
+        .get(peer.as_str())
+        .map_err(error::redb)?
+        .map(|bytes| json::decode(bytes.value(), "peer relationship accounting"))
+        .transpose()?
+        .unwrap_or_else(|| PerPeerAccounting::empty(peer));
+    if value.schema_version != PEER_ACCOUNTING_SCHEMA_VERSION || value.peer != *peer {
+        return Err(corruption("per-peer accounting schema or key is invalid"));
+    }
+    Ok(value)
+}
+
+fn verify_per_peer_accounting(read: &redb::ReadTransaction) -> Result<(), PersistenceError> {
+    let accounting = read
+        .open_table(PEER_EXECUTION_ACCOUNTING)
+        .map_err(error::redb)?;
+    let hot = read.open_table(PEER_EXECUTIONS).map_err(error::redb)?;
+    for row in accounting.iter().map_err(error::redb)? {
+        let (key, bytes) = row.map_err(error::redb)?;
+        if key.value() == PEER_EXECUTION_GLOBAL_ACCOUNTING_KEY {
+            continue;
+        }
+        let value: PerPeerAccounting = json::decode(bytes.value(), "peer relationship accounting")?;
+        if value.peer.as_str() != key.value()
+            || value.schema_version != PEER_ACCOUNTING_SCHEMA_VERSION
+        {
+            return Err(corruption(
+                "per-peer accounting row key/schema is inconsistent",
+            ));
+        }
+        let mut actual = 0_u32;
+        for record in hot.iter().map_err(error::redb)? {
+            let (_key, bytes) = record.map_err(error::redb)?;
+            let record = decode_record(bytes.value())?;
+            if record.owner_peer == value.peer && record.phase.is_active() {
+                actual = actual.saturating_add(1);
+            }
+        }
+        if actual != value.active {
+            return Err(corruption("per-peer active accounting drifted"));
+        }
+    }
+    Ok(())
+}
+
+fn verify_peer_indexes(read: &redb::ReadTransaction) -> Result<(), PersistenceError> {
+    let requests = read
+        .open_table(PEER_EXECUTIONS_BY_REQUEST)
+        .map_err(error::redb)?;
+    for row in requests.iter().map_err(error::redb)? {
+        let (stored_key, execution) = row.map_err(error::redb)?;
+        let snapshot = snapshot_in_read_transaction_text(read, execution.value())?;
+        if request_key(snapshot.owner_peer(), snapshot.request_id())? != stored_key.value() {
+            return Err(corruption(
+                "peer request index key disagrees with its authority",
+            ));
+        }
+    }
+    let locations = read
+        .open_table(PEER_EXECUTION_LOCATIONS)
+        .map_err(error::redb)?;
+    for row in locations.iter().map_err(error::redb)? {
+        let (execution, location) = row.map_err(error::redb)?;
+        let snapshot = snapshot_in_read_transaction_text(read, execution.value())?;
+        if !matches!(
+            (location.value(), snapshot),
+            (LOCATION_HOT, PeerExecutionSnapshot::Hot(_))
+                | (LOCATION_ARCHIVED, PeerExecutionSnapshot::Archived(_))
+        ) {
+            return Err(corruption(
+                "peer execution location points at the wrong authority",
+            ));
+        }
     }
     Ok(())
 }
@@ -1557,4 +2437,11 @@ fn valid_prefixed_blake3(value: &str) -> bool {
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     })
+}
+
+fn valid_capability_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }

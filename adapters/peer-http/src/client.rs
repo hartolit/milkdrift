@@ -5,10 +5,10 @@ use std::{
 
 use milkdrift_peer_protocol::{
     ArtifactChunk, ArtifactMetadataOffer, ArtifactTransferDecision, CatalogSnapshot,
-    HandshakeRequest, HandshakeResponse, InvocationAcceptance, InvocationLookup, ObservationPage,
-    PeerCancellationAcknowledgement, PeerCancellationRequest, PeerExecutionId,
-    PeerInvocationRequest, PeerRequestId, ProtocolEnvelope, TransferId, decode_envelope,
-    encode_envelope,
+    HandshakeRequest, HandshakeResponse, InvocationAcceptance, InvocationLookup,
+    ObservationHistory, ObservationPage, PeerCancellationAcknowledgement, PeerCancellationRequest,
+    PeerExecutionId, PeerInvocationRequest, PeerRequestId, ProtocolEnvelope, TransferId,
+    decode_envelope, encode_envelope,
 };
 use reqwest::{
     blocking::{Client, Response},
@@ -108,6 +108,7 @@ impl PeerHttpClient {
                 resumable_observations: true,
                 resumable_artifacts: true,
                 incremental_catalog: false,
+                archived_execution_replay: true,
             },
             limits: milkdrift_peer_protocol::HardLimits::default(),
         };
@@ -164,15 +165,26 @@ impl PeerHttpClient {
             Ok(InvocationLookup::Known {
                 execution,
                 request_digest,
+                accepted_at_unix_ms,
+                history,
                 ..
-            }) if request_digest == request.request_digest => Ok(InvocationAcceptance::Accepted {
-                request_id: request.request_id.clone(),
-                execution,
-                request_digest,
-                accepted_at_unix_ms: 0,
-                lease_expires_at_unix_ms: 0,
-                replayed: true,
-            }),
+            }) if request_digest == request.request_digest => match history {
+                ObservationHistory::Hot => Ok(InvocationAcceptance::Accepted {
+                    request_id: request.request_id.clone(),
+                    execution,
+                    request_digest,
+                    accepted_at_unix_ms,
+                    lease_expires_at_unix_ms: 0,
+                    replayed: true,
+                }),
+                ObservationHistory::Archived { summary } => Ok(InvocationAcceptance::Archived {
+                    request_id: request.request_id.clone(),
+                    execution,
+                    request_digest,
+                    accepted_at_unix_ms,
+                    summary,
+                }),
+            },
             Ok(InvocationLookup::NotAccepted) => Err(last_error.unwrap_or_else(|| {
                 PeerHttpError::Transport("submission was not accepted".to_owned())
             })),

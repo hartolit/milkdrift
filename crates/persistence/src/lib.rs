@@ -84,12 +84,14 @@ pub use journal::{
     TimerIndexEntry, TimerIndexMutation, WorkspaceAccounting, WorkspaceMutation, WorkspaceStore,
 };
 pub use peer::{
-    PEER_EXECUTION_RECORD_SCHEMA_VERSION_V1, PeerAdmission, PeerAdmissionOutcome,
-    PeerAdmissionRejection, PeerCancellationRecord, PeerCatalogState, PeerClaimOutcome,
+    PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2, PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1,
+    PeerAcceptedAuthoritySummary, PeerAdmission, PeerAdmissionOutcome, PeerAdmissionRejection,
+    PeerArchivedDisposition, PeerCancellationRecord, PeerCatalogState, PeerClaimOutcome,
     PeerDispatchClaim, PeerDispatchClaimRequest, PeerEntryEvidence, PeerEntryOutcome,
     PeerEntryRequest, PeerExecutionAccounting, PeerExecutionPhase, PeerExecutionRecord,
-    PeerExecutionRetention, PeerExecutionStore, PeerObservationAppend, PeerObservationPage,
-    PeerRecoveryResult, PeerRelationshipState, PeerRetentionPage, PeerRetentionRequest,
+    PeerExecutionSnapshot, PeerExecutionStatus, PeerExecutionStore, PeerExecutionTombstone,
+    PeerObservationAppend, PeerObservationPage, PeerRecoveryResult, PeerRelationshipState,
+    PeerRetentionPage, PeerRetentionRequest,
 };
 pub use revision::{
     ImmutableRevisionPut, RevisionCursor, RevisionFilter, RevisionPage, RevisionPageQuery,

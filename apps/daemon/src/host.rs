@@ -31,8 +31,8 @@ use milkdrift_control::{
 use milkdrift_control_protocol::{
     ApplicationReceiptHealthRead, ArtifactMetadataRead, AttemptRead, CapabilityRead, Command,
     CommandAccepted, CommandRequest, ContextManifestRead, Cursor, CursorBinding, DaemonState,
-    ErrorCode, HealthRead, LayoutDocument, NodeRead, Page, PeerRead, ProposalDecision,
-    ProposalRead, ResolveAction, RevisionChange, RevisionDiffRead, RevisionRead,
+    ErrorCode, HealthRead, LayoutDocument, NodeRead, Page, PeerExecutionHealthRead, PeerRead,
+    ProposalDecision, ProposalRead, ResolveAction, RevisionChange, RevisionDiffRead, RevisionRead,
     RevisionSummary as PublicRevisionSummary, RunRead, TimelineCategory, TimelineEntry,
 };
 use milkdrift_local_process::{LocalProcessAdapter, ProcessProfileDocument};
@@ -53,11 +53,11 @@ use milkdrift_persistence::{
     ApplicationPageQuery, ApplicationReceiptArchiveRequest, ApplicationReceiptStatus,
     ArtifactReadAuthority, ArtifactReadRequest, ArtifactStore, AttemptId, CommandId,
     CorrelationKey, EventPageQuery, EvidenceId, EvidenceKind, EvidenceReference, IndexedRunState,
-    IntegrityDigest, PageSize, PersistenceError, ProposalIndexEntry, ProposalIndexStore, Reason,
-    ReconciliationDecisionId, RevisionCursor, RevisionFilter, RevisionPageQuery, RevisionStore,
-    RunEventKind, RunQueryStore, RunSequence, RunSummaryCursor, RunSummaryFilter,
-    RunSummaryPageQuery, SecurityAuditEntry, SecurityAuditStore, SignalDeliveryMode, SignalId,
-    SignalTypeId, TimestampMillis, WorkerId,
+    IntegrityDigest, PageSize, PeerExecutionStatus, PersistenceError, ProposalIndexEntry,
+    ProposalIndexStore, Reason, ReconciliationDecisionId, RevisionCursor, RevisionFilter,
+    RevisionPageQuery, RevisionStore, RunEventKind, RunQueryStore, RunSequence, RunSummaryCursor,
+    RunSummaryFilter, RunSummaryPageQuery, SecurityAuditEntry, SecurityAuditStore,
+    SignalDeliveryMode, SignalId, SignalTypeId, TimestampMillis, WorkerId,
 };
 use milkdrift_prompt_sequence::{PromptSequenceDocument, compile as compile_prompt_sequence};
 use milkdrift_redb_store::{RedbStore, RedbStoreConfig};
@@ -95,7 +95,6 @@ use read_model::*;
 const OWNER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
 const APPLICATION_COMMAND_SCHEMA_VERSION: u32 = 1;
 const LEGACY_SIDECAR_FILE: &str = "control-state-v1.json";
-const DEFAULT_PEER_EXECUTION_RECORD_BOUND: u64 = 10_000;
 
 /// Daemon construction, owner-thread, or orderly-shutdown failure.
 #[derive(Debug, Error)]
@@ -192,6 +191,20 @@ struct SharedHealth {
     receipt_last_archived_at: AtomicU64,
     receipt_archival_degraded: AtomicBool,
     receipt_archival_failure: Mutex<Option<String>>,
+    peer_enabled: bool,
+    peer_active_count: AtomicU32,
+    peer_active_bound: u32,
+    peer_dispatch_queued: AtomicU32,
+    peer_dispatch_bound: u32,
+    peer_hot_terminal_count: AtomicU64,
+    peer_hot_terminal_bound: u64,
+    peer_tombstone_count: AtomicU64,
+    peer_archive_batch_size: u32,
+    peer_observation_hot_retention_ms: u64,
+    peer_archive_generation: AtomicU64,
+    peer_last_archived_at: AtomicU64,
+    peer_archival_degraded: AtomicBool,
+    peer_archival_failure: Mutex<Option<String>>,
 }
 
 impl SharedHealth {
@@ -231,6 +244,34 @@ impl SharedHealth {
         }
     }
 
+    fn peer_status(&self, status: PeerExecutionStatus) {
+        self.peer_active_count
+            .store(status.active, Ordering::SeqCst);
+        self.peer_dispatch_queued
+            .store(status.dispatch_queued, Ordering::SeqCst);
+        self.peer_hot_terminal_count
+            .store(status.hot_terminal, Ordering::SeqCst);
+        self.peer_tombstone_count
+            .store(status.tombstones, Ordering::SeqCst);
+        self.peer_archive_generation
+            .store(status.archive_generation, Ordering::SeqCst);
+        self.peer_last_archived_at.store(
+            status.last_archived_at_unix_ms.unwrap_or(0),
+            Ordering::SeqCst,
+        );
+        self.peer_archival_degraded.store(false, Ordering::SeqCst);
+        if let Ok(mut failure) = self.peer_archival_failure.lock() {
+            *failure = None;
+        }
+    }
+
+    fn peer_failure(&self) {
+        self.peer_archival_degraded.store(true, Ordering::SeqCst);
+        if let Ok(mut failure) = self.peer_archival_failure.lock() {
+            *failure = Some("peer execution archival/storage operation failed".to_owned());
+        }
+    }
+
     fn read(&self) -> HealthRead {
         let lifecycle = Lifecycle::from_u8(self.lifecycle.load(Ordering::SeqCst));
         HealthRead {
@@ -262,6 +303,30 @@ impl SharedHealth {
                 archival_degraded: self.receipt_archival_degraded.load(Ordering::SeqCst),
                 last_archival_failure: self
                     .receipt_archival_failure
+                    .lock()
+                    .ok()
+                    .and_then(|failure| failure.clone()),
+            },
+            peer_executions: PeerExecutionHealthRead {
+                enabled: self.peer_enabled,
+                active_count: self.peer_active_count.load(Ordering::SeqCst),
+                active_bound: self.peer_active_bound,
+                dispatch_queued: self.peer_dispatch_queued.load(Ordering::SeqCst),
+                dispatch_bound: self.peer_dispatch_bound,
+                hot_terminal_count: self.peer_hot_terminal_count.load(Ordering::SeqCst),
+                hot_terminal_bound: self.peer_hot_terminal_bound,
+                tombstone_count: self.peer_tombstone_count.load(Ordering::SeqCst),
+                archive_batch_size: self.peer_archive_batch_size,
+                observation_hot_retention_ms: self.peer_observation_hot_retention_ms,
+                archive_generation: self.peer_archive_generation.load(Ordering::SeqCst),
+                last_archived_at_unix_ms: match self.peer_archive_generation.load(Ordering::SeqCst)
+                {
+                    0 => None,
+                    _ => Some(self.peer_last_archived_at.load(Ordering::SeqCst)),
+                },
+                archival_degraded: self.peer_archival_degraded.load(Ordering::SeqCst),
+                last_archival_failure: self
+                    .peer_archival_failure
                     .lock()
                     .ok()
                     .and_then(|failure| failure.clone()),
@@ -320,6 +385,24 @@ impl DaemonHost {
             receipt_last_archived_at: AtomicU64::new(0),
             receipt_archival_degraded: AtomicBool::new(false),
             receipt_archival_failure: Mutex::new(None),
+            peer_enabled: config.document.peers.enabled,
+            peer_active_count: AtomicU32::new(0),
+            peer_active_bound: config.document.peers.serving.maximum_global_active,
+            peer_dispatch_queued: AtomicU32::new(0),
+            peer_dispatch_bound: config.document.peers.serving.maximum_dispatch_queue,
+            peer_hot_terminal_count: AtomicU64::new(0),
+            peer_hot_terminal_bound: config.document.peers.serving.maximum_hot_terminal_records,
+            peer_tombstone_count: AtomicU64::new(0),
+            peer_archive_batch_size: config.document.peers.serving.archive_batch_size,
+            peer_observation_hot_retention_ms: config
+                .document
+                .peers
+                .serving
+                .observation_hot_retention_ms,
+            peer_archive_generation: AtomicU64::new(0),
+            peer_last_archived_at: AtomicU64::new(0),
+            peer_archival_degraded: AtomicBool::new(false),
+            peer_archival_failure: Mutex::new(None),
         });
         let thread_health = health.clone();
         let thread_auth = auth.clone();
@@ -933,6 +1016,11 @@ impl Owner {
             build_peer_runtime(&config, &capability_host, store.clone(), auth.resolver())?;
         if let Some(service) = &peer_runtime.service {
             service.recover(1_024).map_err(|error| error.to_string())?;
+            health.peer_status(
+                service
+                    .execution_status()
+                    .map_err(|error| error.to_string())?,
+            );
         }
         let effect_workers = EffectWorkerHost::start(
             runtime.clone(),
@@ -1023,6 +1111,20 @@ impl Owner {
                     bounded(&error.to_string())
                 );
                 health.receipt_failure();
+            }
+        }
+        if let Some(service) = &self.peer_service {
+            match service.maintain_retention() {
+                Ok(status) => health.peer_status(status),
+                Err(error) => {
+                    warn!(
+                        outcome = "error",
+                        code = "peer_execution_archive",
+                        "{}",
+                        bounded(&error.to_string())
+                    );
+                    health.peer_failure();
+                }
             }
         }
         if let Err(error) = self.runtime.scheduler_tick() {
@@ -1573,8 +1675,8 @@ fn build_peer_runtime(
     let session = SessionId::new(format!("session:{}", session_hasher.finalize().to_hex()))
         .map_err(|error| error.to_string())?;
     let versions = ProtocolVersionRange::new(
-        ProtocolVersion { major: 1, minor: 0 },
-        ProtocolVersion { major: 1, minor: 0 },
+        ProtocolVersion { major: 1, minor: 1 },
+        ProtocolVersion { major: 1, minor: 1 },
     )
     .map_err(|error| error.to_string())?;
     let mut relationships = Vec::new();
@@ -1710,14 +1812,21 @@ fn build_peer_runtime(
             },
             relationships,
             workers: PeerWorkerConfig {
-                threads: config.document.runtime.effect_threads,
-                maximum_global_active: config.document.runtime.global_concurrency,
-                maximum_dispatch_queue: config.document.runtime.global_concurrency,
-                maximum_records: DEFAULT_PEER_EXECUTION_RECORD_BOUND
-                    .max(u64::from(config.document.runtime.global_concurrency)),
-                recovery_page: config.document.runtime.maximum_effect_claim,
+                threads: config.document.peers.serving.worker_threads,
+                maximum_global_active: config.document.peers.serving.maximum_global_active,
+                maximum_dispatch_queue: config.document.peers.serving.maximum_dispatch_queue,
+                maximum_hot_terminal_records: config
+                    .document
+                    .peers
+                    .serving
+                    .maximum_hot_terminal_records,
+                archive_batch_size: config.document.peers.serving.archive_batch_size,
+                observation_hot_retention: Duration::from_millis(
+                    config.document.peers.serving.observation_hot_retention_ms,
+                ),
+                recovery_page: config.document.peers.serving.recovery_page,
                 poll_interval: Duration::from_millis(
-                    config.document.runtime.maintenance_interval_ms,
+                    config.document.peers.serving.poll_interval_ms,
                 ),
             },
         },

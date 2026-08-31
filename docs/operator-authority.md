@@ -1,6 +1,6 @@
 # Daemon control and execution authority
 
-Daemon configuration schema 5 requires every actor binding to contain an explicit `authority`
+Daemon configuration schema 6 requires every actor binding to contain an explicit `authority`
 object. Preset names deterministically expand to typed operation sets; they do not imply resource
 access and are not retained as executable session policy. The resource scope, numeric ceilings,
 validity interval, grant identity/revision, and revocation generation are independent inputs to the

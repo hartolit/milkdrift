@@ -204,8 +204,12 @@ pub struct PeerWorkerConfig {
     pub maximum_global_active: u32,
     /// Durable accepted pre-entry queue ceiling.
     pub maximum_dispatch_queue: u32,
-    /// Total primary-record ceiling. Reaching it refuses new identities; nothing is evicted.
-    pub maximum_records: u64,
+    /// Maximum complete terminal/uncertain records retaining detailed hot observations.
+    pub maximum_hot_terminal_records: u64,
+    /// Maximum oldest eligible records compacted by one transaction.
+    pub archive_batch_size: u32,
+    /// Minimum terminal age before detailed observation rows are compacted.
+    pub observation_hot_retention: Duration,
     /// Maximum claims recovered in one transaction/page.
     pub recovery_page: u16,
     /// Idle durable-queue poll interval.
@@ -218,7 +222,9 @@ impl Default for PeerWorkerConfig {
             threads: 4,
             maximum_global_active: 256,
             maximum_dispatch_queue: 256,
-            maximum_records: 1_000_000,
+            maximum_hot_terminal_records: 10_000,
+            archive_batch_size: 256,
+            observation_hot_retention: Duration::from_secs(24 * 60 * 60),
             recovery_page: 128,
             poll_interval: Duration::from_millis(100),
         }
@@ -232,7 +238,12 @@ impl PeerWorkerConfig {
             || self.maximum_global_active == 0
             || self.maximum_dispatch_queue == 0
             || self.maximum_dispatch_queue > self.maximum_global_active
-            || self.maximum_records < u64::from(self.maximum_global_active)
+            || self.maximum_hot_terminal_records < u64::from(self.maximum_global_active)
+            || self.maximum_hot_terminal_records > 1_000_000
+            || self.archive_batch_size == 0
+            || u64::from(self.archive_batch_size) > self.maximum_hot_terminal_records
+            || self.observation_hot_retention.is_zero()
+            || self.observation_hot_retention > Duration::from_secs(365 * 24 * 60 * 60)
             || self.recovery_page == 0
             || self.poll_interval.is_zero()
             || self.poll_interval > Duration::from_secs(60)

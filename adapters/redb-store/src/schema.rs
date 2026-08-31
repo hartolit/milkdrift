@@ -1,8 +1,8 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 6;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 7;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
-pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 9;
+pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 10;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
 pub(crate) const LEASE_SET_REVISION_KEY: &str = "lease_set_revision";
 pub(crate) const NONTERMINAL_SET_COUNT_KEY: &str = "nonterminal_set_count";
@@ -149,21 +149,25 @@ pub(crate) const PEER_RELATIONSHIPS: TableDefinition<'static, &'static str, &'st
 pub(crate) const PEER_CATALOGS: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v1.peers.catalogs");
 pub(crate) const PEER_EXECUTIONS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.peers.executions");
+    TableDefinition::new("milkdrift.v2.peers.executions.hot");
+pub(crate) const PEER_EXECUTION_TOMBSTONES: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new("milkdrift.v2.peers.executions.tombstones");
+pub(crate) const PEER_EXECUTION_LOCATIONS: TableDefinition<'static, &'static str, u8> =
+    TableDefinition::new("milkdrift.v2.peers.executions.locations");
 pub(crate) const PEER_EXECUTIONS_BY_REQUEST: TableDefinition<'static, &'static [u8], &'static str> =
-    TableDefinition::new("milkdrift.v1.peers.executions_by_request");
+    TableDefinition::new("milkdrift.v2.peers.executions_by_request");
 pub(crate) const PEER_OBSERVATIONS: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.peers.observations");
+    TableDefinition::new("milkdrift.v2.peers.observations.hot");
 pub(crate) const PEER_OBSERVATION_ARTIFACTS: TableDefinition<
     'static,
     &'static [u8],
     &'static [u8],
-> = TableDefinition::new("milkdrift.v1.peers.observation_artifacts");
+> = TableDefinition::new("milkdrift.v2.peers.observation_artifacts.hot");
 pub(crate) const PEER_DISPATCH_AVAILABLE: TableDefinition<'static, &'static [u8], &'static str> =
-    TableDefinition::new("milkdrift.v1.peers.dispatch_available");
+    TableDefinition::new("milkdrift.v2.peers.dispatch_available");
 pub(crate) const PEER_ACTIVE_CLAIMS: TableDefinition<'static, &'static [u8], &'static str> =
-    TableDefinition::new("milkdrift.v1.peers.active_claims");
+    TableDefinition::new("milkdrift.v2.peers.active_claims");
 pub(crate) const PEER_TERMINAL_INDEX: TableDefinition<'static, &'static [u8], &'static str> =
-    TableDefinition::new("milkdrift.v1.peers.terminal_retention");
+    TableDefinition::new("milkdrift.v2.peers.hot_terminal_retention");
 pub(crate) const PEER_EXECUTION_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.peers.accounting");
+    TableDefinition::new("milkdrift.v2.peers.accounting");

@@ -328,7 +328,7 @@ fn compute_request_digest(
 }
 
 /// Durable submission outcome. Accepted identities never change across replay.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum InvocationAcceptance {
     /// Acceptance was durably recorded before this response.
@@ -345,6 +345,19 @@ pub enum InvocationAcceptance {
         lease_expires_at_unix_ms: u64,
         /// True when this is an idempotent replay response.
         replayed: bool,
+    },
+    /// Exact replay resolved a compact immutable archived execution without reinvocation.
+    Archived {
+        /// Exact idempotency key.
+        request_id: PeerRequestId,
+        /// Original stable remote execution identity.
+        execution: PeerExecutionId,
+        /// Canonical request digest stored with acceptance.
+        request_digest: String,
+        /// Original durable acceptance boundary.
+        accepted_at_unix_ms: u64,
+        /// Compact terminal/uncertain and history summary.
+        summary: Box<ArchivedExecutionSummary>,
     },
     /// Rejected before a new execution was accepted.
     Rejected {
@@ -373,10 +386,14 @@ pub enum InvocationLookup {
         execution: PeerExecutionId,
         /// Canonical accepted request digest.
         request_digest: String,
+        /// Original durable acceptance boundary.
+        accepted_at_unix_ms: u64,
         /// Current durable execution status.
         status: RemoteExecutionStatus,
         /// Highest durably appended semantic observation sequence.
         last_sequence: u64,
+        /// Explicit hot or archived history availability.
+        history: ObservationHistory,
     },
     /// The backing record is irrecoverably unavailable; no false conclusion is made.
     Unknown {
@@ -397,6 +414,71 @@ pub enum RemoteExecutionStatus {
     Terminal,
     /// Acceptance is known but outcome evidence is irrecoverable.
     OutcomeUnknown,
+}
+
+/// Compact immutable archived outcome and observation-history summary.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArchivedExecutionSummary {
+    /// Terminal or truthful outcome-unknown disposition.
+    pub status: RemoteExecutionStatus,
+    /// Highest observation sequence before archival.
+    pub last_sequence: u64,
+    /// Domain-separated digest of every compacted observation row.
+    pub observation_digest: String,
+    /// Atomic archive/compaction boundary.
+    pub archived_at_unix_ms: u64,
+    /// Retained final terminal summary, absent for outcome uncertainty.
+    pub final_observation: Option<PeerObservation>,
+    /// Bounded redacted uncertainty reason, present only for outcome uncertainty.
+    pub uncertainty_reason: Option<String>,
+}
+
+impl ArchivedExecutionSummary {
+    /// Validates terminal/uncertain summary consistency for one execution.
+    pub fn validate(&self, execution: &PeerExecutionId) -> Result<(), PeerProtocolError> {
+        if self.archived_at_unix_ms == 0
+            || !valid_blake3_digest(&self.observation_digest)
+            || self
+                .uncertainty_reason
+                .as_ref()
+                .is_some_and(|reason| reason.is_empty() || reason.len() > 2_048)
+        {
+            return Err(PeerProtocolError::InvalidContract(
+                "archived execution summary has invalid bounds or digest".to_owned(),
+            ));
+        }
+        match (
+            self.status,
+            &self.final_observation,
+            &self.uncertainty_reason,
+        ) {
+            (RemoteExecutionStatus::Terminal, Some(observation), None)
+                if observation.execution == *execution
+                    && observation.sequence == self.last_sequence
+                    && observation.event.kind().terminal().is_some() =>
+            {
+                observation.validate()
+            }
+            (RemoteExecutionStatus::OutcomeUnknown, None, Some(_)) => Ok(()),
+            _ => Err(PeerProtocolError::InvalidContract(
+                "archived execution disposition is inconsistent".to_owned(),
+            )),
+        }
+    }
+}
+
+/// Whether detailed observation rows remain hot or were explicitly compacted.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+pub enum ObservationHistory {
+    /// Complete contiguous rows through the durable head remain queryable.
+    Hot,
+    /// Detailed rows were compacted; only the immutable outcome/history summary remains.
+    Archived {
+        /// Compact archived summary.
+        summary: Box<ArchivedExecutionSummary>,
+    },
 }
 
 /// Provider-neutral category for one semantic observation.
@@ -481,18 +563,39 @@ pub struct ObservationPage {
     pub terminal: bool,
     /// True when no later semantic observation can be appended.
     pub closed: bool,
+    /// Explicit detailed-history availability.
+    pub history: ObservationHistory,
 }
 
 impl ObservationPage {
     /// Validates page cardinality, execution ownership, and contiguous cursors.
     pub fn validate(&self, maximum_items: usize) -> Result<(), PeerProtocolError> {
         let limit = maximum_items.min(MAX_OBSERVATIONS_PER_PAGE);
-        if self.observations.len() > limit || (self.closed && !self.terminal) {
+        if self.observations.len() > limit {
             return Err(PeerProtocolError::Bounds {
                 location: "observations",
-                reason: "observation page exceeds bounds or closes without terminal evidence"
-                    .to_owned(),
+                reason: "observation page exceeds bounds".to_owned(),
             });
+        }
+        match &self.history {
+            ObservationHistory::Hot if self.closed && !self.terminal => {
+                return Err(PeerProtocolError::InvalidContract(
+                    "hot observation history closes only with terminal evidence".to_owned(),
+                ));
+            }
+            ObservationHistory::Archived { summary } => {
+                summary.validate(&self.execution)?;
+                if !self.observations.is_empty()
+                    || !self.closed
+                    || self.after_sequence > summary.last_sequence
+                    || self.terminal != (summary.status == RemoteExecutionStatus::Terminal)
+                {
+                    return Err(PeerProtocolError::InvalidContract(
+                        "archived observation page does not match its compacted summary".to_owned(),
+                    ));
+                }
+            }
+            ObservationHistory::Hot => {}
         }
         let mut expected = self.after_sequence.saturating_add(1);
         for observation in &self.observations {
@@ -515,6 +618,14 @@ impl ObservationPage {
         }
         Ok(())
     }
+}
+
+fn valid_blake3_digest(value: &str) -> bool {
+    value.len() == 67
+        && value.starts_with("b3_")
+        && value[3..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 /// Exact cancellation request; socket closure is deliberately unrelated.

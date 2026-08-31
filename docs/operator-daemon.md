@@ -8,7 +8,7 @@ Startup is deliberately fail-closed and ordered:
 
 1. Validate daemon configuration, normalized paths, credential references, grants, and bounds before opening storage.
 2. Refuse a data root containing legacy `control-state-v1.json`, `peer-executions-v1`, or `peer-artifacts-v1`. This release neither imports nor ignores old sidecar/prototype idempotency and artifact authority; move to a fresh data root or perform an explicitly reviewed offline conversion.
-3. Open exact-current redb physical schema 6/internal document format 9 and the immutable artifact root.
+3. Open exact-current redb physical schema 7/internal document format 10 and the immutable artifact root.
 4. Open runtime admission closed and recover active runtime state.
 5. Validate bounded application-receipt and layout reads; corrupt or unsupported records fail startup.
 6. Register and health-check workflow-control, process, and model adapters.
@@ -19,7 +19,7 @@ Until the final step, readiness returns unavailable and no external command is a
 
 ## Application receipts and retention
 
-Configuration schema 5 uses `application_receipts.hot_receipt_bound` for the recent operational tier and `application_receipts.archive_batch_size` for one oldest-first move. The existing runtime maintenance interval performs a bounded archive when the tier is full; the new-command transaction also reclaims a bounded batch if needed, so maintenance delay cannot create a permanent refusal. `security_audit_record_bound` is a separate evicting audit-prefix policy. Peer execution, artifacts, and runtime event/snapshot retention are not derived from either value.
+Configuration schema 6 uses `application_receipts.hot_receipt_bound` for the recent operational tier and `application_receipts.archive_batch_size` for one oldest-first move. The existing runtime maintenance interval performs a bounded archive when the tier is full; the new-command transaction also reclaims a bounded batch if needed, so maintenance delay cannot create a permanent refusal. `security_audit_record_bound` is a separate evicting audit-prefix policy. `peers.serving.maximum_hot_terminal_records`, `archive_batch_size`, and `observation_hot_retention_ms` independently govern peer execution detail. Artifacts and runtime event/snapshot retention are not derived from any of those values.
 
 An application receipt binds the authenticated actor, exact grant identity/revision/digest, client command identity, canonical command/schema digest, accepted or intentional deterministic rejected result, effect reference, and timestamps. Reuse with the same digest returns that stored result from either tier; reuse with another digest permanently fails conflict. Same-store layout/proposal effects commit atomically with receipt insertion and any required hot-to-cold move. Runtime/control effects reconcile through their existing stable internal command identities when a crash separates runtime acceptance from receipt commit.
 
@@ -27,13 +27,15 @@ Receipt documents live in exactly one of `milkdrift.v2.application.command_recei
 
 Detailed health reports hot count/bound, archive batch, cold count, archive generation, last successful archive time, and redacted degraded/failure state. It never includes command content or stored result bytes. Cold receipt history has no configured record-count ceiling and grows until physical storage is exhausted; such exhaustion is reported as a storage failure, not a logical retention limit.
 
+Peer execution health separately reports active, dispatch, hot-terminal, and compact tombstone counts, configured active/queue/hot/batch bounds, archive generation/time, and a redacted degraded state. Startup recovers claims with bounded pages, verifies placement/index/counter/observation-chain invariants before opening admission, performs one eligible archival batch, and verifies again. Retention maintenance uses the same atomic move as admission. A failed verification keeps peer admission closed; it never silently rebuilds request identity or invents terminal evidence.
+
 ## Shutdown
 
 Shutdown means owner completion, not merely stopping the HTTP listener. The daemon closes external admission/readiness, stops new peer acceptance and durable claims, begins peer/runtime draining, disconnects registries, closes runtime admission, and applies the configured `drain`, `cancel`, or `retain` effect policy until its deadline. It joins fixed peer and effect workers plus the owner thread before dropping redb/artifact handles. The final result reports whether shutdown was clean and how many worker/effect identities remain retained or unresolved; retained or uncertain work is never reported as successful completion.
 
 ## Backup, compatibility, and repair
 
-Stop the daemon cleanly before copying its data root. Artifact bytes remain in the content-addressed filesystem store; application, peer execution, and runtime metadata remain in redb. This pre-release build implements no storage migration: physical schemas other than 6 and internal document formats other than 9 are refused. Do not edit rows or schema markers by hand.
+Stop the daemon cleanly before copying its data root. Artifact bytes remain in the content-addressed filesystem store; application, peer execution, and runtime metadata remain in redb. This pre-release build implements no storage migration: physical schemas other than 7 and internal document formats other than 10 are refused. Do not edit rows or schema markers by hand.
 
 Exact command replay is preserved only within one store generation. To create a new generation, stop the daemon, make and independently verify a complete backup/export of the old data root, configure an empty new data root, and retain the old generation read-only for forensic/replay needs. There is no automatic rotation and no implemented cold-archive export/delete command. Command IDs must not be reused across generations unless every caller also rotates an explicit namespaced client epoch; otherwise a delayed request from the old generation is indistinguishable from new intent.
 

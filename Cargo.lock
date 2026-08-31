@@ -1136,6 +1136,7 @@ dependencies = [
  "milkdrift-persistence",
  "milkdrift-redb-store",
  "milkdrift-workspace",
+ "redb",
  "reqwest",
  "serde",
  "serde_json",

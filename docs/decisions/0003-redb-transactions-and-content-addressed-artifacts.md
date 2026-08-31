@@ -55,9 +55,10 @@ walking an authenticated structure.
 
 ADR 0022 extends the same narrow-port rule to daemon application receipts, layouts, proposal
 discovery, and security audit; ADR 0018 now applies it to peer admission, dispatch, observations,
-and retention. Physical schema version 6 and internal document format 9 are exact-current only. Earlier and
-future formats are refused; no migration is implemented. Pre-release users must create a new
-store or wait for an explicit future migration tool rather than reinterpret old bytes.
+and retention. This decision originally reached physical schema 6/internal document format 9;
+ADR 0024 advances the exact-current forms to 7/10. Earlier and future formats are refused; no
+migration is implemented. Pre-release users must create a new store or wait for an explicit future
+migration tool rather than reinterpret old bytes.
 
 ## Rejected alternatives
 

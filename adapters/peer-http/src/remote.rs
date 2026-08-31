@@ -19,9 +19,9 @@ use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, CapabilityHost,
 };
 use milkdrift_peer_protocol::{
-    CancellationDisposition, CatalogDigest, CatalogSnapshot, DelegatedAuthorization,
-    InvocationAcceptance, PeerCancellationRequest, PeerExecutionId, PeerExecutionProvenance,
-    PeerInvocationRequest, PeerRequestId, SessionId,
+    ArchivedExecutionSummary, CancellationDisposition, CatalogDigest, CatalogSnapshot,
+    DelegatedAuthorization, InvocationAcceptance, ObservationHistory, PeerCancellationRequest,
+    PeerExecutionId, PeerExecutionProvenance, PeerInvocationRequest, PeerRequestId, SessionId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -388,6 +388,15 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
         .map_err(|error| AdapterError::rejected(error.to_string()))?;
         let execution = match self.client.submit(&request) {
             Ok(InvocationAcceptance::Accepted { execution, .. }) => execution,
+            Ok(InvocationAcceptance::Archived { summary, .. }) => {
+                return report_archived_summary(
+                    invocation.request().invocation(),
+                    1,
+                    invocation.resolution().operation_contract().side_effect(),
+                    &summary,
+                    reporter,
+                );
+            }
             Ok(InvocationAcceptance::Rejected { detail, .. }) => {
                 return Err(AdapterError::rejected(detail));
             }
@@ -410,6 +419,10 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
             }
             match self.client.observations(&execution, after, 128) {
                 Ok(page) => {
+                    let archived_summary = match &page.history {
+                        ObservationHistory::Archived { summary } => Some(summary.clone()),
+                        ObservationHistory::Hot => None,
+                    };
                     let empty = page.observations.is_empty();
                     for observation in page.observations {
                         if observation.event.invocation() != invocation.request().invocation()
@@ -423,6 +436,15 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
                         if let Err(error) = reporter.invocation(observation.event) {
                             break 'observing Err(error);
                         }
+                    }
+                    if let Some(summary) = archived_summary {
+                        break report_archived_summary(
+                            invocation.request().invocation(),
+                            after.saturating_add(1),
+                            invocation.resolution().operation_contract().side_effect(),
+                            &summary,
+                            reporter,
+                        );
                     }
                     if page.closed {
                         break Ok(());
@@ -671,6 +693,38 @@ fn report_uncertainty(
             InvocationEventKind::Terminal { terminal },
         )
         .map_err(|error| AdapterError::external_failure(error.to_string()))?,
+    )
+}
+
+fn report_archived_summary(
+    invocation: &InvocationId,
+    sequence: u64,
+    side_effect: milkdrift_capability::SideEffectClass,
+    summary: &ArchivedExecutionSummary,
+    reporter: &dyn AdapterReporter,
+) -> Result<(), AdapterError> {
+    if let Some(observation) = &summary.final_observation
+        && let Some(terminal) = observation.event.kind().terminal()
+    {
+        let event = InvocationEvent::new(
+            invocation.clone(),
+            sequence,
+            InvocationEventKind::Terminal {
+                terminal: terminal.clone(),
+            },
+        )
+        .map_err(|error| AdapterError::external_failure(error.to_string()))?;
+        return reporter.invocation(event);
+    }
+    report_uncertainty(
+        invocation,
+        sequence,
+        side_effect,
+        summary
+            .uncertainty_reason
+            .as_deref()
+            .unwrap_or("remote execution history was archived without terminal evidence"),
+        reporter,
     )
 }
 

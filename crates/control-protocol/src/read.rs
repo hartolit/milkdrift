@@ -22,6 +22,8 @@ pub struct HealthRead {
     pub last_failure: Option<String>,
     /// Bounded application-receipt lifecycle facts without command or result content.
     pub application_receipts: ApplicationReceiptHealthRead,
+    /// Serving-peer active/hot/tombstone lifecycle facts without per-peer identities.
+    pub peer_executions: PeerExecutionHealthRead,
 }
 
 /// Redacted exact-replay receipt lifecycle health.
@@ -43,6 +45,40 @@ pub struct ApplicationReceiptHealthRead {
     /// Whether the last bounded archival/storage refresh failed.
     pub archival_degraded: bool,
     /// Redacted failure classification, never command or result content.
+    pub last_archival_failure: Option<String>,
+}
+
+/// Redacted serving-peer execution retention and archival health.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerExecutionHealthRead {
+    /// Whether serving-peer execution is enabled.
+    pub enabled: bool,
+    /// Accepted nonterminal execution count.
+    pub active_count: u32,
+    /// Configured global active ceiling.
+    pub active_bound: u32,
+    /// Active pre-entry dispatch queue count.
+    pub dispatch_queued: u32,
+    /// Configured durable dispatch queue ceiling.
+    pub dispatch_bound: u32,
+    /// Complete terminal/uncertain records retaining detailed observations.
+    pub hot_terminal_count: u64,
+    /// Configured hot terminal ceiling, including capacity reserved by active work.
+    pub hot_terminal_bound: u64,
+    /// Compact immutable archived request identities.
+    pub tombstone_count: u64,
+    /// Maximum records compacted in one transaction.
+    pub archive_batch_size: u32,
+    /// Minimum terminal age before detailed observations are compacted.
+    pub observation_hot_retention_ms: u64,
+    /// Monotonic successful archive generation.
+    pub archive_generation: u64,
+    /// Most recent successful archival boundary.
+    pub last_archived_at_unix_ms: Option<u64>,
+    /// Whether the last archival/status operation failed.
+    pub archival_degraded: bool,
+    /// Redacted archival failure classification.
     pub last_archival_failure: Option<String>,
 }
 

@@ -116,7 +116,7 @@ fn configuration_with_process_profiles(
         ..RuntimeHostConfig::default()
     };
     DaemonConfig {
-        schema_version: 5,
+        schema_version: 6,
         data_root: directory.path().join("data"),
         bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         secret_sources: BTreeMap::from([

@@ -481,6 +481,22 @@ async fn readiness(
             active_effects: 0,
             last_failure: None,
             application_receipts: health.application_receipts,
+            peer_executions: milkdrift_control_protocol::PeerExecutionHealthRead {
+                enabled: health.peer_executions.enabled,
+                active_count: 0,
+                active_bound: 0,
+                dispatch_queued: 0,
+                dispatch_bound: 0,
+                hot_terminal_count: 0,
+                hot_terminal_bound: 0,
+                tombstone_count: 0,
+                archive_batch_size: 0,
+                observation_hot_retention_ms: 0,
+                archive_generation: 0,
+                last_archived_at_unix_ms: None,
+                archival_degraded: health.peer_executions.archival_degraded,
+                last_archival_failure: None,
+            },
         },
     )
 }

@@ -58,6 +58,18 @@ pub enum FaultPoint {
     BeforePeerObservationCommit,
     /// Immediately after a durable peer observation commit.
     AfterPeerObservationCommit,
+    /// After a compact tombstone is written but before hot ownership is removed atomically.
+    AfterPeerTombstoneInsert,
+    /// After detailed observation rows/mappings are removed but before hot ownership is removed.
+    AfterPeerObservationCleanup,
+    /// After hot ownership is removed but before archival accounting and commit.
+    AfterPeerHotRemove,
+    /// After archival counters are updated but before the transaction commits.
+    AfterPeerArchiveAccounting,
+    /// Immediately before committing one explicit/automatic peer archival transaction.
+    BeforePeerArchiveCommit,
+    /// Immediately after a peer archival transaction commits.
+    AfterPeerArchiveCommit,
     /// After the empty stream is durable, before committing its publication session.
     BeforeArtifactBeginCommit,
     /// Immediately after the publication session transaction commits.

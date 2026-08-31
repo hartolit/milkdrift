@@ -22,10 +22,10 @@ pub use document::{
     DecodeLimits, MAX_PEER_DOCUMENT_BYTES, ProtocolEnvelope, decode_envelope, encode_envelope,
 };
 pub use execution::{
-    CancellationDisposition, DelegatedAuthorization, ExecutionLimits, InvocationAcceptance,
-    InvocationLookup, ObservationCategory, ObservationPage, PeerCancellationAcknowledgement,
-    PeerCancellationRequest, PeerExecutionProvenance, PeerInvocationRequest, PeerObservation,
-    RemoteExecutionStatus,
+    ArchivedExecutionSummary, CancellationDisposition, DelegatedAuthorization, ExecutionLimits,
+    InvocationAcceptance, InvocationLookup, ObservationCategory, ObservationHistory,
+    ObservationPage, PeerCancellationAcknowledgement, PeerCancellationRequest,
+    PeerExecutionProvenance, PeerInvocationRequest, PeerObservation, RemoteExecutionStatus,
 };
 pub use identity::{
     CatalogDigest, DelegationRef, PeerExecutionId, PeerRequestId, SessionId, TransferId,

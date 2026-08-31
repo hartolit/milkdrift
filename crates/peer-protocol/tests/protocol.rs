@@ -10,9 +10,10 @@ use milkdrift_capability::{
     SideEffectClass, StreamingMode,
 };
 use milkdrift_peer_protocol::{
-    CatalogEntry, CatalogSnapshot, DecodeLimits, DelegatedAuthorization, DelegationRef,
-    ExecutionLimits, PeerInvocationRequest, PeerRequestId, ProtocolEnvelope, ProtocolVersion,
-    ProtocolVersionRange, decode_envelope, encode_envelope,
+    ArchivedExecutionSummary, CatalogEntry, CatalogSnapshot, DecodeLimits, DelegatedAuthorization,
+    DelegationRef, ExecutionLimits, ObservationHistory, ObservationPage, PeerExecutionId,
+    PeerInvocationRequest, PeerRequestId, ProtocolEnvelope, ProtocolVersion, ProtocolVersionRange,
+    RemoteExecutionStatus, decode_envelope, encode_envelope,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -51,7 +52,7 @@ fn descriptor() -> TestResult<milkdrift_capability::CapabilityDescriptor> {
 #[test]
 fn version_negotiation_fails_closed_on_unknown_major() -> TestResult {
     let local = ProtocolVersionRange::default();
-    assert_eq!(local.negotiate(local)?, ProtocolVersion::V1_0);
+    assert_eq!(local.negotiate(local)?, ProtocolVersion::V1_1);
     let unknown = ProtocolVersionRange::new(
         ProtocolVersion { major: 2, minor: 0 },
         ProtocolVersion { major: 2, minor: 1 },
@@ -179,5 +180,37 @@ fn invocation_digest_binds_catalog_selection_delegation_and_request() -> TestRes
     let mut value = serde_json::to_value(&request)?;
     value["deadline_unix_ms"] = serde_json::json!(15_001);
     assert!(serde_json::from_value::<PeerInvocationRequest>(value).is_err());
+    Ok(())
+}
+
+#[test]
+fn archived_observation_history_is_typed_closed_and_truthfully_uncertain() -> TestResult {
+    let execution = PeerExecutionId::new("execution-archived")?;
+    let summary = ArchivedExecutionSummary {
+        status: RemoteExecutionStatus::OutcomeUnknown,
+        last_sequence: 0,
+        observation_digest: format!("b3_{}", "0".repeat(64)),
+        archived_at_unix_ms: 10,
+        final_observation: None,
+        uncertainty_reason: Some(
+            "adapter entry is known but terminal evidence was lost".to_owned(),
+        ),
+    };
+    let page = ObservationPage {
+        execution: execution.clone(),
+        after_sequence: 0,
+        observations: Vec::new(),
+        next_sequence: 0,
+        terminal: false,
+        closed: true,
+        history: ObservationHistory::Archived {
+            summary: Box::new(summary.clone()),
+        },
+    };
+    page.validate(8)?;
+    let mut invalid = page;
+    invalid.closed = false;
+    assert!(invalid.validate(8).is_err());
+    summary.validate(&execution)?;
     Ok(())
 }

@@ -1,5 +1,5 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "data_root": "./test-data",
   "bind": "127.0.0.1:9734",
   "secret_sources": {
@@ -99,7 +99,17 @@
   "peers": {
     "enabled": false,
     "local_peer_id": null,
-    "relationships": []
+    "relationships": [],
+    "serving": {
+      "worker_threads": 4,
+      "maximum_global_active": 256,
+      "maximum_dispatch_queue": 256,
+      "maximum_hot_terminal_records": 10000,
+      "archive_batch_size": 256,
+      "observation_hot_retention_ms": 86400000,
+      "recovery_page": 128,
+      "poll_interval_ms": 100
+    }
   },
   "shutdown": {
     "deadline_ms": 10000,

@@ -18,6 +18,16 @@ Peer support is disabled unless `peers.enabled` and explicit relationships are c
 "peers": {
   "enabled": true,
   "local_peer_id": "peer-b",
+  "serving": {
+    "worker_threads": 4,
+    "maximum_global_active": 256,
+    "maximum_dispatch_queue": 256,
+    "maximum_hot_terminal_records": 10000,
+    "archive_batch_size": 256,
+    "observation_hot_retention_ms": 86400000,
+    "recovery_page": 128,
+    "poll_interval_ms": 100
+  },
   "relationships": [{
     "peer_id": "peer-a",
     "endpoint": "http://127.0.0.1:9734/",
@@ -61,14 +71,14 @@ The insecure mode refuses non-loopback URLs. Use ordinary HTTPS directly or term
 
 ## Local daemon quick start
 
-Create a private bearer-token file and a version-five daemon configuration. Relative paths are resolved from the configuration file directory. Presets are deterministic shorthand for exact operation sets only; the required `authority` object supplies every executable resource scope, ceiling, and validity boundary.
+Create a private bearer-token file and a version-six daemon configuration. Relative paths are resolved from the configuration file directory. Presets are deterministic shorthand for exact operation sets only; the required `authority` object supplies every executable resource scope, ceiling, and validity boundary.
 
 ```sh
 install -m 600 /dev/null operator.token
 printf '%s' 'replace-with-a-long-random-local-token' > operator.token
 cat > daemon.json <<'JSON'
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "data_root": "./milkdrift-data",
   "bind": "127.0.0.1:9734",
   "secret_sources": {

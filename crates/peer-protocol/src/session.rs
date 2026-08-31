@@ -7,8 +7,8 @@ use crate::{PeerProtocolError, SessionId};
 
 /// Current incompatible-change protocol major.
 pub const PROTOCOL_MAJOR_V1: u16 = 1;
-/// Current backward-compatible protocol minor.
-pub const PROTOCOL_MINOR_V0: u16 = 0;
+/// Current protocol minor adding explicit archived execution/history semantics.
+pub const PROTOCOL_MINOR_V1: u16 = 1;
 
 /// One selected peer protocol version.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
@@ -22,9 +22,9 @@ pub struct ProtocolVersion {
 
 impl ProtocolVersion {
     /// Version implemented by this package.
-    pub const V1_0: Self = Self {
+    pub const V1_1: Self = Self {
         major: PROTOCOL_MAJOR_V1,
-        minor: PROTOCOL_MINOR_V0,
+        minor: PROTOCOL_MINOR_V1,
     };
 }
 
@@ -68,8 +68,8 @@ impl ProtocolVersionRange {
 impl Default for ProtocolVersionRange {
     fn default() -> Self {
         Self {
-            minimum: ProtocolVersion::V1_0,
-            maximum: ProtocolVersion::V1_0,
+            minimum: ProtocolVersion::V1_1,
+            maximum: ProtocolVersion::V1_1,
         }
     }
 }
@@ -84,6 +84,8 @@ pub struct FeatureSet {
     pub resumable_artifacts: bool,
     /// Bounded incremental catalog update support.
     pub incremental_catalog: bool,
+    /// Compact archived acceptance replay and typed compacted observation history.
+    pub archived_execution_replay: bool,
 }
 
 /// Hard peer limits negotiated down to the lower value.

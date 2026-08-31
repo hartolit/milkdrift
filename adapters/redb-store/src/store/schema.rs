@@ -223,6 +223,16 @@ pub(crate) fn initialize_schema(
     }
     {
         let _table = write
+            .open_table(PEER_EXECUTION_TOMBSTONES)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = write
+            .open_table(PEER_EXECUTION_LOCATIONS)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = write
             .open_table(PEER_EXECUTIONS_BY_REQUEST)
             .map_err(error::redb)?;
     }
@@ -596,6 +606,16 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
     }
     {
         let _table = read.open_table(PEER_EXECUTIONS).map_err(error::redb)?;
+    }
+    {
+        let _table = read
+            .open_table(PEER_EXECUTION_TOMBSTONES)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = read
+            .open_table(PEER_EXECUTION_LOCATIONS)
+            .map_err(error::redb)?;
     }
     {
         let _table = read

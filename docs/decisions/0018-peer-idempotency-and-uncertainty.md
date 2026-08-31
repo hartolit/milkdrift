@@ -4,6 +4,8 @@
 
 Accepted.
 
+The retention-specific parts of this decision are superseded by [ADR 0024](0024-peer-execution-hot-retention-and-tombstones.md). The acceptance, adapter-entry, cancellation, and uncertainty boundaries remain in force.
+
 ## Context
 
 HTTP response loss can occur after a remote daemon accepts work. Retrying with a new execution would duplicate process/model/tool entry, while treating socket closure as failure or cancellation would invent evidence. The runtime already owns workflow state and exact capability snapshots, so peer transport must not become a second scheduler or shared truth store.
@@ -14,7 +16,7 @@ One remote peer is an ordinary local `CapabilityAdapter`. The serving daemon sto
 
 The durable phases are `DispatchAvailable`, `DispatchClaimed`, `Entered`, `CancellationRequested`, `Terminal`, and `Uncertain`; record existence is durable acceptance. Claims have worker, generation, and lease facts. Entry is a distinct CAS immediately before the adapter call and atomically rechecks that persistent admission is open and that the exact relationship generation is still enabled and unexpired. Fixed daemon-owned workers start with persistent admission closed, recover existing work before opening it, and close it before drain or shutdown; they are joined or reported retained at shutdown. Revocation durably disables a newer relationship generation before in-memory catalog removal. Restart requeues claims without entry evidence and converts entered claims without terminal evidence to uncertainty. A worker panic follows the same boundary rule.
 
-Primary records retain the exact canonical request, delegated origin run/revision/node/execution/attempt, allowing authority decision, cancellation facts, bounded accounting, and retention state. Observations are separate contiguous checksummed rows with an artifact-reference index, so cursor reads are bounded and appends do not rewrite history. Terminal/uncertain rows use a time index. Explicit archival marks retained facts archived without deleting the idempotency tombstone, security facts, observations, or provenance; reaching the configured total-record ceiling rejects new identities rather than evicting evidence.
+Primary records retain the exact canonical request, delegated origin run/revision/node/execution/attempt, allowing authority decision, cancellation facts, and bounded accounting. Observations are separate contiguous checksummed rows with an artifact-reference index, so cursor reads are bounded and appends do not rewrite history. Terminal/uncertain rows use a time index. ADR 0024 replaces the original non-reclaiming archival/total-record-ceiling policy with bounded hot history plus compact permanent idempotency tombstones.
 
 Cancellation request, acknowledgement, adapter support, terminal evidence, and connection closure are independent facts. Cancellation before entry is durably terminalized without invoking the adapter. After entry, disconnect cannot prove cancellation. Late terminal evidence follows the same idempotent append path and may resolve uncertainty without creating a second terminal fact.
 
@@ -24,4 +26,4 @@ Peer artifact transfer is an adapter over the ordinary core `ArtifactStore` and 
 
 Response loss and reconnect do not duplicate accepted work. Non-idempotent uncertainty remains visible for operator/controller resolution, and no globally exactly-once external-effect claim is made. The origin still owns workflow truth; the serving daemon owns only its durable remote execution record and ordinary local artifacts. HTTP/redb types remain outside the transport-neutral protocol contracts.
 
-The original peer store advanced redb physical schema 4 to 5 and internal document format 7 to 8. Exact lifecycle admission and entry-authority evidence subsequently advance only the internal document format to 9; physical tables remain schema 5. Older/future stores are refused. Daemon startup also explicitly refuses the obsolete `peer-executions-v1` and `peer-artifacts-v1` prototype directories; no partial importer is claimed.
+The original peer store advanced redb physical schema 4 to 5 and internal document format 7 to 8. Exact lifecycle admission and entry-authority evidence subsequently advanced only the internal document format to 9. ADR 0024 advances physical schema 7 and internal document format 10. Older/future stores are refused. Daemon startup also explicitly refuses the obsolete `peer-executions-v1` and `peer-artifacts-v1` prototype directories; no partial importer is claimed.
