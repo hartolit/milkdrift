@@ -7,8 +7,7 @@ use milkdrift_runtime::CommandAuthorityClaim;
 use subtle::ConstantTimeEq;
 
 use crate::config::{
-    ActorBindingConfig, AuthorityPresetConfig, ConfigError, SecretSourceConfig,
-    ValidatedDaemonConfig,
+    ActorBindingConfig, AuthenticationPlan, AuthorityPresetConfig, ConfigError, SecretSourceConfig,
 };
 
 /// Immutable authenticated server-owned session facts.
@@ -100,20 +99,17 @@ impl fmt::Debug for AuthRegistry {
 }
 
 impl AuthRegistry {
-    pub fn from_config(config: &ValidatedDaemonConfig) -> Result<Self, ConfigError> {
-        let resolver = Arc::new(ConfiguredSecretResolver::new(
-            config.document.secret_sources.clone(),
-        ));
-        let mut bindings = Vec::with_capacity(config.document.actors.len());
-        let mut grants = Vec::with_capacity(config.document.actors.len());
+    pub fn from_plan(config: &AuthenticationPlan) -> Result<Self, ConfigError> {
+        let resolver = Arc::new(ConfiguredSecretResolver::new(config.secret_sources.clone()));
+        let mut bindings = Vec::with_capacity(config.actors.len());
+        let mut grants = Vec::with_capacity(config.actors.len());
         let mut revocations = BTreeMap::new();
-        for configured in &config.document.actors {
+        for configured in &config.actors {
             let actor = ActorRef::new(configured.actor.clone())
                 .map_err(|error| ConfigError::Invalid(error.to_string()))?;
             let grant = grant(configured, &actor)?;
             let session = session(configured, actor, grant.clone())?;
             let source = config
-                .document
                 .secret_sources
                 .get(&configured.credential_ref)
                 .ok_or_else(|| ConfigError::Invalid("credential source is absent".to_owned()))?
@@ -351,7 +347,8 @@ mod tests {
             fs::set_permissions(&token, fs::Permissions::from_mode(0o600))?;
         }
         let validated = config(root.path(), &token).validate(root.path())?;
-        let registry = AuthRegistry::from_config(&validated)?;
+        let parts = validated.into_parts();
+        let registry = AuthRegistry::from_plan(&parts.authentication)?;
         assert!(registry.authenticate(b"wrong").is_none());
         assert!(registry.authenticate(b"first-token").is_some());
         fs::write(&token, "second-token")?;

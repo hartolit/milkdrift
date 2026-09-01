@@ -11,6 +11,7 @@ use milkdrift_authority::{
     PeerAuthorityScope, ResourceScope, SecretRef, WorkflowRunScope, WorkspaceAuthorityScope,
 };
 use milkdrift_capability::SideEffectClass;
+use milkdrift_contracts::{JsonLimits, canonical_json_bytes};
 use milkdrift_control_protocol::MAX_DOCUMENT_BYTES;
 use milkdrift_peer_protocol::PeerAction;
 use milkdrift_workspace::ArtifactSensitivity;
@@ -18,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Current daemon configuration document version.
-pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 8;
+pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 9;
 
 /// Configuration load or deterministic validation failure.
 #[derive(Debug, Error)]
@@ -26,11 +27,11 @@ pub enum ConfigError {
     /// Configuration bytes could not be read.
     #[error("daemon configuration could not be read: {0}")]
     Read(String),
-    /// Configuration JSON is malformed or contains duplicate keys.
-    #[error("invalid daemon configuration JSON: {0}")]
-    Json(String),
+    /// Configuration TOML is malformed or contains duplicate keys.
+    #[error("invalid daemon configuration TOML: {0}")]
+    Toml(String),
     /// The schema version is unsupported.
-    #[error("unsupported daemon configuration version {0}; supported version is 8")]
+    #[error("unsupported daemon configuration version {0}; supported version is 9")]
     UnsupportedVersion(u32),
     /// A host-safety invariant is invalid.
     #[error("invalid daemon configuration: {0}")]
@@ -216,21 +217,24 @@ pub struct AdapterConfig {
     pub model_profiles: Vec<ModelProfileConfig>,
 }
 
-/// Default-disabled peer listener/client configuration.
+/// Explicit peer-host deployment state.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct PeerHostConfig {
-    /// Enables the separate `/peer/v1` authentication realm.
-    #[serde(default)]
-    pub enabled: bool,
-    /// Stable identity of this daemon when peer support is enabled.
-    pub local_peer_id: Option<String>,
-    /// Explicit operator-configured relationships. Empty exposes nothing.
-    #[serde(default)]
-    pub relationships: Vec<PeerRelationshipConfig>,
-    /// Independent serving-peer worker, capacity, recovery, and observation-retention policy.
-    #[serde(default)]
-    pub serving: PeerServingConfig,
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "mode")]
+pub enum PeerHostConfig {
+    /// No peer authentication realm, relationships, workers, or remote registrations.
+    #[default]
+    Disabled,
+    /// One exact local identity with explicit relationships and serving policy.
+    Enabled {
+        /// Stable identity of this daemon.
+        local_peer_id: String,
+        /// Explicit operator-configured relationships. Empty exposes nothing.
+        #[serde(default)]
+        relationships: Vec<PeerRelationshipConfig>,
+        /// Independent serving-peer worker, capacity, recovery, and observation-retention policy.
+        #[serde(default)]
+        serving: PeerServingConfig,
+    },
 }
 
 /// Independent bounded serving-peer execution lifecycle configuration.
@@ -481,36 +485,93 @@ const fn default_security_audit_record_bound() -> u32 {
     10_000
 }
 
-/// Path-normalized, safety-checked configuration used to open the host.
+const CONFIG_DIGEST_LIMITS: JsonLimits = JsonLimits {
+    maximum_depth: 64,
+    maximum_string_bytes: MAX_DOCUMENT_BYTES,
+    maximum_key_bytes: 512,
+    maximum_container_items: 4_096,
+};
+
+/// Immutable path-normalized daemon construction plan.
 #[derive(Clone, Debug)]
-pub struct ValidatedDaemonConfig {
-    /// Original validated document with normalized paths.
-    pub document: DaemonConfig,
-    /// Directory against which relative sources were resolved.
-    pub configuration_directory: PathBuf,
+pub struct DaemonPlan {
+    bind: SocketAddr,
+    storage: StoragePlan,
+    authentication: AuthenticationPlan,
+    runtime: RuntimeHostConfig,
+    adapters: AdapterConfig,
+    peers: PeerHostConfig,
+    shutdown: ShutdownConfig,
+    redacted_toml: String,
+    normalized_digest: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct StoragePlan {
+    pub(crate) data_root: PathBuf,
+    pub(crate) application_receipts: ApplicationReceiptConfig,
+    pub(crate) security_audit_record_bound: u32,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct AuthenticationPlan {
+    pub(crate) secret_sources: BTreeMap<String, SecretSourceConfig>,
+    pub(crate) actors: Vec<ActorBindingConfig>,
+}
+
+pub(crate) struct DaemonPlanParts {
+    pub(crate) storage: StoragePlan,
+    pub(crate) authentication: AuthenticationPlan,
+    pub(crate) runtime: RuntimeHostConfig,
+    pub(crate) adapters: AdapterConfig,
+    pub(crate) peers: PeerHostConfig,
+    pub(crate) shutdown: ShutdownConfig,
+}
+
+impl DaemonPlan {
+    /// Local validated listener address.
+    #[must_use]
+    pub const fn bind(&self) -> SocketAddr {
+        self.bind
+    }
+
+    /// Redacted normalized effective configuration rendered as TOML.
+    #[must_use]
+    pub fn redacted_toml(&self) -> &str {
+        &self.redacted_toml
+    }
+
+    /// Digest of the normalized effective configuration, excluding source formatting.
+    #[must_use]
+    pub fn normalized_digest(&self) -> &str {
+        &self.normalized_digest
+    }
+
+    pub(crate) fn into_parts(self) -> DaemonPlanParts {
+        DaemonPlanParts {
+            storage: self.storage,
+            authentication: self.authentication,
+            runtime: self.runtime,
+            adapters: self.adapters,
+            peers: self.peers,
+            shutdown: self.shutdown,
+        }
+    }
 }
 
 impl DaemonConfig {
-    /// Loads duplicate-safe bounded JSON and validates before storage is opened.
-    pub fn load(path: &Path) -> Result<ValidatedDaemonConfig, ConfigError> {
+    /// Loads bounded duplicate-safe TOML and compiles it before storage is opened.
+    pub fn load(path: &Path) -> Result<DaemonPlan, ConfigError> {
         let bytes = fs::read(path).map_err(|error| ConfigError::Read(error.kind().to_string()))?;
         if bytes.len() > MAX_DOCUMENT_BYTES {
             return Err(ConfigError::Invalid(format!(
                 "configuration exceeds {MAX_DOCUMENT_BYTES} bytes"
             )));
         }
-        let value = milkdrift_contracts::parse_json_without_duplicates(&bytes)
-            .map_err(|error| ConfigError::Json(error.to_string()))?;
-        let version = value
-            .get("schema_version")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok())
-            .ok_or_else(|| ConfigError::Json("missing numeric schema_version".to_owned()))?;
-        if version != DAEMON_CONFIG_SCHEMA_VERSION {
-            return Err(ConfigError::UnsupportedVersion(version));
-        }
+        let source =
+            std::str::from_utf8(&bytes).map_err(|error| ConfigError::Toml(error.to_string()))?;
         let config: Self =
-            serde_json::from_value(value).map_err(|error| ConfigError::Json(error.to_string()))?;
+            toml::from_str(source).map_err(|error| ConfigError::Toml(error.to_string()))?;
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
         let parent = parent
             .canonicalize()
@@ -519,7 +580,7 @@ impl DaemonConfig {
     }
 
     /// Deterministically validates and normalizes a programmatically built config.
-    pub fn validate(mut self, base: &Path) -> Result<ValidatedDaemonConfig, ConfigError> {
+    pub fn validate(mut self, base: &Path) -> Result<DaemonPlan, ConfigError> {
         if self.schema_version != DAEMON_CONFIG_SCHEMA_VERSION {
             return Err(ConfigError::UnsupportedVersion(self.schema_version));
         }
@@ -612,24 +673,100 @@ impl DaemonConfig {
             model.profile = normalize_existing_file(&base, &model.profile)?;
         }
         validate_peers(&self.peers, &self.secret_sources)?;
-        Ok(ValidatedDaemonConfig {
-            document: self,
-            configuration_directory: base,
+        let redacted_toml = redacted_toml(&redacted_value(&self)?)?;
+        let normalized = canonical_json_bytes(&self, CONFIG_DIGEST_LIMITS).map_err(|error| {
+            ConfigError::Invalid(format!(
+                "effective configuration cannot be canonicalized: {error:?}"
+            ))
+        })?;
+        let normalized_digest = format!("b3_{}", blake3::hash(&normalized).to_hex());
+        Ok(DaemonPlan {
+            bind: self.bind,
+            storage: StoragePlan {
+                data_root: self.data_root,
+                application_receipts: self.application_receipts,
+                security_audit_record_bound: self.security_audit_record_bound,
+            },
+            authentication: AuthenticationPlan {
+                secret_sources: self.secret_sources,
+                actors: self.actors,
+            },
+            runtime: self.runtime,
+            adapters: self.adapters,
+            peers: self.peers,
+            shutdown: self.shutdown,
+            redacted_toml,
+            normalized_digest,
         })
     }
+}
 
-    /// Returns redacted effective JSON without any resolved values.
-    pub fn redacted_json(&self) -> Result<serde_json::Value, ConfigError> {
-        let mut value =
-            serde_json::to_value(self).map_err(|error| ConfigError::Json(error.to_string()))?;
-        if let Some(sources) = value
-            .as_object_mut()
-            .and_then(|object| object.get_mut("secret_sources"))
-        {
-            *sources = serde_json::json!({"configured_references": self.secret_sources.len(), "values": "[redacted]"});
+fn redacted_value(config: &DaemonConfig) -> Result<serde_json::Value, ConfigError> {
+    let mut value =
+        serde_json::to_value(config).map_err(|error| ConfigError::Invalid(error.to_string()))?;
+    let sources = value
+        .as_object_mut()
+        .ok_or_else(|| ConfigError::Invalid("configuration root is not an object".to_owned()))?;
+    sources.insert(
+        "secret_sources".to_owned(),
+        serde_json::json!({
+            "configured_references": config.secret_sources.len(),
+            "values": "[redacted]",
+        }),
+    );
+    Ok(value)
+}
+
+fn redacted_toml(redacted: &serde_json::Value) -> Result<String, ConfigError> {
+    let value = json_to_toml(redacted)?
+        .ok_or_else(|| ConfigError::Toml("effective configuration cannot be null".to_owned()))?;
+    toml::to_string_pretty(&value).map_err(|error| ConfigError::Toml(error.to_string()))
+}
+
+fn json_to_toml(value: &serde_json::Value) -> Result<Option<toml::Value>, ConfigError> {
+    let converted = match value {
+        serde_json::Value::Null => return Ok(None),
+        serde_json::Value::Bool(value) => toml::Value::Boolean(*value),
+        serde_json::Value::String(value) => toml::Value::String(value.clone()),
+        serde_json::Value::Number(value) => {
+            if let Some(value) = value.as_i64() {
+                toml::Value::Integer(value)
+            } else if let Some(value) = value.as_u64() {
+                match i64::try_from(value) {
+                    Ok(value) => toml::Value::Integer(value),
+                    Err(_) => toml::Value::String(value.to_string()),
+                }
+            } else if let Some(value) = value.as_f64() {
+                toml::Value::Float(value)
+            } else {
+                return Err(ConfigError::Toml(
+                    "effective configuration contains an unsupported number".to_owned(),
+                ));
+            }
         }
-        Ok(value)
-    }
+        serde_json::Value::Array(values) => toml::Value::Array(
+            values
+                .iter()
+                .map(|value| {
+                    json_to_toml(value)?.ok_or_else(|| {
+                        ConfigError::Toml(
+                            "effective configuration contains null inside an array".to_owned(),
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        serde_json::Value::Object(values) => {
+            let mut table = toml::Table::new();
+            for (key, value) in values {
+                if let Some(value) = json_to_toml(value)? {
+                    table.insert(key.clone(), value);
+                }
+            }
+            toml::Value::Table(table)
+        }
+    };
+    Ok(Some(converted))
 }
 
 fn validate_actor_authority(authority: &ActorGrantConfig) -> Result<(), ConfigError> {
@@ -720,7 +857,14 @@ fn validate_peers(
     peers: &PeerHostConfig,
     secrets: &BTreeMap<String, SecretSourceConfig>,
 ) -> Result<(), ConfigError> {
-    let serving = &peers.serving;
+    let PeerHostConfig::Enabled {
+        local_peer_id,
+        relationships,
+        serving,
+    } = peers
+    else {
+        return Ok(());
+    };
     if serving.worker_threads == 0
         || serving.worker_threads > 256
         || serving.maximum_global_active == 0
@@ -740,30 +884,19 @@ fn validate_peers(
             "peer serving active/queue/hot/archive/recovery bounds are invalid".to_owned(),
         ));
     }
-    if !peers.enabled {
-        if peers.local_peer_id.is_some() || !peers.relationships.is_empty() {
-            return Err(ConfigError::Invalid(
-                "peer relationships require peers.enabled=true".to_owned(),
-            ));
-        }
-        return Ok(());
-    }
-    let local = peers.local_peer_id.as_deref().ok_or_else(|| {
-        ConfigError::Invalid("enabled peer support requires local_peer_id".to_owned())
-    })?;
-    validate_safe_identity("local_peer_id", local)?;
-    if peers.relationships.len() > 256 {
+    validate_safe_identity("local_peer_id", local_peer_id)?;
+    if relationships.len() > 256 {
         return Err(ConfigError::Invalid(
             "peer relationship count must not exceed 256".to_owned(),
         ));
     }
     let mut identities = BTreeSet::new();
-    for relationship in &peers.relationships {
+    for relationship in relationships {
         validate_safe_identity("peer_id", &relationship.peer_id)?;
         validate_safe_identity("peer credential_ref", &relationship.credential_ref)?;
         validate_safe_identity("peer trust_zone", &relationship.trust_zone)?;
         validate_safe_identity("peer delegation_ref", &relationship.delegation_ref)?;
-        if relationship.peer_id == local
+        if relationship.peer_id == *local_peer_id
             || !identities.insert(&relationship.peer_id)
             || !secrets.contains_key(&relationship.credential_ref)
             || relationship.maximum_minor < relationship.minimum_minor
@@ -881,15 +1014,19 @@ fn normalize_owned_path(base: &Path, path: &Path) -> Result<PathBuf, ConfigError
     } else {
         base.join(path)
     };
-    if path
-        .components()
-        .any(|component| component == Component::ParentDir)
-    {
-        return Err(ConfigError::Invalid(
-            "configured paths must not contain parent traversal".to_owned(),
-        ));
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                return Err(ConfigError::Invalid(
+                    "configured paths must not contain parent traversal".to_owned(),
+                ));
+            }
+            Component::CurDir => {}
+            component => normalized.push(component.as_os_str()),
+        }
     }
-    Ok(path)
+    Ok(normalized)
 }
 
 fn normalize_existing_file(base: &Path, path: &Path) -> Result<PathBuf, ConfigError> {
@@ -926,18 +1063,20 @@ mod tests {
     use super::*;
 
     fn fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v8.json")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v9.toml")
+    }
+
+    fn fixture_document() -> Result<DaemonConfig, Box<dyn std::error::Error>> {
+        Ok(toml::from_str(&fs::read_to_string(fixture_path())?)?)
     }
 
     #[test]
-    fn schema_v8_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>>
+    fn schema_v9_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>>
     {
-        let validated = DaemonConfig::load(&fixture_path())?;
-        let actor = &validated.document.actors[0];
-        assert_eq!(
-            validated.document.schema_version,
-            DAEMON_CONFIG_SCHEMA_VERSION
-        );
+        let plan = DaemonConfig::load(&fixture_path())?;
+        let document = fixture_document()?;
+        let actor = &document.actors[0];
+        assert_eq!(document.schema_version, DAEMON_CONFIG_SCHEMA_VERSION);
         assert!(!actor.authority.dangerous_allow_broad_authority);
         assert!(matches!(
             actor.authority.resources.workflow_run,
@@ -964,22 +1103,36 @@ mod tests {
             Some(1)
         );
         assert_eq!(actor.authority.budget.concurrency, Some(4));
-        let bytes = serde_json::to_vec(&validated.document)?;
-        let decoded: DaemonConfig = serde_json::from_slice(&bytes)?;
-        decoded.validate(&validated.configuration_directory)?;
+        let encoded = toml::to_string_pretty(&document)?;
+        let decoded: DaemonConfig = toml::from_str(&encoded)?;
+        decoded.validate(fixture_path().parent().ok_or("fixture parent absent")?)?;
+        assert!(plan.redacted_toml().contains("values = \"[redacted]\""));
+        assert_eq!(
+            plan.storage.data_root,
+            fixture_path()
+                .parent()
+                .ok_or("fixture parent absent")?
+                .join("test-data")
+        );
+        assert!(plan.normalized_digest().starts_with("b3_"));
         Ok(())
     }
 
     #[test]
     fn old_and_future_config_versions_are_rejected_truthfully()
     -> Result<(), Box<dyn std::error::Error>> {
-        let source = fs::read(fixture_path())?;
-        for unsupported in [1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 6_u32, 7_u32, 9_u32] {
+        let source = fs::read_to_string(fixture_path())?;
+        for unsupported in [
+            1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 6_u32, 7_u32, 8_u32, 10_u32,
+        ] {
             let directory = tempfile::tempdir()?;
-            let mut value: serde_json::Value = serde_json::from_slice(&source)?;
-            value["schema_version"] = serde_json::json!(unsupported);
-            let path = directory.path().join("daemon.json");
-            fs::write(&path, serde_json::to_vec(&value)?)?;
+            let value = source.replacen(
+                "schema_version = 9",
+                &format!("schema_version = {unsupported}"),
+                1,
+            );
+            let path = directory.path().join("daemon.toml");
+            fs::write(&path, value)?;
             assert!(matches!(
                 DaemonConfig::load(&path),
                 Err(ConfigError::UnsupportedVersion(found)) if found == unsupported
@@ -989,10 +1142,62 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_unknown_and_json_configuration_are_rejected()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let duplicate = directory.path().join("duplicate.toml");
+        fs::write(&duplicate, "schema_version = 9\nschema_version = 9\n")?;
+        assert!(matches!(
+            DaemonConfig::load(&duplicate),
+            Err(ConfigError::Toml(_))
+        ));
+
+        let json = directory.path().join("legacy.json");
+        fs::write(&json, r#"{"schema_version":9}"#)?;
+        assert!(matches!(
+            DaemonConfig::load(&json),
+            Err(ConfigError::Toml(_))
+        ));
+
+        let unknown = directory.path().join("unknown.toml");
+        fs::write(
+            &unknown,
+            fs::read_to_string(fixture_path())?.replacen(
+                "schema_version = 9",
+                "schema_version = 9\nunexpected = true",
+                1,
+            ),
+        )?;
+        assert!(matches!(
+            DaemonConfig::load(&unknown),
+            Err(ConfigError::Toml(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn peer_mode_decodes_only_complete_explicit_states() -> Result<(), Box<dyn std::error::Error>> {
+        let source = fs::read_to_string(fixture_path())?;
+        let enabled = source.replacen(
+            "mode = \"disabled\"",
+            "mode = \"enabled\"\nlocal_peer_id = \"peer:local\"",
+            1,
+        );
+        let document: DaemonConfig = toml::from_str(&enabled)?;
+        assert!(matches!(document.peers, PeerHostConfig::Enabled { .. }));
+
+        let incomplete = source.replacen("mode = \"disabled\"", "mode = \"enabled\"", 1);
+        assert!(toml::from_str::<DaemonConfig>(&incomplete).is_err());
+
+        let legacy = source.replacen("mode = \"disabled\"", "enabled = true", 1);
+        assert!(toml::from_str::<DaemonConfig>(&legacy).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn wildcard_or_unbounded_authority_requires_the_dangerous_flag()
     -> Result<(), Box<dyn std::error::Error>> {
-        let value: serde_json::Value = serde_json::from_slice(&fs::read(fixture_path())?)?;
-        let mut config: DaemonConfig = serde_json::from_value(value)?;
+        let mut config = fixture_document()?;
         config.actors[0].authority.resources.workflow_run = WorkflowRunScope::Any;
         config.actors[0].authority.budget.duration_ms = None;
         config.actors[0].authority.valid_until = BoundaryTimeMillis::new(u64::MAX);
@@ -1009,23 +1214,23 @@ mod tests {
     #[test]
     fn empty_or_legacy_capability_selectors_are_rejected_not_widened()
     -> Result<(), Box<dyn std::error::Error>> {
-        let source = fs::read(fixture_path())?;
-        let mut empty_only: serde_json::Value = serde_json::from_slice(&source)?;
-        empty_only["actors"][0]["authority"]["resources"]["capability"]["operations"] =
-            serde_json::json!({"type": "only", "values": []});
-        assert!(serde_json::from_value::<DaemonConfig>(empty_only).is_err());
+        let source = fs::read_to_string(fixture_path())?;
+        let mut empty_only: toml::Value = toml::from_str(&source)?;
+        empty_only["actors"][0]["authority"]["resources"]["capability"]["operations"]["values"] =
+            toml::Value::Array(Vec::new());
+        assert!(toml::from_str::<DaemonConfig>(&toml::to_string(&empty_only)?).is_err());
 
-        let mut legacy_array: serde_json::Value = serde_json::from_slice(&source)?;
+        let mut legacy_array: toml::Value = toml::from_str(&source)?;
         legacy_array["actors"][0]["authority"]["resources"]["capability"]["operations"] =
-            serde_json::json!([]);
-        assert!(serde_json::from_value::<DaemonConfig>(legacy_array).is_err());
+            toml::Value::Array(Vec::new());
+        assert!(toml::from_str::<DaemonConfig>(&toml::to_string(&legacy_array)?).is_err());
         Ok(())
     }
 
     #[test]
     fn explicit_capability_wildcard_alone_requires_acknowledgement()
     -> Result<(), Box<dyn std::error::Error>> {
-        let mut config: DaemonConfig = serde_json::from_slice(&fs::read(fixture_path())?)?;
+        let mut config = fixture_document()?;
         config.actors[0].authority.resources.capability =
             CapabilityAuthorityScope::allow_any(SideEffectClass::ReadOnly);
         config.actors[0].authority.dangerous_allow_broad_authority = false;
@@ -1041,17 +1246,24 @@ mod tests {
     #[test]
     fn deny_all_is_not_broad_and_redaction_preserves_selector_kinds()
     -> Result<(), Box<dyn std::error::Error>> {
-        let mut config: DaemonConfig = serde_json::from_slice(&fs::read(fixture_path())?)?;
-        let redacted = config.redacted_json()?;
+        let mut config = fixture_document()?;
+        let plan = config
+            .clone()
+            .validate(fixture_path().parent().ok_or("fixture parent absent")?)?;
+        let redacted: toml::Value = toml::from_str(plan.redacted_toml())?;
         assert_eq!(
-            redacted["actors"][0]["authority"]["resources"]["capability"]["type"],
-            "allow"
+            redacted["actors"][0]["authority"]["resources"]["capability"]["type"].as_str(),
+            Some("allow")
         );
         assert_eq!(
-            redacted["actors"][0]["authority"]["resources"]["capability"]["operations"]["type"],
-            "only"
+            redacted["actors"][0]["authority"]["resources"]["capability"]["operations"]["type"]
+                .as_str(),
+            Some("only")
         );
-        assert_eq!(redacted["secret_sources"]["values"], "[redacted]");
+        assert_eq!(
+            redacted["secret_sources"]["values"].as_str(),
+            Some("[redacted]")
+        );
 
         config.actors[0].authority.resources.capability = CapabilityAuthorityScope::deny_all();
         config.actors[0].authority.dangerous_allow_broad_authority = false;
@@ -1063,26 +1275,28 @@ mod tests {
     #[test]
     fn peer_execution_retention_is_independent_from_application_receipts()
     -> Result<(), Box<dyn std::error::Error>> {
-        let value: serde_json::Value = serde_json::from_slice(&fs::read(fixture_path())?)?;
-        let mut config: DaemonConfig = serde_json::from_value(value)?;
+        let mut config = fixture_document()?;
         config.application_receipts.hot_receipt_bound = 1;
         config.application_receipts.archive_batch_size = 1;
-        config.peers.serving.maximum_global_active = 64;
-        config.peers.serving.maximum_dispatch_queue = 32;
-        config.peers.serving.maximum_hot_terminal_records = 77;
-        config.peers.serving.archive_batch_size = 7;
+        config.peers = PeerHostConfig::Enabled {
+            local_peer_id: "peer:test".to_owned(),
+            relationships: Vec::new(),
+            serving: PeerServingConfig {
+                maximum_global_active: 64,
+                maximum_dispatch_queue: 32,
+                maximum_hot_terminal_records: 77,
+                archive_batch_size: 7,
+                ..PeerServingConfig::default()
+            },
+        };
         let directory = tempfile::tempdir()?;
         let validated = config.validate(directory.path())?;
-        assert_eq!(
-            validated
-                .document
-                .peers
-                .serving
-                .maximum_hot_terminal_records,
-            77
-        );
-        assert_eq!(validated.document.peers.serving.archive_batch_size, 7);
-        assert_eq!(validated.document.application_receipts.hot_receipt_bound, 1);
+        let PeerHostConfig::Enabled { serving, .. } = &validated.peers else {
+            return Err("peer serving plan absent".into());
+        };
+        assert_eq!(serving.maximum_hot_terminal_records, 77);
+        assert_eq!(serving.archive_batch_size, 7);
+        assert_eq!(validated.storage.application_receipts.hot_receipt_bound, 1);
         Ok(())
     }
 

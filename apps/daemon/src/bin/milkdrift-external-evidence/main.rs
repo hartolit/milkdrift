@@ -31,9 +31,9 @@ use milkdrift_control_client::{BearerCredential, ClientConfig, ClientError, Cont
 use milkdrift_control_protocol::{Command, CommandRequest, ProtocolVersion, decode_json};
 use milkdrift_daemon::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, DaemonConfig, DaemonHost, ModelProfileConfig, PeerHostConfig,
-    RuntimeHostConfig, SecretSourceConfig, ShutdownConfig, ShutdownEffectPolicy,
-    ValidatedDaemonConfig, serve,
+    AuthorityPresetConfig, DaemonConfig, DaemonHost, DaemonPlan, ModelProfileConfig,
+    PeerHostConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig, ShutdownEffectPolicy,
+    serve,
 };
 use milkdrift_model::ModelResponseDocument;
 use milkdrift_prompt_sequence::{
@@ -376,7 +376,7 @@ fn configuration(
     model_capability: &str,
     model: &workflows::ModelProfileFacts,
     mut secret_sources: BTreeMap<String, SecretSourceConfig>,
-) -> HarnessResult<(ValidatedDaemonConfig, String, String, String)> {
+) -> HarnessResult<(DaemonPlan, String, String, String)> {
     let process_token = format!("process-{}-{}", std::process::id(), unix_millis());
     let model_token = format!("model-{}-{}", std::process::id(), unix_millis());
     let process_token_path = session_root.join("process.token");
@@ -488,9 +488,7 @@ fn configuration(
     }
     .validate(session_root)
     .map_err(|error| error.to_string())?;
-    let configuration_bytes =
-        serde_json::to_vec(&config.document).map_err(|error| error.to_string())?;
-    let configuration_digest = format!("b3_{}", blake3::hash(&configuration_bytes).to_hex());
+    let configuration_digest = config.normalized_digest().to_owned();
     Ok((config, configuration_digest, process_token, model_token))
 }
 
@@ -626,7 +624,7 @@ fn explicit_grant(
     })
 }
 
-async fn start(config: ValidatedDaemonConfig) -> HarnessResult<RunningDaemon> {
+async fn start(config: DaemonPlan) -> HarnessResult<RunningDaemon> {
     let host = DaemonHost::start(config).map_err(|error| error.to_string())?;
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
@@ -645,7 +643,7 @@ async fn start(config: ValidatedDaemonConfig) -> HarnessResult<RunningDaemon> {
 }
 
 async fn run_process_scenario(
-    config: &ValidatedDaemonConfig,
+    config: &DaemonPlan,
     token: &str,
     agent: &AgentProfile,
     initial_commit: &str,
@@ -1034,7 +1032,7 @@ async fn run_process_scenario(
 }
 
 async fn run_model_scenario(
-    config: &ValidatedDaemonConfig,
+    config: &DaemonPlan,
     token: &str,
     model_capability: &str,
     profile: &workflows::ModelProfileFacts,

@@ -11,8 +11,8 @@ use milkdrift_control_client::{BearerCredential, ClientConfig, ClientError, Cont
 use milkdrift_control_protocol::ErrorCode;
 use milkdrift_daemon::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, DaemonConfig, DaemonHost, PeerHostConfig, RuntimeHostConfig,
-    SecretSourceConfig, ShutdownConfig, ValidatedDaemonConfig, serve,
+    AuthorityPresetConfig, DaemonConfig, DaemonHost, DaemonPlan, PeerHostConfig, RuntimeHostConfig,
+    SecretSourceConfig, ShutdownConfig, serve,
 };
 use serde::Serialize;
 use tokio::{sync::oneshot, task::JoinHandle};
@@ -186,7 +186,7 @@ fn runtime() -> EvidenceResult<tokio::runtime::Runtime> {
         .build()?)
 }
 
-async fn start(config: ValidatedDaemonConfig) -> EvidenceResult<RunningDaemon> {
+async fn start(config: DaemonPlan) -> EvidenceResult<RunningDaemon> {
     let host = DaemonHost::start(config)?;
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let address = listener.local_addr()?;
@@ -212,10 +212,7 @@ async fn stop(running: RunningDaemon) -> EvidenceResult {
     Ok(())
 }
 
-fn configuration(
-    directory: &tempfile::TempDir,
-    request_queue: u32,
-) -> EvidenceResult<ValidatedDaemonConfig> {
+fn configuration(directory: &tempfile::TempDir, request_queue: u32) -> EvidenceResult<DaemonPlan> {
     let token_path = directory.path().join("controller.token");
     write_secret(&token_path, TOKEN)?;
     let config = DaemonConfig {

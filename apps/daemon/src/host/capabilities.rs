@@ -87,12 +87,12 @@ pub(super) fn register_control(
 }
 
 pub(super) fn register_configured(
-    config: &ValidatedDaemonConfig,
+    config: &AdapterConfig,
     host: &CapabilityHost,
     data: Arc<dyn InvocationDataAccess>,
     secrets: Arc<ConfiguredSecretResolver>,
 ) -> Result<(), String> {
-    for path in &config.document.adapters.process_profiles {
+    for path in &config.process_profiles {
         let bytes = fs::read(path)
             .map_err(|error| format!("process profile read failed: {:?}", error.kind()))?;
         let profile = ProcessProfileDocument::from_json(&bytes)
@@ -110,7 +110,7 @@ pub(super) fn register_configured(
         host.refresh_health(&capability, revision, unix_millis())
             .map_err(|error| error.to_string())?;
     }
-    for configured in &config.document.adapters.model_profiles {
+    for configured in &config.model_profiles {
         let bytes = fs::read(&configured.profile)
             .map_err(|error| format!("model profile read failed: {:?}", error.kind()))?;
         let profile = EndpointProfile::from_json(&bytes).map_err(|error| error.to_string())?;

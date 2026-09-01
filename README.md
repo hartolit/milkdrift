@@ -16,50 +16,47 @@ produce reviewable artifacts without treating benchmark values as correctness ga
 
 ## Two-daemon peer example
 
-Peer support is disabled unless `peers.enabled` and explicit relationships are configured. For a local test, daemon B can point at daemon A with:
+Peer support is disabled unless `peers.mode = "enabled"` supplies one local identity and explicit
+relationships. For a local test, daemon B can point at daemon A with this TOML fragment:
 
-```json
-"peers": {
-  "enabled": true,
-  "local_peer_id": "peer-b",
-  "serving": {
-    "worker_threads": 4,
-    "maximum_global_active": 256,
-    "maximum_dispatch_queue": 256,
-    "maximum_hot_terminal_records": 10000,
-    "archive_batch_size": 256,
-    "observation_hot_retention_ms": 86400000,
-    "recovery_page": 128,
-    "poll_interval_ms": 100
-  },
-  "relationships": [{
-    "peer_id": "peer-a",
-    "endpoint": "http://127.0.0.1:9734/",
-    "credential_ref": "credential:peer-a",
-    "insecure_loopback_development": true,
-    "actions": ["read_catalog", "invoke", "cancel"],
-    "capability_allow": ["my-process-capability"],
-    "capability_deny": [],
-    "operation_allow": ["process.execute"],
-    "maximum_side_effect": "read_only",
-    "execution_filesystem": [{
-      "root": "/opt/milkdrift-tools/my-process",
-      "access": ["execute"]
-    }],
-    "execution_network_profiles": [],
-    "execution_network_destinations": [],
-    "execution_secrets": [],
-    "maximum_concurrent": 2,
-    "maximum_requests_per_minute": 600,
-    "maximum_artifact_bytes": 1048576,
-    "artifact_sensitivities": [],
-    "maximum_duration_ms": 30000,
-    "maximum_observations": 128,
-    "trust_zone": "operator-wireguard",
-    "delegation_ref": "delegation:peer-a-b",
-    "expires_at_unix_ms": 1798761600000
-  }]
-}
+```toml
+[peers]
+mode = "enabled"
+local_peer_id = "peer-b"
+
+[peers.serving]
+worker_threads = 4
+maximum_global_active = 256
+maximum_dispatch_queue = 256
+maximum_hot_terminal_records = 10000
+archive_batch_size = 256
+observation_hot_retention_ms = 86400000
+recovery_page = 128
+poll_interval_ms = 100
+
+[[peers.relationships]]
+peer_id = "peer-a"
+endpoint = "http://127.0.0.1:9734/"
+credential_ref = "credential:peer-a"
+insecure_loopback_development = true
+actions = ["read_catalog", "invoke", "cancel"]
+capability_allow = ["my-process-capability"]
+capability_deny = []
+operation_allow = ["process.execute"]
+maximum_side_effect = "read_only"
+execution_filesystem = [{ root = "/opt/milkdrift-tools/my-process", access = ["execute"] }]
+execution_network_profiles = []
+execution_network_destinations = []
+execution_secrets = []
+maximum_concurrent = 2
+maximum_requests_per_minute = 600
+maximum_artifact_bytes = 1048576
+artifact_sensitivities = []
+maximum_duration_ms = 30000
+maximum_observations = 128
+trust_zone = "operator-wireguard"
+delegation_ref = "delegation:peer-a-b"
+expires_at_unix_ms = 1798761600000
 ```
 
 The peer credential remains in `secret_sources`, is resolved at each request, and is never printed. Capability/operation allowlists do not grant host resources: `execution_filesystem`, network, and secret scopes must explicitly contain the selected adapter's declared requirements. Configure the inverse relationship on daemon A, start both daemons, then run:
@@ -75,100 +72,23 @@ The insecure mode refuses non-loopback URLs. Use ordinary HTTPS directly or term
 
 ## Local daemon quick start
 
-Create a private bearer-token file and a version-eight daemon configuration. Relative paths are resolved from the configuration file directory. Presets are deterministic shorthand for exact operation sets only; the required `authority` object supplies every executable resource scope, ceiling, and validity boundary.
+Create a version-nine TOML daemon configuration. Relative paths are resolved from the configuration
+file directory. Presets are deterministic shorthand for exact operation sets only; the required
+`authority` table supplies every executable resource scope, ceiling, and validity boundary. The
+checked fixture is a complete minimal starting point:
 
 ```sh
-install -m 600 /dev/null operator.token
-printf '%s' 'replace-with-a-long-random-local-token' > operator.token
-cat > daemon.json <<'JSON'
-{
-  "schema_version": 8,
-  "data_root": "./milkdrift-data",
-  "bind": "127.0.0.1:9734",
-  "secret_sources": {
-    "credential:operator": { "type": "file", "path": "./operator.token" }
-  },
-  "actors": [{
-    "credential_ref": "credential:operator",
-    "actor": "human:operator",
-    "grant_id": "grant:operator",
-    "grant_revision": 1,
-    "revocation_generation": 0,
-    "preset": "controller",
-    "authority": {
-      "resources": {
-        "workflow_run": { "type": "workflow", "workflow": "example-workflow" },
-        "capability": {
-          "type": "allow",
-          "identities": { "type": "only", "values": ["local-example"] },
-          "categories": { "type": "any" },
-          "operations": { "type": "only", "values": ["process.execute"] },
-          "provider_profiles": { "type": "any" },
-          "trust_zones": { "type": "only", "values": ["local-process"] },
-          "execution_trust_classes": { "type": "only", "values": ["trusted_host_process"] },
-          "localities": { "type": "only", "values": ["local"] },
-          "peers": { "type": "any" },
-          "maximum_side_effect": "read_only"
-        },
-        "filesystem": [],
-        "network": { "profiles": [], "destinations": [] },
-        "secrets": [],
-        "artifacts": { "type": "deny_all" },
-        "layouts": { "type": "deny_all" },
-        "peers": { "identities": [], "allow_any": false },
-        "daemon": {
-          "readiness": true,
-          "detailed_health": false,
-          "own_authority": true,
-          "configuration": false,
-          "audit": false
-        },
-        "workspace": { "scopes": [], "allow_any_in_run": false }
-      },
-      "budget": {
-        "cost_minor": 1000,
-        "duration_ms": 300000,
-        "invocations": 1000,
-        "artifact_bytes": 67108864,
-        "units": 1000000,
-        "concurrency": 4
-      },
-      "valid_from": 0,
-      "valid_until": 4102444800000,
-      "dangerous_allow_broad_authority": false
-    },
-    "enabled": true
-  }],
-  "runtime": {
-    "request_queue": 128,
-    "maintenance_interval_ms": 100,
-    "maximum_tick_items": 128,
-    "global_concurrency": 32,
-    "per_run_concurrency": 8,
-    "per_branch_concurrency": 4,
-    "per_capability_concurrency": 8,
-    "effect_threads": 4,
-    "effect_queue": 64,
-    "cancellation_queue": 32,
-    "maximum_effect_claim": 32,
-    "lease_duration_ms": 30000
-  },
-  "adapters": { "process_profiles": [], "model_profiles": [] },
-  "shutdown": { "deadline_ms": 10000, "effect_policy": "drain" },
-  "application_receipts": {
-    "hot_receipt_bound": 10000,
-    "archive_batch_size": 256
-  },
-  "security_audit_record_bound": 10000
-}
-JSON
-cargo run -p milkdrift-daemon -- --config daemon.json
+cp apps/daemon/tests/fixtures/daemon-config-v9.toml daemon.toml
+export MILKDRIFT_OPERATOR_TOKEN='replace-with-a-long-random-local-token'
+cargo run -p milkdrift-daemon --bin milkdrift-daemon -- --config daemon.toml --check-config
+cargo run -p milkdrift-daemon --bin milkdrift-daemon -- --config daemon.toml --print-effective-config
+cargo run -p milkdrift-daemon --bin milkdrift-daemon -- --config daemon.toml
 ```
 
 In another terminal:
 
 ```sh
-export MILKDRIFT_TOKEN_FILE="$PWD/operator.token"
+export MILKDRIFT_TOKEN='replace-with-the-same-long-random-local-token'
 cargo run -p milkdrift-cli -- daemon readiness
 cargo run -p milkdrift-cli -- --json capability list
 cargo run -p milkdrift-cli -- blueprint import crates/blueprint/tests/fixtures/revision-v2.json

@@ -17,9 +17,9 @@ use milkdrift_control_client::{BearerCredential, ClientConfig, ControlClient};
 use milkdrift_control_protocol::{Command, CommandRequest, PageRequest, ProtocolVersion};
 use milkdrift_daemon::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, DaemonConfig, DaemonHost, PeerHostConfig, PeerRelationshipConfig,
-    PeerServingConfig, PeerSideEffectConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
-    ValidatedDaemonConfig, serve,
+    AuthorityPresetConfig, DaemonConfig, DaemonHost, DaemonPlan, PeerHostConfig,
+    PeerRelationshipConfig, PeerServingConfig, PeerSideEffectConfig, RuntimeHostConfig,
+    SecretSourceConfig, ShutdownConfig, serve,
 };
 use milkdrift_peer_protocol::PeerAction;
 use milkdrift_peer_protocol::PeerRequestId;
@@ -350,7 +350,7 @@ fn configuration(
     local_peer: &str,
     remote_peer: &str,
     remote_endpoint: &Url,
-) -> TestResult<ValidatedDaemonConfig> {
+) -> TestResult<DaemonPlan> {
     let operator = root.path().join("operator.token");
     let peer = root.path().join("peer.token");
     write_secret(&operator, OPERATOR_TOKEN)?;
@@ -408,9 +408,8 @@ fn configuration(
             process_profiles,
             ..AdapterConfig::default()
         },
-        peers: PeerHostConfig {
-            enabled: true,
-            local_peer_id: Some(local_peer.to_owned()),
+        peers: PeerHostConfig::Enabled {
+            local_peer_id: local_peer.to_owned(),
             serving: PeerServingConfig {
                 worker_threads: 2,
                 maximum_global_active: 2,

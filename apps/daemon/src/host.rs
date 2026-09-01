@@ -76,7 +76,10 @@ use tracing::{info, warn};
 
 use crate::{
     auth::{ActorSession, AuthRegistry, ConfiguredSecretResolver},
-    config::{PeerSideEffectConfig, ShutdownEffectPolicy, ValidatedDaemonConfig},
+    config::{
+        AdapterConfig, DaemonPlan, DaemonPlanParts, PeerHostConfig, PeerServingConfig,
+        PeerSideEffectConfig, RuntimeHostConfig, ShutdownConfig, ShutdownEffectPolicy, StoragePlan,
+    },
 };
 
 mod artifacts;
@@ -359,13 +362,28 @@ impl std::fmt::Debug for DaemonHost {
     }
 }
 
+fn peer_serving(peers: &PeerHostConfig) -> Option<&PeerServingConfig> {
+    match peers {
+        PeerHostConfig::Disabled => None,
+        PeerHostConfig::Enabled { serving, .. } => Some(serving),
+    }
+}
+
 impl DaemonHost {
     /// Starts the dedicated owner, completes recovery/adapters/workers, then returns ready.
-    pub fn start(config: ValidatedDaemonConfig) -> Result<Self, HostError> {
-        let auth = AuthRegistry::from_config(&config)
+    pub fn start(config: DaemonPlan) -> Result<Self, HostError> {
+        let DaemonPlanParts {
+            storage,
+            authentication,
+            runtime,
+            adapters,
+            peers,
+            shutdown,
+        } = config.into_parts();
+        let auth = AuthRegistry::from_plan(&authentication)
             .map_err(|error| HostError::Configuration(error.to_string()))?;
-        let queue_capacity = config.document.runtime.request_queue;
-        let shutdown_deadline = Duration::from_millis(config.document.shutdown.deadline_ms);
+        let queue_capacity = runtime.request_queue;
+        let shutdown_deadline = Duration::from_millis(shutdown.deadline_ms);
         let queue_size = usize::try_from(queue_capacity)
             .map_err(|_| HostError::Configuration("request queue exceeds platform".to_owned()))?;
         let (sender, receiver) = sync_channel(queue_size);
@@ -378,27 +396,28 @@ impl DaemonHost {
             active_effects: AtomicU32::new(0),
             last_failure: Mutex::new(None),
             receipt_hot_count: AtomicU64::new(0),
-            receipt_hot_bound: config.document.application_receipts.hot_receipt_bound,
-            receipt_archive_batch_size: config.document.application_receipts.archive_batch_size,
+            receipt_hot_bound: storage.application_receipts.hot_receipt_bound,
+            receipt_archive_batch_size: storage.application_receipts.archive_batch_size,
             receipt_cold_count: AtomicU64::new(0),
             receipt_archive_generation: AtomicU64::new(0),
             receipt_last_archived_at: AtomicU64::new(0),
             receipt_archival_degraded: AtomicBool::new(false),
             receipt_archival_failure: Mutex::new(None),
-            peer_enabled: config.document.peers.enabled,
+            peer_enabled: matches!(&peers, PeerHostConfig::Enabled { .. }),
             peer_active_count: AtomicU32::new(0),
-            peer_active_bound: config.document.peers.serving.maximum_global_active,
+            peer_active_bound: peer_serving(&peers)
+                .map_or(0, |serving| serving.maximum_global_active),
             peer_dispatch_queued: AtomicU32::new(0),
-            peer_dispatch_bound: config.document.peers.serving.maximum_dispatch_queue,
+            peer_dispatch_bound: peer_serving(&peers)
+                .map_or(0, |serving| serving.maximum_dispatch_queue),
             peer_hot_terminal_count: AtomicU64::new(0),
-            peer_hot_terminal_bound: config.document.peers.serving.maximum_hot_terminal_records,
+            peer_hot_terminal_bound: peer_serving(&peers)
+                .map_or(0, |serving| serving.maximum_hot_terminal_records),
             peer_tombstone_count: AtomicU64::new(0),
-            peer_archive_batch_size: config.document.peers.serving.archive_batch_size,
-            peer_observation_hot_retention_ms: config
-                .document
-                .peers
-                .serving
-                .observation_hot_retention_ms,
+            peer_archive_batch_size: peer_serving(&peers)
+                .map_or(0, |serving| serving.archive_batch_size),
+            peer_observation_hot_retention_ms: peer_serving(&peers)
+                .map_or(0, |serving| serving.observation_hot_retention_ms),
             peer_archive_generation: AtomicU64::new(0),
             peer_last_archived_at: AtomicU64::new(0),
             peer_archival_degraded: AtomicBool::new(false),
@@ -406,12 +425,19 @@ impl DaemonHost {
         });
         let thread_health = health.clone();
         let thread_auth = auth.clone();
-        let maintenance = Duration::from_millis(config.document.runtime.maintenance_interval_ms);
+        let maintenance = Duration::from_millis(runtime.maintenance_interval_ms);
+        let owner_plan = OwnerPlan {
+            storage,
+            runtime,
+            adapters,
+            peers,
+            shutdown,
+        };
         let join = thread::Builder::new()
             .name("milkdrift-runtime-owner".to_owned())
             .spawn(move || {
                 info!(phase = "startup", "runtime owner starting");
-                let mut owner = match Owner::open(config, thread_auth, thread_health.clone()) {
+                let mut owner = match Owner::open(owner_plan, thread_auth, thread_health.clone()) {
                     Ok(owner) => owner,
                     Err(failure) => {
                         warn!(
@@ -865,8 +891,16 @@ struct OwnerRequest {
     reply: oneshot::Sender<Result<OwnerValue, PublicFailure>>,
 }
 
+struct OwnerPlan {
+    storage: StoragePlan,
+    runtime: RuntimeHostConfig,
+    adapters: AdapterConfig,
+    peers: PeerHostConfig,
+    shutdown: ShutdownConfig,
+}
+
 struct Owner {
-    config: ValidatedDaemonConfig,
+    shutdown: ShutdownConfig,
     store: Arc<RedbStore>,
     runtime: Arc<RuntimeService>,
     control: Arc<ControlService>,
@@ -884,20 +918,27 @@ struct PeerRuntime {
 
 impl Owner {
     fn open(
-        config: ValidatedDaemonConfig,
+        plan: OwnerPlan,
         auth: AuthRegistry,
         health: Arc<SharedHealth>,
     ) -> Result<Self, String> {
-        fs::create_dir_all(&config.document.data_root)
+        let OwnerPlan {
+            storage,
+            runtime: runtime_plan,
+            adapters,
+            peers,
+            shutdown,
+        } = plan;
+        fs::create_dir_all(&storage.data_root)
             .map_err(|error| format!("data root creation failed: {:?}", error.kind()))?;
-        if config.document.data_root.join(LEGACY_SIDECAR_FILE).exists() {
+        if storage.data_root.join(LEGACY_SIDECAR_FILE).exists() {
             return Err(
                 "legacy control-state-v1.json is unsupported; this release refuses sidecar state instead of silently importing or ignoring idempotency truth"
                     .to_owned(),
             );
         }
         for prototype in ["peer-executions-v1", "peer-artifacts-v1"] {
-            if config.document.data_root.join(prototype).exists() {
+            if storage.data_root.join(prototype).exists() {
                 return Err(format!(
                     "prototype {prototype} storage is unsupported; this release refuses parallel peer authorities instead of partially importing them"
                 ));
@@ -905,12 +946,12 @@ impl Owner {
         }
         let store = Arc::new(
             RedbStore::open_with_config(
-                RedbStoreConfig::new(&config.document.data_root)
+                RedbStoreConfig::new(&storage.data_root)
                     .with_application_receipt_lifecycle(
-                        config.document.application_receipts.hot_receipt_bound,
-                        config.document.application_receipts.archive_batch_size,
+                        storage.application_receipts.hot_receipt_bound,
+                        storage.application_receipts.archive_batch_size,
                     )
-                    .with_security_audit_limit(config.document.security_audit_record_bound),
+                    .with_security_audit_limit(storage.security_audit_record_bound),
             )
             .map_err(|error| error.to_string())?,
         );
@@ -927,17 +968,17 @@ impl Owner {
             HostConfig {
                 max_registrations: 1_024,
                 max_generations_per_capability: 16,
-                max_concurrent_per_generation: config.document.runtime.global_concurrency,
+                max_concurrent_per_generation: runtime_plan.global_concurrency,
                 observation_stale_after_ms: 60_000,
             },
             CapabilitySelectionPolicy::priorities(BTreeMap::new()),
         )
         .map_err(|error| error.to_string())?;
         let scheduler = SchedulerLimits::new(
-            config.document.runtime.global_concurrency,
-            config.document.runtime.per_run_concurrency,
-            config.document.runtime.per_branch_concurrency,
-            config.document.runtime.per_capability_concurrency,
+            runtime_plan.global_concurrency,
+            runtime_plan.per_run_concurrency,
+            runtime_plan.per_branch_concurrency,
+            runtime_plan.per_capability_concurrency,
         )
         .map_err(|error| error.to_string())?;
         let retry = RetryPolicy::new(
@@ -955,8 +996,8 @@ impl Owner {
         let runtime_config = RuntimeConfig::new(
             WorkerId::new("daemon-worker").map_err(|error| error.to_string())?,
             ActorRef::new("service:daemon-runtime").map_err(|error| error.to_string())?,
-            config.document.runtime.lease_duration_ms,
-            config.document.runtime.maximum_tick_items,
+            runtime_plan.lease_duration_ms,
+            runtime_plan.maximum_tick_items,
             scheduler,
             retry,
         )
@@ -983,7 +1024,7 @@ impl Owner {
         let data = Arc::new(
             StoreInvocationDataAccess::new(
                 store.clone(),
-                config.document.data_root.join("execution"),
+                storage.data_root.join("execution"),
                 ArtifactReadAuthority::Authorized {
                     actor: ActorRef::new("service:daemon-runtime")
                         .map_err(|error| error.to_string())?,
@@ -1015,9 +1056,14 @@ impl Owner {
             })
             .map_err(|error| error.to_string())?;
         capabilities::register_control(&capability_host, control.clone(), data.clone())?;
-        capabilities::register_configured(&config, &capability_host, data, auth.resolver())?;
-        let peer_runtime =
-            build_peer_runtime(&config, &capability_host, store.clone(), auth.resolver())?;
+        capabilities::register_configured(&adapters, &capability_host, data, auth.resolver())?;
+        let peer_runtime = build_peer_runtime(
+            &peers,
+            runtime_plan.lease_duration_ms,
+            &capability_host,
+            store.clone(),
+            auth.resolver(),
+        )?;
         if let Some(service) = &peer_runtime.service {
             service.recover(1_024).map_err(|error| error.to_string())?;
             health.peer_status(
@@ -1030,10 +1076,10 @@ impl Owner {
             runtime.clone(),
             capability_host.clone(),
             EffectWorkerConfig {
-                execution_threads: config.document.runtime.effect_threads,
-                execution_queue: config.document.runtime.effect_queue,
-                cancellation_queue: config.document.runtime.cancellation_queue,
-                maximum_claim_page: config.document.runtime.maximum_effect_claim,
+                execution_threads: runtime_plan.effect_threads,
+                execution_queue: runtime_plan.effect_queue,
+                cancellation_queue: runtime_plan.cancellation_queue,
+                maximum_claim_page: runtime_plan.maximum_effect_claim,
             },
         )
         .map_err(|error| error.to_string())?;
@@ -1042,7 +1088,7 @@ impl Owner {
             .map_err(|error| error.to_string())?;
         health.active_effects.store(0, Ordering::SeqCst);
         Ok(Self {
-            config,
+            shutdown,
             store,
             runtime,
             control,
@@ -1481,12 +1527,12 @@ impl Owner {
             let _ = registry.disconnect();
         }
         self.runtime.begin_shutdown();
-        let mode = match self.config.document.shutdown.effect_policy {
+        let mode = match self.shutdown.effect_policy {
             ShutdownEffectPolicy::Drain => EffectShutdownMode::Drain,
             ShutdownEffectPolicy::Cancel => EffectShutdownMode::Cancel,
             ShutdownEffectPolicy::Retain => EffectShutdownMode::Retain,
         };
-        let deadline = Duration::from_millis(self.config.document.shutdown.deadline_ms);
+        let deadline = Duration::from_millis(self.shutdown.deadline_ms);
         let shutdown_started = std::time::Instant::now();
         let peer_shutdown = self
             .peer_service
@@ -1701,26 +1747,24 @@ impl ControlResultSink for ResultSink {
 }
 
 fn build_peer_runtime(
-    config: &ValidatedDaemonConfig,
+    peers: &PeerHostConfig,
+    execution_lease_ms: u64,
     host: &CapabilityHost,
     store: Arc<RedbStore>,
     secrets: Arc<ConfiguredSecretResolver>,
 ) -> Result<PeerRuntime, String> {
-    if !config.document.peers.enabled {
+    let PeerHostConfig::Enabled {
+        local_peer_id,
+        relationships: configured_relationships,
+        serving,
+    } = peers
+    else {
         return Ok(PeerRuntime {
             service: None,
             registries: BTreeMap::new(),
         });
-    }
-    let local_peer = PeerId::new(
-        config
-            .document
-            .peers
-            .local_peer_id
-            .clone()
-            .ok_or_else(|| "enabled peer support lacks local identity".to_owned())?,
-    )
-    .map_err(|error| error.to_string())?;
+    };
+    let local_peer = PeerId::new(local_peer_id.clone()).map_err(|error| error.to_string())?;
     let mut session_hasher = blake3::Hasher::new();
     session_hasher.update(b"milkdrift.peer.session.v1\0");
     session_hasher.update(local_peer.as_str().as_bytes());
@@ -1735,7 +1779,7 @@ fn build_peer_runtime(
     let mut relationships = Vec::new();
     let mut clients = Vec::new();
     let mut authentication = Vec::new();
-    for configured in &config.document.peers.relationships {
+    for configured in configured_relationships {
         let reference =
             SecretRef::new(configured.credential_ref.clone()).map_err(|error| error.to_string())?;
         let credential = Arc::new(
@@ -1861,26 +1905,20 @@ fn build_peer_runtime(
             lease: HeartbeatLease {
                 heartbeat_ms: 5_000,
                 idle_timeout_ms: 20_000,
-                execution_lease_ms: config.document.runtime.lease_duration_ms,
+                execution_lease_ms,
             },
             relationships,
             workers: PeerWorkerConfig {
-                threads: config.document.peers.serving.worker_threads,
-                maximum_global_active: config.document.peers.serving.maximum_global_active,
-                maximum_dispatch_queue: config.document.peers.serving.maximum_dispatch_queue,
-                maximum_hot_terminal_records: config
-                    .document
-                    .peers
-                    .serving
-                    .maximum_hot_terminal_records,
-                archive_batch_size: config.document.peers.serving.archive_batch_size,
+                threads: serving.worker_threads,
+                maximum_global_active: serving.maximum_global_active,
+                maximum_dispatch_queue: serving.maximum_dispatch_queue,
+                maximum_hot_terminal_records: serving.maximum_hot_terminal_records,
+                archive_batch_size: serving.archive_batch_size,
                 observation_hot_retention: Duration::from_millis(
-                    config.document.peers.serving.observation_hot_retention_ms,
+                    serving.observation_hot_retention_ms,
                 ),
-                recovery_page: config.document.peers.serving.recovery_page,
-                poll_interval: Duration::from_millis(
-                    config.document.peers.serving.poll_interval_ms,
-                ),
+                recovery_page: serving.recovery_page,
+                poll_interval: Duration::from_millis(serving.poll_interval_ms),
             },
         },
         host.clone(),
@@ -1888,10 +1926,7 @@ fn build_peer_runtime(
         Arc::new(
             CorePeerArtifactStore::new(
                 store,
-                config
-                    .document
-                    .peers
-                    .relationships
+                configured_relationships
                     .iter()
                     .map(|relationship| relationship.maximum_artifact_bytes)
                     .max()

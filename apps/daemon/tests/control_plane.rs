@@ -31,8 +31,8 @@ use milkdrift_control_protocol::{
 };
 use milkdrift_daemon::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, DaemonConfig, DaemonHost, PeerHostConfig, RuntimeHostConfig,
-    SecretSourceConfig, ShutdownConfig, ValidatedDaemonConfig, serve,
+    AuthorityPresetConfig, DaemonConfig, DaemonHost, DaemonPlan, PeerHostConfig, RuntimeHostConfig,
+    SecretSourceConfig, ShutdownConfig, serve,
 };
 use milkdrift_persistence::{
     ApplicationPageQuery, ArtifactPublicationId, ArtifactStore, BeginArtifactPublication, PageSize,
@@ -73,7 +73,7 @@ impl RunningDaemon {
     }
 }
 
-async fn start(config: ValidatedDaemonConfig, token: &str) -> TestResult<RunningDaemon> {
+async fn start(config: DaemonPlan, token: &str) -> TestResult<RunningDaemon> {
     let host = DaemonHost::start(config)?;
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let address = listener.local_addr()?;
@@ -100,7 +100,7 @@ fn client(endpoint: &Url, token: &str) -> Result<ControlClient, ClientError> {
     ControlClient::new(config, BearerCredential::new(token)?)
 }
 
-fn configuration(directory: &TempDir, request_queue: u32) -> TestResult<ValidatedDaemonConfig> {
+fn configuration(directory: &TempDir, request_queue: u32) -> TestResult<DaemonPlan> {
     configuration_with_process_profiles(directory, request_queue, Vec::new())
 }
 
@@ -108,7 +108,17 @@ fn configuration_with_process_profiles(
     directory: &TempDir,
     request_queue: u32,
     process_profiles: Vec<std::path::PathBuf>,
-) -> TestResult<ValidatedDaemonConfig> {
+) -> TestResult<DaemonPlan> {
+    configuration_document_with_process_profiles(directory, request_queue, process_profiles)?
+        .validate(directory.path())
+        .map_err(Into::into)
+}
+
+fn configuration_document_with_process_profiles(
+    directory: &TempDir,
+    request_queue: u32,
+    process_profiles: Vec<std::path::PathBuf>,
+) -> TestResult<DaemonConfig> {
     write_secret(&directory.path().join("controller.token"), CONTROLLER_TOKEN)?;
     write_secret(&directory.path().join("observer.token"), OBSERVER_TOKEN)?;
     let runtime = RuntimeHostConfig {
@@ -116,7 +126,7 @@ fn configuration_with_process_profiles(
         maintenance_interval_ms: 10,
         ..RuntimeHostConfig::default()
     };
-    DaemonConfig {
+    Ok(DaemonConfig {
         schema_version: milkdrift_daemon::DAEMON_CONFIG_SCHEMA_VERSION,
         data_root: directory.path().join("data"),
         bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
@@ -168,9 +178,7 @@ fn configuration_with_process_profiles(
             archive_batch_size: 64,
         },
         security_audit_record_bound: 1_000,
-    }
-    .validate(directory.path())
-    .map_err(Into::into)
+    })
 }
 
 fn configured_process_profile(directory: &TempDir) -> TestResult<std::path::PathBuf> {
@@ -1080,10 +1088,10 @@ async fn daemon_auth_startup_readiness_and_authority() -> TestResult {
 async fn daemon_accepts_commands_across_hot_receipt_turnovers_and_replays_cold_after_restart()
 -> TestResult {
     let directory = tempfile::tempdir()?;
-    let mut config = configuration(&directory, 16)?;
-    config.document.application_receipts.hot_receipt_bound = 1;
-    config.document.application_receipts.archive_batch_size = 1;
-    let config = config.document.validate(&config.configuration_directory)?;
+    let mut document = configuration_document_with_process_profiles(&directory, 16, Vec::new())?;
+    document.application_receipts.hot_receipt_bound = 1;
+    document.application_receipts.archive_batch_size = 1;
+    let config = document.validate(directory.path())?;
     let restart_config = config.clone();
     let daemon = start(config, CONTROLLER_TOKEN).await?;
     let import_request = request(
@@ -1147,7 +1155,8 @@ async fn daemon_accepts_commands_across_hot_receipt_turnovers_and_replays_cold_a
 async fn scoped_read_matrix_and_continuations_fail_closed() -> TestResult {
     let directory = tempfile::tempdir()?;
     let profile = configured_process_profile(&directory)?;
-    let config = configuration_with_process_profiles(&directory, 16, vec![profile])?;
+    let document = configuration_document_with_process_profiles(&directory, 16, vec![profile])?;
+    let config = document.clone().validate(directory.path())?;
     let daemon = start(config.clone(), CONTROLLER_TOKEN).await?;
     let golden_revision = import_blueprint(&daemon.client, "matrix-import-golden").await?;
     let process_import = daemon
@@ -1339,10 +1348,10 @@ async fn scoped_read_matrix_and_continuations_fail_closed() -> TestResult {
     drop(health);
     daemon.stop().await?;
 
-    let mut narrowed = config;
-    narrowed.document.actors[0].grant_revision = 2;
-    narrowed.document.actors[0].authority.resources.capability =
-        CapabilityAuthorityScope::deny_all();
+    let mut narrowed = document;
+    narrowed.actors[0].grant_revision = 2;
+    narrowed.actors[0].authority.resources.capability = CapabilityAuthorityScope::deny_all();
+    let narrowed = narrowed.validate(directory.path())?;
     let restarted = start(narrowed, CONTROLLER_TOKEN).await?;
     assert!(matches!(
         restarted.client.revisions(
@@ -1560,13 +1569,7 @@ async fn layout_is_optimistic_restart_durable_and_semantically_inert() -> TestRe
             .semantic_digest,
         semantic_digest
     );
-    assert!(
-        !config
-            .document
-            .data_root
-            .join("control-state-v1.json")
-            .exists()
-    );
+    assert!(!directory.path().join("data/control-state-v1.json").exists());
     daemon.stop().await?;
 
     let restarted = start(config, CONTROLLER_TOKEN).await?;
@@ -1785,7 +1788,7 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
     let profile = configured_process_profile(&directory)?;
     let config = configuration_with_process_profiles(&directory, 16, vec![profile])?;
     let (artifact_id, artifact_bytes) =
-        publish_restricted_test_artifact(&config.document.data_root)?;
+        publish_restricted_test_artifact(&directory.path().join("data"))?;
     let daemon = start(config.clone(), CONTROLLER_TOKEN).await?;
     assert!(
         daemon
@@ -1971,9 +1974,10 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
 fn daemon_startup_refuses_legacy_sidecar_and_peer_prototype_authority() -> TestResult {
     let directory = tempfile::tempdir()?;
     let config = configuration(&directory, 16)?;
-    fs::create_dir_all(&config.document.data_root)?;
+    let data_root = directory.path().join("data");
+    fs::create_dir_all(&data_root)?;
     fs::write(
-        config.document.data_root.join("control-state-v1.json"),
+        data_root.join("control-state-v1.json"),
         br#"{"schema_version":1,"layouts":{},"commands":{"broken":true}}"#,
     )?;
     let result = DaemonHost::start(config);
@@ -1981,7 +1985,7 @@ fn daemon_startup_refuses_legacy_sidecar_and_peer_prototype_authority() -> TestR
     for prototype in ["peer-executions-v1", "peer-artifacts-v1"] {
         let directory = tempfile::tempdir()?;
         let config = configuration(&directory, 16)?;
-        fs::create_dir_all(config.document.data_root.join(prototype))?;
+        fs::create_dir_all(directory.path().join("data").join(prototype))?;
         assert!(DaemonHost::start(config).is_err());
     }
     Ok(())

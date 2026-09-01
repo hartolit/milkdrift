@@ -18,7 +18,9 @@ snapshot. Git, CI, releases, and external audits own chronology.
   Capability and artifact selectors are explicit `Any`, bounded nonempty `Only`, or whole-scope
   `DenyAll`; layout authority is deny-all or shared revisions only. Empty collections never mean
   wildcard, and private actor-owned layouts are not advertised as executable daemon state.
-- `milkdrift-daemon` is the single bounded synchronous owner of redb, runtime, control, adapters,
+- `milkdrift-daemon` compiles bounded duplicate-safe TOML schema 9 into immutable storage,
+  authentication, runtime, adapter, peer, and shutdown plans; the superseded JSON/global-document
+  path is refused. It is the single bounded synchronous owner of redb, runtime, control, adapters,
   peers, receipts, layouts, and proposal discovery. A dedicated owner thread sits behind a bounded
   channel; overload, startup recovery, readiness, periodic maintenance, and ordered shutdown are
   explicit. The CLI is a storage-free client of `milkdrift-control-client`.
@@ -83,7 +85,7 @@ Current exact versions are:
 | Local-process profile / host materialization | 2 / 1; process v1 refused |
 | External control / authenticated cursor | 2.2 / 2; legacy forms refused |
 | Peer protocol and catalog messages | 1.2; earlier minors refused |
-| Daemon configuration | 8; earlier versions refused |
+| Daemon configuration | 9 TOML; JSON and earlier versions refused |
 | Layout document / CLI JSON output | 1 / 1 |
 
 ## Limitations now
@@ -135,11 +137,11 @@ Current exact versions are:
   and the 2,049-occurrence runtime frontier. The seven pinned mutation shards cover 398 mutants:
   375 caught, 21 compiler-unviable, and two exact reviewed unreachable-state classifications, with
   no timeout or unclassified survivor.
-- The simplified all-feature `cargo-public-api` inventory is 6,586 items, down 11 from the measured
-  6,597 baseline through removal of compatibility identity exports, unused legacy constants, and
-  the daemon router export. Redb has 156 all-feature items but only 88 default-feature items because
-  68 fault/mutation items are test-only. Lint allowances are 81, down from 82; every retained
-  allowance has an immediate reviewed rationale.
+- The simplified all-feature `cargo-public-api` inventory is 6,604 items. The daemon has 140 items
+  and exposes its effective configuration as an opaque compiled plan rather than validated raw
+  fields. Redb has 156 all-feature items but only 88 default-feature items because 68
+  fault/mutation items are test-only. Lint allowances are 81; every retained allowance has an
+  immediate reviewed rationale.
 - The maintained evidence suites cover immutable/schema readers, validating constructors, hostile
   bounds, exact idempotency/conflict, crash/reopen and deterministic fault boundaries, projection
   replay, reconciliation, causal context, process/model adapters, controller lifecycle, application

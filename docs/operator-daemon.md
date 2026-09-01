@@ -2,6 +2,13 @@
 
 `milkdrift-daemon` is the only supported local owner of one configured data root. Clients use the authenticated control API; they never open redb, mutate the journal, or write application state directly. A second daemon/store opener fails with a typed owner-busy error while the first process holds the domain lock.
 
+Operator-authored daemon configuration is TOML schema 9. Loading is bounded, rejects duplicate and
+unknown keys, normalizes paths relative to the configuration file, validates cross-section safety,
+and compiles the raw document into immutable storage, authentication, runtime, adapter, peer, and
+shutdown plans. JSON has no fallback reader, and internal subsystems do not receive the raw global
+document. Use `--check-config` for validation and `--print-effective-config` for normalized redacted
+TOML before startup.
+
 ## Startup and readiness
 
 Startup is deliberately fail-closed and ordered:
@@ -37,7 +44,7 @@ resource dimension; merely enabling the existing hook is unsupported.
 
 ## Application receipts and retention
 
-Configuration schema 8 uses `application_receipts.hot_receipt_bound` for the recent operational tier and `application_receipts.archive_batch_size` for one oldest-first move. Startup first re-establishes the configured hot-receipt and security-audit bounds, including when a restart selects smaller limits. The runtime maintenance interval performs bounded archival, and a new-command transaction reclaims enough eligible batches to preserve the current ceiling. `security_audit_record_bound` is a separate evicting audit-prefix policy. `peers.serving.maximum_hot_terminal_records`, `archive_batch_size`, and `observation_hot_retention_ms` independently govern peer execution detail. Artifacts and runtime event/snapshot retention are not derived from any of those values.
+Configuration schema 9 uses `application_receipts.hot_receipt_bound` for the recent operational tier and `application_receipts.archive_batch_size` for one oldest-first move. Startup first re-establishes the configured hot-receipt and security-audit bounds, including when a restart selects smaller limits. The runtime maintenance interval performs bounded archival, and a new-command transaction reclaims enough eligible batches to preserve the current ceiling. `security_audit_record_bound` is a separate evicting audit-prefix policy. In enabled peer mode, `peers.serving.maximum_hot_terminal_records`, `archive_batch_size`, and `observation_hot_retention_ms` independently govern peer execution detail. Artifacts and runtime event/snapshot retention are not derived from any of those values.
 
 An application receipt binds the authenticated actor, exact grant identity/revision/digest, client command identity, canonical command/schema digest, accepted or intentional deterministic rejected result, effect reference, and timestamps. Reuse with the same digest returns that stored result from either tier; reuse with another digest permanently fails conflict. Same-store layout/proposal effects commit atomically with receipt insertion and any required hot-to-cold move. Runtime/control effects reconcile through their existing stable internal command identities when a crash separates runtime acceptance from receipt commit.
 

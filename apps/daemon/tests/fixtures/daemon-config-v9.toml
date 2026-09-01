@@ -1,0 +1,124 @@
+schema_version = 9
+data_root = "./test-data"
+bind = "127.0.0.1:9734"
+security_audit_record_bound = 10000
+
+[secret_sources."credential:operator"]
+type = "environment"
+variable = "MILKDRIFT_OPERATOR_TOKEN"
+
+[[actors]]
+credential_ref = "credential:operator"
+actor = "human:operator"
+grant_id = "grant:operator"
+grant_revision = 1
+revocation_generation = 0
+preset = "controller"
+enabled = true
+
+[actors.authority]
+valid_from = 0
+valid_until = 4102444800000
+dangerous_allow_broad_authority = false
+
+[actors.authority.resources]
+filesystem = []
+secrets = []
+
+[actors.authority.resources.workflow_run]
+type = "workflow"
+workflow = "example-workflow"
+
+[actors.authority.resources.capability]
+type = "allow"
+maximum_side_effect = "read_only"
+
+[actors.authority.resources.capability.identities]
+type = "only"
+values = ["local-example"]
+
+[actors.authority.resources.capability.categories]
+type = "any"
+
+[actors.authority.resources.capability.operations]
+type = "only"
+values = ["process.execute"]
+
+[actors.authority.resources.capability.provider_profiles]
+type = "any"
+
+[actors.authority.resources.capability.trust_zones]
+type = "only"
+values = ["local-process"]
+
+[actors.authority.resources.capability.execution_trust_classes]
+type = "any"
+
+[actors.authority.resources.capability.localities]
+type = "only"
+values = ["local"]
+
+[actors.authority.resources.capability.peers]
+type = "any"
+
+[actors.authority.resources.network]
+profiles = []
+destinations = []
+
+[actors.authority.resources.artifacts]
+type = "deny_all"
+
+[actors.authority.resources.layouts]
+type = "deny_all"
+
+[actors.authority.resources.peers]
+identities = []
+allow_any = false
+
+[actors.authority.resources.daemon]
+readiness = true
+detailed_health = false
+own_authority = true
+configuration = false
+audit = false
+
+[actors.authority.resources.workspace]
+scopes = []
+allow_any_in_run = false
+
+[actors.authority.budget]
+cost_minor = 1000
+duration_ms = 300000
+invocations = 1000
+artifact_bytes = 67108864
+units = 1000000
+concurrency = 4
+
+[runtime]
+request_queue = 128
+maintenance_interval_ms = 100
+maximum_tick_items = 128
+global_concurrency = 32
+per_run_concurrency = 8
+per_branch_concurrency = 4
+per_capability_concurrency = 8
+effect_threads = 4
+effect_queue = 64
+cancellation_queue = 32
+maximum_effect_claim = 32
+lease_duration_ms = 30000
+
+[adapters]
+process_profiles = []
+model_profiles = []
+
+[peers]
+mode = "disabled"
+
+[shutdown]
+deadline_ms = 10000
+effect_policy = "drain"
+
+[application_receipts]
+hot_receipt_bound = 10000
+archive_batch_size = 256

@@ -1,72 +1,44 @@
 # Daemon control and execution authority
 
-Daemon configuration schema 8 requires every actor binding to contain an explicit `authority`
-object. Preset names deterministically expand to typed operation sets; they do not imply resource
+Daemon configuration schema 9 requires every actor binding to contain an explicit `authority`
+table. Preset names deterministically expand to typed operation sets; they do not imply resource
 access and are not retained as executable session policy. The resource scope, numeric ceilings,
 validity interval, grant identity/revision, and revocation generation are independent inputs to the
 immutable schema-4 grant. Authentication selects that exact actor and grant but grants nothing by
 itself.
 
-The following safe pattern grants one actor access to one workflow lineage and one local process
-capability. Adjust every value to the actual immutable capability profile and workflow you intend
-to run:
+The checked [schema-9 fixture](../apps/daemon/tests/fixtures/daemon-config-v9.toml) is the complete
+safe pattern for one actor, one workflow lineage, and one local process capability. Its central
+selection reads as ordinary TOML:
 
-```json
-{
-  "credential_ref": "credential:operator",
-  "actor": "human:operator",
-  "grant_id": "grant:operator",
-  "grant_revision": 1,
-  "revocation_generation": 0,
-  "preset": "controller",
-  "authority": {
-    "resources": {
-      "workflow_run": { "type": "workflow", "workflow": "example-workflow" },
-      "capability": {
-        "type": "allow",
-        "identities": { "type": "only", "values": ["local-example"] },
-        "categories": { "type": "any" },
-        "operations": { "type": "only", "values": ["process.execute"] },
-        "provider_profiles": { "type": "any" },
-        "trust_zones": { "type": "only", "values": ["local-process"] },
-        "execution_trust_classes": { "type": "only", "values": ["trusted_host_process"] },
-        "localities": { "type": "only", "values": ["local"] },
-        "peers": { "type": "any" },
-        "maximum_side_effect": "read_only"
-      },
-      "filesystem": [
-        { "root": "/usr/bin", "access": ["read", "execute"] },
-        { "root": "/var/lib/milkdrift/work", "access": ["read", "write"] }
-      ],
-      "network": { "profiles": [], "destinations": [] },
-      "secrets": [],
-      "artifacts": { "type": "deny_all" },
-      "layouts": { "type": "deny_all" },
-      "peers": { "identities": [], "allow_any": false },
-      "daemon": {
-        "readiness": true,
-        "detailed_health": false,
-        "own_authority": true,
-        "configuration": false,
-        "audit": false
-      },
-      "workspace": { "scopes": [], "allow_any_in_run": false }
-    },
-    "budget": {
-      "cost_minor": 1000,
-      "duration_ms": 300000,
-      "invocations": 1000,
-      "artifact_bytes": 67108864,
-      "units": 1000000,
-      "concurrency": 4
-    },
-    "valid_from": 0,
-    "valid_until": 4102444800000,
-    "dangerous_allow_broad_authority": false
-  },
-  "enabled": true
-}
+```toml
+[[actors]]
+credential_ref = "credential:operator"
+actor = "human:operator"
+grant_id = "grant:operator"
+grant_revision = 1
+preset = "controller"
+enabled = true
+
+[actors.authority.resources.workflow_run]
+type = "workflow"
+workflow = "example-workflow"
+
+[actors.authority.resources.capability]
+type = "allow"
+maximum_side_effect = "read_only"
+
+[actors.authority.resources.capability.identities]
+type = "only"
+values = ["local-example"]
+
+[actors.authority.resources.capability.operations]
+type = "only"
+values = ["process.execute"]
 ```
+
+Adjust every value and every remaining selector in the complete fixture to the actual immutable
+capability profile and workflow you intend to run.
 
 Capability authority is either `{ "type": "deny_all" }` or an explicit conjunctive allow scope.
 Every allow dimension is `{ "type": "any" }` or `{ "type": "only", "values": [...] }`.
@@ -103,13 +75,15 @@ effects; infinite validity; or missing ceilings are rejected unless
 shortcut for generating hidden wildcard facts. Broad grants remain limited by the resources
 written in the configuration.
 
-Older configuration and authority-grant schemas are rejected. Migration is manual: start from a
-reviewed schema-8 configuration, replace every legacy capability and artifact array with an
+Older configuration and authority-grant schemas are rejected. JSON configuration has no fallback
+reader. Migration is manual: start from a reviewed schema-9 TOML configuration, replace every
+legacy capability and artifact array with an
 explicit `Any` or nonempty `Only` selector, retain `DenyAll` where no invocation or presentation
 access is intended, choose finite limits,
 and explicitly configure each peer relationship's `artifact_sensitivities`. Run
-`milkdrift-daemon --config PATH --check-config`, and inspect the redacted
-effective configuration before starting the daemon. When narrowing or revoking, advance the grant
+`milkdrift-daemon --config PATH --check-config`, then inspect
+`--print-effective-config` before starting the daemon. The effective output is normalized TOML,
+redacts secret-source details, and is independent of source comments and formatting. When narrowing or revoking, advance the grant
 revision/revocation generation or disable the actor and restart. Existing page and reconnect
 cursors then fail closed; open streams stop future disclosure on their next bounded check;
 already-entered external work keeps its truthful terminal history.

@@ -13,12 +13,15 @@ use tracing_subscriber::EnvFilter;
     about = "Milkdrift local durable workflow daemon"
 )]
 struct Arguments {
-    /// Versioned JSON daemon configuration path.
+    /// Versioned TOML daemon configuration path.
     #[arg(long, env = "MILKDRIFT_DAEMON_CONFIG")]
     config: PathBuf,
     /// Validate and print redacted effective configuration, then exit.
     #[arg(long)]
     print_effective_config: bool,
+    /// Validate configuration without starting the daemon.
+    #[arg(long, conflicts_with = "print_effective_config")]
+    check_config: bool,
 }
 
 #[tokio::main]
@@ -39,10 +42,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let arguments = Arguments::parse();
     let config = DaemonConfig::load(&arguments.config)?;
     if arguments.print_effective_config {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&config.document.redacted_json()?)?
-        );
+        print!("{}", config.redacted_toml());
+        return Ok(());
+    }
+    if arguments.check_config {
         return Ok(());
     }
     tracing_subscriber::fmt()
@@ -53,7 +56,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_current_span(true)
         .with_span_list(false)
         .init();
-    let bind = config.document.bind;
+    let bind = config.bind();
     let listener = tokio::net::TcpListener::bind(bind).await?;
     let host = DaemonHost::start(config)?;
     serve(listener, host, async {
