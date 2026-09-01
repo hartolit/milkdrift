@@ -59,9 +59,9 @@ impl AuthorityPreset {
             Inspect, InspectAttempt, InspectCapabilityHealth, InspectDaemonHealth,
             InspectNodeExecution, InspectOwnAuthority, InspectPeer, InspectProposal,
             InspectProviderProfile, InspectRevision, InspectRun, InspectTimeline, InvokeCapability,
-            ListCapabilities, NegotiateControlProtocol, Pause, Propose, ReadArtifactContent,
-            ReadArtifactMetadata, ReadLayout, ReadReadiness, ReadWorkspaceValue, Resume, Retry,
-            StartRun, Terminate, ValidateBlueprint, WriteLayout,
+            ListCapabilities, NegotiateControlProtocol, Pause, Propose, ProposeOffline,
+            ReadArtifactContent, ReadArtifactMetadata, ReadLayout, ReadReadiness,
+            ReadWorkspaceValue, Resume, Retry, StartRun, Terminate, ValidateBlueprint, WriteLayout,
         };
         let reads = [
             Inspect,
@@ -87,11 +87,12 @@ impl AuthorityPreset {
         ];
         match self {
             Self::Observer => reads.into_iter().collect(),
-            Self::Advisor => reads.into_iter().chain([Propose]).collect(),
+            Self::Advisor => reads.into_iter().chain([Propose, ProposeOffline]).collect(),
             Self::Supervisor => reads
                 .into_iter()
                 .chain([
                     Propose,
+                    ProposeOffline,
                     Approve,
                     Apply,
                     Pause,

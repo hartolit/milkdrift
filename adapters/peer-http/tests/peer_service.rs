@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    path::Path,
     sync::{
         Arc, Barrier,
         atomic::{AtomicUsize, Ordering},
@@ -18,12 +19,13 @@ use milkdrift_authority::{
 };
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::{
-    AdmissionConstraints, BoundedJson, CancellationAcknowledgement, CancellationBehavior,
-    CancellationRequest, CapabilityCategory, CapabilityDescriptor, CapabilityId,
-    CapabilityObservation, DescriptorBuilder, IdempotencyBehavior, InvocationEvent,
-    InvocationEventKind, InvocationId, InvocationRequest, InvocationTerminal, Locality,
-    OperationContract, OperationId, ResolvedCapabilitySnapshot, SchemaContract, SchemaId,
-    SideEffectClass, StreamingMode, TerminalStatus, TrustZone,
+    AdmissionConstraints, ArtifactReference as InvocationArtifactReference, BoundedJson,
+    CancellationAcknowledgement, CancellationBehavior, CancellationRequest, CapabilityCategory,
+    CapabilityDescriptor, CapabilityId, CapabilityObservation, DescriptorBuilder,
+    IdempotencyBehavior, InputReference, InvocationEvent, InvocationEventKind, InvocationId,
+    InvocationRequest, InvocationTerminal, InvocationValueReference, Locality, OperationContract,
+    OperationId, ResolvedCapabilitySnapshot, SchemaContract, SchemaId, SideEffectClass,
+    StreamingMode, TerminalStatus, TrustZone,
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, CapabilityHost,
@@ -35,16 +37,18 @@ use milkdrift_peer_http::{
 };
 use milkdrift_peer_protocol::{
     ArtifactChunk, ArtifactMetadataOffer, ArtifactTransferDecision, ArtifactTransferDirection,
-    CatalogDigest, DelegatedAuthorization, DelegationRef, ExecutionLimits, HardLimits,
-    HeartbeatLease, InvocationAcceptance, ObservationCategory, ObservationHistory, PeerAction,
-    PeerAuthority, PeerCancellationRequest, PeerExecutionId, PeerInvocationRequest,
-    PeerObservation, PeerRequestId, ProtocolVersionRange, SessionId, TransferId,
+    CancellationDisposition, CatalogDigest, DelegatedAuthorization, DelegationRef, ExecutionLimits,
+    HardLimits, HeartbeatLease, InvocationAcceptance, ObservationCategory, ObservationHistory,
+    PeerAction, PeerAuthority, PeerCancellationAcknowledgement, PeerCancellationRequest,
+    PeerExecutionId, PeerInvocationRequest, PeerObservation, PeerRequestId, ProtocolVersionRange,
+    SessionId, TransferId,
 };
 use milkdrift_persistence::{
     ArtifactStore, PageSize, PeerAdmission, PeerAdmissionOutcome, PeerAdmissionRejection,
-    PeerCatalogState, PeerClaimOutcome, PeerDispatchClaimRequest, PeerEntryOutcome,
-    PeerEntryRequest, PeerExecutionPhase, PeerExecutionSnapshot, PeerExecutionStore,
-    PeerRelationshipState, PeerRetentionRequest, TimestampMillis, WorkerId,
+    PeerArchivedDisposition, PeerCancellationRecord, PeerCatalogState, PeerClaimOutcome,
+    PeerDispatchClaimRequest, PeerEntryOutcome, PeerEntryRequest, PeerExecutionPhase,
+    PeerExecutionSnapshot, PeerExecutionStore, PeerExecutionTombstone, PeerRelationshipState,
+    PeerRetentionRequest, TimestampMillis, WorkerId,
 };
 use milkdrift_redb_store::{
     FaultInjector, FaultPoint, RedbStore, RedbStoreConfig, injected_failure,
@@ -54,6 +58,7 @@ use milkdrift_workspace::{
     CausalId, CausalReference, ContentDigest, MediaType,
 };
 use redb::{Database, ReadableTable, TableDefinition};
+use serde::Serialize;
 use url::Url;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -64,6 +69,8 @@ const PEER_EXECUTION_LOCATIONS: TableDefinition<'static, &'static str, u8> =
     TableDefinition::new("milkdrift.v2.peers.executions.locations");
 const PEER_EXECUTION_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v2.peers.accounting");
+const PEER_EXECUTIONS: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new("milkdrift.v2.peers.executions.hot");
 
 struct FailOnce {
     point: FaultPoint,
@@ -477,6 +484,68 @@ fn claims_recover_at_truthful_entry_boundary_and_late_terminal_is_idempotent() -
             .peer_execution_by_request(&peer, &request.request_id)?
             .is_some()
     );
+    Ok(())
+}
+
+#[test]
+fn cumulative_output_artifacts_cannot_exceed_the_accepted_total_quota() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let store = RedbStore::open(root.path())?;
+    let peer = PeerId::new("peer-artifact-quota")?;
+    let target = PeerId::new("peer-artifact-quota-target")?;
+    let descriptor = descriptor()?;
+    let catalog = milkdrift_peer_protocol::CatalogSnapshot::new(
+        1,
+        1,
+        now().saturating_add(60_000),
+        Vec::new(),
+    )?;
+    configure_store(&store, &peer, &catalog.digest, 1)?;
+    let request = request_with_input_artifact(
+        &peer,
+        &target,
+        &descriptor,
+        1,
+        catalog.digest,
+        "request-artifact-quota",
+        "invocation-artifact-quota",
+        448_576,
+    )?;
+    let execution = PeerExecutionId::new("execution-artifact-quota")?;
+    admit(&store, &peer, &request, &execution, 1)?;
+    let admitted = store
+        .peer_execution(&peer, &execution)?
+        .ok_or("admitted execution missing")?;
+    let PeerExecutionSnapshot::Hot(admitted) = admitted else {
+        return Err("admitted execution archived unexpectedly".into());
+    };
+    assert_eq!(admitted.accounting.artifact_bytes, 448_576);
+    let worker = WorkerId::new("artifact-quota-worker")?;
+    let claimed = claim(&store, &worker)?;
+    let generation = claimed.phase.claim().ok_or("claim missing")?.generation;
+    enter(&store, &peer, &execution, &worker, generation)?;
+
+    let first = output_observation(&request, &execution, 1, "first", 600_000, 'a')?;
+    store.append_peer_observation(&peer, &execution, &first)?;
+    let second = output_observation(&request, &execution, 2, "second", 1, 'b')?;
+    let Err(error) = store.append_peer_observation(&peer, &execution, &second) else {
+        return Err("cumulative output bytes exceeded the accepted quota".into());
+    };
+    assert!(matches!(
+        error,
+        milkdrift_persistence::PersistenceError::Bounds {
+            location: "peer_execution_artifact_bytes",
+            ..
+        }
+    ));
+    let snapshot = store
+        .peer_execution(&peer, &execution)?
+        .ok_or("execution missing after bounded refusal")?;
+    let PeerExecutionSnapshot::Hot(record) = snapshot else {
+        return Err("active execution archived unexpectedly".into());
+    };
+    assert_eq!(record.last_observation_sequence, 1);
+    assert_eq!(record.accounting.artifact_bytes, 1_048_576);
     Ok(())
 }
 
@@ -964,6 +1033,183 @@ fn peer_integrity_verification_detects_tombstone_index_and_counter_corruption() 
 }
 
 #[test]
+fn checksum_valid_peer_primary_and_tombstone_fact_corruption_is_rejected() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let peer = PeerId::new("peer-fact-corruption")?;
+    let target = PeerId::new("peer-fact-corruption-target")?;
+    let descriptor = descriptor()?;
+    let catalog = milkdrift_peer_protocol::CatalogSnapshot::new(
+        1,
+        1,
+        now().saturating_add(60_000),
+        Vec::new(),
+    )?;
+    let request = request_with_input_artifact(
+        &peer,
+        &target,
+        &descriptor,
+        1,
+        catalog.digest.clone(),
+        "request-fact-corruption",
+        "invocation-fact-corruption",
+        10,
+    )?;
+    let execution = PeerExecutionId::new("execution-fact-corruption")?;
+    let record = {
+        let store = RedbStore::open(root.path())?;
+        configure_store(&store, &peer, &catalog.digest, 1)?;
+        admit(&store, &peer, &request, &execution, 1)?;
+        let snapshot = store
+            .peer_execution(&peer, &execution)?
+            .ok_or("fact-corruption record missing")?;
+        let PeerExecutionSnapshot::Hot(record) = snapshot else {
+            return Err("fresh fact-corruption record was archived".into());
+        };
+        *record
+    };
+
+    let mut invalid_records = Vec::new();
+    let mut invalid = record.clone();
+    invalid.schema_version = 0;
+    invalid_records.push(invalid);
+    let mut invalid = record.clone();
+    invalid.relationship_generation = 0;
+    invalid_records.push(invalid);
+    let mut invalid = record.clone();
+    invalid.acceptance_sequence = 0;
+    invalid_records.push(invalid);
+    let mut invalid = record.clone();
+    invalid.accepted_at_unix_ms = 0;
+    invalid_records.push(invalid);
+    let mut invalid = record.clone();
+    invalid.revision = 0;
+    invalid_records.push(invalid);
+    let mut invalid = record.clone();
+    invalid.accounting.observations = 1;
+    invalid_records.push(invalid);
+    let mut invalid = record.clone();
+    invalid.last_observation_sequence = 101;
+    invalid.accounting.observations = 101;
+    invalid_records.push(invalid);
+    let mut invalid = record.clone();
+    invalid.accounting.artifact_bytes = invalid.request.limits.artifact_bytes + 1;
+    invalid_records.push(invalid);
+    let mut invalid = record.clone();
+    invalid.accounting.artifact_bytes = 0;
+    invalid_records.push(invalid);
+    let mut invalid = record.clone();
+    invalid.observation_digest = "not-a-digest".to_owned();
+    invalid_records.push(invalid);
+
+    for invalid in invalid_records {
+        overwrite_peer_document(
+            root.path(),
+            PEER_EXECUTIONS,
+            execution.as_str(),
+            "peer execution",
+            &invalid,
+        )?;
+        assert_peer_integrity_refuses(root.path(), "invalid hot execution facts")?;
+        overwrite_peer_document(
+            root.path(),
+            PEER_EXECUTIONS,
+            execution.as_str(),
+            "peer execution",
+            &record,
+        )?;
+    }
+
+    let mut legacy = record.clone();
+    legacy.schema_version = 2;
+    legacy.accounting.artifact_bytes = 0;
+    overwrite_peer_document(
+        root.path(),
+        PEER_EXECUTIONS,
+        execution.as_str(),
+        "peer execution",
+        &legacy,
+    )?;
+    let legacy_store = RedbStore::open(root.path())?;
+    legacy_store.verify_peer_execution_integrity()?;
+    drop(legacy_store);
+    overwrite_peer_document(
+        root.path(),
+        PEER_EXECUTIONS,
+        execution.as_str(),
+        "peer execution",
+        &record,
+    )?;
+
+    let tombstone = {
+        let store = RedbStore::open(root.path())?;
+        let worker = WorkerId::new("fact-corruption-worker")?;
+        let _ = claim(&store, &worker)?;
+        let boundary = now().saturating_add(100);
+        let mut terminal = terminal_observation(&request, &execution, 1, TerminalStatus::Success)?;
+        terminal.observed_at_unix_ms = boundary;
+        store.append_peer_observation(&peer, &execution, &terminal)?;
+        store.archive_peer_executions(&PeerRetentionRequest {
+            terminal_before_or_at: TimestampMillis::new(boundary),
+            archived_at: TimestampMillis::new(boundary),
+            limit: PageSize::new(1)?,
+        })?;
+        let snapshot = store
+            .peer_execution(&peer, &execution)?
+            .ok_or("fact-corruption tombstone missing")?;
+        let PeerExecutionSnapshot::Archived(tombstone) = snapshot else {
+            return Err("fact-corruption execution did not archive".into());
+        };
+        *tombstone
+    };
+
+    for invalid in invalid_tombstones(&tombstone, &request)? {
+        overwrite_peer_document(
+            root.path(),
+            PEER_EXECUTION_TOMBSTONES,
+            execution.as_str(),
+            "peer execution tombstone",
+            &invalid,
+        )?;
+        assert_peer_integrity_refuses(root.path(), "invalid archived execution facts")?;
+        overwrite_peer_document(
+            root.path(),
+            PEER_EXECUTION_TOMBSTONES,
+            execution.as_str(),
+            "peer execution tombstone",
+            &tombstone,
+        )?;
+    }
+    let mut exact_uncertainty_bound = tombstone.clone();
+    exact_uncertainty_bound.disposition = PeerArchivedDisposition::Uncertain {
+        uncertain_at_unix_ms: tombstone.archived_at_unix_ms,
+        reason: "x".repeat(2_048),
+    };
+    overwrite_peer_document(
+        root.path(),
+        PEER_EXECUTION_TOMBSTONES,
+        execution.as_str(),
+        "peer execution tombstone",
+        &exact_uncertainty_bound,
+    )?;
+    let store = RedbStore::open(root.path())?;
+    store.verify_peer_execution_integrity()?;
+    drop(store);
+
+    let mut exact_cancellation = tombstone.clone();
+    exact_cancellation.cancellation = Some(valid_cancellation(&execution)?);
+    overwrite_peer_document(
+        root.path(),
+        PEER_EXECUTION_TOMBSTONES,
+        execution.as_str(),
+        "peer execution tombstone",
+        &exact_cancellation,
+    )?;
+    let store = RedbStore::open(root.path())?;
+    store.verify_peer_execution_integrity()?;
+    Ok(())
+}
+
+#[test]
 fn durable_drain_and_relationship_generation_close_the_adapter_entry_race() -> TestResult {
     let root = tempfile::tempdir()?;
     let store = RedbStore::open(root.path())?;
@@ -1094,6 +1340,46 @@ fn cancellation_before_entry_prevents_adapter_invocation_and_survives_claim_reco
     );
     let recovered = store.recover_peer_claims(now(), PageSize::new(8)?)?;
     assert_eq!(recovered.requeued, 1);
+    Ok(())
+}
+
+#[test]
+fn recovery_reports_a_remaining_claim_frontier_after_a_bounded_page() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let store = RedbStore::open(root.path())?;
+    let peer = PeerId::new("peer-recovery-page")?;
+    let target = PeerId::new("peer-recovery-page-target")?;
+    let descriptor = descriptor()?;
+    let catalog = milkdrift_peer_protocol::CatalogSnapshot::new(
+        1,
+        1,
+        now().saturating_add(60_000),
+        Vec::new(),
+    )?;
+    configure_store(&store, &peer, &catalog.digest, 2)?;
+    for ordinal in 0..2 {
+        let request = request(
+            &peer,
+            &target,
+            &descriptor,
+            1,
+            catalog.digest.clone(),
+            &format!("request-recovery-page-{ordinal}"),
+            &format!("invocation-recovery-page-{ordinal}"),
+        )?;
+        let execution = PeerExecutionId::new(format!("execution-recovery-page-{ordinal}"))?;
+        admit(&store, &peer, &request, &execution, 2)?;
+        let _ = claim(
+            &store,
+            &WorkerId::new(format!("worker-recovery-page-{ordinal}"))?,
+        )?;
+    }
+    let first = store.recover_peer_claims(now(), PageSize::new(1)?)?;
+    assert_eq!(first.requeued, 1);
+    assert!(first.more);
+    let second = store.recover_peer_claims(now(), PageSize::new(1)?)?;
+    assert_eq!(second.requeued, 1);
+    assert!(!second.more);
     Ok(())
 }
 
@@ -2036,15 +2322,77 @@ fn request(
     request_identity: &str,
     invocation_identity: &str,
 ) -> TestResult<PeerInvocationRequest> {
+    request_with_optional_input_artifact(
+        issuer,
+        target,
+        descriptor,
+        catalog_generation,
+        catalog_digest,
+        request_identity,
+        invocation_identity,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)] // Exact peer fixture facts stay visible at the contract boundary.
+fn request_with_input_artifact(
+    issuer: &PeerId,
+    target: &PeerId,
+    descriptor: &CapabilityDescriptor,
+    catalog_generation: u64,
+    catalog_digest: CatalogDigest,
+    request_identity: &str,
+    invocation_identity: &str,
+    input_artifact_bytes: u64,
+) -> TestResult<PeerInvocationRequest> {
+    request_with_optional_input_artifact(
+        issuer,
+        target,
+        descriptor,
+        catalog_generation,
+        catalog_digest,
+        request_identity,
+        invocation_identity,
+        Some(input_artifact_bytes),
+    )
+}
+
+#[allow(clippy::too_many_arguments)] // Exact peer fixture facts stay visible at the contract boundary.
+fn request_with_optional_input_artifact(
+    issuer: &PeerId,
+    target: &PeerId,
+    descriptor: &CapabilityDescriptor,
+    catalog_generation: u64,
+    catalog_digest: CatalogDigest,
+    request_identity: &str,
+    invocation_identity: &str,
+    input_artifact_bytes: Option<u64>,
+) -> TestResult<PeerInvocationRequest> {
     let operation = OperationId::new("test.execute")?;
     let selection = ResolvedCapabilitySnapshot::from_descriptor(descriptor, &operation)?;
+    let inputs = input_artifact_bytes
+        .map(|size_bytes| {
+            Ok(InputReference::new(
+                "input-artifact",
+                InvocationValueReference::Artifact {
+                    reference: InvocationArtifactReference::new(
+                        "artifact-input-quota",
+                        "c".repeat(64),
+                        Some("application/octet-stream".to_owned()),
+                        Some(size_bytes),
+                    )?,
+                },
+            )?)
+        })
+        .into_iter()
+        .collect::<TestResult<Vec<_>>>()?;
     let invocation = InvocationRequest::new(
         InvocationId::new(invocation_identity)?,
         descriptor.identity().clone(),
         operation.clone(),
         None,
         None,
-        Vec::new(),
+        inputs,
         BTreeMap::new(),
     )?;
     let request_id = PeerRequestId::new(request_identity)?;
@@ -2112,6 +2460,35 @@ fn terminal_observation(
     })
 }
 
+fn output_observation(
+    request: &PeerInvocationRequest,
+    execution: &PeerExecutionId,
+    sequence: u64,
+    name: &str,
+    size_bytes: u64,
+    digest_character: char,
+) -> TestResult<PeerObservation> {
+    Ok(PeerObservation {
+        execution: execution.clone(),
+        sequence,
+        category: ObservationCategory::Artifact,
+        event: InvocationEvent::new(
+            request.request.invocation().clone(),
+            sequence,
+            InvocationEventKind::Output {
+                name: name.to_owned(),
+                reference: InvocationArtifactReference::new(
+                    format!("artifact-{name}"),
+                    digest_character.to_string().repeat(64),
+                    Some("application/octet-stream".to_owned()),
+                    Some(size_bytes),
+                )?,
+            },
+        )?,
+        observed_at_unix_ms: now(),
+    })
+}
+
 fn progress_observation(
     request: &PeerInvocationRequest,
     execution: &PeerExecutionId,
@@ -2132,4 +2509,179 @@ fn progress_observation(
         )?,
         observed_at_unix_ms: now(),
     })
+}
+
+fn invalid_tombstones(
+    valid: &PeerExecutionTombstone,
+    request: &PeerInvocationRequest,
+) -> TestResult<Vec<PeerExecutionTombstone>> {
+    let mut invalid_tombstones = Vec::new();
+    macro_rules! invalid_with {
+        ($change:expr) => {{
+            let mut invalid = valid.clone();
+            $change(&mut invalid);
+            invalid_tombstones.push(invalid);
+        }};
+    }
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.schema_version = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.relationship_generation = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.acceptance_sequence = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.accepted_at_unix_ms = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.catalog_generation = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.capability_generation = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.authority.grant_revision = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.authority.policy_version = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.archived_at_unix_ms = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.compacted_through_sequence = value.last_observation_sequence.saturating_add(1);
+    });
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.accounting.observations = value.accounting.observations.saturating_add(1);
+    });
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.request_digest = "invalid".to_owned());
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.catalog_digest = "invalid".to_owned());
+    invalid_with!(
+        |value: &mut PeerExecutionTombstone| value.capability_digest = "invalid".to_owned()
+    );
+    invalid_with!(
+        |value: &mut PeerExecutionTombstone| value.authority.decision_digest = "invalid".to_owned()
+    );
+    invalid_with!(
+        |value: &mut PeerExecutionTombstone| value.observation_digest = "invalid".to_owned()
+    );
+
+    let other_execution = PeerExecutionId::new("execution-fact-corruption-other")?;
+    let wrong_execution =
+        terminal_observation(request, &other_execution, 1, TerminalStatus::Success)?;
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Terminal {
+            observation: Box::new(wrong_execution.clone()),
+        };
+    });
+    let wrong_sequence = terminal_observation(
+        request,
+        &valid.execution,
+        valid.last_observation_sequence.saturating_add(1),
+        TerminalStatus::Success,
+    )?;
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Terminal {
+            observation: Box::new(wrong_sequence.clone()),
+        };
+    });
+    let progress =
+        progress_observation(request, &valid.execution, valid.last_observation_sequence)?;
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Terminal {
+            observation: Box::new(progress.clone()),
+        };
+    });
+    let mut late = terminal_observation(
+        request,
+        &valid.execution,
+        valid.last_observation_sequence,
+        TerminalStatus::Success,
+    )?;
+    late.observed_at_unix_ms = valid.archived_at_unix_ms.saturating_add(1);
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Terminal {
+            observation: Box::new(late.clone()),
+        };
+    });
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Uncertain {
+            uncertain_at_unix_ms: 0,
+            reason: "reason".to_owned(),
+        };
+    });
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Uncertain {
+            uncertain_at_unix_ms: value.archived_at_unix_ms.saturating_add(1),
+            reason: "reason".to_owned(),
+        };
+    });
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Uncertain {
+            uncertain_at_unix_ms: value.archived_at_unix_ms,
+            reason: String::new(),
+        };
+    });
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Uncertain {
+            uncertain_at_unix_ms: value.archived_at_unix_ms,
+            reason: "x".repeat(2_049),
+        };
+    });
+    let mut wrong_cancellation = valid_cancellation(&valid.execution)?;
+    wrong_cancellation.request.execution = other_execution;
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.cancellation = Some(wrong_cancellation.clone());
+    });
+    Ok(invalid_tombstones)
+}
+
+fn valid_cancellation(execution: &PeerExecutionId) -> TestResult<PeerCancellationRecord> {
+    let request_id = PeerRequestId::new("cancel-fact-corruption")?;
+    Ok(PeerCancellationRecord {
+        request: PeerCancellationRequest {
+            request_id: request_id.clone(),
+            execution: execution.clone(),
+            sequence: 1,
+            reason: "fact corruption cancellation".to_owned(),
+        },
+        requested_at_unix_ms: 1,
+        acknowledgement: Some(PeerCancellationAcknowledgement {
+            request_id,
+            execution: execution.clone(),
+            disposition: CancellationDisposition::Accepted,
+            terminal_boundary: false,
+            terminal_evidence: None,
+            detail: None,
+        }),
+        acknowledged_at_unix_ms: Some(2),
+    })
+}
+
+fn overwrite_peer_document<T: Serialize>(
+    root: &Path,
+    table: TableDefinition<'static, &'static str, &'static [u8]>,
+    key: &str,
+    family: &'static str,
+    payload: &T,
+) -> TestResult {
+    #[derive(Serialize)]
+    struct Envelope<'a, T> {
+        schema_version: u32,
+        family: &'static str,
+        checksum: String,
+        payload: &'a T,
+    }
+
+    let payload_bytes = serde_json::to_vec(payload)?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"milkdrift.redb.internal-document.v1\0");
+    hasher.update(&u64::try_from(family.len())?.to_be_bytes());
+    hasher.update(family.as_bytes());
+    hasher.update(&u64::try_from(payload_bytes.len())?.to_be_bytes());
+    hasher.update(&payload_bytes);
+    let bytes = serde_json::to_vec(&Envelope {
+        schema_version: 1,
+        family,
+        checksum: hasher.finalize().to_hex().to_string(),
+        payload,
+    })?;
+    let database = Database::open(root.join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    write.open_table(table)?.insert(key, bytes.as_slice())?;
+    write.commit()?;
+    Ok(())
+}
+
+fn assert_peer_integrity_refuses(root: &Path, case: &str) -> TestResult {
+    if let Ok(store) = RedbStore::open(root)
+        && store.verify_peer_execution_integrity().is_ok()
+    {
+        return Err(format!("peer integrity accepted {case}").into());
+    }
+    Ok(())
 }

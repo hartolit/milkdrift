@@ -42,15 +42,19 @@ fn revision_id() -> Result<RevisionId, PersistenceError> {
 }
 
 #[test]
-fn golden_schema_v1_is_stable_and_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+fn legacy_schema_v1_remains_readable_and_current_writes_use_v2()
+-> Result<(), Box<dyn std::error::Error>> {
     let event = sample_event(1)?;
     let encoded = event.to_canonical_json()?;
     let fixture_with_newline = include_bytes!("fixtures/run-event-started-v1.json");
     let fixture = fixture_with_newline
         .strip_suffix(b"\n")
         .unwrap_or(fixture_with_newline);
-    assert_eq!(encoded, fixture);
-    assert_eq!(RunEventEnvelope::from_json(fixture)?, event);
+    let legacy = RunEventEnvelope::from_json(fixture)?;
+    assert_eq!(legacy.schema_version(), 1);
+    assert_eq!(event.schema_version(), 2);
+    assert_ne!(encoded, fixture);
+    assert_eq!(RunEventEnvelope::from_json(&encoded)?, event);
     Ok(())
 }
 
@@ -59,14 +63,14 @@ fn future_and_malformed_versions_fail_before_interpretation()
 -> Result<(), Box<dyn std::error::Error>> {
     let bytes = sample_event(1)?.to_canonical_json()?;
     let mut value: serde_json::Value = serde_json::from_slice(&bytes)?;
-    value["schema_version"] = json!(2);
+    value["schema_version"] = json!(3);
     let future = serde_json::to_vec(&value)?;
     assert!(matches!(
         RunEventEnvelope::from_json(&future),
         Err(PersistenceError::UnsupportedVersion {
             document: "run_event",
-            found: 2,
-            supported: 1
+            found: 3,
+            supported: 2
         })
     ));
 

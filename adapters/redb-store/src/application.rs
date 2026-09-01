@@ -31,6 +31,59 @@ const LAYOUT_FAMILY: &str = "application layout";
 const PROPOSAL_FAMILY: &str = "application proposal index";
 const SECURITY_AUDIT_FAMILY: &str = "security audit record";
 
+impl RedbStore {
+    pub(crate) fn reestablish_application_retention_bounds(&self) -> Result<(), PersistenceError> {
+        let write = self.database().begin_write().map_err(error::redb)?;
+        let mut accounting = transaction_receipt_accounting(&write)?;
+        let hot_bound = u64::from(self.hot_application_receipt_bound);
+        if accounting.hot_count > hot_bound {
+            let archived_at = self.artifact_clock.now()?;
+            while accounting.hot_count > hot_bound {
+                let excess = accounting.hot_count - hot_bound;
+                let maximum = u32::try_from(excess)
+                    .unwrap_or(u32::MAX)
+                    .min(self.application_receipt_archive_batch_size);
+                let archived = move_receipts_with_verified_accounting(
+                    &write,
+                    self,
+                    &mut accounting,
+                    maximum,
+                    archived_at,
+                )?;
+                if archived == 0 {
+                    return Err(error::corruption(
+                        "hot receipt accounting exceeds its bound without archive candidates",
+                    ));
+                }
+            }
+            write_receipt_accounting(&write, &accounting)?;
+        }
+
+        let retained_audits = {
+            let mut audit = write.open_table(SECURITY_AUDIT).map_err(error::redb)?;
+            let mut count = audit.len().map_err(error::redb)?;
+            let bound = u64::from(self.max_security_audit_records);
+            while count > bound {
+                let oldest = audit
+                    .first()
+                    .map_err(error::redb)?
+                    .map(|(key, _)| key.value())
+                    .ok_or_else(|| error::corruption("security audit table length is invalid"))?;
+                audit.remove(oldest).map_err(error::redb)?;
+                count -= 1;
+            }
+            count
+        };
+        {
+            let mut metadata = write.open_table(METADATA).map_err(error::redb)?;
+            metadata
+                .insert(SECURITY_AUDIT_COUNT_KEY, retained_audits)
+                .map_err(error::redb)?;
+        }
+        write.commit().map_err(error::redb)
+    }
+}
+
 impl ApplicationCommandStore for RedbStore {
     fn application_command_receipt(
         &self,
@@ -77,14 +130,26 @@ impl ApplicationCommandStore for RedbStore {
         }
         commit.validate()?;
         let mut accounting = transaction_receipt_accounting(&write)?;
-        if accounting.hot_count >= u64::from(self.hot_application_receipt_bound) {
-            archive_oldest_hot_receipts(
+        while accounting.hot_count >= u64::from(self.hot_application_receipt_bound) {
+            let excess_after_insert = accounting
+                .hot_count
+                .saturating_add(1)
+                .saturating_sub(u64::from(self.hot_application_receipt_bound));
+            let maximum = u32::try_from(excess_after_insert)
+                .unwrap_or(u32::MAX)
+                .min(self.application_receipt_archive_batch_size);
+            let archived = move_receipts_with_verified_accounting(
                 &write,
                 self,
                 &mut accounting,
-                self.application_receipt_archive_batch_size,
+                maximum,
                 commit.receipt.completed_at(),
             )?;
+            if archived == 0 {
+                return Err(error::corruption(
+                    "hot receipt accounting exceeds its bound without archive candidates",
+                ));
+            }
         }
 
         match &commit.effect {
@@ -153,10 +218,7 @@ impl ApplicationCommandStore for RedbStore {
                     .map_err(error::redb)?;
                 if let Some(bytes) = table.get(key.as_slice()).map_err(error::redb)? {
                     let existing = decode_proposal(key.as_slice(), bytes.value())?;
-                    if existing.run != entry.run
-                        || existing.proposal != entry.proposal
-                        || existing.proposed_revision != entry.proposed_revision
-                    {
+                    if existing.proposed_revision != entry.proposed_revision {
                         return Err(PersistenceError::Corruption(
                             "proposal index key is bound to different proposal facts".to_owned(),
                         ));
@@ -295,7 +357,7 @@ impl ApplicationCommandStore for RedbStore {
                 },
             );
         }
-        let archived = archive_oldest_hot_receipts(
+        let archived = move_receipts_with_verified_accounting(
             &write,
             self,
             &mut accounting,
@@ -577,13 +639,16 @@ impl SecurityAuditStore for RedbStore {
             sequence,
             entry: entry.clone(),
         };
+        let remove_count = count
+            .saturating_add(1)
+            .saturating_sub(u64::from(self.max_security_audit_records));
         {
             let mut audit = write.open_table(SECURITY_AUDIT).map_err(error::redb)?;
             let bytes = json::encode(&record, SECURITY_AUDIT_FAMILY)?;
             audit
                 .insert(sequence, bytes.as_slice())
                 .map_err(error::redb)?;
-            if count >= u64::from(self.max_security_audit_records) {
+            for _ in 0..remove_count {
                 let oldest = audit
                     .first()
                     .map_err(error::redb)?
@@ -597,9 +662,7 @@ impl SecurityAuditStore for RedbStore {
             metadata
                 .insert(
                     SECURITY_AUDIT_COUNT_KEY,
-                    count
-                        .saturating_add(1)
-                        .min(u64::from(self.max_security_audit_records)),
+                    count.saturating_add(1).saturating_sub(remove_count),
                 )
                 .map_err(error::redb)?;
         }
@@ -927,6 +990,49 @@ fn archive_oldest_hot_receipts(
         .checked_add(1)
         .ok_or(PersistenceError::SequenceOverflow)?;
     accounting.last_archived_at = archived_at.get();
+    Ok(archived)
+}
+
+fn move_receipts_with_verified_accounting(
+    write: &redb::WriteTransaction,
+    store: &RedbStore,
+    accounting: &mut ReceiptAccounting,
+    maximum: u32,
+    archived_at: TimestampMillis,
+) -> Result<u32, PersistenceError> {
+    let before = *accounting;
+    let archived = archive_oldest_hot_receipts(write, store, accounting, maximum, archived_at)?;
+    let archived_count = u64::from(archived);
+    let expected_hot = before
+        .hot_count
+        .checked_sub(archived_count)
+        .ok_or_else(|| error::corruption("receipt archival reported more rows than existed"))?;
+    let expected_cold = before
+        .cold_count
+        .checked_add(archived_count)
+        .ok_or(PersistenceError::SequenceOverflow)?;
+    let expected_generation = if archived == 0 {
+        before.archive_generation
+    } else {
+        before
+            .archive_generation
+            .checked_add(1)
+            .ok_or(PersistenceError::SequenceOverflow)?
+    };
+    let expected_archived_at = if archived == 0 {
+        before.last_archived_at
+    } else {
+        archived_at.get()
+    };
+    if accounting.hot_count != expected_hot
+        || accounting.cold_count != expected_cold
+        || accounting.archive_generation != expected_generation
+        || accounting.last_archived_at != expected_archived_at
+    {
+        return Err(error::corruption(
+            "receipt archival result disagrees with durable accounting progress",
+        ));
+    }
     Ok(archived)
 }
 

@@ -25,7 +25,7 @@ impl Owner {
             .resources()
             .artifacts
             .sensitivities()
-            .contains(&metadata.sensitivity())
+            .is_some_and(|allowed| allowed.contains(&metadata.sensitivity()))
         {
             return Err(not_found());
         }
@@ -69,7 +69,7 @@ impl Owner {
             .resources()
             .artifacts
             .sensitivities()
-            .contains(&metadata.sensitivity())
+            .is_some_and(|allowed| allowed.contains(&metadata.sensitivity()))
         {
             return Err(not_found());
         }
@@ -111,8 +111,9 @@ pub(super) fn preauthorize_artifact_identity(
 ) -> Result<(), PublicFailure> {
     let scope = &session.grant.resources().artifacts;
     if !session.grant.operations().contains(&operation)
-        || scope.sensitivities().is_empty()
-        || (!scope.identities().is_empty() && !scope.identities().contains(artifact))
+        || !scope
+            .identity_selection()
+            .is_some_and(|selection| selection.matches(artifact))
     {
         return Err(unauthorized());
     }

@@ -321,9 +321,14 @@ impl ControlService {
                 "control guard and proposal observed sequence differ".to_owned(),
             ));
         }
+        let proposal_operation = if proposal.run().is_some() {
+            AuthorityOperation::Propose
+        } else {
+            AuthorityOperation::ProposeOffline
+        };
         self.authorize_simple(
             document,
-            AuthorityOperation::Propose,
+            proposal_operation,
             Some(proposal.workflow()),
             proposal.run(),
         )?;
@@ -345,6 +350,15 @@ impl ControlService {
             author,
             revision_reason,
         )?;
+        if proposal.run().is_none() {
+            let old_policy = crate::ControllerPolicyDocument::from_controller_revision(&base)?;
+            let new_policy = crate::ControllerPolicyDocument::from_controller_revision(&candidate)?;
+            if old_policy.as_ref().map(|(_, value)| value.digest())
+                != new_policy.as_ref().map(|(_, value)| value.digest())
+            {
+                return Err(ControlError::ForbiddenProposal);
+            }
+        }
         let candidate_preexisting = self.revisions.revision(candidate.id())?.is_some();
         let live_projection = match proposal.run() {
             Some(run) => {
@@ -393,7 +407,7 @@ impl ControlService {
         }
         self.authorize_revision_delta(
             document,
-            AuthorityOperation::Propose,
+            proposal_operation,
             &base,
             &candidate,
             proposal.run(),

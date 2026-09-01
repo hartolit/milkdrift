@@ -1,5 +1,5 @@
 {
-  "schema_version": 7,
+  "schema_version": 8,
   "data_root": "./test-data",
   "bind": "127.0.0.1:9734",
   "secret_sources": {
@@ -41,13 +41,10 @@
           },
           "secrets": [],
           "artifacts": {
-            "identities": [],
-            "sensitivities": []
+            "type": "deny_all"
           },
           "layouts": {
-            "revisions": [],
-            "actors": [],
-            "shared": false
+            "type": "deny_all"
           },
           "peers": {
             "identities": [],

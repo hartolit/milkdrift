@@ -319,6 +319,14 @@ impl ControlCommandDocument {
     pub const fn issued_at(&self) -> TimestampMillis {
         self.issued_at
     }
+    pub(crate) fn with_trusted_issued_at(
+        mut self,
+        issued_at: TimestampMillis,
+    ) -> Result<Self, ControlError> {
+        self.issued_at = issued_at;
+        self.validate()?;
+        Ok(self)
+    }
     /// Optimistic guards.
     #[must_use]
     pub const fn guard(&self) -> &OptimisticGuard {

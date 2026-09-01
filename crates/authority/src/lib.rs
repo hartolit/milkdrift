@@ -10,7 +10,10 @@ mod model;
 mod secret;
 mod selection;
 
-pub use document::{AUTHORITY_GRANT_SCHEMA_VERSION_V3, MAX_AUTHORITY_DOCUMENT_BYTES};
+pub use document::{
+    AUTHORITY_GRANT_SCHEMA_VERSION_V3, AUTHORITY_GRANT_SCHEMA_VERSION_V4,
+    MAX_AUTHORITY_DOCUMENT_BYTES,
+};
 pub use evaluator::{AuthorityEvaluator, GrantSetEvaluator};
 pub use identity::{
     ActorRef, AuthorityError, DecisionId, GrantDigest, GrantId, NetworkProfileRef, PolicyId,

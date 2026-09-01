@@ -377,7 +377,7 @@ fn configuration(
         Vec::new()
     };
     DaemonConfig {
-        schema_version: 7,
+        schema_version: milkdrift_daemon::DAEMON_CONFIG_SCHEMA_VERSION,
         data_root: root.path().join("data"),
         bind: "127.0.0.1:0".parse()?,
         secret_sources: BTreeMap::from([

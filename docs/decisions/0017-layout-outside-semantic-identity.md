@@ -39,9 +39,11 @@ blueprint semantic digest.
 
 ## Consequences
 
-Future Iced clients can share or fork an exact layout association without changing run provenance.
+Clients can share one exact workflow/revision layout association without changing run provenance.
 Layout compatibility, digest, and optimistic update rules evolve independently from blueprint
-schemas. There is no multi-user merge policy; concurrent changed writes use optimistic conflict.
+schemas. Actor-owned/private forks are not implemented: adding them requires a reviewed owner field
+in protocol and persistence rather than authority-only vocabulary. There is no multi-user merge
+policy; concurrent changed writes use optimistic conflict.
 
 ## Reconsideration triggers
 

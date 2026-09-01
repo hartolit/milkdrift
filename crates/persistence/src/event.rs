@@ -433,12 +433,12 @@ pub struct SubworkflowResourceUsage {
 }
 
 impl SubworkflowResourceUsage {
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self == &Self::default()
     }
 }
 
-/// Closed schema-v1 run facts. Variants describe observations, never requested actions.
+/// Closed versioned run facts. Variants describe observations, never requested actions.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 #[allow(clippy::large_enum_variant)] // Durable facts remain direct typed schema fields.

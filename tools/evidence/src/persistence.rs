@@ -126,7 +126,7 @@ pub fn projection_rebuild() -> EvidenceResult<ScenarioMeasurement> {
     ))
 }
 
-/// Restores a serialized bounded projection and applies an authoritative tail.
+/// Restores an in-memory projection serialization and applies an authoritative tail.
 pub fn projection_snapshot_tail() -> EvidenceResult<ScenarioMeasurement> {
     let history = projection_history(4_096)?;
     let split = history.len().saturating_sub(128);
@@ -138,7 +138,7 @@ pub fn projection_snapshot_tail() -> EvidenceResult<ScenarioMeasurement> {
     }
     let encoded = serde_json::to_vec(&restored)?;
     Ok(ScenarioMeasurement::new(
-        "runtime/projection_snapshot_plus_tail_128",
+        "runtime/in_memory_projection_serde_plus_tail_128",
         128,
         u64::try_from(payload.len().saturating_add(encoded.len()))?,
         &encoded,

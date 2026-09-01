@@ -1,6 +1,6 @@
 //! Release-mode operational evidence runner emitting JSON and CSV artifacts.
 
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, process::Command};
 
 use milkdrift_evidence::{
     DEFAULT_OPERATION_COUNT, EvidenceResult, application_receipt_paths, artifact_range_read,
@@ -41,6 +41,10 @@ fn run() -> EvidenceResult {
     }
 
     fs::create_dir_all(&output)?;
+    let git_commit = command_stdout("git", &["rev-parse", "HEAD"])?;
+    let git_tree = command_stdout("git", &["rev-parse", "HEAD^{tree}"])?;
+    let source_dirty = !command_stdout("git", &["status", "--porcelain=v1"])?.is_empty();
+    let rustc_verbose = command_stdout("rustc", &["-vV"])?;
     let scenarios = vec![
         journal_append_one()?,
         journal_append_batch()?,
@@ -62,8 +66,10 @@ fn run() -> EvidenceResult {
         "build": {
             "target_os": std::env::consts::OS,
             "target_arch": std::env::consts::ARCH,
-            "git_commit": std::env::var("GITHUB_SHA").ok(),
-            "rust_toolchain": std::env::var("RUSTUP_TOOLCHAIN").ok(),
+            "git_commit": git_commit,
+            "git_tree": git_tree,
+            "source_dirty": source_dirty,
+            "rustc_verbose": rustc_verbose,
         },
         "parameters": { "operations": operations },
         "scenarios": scenarios,
@@ -84,4 +90,17 @@ fn run() -> EvidenceResult {
     fs::write(output.join("scenario-summary.csv"), csv)?;
     println!("{}", output.join("operational-evidence.json").display());
     Ok(())
+}
+
+fn command_stdout(program: &str, arguments: &[&str]) -> EvidenceResult<String> {
+    let output = Command::new(program).args(arguments).output()?;
+    if !output.status.success() {
+        return Err(std::io::Error::other(format!(
+            "{program} {} failed with {}",
+            arguments.join(" "),
+            output.status
+        ))
+        .into());
+    }
+    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
 }

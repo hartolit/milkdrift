@@ -20,12 +20,13 @@
   ],
   "properties": {
     "schema_version": { "const": 1 },
-    "generated_at_unix_ms": { "type": "integer", "minimum": 0 },
+    "generated_at_unix_ms": { "type": "integer", "minimum": 1 },
     "platform": { "$ref": "#/$defs/platform" },
     "milkdrift": { "$ref": "#/$defs/milkdrift" },
     "configuration_digest": {
       "type": ["string", "null"],
-      "pattern": "^b3_[0-9a-fA-F]{64}$"
+      "pattern": "^b3_[0-9a-f]{64}$",
+      "maxLength": 67
     },
     "qualifying": { "type": "boolean" },
     "fixture_mode": { "type": "boolean" },
@@ -33,13 +34,18 @@
     "model": { "$ref": "#/$defs/scenario" },
     "validation": {
       "type": "array",
+      "maxItems": 4096,
       "items": { "$ref": "#/$defs/validation" }
     },
     "redactions": {
       "type": "array",
-      "items": { "type": "string" }
+      "maxItems": 64,
+      "items": { "type": "string", "maxLength": 1024 }
     },
-    "failure_reason": { "type": ["string", "null"] }
+    "failure_reason": {
+      "type": ["string", "null"],
+      "maxLength": 8192
+    }
   },
   "allOf": [
     {
@@ -50,14 +56,94 @@
       "then": {
         "properties": {
           "fixture_mode": { "const": false },
+          "milkdrift": {
+            "properties": { "dirty_at_start": { "const": false } },
+            "required": ["dirty_at_start"]
+          },
           "process": {
-            "properties": { "qualifying": { "const": true } },
-            "required": ["qualifying"]
+            "properties": {
+              "qualifying": { "const": true },
+              "proposals": { "minItems": 1 },
+              "profile": {
+                "required": [
+                  "executable_content_digest",
+                  "executable_size_bytes",
+                  "version_output",
+                  "profile_digest"
+                ],
+                "properties": {
+                  "executable_content_digest": { "pattern": "^b3_[0-9a-f]{64}$" },
+                  "executable_size_bytes": { "type": "integer", "minimum": 1 },
+                  "version_output": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                  "profile_digest": { "pattern": "^b3_[0-9a-f]{64}$" }
+                }
+              },
+              "facts": {
+                "required": [
+                  "repository_initial_commit",
+                  "repository_final_commit",
+                  "distinct_process_invocations",
+                  "process_invocations",
+                  "terminal_sequence"
+                ],
+                "properties": {
+                  "repository_initial_commit": { "pattern": "^[0-9a-f]{40}$" },
+                  "repository_final_commit": { "pattern": "^[0-9a-f]{40}$" },
+                  "distinct_process_invocations": { "type": "integer", "minimum": 5 },
+                  "process_invocations": { "type": "array", "minItems": 5, "maxItems": 4096 },
+                  "terminal_sequence": { "type": "integer", "minimum": 1 }
+                }
+              }
+            },
+            "required": ["qualifying", "proposals", "profile", "facts"]
           },
           "model": {
-            "properties": { "qualifying": { "const": true } },
-            "required": ["qualifying"]
-          }
+            "properties": {
+              "qualifying": { "const": true },
+              "profile": {
+                "required": [
+                  "profile_digest",
+                  "profile_revision",
+                  "provider_protocol",
+                  "model_alias"
+                ],
+                "properties": {
+                  "profile_digest": { "pattern": "^b3_[0-9a-f]{64}$" },
+                  "profile_revision": { "type": "integer", "minimum": 1 },
+                  "provider_protocol": { "type": "string", "minLength": 1, "maxLength": 1024 },
+                  "model_alias": { "type": "string", "minLength": 1, "maxLength": 1024 }
+                }
+              },
+              "facts": {
+                "required": [
+                  "context_manifest_digest",
+                  "streaming_observations",
+                  "usage",
+                  "terminal",
+                  "uncertain",
+                  "invocation_id"
+                ],
+                "properties": {
+                  "context_manifest_digest": { "pattern": "^b3_[0-9a-f]{64}$" },
+                  "streaming_observations": { "type": "integer", "minimum": 1 },
+                  "usage": {
+                    "type": "object",
+                    "required": ["input_units", "output_units"],
+                    "properties": {
+                      "input_units": { "type": "integer", "minimum": 0 },
+                      "output_units": { "type": "integer", "minimum": 0 }
+                    }
+                  },
+                  "terminal": { "const": "succeeded" },
+                  "uncertain": { "const": false },
+                  "invocation_id": { "type": "string", "minLength": 1, "maxLength": 1024 }
+                }
+              }
+            },
+            "required": ["qualifying", "profile", "facts"]
+          },
+          "validation": { "minItems": 1 },
+          "failure_reason": { "type": "null" }
         }
       }
     },
@@ -87,9 +173,9 @@
       "additionalProperties": false,
       "required": ["os", "architecture", "build_target"],
       "properties": {
-        "os": { "type": "string" },
-        "architecture": { "type": "string" },
-        "build_target": { "type": "string" }
+        "os": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "architecture": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "build_target": { "type": "string", "minLength": 1, "maxLength": 1024 }
       }
     },
     "milkdrift": {
@@ -102,9 +188,9 @@
         "dirty_at_start"
       ],
       "properties": {
-        "starting_commit": { "type": "string" },
-        "starting_tree": { "type": "string" },
-        "workspace_version": { "type": "string" },
+        "starting_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "starting_tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "workspace_version": { "type": "string", "minLength": 1, "maxLength": 1024 },
         "dirty_at_start": { "type": "boolean" }
       }
     },
@@ -131,49 +217,76 @@
           "type": "string",
           "enum": ["not_run", "succeeded", "failed"]
         },
-        "profile": { "type": "object" },
+        "profile": { "type": "object", "maxProperties": 64 },
         "commands": {
           "type": "array",
-          "items": { "type": "string" }
+          "maxItems": 4096,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1024 }
         },
         "runs": {
           "type": "array",
-          "items": { "type": "string" }
+          "maxItems": 4096,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1024 }
         },
         "revisions": {
           "type": "array",
-          "items": { "type": "string" }
+          "maxItems": 4096,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1024 }
         },
         "attempts": {
           "type": "array",
-          "items": { "type": "string" }
+          "maxItems": 4096,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1024 }
         },
         "proposals": {
           "type": "array",
-          "items": { "type": "string" }
+          "maxItems": 4096,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1024 }
         },
         "artifacts": {
           "type": "array",
+          "maxItems": 4096,
           "items": { "$ref": "#/$defs/artifact" }
         },
         "restart_boundaries": {
           "type": "array",
+          "maxItems": 4096,
           "items": { "$ref": "#/$defs/restart" }
         },
-        "facts": { "type": "object" },
-        "failure_reason": { "type": ["string", "null"] }
-      }
+        "facts": { "type": "object", "maxProperties": 64 },
+        "failure_reason": { "type": ["string", "null"], "maxLength": 8192 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "qualifying": { "const": true } },
+            "required": ["qualifying"]
+          },
+          "then": {
+            "properties": {
+              "outcome": { "const": "succeeded" },
+              "commands": { "minItems": 1 },
+              "runs": { "minItems": 1 },
+              "revisions": { "minItems": 1 },
+              "attempts": { "minItems": 1 },
+              "artifacts": { "minItems": 1 },
+              "restart_boundaries": { "minItems": 1 },
+              "failure_reason": { "type": "null" }
+            }
+          }
+        }
+      ]
     },
     "artifact": {
       "type": "object",
       "additionalProperties": false,
       "required": ["artifact_id", "digest", "size", "content_type", "role"],
       "properties": {
-        "artifact_id": { "type": "string" },
-        "digest": { "type": "string" },
+        "artifact_id": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "size": { "type": "integer", "minimum": 0 },
-        "content_type": { "type": "string" },
-        "role": { "type": "string" }
+        "content_type": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "role": { "type": "string", "minLength": 1, "maxLength": 1024 }
       }
     },
     "restart": {
@@ -187,10 +300,10 @@
         "duplicate_attempts"
       ],
       "properties": {
-        "boundary": { "type": "string" },
+        "boundary": { "type": "string", "minLength": 1, "maxLength": 1024 },
         "sequence_before": { "type": "integer", "minimum": 0 },
         "sequence_after": { "type": "integer", "minimum": 0 },
-        "recovered_state": { "type": "string" },
+        "recovered_state": { "type": "string", "minLength": 1, "maxLength": 1024 },
         "duplicate_attempts": { "type": "boolean" }
       }
     },
@@ -199,7 +312,7 @@
       "additionalProperties": false,
       "required": ["command", "exit_status"],
       "properties": {
-        "command": { "type": "string" },
+        "command": { "type": "string", "minLength": 1, "maxLength": 1024 },
         "exit_status": { "type": "integer" }
       }
     }

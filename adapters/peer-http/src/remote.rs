@@ -397,8 +397,40 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
                     reporter,
                 );
             }
-            Ok(InvocationAcceptance::Rejected { detail, .. }) => {
-                return Err(AdapterError::rejected(detail));
+            Ok(InvocationAcceptance::Rejected {
+                code,
+                detail,
+                retryable,
+                ..
+            }) => {
+                let failure = InvocationFailure::new(
+                    if retryable {
+                        ErrorClass::RateLimit
+                    } else {
+                        ErrorClass::InvalidRequest
+                    },
+                    retryable,
+                    code,
+                    detail,
+                    None,
+                )
+                .map_err(|error| AdapterError::rejected(error.to_string()))?;
+                let terminal = InvocationTerminal::new(
+                    TerminalStatus::Rejected,
+                    Vec::new(),
+                    Some(failure),
+                    None,
+                    milkdrift_capability::SideEffectClass::None,
+                )
+                .map_err(|error| AdapterError::rejected(error.to_string()))?;
+                return reporter.invocation(
+                    InvocationEvent::new(
+                        invocation.request().invocation().clone(),
+                        1,
+                        InvocationEventKind::Terminal { terminal },
+                    )
+                    .map_err(|error| AdapterError::rejected(error.to_string()))?,
+                );
             }
             Err(error) => return Err(AdapterError::unavailable(error.to_string())),
         };

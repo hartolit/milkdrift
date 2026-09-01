@@ -889,7 +889,10 @@ pub fn build_controller_blueprint(
     )?)
 }
 
-/// Canonical production owner for typed controller parsing, accounting, and assessment.
+/// Canonical integration owner for typed controller parsing, accounting, and assessment.
+///
+/// The production daemon leaves this owner uninstalled until cumulative controller resources are
+/// reserved at the final external-entry boundary.
 pub struct ControllerLifecycleOwner {
     revisions: Arc<dyn RevisionStore>,
 }

@@ -235,8 +235,8 @@ fn resolved_snapshot_is_exact_digest_bound_and_golden() -> Result<(), Box<dyn st
     let document = ResolvedCapabilitySnapshotDocument::new(snapshot.clone());
     assert_golden(
         document.to_canonical_json()?,
-        include_bytes!("fixtures/resolved-capability-snapshot-v1.json"),
-        "resolved capability snapshot",
+        include_bytes!("fixtures/resolved-capability-snapshot-v2.json"),
+        "resolved capability snapshot v2",
     )?;
     let encoded = document.to_canonical_json()?;
     assert_eq!(
@@ -245,6 +245,7 @@ fn resolved_snapshot_is_exact_digest_bound_and_golden() -> Result<(), Box<dyn st
     );
     let legacy_bytes = include_bytes!("fixtures/resolved-capability-snapshot-v1-legacy.json");
     let legacy = ResolvedCapabilitySnapshotDocument::from_json(legacy_bytes)?;
+    assert_eq!(legacy.schema_version(), 1);
     assert_eq!(legacy.body().category(), None);
     legacy.body().validate_against(&descriptor)?;
     assert_eq!(
@@ -253,6 +254,7 @@ fn resolved_snapshot_is_exact_digest_bound_and_golden() -> Result<(), Box<dyn st
             .strip_suffix(b"\n")
             .unwrap_or(legacy_bytes.as_slice())
     );
+    assert_eq!(document.schema_version(), 2);
 
     assert!(snapshot.validate_against(&descriptor_at(8)?).is_err());
     let mut tampered = serde_json::to_value(&snapshot)?;

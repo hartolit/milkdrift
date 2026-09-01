@@ -1,6 +1,6 @@
 use super::{
-    AttemptId, CapabilityRequirement, ErrorClass, IdempotencyBehavior, InvocationId, LeaseId,
-    NodeExecutionId, NodeId, NodeOutcome, OperationId, ProviderProfileRef, Reason,
+    ActorRef, AttemptId, CapabilityRequirement, ErrorClass, IdempotencyBehavior, InvocationId,
+    LeaseId, NodeExecutionId, NodeId, NodeOutcome, OperationId, ProviderProfileRef, Reason,
     ReconciliationAction, ReconciliationClassification, ReconciliationId, ReconciliationItem,
     ReconciliationPlanId, ReconciliationPolicy, RecoveryClassification, RunEventKind,
     RunProjection, RunSequence, SideEffectClass, SignalDeliveryMode, SignalId, SignalTypeId,
@@ -1297,7 +1297,7 @@ fn ten_thousand_revision_node_churn_drops_removed_root_summaries() -> TestResult
             &fixture.run,
             RunEventKind::RevisionAdoptionRequested {
                 reconciliation: reconciliation.clone(),
-                requested_by: None,
+                requested_by: Some(ActorRef::new("human:test-reconciliation")?),
                 from_revision: current.clone(),
                 to_revision: next.clone(),
                 policy: ReconciliationPolicy::RemoveUnstartedOnly,

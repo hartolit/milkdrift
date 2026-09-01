@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     sync::{
         Arc, Mutex,
@@ -86,6 +87,64 @@ struct ModelExecution<'a> {
     cancelled: &'a AtomicBool,
     reporter: &'a dyn AdapterReporter,
     started: Instant,
+    materialization: &'a RefCell<MaterializationLedger>,
+}
+
+struct MaterializationLedger {
+    files: u32,
+    bytes: u64,
+    limits: MaterializationLimits,
+}
+
+impl MaterializationLedger {
+    const fn new(limits: MaterializationLimits) -> Self {
+        Self {
+            files: 0,
+            bytes: 0,
+            limits,
+        }
+    }
+
+    fn record(&mut self, bytes: usize) -> Result<(), AdapterError> {
+        let bytes = u64::try_from(bytes)
+            .map_err(|_| AdapterError::rejected("model materialization exceeds the platform"))?;
+        self.files = self
+            .files
+            .checked_add(1)
+            .ok_or_else(|| AdapterError::rejected("model materialization file count overflowed"))?;
+        self.bytes = self
+            .bytes
+            .checked_add(bytes)
+            .ok_or_else(|| AdapterError::rejected("model materialization byte count overflowed"))?;
+        if self.files > self.limits.max_files
+            || bytes > self.limits.max_file_bytes
+            || self.bytes > self.limits.max_total_bytes
+        {
+            return Err(AdapterError::rejected(
+                "model materialization exceeds the aggregate file or byte bound",
+            ));
+        }
+        Ok(())
+    }
+}
+
+struct ActiveInvocationGuard<'a> {
+    active: &'a Mutex<BTreeMap<milkdrift_capability::InvocationId, Arc<AtomicBool>>>,
+    invocation: milkdrift_capability::InvocationId,
+}
+
+impl Drop for ActiveInvocationGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.active.lock() {
+            active.remove(&self.invocation);
+        }
+    }
+}
+
+struct PreparedOutput {
+    name: &'static str,
+    media_type: &'static str,
+    bytes: Vec<u8>,
 }
 
 /// Provider-neutral failure facts after adapter-specific status/error mapping.
@@ -127,8 +186,8 @@ impl ModelEndpointAdapter {
             .map_err(|error| AdapterError::rejected(error.to_string()))?;
         let limits = profile.limits();
         let artifact_bytes = limits
-            .max_request_bytes
-            .checked_add(limits.max_response_bytes)
+            .max_response_bytes
+            .checked_mul(8)
             .ok_or_else(|| AdapterError::rejected("model artifact byte ceiling overflows"))?;
         let required_secrets = match profile.auth() {
             AuthMode::NoAuth => BTreeSet::new(),
@@ -193,10 +252,12 @@ impl ModelEndpointAdapter {
             ));
         }
         let limits = self.materialization_limits();
+        let mut materialization = MaterializationLedger::new(limits);
         let manifest_bytes = self
             .data
             .read_artifact_bytes(context, manifest_ref, limits)
             .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        materialization.record(manifest_bytes.len())?;
         let manifest = ContextManifestDocument::from_json(&manifest_bytes)
             .map_err(|_| AdapterError::rejected("context manifest is malformed"))?;
         if manifest.body().run() != context.run()
@@ -211,8 +272,14 @@ impl ModelEndpointAdapter {
         }
         let manifest_text = std::str::from_utf8(&manifest_bytes)
             .map_err(|_| AdapterError::rejected("context manifest is not canonical UTF-8"))?;
-        let context_parts = self.load_context_parts(context, request, manifest.body(), limits)?;
-        let task = self.load_task(context, request, limits)?;
+        let context_parts = self.load_context_parts(
+            context,
+            request,
+            manifest.body(),
+            limits,
+            &mut materialization,
+        )?;
+        let task = self.load_task(context, request, limits, &mut materialization)?;
         self.negotiate(&task, &context_parts)?;
         let cancelled = Arc::new(AtomicBool::new(false));
         {
@@ -224,8 +291,13 @@ impl ModelEndpointAdapter {
             }
             active.insert(request.invocation().clone(), cancelled.clone());
         }
+        let _active_guard = ActiveInvocationGuard {
+            active: &self.active,
+            invocation: request.invocation().clone(),
+        };
+        let materialization = RefCell::new(materialization);
         let started = Instant::now();
-        let result = match self.profile.auth() {
+        match self.profile.auth() {
             AuthMode::NoAuth => self.perform(ModelExecution {
                 context,
                 request,
@@ -236,6 +308,7 @@ impl ModelEndpointAdapter {
                 cancelled: &cancelled,
                 reporter,
                 started,
+                materialization: &materialization,
             }),
             AuthMode::Bearer { secret } | AuthMode::AnthropicApiKey { secret } => {
                 match self.secrets.resolve(secret) {
@@ -256,15 +329,12 @@ impl ModelEndpointAdapter {
                             cancelled: &cancelled,
                             reporter,
                             started,
+                            materialization: &materialization,
                         })
                     }),
                 }
             }
-        };
-        if let Ok(mut active) = self.active.lock() {
-            active.remove(request.invocation());
         }
-        result
     }
 
     fn perform(&self, execution: ModelExecution<'_>) -> Result<(), AdapterError> {
@@ -278,11 +348,20 @@ impl ModelEndpointAdapter {
             cancelled,
             reporter,
             started,
+            materialization,
         } = execution;
         let load = |reference: &milkdrift_capability::ArtifactReference| {
-            self.data
+            let bytes = self
+                .data
                 .read_artifact_bytes(context, reference, self.materialization_limits())
-                .map_err(|_| HttpError::Policy("referenced model content is unavailable"))
+                .map_err(|_| HttpError::Policy("referenced model content is unavailable"))?;
+            materialization
+                .borrow_mut()
+                .record(bytes.len())
+                .map_err(|_| {
+                    HttpError::Policy("referenced model content exceeds aggregate bounds")
+                })?;
+            Ok(bytes)
         };
         let wire = match self.profile.protocol() {
             ProviderProtocol::OpenAiCompatible { .. } => openai_compatible::request(
@@ -426,6 +505,7 @@ impl ModelEndpointAdapter {
         request: &InvocationRequest,
         manifest: &ContextManifest,
         limits: MaterializationLimits,
+        materialization: &mut MaterializationLedger,
     ) -> Result<Vec<MaterializedContextPart>, AdapterError> {
         let mut expected = BTreeSet::new();
         let mut parts = Vec::new();
@@ -444,6 +524,7 @@ impl ModelEndpointAdapter {
                     .data
                     .read_input_bytes(context, input, limits)
                     .map_err(|_| AdapterError::rejected("direct context content is unavailable"))?;
+                materialization.record(bytes.len())?;
                 verify_context_bytes(entry, &bytes)?;
                 continue;
             }
@@ -462,6 +543,7 @@ impl ModelEndpointAdapter {
                 .data
                 .read_input_bytes(context, input, limits)
                 .map_err(|_| AdapterError::rejected("selected context content is unavailable"))?;
+            materialization.record(bytes.len())?;
             verify_context_bytes(entry, &bytes)?;
             let media_type = match entry.source() {
                 ContextSource::Artifact { reference } => reference.media_type().as_str(),
@@ -522,138 +604,79 @@ impl ModelEndpointAdapter {
         started: Instant,
     ) -> Result<(), AdapterError> {
         let limits = self.materialization_limits();
-        let mut published = Vec::new();
         let canonical = ModelResponseDocument::new(response.clone())
             .to_canonical_json()
             .map_err(|_| {
                 AdapterError::external_failure("canonical model response encoding failed")
             })?;
-        let complete = self.data.publish_bytes(
-            context,
-            request,
-            "model_response",
-            RESPONSE_MEDIA,
-            &canonical,
-            limits,
-        );
-        let complete = match complete {
-            Ok(reference) => reference,
-            Err(_) => {
-                return self.report_failure(
-                    request,
-                    reporter,
-                    sequence,
-                    ProviderFailure {
-                        class: ErrorClass::Adapter,
-                        retryable: false,
-                        code: "artifact_publication",
-                        message: "model response artifact publication failed",
-                    },
-                    started,
-                );
-            }
-        };
-        published.push(("model_response", complete));
+        let mut outputs = vec![PreparedOutput {
+            name: "model_response",
+            media_type: RESPONSE_MEDIA,
+            bytes: canonical,
+        }];
         if !response.text().is_empty() {
-            let reference = self.data.publish_bytes(
-                context,
-                request,
-                "final_text",
-                "text/plain",
-                response.text().as_bytes(),
-                limits,
-            );
-            let reference = match reference {
-                Ok(value) => value,
-                Err(_) => {
-                    return self.report_failure(
-                        request,
-                        reporter,
-                        sequence,
-                        ProviderFailure {
-                            class: ErrorClass::Adapter,
-                            retryable: false,
-                            code: "artifact_publication",
-                            message: "model text artifact publication failed",
-                        },
-                        started,
-                    );
-                }
-            };
-            published.push(("final_text", reference));
+            outputs.push(PreparedOutput {
+                name: "final_text",
+                media_type: "text/plain",
+                bytes: response.text().as_bytes().to_vec(),
+            });
         }
         if let Some(structured) = response.structured() {
             let bytes = serde_json::to_vec(structured.value())
                 .map_err(|_| AdapterError::external_failure("structured output encoding failed"))?;
-            let reference = self.data.publish_bytes(
-                context,
-                request,
-                "structured_output",
-                STRUCTURED_MEDIA,
-                &bytes,
-                limits,
-            );
-            let reference = match reference {
-                Ok(value) => value,
-                Err(_) => {
-                    return self.report_failure(
-                        request,
-                        reporter,
-                        sequence,
-                        ProviderFailure {
-                            class: ErrorClass::Adapter,
-                            retryable: false,
-                            code: "artifact_publication",
-                            message: "structured output artifact publication failed",
-                        },
-                        started,
-                    );
-                }
-            };
-            published.push(("structured_output", reference));
+            outputs.push(PreparedOutput {
+                name: "structured_output",
+                media_type: STRUCTURED_MEDIA,
+                bytes,
+            });
         }
         if !response.tool_calls().is_empty() {
             let bytes = serde_json::to_vec(response.tool_calls())
                 .map_err(|_| AdapterError::external_failure("tool call encoding failed"))?;
-            let reference = self.data.publish_bytes(
-                context,
-                request,
-                "tool_calls",
-                TOOL_CALLS_MEDIA,
-                &bytes,
-                limits,
-            );
-            let reference = match reference {
-                Ok(value) => value,
-                Err(_) => {
-                    return self.report_failure(
-                        request,
-                        reporter,
-                        sequence,
-                        ProviderFailure {
-                            class: ErrorClass::Adapter,
-                            retryable: false,
-                            code: "artifact_publication",
-                            message: "tool call artifact publication failed",
-                        },
-                        started,
-                    );
-                }
-            };
-            published.push(("tool_calls", reference));
+            outputs.push(PreparedOutput {
+                name: "tool_calls",
+                media_type: TOOL_CALLS_MEDIA,
+                bytes,
+            });
         }
         if !response.provider_metadata().is_empty() {
             let bytes = serde_json::to_vec(response.provider_metadata())
                 .map_err(|_| AdapterError::external_failure("provider metadata encoding failed"))?;
-            let reference = self.data.publish_bytes(
+            outputs.push(PreparedOutput {
+                name: "provider_metadata",
+                media_type: PROVIDER_METADATA_MEDIA,
+                bytes,
+            });
+        }
+        let mut output_ledger = MaterializationLedger::new(limits);
+        if outputs
+            .iter()
+            .try_for_each(|output| output_ledger.record(output.bytes.len()))
+            .is_err()
+        {
+            return self.report_failure(
+                request,
+                reporter,
+                sequence,
+                ProviderFailure {
+                    class: ErrorClass::Adapter,
+                    retryable: false,
+                    code: "artifact_output_bounds",
+                    message: "aggregate model output artifacts exceed the configured bound",
+                },
+                started,
+            );
+        }
+        let mut published = Vec::with_capacity(outputs.len());
+        for output in outputs {
+            let reference = match self.data.publish_bytes(
                 context,
                 request,
-                "provider_metadata",
-                PROVIDER_METADATA_MEDIA,
-                &bytes,
+                output.name,
+                output.media_type,
+                &output.bytes,
                 limits,
-            );
-            let reference = match reference {
+            ) {
                 Ok(value) => value,
                 Err(_) => {
                     return self.report_failure(
@@ -664,13 +687,13 @@ impl ModelEndpointAdapter {
                             class: ErrorClass::Adapter,
                             retryable: false,
                             code: "artifact_publication",
-                            message: "provider metadata artifact publication failed",
+                            message: "model output artifact publication failed",
                         },
                         started,
                     );
                 }
             };
-            published.push(("provider_metadata", reference));
+            published.push((output.name, reference));
         }
         let output_refs = published
             .iter()
@@ -791,6 +814,7 @@ impl ModelEndpointAdapter {
         context: &milkdrift_capability_host::AdapterExecutionContext,
         request: &InvocationRequest,
         limits: MaterializationLimits,
+        materialization: &mut MaterializationLedger,
     ) -> Result<ModelTaskRequest, AdapterError> {
         let input = request
             .inputs()
@@ -800,10 +824,14 @@ impl ModelEndpointAdapter {
         let bytes = match input.value() {
             InvocationValueReference::Inline { value } => serde_json::to_vec(value.value())
                 .map_err(|_| AdapterError::rejected("model task input cannot be encoded"))?,
-            InvocationValueReference::Artifact { reference } => self
-                .data
-                .read_artifact_bytes(context, reference, limits)
-                .map_err(|_| AdapterError::rejected("model task artifact is unavailable"))?,
+            InvocationValueReference::Artifact { reference } => {
+                let bytes = self
+                    .data
+                    .read_artifact_bytes(context, reference, limits)
+                    .map_err(|_| AdapterError::rejected("model task artifact is unavailable"))?;
+                materialization.record(bytes.len())?;
+                bytes
+            }
             InvocationValueReference::WorkspaceValue { .. } => {
                 return Err(AdapterError::rejected(
                     "model task must be an inline or immutable artifact document",
@@ -1152,4 +1180,60 @@ fn report_fragment(
         rest = &rest[end..];
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn limits() -> MaterializationLimits {
+        MaterializationLimits {
+            max_files: 2,
+            max_file_bytes: 5,
+            max_total_bytes: 8,
+            max_path_bytes: 64,
+            max_directory_depth: 4,
+            chunk_bytes: 4,
+        }
+    }
+
+    #[test]
+    fn aggregate_materialization_ledger_enforces_count_bytes_and_exact_boundary() {
+        let mut exact = MaterializationLedger::new(limits());
+        assert!(exact.record(3).is_ok());
+        assert!(exact.record(5).is_ok());
+        assert!(exact.record(0).is_err());
+
+        let mut bytes = MaterializationLedger::new(limits());
+        assert!(bytes.record(4).is_ok());
+        assert!(bytes.record(5).is_err());
+
+        let mut file = MaterializationLedger::new(limits());
+        assert!(file.record(6).is_err());
+    }
+
+    #[test]
+    fn active_registration_is_removed_during_panic_unwind() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let invocation = milkdrift_capability::InvocationId::new("invocation-panic-cleanup")?;
+        let active = Mutex::new(BTreeMap::from([(
+            invocation.clone(),
+            Arc::new(AtomicBool::new(false)),
+        )]));
+        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = ActiveInvocationGuard {
+                active: &active,
+                invocation,
+            };
+            std::panic::resume_unwind(Box::new("contained test panic"));
+        }));
+        assert!(unwind.is_err());
+        assert!(
+            active
+                .lock()
+                .map_err(|_| "active invocation test lock is poisoned")?
+                .is_empty()
+        );
+        Ok(())
+    }
 }

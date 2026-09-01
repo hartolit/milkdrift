@@ -12,7 +12,7 @@ use milkdrift_authority::{
     CapabilityAuthorityScopeBuilder, DaemonAuthorityScope, DecisionId, DecisionReasonCode,
     FilesystemScope, GrantId, GrantSetEvaluator, LayoutAuthorityScope, NetworkProfileRef,
     NetworkScope, PeerAuthorityScope, PolicyId, RequestedResourceFacts, ResourceScope, SecretRef,
-    SensitiveSecret, WorkflowRunScope, WorkspaceAuthorityScope,
+    Selection, SensitiveSecret, WorkflowRunScope, WorkspaceAuthorityScope,
 };
 use milkdrift_blueprint::{AuthorRef, WorkflowId};
 use milkdrift_capability::{
@@ -253,7 +253,7 @@ fn grant_schema_has_a_canonical_golden_fixture_and_hostile_bounds() -> TestResul
     .build()?;
     assert_eq!(
         grant.to_canonical_json()?,
-        String::from_utf8(include_bytes!("fixtures/authority-grant-v3.json").to_vec())?
+        String::from_utf8(include_bytes!("fixtures/authority-grant-v4.json").to_vec())?
             .trim()
             .as_bytes()
     );
@@ -261,7 +261,7 @@ fn grant_schema_has_a_canonical_golden_fixture_and_hostile_bounds() -> TestResul
         AuthorityGrant::from_json(&grant.to_canonical_json()?)?,
         grant
     );
-    for unsupported in [1, 2, 4] {
+    for unsupported in [1, 2, 3, 5] {
         let mut old: serde_json::Value = serde_json::from_slice(&grant.to_canonical_json()?)?;
         old["schema_version"] = serde_json::json!(unsupported);
         assert!(AuthorityGrant::from_json(&serde_json::to_vec(&old)?).is_err());
@@ -431,7 +431,7 @@ fn artifact_metadata_and_content_require_exact_identity_and_sensitivity_scope() 
                 network: NetworkScope::empty(),
                 secrets: BTreeSet::new(),
                 artifacts: ArtifactAuthorityScope::new(
-                    set(artifact.clone()),
+                    Selection::only(set(artifact.clone()))?,
                     set(ArtifactSensitivity::Restricted),
                 )?,
                 layouts: LayoutAuthorityScope::none(),

@@ -8,7 +8,9 @@ use crate::{
     SCHEMA_VERSION_V1, document::canonical_json_bytes,
 };
 
-const DIGEST_DOMAIN: &[u8] = b"milkdrift.resolved-capability-snapshot.v1\0";
+const DIGEST_DOMAIN_V1: &[u8] = b"milkdrift.resolved-capability-snapshot.v1\0";
+const DIGEST_DOMAIN_V2: &[u8] = b"milkdrift.resolved-capability-snapshot.v2\0";
+const RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2: u32 = 2;
 
 /// Immutable exact capability resolution supplied to an executor before dispatch.
 ///
@@ -105,7 +107,7 @@ impl ResolvedCapabilitySnapshot {
             ))
         })?;
         let digest = Self::compute_digest(&SnapshotDigestPayload {
-            schema_version: SCHEMA_VERSION_V1,
+            schema_version: RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2,
             capability: descriptor.identity(),
             descriptor_revision: descriptor.descriptor_revision(),
             provider_profile: descriptor.provider_profile(),
@@ -217,8 +219,13 @@ impl ResolvedCapabilitySnapshot {
                 "resolved capability snapshot descriptor revision must be nonzero".to_owned(),
             ));
         }
+        let schema_version = if self.category.is_some() {
+            RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2
+        } else {
+            SCHEMA_VERSION_V1
+        };
         let expected = Self::compute_digest(&SnapshotDigestPayload {
-            schema_version: SCHEMA_VERSION_V1,
+            schema_version,
             capability: &self.capability,
             descriptor_revision: self.descriptor_revision,
             provider_profile: self.provider_profile.as_ref(),
@@ -239,7 +246,18 @@ impl ResolvedCapabilitySnapshot {
     fn compute_digest(payload: &SnapshotDigestPayload<'_>) -> Result<String, ContractError> {
         let canonical_payload = canonical_json_bytes(payload)?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(DIGEST_DOMAIN);
+        let domain = match payload.schema_version {
+            SCHEMA_VERSION_V1 => DIGEST_DOMAIN_V1,
+            RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2 => DIGEST_DOMAIN_V2,
+            _ => {
+                return Err(ContractError::UnsupportedVersion {
+                    document: "resolved capability snapshot digest",
+                    found: payload.schema_version,
+                    supported: RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2,
+                });
+            }
+        };
+        hasher.update(domain);
         hasher.update(&canonical_payload);
         Ok(hasher.finalize().to_hex().to_string())
     }

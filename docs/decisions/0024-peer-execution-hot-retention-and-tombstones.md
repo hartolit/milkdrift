@@ -24,6 +24,10 @@ Maintenance archives at most `archive_batch_size` records per pass. If a new req
 
 Protocol 1.1 makes archival visible. Acceptance can be `accepted` or `archived`; lookup and observation pages identify hot versus archived history. Archived history returns the retained terminal or uncertainty disposition and never fabricates detailed observations. A consumer that races with compaction completes from that disposition and never submits replacement work.
 
+Protocol 1.2 subsequently adds the exact queried request identity to every lookup result. This lets
+the consuming client reject a semantically swapped response from an authenticated but untrusted
+peer instead of trusting the HTTP path alone; earlier minor versions are now refused.
+
 Peer compaction deletes only peer-owned detail and observation-to-artifact mappings. It does not delete or rewrite core artifact bytes, metadata, ownership, retention class, or provenance. Compact tombstones have no automatic destructive expiry. Physical reclamation beyond them requires an operator-managed, fully retained store-generation rotation and a new client request-id epoch.
 
 ## Consequences

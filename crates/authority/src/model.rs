@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ActorRef, AuthorityError, DecisionId, GrantDigest, GrantId, NetworkProfileRef, PeerId,
     PolicyId, SecretRef, Selection,
-    document::{AUTHORITY_GRANT_SCHEMA_VERSION_V3, canonical_json},
+    document::{AUTHORITY_GRANT_SCHEMA_VERSION_V4, canonical_json},
 };
 
 const MAX_SCOPE_ITEMS: usize = 128;
@@ -45,6 +45,8 @@ pub enum AuthorityOperation {
     Inspect,
     /// Propose a prospective revision or action.
     Propose,
+    /// Propose a revision without a live run; controller policy changes remain excluded.
+    ProposeOffline,
     /// Approve an awaiting decision.
     Approve,
     /// Apply an approved prospective change.
@@ -674,141 +676,175 @@ fn within(requested: Option<u64>, ceiling: Option<u64>) -> bool {
     }
 }
 
-/// Explicit artifact metadata/content scope. An empty sensitivity set grants no artifacts.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+/// Explicit artifact metadata/content scope.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct ArtifactAuthorityScope(ArtifactAuthorityScopeKind);
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+enum ArtifactAuthorityScopeKind {
+    DenyAll,
+    Allow(Box<ArtifactAuthorityAllowScope>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct ArtifactAuthorityScope {
-    identities: BTreeSet<ArtifactId>,
+struct ArtifactAuthorityAllowScope {
+    identities: Selection<ArtifactId>,
     sensitivities: BTreeSet<ArtifactSensitivity>,
 }
 
+impl Default for ArtifactAuthorityScope {
+    fn default() -> Self {
+        Self::none()
+    }
+}
+
 impl ArtifactAuthorityScope {
-    /// Constructs a bounded artifact scope. Empty identities mean any identity, but at least one
-    /// sensitivity must be named for the scope to grant access.
+    /// Constructs a bounded artifact allow scope with an explicit identity selector.
     pub fn new(
-        identities: BTreeSet<ArtifactId>,
+        identities: Selection<ArtifactId>,
         sensitivities: BTreeSet<ArtifactSensitivity>,
     ) -> Result<Self, AuthorityError> {
-        if identities.len() > MAX_SCOPE_ITEMS || sensitivities.len() > 3 {
+        if sensitivities.is_empty() || sensitivities.len() > 3 {
             return Err(AuthorityError::Bounds {
                 location: "grant.artifacts",
-                reason: "artifact identity or sensitivity scope exceeded".to_owned(),
+                reason: "artifact sensitivity scope requires 1..=3 values".to_owned(),
             });
         }
-        Ok(Self {
-            identities,
-            sensitivities,
-        })
+        Ok(Self(ArtifactAuthorityScopeKind::Allow(Box::new(
+            ArtifactAuthorityAllowScope {
+                identities,
+                sensitivities,
+            },
+        ))))
     }
 
     /// Grants no artifact metadata or content.
     #[must_use]
     pub fn none() -> Self {
-        Self::default()
+        Self(ArtifactAuthorityScopeKind::DenyAll)
     }
 
     /// Deliberately broad artifact scope for acknowledged administration.
     #[must_use]
     pub fn dangerous_all() -> Self {
-        Self {
-            identities: BTreeSet::new(),
-            sensitivities: BTreeSet::from([
-                ArtifactSensitivity::Public,
-                ArtifactSensitivity::Internal,
-                ArtifactSensitivity::Restricted,
-            ]),
+        Self(ArtifactAuthorityScopeKind::Allow(Box::new(
+            ArtifactAuthorityAllowScope {
+                identities: Selection::any(),
+                sensitivities: BTreeSet::from([
+                    ArtifactSensitivity::Public,
+                    ArtifactSensitivity::Internal,
+                    ArtifactSensitivity::Restricted,
+                ]),
+            },
+        )))
+    }
+
+    /// Artifact identity selector for an allow scope.
+    #[must_use]
+    pub const fn identity_selection(&self) -> Option<&Selection<ArtifactId>> {
+        match &self.0 {
+            ArtifactAuthorityScopeKind::DenyAll => None,
+            ArtifactAuthorityScopeKind::Allow(scope) => Some(&scope.identities),
         }
     }
 
-    /// Exact artifact identities; empty means any identity within the sensitivity scope.
+    /// Explicitly visible sensitivity classes for an allow scope.
     #[must_use]
-    pub const fn identities(&self) -> &BTreeSet<ArtifactId> {
-        &self.identities
+    pub const fn sensitivities(&self) -> Option<&BTreeSet<ArtifactSensitivity>> {
+        match &self.0 {
+            ArtifactAuthorityScopeKind::DenyAll => None,
+            ArtifactAuthorityScopeKind::Allow(scope) => Some(&scope.sensitivities),
+        }
     }
 
-    /// Explicitly visible sensitivity classes; empty denies all artifacts.
+    /// Whether this allow scope contains an explicit identity wildcard.
     #[must_use]
-    pub const fn sensitivities(&self) -> &BTreeSet<ArtifactSensitivity> {
-        &self.sensitivities
+    pub const fn has_any_selector(&self) -> bool {
+        match &self.0 {
+            ArtifactAuthorityScopeKind::DenyAll => false,
+            ArtifactAuthorityScopeKind::Allow(scope) => scope.identities.is_any(),
+        }
     }
 
     pub(crate) fn matches(&self, artifact: &ArtifactId, sensitivity: ArtifactSensitivity) -> bool {
-        self.sensitivities.contains(&sensitivity)
-            && (self.identities.is_empty() || self.identities.contains(artifact))
+        match &self.0 {
+            ArtifactAuthorityScopeKind::DenyAll => false,
+            ArtifactAuthorityScopeKind::Allow(scope) => {
+                scope.sensitivities.contains(&sensitivity) && scope.identities.matches(artifact)
+            }
+        }
     }
 }
 
 /// Presentation-layout visibility within the separately evaluated workflow scope.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct LayoutAuthorityScope {
-    revisions: BTreeSet<RevisionId>,
-    actors: BTreeSet<ActorRef>,
-    shared: bool,
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct LayoutAuthorityScope(LayoutAuthorityScopeKind);
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+enum LayoutAuthorityScopeKind {
+    DenyAll,
+    Shared { revisions: Selection<RevisionId> },
+}
+
+impl Default for LayoutAuthorityScope {
+    fn default() -> Self {
+        Self::none()
+    }
 }
 
 impl LayoutAuthorityScope {
-    /// Constructs a bounded layout scope. Empty revisions mean any revision in the already
-    /// constrained workflow scope; empty actors grant no actor-owned layout.
-    pub fn new(
-        revisions: BTreeSet<RevisionId>,
-        actors: BTreeSet<ActorRef>,
-        shared: bool,
-    ) -> Result<Self, AuthorityError> {
-        if revisions.len() > MAX_SCOPE_ITEMS || actors.len() > MAX_SCOPE_ITEMS {
-            return Err(AuthorityError::Bounds {
-                location: "grant.layouts",
-                reason: "layout revision or actor scope exceeded".to_owned(),
-            });
-        }
-        Ok(Self {
-            revisions,
-            actors,
-            shared,
-        })
+    /// Constructs a shared-layout allow scope with an explicit revision selector.
+    #[must_use]
+    pub const fn shared(revisions: Selection<RevisionId>) -> Self {
+        Self(LayoutAuthorityScopeKind::Shared { revisions })
     }
 
     /// Grants no layout reads or writes.
     #[must_use]
     pub fn none() -> Self {
-        Self::default()
+        Self(LayoutAuthorityScopeKind::DenyAll)
     }
 
-    /// Deliberately broad shared and actor-owned layout scope.
+    /// Deliberately broad shared-layout scope.
     #[must_use]
     pub fn dangerous_all() -> Self {
-        Self {
-            revisions: BTreeSet::new(),
-            actors: BTreeSet::new(),
-            shared: true,
+        Self::shared(Selection::any())
+    }
+
+    /// Revision selector for a shared-layout allow scope.
+    #[must_use]
+    pub const fn revision_selection(&self) -> Option<&Selection<RevisionId>> {
+        match &self.0 {
+            LayoutAuthorityScopeKind::DenyAll => None,
+            LayoutAuthorityScopeKind::Shared { revisions } => Some(revisions),
         }
     }
 
-    /// Explicit revision allowlist; empty means any revision in workflow scope.
+    /// Whether shared layouts are allowed.
     #[must_use]
-    pub const fn revisions(&self) -> &BTreeSet<RevisionId> {
-        &self.revisions
+    pub const fn allows_shared(&self) -> bool {
+        matches!(self.0, LayoutAuthorityScopeKind::Shared { .. })
     }
 
-    /// Explicit actor-owned layout allowlist.
+    /// Whether this shared allow scope uses an explicit revision wildcard.
     #[must_use]
-    pub const fn actors(&self) -> &BTreeSet<ActorRef> {
-        &self.actors
-    }
-
-    /// Whether shared layout state is visible.
-    #[must_use]
-    pub const fn shared(&self) -> bool {
-        self.shared
+    pub const fn has_any_selector(&self) -> bool {
+        match &self.0 {
+            LayoutAuthorityScopeKind::DenyAll => false,
+            LayoutAuthorityScopeKind::Shared { revisions } => revisions.is_any(),
+        }
     }
 
     pub(crate) fn matches(&self, revision: &RevisionId, owner: &LayoutOwner) -> bool {
-        let revision_matches = self.revisions.is_empty() || self.revisions.contains(revision);
-        revision_matches
-            && match owner {
-                LayoutOwner::Shared => self.shared,
-                LayoutOwner::Actor(actor) => !self.actors.is_empty() && self.actors.contains(actor),
-            }
+        matches!(owner, LayoutOwner::Shared)
+            && self
+                .revision_selection()
+                .is_some_and(|selection| selection.matches(revision))
     }
 }
 
@@ -823,7 +859,7 @@ impl LayoutAuthorityScope {
 pub enum LayoutOwner {
     /// Shared workflow/revision layout.
     Shared,
-    /// Actor-owned private layout.
+    /// Reserved actor-owned identity; production persistence does not implement private layouts.
     Actor(ActorRef),
 }
 
@@ -1103,7 +1139,7 @@ impl AuthorityGrant {
     pub fn digest(&self) -> Result<GrantDigest, AuthorityError> {
         Ok(GrantDigest::for_bytes(&self.to_canonical_json()?))
     }
-    /// Strictly decodes and validates one schema-v3 grant.
+    /// Strictly decodes and validates one schema-v4 grant.
     pub fn from_json(bytes: &[u8]) -> Result<Self, AuthorityError> {
         if bytes.len() > crate::MAX_AUTHORITY_DOCUMENT_BYTES {
             return Err(AuthorityError::Bounds {
@@ -1120,11 +1156,11 @@ impl AuthorityGrant {
             .ok_or_else(|| {
                 AuthorityError::InvalidContract("grant requires numeric schema_version".to_owned())
             })?;
-        if version != AUTHORITY_GRANT_SCHEMA_VERSION_V3 {
+        if version != AUTHORITY_GRANT_SCHEMA_VERSION_V4 {
             return Err(AuthorityError::UnsupportedVersion {
                 document: "authority_grant",
                 found: version,
-                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V3,
+                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V4,
             });
         }
         serde_json::from_value(value).map_err(|error| AuthorityError::Json(error.to_string()))
@@ -1142,7 +1178,7 @@ impl AuthorityGrantBuilder {
     pub fn new(identity: GrantId, revision: u64, actor: ActorRef) -> Self {
         Self {
             grant: AuthorityGrant {
-                schema_version: AUTHORITY_GRANT_SCHEMA_VERSION_V3,
+                schema_version: AUTHORITY_GRANT_SCHEMA_VERSION_V4,
                 identity,
                 revision,
                 actor,
@@ -1214,11 +1250,11 @@ impl AuthorityGrantBuilder {
     /// Validates and publishes the immutable grant revision.
     pub fn build(self) -> Result<AuthorityGrant, AuthorityError> {
         let grant = self.grant;
-        if grant.schema_version != AUTHORITY_GRANT_SCHEMA_VERSION_V3 {
+        if grant.schema_version != AUTHORITY_GRANT_SCHEMA_VERSION_V4 {
             return Err(AuthorityError::UnsupportedVersion {
                 document: "authority_grant",
                 found: grant.schema_version,
-                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V3,
+                supported: AUTHORITY_GRANT_SCHEMA_VERSION_V4,
             });
         }
         if grant.revision == 0
@@ -1251,15 +1287,9 @@ impl AuthorityGrantBuilder {
         for scope in &grant.resources.filesystem {
             FilesystemScope::new(scope.root.clone(), scope.access.clone())?;
         }
-        ArtifactAuthorityScope::new(
-            grant.resources.artifacts.identities.clone(),
-            grant.resources.artifacts.sensitivities.clone(),
-        )?;
-        LayoutAuthorityScope::new(
-            grant.resources.layouts.revisions.clone(),
-            grant.resources.layouts.actors.clone(),
-            grant.resources.layouts.shared,
-        )?;
+        if let ArtifactAuthorityScopeKind::Allow(scope) = &grant.resources.artifacts.0 {
+            ArtifactAuthorityScope::new(scope.identities.clone(), scope.sensitivities.clone())?;
+        }
         PeerAuthorityScope::new(
             grant.resources.peers.identities.clone(),
             grant.resources.peers.allow_any,
@@ -1645,7 +1675,7 @@ pub struct RequestedResourceFacts {
     /// Exact revision governing a revision/layout request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<RevisionId>,
-    /// Shared or actor-owned layout scope.
+    /// Shared layout scope, or a reserved actor owner that production denies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout_owner: Option<LayoutOwner>,
     /// Exact workspace scope identity.

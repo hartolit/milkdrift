@@ -219,7 +219,7 @@ fn configuration(
     let token_path = directory.path().join("controller.token");
     write_secret(&token_path, TOKEN)?;
     let config = DaemonConfig {
-        schema_version: 7,
+        schema_version: milkdrift_daemon::DAEMON_CONFIG_SCHEMA_VERSION,
         data_root: directory.path().join("data"),
         bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         secret_sources: BTreeMap::from([(

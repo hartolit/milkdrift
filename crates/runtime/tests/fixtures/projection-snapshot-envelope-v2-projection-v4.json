@@ -1,8 +1,8 @@
 {
   "snapshot_envelope": {
-    "checksum": "b3_8e046b5681dbd9bec808c97491eb0e439079a51a4f19cc29198ef676c7eca48f",
+    "checksum": "b3_53000e867d22273e51782a07d80f532c5377891296191a428ff3046cf38c9016",
     "covered_sequence": 5,
-    "history_digest": "b3_3613438c1c85f4a16cc0559d3e1d4438f9bde51d0ebe3ae625d4f6602cbc3cf4",
+    "history_digest": "b3_83939292d067f6a868cb11c95232f23f29a58841fad41a9b126e16a3e2fd4a42",
     "projection_payload_schema": 4,
     "run": "run-snapshot-golden",
     "schema_version": 2,

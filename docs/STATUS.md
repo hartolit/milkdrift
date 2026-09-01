@@ -15,8 +15,9 @@ snapshot. Git, CI, releases, and external audits own chronology.
 - One exact immutable grant basis governs run entry, local commands, information-bearing reads,
   pages, streams, artifacts, layouts, capability/provider views, controller actions, and peer
   operations. Humans, services, AIs, and peers use the same authority evaluator and command path.
-  Capability selectors are explicit `Any`, bounded nonempty `Only`, or whole-scope `DenyAll`; empty
-  collections never mean wildcard.
+  Capability and artifact selectors are explicit `Any`, bounded nonempty `Only`, or whole-scope
+  `DenyAll`; layout authority is deny-all or shared revisions only. Empty collections never mean
+  wildcard, and private actor-owned layouts are not advertised as executable daemon state.
 - `milkdrift-daemon` is the single bounded synchronous owner of redb, runtime, control, adapters,
   peers, receipts, layouts, and proposal discovery. A dedicated owner thread sits behind a bounded
   channel; overload, startup recovery, readiness, periodic maintenance, and ordered shutdown are
@@ -26,7 +27,7 @@ snapshot. Git, CI, releases, and external audits own chronology.
   timelines, proposals, capabilities/providers, authority, peers, artifacts, layouts, health, and
   resumable SSE. Protocol-1 clients are refused. Internal events, redb rows, snapshots, provider
   payloads, process handles, and framework types are not wire contracts.
-- Peer protocol 1.1 is transport-neutral. The HTTP adapter owns relationship authorization,
+- Peer protocol 1.2 is transport-neutral. The HTTP adapter owns relationship authorization,
   rotating bearer authentication, fixed endpoints, bounded quotas/workers, catalog generations,
   remote ordinary capability registrations, transactional acceptance/claim/entry, append-only
   observations, cancellation, restart recovery, tombstone replay, and ordinary core artifact
@@ -50,9 +51,11 @@ snapshot. Git, CI, releases, and external audits own chronology.
   uses the normal daemon/control/CLI path for validation, execution, verification, review,
   approval, prospective remediation, restart recovery, and historical inspection. Its headless
   dogfood fixture uses fresh byte-pinned processes and a persistent temporary Git repository.
-- A bounded controller lifecycle uses ordinary repeat, proposal, reconciliation, authority, and
-  event contracts. Assessment, continuation, human checkpoints, immutable limits, restart
-  recovery, and proposer attribution are durable and inspectable.
+- The control/runtime libraries implement a bounded controller lifecycle using ordinary repeat,
+  proposal, reconciliation, authority, and event contracts. Focused integrations test durable
+  assessment, continuation, checkpoints, immutable limits, restart recovery, and attribution. The
+  production daemon leaves this lifecycle uninstalled, so continuous controller activation fails
+  closed until cumulative resource admission is enforced at final external entry.
 - The public Rust surface follows the current policy in
   [`reference/public-api-policy.md`](reference/public-api-policy.md). Canonical identities come
   from their semantic owner; storage fault hooks are available only with redb `test-admin`; daemon
@@ -62,25 +65,25 @@ Current exact versions are:
 
 | Contract or durable family | Version and read behavior |
 | --- | --- |
-| Capability descriptor/resolution/events/cancellation | 1 |
+| Capability descriptor/events/cancellation / resolved snapshot | 1 / 2; legacy snapshot v1 reads retain their original digest and conservative missing-category meaning |
 | Invocation request | 2; context-free v1 reads migrate unambiguously |
 | Blueprint revision and mutation | 2; v1 refused |
 | Context manifest | 2; v1 refused |
 | Provider-neutral model task/response and endpoint profile | 1 |
 | Proposal, workflow-control command/risk policy, and controller policy | 1 |
 | Prompt-sequence import | 2; v1 refused |
-| Run command and run event | 1 |
-| Authority grant / authorization decision | 3 / 2; earlier forms refused |
+| Run command / run event | 1 / 2; exact legacy event v1 remains readable |
+| Authority grant / authorization decision | 4 / 2; earlier grant forms refused |
 | Authorized-command wrapper / command result | 1 / 2; result v1 reads only closed internal records |
 | Projection snapshot envelope / runtime payload | 2 / 4; old optional payloads replay from journal |
 | Administrative integrity cursor | 2 |
-| Peer hot record / compact tombstone | 2 / 1 |
+| Peer hot record / compact tombstone | 3 / 1; hot v2 reads are upgraded on the next append |
 | Redb internal document format / physical schema | 11 / 8 |
 | Application command receipt / layout record | 1 / 1 |
 | Local-process profile / host materialization | 2 / 1; process v1 refused |
 | External control / authenticated cursor | 2.2 / 2; legacy forms refused |
-| Peer protocol and catalog messages | 1.1; minor 0 refused |
-| Daemon configuration | 7; earlier versions refused |
+| Peer protocol and catalog messages | 1.2; earlier minors refused |
+| Daemon configuration | 8; earlier versions refused |
 | Layout document / CLI JSON output | 1 / 1 |
 
 ## Limitations now
@@ -105,10 +108,12 @@ Current exact versions are:
   event firehose, public configuration/audit/shutdown route, generalized plugin framework,
   optimized lifetime attempt index, or context search service. Historical attempt reads trade
   bounded memory for journal scan time.
-- Controller stop behavior is the immutable fail-at-bound mode; pause-at-bound is not implemented.
-  Multiple active controller occurrences deliberately prevent ambiguous proposer attribution.
-  Prompt sequences currently use trusted-host process stages; model-backed sequence stages,
-  checkpoint capabilities, and automatic distributed dogfood are not implemented.
+- Continuous controllers are not production-supported by the daemon. The library lifecycle's only
+  stop behavior is immutable fail-at-bound; it does not yet own an atomic final-entry ledger for
+  every cumulative resource dimension. Multiple active controller occurrences deliberately
+  prevent ambiguous proposer attribution. Prompt sequences currently use trusted-host process
+  stages; model-backed sequence stages, checkpoint capabilities, and automatic distributed dogfood
+  are not implemented.
 - The provider adapter does not implement provider discovery, tokenization, pricing, generic file
   parts, managed sessions, or the separate OpenAI Responses API. Cancellation cannot prove remote
   termination, and malformed/truncated streams do not produce a successful partial artifact.
@@ -121,10 +126,15 @@ Current exact versions are:
 
 ## Current validation/evidence snapshot
 
-- Current Linux snapshot (2026-08-31): formatting, all-target/all-feature checking, the complete
+- Current Linux snapshot (2026-09-01): formatting, all-target/all-feature checking, the complete
   workspace test and doctest suite, Clippy with warnings denied, rustdoc with warnings denied,
   `cargo deny check`, `cargo machete`, duplicate dependency inspection, and test inventory all pass.
   Four explicitly manual longevity/storage-bound tests remain ignored in the ordinary suite.
+- All four manual longevity lanes pass separately in release mode: 10,001 receipt commits across
+  hot/cold turnover and restart, two-daemon peer retention/restart, controller checkpoint/restart,
+  and the 2,049-occurrence runtime frontier. The seven pinned mutation shards cover 398 mutants:
+  375 caught, 21 compiler-unviable, and two exact reviewed unreachable-state classifications, with
+  no timeout or unclassified survivor.
 - The simplified all-feature `cargo-public-api` inventory is 6,586 items, down 11 from the measured
   6,597 baseline through removal of compatibility identity exports, unused legacy constants, and
   the daemon router export. Redb has 156 all-feature items but only 88 default-feature items because
@@ -136,8 +146,10 @@ Current exact versions are:
   and peer retention, artifact integrity/ranges, authentication/cursor revocation, daemon overload,
   shutdown, and a loopback two-daemon remote execution.
 - `milkdrift-evidence` owns repeatable storage/projection/context/artifact/daemon measurements and
-  operational reports under `target/evidence`. The hermetic external-evidence report remains
-  explicitly non-qualifying for real interoperability.
+  operational reports under `target/evidence`. Current dirty-tree diagnostic runs cover 64, 256,
+  and 1,024 operations and record Git commit/tree/dirty state plus `rustc -vV`; they are not release
+  qualification. The hermetic external-evidence report remains explicitly non-qualifying for real
+  interoperability.
 - Raw API inventories are generated under `target/public-api`; generated public-API reports and
   pass histories are not source documentation.
 - `cargo machete` reports no unused dependency. `cargo deny` accepts the maintained transitive

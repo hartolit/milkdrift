@@ -34,6 +34,7 @@ pub(crate) fn acceptance(snapshot: &PeerExecutionSnapshot, replayed: bool) -> In
 
 pub(crate) fn lookup(snapshot: &PeerExecutionSnapshot) -> InvocationLookup {
     InvocationLookup::Known {
+        request_id: snapshot.request_id().clone(),
         execution: snapshot.execution().clone(),
         request_digest: snapshot.request_digest().to_owned(),
         accepted_at_unix_ms: match snapshot {

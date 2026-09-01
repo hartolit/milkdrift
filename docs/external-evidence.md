@@ -159,6 +159,12 @@ as sensitive scratch data, never commit it, and share only a separately reviewed
 
 The report validates against strict serde v1 at write time; the consumer schema is
 [`external-evidence-report-v1.schema.json`](reference/external-evidence-report-v1.schema.json).
+The writer also caps the encoded report, rejects a qualifying document unless its source commit is
+clean and exact, requires scenario-specific command/run/attempt/artifact/restart facts, validates
+every reported artifact digest, and scans the complete encoded bytes for generated and
+operator-mapped secret values before creating the file. These checks make malformed or leaked
+reports non-writable; they do not sign a report or make self-reported evidence independently
+attested.
 Interpret the top level first:
 
 - `qualifying: true` requires `fixture_mode: false` and both scenario `qualifying` fields true.

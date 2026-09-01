@@ -1331,7 +1331,9 @@ mod tests {
                 3,
                 RunEventKind::RevisionAdoptionRequested {
                     reconciliation: reconciliation.clone(),
-                    requested_by: None,
+                    requested_by: Some(milkdrift_authority::ActorRef::new(
+                        "human:test-reconciliation",
+                    )?),
                     from_revision: old.id().clone(),
                     to_revision: new.id().clone(),
                     policy: ReconciliationPolicy::FinishCurrentThenAdopt,

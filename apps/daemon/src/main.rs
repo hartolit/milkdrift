@@ -54,8 +54,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_span_list(false)
         .init();
     let bind = config.document.bind;
-    let host = DaemonHost::start(config)?;
     let listener = tokio::net::TcpListener::bind(bind).await?;
+    let host = DaemonHost::start(config)?;
     serve(listener, host, async {
         if let Err(error) = tokio::signal::ctrl_c().await {
             tracing::warn!(phase = "shutdown", outcome = "signal_error", "{error}");

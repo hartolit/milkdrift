@@ -69,7 +69,7 @@ pub fn initialize_repository(repository: &Path) -> Result<(String, String), Stri
 }
 
 pub fn git(repository: &Path, arguments: &[&str]) -> Result<String, String> {
-    let output = Command::new("/usr/bin/git")
+    let output = Command::new("git")
         .args(arguments)
         .current_dir(repository)
         .output()

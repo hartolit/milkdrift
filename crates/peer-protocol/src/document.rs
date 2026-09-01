@@ -55,7 +55,7 @@ impl<T> ProtocolEnvelope<T> {
     #[must_use]
     pub fn v1(message: T) -> Self {
         Self {
-            protocol: ProtocolVersion::V1_1,
+            protocol: ProtocolVersion::V1_2,
             message,
             extensions: BTreeMap::new(),
         }

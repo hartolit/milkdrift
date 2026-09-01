@@ -159,7 +159,7 @@ fn resolved_snapshot_at(
     descriptor_revision: u64,
 ) -> Result<ResolvedCapabilitySnapshot, Box<dyn Error>> {
     let base = ResolvedCapabilitySnapshotDocument::from_json(include_bytes!(
-        "../../../capability/tests/fixtures/resolved-capability-snapshot-v1.json"
+        "../../../capability/tests/fixtures/resolved-capability-snapshot-v2.json"
     ))?;
     let operation = base.body().operation().clone();
     let descriptor = DescriptorBuilder::new(
@@ -187,7 +187,7 @@ fn resolved_snapshot_with_side_effect(
     idempotency: IdempotencyBehavior,
 ) -> Result<ResolvedCapabilitySnapshot, Box<dyn Error>> {
     let base = ResolvedCapabilitySnapshotDocument::from_json(include_bytes!(
-        "../../../capability/tests/fixtures/resolved-capability-snapshot-v1.json"
+        "../../../capability/tests/fixtures/resolved-capability-snapshot-v2.json"
     ))?;
     let operation = base.body().operation().clone();
     let contract = base.body().operation_contract();

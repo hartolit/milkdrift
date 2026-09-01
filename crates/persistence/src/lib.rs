@@ -53,7 +53,10 @@ pub use bounded::{
     MAX_DETAIL_BYTES, MAX_EVENTS_PER_COMMIT, MAX_EVIDENCE_REFERENCES, MAX_PAGE_SIZE,
     MAX_REASON_BYTES, PageSize, Reason,
 };
-pub use document::{MAX_EVENT_DOCUMENT_BYTES, RUN_EVENT_SCHEMA_VERSION_V1, RunEventEnvelope};
+pub use document::{
+    MAX_EVENT_DOCUMENT_BYTES, RUN_EVENT_SCHEMA_VERSION_V1, RUN_EVENT_SCHEMA_VERSION_V2,
+    RunEventEnvelope,
+};
 pub use error::{PersistenceError, StorageFailureClass};
 pub use event::{
     AttemptUsage, AuthorityDecision, BranchResultReference, ControllerAssessmentBoundary,
@@ -85,14 +88,14 @@ pub use journal::{
     TimerIndexEntry, TimerIndexMutation, WorkspaceAccounting, WorkspaceMutation, WorkspaceStore,
 };
 pub use peer::{
-    PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2, PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1,
-    PeerAcceptedAuthoritySummary, PeerAdmission, PeerAdmissionOutcome, PeerAdmissionRejection,
-    PeerArchivedDisposition, PeerCancellationRecord, PeerCatalogState, PeerClaimOutcome,
-    PeerDispatchClaim, PeerDispatchClaimRequest, PeerEntryEvidence, PeerEntryOutcome,
-    PeerEntryRequest, PeerExecutionAccounting, PeerExecutionPhase, PeerExecutionRecord,
-    PeerExecutionSnapshot, PeerExecutionStatus, PeerExecutionStore, PeerExecutionTombstone,
-    PeerObservationAppend, PeerObservationPage, PeerRecoveryResult, PeerRelationshipState,
-    PeerRetentionPage, PeerRetentionRequest,
+    PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2, PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3,
+    PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1, PeerAcceptedAuthoritySummary, PeerAdmission,
+    PeerAdmissionOutcome, PeerAdmissionRejection, PeerArchivedDisposition, PeerCancellationRecord,
+    PeerCatalogState, PeerClaimOutcome, PeerDispatchClaim, PeerDispatchClaimRequest,
+    PeerEntryEvidence, PeerEntryOutcome, PeerEntryRequest, PeerExecutionAccounting,
+    PeerExecutionPhase, PeerExecutionRecord, PeerExecutionSnapshot, PeerExecutionStatus,
+    PeerExecutionStore, PeerExecutionTombstone, PeerObservationAppend, PeerObservationPage,
+    PeerRecoveryResult, PeerRelationshipState, PeerRetentionPage, PeerRetentionRequest,
 };
 pub use revision::{
     ImmutableRevisionPut, RevisionCursor, RevisionFilter, RevisionPage, RevisionPageQuery,

@@ -6,7 +6,7 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
+        mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -308,12 +308,15 @@ impl EffectWorkerHost {
         if mode == EffectShutdownMode::Retain {
             self.shared.retain_queued.store(true, Ordering::SeqCst);
         }
+        let expires = Instant::now() + deadline;
         let mut unresolved_invocations = Vec::new();
-        if mode == EffectShutdownMode::Cancel {
-            let ShutdownReport {
-                unresolved_invocations: unresolved,
-            } = self.capability_host.force_shutdown()?;
-            unresolved_invocations = unresolved;
+        let mut lifecycle_complete = mode != EffectShutdownMode::Cancel;
+        if mode == EffectShutdownMode::Cancel
+            && let Some(report) =
+                capability_shutdown_before(self.capability_host.clone(), true, expires)?
+        {
+            unresolved_invocations = report.unresolved_invocations;
+            lifecycle_complete = true;
         }
         self.execution_sender
             .lock()
@@ -324,19 +327,21 @@ impl EffectWorkerHost {
             .map_err(|_error| EffectWorkerError::StateUnavailable)?
             .take();
 
-        let expires = Instant::now() + deadline;
         while !self.is_idle() && Instant::now() < expires {
             thread::sleep(Duration::from_millis(5));
         }
-        let clean = self.is_idle();
-        if clean {
-            if mode != EffectShutdownMode::Cancel {
-                self.capability_host.begin_shutdown()?;
-                let ShutdownReport {
-                    unresolved_invocations: unresolved,
-                } = self.capability_host.shutdown()?;
-                unresolved_invocations.extend(unresolved);
+        let idle = self.is_idle();
+        if idle && mode != EffectShutdownMode::Cancel {
+            if let Some(report) =
+                capability_shutdown_before(self.capability_host.clone(), false, expires)?
+            {
+                unresolved_invocations.extend(report.unresolved_invocations);
+                lifecycle_complete = true;
+            } else {
+                lifecycle_complete = false;
             }
+        }
+        if idle {
             let mut joins = self
                 .joins
                 .lock()
@@ -347,6 +352,7 @@ impl EffectWorkerHost {
                 }
             }
         }
+        let clean = idle && lifecycle_complete;
         Ok(EffectWorkerShutdown {
             clean,
             unresolved_invocations,
@@ -359,6 +365,33 @@ impl EffectWorkerHost {
             && self.shared.active_executions.load(Ordering::SeqCst) == 0
             && self.shared.queued_cancellations.load(Ordering::SeqCst) == 0
             && self.shared.active_cancellations.load(Ordering::SeqCst) == 0
+    }
+}
+
+fn capability_shutdown_before(
+    host: CapabilityHost,
+    force: bool,
+    expires: Instant,
+) -> Result<Option<ShutdownReport>, EffectWorkerError> {
+    let remaining = expires.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Ok(None);
+    }
+    let (sender, receiver) = sync_channel(1);
+    thread::Builder::new()
+        .name("milkdrift-capability-shutdown".to_owned())
+        .spawn(move || {
+            let result = if force {
+                host.force_shutdown()
+            } else {
+                host.shutdown()
+            };
+            let _ = sender.send(result);
+        })
+        .map_err(|_| EffectWorkerError::StateUnavailable)?;
+    match receiver.recv_timeout(remaining) {
+        Ok(result) => result.map(Some).map_err(EffectWorkerError::Host),
+        Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => Ok(None),
     }
 }
 

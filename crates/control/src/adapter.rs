@@ -55,14 +55,16 @@ impl WorkflowControlAdapter {
         invocation: &AdapterInvocation<'_>,
     ) -> Result<ControlResult, ControlError> {
         let request_value = inline_input(invocation, CONTROL_REQUEST_INPUT)?;
-        let basis = invocation
-            .context()
-            .and_then(milkdrift_capability_host::AdapterExecutionContext::authority)
-            .ok_or_else(|| {
-                ControlError::InvalidContract(
-                    "workflow control requires the frozen invocation authority basis".to_owned(),
-                )
-            })?;
+        let execution_context = invocation.context().ok_or_else(|| {
+            ControlError::InvalidContract(
+                "workflow control requires durable execution provenance".to_owned(),
+            )
+        })?;
+        let basis = execution_context.authority().ok_or_else(|| {
+            ControlError::InvalidContract(
+                "workflow control requires the frozen invocation authority basis".to_owned(),
+            )
+        })?;
         let context = ActorAuthorityContext::new(
             basis.actor().clone(),
             milkdrift_runtime::CommandAuthorityClaim::new(
@@ -81,6 +83,18 @@ impl WorkflowControlAdapter {
             ));
         }
         ensure_operation_matches(invocation.request().operation(), document.command())?;
+        let trusted_time = execution_context
+            .entry_authorization()
+            .ok_or_else(|| {
+                ControlError::InvalidContract(
+                    "workflow control requires the fresh entry-authorization decision".to_owned(),
+                )
+            })?
+            .request()
+            .evaluated_at;
+        let document = document.with_trusted_issued_at(
+            milkdrift_persistence::TimestampMillis::new(trusted_time.get()),
+        )?;
         self.service.execute(&document)
     }
 

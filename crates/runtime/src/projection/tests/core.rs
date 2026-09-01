@@ -299,7 +299,7 @@ fn persisted_invocation_request_must_match_frozen_capability_resolution() -> Tes
         Some(&fixture.revision)
     );
     let snapshot_document = ResolvedCapabilitySnapshotDocument::from_json(include_bytes!(
-        "../../../../capability/tests/fixtures/resolved-capability-snapshot-v1.json"
+        "../../../../capability/tests/fixtures/resolved-capability-snapshot-v2.json"
     ))?;
     let mismatch = envelope(
         5,

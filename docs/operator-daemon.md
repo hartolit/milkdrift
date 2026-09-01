@@ -9,8 +9,9 @@ Startup is deliberately fail-closed and ordered:
 1. Validate daemon configuration, normalized paths, credential references, grants, and bounds before opening storage.
 2. Refuse a data root containing legacy `control-state-v1.json`, `peer-executions-v1`, or `peer-artifacts-v1`. This release neither imports nor ignores old sidecar/prototype idempotency and artifact authority; move to a fresh data root or perform an explicitly reviewed offline conversion.
 3. Open exact-current redb physical schema 8/internal document format 11 and the immutable artifact root.
-4. Open runtime admission closed, construct the shared control service, install its single
-   controller lifecycle owner, and only then recover active runtime state.
+4. Open runtime admission closed and construct the shared control service. The production daemon
+   deliberately leaves the experimental controller lifecycle uninstalled, so marked continuous
+   controllers fail closed during recovery or activation.
 5. Validate bounded application-receipt and layout reads; corrupt or unsupported records fail startup.
 6. Register and health-check workflow-control, process, and model adapters.
 7. Build peer relationships and recover owned peer work when enabled.
@@ -18,28 +19,25 @@ Startup is deliberately fail-closed and ordered:
 
 Until the final step, readiness returns unavailable and no external command is admitted. Axum owns sockets and streaming only; redb, runtime, control, layout, proposal, and artifact work crosses the bounded owner queue. Queue saturation returns overload instead of blocking an async reactor task or allocating an unbounded backlog.
 
-## Bounded controllers
+## Bounded controller contracts
 
 A controller is an ordinary immutable revision containing the validated
-`org.milkdrift/controller-policy` schema-1 extension and an explicit pinned `Repeat`. The daemon
-does not scan for work in a separate controller loop. Runtime scheduling calls the installed
-`ControllerLifecycleOwner` before activation, each cycle, and checkpoint continuation; the
-assessment and any admitted iteration are committed together. A marked controller cannot run if
-the owner was not installed or its policy version/digest/wrapper binding is invalid.
+`org.milkdrift/controller-policy` schema-1 extension and an explicit pinned `Repeat`. The control
+and runtime libraries expose one `ControllerLifecycleOwner` for focused integration and recovery
+tests, and never add a separate controller scheduler. The production daemon does not install that
+owner because projection-time cumulative accounting is not yet an atomic reservation at every
+final external-entry boundary. A marked controller therefore fails closed rather than running
+with a limit that concurrent or newly admitted work could exceed.
 
-Use `milkdrift-cli controller status RUN CONTROLLER_EXECUTION` to inspect the exact policy,
-progress/limits, last durable assessment, checkpoint or bound, and eligibility. Continue a pending
-checkpoint with `milkdrift-cli controller continue RUN CONTROLLER_EXECUTION DECISION_ID`; this is a
-confirmed mutating command using the configured actor's normal approval authority. Restart does not
-approve a checkpoint. A stale/duplicate different decision, grant revocation, elapsed/resource
-bound, or terminal controller prevents continuation. Reaching a bound deterministically fails the
-controller repeat without retrying a provider. Raising a bound requires an authorized immutable
-revision and prospective reconciliation; the controller actor cannot widen or remove its own
-policy.
+The controller read/command DTOs remain available for inspecting any durable lifecycle history
+created by an explicit embedding. `milkdrift-cli controller continue` cannot make the production
+daemon install or bypass the missing owner. Production support requires an entry-adjacent ledger
+whose reservation, accounting, retry, cancellation, and restart behavior is proven for every hard
+resource dimension; merely enabling the existing hook is unsupported.
 
 ## Application receipts and retention
 
-Configuration schema 7 uses `application_receipts.hot_receipt_bound` for the recent operational tier and `application_receipts.archive_batch_size` for one oldest-first move. The existing runtime maintenance interval performs a bounded archive when the tier is full; the new-command transaction also reclaims a bounded batch if needed, so maintenance delay cannot create a permanent refusal. `security_audit_record_bound` is a separate evicting audit-prefix policy. `peers.serving.maximum_hot_terminal_records`, `archive_batch_size`, and `observation_hot_retention_ms` independently govern peer execution detail. Artifacts and runtime event/snapshot retention are not derived from any of those values.
+Configuration schema 8 uses `application_receipts.hot_receipt_bound` for the recent operational tier and `application_receipts.archive_batch_size` for one oldest-first move. Startup first re-establishes the configured hot-receipt and security-audit bounds, including when a restart selects smaller limits. The runtime maintenance interval performs bounded archival, and a new-command transaction reclaims enough eligible batches to preserve the current ceiling. `security_audit_record_bound` is a separate evicting audit-prefix policy. `peers.serving.maximum_hot_terminal_records`, `archive_batch_size`, and `observation_hot_retention_ms` independently govern peer execution detail. Artifacts and runtime event/snapshot retention are not derived from any of those values.
 
 An application receipt binds the authenticated actor, exact grant identity/revision/digest, client command identity, canonical command/schema digest, accepted or intentional deterministic rejected result, effect reference, and timestamps. Reuse with the same digest returns that stored result from either tier; reuse with another digest permanently fails conflict. Same-store layout/proposal effects commit atomically with receipt insertion and any required hot-to-cold move. Runtime/control effects reconcile through their existing stable internal command identities when a crash separates runtime acceptance from receipt commit.
 

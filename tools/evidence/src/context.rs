@@ -22,7 +22,7 @@ use crate::{EvidenceResult, ScenarioMeasurement};
 const DISCOVERY_CANDIDATES: u32 = 2_048;
 const MATERIALIZED_CANDIDATES: u32 = 64;
 
-/// Builds and deterministically selects a bounded manifest from a large metadata set.
+/// Builds and deterministically selects a bounded manifest from synthetic candidate metadata.
 pub fn context_discovery_and_selection() -> EvidenceResult<ScenarioMeasurement> {
     let policy = policy(128)?;
     let revision = revision(policy.clone())?;
@@ -61,7 +61,7 @@ pub fn context_discovery_and_selection() -> EvidenceResult<ScenarioMeasurement> 
     }
     let encoded = serde_json::to_vec(&manifest)?;
     Ok(ScenarioMeasurement::new(
-        "context/metadata_discovery_selection_2048_to_128",
+        "context/synthetic_candidate_selection_2048_to_128",
         u64::from(DISCOVERY_CANDIDATES),
         u64::try_from(encoded.len())?,
         &encoded,

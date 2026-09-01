@@ -166,6 +166,16 @@ fn committed_report_schema_is_strict_and_versioned() -> TestResult {
     );
     assert_eq!(schema["properties"]["schema_version"]["const"], 1);
     assert_eq!(schema["additionalProperties"], false);
+    assert_eq!(schema["properties"]["validation"]["maxItems"], 4096);
+    assert_eq!(schema["properties"]["redactions"]["maxItems"], 64);
+    assert_eq!(
+        schema["$defs"]["scenario"]["properties"]["facts"]["maxProperties"],
+        64
+    );
+    assert_eq!(
+        schema["$defs"]["artifact"]["properties"]["digest"]["pattern"],
+        "^[0-9a-f]{64}$"
+    );
     assert!(
         schema["required"]
             .as_array()

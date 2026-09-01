@@ -22,7 +22,7 @@ use clap::{ArgAction, Parser, ValueEnum};
 use milkdrift_authority::{
     AccessMode, ArtifactAuthorityScope, AuthorityBudget, BoundaryTimeMillis,
     CapabilityAuthorityScopeBuilder, DaemonAuthorityScope, FilesystemScope, LayoutAuthorityScope,
-    NetworkProfileRef, NetworkScope, PeerAuthorityScope, ResourceScope, SecretRef,
+    NetworkProfileRef, NetworkScope, PeerAuthorityScope, ResourceScope, SecretRef, Selection,
     WorkflowRunScope, WorkspaceAuthorityScope,
 };
 use milkdrift_blueprint::{BlueprintRevisionDocument, WorkflowId};
@@ -178,6 +178,7 @@ async fn execute(arguments: Arguments) -> HarnessResult {
     let repository = session_root.join("repository");
     fs::create_dir_all(&session_root).map_err(|error| error.to_string())?;
     let now = unix_millis();
+    let operator_secrets = forbidden_secret_values(&arguments.secret_source)?;
     let (milkdrift_commit, milkdrift_tree, dirty) = milkdrift_git_facts()?;
     let mut report = EvidenceReport {
         schema_version: REPORT_SCHEMA_VERSION,
@@ -207,13 +208,21 @@ async fn execute(arguments: Arguments) -> HarnessResult {
         ],
         failure_reason: None,
     };
-    let result = run_scenarios(&arguments, &output, &session_root, &repository, &mut report).await;
+    let result = run_scenarios(
+        &arguments,
+        &output,
+        &session_root,
+        &repository,
+        &mut report,
+        &operator_secrets,
+    )
+    .await;
     if let Err(error) = &result {
         report.failure_reason = Some(error.clone());
     }
     report.qualifying = report.process.qualifying && report.model.qualifying;
-    write_report(&report_path, &report)?;
-    redaction_check(&report_path, &[])?;
+    write_report(&report_path, &report, &operator_secrets)?;
+    redaction_check(&report_path, &operator_secrets)?;
     result
 }
 
@@ -223,6 +232,7 @@ async fn run_scenarios(
     session_root: &Path,
     repository: &Path,
     report: &mut EvidenceReport,
+    operator_secrets: &[Vec<u8>],
 ) -> HarnessResult {
     let (repository_initial_commit, repository_initial_tree) =
         workflows::initialize_repository(repository)?;
@@ -346,9 +356,11 @@ async fn run_scenarios(
                 .map_err(|_| "fixture model endpoint thread panicked".to_owned())?;
         }
     }
-    let forbidden = [process_token.as_str(), model_token.as_str()];
+    let mut forbidden = operator_secrets.to_vec();
+    forbidden.push(process_token.as_bytes().to_vec());
+    forbidden.push(model_token.as_bytes().to_vec());
     let temporary = output.join("report.preflight.json");
-    write_report(&temporary, report)?;
+    write_report(&temporary, report, &forbidden)?;
     redaction_check(&temporary, &forbidden)?;
     fs::remove_file(temporary).map_err(|error| error.to_string())?;
     Ok(())
@@ -441,7 +453,7 @@ fn configuration(
         )?,
     ];
     let config = DaemonConfig {
-        schema_version: 7,
+        schema_version: milkdrift_daemon::DAEMON_CONFIG_SCHEMA_VERSION,
         data_root: session_root.join("data"),
         bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         secret_sources,
@@ -569,7 +581,7 @@ fn explicit_grant(
         .map(|key| SecretRef::new(key).map_err(|error| error.to_string()))
         .collect::<Result<BTreeSet<_>, _>>()?;
     let artifacts = ArtifactAuthorityScope::new(
-        BTreeSet::new(),
+        Selection::any(),
         BTreeSet::from([
             ArtifactSensitivity::Public,
             ArtifactSensitivity::Internal,
@@ -1638,7 +1650,7 @@ fn validate_output_path(path: &Path) -> HarnessResult<PathBuf> {
 fn milkdrift_git_facts() -> HarnessResult<(String, String, bool)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let command = |arguments: &[&str]| -> HarnessResult<String> {
-        let output = std::process::Command::new("/usr/bin/git")
+        let output = std::process::Command::new("git")
             .args(arguments)
             .current_dir(&root)
             .output()
@@ -1656,7 +1668,7 @@ fn milkdrift_git_facts() -> HarnessResult<(String, String, bool)> {
 }
 
 fn rust_build_target() -> HarnessResult<String> {
-    let output = std::process::Command::new("/usr/bin/rustc")
+    let output = std::process::Command::new("rustc")
         .arg("-vV")
         .output()
         .map_err(|error| format!("rustc build-target query failed: {error}"))?;
@@ -1671,15 +1683,15 @@ fn rust_build_target() -> HarnessResult<String> {
         .ok_or_else(|| "rustc build-target query omitted the host triple".to_owned())
 }
 
-fn redaction_check(path: &Path, forbidden: &[&str]) -> HarnessResult {
+fn redaction_check(path: &Path, forbidden: &[Vec<u8>]) -> HarnessResult {
     let bytes = fs::read(path).map_err(|error| error.to_string())?;
-    let text = String::from_utf8(bytes).map_err(|error| error.to_string())?;
     if forbidden
         .iter()
-        .any(|value| !value.is_empty() && text.contains(value))
+        .any(|value| !value.is_empty() && bytes.windows(value.len()).any(|window| window == value))
     {
         return Err("redaction validation found a secret value in the report".to_owned());
     }
+    let text = String::from_utf8(bytes).map_err(|error| error.to_string())?;
     for forbidden_key in ["authorization", "full_prompt", "full_output", "environment"] {
         if text
             .to_ascii_lowercase()
@@ -1692,6 +1704,31 @@ fn redaction_check(path: &Path, forbidden: &[&str]) -> HarnessResult {
     }
     serde_json::from_str::<Value>(&text).map_err(|error| error.to_string())?;
     Ok(())
+}
+
+fn forbidden_secret_values(mappings: &[String]) -> HarnessResult<Vec<Vec<u8>>> {
+    let mut values = Vec::new();
+    for mapping in mappings {
+        let (_reference, source) = mapping
+            .split_once('=')
+            .ok_or_else(|| "secret source mapping requires reference=source".to_owned())?;
+        let value = if let Some(variable) = source.strip_prefix("env:") {
+            std::env::var_os(variable)
+                .ok_or_else(|| {
+                    format!("required secret environment variable {variable} is not set")
+                })?
+                .as_encoded_bytes()
+                .to_vec()
+        } else if let Some(path) = source.strip_prefix("file:") {
+            fs::read(path).map_err(|error| format!("secret source file read: {error}"))?
+        } else {
+            return Err("secret source must use env: or file:".to_owned());
+        };
+        if !value.is_empty() {
+            values.push(value);
+        }
+    }
+    Ok(values)
 }
 
 fn unix_millis() -> u64 {

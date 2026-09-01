@@ -125,11 +125,23 @@ fn canonical_version_statements_match_source_constants() -> TestResult {
     )?;
     let grant = numeric_const(
         "crates/authority/src/document.rs",
-        "AUTHORITY_GRANT_SCHEMA_VERSION_V3",
+        "AUTHORITY_GRANT_SCHEMA_VERSION_V4",
     )?;
     let prompt = numeric_const(
         "crates/prompt-sequence/src/document.rs",
         "PROMPT_SEQUENCE_SCHEMA_VERSION_V2",
+    )?;
+    let peer_execution = numeric_const(
+        "crates/persistence/src/peer.rs",
+        "PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3",
+    )?;
+    let run_event = numeric_const(
+        "crates/persistence/src/document.rs",
+        "RUN_EVENT_SCHEMA_VERSION_V2",
+    )?;
+    let resolved_snapshot = numeric_const(
+        "crates/capability/src/document.rs",
+        "RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2",
     )?;
 
     let facts = [
@@ -139,9 +151,10 @@ fn canonical_version_statements_match_source_constants() -> TestResult {
         format!("physical schema {storage}"),
         format!("internal document format {format}"),
         format!("authority grants are v{grant}"),
-        format!(
-            "prompt-sequence imports, durable hot peer-execution records, and authority decisions are currently v{prompt}"
-        ),
+        format!("prompt-sequence imports are currently v{prompt}"),
+        format!("durable hot peer-execution records are v{peer_execution}"),
+        format!("run-event envelopes are v{run_event}"),
+        format!("resolved-capability snapshots are v{resolved_snapshot}"),
     ];
     let architecture = read(root()?.join("ARCHITECTURE.md"))?;
     for fact in facts {

@@ -1,10 +1,10 @@
 # Daemon control and execution authority
 
-Daemon configuration schema 7 requires every actor binding to contain an explicit `authority`
+Daemon configuration schema 8 requires every actor binding to contain an explicit `authority`
 object. Preset names deterministically expand to typed operation sets; they do not imply resource
 access and are not retained as executable session policy. The resource scope, numeric ceilings,
 validity interval, grant identity/revision, and revocation generation are independent inputs to the
-immutable schema-3 grant. Authentication selects that exact actor and grant but grants nothing by
+immutable schema-4 grant. Authentication selects that exact actor and grant but grants nothing by
 itself.
 
 The following safe pattern grants one actor access to one workflow lineage and one local process
@@ -40,8 +40,8 @@ to run:
       ],
       "network": { "profiles": [], "destinations": [] },
       "secrets": [],
-      "artifacts": { "identities": [], "sensitivities": [] },
-      "layouts": { "revisions": [], "actors": [], "shared": false },
+      "artifacts": { "type": "deny_all" },
+      "layouts": { "type": "deny_all" },
       "peers": { "identities": [], "allow_any": false },
       "daemon": {
         "readiness": true,
@@ -76,11 +76,12 @@ Filesystem roots are normalized absolute lexical roots. Network destinations are
 `host:port` values and network profiles are named immutable transport profiles. Secret references
 are opaque names; secret values never belong in the document.
 
-Artifact access requires both an allowed immutable artifact identity (or an intentionally empty
-identity wildcard) and an explicitly named sensitivity; an empty sensitivity set denies metadata
-and bytes. Layout authority is evaluated separately from semantic revision authority and names
-exact revisions plus shared or actor-owned presentation state. Empty peer and workspace scopes
-deny access unless their explicit wildcard boolean is set. Daemon flags independently grant coarse
+Artifact authority is either `{ "type": "deny_all" }` or an allow scope containing an explicit
+`Any`/nonempty `Only` identity selector and a nonempty sensitivity set; there is no implicit empty
+identity wildcard. Layout authority is either deny-all or a shared-layout scope with an explicit
+revision selector. Actor-owned/private layouts are reserved in the authority vocabulary but are
+not implemented by the control protocol, daemon, or persistence adapter. Empty peer and workspace
+scopes deny access unless their explicit wildcard boolean is set. Daemon flags independently grant coarse
 readiness, detailed health, the caller's own authority view, redacted configuration, and bounded
 audit views. Protected artifact/provider/peer/health details are therefore not implied by workflow
 inspection.
@@ -103,8 +104,9 @@ shortcut for generating hidden wildcard facts. Broad grants remain limited by th
 written in the configuration.
 
 Older configuration and authority-grant schemas are rejected. Migration is manual: start from a
-reviewed schema-7 configuration, replace every legacy capability array with an explicit `Any` or
-nonempty `Only` selector, retain `DenyAll` where no invocation is intended, choose finite limits,
+reviewed schema-8 configuration, replace every legacy capability and artifact array with an
+explicit `Any` or nonempty `Only` selector, retain `DenyAll` where no invocation or presentation
+access is intended, choose finite limits,
 and explicitly configure each peer relationship's `artifact_sensitivities`. Run
 `milkdrift-daemon --config PATH --check-config`, and inspect the redacted
 effective configuration before starting the daemon. When narrowing or revoking, advance the grant

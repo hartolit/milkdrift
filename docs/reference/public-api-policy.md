@@ -36,7 +36,7 @@ package entry point. Consumers otherwise import the canonical owner directly.
 | `milkdrift-control-client` | External product contract for typed authenticated HTTP/SSE clients, including CLI and future clients. |
 | `milkdrift-control-protocol` | External product and durable wire contracts for protocol 2.2; transport/runtime/storage types are excluded. |
 | `milkdrift-model` | External product and durable-schema contracts for provider-neutral model requests, responses, and context manifests. |
-| `milkdrift-peer-protocol` | External product and durable wire contracts for peer protocol 1.1; HTTP/runtime/storage types are excluded. |
+| `milkdrift-peer-protocol` | External product and durable wire contracts for peer protocol 1.2; HTTP/runtime/storage types are excluded. |
 | `milkdrift-persistence` | Workspace adapter ports and durable event/application/peer/snapshot schemas used by runtime and redb. Canonical identities are imported from their owners, not re-exported for compatibility. |
 | `milkdrift-prompt-sequence` | External product and durable-schema contracts for schema-2 imports, compilation, inspection, and remediation. |
 | `milkdrift-runtime` | Workspace adapter contracts for commands, projection, scheduling, execution, recovery, reconciliation, and context discovery. |

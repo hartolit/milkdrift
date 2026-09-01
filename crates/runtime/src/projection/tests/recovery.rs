@@ -21,7 +21,7 @@ fn keeps_uncertain_retained_work_visible_through_cancellation_and_recovery() -> 
     let lease = LeaseId::new("lease-1")?;
     let decision = ReconciliationDecisionId::new("decision-retain")?;
     let snapshot_document = ResolvedCapabilitySnapshotDocument::from_json(include_bytes!(
-        "../../../../capability/tests/fixtures/resolved-capability-snapshot-v1.json"
+        "../../../../capability/tests/fixtures/resolved-capability-snapshot-v2.json"
     ))?;
     let snapshot = snapshot_document.body().clone();
     let requirement = CapabilityRequirement::new(OperationId::new("tool.publish")?)
@@ -303,7 +303,7 @@ fn recovery_query_preserves_obligation_and_remediation_creates_real_work() -> Te
     let compensate = ReconciliationDecisionId::new("decision-compensate")?;
     let remediation = NodeExecutionId::new("execution-remediation")?;
     let snapshot_document = ResolvedCapabilitySnapshotDocument::from_json(include_bytes!(
-        "../../../../capability/tests/fixtures/resolved-capability-snapshot-v1.json"
+        "../../../../capability/tests/fixtures/resolved-capability-snapshot-v2.json"
     ))?;
     let snapshot = snapshot_document.body().clone();
     let requirement = CapabilityRequirement::new(OperationId::new("tool.publish")?)
@@ -475,7 +475,7 @@ fn rejects_stale_reconciliation_and_requires_immediate_exact_repin() -> TestResu
             &fixture.run,
             RunEventKind::RevisionAdoptionRequested {
                 reconciliation: reconciliation.clone(),
-                requested_by: None,
+                requested_by: Some(ActorRef::new("human:test-reconciliation")?),
                 from_revision: fixture.revision.clone(),
                 to_revision: next_revision.clone(),
                 policy: ReconciliationPolicy::FinishCurrentThenAdopt,
@@ -561,7 +561,7 @@ fn reconciliation_removal_without_a_created_execution_is_an_enacted_noop() -> Te
             &fixture.run,
             RunEventKind::RevisionAdoptionRequested {
                 reconciliation: reconciliation.clone(),
-                requested_by: None,
+                requested_by: Some(ActorRef::new("human:test-reconciliation")?),
                 from_revision: fixture.revision.clone(),
                 to_revision: next_revision.clone(),
                 policy: ReconciliationPolicy::RemoveUnstartedOnly,
@@ -646,7 +646,7 @@ fn reconciliation_removal_rejects_eligible_execution_with_live_wait_ownership() 
             &fixture.run,
             RunEventKind::RevisionAdoptionRequested {
                 reconciliation: reconciliation.clone(),
-                requested_by: None,
+                requested_by: Some(ActorRef::new("human:test-reconciliation")?),
                 from_revision: fixture.revision.clone(),
                 to_revision: next_revision.clone(),
                 policy: ReconciliationPolicy::RemoveUnstartedOnly,
@@ -754,7 +754,7 @@ fn reconciliation_cancellation_is_execution_cancellation_authority() -> TestResu
             &fixture.run,
             RunEventKind::RevisionAdoptionRequested {
                 reconciliation: reconciliation.clone(),
-                requested_by: None,
+                requested_by: Some(ActorRef::new("human:test-reconciliation")?),
                 from_revision: fixture.revision.clone(),
                 to_revision: next_revision.clone(),
                 policy: ReconciliationPolicy::CancelAndRestartSafeWork,

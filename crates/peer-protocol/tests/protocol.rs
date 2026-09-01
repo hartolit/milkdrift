@@ -4,16 +4,17 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use milkdrift_authority::{ActorRef, PeerId};
 use milkdrift_capability::{
-    AdmissionConstraints, BoundedJson, CancellationBehavior, CapabilityCategory, CapabilityId,
-    CapabilityObservation, DescriptorBuilder, IdempotencyBehavior, InvocationId, InvocationRequest,
-    Locality, OperationContract, OperationId, ResolvedCapabilitySnapshot, SchemaContract, SchemaId,
-    SideEffectClass, StreamingMode,
+    AdmissionConstraints, ArtifactReference, BoundedJson, CancellationBehavior, CapabilityCategory,
+    CapabilityId, CapabilityObservation, DescriptorBuilder, IdempotencyBehavior, InputReference,
+    InvocationId, InvocationRequest, InvocationValueReference, Locality, OperationContract,
+    OperationId, ResolvedCapabilitySnapshot, SchemaContract, SchemaId, SideEffectClass,
+    StreamingMode,
 };
 use milkdrift_peer_protocol::{
     ArchivedExecutionSummary, CatalogEntry, CatalogSnapshot, DecodeLimits, DelegatedAuthorization,
-    DelegationRef, ExecutionLimits, ObservationHistory, ObservationPage, PeerExecutionId,
-    PeerInvocationRequest, PeerRequestId, ProtocolEnvelope, ProtocolVersion, ProtocolVersionRange,
-    RemoteExecutionStatus, decode_envelope, encode_envelope,
+    DelegationRef, ExecutionLimits, InvocationLookup, ObservationHistory, ObservationPage,
+    PeerExecutionId, PeerInvocationRequest, PeerRequestId, ProtocolEnvelope, ProtocolVersion,
+    ProtocolVersionRange, RemoteExecutionStatus, decode_envelope, encode_envelope,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -49,15 +50,108 @@ fn descriptor() -> TestResult<milkdrift_capability::CapabilityDescriptor> {
     .build()?)
 }
 
+fn request_with_artifact_limit(
+    suffix: &str,
+    size_bytes: Option<u64>,
+    artifact_limit: u64,
+) -> TestResult<PeerInvocationRequest> {
+    let descriptor = descriptor()?;
+    let operation = OperationId::new("test.execute")?;
+    let request_id = PeerRequestId::new(format!("request-{suffix}"))?;
+    let limits = ExecutionLimits {
+        artifact_bytes: artifact_limit,
+        duration_ms: 10_000,
+        cost_micros: 0,
+        observations: 10,
+    };
+    PeerInvocationRequest::new(
+        request_id.clone(),
+        1,
+        CatalogSnapshot::new(1, 1, 20_000, Vec::new())?.digest,
+        ResolvedCapabilitySnapshot::from_descriptor(&descriptor, &operation)?,
+        InvocationRequest::new(
+            InvocationId::new(format!("invocation-{suffix}"))?,
+            descriptor.identity().clone(),
+            operation.clone(),
+            None,
+            None,
+            vec![InputReference::new(
+                "payload",
+                InvocationValueReference::Artifact {
+                    reference: ArtifactReference::new(
+                        format!("artifact-{suffix}"),
+                        "a".repeat(64),
+                        Some("application/octet-stream".to_owned()),
+                        size_bytes,
+                    )?,
+                },
+            )?],
+            BTreeMap::new(),
+        )?,
+        limits,
+        15_000,
+        DelegatedAuthorization {
+            reference: DelegationRef::new(format!("delegation-{suffix}"))?,
+            issuer_peer: PeerId::new("peer-a")?,
+            actor: ActorRef::new("peer:peer-a")?,
+            target_peer: PeerId::new("peer-b")?,
+            capability: descriptor.identity().clone(),
+            operation,
+            request: request_id,
+            limits,
+            expires_at_unix_ms: 20_000,
+            nonce: format!("nonce-{suffix}"),
+            provenance: milkdrift_peer_protocol::PeerExecutionProvenance {
+                run: "run-1".to_owned(),
+                revision: "revision-1".to_owned(),
+                node: "node-1".to_owned(),
+                execution: "execution-1".to_owned(),
+                attempt: "attempt-1".to_owned(),
+            },
+        },
+    )
+    .map_err(Into::into)
+}
+
 #[test]
 fn version_negotiation_fails_closed_on_unknown_major() -> TestResult {
     let local = ProtocolVersionRange::default();
-    assert_eq!(local.negotiate(local)?, ProtocolVersion::V1_1);
+    assert_eq!(local.negotiate(local)?, ProtocolVersion::V1_2);
     let unknown = ProtocolVersionRange::new(
         ProtocolVersion { major: 2, minor: 0 },
         ProtocolVersion { major: 2, minor: 1 },
     )?;
     assert!(local.negotiate(unknown).is_err());
+    let legacy_minor = ProtocolVersionRange::new(
+        ProtocolVersion { major: 1, minor: 1 },
+        ProtocolVersion { major: 1, minor: 1 },
+    )?;
+    assert!(local.negotiate(legacy_minor).is_err());
+    Ok(())
+}
+
+#[test]
+fn artifact_input_quota_requires_exact_sizes_and_accepts_the_exact_boundary() -> TestResult {
+    assert!(request_with_artifact_limit("missing", None, 8).is_err());
+    assert!(request_with_artifact_limit("overflow", Some(9), 8).is_err());
+    assert_eq!(
+        request_with_artifact_limit("boundary", Some(8), 8)?.input_artifact_bytes()?,
+        8
+    );
+    Ok(())
+}
+
+#[test]
+fn invocation_lookup_is_bound_to_the_exact_queried_request() -> TestResult {
+    let requested = PeerRequestId::new("request-expected")?;
+    let swapped = InvocationLookup::NotAccepted {
+        request_id: PeerRequestId::new("request-swapped")?,
+    };
+    assert!(swapped.validate_for(&requested).is_err());
+    InvocationLookup::NotAccepted {
+        request_id: requested.clone(),
+    }
+    .validate_for(&requested)?;
     Ok(())
 }
 

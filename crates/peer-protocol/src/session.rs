@@ -7,8 +7,8 @@ use crate::{PeerProtocolError, SessionId};
 
 /// Current incompatible-change protocol major.
 pub const PROTOCOL_MAJOR_V1: u16 = 1;
-/// Current protocol minor adding explicit archived execution/history semantics.
-pub const PROTOCOL_MINOR_V1: u16 = 1;
+/// Current protocol minor adding request-bound invocation lookup responses.
+pub const PROTOCOL_MINOR_V1: u16 = 2;
 
 /// One selected peer protocol version.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
@@ -22,7 +22,7 @@ pub struct ProtocolVersion {
 
 impl ProtocolVersion {
     /// Version implemented by this package.
-    pub const V1_1: Self = Self {
+    pub const V1_2: Self = Self {
         major: PROTOCOL_MAJOR_V1,
         minor: PROTOCOL_MINOR_V1,
     };
@@ -68,8 +68,8 @@ impl ProtocolVersionRange {
 impl Default for ProtocolVersionRange {
     fn default() -> Self {
         Self {
-            minimum: ProtocolVersion::V1_1,
-            maximum: ProtocolVersion::V1_1,
+            minimum: ProtocolVersion::V1_2,
+            maximum: ProtocolVersion::V1_2,
         }
     }
 }

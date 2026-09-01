@@ -14,7 +14,7 @@ use milkdrift_authority::{
     AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope,
     CapabilityAuthorityScopeBuilder, CapabilityExecutionRequirements, DaemonAuthorityScope,
     DecisionId, GrantId, GrantSetEvaluator, LayoutAuthorityScope, NetworkScope, PeerAuthorityScope,
-    PeerId, PolicyId, RequestedResourceFacts, ResourceScope, WorkflowRunScope,
+    PeerId, PolicyId, RequestedResourceFacts, ResourceScope, Selection, WorkflowRunScope,
     WorkspaceAuthorityScope,
 };
 use milkdrift_blueprint::{NodeId, RevisionId};
@@ -560,9 +560,12 @@ impl PeerService {
             .executions
             .peer_execution_by_request(authenticated_peer, request)
             .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
-            .map_or(InvocationLookup::NotAccepted, |record| {
-                execution_lookup(&record)
-            }))
+            .map_or_else(
+                || InvocationLookup::NotAccepted {
+                    request_id: request.clone(),
+                },
+                |record| execution_lookup(&record),
+            ))
     }
 
     /// Returns a contiguous resumable observation page for one owned execution.
@@ -1546,6 +1549,10 @@ impl PeerService {
             clock: self.clock.clone(),
             lease_ms: self.config.lease.execution_lease_ms,
             limits: entered.request.limits,
+            input_artifact_bytes: entered
+                .request
+                .input_artifact_bytes()
+                .map_err(|error| PeerHttpError::Protocol(error.to_string()))?,
             deadline_unix_ms: entered.request.deadline_unix_ms,
             worker: claim.worker.clone(),
             claim_generation: claim.generation,
@@ -1846,7 +1853,7 @@ fn peer_authority_grant(relationship: &PeerRelationship) -> Result<AuthorityGran
             && !relationship.artifact_sensitivities.is_empty()
         {
             ArtifactAuthorityScope::new(
-                BTreeSet::new(),
+                Selection::any(),
                 relationship.artifact_sensitivities.clone(),
             )
             .map_err(|error| PeerHttpError::Configuration(error.to_string()))?
@@ -1915,6 +1922,7 @@ struct PeerStoreReporter {
     clock: Arc<dyn PeerClock>,
     lease_ms: u64,
     limits: milkdrift_peer_protocol::ExecutionLimits,
+    input_artifact_bytes: u64,
     deadline_unix_ms: u64,
     worker: WorkerId,
     claim_generation: u64,
@@ -1965,9 +1973,12 @@ impl AdapterReporter for PeerStoreReporter {
                     "peer terminal usage exceeds the accepted duration or cost quota",
                 ));
             }
-            let output_bytes = terminal.outputs().iter().try_fold(0_u64, |total, output| {
-                output.size_bytes().and_then(|size| total.checked_add(size))
-            });
+            let output_bytes = terminal
+                .outputs()
+                .iter()
+                .try_fold(self.input_artifact_bytes, |total, output| {
+                    output.size_bytes().and_then(|size| total.checked_add(size))
+                });
             if output_bytes.is_none_or(|bytes| bytes > self.limits.artifact_bytes) {
                 return Err(self.reject_report(
                     "peer_report_artifact_quota",

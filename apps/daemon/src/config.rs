@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Current daemon configuration document version.
-pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 7;
+pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 8;
 
 /// Configuration load or deterministic validation failure.
 #[derive(Debug, Error)]
@@ -30,7 +30,7 @@ pub enum ConfigError {
     #[error("invalid daemon configuration JSON: {0}")]
     Json(String),
     /// The schema version is unsupported.
-    #[error("unsupported daemon configuration version {0}; supported version is 7")]
+    #[error("unsupported daemon configuration version {0}; supported version is 8")]
     UnsupportedVersion(u32),
     /// A host-safety invariant is invalid.
     #[error("invalid daemon configuration: {0}")]
@@ -645,17 +645,21 @@ fn validate_actor_authority(authority: &ActorGrantConfig) -> Result<(), ConfigEr
         )
         .map_err(|error| ConfigError::Invalid(error.to_string()))?;
     }
-    ArtifactAuthorityScope::new(
-        authority.resources.artifacts.identities().clone(),
-        authority.resources.artifacts.sensitivities().clone(),
-    )
-    .map_err(|error| ConfigError::Invalid(error.to_string()))?;
-    LayoutAuthorityScope::new(
-        authority.resources.layouts.revisions().clone(),
-        authority.resources.layouts.actors().clone(),
-        authority.resources.layouts.shared(),
-    )
-    .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+    match (
+        authority.resources.artifacts.identity_selection(),
+        authority.resources.artifacts.sensitivities(),
+    ) {
+        (Some(identities), Some(sensitivities)) => {
+            ArtifactAuthorityScope::new(identities.clone(), sensitivities.clone())
+                .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+        }
+        (None, None) => {}
+        _ => {
+            return Err(ConfigError::Invalid(
+                "artifact authority selector and sensitivity scope disagree".to_owned(),
+            ));
+        }
+    }
     PeerAuthorityScope::new(
         authority.resources.peers.identities().clone(),
         authority.resources.peers.allows_any(),
@@ -694,12 +698,10 @@ fn validate_actor_authority(authority: &ActorGrantConfig) -> Result<(), ConfigEr
         || authority.budget.units.is_none()
         || authority.budget.concurrency.is_none();
     let effectively_unbounded = authority.valid_until.get() == u64::MAX;
-    let broad_reads = (authority.resources.artifacts.identities().is_empty()
-        && !authority.resources.artifacts.sensitivities().is_empty())
+    let broad_reads = authority.resources.artifacts.has_any_selector()
         || authority.resources.peers.allows_any()
         || authority.resources.workspace.allows_any_in_run()
-        || (authority.resources.layouts.shared()
-            && authority.resources.layouts.revisions().is_empty());
+        || authority.resources.layouts.has_any_selector();
     if broad_workflow
         || broad_capability
         || broad_reads
@@ -924,11 +926,11 @@ mod tests {
     use super::*;
 
     fn fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v7.json")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v8.json")
     }
 
     #[test]
-    fn schema_v7_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>>
+    fn schema_v8_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>>
     {
         let validated = DaemonConfig::load(&fixture_path())?;
         let actor = &validated.document.actors[0];
@@ -972,7 +974,7 @@ mod tests {
     fn old_and_future_config_versions_are_rejected_truthfully()
     -> Result<(), Box<dyn std::error::Error>> {
         let source = fs::read(fixture_path())?;
-        for unsupported in [1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 6_u32, 8_u32] {
+        for unsupported in [1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 6_u32, 7_u32, 9_u32] {
             let directory = tempfile::tempdir()?;
             let mut value: serde_json::Value = serde_json::from_slice(&source)?;
             value["schema_version"] = serde_json::json!(unsupported);
@@ -1091,7 +1093,7 @@ mod tests {
         let secret = directory.path().join("token");
         fs::write(&secret, "secret")?;
         let config = DaemonConfig {
-            schema_version: 7,
+            schema_version: DAEMON_CONFIG_SCHEMA_VERSION,
             data_root: directory.path().join("data"),
             bind: "0.0.0.0:9734".parse()?,
             secret_sources: BTreeMap::from([(

@@ -90,6 +90,88 @@ fn receipts_layouts_proposals_and_audit_are_incremental_and_restart_durable() ->
     assert_eq!(stored.generation(), 1);
     assert_eq!(stored.created_at(), TimestampMillis::new(10));
 
+    let same_layout_receipt = receipt(
+        "actor:application",
+        "command-layout-same",
+        b"put-layout-same",
+        Some(ApplicationEffectReference::Layout {
+            workflow: workflow.clone(),
+            revision: revision.clone(),
+            generation: 1,
+            digest: stored.digest().clone(),
+        }),
+    )?;
+    assert_eq!(
+        store.commit_application_command(&ApplicationCommandCommit {
+            receipt: same_layout_receipt.clone(),
+            effect: ApplicationCommandEffect::PutLayout(ApplicationLayoutUpdate {
+                layout_schema_version: 1,
+                workflow: workflow.clone(),
+                revision: revision.clone(),
+                generation: 1,
+                digest: stored.digest().clone(),
+                author: same_layout_receipt.actor().clone(),
+                updated_at: TimestampMillis::new(11),
+                document: layout_one.clone(),
+            }),
+        })?,
+        ApplicationCommandCommitOutcome::Committed
+    );
+    let wrong_generation_receipt = receipt(
+        "actor:application",
+        "command-layout-same-digest-wrong-generation",
+        b"put-layout-same-digest-wrong-generation",
+        Some(ApplicationEffectReference::Layout {
+            workflow: workflow.clone(),
+            revision: revision.clone(),
+            generation: 2,
+            digest: stored.digest().clone(),
+        }),
+    )?;
+    assert!(matches!(
+        store.commit_application_command(&ApplicationCommandCommit {
+            receipt: wrong_generation_receipt.clone(),
+            effect: ApplicationCommandEffect::PutLayout(ApplicationLayoutUpdate {
+                layout_schema_version: 1,
+                workflow: workflow.clone(),
+                revision: revision.clone(),
+                generation: 2,
+                digest: stored.digest().clone(),
+                author: wrong_generation_receipt.actor().clone(),
+                updated_at: TimestampMillis::new(12),
+                document: layout_one.clone(),
+            }),
+        }),
+        Err(PersistenceError::Corruption(_))
+    ));
+    let dishonest_layout_receipt = receipt(
+        "actor:application",
+        "command-layout-same-digest-different-document",
+        b"put-layout-same-digest-different-document",
+        Some(ApplicationEffectReference::Layout {
+            workflow: workflow.clone(),
+            revision: revision.clone(),
+            generation: 1,
+            digest: stored.digest().clone(),
+        }),
+    )?;
+    assert!(matches!(
+        store.commit_application_command(&ApplicationCommandCommit {
+            receipt: dishonest_layout_receipt.clone(),
+            effect: ApplicationCommandEffect::PutLayout(ApplicationLayoutUpdate {
+                layout_schema_version: 1,
+                workflow: workflow.clone(),
+                revision: revision.clone(),
+                generation: 1,
+                digest: stored.digest().clone(),
+                author: dishonest_layout_receipt.actor().clone(),
+                updated_at: TimestampMillis::new(12),
+                document: b"different bytes under the old digest".to_vec(),
+            }),
+        }),
+        Err(PersistenceError::Corruption(_))
+    ));
+
     let layout_two = b"layout-generation-two".to_vec();
     let layout_two_digest = IntegrityDigest::hash(&layout_two);
     let second = receipt(
@@ -140,12 +222,61 @@ fn receipts_layouts_proposals_and_audit_are_incremental_and_restart_durable() ->
         effect: ApplicationCommandEffect::IndexProposal(ProposalIndexEntry {
             run: run.clone(),
             proposal: "proposal-application".to_owned(),
-            proposed_revision: proposal_revision,
+            proposed_revision: proposal_revision.clone(),
             receipt_actor: proposal_receipt.actor().clone(),
             receipt_command: proposal_receipt.command().clone(),
             created_at: TimestampMillis::new(10),
         }),
     })?;
+    let duplicate_proposal_receipt = receipt(
+        "actor:application",
+        "command-proposal-duplicate-index",
+        b"submit-proposal-duplicate-index",
+        Some(ApplicationEffectReference::Proposal {
+            run: run.clone(),
+            proposal: "proposal-application".to_owned(),
+            proposed_revision: proposal_revision.clone(),
+        }),
+    )?;
+    assert_eq!(
+        store.commit_application_command(&ApplicationCommandCommit {
+            receipt: duplicate_proposal_receipt.clone(),
+            effect: ApplicationCommandEffect::IndexProposal(ProposalIndexEntry {
+                run: run.clone(),
+                proposal: "proposal-application".to_owned(),
+                proposed_revision: proposal_revision,
+                receipt_actor: duplicate_proposal_receipt.actor().clone(),
+                receipt_command: duplicate_proposal_receipt.command().clone(),
+                created_at: TimestampMillis::new(11),
+            }),
+        })?,
+        ApplicationCommandCommitOutcome::Committed
+    );
+    let conflicting_proposal_revision = revision_id('4')?;
+    let conflicting_proposal_receipt = receipt(
+        "actor:application",
+        "command-proposal-conflicting-revision",
+        b"submit-proposal-conflicting-revision",
+        Some(ApplicationEffectReference::Proposal {
+            run: run.clone(),
+            proposal: "proposal-application".to_owned(),
+            proposed_revision: conflicting_proposal_revision.clone(),
+        }),
+    )?;
+    assert!(matches!(
+        store.commit_application_command(&ApplicationCommandCommit {
+            receipt: conflicting_proposal_receipt.clone(),
+            effect: ApplicationCommandEffect::IndexProposal(ProposalIndexEntry {
+                run: run.clone(),
+                proposal: "proposal-application".to_owned(),
+                proposed_revision: conflicting_proposal_revision,
+                receipt_actor: conflicting_proposal_receipt.actor().clone(),
+                receipt_command: conflicting_proposal_receipt.command().clone(),
+                created_at: TimestampMillis::new(12),
+            }),
+        }),
+        Err(PersistenceError::Corruption(_))
+    ));
     let proposals = store.proposal_index(&run, &page(10)?)?;
     assert_eq!(proposals.items.len(), 1);
     assert_eq!(proposals.items[0].proposal, "proposal-application");
@@ -271,6 +402,93 @@ fn hot_receipt_capacity_reclaims_and_exact_cold_replay_remains_lifetime_durable(
         }),
         Err(PersistenceError::ExternalCommandIdempotencyConflict { .. })
     ));
+    Ok(())
+}
+
+#[test]
+fn reopen_reestablishes_smaller_receipt_and_audit_bounds_before_ready() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let mut receipts = Vec::new();
+    {
+        let store = RedbStore::open_with_config(
+            RedbStoreConfig::new(directory.path())
+                .with_application_receipt_lifecycle(8, 2)
+                .with_security_audit_limit(8),
+        )?;
+        for ordinal in 0..6 {
+            let value = receipt(
+                "actor:downsized",
+                &format!("command-downsized-{ordinal}"),
+                format!("downsized-{ordinal}").as_bytes(),
+                None,
+            )?;
+            store.commit_application_command(&ApplicationCommandCommit {
+                receipt: value.clone(),
+                effect: ApplicationCommandEffect::None,
+            })?;
+            receipts.push(value);
+            store.append_security_audit(&SecurityAuditEntry {
+                evaluated_at: TimestampMillis::new(100 + ordinal),
+                actor: ActorRef::new("actor:downsized")?,
+                grant: GrantId::new("grant-downsized")?,
+                grant_revision: 1,
+                grant_digest: digest('d')?,
+                operation: "inspect".to_owned(),
+                resource_digest: IntegrityDigest::hash(format!("resource-{ordinal}").as_bytes()),
+                decision_digest: IntegrityDigest::hash(format!("decision-{ordinal}").as_bytes())
+                    .to_string(),
+                outcome: "allowed".to_owned(),
+                reason_codes: vec!["allowed".to_owned()],
+            })?;
+        }
+    }
+
+    let store = RedbStore::open_with_config(
+        RedbStoreConfig::new(directory.path())
+            .with_application_receipt_lifecycle(2, 1)
+            .with_security_audit_limit(2),
+    )?;
+    let status = store.application_receipt_status()?;
+    assert_eq!(status.hot_count, 2);
+    assert_eq!(status.cold_count, 4);
+    let audit = store.security_audit(&page(10)?)?;
+    assert_eq!(
+        audit
+            .items
+            .iter()
+            .map(|item| item.sequence)
+            .collect::<Vec<_>>(),
+        [5, 6]
+    );
+
+    assert!(matches!(
+        store.commit_application_command(&ApplicationCommandCommit {
+            receipt: receipts[0].clone(),
+            effect: ApplicationCommandEffect::None,
+        })?,
+        ApplicationCommandCommitOutcome::Replayed(_)
+    ));
+    store.append_security_audit(&SecurityAuditEntry {
+        evaluated_at: TimestampMillis::new(200),
+        actor: ActorRef::new("actor:downsized")?,
+        grant: GrantId::new("grant-downsized")?,
+        grant_revision: 1,
+        grant_digest: digest('d')?,
+        operation: "inspect".to_owned(),
+        resource_digest: IntegrityDigest::hash(b"resource-new"),
+        decision_digest: IntegrityDigest::hash(b"decision-new").to_string(),
+        outcome: "allowed".to_owned(),
+        reason_codes: vec!["allowed".to_owned()],
+    })?;
+    let audit = store.security_audit(&page(10)?)?;
+    assert_eq!(
+        audit
+            .items
+            .iter()
+            .map(|item| item.sequence)
+            .collect::<Vec<_>>(),
+        [6, 7]
+    );
     Ok(())
 }
 

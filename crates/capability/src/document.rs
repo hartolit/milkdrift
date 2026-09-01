@@ -13,6 +13,8 @@ use crate::{
 pub const SCHEMA_VERSION_V1: u32 = 1;
 /// Invocation request schema adding an explicit frozen context-manifest reference.
 pub const INVOCATION_REQUEST_SCHEMA_VERSION_V2: u32 = 2;
+/// Current resolved-capability snapshot envelope with category-bound digest semantics.
+pub const RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2: u32 = 2;
 
 pub(crate) fn canonical_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, ContractError> {
     let bytes =
@@ -254,13 +256,110 @@ document!(
     acknowledgement,
     "cancellation acknowledgement"
 );
-document!(
-    /// Versioned portable exact capability resolution snapshot.
-    ResolvedCapabilitySnapshotDocument,
-    ResolvedCapabilitySnapshot,
-    snapshot,
-    "resolved capability snapshot"
-);
+/// Versioned portable exact capability resolution snapshot.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedCapabilitySnapshotDocument {
+    schema_version: u32,
+    snapshot: ResolvedCapabilitySnapshot,
+}
+
+impl ResolvedCapabilitySnapshotDocument {
+    /// Wraps a category-bound snapshot in the current schema-v2 envelope.
+    #[must_use]
+    pub const fn new(snapshot: ResolvedCapabilitySnapshot) -> Self {
+        Self {
+            schema_version: RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2,
+            snapshot,
+        }
+    }
+
+    /// Exact envelope schema retained by this decoded document.
+    #[must_use]
+    pub const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    /// Immutable exact resolution snapshot.
+    #[must_use]
+    pub const fn body(&self) -> &ResolvedCapabilitySnapshot {
+        &self.snapshot
+    }
+
+    /// Serializes the envelope as deterministic compact JSON.
+    pub fn to_canonical_json(&self) -> Result<Vec<u8>, ContractError> {
+        canonical_json_bytes(self)
+    }
+
+    /// Reads exact legacy v1 or category-bound v2 without reinterpreting either shape.
+    pub fn from_json(bytes: &[u8]) -> Result<Self, ContractError> {
+        if bytes.len() > MAX_DOCUMENT_BYTES {
+            return Err(ContractError::Bounds {
+                location: "$".to_owned(),
+                reason: format!("document exceeds {MAX_DOCUMENT_BYTES} bytes"),
+            });
+        }
+        let value = milkdrift_contracts::parse_json_without_duplicates(bytes)?;
+        validate_document_value(&value)?;
+        let version = value
+            .get("schema_version")
+            .and_then(Value::as_u64)
+            .and_then(|version| u32::try_from(version).ok())
+            .ok_or_else(|| {
+                ContractError::InvalidContract("missing numeric schema_version".to_owned())
+            })?;
+        if !matches!(
+            version,
+            SCHEMA_VERSION_V1 | RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2
+        ) {
+            return Err(ContractError::UnsupportedVersion {
+                document: "resolved capability snapshot",
+                found: version,
+                supported: RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2,
+            });
+        }
+        let has_category = value
+            .get("snapshot")
+            .and_then(Value::as_object)
+            .is_some_and(|snapshot| snapshot.contains_key("category"));
+        if has_category != (version == RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2) {
+            return Err(ContractError::InvalidContract(
+                "resolved capability snapshot envelope version contradicts category-bound digest semantics"
+                    .to_owned(),
+            ));
+        }
+        serde_json::from_value(value).map_err(ContractError::from)
+    }
+}
+
+impl<'de> Deserialize<'de> for ResolvedCapabilitySnapshotDocument {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            schema_version: u32,
+            snapshot: ResolvedCapabilitySnapshot,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        let valid = match wire.schema_version {
+            SCHEMA_VERSION_V1 => wire.snapshot.category().is_none(),
+            RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2 => wire.snapshot.category().is_some(),
+            _ => false,
+        };
+        if !valid {
+            return Err(serde::de::Error::custom(
+                "resolved capability snapshot version/category mismatch",
+            ));
+        }
+        Ok(Self {
+            schema_version: wire.schema_version,
+            snapshot: wire.snapshot,
+        })
+    }
+}
 
 impl CancellationRequestDocument {
     /// Performs semantic validation in addition to envelope validation.

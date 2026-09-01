@@ -88,11 +88,12 @@ machine-readable result. A missed mutant must be fixed by a test or recorded by 
 unreachable under a validated public contract, or a mutation-tool limitation; unclassified survivors
 fail the lane.
 
-The complete local Linux campaign on 2026-08-31 tested 387 focused mutants: 316 were caught, 21
-were compiler-unviable, and 50 exact survivors were machine-matched to reviewed classifications
-(48 unreachable under validated corruption/state contracts and two semantic equivalents). There
-were no timeouts and no unclassified survivors. Per-shard `mutants.out` directories retain the
-source identities, logs, outcomes, and generated classification reports.
+The complete local Linux campaign on 2026-09-01 tested 398 focused mutants: 375 were caught, 21
+were compiler-unviable, and two exact survivors were machine-matched to reviewed
+`unreachable_by_valid_contract` classifications. There were no timeouts and no unclassified
+survivors. Per-shard `mutants.out` directories retain the source identities, logs, outcomes, and
+generated classification reports. Checksum-correct raw-row corruption tests now exercise the peer
+primary-record and tombstone validators instead of classifying their individual guards.
 
 Build and smoke every benchmark once:
 
@@ -119,8 +120,10 @@ cargo test --release -p milkdrift-capability-host --test effect_worker \
 The runner writes `operational-evidence.json` and `scenario-summary.csv`. Reports include scenario
 identities, operation/byte counts, stable result checksums, storage/reopen facts, daemon accepted
 and overload counts, latency distribution, stream/recovery/shutdown outcomes, platform identity,
-and CI commit metadata when available. Raw credentials, prompts, provider payloads, artifact
-content, environment values, and database internals are never reported.
+Git commit/tree/dirty state queried from the checkout, and `rustc -vV` output. Raw credentials,
+prompts, provider payloads, artifact content, environment values, and database internals are never
+reported. Scenario identities explicitly distinguish synthetic candidate selection and in-memory
+projection serialization from production durable discovery and snapshot-envelope recovery.
 
 ## Continuous integration evidence
 
@@ -141,7 +144,7 @@ cleanup defects remain inspectable.
 
 ## Interpretation and limitations
 
-On 2026-08-31 the complete post-change local Linux gate passed: formatting,
+On 2026-09-01 the complete post-change local Linux gate passed: formatting,
 all-target/all-feature check and tests, Clippy with warnings denied, rustdoc with warnings denied,
 `cargo deny check`, and `cargo machete`. The full release evidence lane also passed with 256 receipt
 operations and 256 peer executions/4,352 peer observations. It retained four hot and 252 cold

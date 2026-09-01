@@ -42,7 +42,7 @@ impl RedbStore {
         prepare_owned_directory(&artifact_root, "artifact root")?;
         prepare_owned_directory(&temp_root, "artifact temporary directory")?;
 
-        Ok(Self {
+        let store = Self {
             database,
             root: config.root,
             artifact_root,
@@ -56,7 +56,9 @@ impl RedbStore {
             faults: config.faults,
             artifact_clock: config.artifact_clock,
             artifact_serialization: Mutex::new(()),
-        })
+        };
+        store.reestablish_application_retention_bounds()?;
+        Ok(store)
     }
 
     pub(crate) const fn database(&self) -> &Database {

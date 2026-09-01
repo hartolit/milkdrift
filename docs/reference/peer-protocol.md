@@ -1,6 +1,6 @@
-# Peer protocol v1.1
+# Peer protocol v1.2
 
-`milkdrift-peer-protocol` is transport neutral. Every JSON control message uses a `ProtocolEnvelope` with selected `{major, minor}`, one typed message, and at most 32 explicitly ignorable DNS-namespaced extensions. Major 1/minor 1 is the only implemented version. It adds typed archived replay and observation-history dispositions; peers that only implement minor 0 are rejected instead of guessing the new meaning. Unknown majors and unknown typed message fields fail closed. Decoding preflights encoded bytes, depth, container items, string/key sizes, duplicates, and document size before domain deserialization.
+`milkdrift-peer-protocol` is transport neutral. Every JSON control message uses a `ProtocolEnvelope` with selected `{major, minor}`, one typed message, and at most 32 explicitly ignorable DNS-namespaced extensions. Major 1/minor 2 is the only implemented version. It retains typed archived replay and observation-history dispositions and adds the exact queried request identity to every lookup result, so clients can bind authenticated responses to the URL they requested. Peers implementing earlier minors are rejected instead of guessing the changed shape or meaning. Unknown majors and unknown typed message fields fail closed. Decoding preflights encoded bytes, depth, container items, string/key sizes, duplicates, and document size before domain deserialization.
 
 ## Authentication and session
 

@@ -154,8 +154,13 @@ impl PeerHttpClient {
         self.ensure_handshake()?;
         let mut last_error = None;
         for _attempt in 0..3 {
-            match self.post(&["peer", "v1", "invocations"], request) {
-                Ok(response) => return Ok(response),
+            match self.post::<_, InvocationAcceptance>(&["peer", "v1", "invocations"], request) {
+                Ok(response) => {
+                    response
+                        .validate_for(request)
+                        .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+                    return Ok(response);
+                }
                 Err(error @ PeerHttpError::Transport(_))
                 | Err(error @ PeerHttpError::Unavailable(_)) => last_error = Some(error),
                 Err(error) => return Err(error),
@@ -174,7 +179,7 @@ impl PeerHttpClient {
                     execution,
                     request_digest,
                     accepted_at_unix_ms,
-                    lease_expires_at_unix_ms: 0,
+                    lease_expires_at_unix_ms: accepted_at_unix_ms,
                     replayed: true,
                 }),
                 ObservationHistory::Archived { summary } => Ok(InvocationAcceptance::Archived {
@@ -185,20 +190,25 @@ impl PeerHttpClient {
                     summary,
                 }),
             },
-            Ok(InvocationLookup::NotAccepted) => Err(last_error.unwrap_or_else(|| {
+            Ok(InvocationLookup::NotAccepted { .. }) => Err(last_error.unwrap_or_else(|| {
                 PeerHttpError::Transport("submission was not accepted".to_owned())
             })),
             Ok(InvocationLookup::Known { .. }) => Err(PeerHttpError::Protocol(
                 "idempotency lookup returned conflicting request digest".to_owned(),
             )),
-            Ok(InvocationLookup::Unknown { reason }) => Err(PeerHttpError::Transport(reason)),
+            Ok(InvocationLookup::Unknown { reason, .. }) => Err(PeerHttpError::Transport(reason)),
             Err(error) => Err(last_error.unwrap_or(error)),
         }
     }
 
     /// Queries durable acceptance by idempotency key.
     pub fn lookup(&self, request: &PeerRequestId) -> Result<InvocationLookup, PeerHttpError> {
-        self.get(&["peer", "v1", "requests", request.as_str()], &[])
+        let lookup: InvocationLookup =
+            self.get(&["peer", "v1", "requests", request.as_str()], &[])?;
+        lookup
+            .validate_for(request)
+            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        Ok(lookup)
     }
 
     /// Reads one contiguous resumable observation page.
@@ -224,6 +234,11 @@ impl PeerHttpClient {
         )?;
         page.validate(limit.min(256))
             .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        if page.execution != *execution || page.after_sequence != after {
+            return Err(PeerHttpError::Protocol(
+                "observation page is not bound to the requested path/cursor".to_owned(),
+            ));
+        }
         Ok(page)
     }
 
@@ -243,7 +258,7 @@ impl PeerHttpClient {
             request,
         )?;
         response
-            .validate()
+            .validate_for(request)
             .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
         Ok(response)
     }

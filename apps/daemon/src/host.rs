@@ -597,8 +597,8 @@ impl DaemonHost {
     }
 
     /// Runs ordered shutdown and joins the owner thread.
-    pub(crate) async fn shutdown(&self) -> Result<(), HostError> {
-        self.begin_draining()?;
+    pub async fn shutdown(&self) -> Result<(), HostError> {
+        let drain_error = self.begin_draining().err();
         let result = match self.request(OwnerOperation::Shutdown, true).await {
             Ok(result) => result,
             Err(error) => {
@@ -621,7 +621,10 @@ impl DaemonHost {
             OwnerValue::Shutdown {
                 clean: true,
                 unresolved: 0,
-            } => Ok(()),
+            } => match drain_error {
+                Some(error) => Err(error),
+                None => Ok(()),
+            },
             OwnerValue::Shutdown { clean, unresolved } => {
                 self.health.set_lifecycle(Lifecycle::Failed);
                 Err(HostError::Shutdown(format!(
@@ -652,12 +655,11 @@ impl DaemonHost {
         let (reply, receiver) = oneshot::channel();
         let mut pending = OwnerRequest { operation, reply };
         loop {
+            self.health.queued.fetch_add(1, Ordering::SeqCst);
             match self.sender.try_send(pending) {
-                Ok(()) => {
-                    self.health.queued.fetch_add(1, Ordering::SeqCst);
-                    break;
-                }
+                Ok(()) => break,
                 Err(TrySendError::Full(returned)) if shutdown => {
+                    self.health.queued.fetch_sub(1, Ordering::SeqCst);
                     if started.elapsed() >= self.shutdown_deadline {
                         return Err(PublicFailure::new(
                             ErrorCode::Timeout,
@@ -669,6 +671,7 @@ impl DaemonHost {
                     tokio::time::sleep(Duration::from_millis(5)).await;
                 }
                 Err(TrySendError::Full(_)) => {
+                    self.health.queued.fetch_sub(1, Ordering::SeqCst);
                     return Err(PublicFailure::new(
                         ErrorCode::Overload,
                         "runtime owner request queue is full",
@@ -676,6 +679,7 @@ impl DaemonHost {
                     ));
                 }
                 Err(TrySendError::Disconnected(_)) => {
+                    self.health.queued.fetch_sub(1, Ordering::SeqCst);
                     return Err(PublicFailure::new(
                         ErrorCode::Unavailable,
                         "runtime owner is unavailable",
@@ -976,9 +980,6 @@ impl Owner {
             runtime.clone(),
             authority.clone(),
         ));
-        runtime
-            .install_controller_lifecycle(control.controller_lifecycle_owner())
-            .map_err(|error| error.to_string())?;
         let data = Arc::new(
             StoreInvocationDataAccess::new(
                 store.clone(),
@@ -1463,10 +1464,18 @@ impl Owner {
     fn shutdown(&mut self, health: &SharedHealth) -> Result<OwnerValue, PublicFailure> {
         info!(phase = "draining", "runtime owner closing admission");
         health.set_lifecycle(Lifecycle::Draining);
-        if let Some(service) = &self.peer_service {
-            service.begin_shutdown().map_err(|error| {
-                PublicFailure::new(ErrorCode::Unavailable, bounded(&error.to_string()), true)
-            })?;
+        let mut clean = true;
+        if let Some(service) = &self.peer_service
+            && let Err(error) = service.begin_shutdown()
+        {
+            clean = false;
+            health.failure("peer shutdown admission failed");
+            warn!(
+                phase = "draining",
+                code = "peer_shutdown_admission",
+                "{}",
+                bounded(&error.to_string())
+            );
         }
         for registry in self.peer_registries.values() {
             let _ = registry.disconnect();
@@ -1484,37 +1493,78 @@ impl Owner {
             .as_ref()
             .map(|service| service.shutdown_workers(deadline));
         let effect_deadline = deadline.saturating_sub(shutdown_started.elapsed());
-        let result = self
-            .effect_workers
-            .take()
-            .ok_or_else(|| {
-                PublicFailure::new(ErrorCode::Internal, "effect owner is absent", false)
-            })?
-            .shutdown(mode, effect_deadline)
-            .map_err(|error| {
-                PublicFailure::new(ErrorCode::Unavailable, bounded(&error.to_string()), true)
-            })?;
-        health.active_effects.store(0, Ordering::SeqCst);
-        health.set_lifecycle(Lifecycle::Stopped);
+        let (effect_clean, unresolved_invocations, outstanding_effects) =
+            match self.effect_workers.take() {
+                Some(workers) => match workers.shutdown(mode, effect_deadline) {
+                    Ok(result) => {
+                        let execution_work = result
+                            .health
+                            .queued_executions
+                            .saturating_add(result.health.active_executions);
+                        let cancellation_work = result
+                            .health
+                            .queued_cancellations
+                            .saturating_add(result.health.active_cancellations);
+                        let outstanding = result
+                            .unresolved_invocations
+                            .len()
+                            .max(execution_work)
+                            .saturating_add(cancellation_work);
+                        (
+                            result.clean,
+                            outstanding,
+                            execution_work.saturating_add(cancellation_work),
+                        )
+                    }
+                    Err(error) => {
+                        clean = false;
+                        health.failure("effect worker shutdown failed");
+                        warn!(
+                            phase = "draining",
+                            code = "effect_worker_shutdown",
+                            "{}",
+                            bounded(&error.to_string())
+                        );
+                        let outstanding = workers.health().map_or(1, |value| {
+                            value
+                                .queued_executions
+                                .saturating_add(value.active_executions)
+                                .saturating_add(value.queued_cancellations)
+                                .saturating_add(value.active_cancellations)
+                                .max(1)
+                        });
+                        (false, outstanding, outstanding)
+                    }
+                },
+                None => {
+                    clean = false;
+                    health.failure("effect worker owner was absent during shutdown");
+                    (false, 1, 1)
+                }
+            };
         let peer_retained = peer_shutdown.map_or(0, |report| report.retained_workers);
+        clean &= effect_clean && peer_retained == 0;
+        health.active_effects.store(
+            if clean {
+                0
+            } else {
+                u32::try_from(outstanding_effects).unwrap_or(u32::MAX)
+            },
+            Ordering::SeqCst,
+        );
+        health.set_lifecycle(if clean {
+            Lifecycle::Stopped
+        } else {
+            Lifecycle::Failed
+        });
+        let unresolved = unresolved_invocations.saturating_add(usize::from(peer_retained));
         info!(
-            phase = "stopped",
-            clean = result.clean && peer_retained == 0,
-            unresolved = result
-                .unresolved_invocations
-                .len()
-                .saturating_add(usize::from(peer_retained)),
-            "runtime owner stopped"
+            phase = if clean { "stopped" } else { "failed" },
+            clean, unresolved, "runtime owner shutdown completed"
         );
         Ok(OwnerValue::Shutdown {
-            clean: result.clean && peer_retained == 0,
-            unresolved: u32::try_from(
-                result
-                    .unresolved_invocations
-                    .len()
-                    .saturating_add(usize::from(peer_retained)),
-            )
-            .unwrap_or(u32::MAX),
+            clean,
+            unresolved: u32::try_from(unresolved).unwrap_or(u32::MAX),
         })
     }
 

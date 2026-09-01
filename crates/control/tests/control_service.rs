@@ -256,7 +256,7 @@ fn command(
 }
 
 #[test]
-fn production_runtime_assesses_and_stops_a_controller_at_exact_cycle_bound() -> TestResult {
+fn installed_runtime_assesses_and_stops_a_controller_at_exact_cycle_bound() -> TestResult {
     let directory = TempDir::new()?;
     let store = Arc::new(RedbStore::open(directory.path().join("controller.redb"))?);
     let run = RunId::new("run-controller-lifecycle")?;

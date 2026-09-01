@@ -4,14 +4,15 @@ use milkdrift_peer_protocol::{
     PeerRequestId,
 };
 use milkdrift_persistence::{
-    PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2, PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1,
-    PeerAcceptedAuthoritySummary, PeerAdmission, PeerAdmissionOutcome, PeerAdmissionRejection,
-    PeerArchivedDisposition, PeerCancellationRecord, PeerCatalogState, PeerClaimOutcome,
-    PeerDispatchClaim, PeerDispatchClaimRequest, PeerEntryEvidence, PeerEntryOutcome,
-    PeerEntryRequest, PeerExecutionAccounting, PeerExecutionPhase, PeerExecutionRecord,
-    PeerExecutionSnapshot, PeerExecutionStatus, PeerExecutionStore, PeerExecutionTombstone,
-    PeerObservationAppend, PeerObservationPage, PeerRecoveryResult, PeerRelationshipState,
-    PeerRetentionPage, PeerRetentionRequest, PersistenceError, StorageFailureClass, WorkerId,
+    PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2, PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3,
+    PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1, PeerAcceptedAuthoritySummary, PeerAdmission,
+    PeerAdmissionOutcome, PeerAdmissionRejection, PeerArchivedDisposition, PeerCancellationRecord,
+    PeerCatalogState, PeerClaimOutcome, PeerDispatchClaim, PeerDispatchClaimRequest,
+    PeerEntryEvidence, PeerEntryOutcome, PeerEntryRequest, PeerExecutionAccounting,
+    PeerExecutionPhase, PeerExecutionRecord, PeerExecutionSnapshot, PeerExecutionStatus,
+    PeerExecutionStore, PeerExecutionTombstone, PeerObservationAppend, PeerObservationPage,
+    PeerRecoveryResult, PeerRelationshipState, PeerRetentionPage, PeerRetentionRequest,
+    PersistenceError, StorageFailureClass, WorkerId,
 };
 use redb::{ReadableTable, ReadableTableMetadata};
 use serde::{Deserialize, Serialize};
@@ -305,7 +306,7 @@ impl PeerExecutionStore for RedbStore {
             .checked_add(1)
             .ok_or_else(|| corruption("per-peer accounting revision overflowed"))?;
         let record = PeerExecutionRecord {
-            schema_version: PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2,
+            schema_version: PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3,
             owner_peer: admission.owner_peer.clone(),
             relationship_generation: admission.relationship_generation,
             request: admission.request.clone(),
@@ -318,7 +319,13 @@ impl PeerExecutionStore for RedbStore {
             },
             cancellation: None,
             last_observation_sequence: 0,
-            accounting: PeerExecutionAccounting::default(),
+            accounting: PeerExecutionAccounting {
+                artifact_bytes: admission
+                    .request
+                    .input_artifact_bytes()
+                    .map_err(|cause| invalid(&cause.to_string()))?,
+                ..PeerExecutionAccounting::default()
+            },
             observation_digest: observation_genesis_digest(),
             revision: 1,
         };
@@ -769,6 +776,42 @@ impl PeerExecutionStore for RedbStore {
                 identity: execution.to_string(),
             });
         }
+        if record.schema_version == PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2 {
+            record.accounting.artifact_bytes = record
+                .accounting
+                .artifact_bytes
+                .checked_add(record.request.input_artifact_bytes().map_err(|cause| {
+                    corruption(format!("stored peer input is invalid: {cause}"))
+                })?)
+                .ok_or_else(|| corruption("peer artifact accounting overflowed"))?;
+            record.schema_version = PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3;
+        }
+        let output_size = observation
+            .event
+            .kind()
+            .output()
+            .map(|(_name, artifact)| {
+                artifact
+                    .size_bytes()
+                    .ok_or_else(|| PersistenceError::Bounds {
+                        location: "peer_observation_artifact",
+                        reason: "peer output artifact requires an exact byte size".to_owned(),
+                    })
+            })
+            .transpose()?;
+        if output_size.is_some_and(|size| {
+            record
+                .accounting
+                .artifact_bytes
+                .checked_add(size)
+                .is_none_or(|total| total > record.request.limits.artifact_bytes)
+        }) {
+            return Err(PersistenceError::Bounds {
+                location: "peer_execution_artifact_bytes",
+                reason: "cumulative input and output artifacts exceed the accepted quota"
+                    .to_owned(),
+            });
+        }
         let key = observation_key(execution, observation.sequence)?;
         let bytes = json::encode(observation, "peer observation")?;
         let replaced = {
@@ -782,19 +825,20 @@ impl PeerExecutionStore for RedbStore {
             return Err(corruption("peer observation append replaced a prior row"));
         }
         if let Some((_name, artifact)) = observation.event.kind().output() {
+            let output_size = output_size.ok_or_else(|| {
+                corruption("peer output artifact size disappeared after validation")
+            })?;
             let bytes = json::encode(artifact, "peer observation artifact")?;
             write
                 .open_table(PEER_OBSERVATION_ARTIFACTS)
                 .map_err(error::redb)?
                 .insert(key.as_slice(), bytes.as_slice())
                 .map_err(error::redb)?;
-            if let Some(size) = artifact.size_bytes() {
-                record.accounting.artifact_bytes = record
-                    .accounting
-                    .artifact_bytes
-                    .checked_add(size)
-                    .ok_or_else(|| corruption("peer artifact accounting overflowed"))?;
-            }
+            record.accounting.artifact_bytes = record
+                .accounting
+                .artifact_bytes
+                .checked_add(output_size)
+                .ok_or_else(|| corruption("peer artifact accounting overflowed"))?;
         }
         if let Some(terminal) = observation.event.kind().terminal()
             && let Some(usage) = terminal.usage()
@@ -1023,11 +1067,7 @@ impl PeerExecutionStore for RedbStore {
                         .map_err(error::redb)?;
                     result.requeued = result.requeued.saturating_add(1);
                 }
-                None if matches!(
-                    record.phase,
-                    PeerExecutionPhase::CancellationRequested { .. }
-                ) =>
-                {
+                None => {
                     record.phase = PeerExecutionPhase::CancellationRequested {
                         claim: None,
                         evidence: None,
@@ -1048,11 +1088,6 @@ impl PeerExecutionStore for RedbStore {
                     release_active_accounting(&write, &record.owner_peer, false)?;
                     insert_terminal_index(&write, &record, recovered_at_unix_ms)?;
                     result.uncertain = result.uncertain.saturating_add(1);
-                }
-                None => {
-                    return Err(corruption(
-                        "active peer claim has cancellation state without entry evidence",
-                    ));
                 }
             }
             bump_record(&mut record)?;
@@ -1929,13 +1964,21 @@ fn validate_record(record: &PeerExecutionRecord) -> Result<(), PersistenceError>
         .request
         .validate()
         .map_err(|cause| corruption(format!("stored peer request is invalid: {cause}")))?;
-    if record.schema_version != PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2
-        || record.relationship_generation == 0
+    if !matches!(
+        record.schema_version,
+        PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2 | PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3
+    ) || record.relationship_generation == 0
         || record.acceptance_sequence == 0
         || record.accepted_at_unix_ms == 0
         || record.revision == 0
         || u64::from(record.accounting.observations) != record.last_observation_sequence
         || record.last_observation_sequence > u64::from(record.request.limits.observations)
+        || record.accounting.artifact_bytes > record.request.limits.artifact_bytes
+        || (record.schema_version == PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3
+            && record.accounting.artifact_bytes
+                < record.request.input_artifact_bytes().map_err(|cause| {
+                    corruption(format!("stored peer input is invalid: {cause}"))
+                })?)
         || !valid_prefixed_blake3(&record.observation_digest)
     {
         return Err(corruption(

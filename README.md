@@ -2,7 +2,7 @@
 
 Milkdrift is a local-first foundation for durable, live-editable workflows whose tasks can be satisfied by explicitly constrained capabilities: hosted AI providers, local servers, coding agents, tools, humans, or peer machines. Its semantic core keeps workflow meaning independent of any executor, UI, database, network, or provider.
 
-Milkdrift currently has a headless Rust execution center. It stores immutable workflow revisions, authorizes versioned idempotent run commands against exact scoped grant revisions, freezes the accepted actor/grant/policy basis into each started run, and records canonical decisions at capability resolution, exact-generation claim, and final adapter entry. It rebuilds pure projections, schedules bounded work through exact authorized capability snapshots, keeps branch-local workspace values, publishes content-addressed artifacts, recovers local runs after restart, and applies compatible revision changes prospectively through persisted reconciliation plans. Its workflow-control application layer accepts bounded digest-bound proposals from humans, services, processes, or models; creates immutable prospective revisions; classifies risk; and uses the same authorized runtime reconciliation path for approval and apply. Typed controller-policy revisions use that same path while durable pre-cycle assessments, fail-closed cumulative accounting, authorized checkpoints, and explicit reached-bound stops prevent restart from resetting autonomy limits.
+Milkdrift currently has a headless Rust execution center. It stores immutable workflow revisions, authorizes versioned idempotent run commands against exact scoped grant revisions, freezes the accepted actor/grant/policy basis into each started run, and records canonical decisions at capability resolution, exact-generation claim, and final adapter entry. It rebuilds pure projections, schedules bounded work through exact authorized capability snapshots, keeps branch-local workspace values, publishes content-addressed artifacts, recovers local runs after restart, and applies compatible revision changes prospectively through persisted reconciliation plans. Its workflow-control application layer accepts bounded digest-bound proposals from humans, services, processes, or models; creates immutable prospective revisions; classifies risk; and uses the same authorized runtime reconciliation path for approval and apply. Typed controller-policy, durable-assessment, and checkpoint contracts exist for focused library validation, but the production daemon deliberately does not admit continuous controllers until their cumulative resource ceilings are enforced at the final external-entry boundary.
 
 The production local backend uses redb plus a filesystem artifact directory. `milkdrift-daemon` is the single durable owner: it validates versioned host configuration, authenticates local clients and configured peers, recovers the runtime with admission closed, registers the generation-safe process/model/workflow-control/remote-peer capability host, runs bounded effect workers, and serves separate versioned control and peer authentication realms. A dedicated bounded owner thread keeps synchronous redb/runtime work off the async HTTP reactor. `milkdrift-cli` and the reusable control client use only that API; they never open storage or resolve adapter secrets. The desktop UI is not implemented.
 
@@ -75,14 +75,14 @@ The insecure mode refuses non-loopback URLs. Use ordinary HTTPS directly or term
 
 ## Local daemon quick start
 
-Create a private bearer-token file and a version-seven daemon configuration. Relative paths are resolved from the configuration file directory. Presets are deterministic shorthand for exact operation sets only; the required `authority` object supplies every executable resource scope, ceiling, and validity boundary.
+Create a private bearer-token file and a version-eight daemon configuration. Relative paths are resolved from the configuration file directory. Presets are deterministic shorthand for exact operation sets only; the required `authority` object supplies every executable resource scope, ceiling, and validity boundary.
 
 ```sh
 install -m 600 /dev/null operator.token
 printf '%s' 'replace-with-a-long-random-local-token' > operator.token
 cat > daemon.json <<'JSON'
 {
-  "schema_version": 7,
+  "schema_version": 8,
   "data_root": "./milkdrift-data",
   "bind": "127.0.0.1:9734",
   "secret_sources": {
@@ -113,8 +113,8 @@ cat > daemon.json <<'JSON'
         "filesystem": [],
         "network": { "profiles": [], "destinations": [] },
         "secrets": [],
-        "artifacts": { "identities": [], "sensitivities": [] },
-        "layouts": { "revisions": [], "actors": [], "shared": false },
+        "artifacts": { "type": "deny_all" },
+        "layouts": { "type": "deny_all" },
         "peers": { "identities": [], "allow_any": false },
         "daemon": {
           "readiness": true,
@@ -206,19 +206,21 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 
 - `crates/capability`: provider-neutral capability, exact resolution, and invocation contracts.
 - `crates/authority`: actor identity, scoped immutable grants, deterministic decisions, and opaque secret references.
-- `crates/control`: shared human/service/AI workflow proposals, risk policy, authority presets, the typed durable controller lifecycle/read model, and the in-process workflow-control capability adapter.
+- `crates/control`: shared human/service/AI workflow proposals, risk policy, authority presets, the typed controller lifecycle/read model, and the in-process workflow-control capability adapter.
 - `crates/control-protocol`: pure protocol-2.2 commands, read models, envelopes, authenticated cursors, streams, and layout schema 1.
 - `crates/control-client`: authenticated typed HTTP queries, exact command submission, bounded artifact ranges, and resumable SSE.
 - `crates/prompt-sequence`: bounded JSON/Markdown implementation sequences, ordinary blueprint compilation, and prospective remediation proposal construction.
 - `crates/capability-host`: live adapter generations, resolution, admission, cancellation, health, drain, and shutdown.
 - `crates/blueprint`: immutable workflow definitions, fingerprints, and revision transactions.
 - `crates/model`: provider-neutral model task/response and exact schema-v2 causal-context manifest contracts.
+- `crates/peer-protocol`: bounded transport-neutral peer session, catalog, execution, cancellation, observation, and artifact-transfer contracts.
 - `crates/workspace`: scoped immutable values, branch lineage, artifact metadata, and budgets.
 - `crates/persistence`: versioned events and narrow journal/revision/snapshot/workspace/artifact ports.
 - `crates/runtime`: commands, pure projections, scheduling, execution ownership, recovery, reconciliation, and authoritative causal-context discovery/materialization.
 - `adapters/redb-store`: transactional local redb storage and content-addressed artifact bytes.
 - `adapters/local-process`: byte-pinned schema-v2 safe-argv profiles and the trusted-host process adapter; it is not a sandbox.
 - `adapters/model-provider`: bounded HTTP endpoint profiles plus OpenAI-compatible and native Anthropic mappings.
+- `adapters/peer-http`: authenticated HTTP peer transport, durable serving/reconnect, and remote capabilities mapped into the ordinary capability host.
 - `adapters/secret-env`: explicit opaque-secret-reference to environment-name resolution.
 - `apps/daemon`: authoritative local host, bounded runtime owner, authentication, HTTP/SSE API, recovery, and shutdown.
 - `apps/cli`: thin operator client with human and stable schema-v1 JSON output.

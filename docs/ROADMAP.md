@@ -3,19 +3,24 @@
 This document owns ordered unfinished product slices. Completed core work belongs in
 [`STATUS.md`](STATUS.md), and chronology belongs in Git and CI.
 
-1. **Independent pre-UI closure review** — Audit the completed core against `VISION.md`,
-   `ARCHITECTURE.md`, the durable decisions, public API policy, dependency direction, full local
-   gate, and current evidence. Resolve findings through their existing owners. This review decides
-   whether any client work may be ordered; no UI is currently authorized as the next slice.
-2. **Real external interoperability evidence** — With operator-supplied resources, run the strict
+1. **Close the independent pre-UI blockers** — Finish the full local gate and current-source
+   mutation, longevity, operational, hosted, and external evidence after the independent review's
+   schema, authority, lifecycle, peer, persistence, and adapter corrections. No UI is currently
+   authorized as the next slice.
+2. **Production controller admission** — Add one final-entry-adjacent durable reservation and
+   accounting owner for every cumulative controller resource ceiling, including concurrent work,
+   retries, cancellation, uncertainty, and restart. Keep continuous controller activation refused
+   by the production daemon until hostile and longevity evidence proves that boundary.
+3. **Real external interoperability evidence** — With operator-supplied resources, run the strict
    external-evidence workflow using one byte-pinned real coding-agent executable and one real
    supported model endpoint/profile with private credentials. Preserve the redacted report and
    consumer-schema result outside source control. Mocks and hermetic helpers do not close this item.
-3. **Hosted portability and operational evidence** — Obtain successful hosted Windows/macOS
+4. **Hosted portability and operational evidence** — Obtain successful hosted Windows/macOS
    contract runs and hosted mutation, benchmark, storage-growth, saturation, reconnect, and
    shutdown artifacts from the pinned workflows. Local Linux runs remain useful but cannot stand in
    for those runners.
-4. **Post-closure product ordering** — Only after the independent review, choose the next bounded
+5. **Post-closure product ordering** — Only after every closure blocker is independently evidenced,
+   choose the next bounded
    product slice. Candidate clients or distributed dogfood must remain consumers of the existing
    protocol, controller, peer, proposal, authority, and runtime boundaries and may not introduce UI
    semantics or autonomous privilege into the core.

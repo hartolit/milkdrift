@@ -1,6 +1,6 @@
 # ADR 0026: Controllers use one durable bounded lifecycle
 
-- Status: accepted
+- Status: accepted for the library contract; production-daemon installation superseded by ADR 0027
 - Date: 2026-08-31
 
 ## Context
@@ -21,8 +21,8 @@ supported stop behavior is deterministic controller failure. Unknown versions, l
 metadata-only patterns, digest mismatches, and wrapper/repeat/body contradictions fail closed.
 
 `milkdrift-control::ControllerLifecycleOwner` is the sole parser, progress accountant, and caller
-of `ControllerLimits::assess`. The daemon installs it into the existing deterministic runtime while
-admission is closed. Runtime supplies host-owned run/revision/node/execution/time/projection facts
+of `ControllerLimits::assess`. An embedding installs it into the existing deterministic runtime only
+while admission is closed. Runtime supplies host-owned run/revision/node/execution/time/projection facts
 at activation, cycle entry, and checkpoint continuation. The owner never accepts model counters or
 authority claims. Runtime records `ControllerAssessmentRecorded` and creates an allowed iteration
 in one atomic transition.
@@ -70,7 +70,8 @@ commands, proposal documents, approvals, revisions, and reconciliation plans.
 One controller policy document exists per immutable revision. Multiple logical occurrences are
 independent by execution identity. Controller-authored proposals are rejected when multiple active
 occurrences make proposer attribution ambiguous. Paused-at-bound behavior and unsafe reinterpretation
-of legacy controller metadata are deliberately unsupported.
+of legacy controller metadata are deliberately unsupported. ADR 0027 records why the production
+daemon leaves the lifecycle uninstalled until cumulative resources are reserved at final entry.
 
 ## Reconsideration triggers
 

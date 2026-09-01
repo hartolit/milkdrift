@@ -63,6 +63,61 @@ struct BlockingAdapter {
     exact_authority_seen: std::sync::atomic::AtomicBool,
 }
 
+struct BlockingLifecycleAdapter {
+    gate: Arc<(Mutex<bool>, Condvar)>,
+}
+
+impl CapabilityAdapter for BlockingLifecycleAdapter {
+    fn execute(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+        _reporter: &dyn AdapterReporter,
+    ) -> Result<(), AdapterError> {
+        Err(AdapterError::unavailable(
+            "lifecycle deadline test does not execute work",
+        ))
+    }
+
+    fn health(&self, observed_at_unix_ms: u64) -> Result<CapabilityObservation, AdapterError> {
+        CapabilityObservation::new(
+            milkdrift_capability::CapabilityId::new("cap-local-test")
+                .map_err(|error| AdapterError::unavailable(error.to_string()))?,
+            observed_at_unix_ms,
+            true,
+            0,
+            "test adapter ready",
+        )
+        .map_err(|error| AdapterError::unavailable(error.to_string()))
+    }
+
+    fn cancel(
+        &self,
+        request: &CancellationRequest,
+    ) -> Result<CancellationAcknowledgement, AdapterError> {
+        CancellationAcknowledgement::new(
+            request.invocation().clone(),
+            request.request_sequence(),
+            false,
+            false,
+            Some("lifecycle deadline test has no active invocation".to_owned()),
+        )
+        .map_err(|error| AdapterError::external_failure(error.to_string()))
+    }
+
+    fn shutdown(&self) -> Result<(), AdapterError> {
+        let (lock, changed) = &*self.gate;
+        let mut released = lock
+            .lock()
+            .map_err(|_| AdapterError::external_failure("test lifecycle gate poisoned"))?;
+        while !*released {
+            released = changed
+                .wait(released)
+                .map_err(|_| AdapterError::external_failure("test lifecycle gate poisoned"))?;
+        }
+        Ok(())
+    }
+}
+
 impl BlockingAdapter {
     fn new(gate: Arc<(Mutex<bool>, Condvar)>) -> Self {
         Self {
@@ -345,6 +400,73 @@ fn bounded_queues_backpressure_and_forced_shutdown_preserves_unresolved_truth() 
         )?
         .is_empty()
     );
+    Ok(())
+}
+
+#[test]
+fn blocking_adapter_lifecycle_cannot_overrun_the_effect_shutdown_deadline() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let descriptor = CapabilityDescriptorDocument::from_json(include_bytes!(
+        "../../capability/tests/fixtures/descriptor-v1.json"
+    ))?
+    .body()
+    .clone();
+    let host = CapabilityHost::new(
+        HostConfig {
+            max_registrations: 4,
+            max_generations_per_capability: 2,
+            max_concurrent_per_generation: 4,
+            observation_stale_after_ms: 10_000,
+        },
+        CapabilitySelectionPolicy::priorities(BTreeMap::new()),
+    )?;
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    host.register(
+        descriptor.clone(),
+        Arc::new(BlockingLifecycleAdapter { gate: gate.clone() }),
+        Some(CapabilityObservation::new(
+            descriptor.identity().clone(),
+            1_000,
+            true,
+            0,
+            "ready",
+        )?),
+    )?;
+    let runtime = Arc::new(RuntimeService::new_with_authority(
+        store,
+        Arc::new(host.clone()),
+        Arc::new(AllowAuthority),
+        Arc::new(ManualClock::new(1_000)),
+        Arc::new(SequentialIdGenerator::new("effect-deadline", 1)?),
+        RuntimeConfig::new(
+            WorkerId::new("worker-effect-deadline")?,
+            ActorRef::new("controller:effect-deadline")?,
+            30_000,
+            32,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(1, vec![ErrorClass::Transport], 10, 100, 0)?,
+        )?,
+    )?);
+    let workers = EffectWorkerHost::start(
+        runtime,
+        host,
+        EffectWorkerConfig {
+            execution_threads: 1,
+            execution_queue: 1,
+            cancellation_queue: 1,
+            maximum_claim_page: 1,
+        },
+    )?;
+    let started = std::time::Instant::now();
+    let shutdown = workers.shutdown(EffectShutdownMode::Cancel, Duration::from_millis(25))?;
+    assert!(!shutdown.clean);
+    assert!(started.elapsed() < Duration::from_millis(500));
+    assert_eq!(shutdown.health.active_executions, 0);
+
+    let (lock, changed) = &*gate;
+    *lock.lock().map_err(|_| "test lifecycle gate poisoned")? = true;
+    changed.notify_all();
     Ok(())
 }
 

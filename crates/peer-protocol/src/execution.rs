@@ -286,7 +286,36 @@ impl PeerInvocationRequest {
         if self.request_digest != expected {
             return Err(PeerProtocolError::DigestMismatch("invocation"));
         }
+        if self.input_artifact_bytes()? > self.limits.artifact_bytes {
+            return Err(PeerProtocolError::Bounds {
+                location: "peer_invocation.input_artifact_bytes",
+                reason: "exact input artifact bytes exceed the accepted total quota".to_owned(),
+            });
+        }
         Ok(())
+    }
+
+    /// Returns the exact total size of every artifact materialized as input.
+    pub fn input_artifact_bytes(&self) -> Result<u64, PeerProtocolError> {
+        let mut references = self
+            .request
+            .inputs()
+            .iter()
+            .filter_map(|input| input.value().artifact())
+            .chain(self.request.context_manifest());
+        references.try_fold(0_u64, |total, reference| {
+            let size = reference.size_bytes().ok_or_else(|| {
+                PeerProtocolError::InvalidContract(
+                    "peer input artifact references require exact byte sizes".to_owned(),
+                )
+            })?;
+            total
+                .checked_add(size)
+                .ok_or_else(|| PeerProtocolError::Bounds {
+                    location: "peer_invocation.input_artifact_bytes",
+                    reason: "input artifact byte accounting overflowed".to_owned(),
+                })
+        })
     }
 }
 
@@ -374,14 +403,70 @@ pub enum InvocationAcceptance {
     },
 }
 
+impl InvocationAcceptance {
+    /// Validates semantic bounds and binds the response to the exact submitted request.
+    pub fn validate_for(&self, request: &PeerInvocationRequest) -> Result<(), PeerProtocolError> {
+        let valid = match self {
+            Self::Accepted {
+                request_id,
+                request_digest,
+                accepted_at_unix_ms,
+                lease_expires_at_unix_ms,
+                ..
+            } => {
+                request_id == &request.request_id
+                    && request_digest == &request.request_digest
+                    && *accepted_at_unix_ms > 0
+                    && *lease_expires_at_unix_ms >= *accepted_at_unix_ms
+            }
+            Self::Archived {
+                request_id,
+                execution,
+                request_digest,
+                accepted_at_unix_ms,
+                summary,
+            } => {
+                request_id == &request.request_id
+                    && request_digest == &request.request_digest
+                    && *accepted_at_unix_ms > 0
+                    && summary.validate(execution).is_ok()
+            }
+            Self::Rejected {
+                request_id,
+                code,
+                detail,
+                ..
+            } => {
+                request_id == &request.request_id
+                    && !code.is_empty()
+                    && code.len() <= 192
+                    && code.is_ascii()
+                    && detail.len() <= 2_048
+            }
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(PeerProtocolError::InvalidContract(
+                "invocation acceptance is not bound to the submitted request".to_owned(),
+            ))
+        }
+    }
+}
+
 /// Current durable knowledge returned by idempotency lookup.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum InvocationLookup {
     /// The server proves it has no durable record for this key.
-    NotAccepted,
+    NotAccepted {
+        /// Exact request identity queried.
+        request_id: PeerRequestId,
+    },
     /// One exact accepted execution and its current status are known.
     Known {
+        /// Exact request identity queried.
+        request_id: PeerRequestId,
         /// Stable execution identity.
         execution: PeerExecutionId,
         /// Canonical accepted request digest.
@@ -397,9 +482,51 @@ pub enum InvocationLookup {
     },
     /// The backing record is irrecoverably unavailable; no false conclusion is made.
     Unknown {
+        /// Exact request identity queried.
+        request_id: PeerRequestId,
         /// Bounded diagnostic reason.
         reason: String,
     },
+}
+
+impl InvocationLookup {
+    /// Validates the internal semantics and binds the result to the exact queried identity.
+    pub fn validate_for(&self, request: &PeerRequestId) -> Result<(), PeerProtocolError> {
+        let valid = match self {
+            Self::NotAccepted { request_id } => request_id == request,
+            Self::Known {
+                request_id,
+                execution,
+                request_digest,
+                accepted_at_unix_ms,
+                status,
+                last_sequence,
+                history,
+            } => {
+                request_id == request
+                    && *accepted_at_unix_ms > 0
+                    && valid_blake3_digest(request_digest)
+                    && match history {
+                        ObservationHistory::Hot => true,
+                        ObservationHistory::Archived { summary } => {
+                            summary.validate(execution).is_ok()
+                                && summary.status == *status
+                                && summary.last_sequence == *last_sequence
+                        }
+                    }
+            }
+            Self::Unknown { request_id, reason } => {
+                request_id == request && !reason.is_empty() && reason.len() <= 2_048
+            }
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(PeerProtocolError::InvalidContract(
+                "invocation lookup is invalid or not bound to the queried request".to_owned(),
+            ))
+        }
+    }
 }
 
 /// Durable execution lifecycle independent of a live connection.
@@ -694,6 +821,17 @@ impl PeerCancellationAcknowledgement {
         {
             return Err(PeerProtocolError::InvalidContract(
                 "invalid cancellation acknowledgement semantics".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validates semantics and binds the acknowledgement to the exact cancellation request.
+    pub fn validate_for(&self, request: &PeerCancellationRequest) -> Result<(), PeerProtocolError> {
+        self.validate()?;
+        if self.request_id != request.request_id || self.execution != request.execution {
+            return Err(PeerProtocolError::InvalidContract(
+                "cancellation acknowledgement targets a different request or execution".to_owned(),
             ));
         }
         Ok(())

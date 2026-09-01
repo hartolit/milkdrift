@@ -1,10 +1,13 @@
 use std::{
     collections::BTreeSet,
     fs,
-    os::unix::fs::PermissionsExt as _,
+    io::{BufReader, Read as _},
     path::{Path, PathBuf},
     process::Command,
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 
 use milkdrift_local_process::{PlatformSupport, ProcessProfileDocument};
 use serde_json::{Value, json};
@@ -39,6 +42,8 @@ pub fn prepare_agent_profile(
     } else {
         let source = source.ok_or_else(|| "--agent-profile is required".to_owned())?;
         let bytes = fs::read(source).map_err(|error| format!("agent profile read: {error}"))?;
+        ProcessProfileDocument::from_json(&bytes)
+            .map_err(|error| format!("agent profile contract: {error}"))?;
         let value: Value = serde_json::from_slice(&bytes)
             .map_err(|error| format!("agent profile JSON: {error}"))?;
         reject_fixture_profile(&value)?;
@@ -78,44 +83,35 @@ pub fn prepare_agent_profile(
     let canonical_executable = executable
         .canonicalize()
         .map_err(|error| format!("agent executable canonicalization: {error}"))?;
-    let executable_bytes = fs::read(&canonical_executable)
-        .map_err(|error| format!("agent executable read: {error}"))?;
-    let observed_digest = format!("b3_{}", blake3::hash(&executable_bytes));
+    let executable_size = fs::metadata(&canonical_executable)
+        .map_err(|error| format!("agent executable metadata: {error}"))?
+        .len();
+    let mut executable = BufReader::new(
+        fs::File::open(&canonical_executable)
+            .map_err(|error| format!("agent executable read: {error}"))?,
+    );
+    let mut hasher = blake3::Hasher::new();
+    let mut buffer = [0_u8; 1_048_576];
+    loop {
+        let read = executable
+            .read(&mut buffer)
+            .map_err(|error| format!("agent executable read: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let observed_digest = format!("b3_{}", hasher.finalize());
     let declared = profile
         .get("implementation")
         .and_then(Value::as_object)
         .ok_or_else(|| "agent implementation declaration is absent".to_owned())?;
     if declared.get("content_digest").and_then(Value::as_str) != Some(&observed_digest)
-        || declared.get("size_bytes").and_then(Value::as_u64)
-            != Some(u64::try_from(executable_bytes.len()).map_err(|_| "executable size")?)
+        || declared.get("size_bytes").and_then(Value::as_u64) != Some(executable_size)
     {
         return Err("agent executable bytes do not match the declared digest/size".to_owned());
     }
-    let mut command = Command::new(&canonical_executable);
-    if version_arguments.is_empty() {
-        command.arg("--version");
-    } else {
-        command.args(version_arguments);
-    }
-    let output = command
-        .output()
-        .map_err(|error| format!("agent version command: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "agent version command exited {}",
-            output.status.code().unwrap_or(-1)
-        ));
-    }
-    let mut version_output = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if version_output.is_empty() {
-        version_output = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    }
-    if version_output.len() > 1_024 {
-        version_output.truncate(1_024);
-    }
-    if version_output.is_empty() {
-        return Err("agent version command produced no bounded output".to_owned());
-    }
+    let version_output = executable_version_output(&canonical_executable, version_arguments)?;
     let output_names = process_output_names(profile)?;
     if output_names.is_empty() {
         return Err(
@@ -141,22 +137,59 @@ pub fn prepare_agent_profile(
         capability,
         canonical_executable,
         content_digest: observed_digest,
-        size_bytes: u64::try_from(executable_bytes.len()).map_err(|_| "executable size")?,
+        size_bytes: executable_size,
         version_output,
         output_names,
         secret_refs,
     })
 }
 
+fn executable_version_output(
+    canonical_executable: &Path,
+    version_arguments: &[String],
+) -> Result<String, String> {
+    let mut command = Command::new(canonical_executable);
+    command.env_clear().env("LANG", "C.UTF-8");
+    if version_arguments.is_empty() {
+        command.arg("--version");
+    } else {
+        command.args(version_arguments);
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("agent version command: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "agent version command exited {}",
+            output.status.code().unwrap_or(-1)
+        ));
+    }
+    let mut version_output = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if version_output.is_empty() {
+        version_output = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    }
+    if version_output.len() > 1_024 {
+        let mut end = 1_024;
+        while !version_output.is_char_boundary(end) {
+            end -= 1;
+        }
+        version_output.truncate(end);
+    }
+    if version_output.is_empty() {
+        return Err("agent version command produced no bounded output".to_owned());
+    }
+    Ok(version_output)
+}
+
 pub fn generated_profiles(
     repository: &Path,
     session_root: &Path,
 ) -> Result<GeneratedProfiles, String> {
-    let python = Path::new("/usr/bin/python3");
+    let python = find_executable(&["python3", "python"])?;
     let weak_verifier = write_profile(
         session_root,
         repository,
-        python,
+        &python,
         "evidence-verifier-weak",
         "evidence-verifier-weak",
         verifier_code(),
@@ -177,7 +210,7 @@ pub fn generated_profiles(
     let good_verifier = write_profile(
         session_root,
         repository,
-        python,
+        &python,
         "evidence-verifier-good",
         "evidence-verifier-good",
         verifier_code(),
@@ -204,7 +237,7 @@ pub fn generated_profiles(
     let reviewer = write_profile(
         session_root,
         repository,
-        python,
+        &python,
         "evidence-reviewer",
         "evidence-reviewer",
         reviewer_code(),
@@ -225,7 +258,7 @@ pub fn generated_profiles(
     let evidence_source = write_profile(
         session_root,
         repository,
-        python,
+        &python,
         "evidence-source",
         "evidence-source",
         evidence_source_code(),
@@ -529,7 +562,7 @@ fn verifier_code() -> &'static str {
     r#"import json, pathlib, subprocess, sys
 mode=sys.argv[1]
 root=pathlib.Path(sys.argv[2])
-diff=subprocess.run(['/usr/bin/git','diff','--binary','HEAD'],check=False,capture_output=True,text=True)
+diff=subprocess.run(['git','diff','--binary','HEAD'],check=False,capture_output=True,text=True)
 tests=subprocess.run([sys.executable,'-m','unittest','-v'],check=False,capture_output=True,text=True)
 log='ORCHESTRATION_FAULT_INJECTION='+str(mode=='weak')+'\n'+tests.stdout+tests.stderr
 (root/'verification.log').write_text(log)
@@ -560,7 +593,34 @@ payload=json.loads((root/'inputs/payload.json').read_text())
 
 pub fn secure_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::write(path, bytes).map_err(|error| error.to_string())?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| error.to_string())
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn find_executable(names: &[&str]) -> Result<PathBuf, String> {
+    let paths = std::env::var_os("PATH").ok_or_else(|| "PATH is unavailable".to_owned())?;
+    for directory in std::env::split_paths(&paths) {
+        for name in names {
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                return candidate
+                    .canonicalize()
+                    .map_err(|error| format!("executable canonicalization: {error}"));
+            }
+            #[cfg(windows)]
+            {
+                let candidate = directory.join(format!("{name}.exe"));
+                if candidate.is_file() {
+                    return candidate
+                        .canonicalize()
+                        .map_err(|error| format!("executable canonicalization: {error}"));
+                }
+            }
+        }
+    }
+    Err(format!("none of {} was found on PATH", names.join(", ")))
 }
 
 #[cfg(test)]
@@ -603,5 +663,23 @@ mod tests {
         assert!(reject_fixture_profile(&fixture).is_err());
         let real = json!({"profile":{"executable":"/opt/coding-agent","extensions":{}}});
         assert!(reject_fixture_profile(&real).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn provenance_version_command_does_not_inherit_operator_environment()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let executable = root.path().join("version-helper");
+        fs::write(
+            &executable,
+            b"#!/bin/sh\nprintf '%s' \"${HOME-operator-environment-cleared}\"\n",
+        )?;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
+        assert_eq!(
+            executable_version_output(&executable, &[])?,
+            "operator-environment-cleared"
+        );
+        Ok(())
     }
 }

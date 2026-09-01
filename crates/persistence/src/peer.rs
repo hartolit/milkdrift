@@ -14,6 +14,8 @@ use crate::{PageSize, PersistenceError, TimestampMillis, WorkerId};
 
 /// Current checksummed hot peer-execution primary-record schema.
 pub const PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2: u32 = 2;
+/// Current record schema whose artifact accounting includes exact inputs and cumulative outputs.
+pub const PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3: u32 = 3;
 /// Current compact immutable archived peer-execution tombstone schema.
 pub const PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1: u32 = 1;
 
@@ -178,7 +180,7 @@ impl PeerExecutionPhase {
 pub struct PeerExecutionAccounting {
     /// Number of append-only observation rows.
     pub observations: u32,
-    /// Sum of exact output artifact sizes observed so far.
+    /// Sum of exact input and output artifact sizes accounted so far.
     pub artifact_bytes: u64,
     /// Terminal duration when reported.
     pub duration_ms: Option<u64>,
