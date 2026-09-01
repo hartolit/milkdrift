@@ -46,14 +46,38 @@ fn numeric_const(relative: &str, name: &str) -> TestResult<u64> {
 #[test]
 fn canonical_entrypoint_and_local_links_resolve() -> TestResult {
     let repository = root()?;
+    let root_markdown = fs::read_dir(&repository)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("md"))
+        .filter_map(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        root_markdown,
+        BTreeSet::from([
+            "AGENTS.md".to_owned(),
+            "CONTRIBUTING.md".to_owned(),
+            "README.md".to_owned(),
+        ]),
+        "repository-root Markdown is limited to entry-point documents"
+    );
+
     let canonical = [
         "AGENTS.md",
-        "VISION.md",
-        "ARCHITECTURE.md",
+        "CONTRIBUTING.md",
         "README.md",
-        "docs/STATUS.md",
-        "docs/ROADMAP.md",
-        "docs/DEVELOPMENT.md",
+        "docs/README.md",
+        "docs/product/vision.md",
+        "docs/architecture.md",
+        "docs/product/status.md",
+        "docs/product/roadmap.md",
+        "docs/development/workflow.md",
+        "docs/development/engineering-rules.md",
+        "docs/development/verification-evidence.md",
         "docs/reference/public-api-policy.md",
     ];
     for relative in canonical {
@@ -91,10 +115,10 @@ fn canonical_entrypoint_and_local_links_resolve() -> TestResult {
     let agents = read(repository.join("AGENTS.md"))?;
     let ordered = [
         "1. `AGENTS.md`",
-        "2. `VISION.md`",
-        "3. `ARCHITECTURE.md`",
-        "4. `docs/STATUS.md`",
-        "5. `docs/ROADMAP.md`",
+        "2. `docs/product/vision.md`",
+        "3. `docs/architecture.md`",
+        "4. `docs/product/status.md`",
+        "5. `docs/product/roadmap.md`",
         "6. Relevant ADRs, references, source, and tests",
     ];
     let mut prior = 0;
@@ -156,7 +180,7 @@ fn canonical_version_statements_match_source_constants() -> TestResult {
         format!("run-event envelopes are v{run_event}"),
         format!("resolved-capability snapshots are v{resolved_snapshot}"),
     ];
-    let architecture = read(root()?.join("ARCHITECTURE.md"))?;
+    let architecture = read(root()?.join("docs/architecture.md"))?;
     for fact in facts {
         assert!(
             architecture.contains(&fact),
@@ -167,7 +191,7 @@ fn canonical_version_statements_match_source_constants() -> TestResult {
     let control = format!("protocol-{control_major}.{control_minor}");
     assert!(read(root()?.join("README.md"))?.contains(&control));
     assert!(
-        read(root()?.join("docs/STATUS.md"))?
+        read(root()?.join("docs/product/status.md"))?
             .contains("External control / authenticated cursor | 2.2 / 2")
     );
     Ok(())
@@ -175,7 +199,7 @@ fn canonical_version_statements_match_source_constants() -> TestResult {
 
 #[test]
 fn status_is_current_fact_not_a_pass_diary() -> TestResult {
-    let status = read(root()?.join("docs/STATUS.md"))?;
+    let status = read(root()?.join("docs/product/status.md"))?;
     let headings: Vec<_> = status
         .lines()
         .filter(|line| line.starts_with("## "))
@@ -228,9 +252,9 @@ fn repository_evidence_tasks_have_one_cargo_owned_rust_path() -> TestResult {
     assert!(workflow.contains("cargo mutation-evidence \"${{ matrix.shard }}\""));
     for document in [
         "README.md",
-        "docs/DEVELOPMENT.md",
-        "docs/external-evidence.md",
-        "docs/verification-evidence.md",
+        "docs/development/workflow.md",
+        "docs/guides/external-evidence.md",
+        "docs/development/verification-evidence.md",
     ] {
         let contents = read(repository.join(document))?;
         assert!(

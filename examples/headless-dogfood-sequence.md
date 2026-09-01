@@ -9,7 +9,7 @@
       "id": "repository:milkdrift",
       "root_ref": "workspace:milkdrift-main",
       "starting_revision": "operator-pinned-revision",
-      "allowed_paths": ["Cargo.toml", "Cargo.lock", "crates", "adapters", "apps", "docs", "README.md", "ARCHITECTURE.md"],
+      "allowed_paths": ["Cargo.toml", "Cargo.lock", "crates", "adapters", "apps", "docs", "README.md"],
       "allowed_operations": ["read", "write", "execute", "version_control"],
       "dirty_tree": "allow_recorded",
       "isolation": "shared_sequential",

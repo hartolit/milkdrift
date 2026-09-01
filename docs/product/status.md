@@ -73,7 +73,7 @@ snapshot. Git, CI, releases, and external audits own chronology.
   production daemon leaves this lifecycle uninstalled, so continuous controller activation fails
   closed until cumulative resource admission is enforced at final external entry.
 - The public Rust surface follows the current policy in
-  [`reference/public-api-policy.md`](reference/public-api-policy.md). Canonical identities come
+  [`../reference/public-api-policy.md`](../reference/public-api-policy.md). Canonical identities come
   from their semantic owner; storage fault hooks are available only with redb `test-admin`; daemon
   routing and read projections remain internal. There are no UI packages or UI dependencies.
 

@@ -11,7 +11,7 @@ credential-free CI/self-test mode; it deliberately sets the report and both scen
 
 ## Prerequisites
 
-- Build prerequisites from [`DEVELOPMENT.md`](DEVELOPMENT.md), `/usr/bin/git`,
+- Build prerequisites from the [development workflow](../development/workflow.md), `/usr/bin/git`,
   `/usr/bin/python3`, and a `b3sum` CLI for preparing exact executable facts. Python is used only
   by the separate verifier/reviewer/evidence helpers.
 - A clean Milkdrift checkout at the exact commit/tree being cited. Real mode refuses a dirty
@@ -29,7 +29,7 @@ credential-free CI/self-test mode; it deliberately sets the report and both scen
 - Every credential must be available through an environment variable or private file. Profiles
   contain only opaque `secret:…` references.
 
-Copy the templates in [`examples/external-evidence`](../examples/external-evidence/README.md) to an
+Copy the templates in [`examples/external-evidence`](../../examples/external-evidence/README.md) to an
 untracked operator directory and replace every placeholder. For the executable declaration,
 compute the exact facts without loading the file into a shell variable:
 
@@ -118,7 +118,7 @@ OpenAI-compatible template, and use the server's actual behavior:
 This fragment is not a complete profile; retain the template's explicit limits, TLS, proxy,
 redirect, concurrency, and trust-zone fields. Advertise `structured_output` only if the exact
 server/model combination implements the requested JSON-schema contract. If it is omitted, the
-harness requests the exact parseable text response. See [`LOCAL_MODEL_ENDPOINT.md`](LOCAL_MODEL_ENDPOINT.md).
+harness requests the exact parseable text response. See the [local model endpoint guide](local-model-endpoint.md).
 
 For hosted OpenAI-compatible endpoints use HTTPS, the exact allowlisted host, bearer secret
 reference, and only verified chat-completions features. For native Anthropic use the Anthropic
@@ -158,7 +158,7 @@ as sensitive scratch data, never commit it, and share only a separately reviewed
 ## Read and clean up the report
 
 The report validates against strict serde v1 at write time; the consumer schema is
-[`external-evidence-report-v1.schema.json`](reference/external-evidence-report-v1.schema.json).
+[`external-evidence-report-v1.schema.json`](../reference/external-evidence-report-v1.schema.json).
 The writer also caps the encoded report, rejects a qualifying document unless its source commit is
 clean and exact, requires scenario-specific command/run/attempt/artifact/restart facts, validates
 every reported artifact digest, and scans the complete encoded bytes for generated and

@@ -2,7 +2,7 @@
 
 > This document owns the enduring product intent of Milkdrift: why it exists, what kind of system it is trying to become, what experience it should create, and which principles must survive implementation changes.
 >
-> It is deliberately not an implementation-status report, milestone ledger, crate map, or API reference. `docs/STATUS.md` must say what exists now. `docs/ROADMAP.md` must say what comes next. `ARCHITECTURE.md` must say where responsibilities live and which invariants bind the implementation. This document is the compass those documents are measured against.
+> It is deliberately not an implementation-status report, milestone ledger, crate map, or API reference. `docs/product/status.md` must say what exists now. `docs/product/roadmap.md` must say what comes next. `docs/architecture.md` must say where responsibilities live and which invariants bind the implementation. This document is the compass those documents are measured against.
 
 ## 1. Why Milkdrift exists
 
@@ -1429,10 +1429,10 @@ Tests should detect mutation of behavior, not repeat the same implementation for
 
 ### Documentation must tell the truth
 
-`VISION.md` explains the destination.
-`ARCHITECTURE.md` explains ownership and invariants.
-`docs/STATUS.md` explains what is actually implemented and validated.
-`docs/ROADMAP.md` explains what remains.
+`docs/product/vision.md` explains the destination.
+`docs/architecture.md` explains ownership and invariants.
+`docs/product/status.md` explains what is actually implemented and validated.
+`docs/product/roadmap.md` explains what remains.
 
 Do not let those documents silently borrow claims from one another.
 

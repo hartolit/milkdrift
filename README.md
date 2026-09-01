@@ -11,7 +11,7 @@ cargo test --workspace
 ```
 
 Repeatable mutation, benchmark, storage-growth, daemon-saturation, and cross-platform evidence is
-documented in [verification and operational evidence](docs/verification-evidence.md). These lanes
+documented in [verification and operational evidence](docs/development/verification-evidence.md). These lanes
 produce reviewable artifacts without treating benchmark values as correctness gates.
 
 ## Two-daemon peer example
@@ -68,7 +68,7 @@ milkdrift capability list
 milkdrift peer show peer-a
 ```
 
-The insecure mode refuses non-loopback URLs. Use ordinary HTTPS directly or terminate TLS in an operator-controlled reverse proxy; WireGuard and Tailscale are possible connectivity choices, not Milkdrift dependencies. See `docs/operator-peers.md` and `docs/reference/peer-protocol.md`.
+The insecure mode refuses non-loopback URLs. Use ordinary HTTPS directly or terminate TLS in an operator-controlled reverse proxy; WireGuard and Tailscale are possible connectivity choices, not Milkdrift dependencies. See `docs/operations/peers.md` and `docs/reference/peer-protocol.md`.
 
 ## Local daemon quick start
 
@@ -108,17 +108,17 @@ cargo run -p milkdrift-cli -- run timeline RUN_ID --follow
 Successful verification advances to the next fresh coding-agent process while one explicitly
 authorized repository remains persistent. Failure routes to independent review and a durable
 shared-control approval hold; remediation is a normal prospective revision. See [the headless
-dogfood guide](docs/headless-dogfood.md), [schema-2 reference](docs/reference/prompt-sequence-v2.md),
+dogfood guide](docs/guides/headless-dogfood.md), [schema-2 reference](docs/reference/prompt-sequence-v2.md),
 and [complete example](examples/headless-dogfood-sequence.md).
 
 To generate redacted operator evidence against one real coding-agent executable and one real model
 endpoint, run `cargo external-evidence` with the safe templates under
 [`examples/external-evidence`](examples/external-evidence/README.md). The exact
 prerequisites, qualification rules, costs, restart/failure scenario, report schema, fixture mode,
-and cleanup guidance are in [the external-evidence guide](docs/external-evidence.md). Fixture mode
+and cleanup guidance are in [the external-evidence guide](docs/guides/external-evidence.md). Fixture mode
 tests the harness but never qualifies as external interoperability proof.
 
-The daemon refuses non-loopback plaintext binds and permissive CORS is not enabled. Older configuration/storage schemas and legacy sidecar authority are not silently migrated, and broad/unbounded authority requires an explicit dangerous acknowledgement. Empty artifact, layout, peer, and workspace scopes deny access. See [the daemon operation guide](docs/operator-daemon.md), [the authority configuration guide](docs/operator-authority.md), and [the control API reference](docs/reference/control-api.md).
+The daemon refuses non-loopback plaintext binds and permissive CORS is not enabled. Older configuration/storage schemas and legacy sidecar authority are not silently migrated, and broad/unbounded authority requires an explicit dangerous acknowledgement. Empty artifact, layout, peer, and workspace scopes deny access. See [the daemon operation guide](docs/operations/daemon.md), [the authority configuration guide](docs/operations/authority.md), and [the control API reference](docs/reference/control-api.md).
 
 A minimal revision is constructed through a validated mutation batch; see the crate-level example in `milkdrift-blueprint` and the integration tests under `crates/blueprint/tests`.
 
@@ -146,10 +146,10 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 - `apps/cli`: thin operator client with human and stable schema-v1 JSON output.
 - `tools/evidence`: development-only Divan and operational fixtures for critical bounded paths.
 - `.github/workflows`: pinned Linux quality/stress/evidence lanes plus Linux, Windows, and macOS contract validation.
-- `docs`: status, roadmap, development commands, and durable decisions.
+- `docs`: product, architecture, development, operator, reference, and durable decision documentation.
 - `.github/workflows/quality.yml`: the primary format/check/test/lint/documentation workflow.
 - `.github/workflows/stress.yml`: weekly and manually triggered long-run storage/projection boundary evidence.
 
-Start with [AGENTS.md](AGENTS.md). The canonical detailed documents are [VISION.md](VISION.md), [ARCHITECTURE.md](ARCHITECTURE.md), [docs/STATUS.md](docs/STATUS.md), [docs/ROADMAP.md](docs/ROADMAP.md), [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), [the public API policy](docs/reference/public-api-policy.md), and [the ADR index](docs/decisions/README.md).
+Start with [AGENTS.md](AGENTS.md). The [documentation index](docs/README.md) links the canonical detailed documents, including the [product vision](docs/product/vision.md), [architecture constitution](docs/architecture.md), [current status](docs/product/status.md), [roadmap](docs/product/roadmap.md), [development workflow](docs/development/workflow.md), [public API policy](docs/reference/public-api-policy.md), and [ADR index](docs/decisions/README.md).
 
 Milkdrift is licensed under either the [MIT license](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE), at your option.

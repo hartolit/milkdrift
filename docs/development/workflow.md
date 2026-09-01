@@ -141,7 +141,7 @@ survivor because a benchmark looks healthy: add the missing correctness assertio
 exact reviewed classification in `.cargo/mutation-classifications.json`.
 
 For a public-surface review, follow
-[`reference/public-api-policy.md`](reference/public-api-policy.md). Install `cargo-public-api` as
+[`../reference/public-api-policy.md`](../reference/public-api-policy.md). Install `cargo-public-api` as
 local tooling (it is not a workspace dependency), then inventory each library package with both
 `cargo public-api -p PACKAGE -sss --all-features --color never` and the default-feature equivalent.
 The tool uses a nightly rustdoc JSON toolchain, while all product builds and gates continue to use

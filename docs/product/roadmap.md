@@ -1,7 +1,7 @@
 # Roadmap
 
 This document owns ordered unfinished product slices. Completed core work belongs in
-[`STATUS.md`](STATUS.md), and chronology belongs in Git and CI.
+[`status.md`](status.md), and chronology belongs in Git and CI.
 
 1. **Close the independent pre-UI blockers** — Finish the full local gate and current-source
    mutation, longevity, operational, hosted, and external evidence after the independent review's

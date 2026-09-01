@@ -15,4 +15,4 @@ working credential, executable identity, or provider model selection.
   profile if it reveals private endpoint identity or operational configuration.
 
 The complete command and interpretation rules are in
-[`docs/external-evidence.md`](../../docs/external-evidence.md).
+[`docs/guides/external-evidence.md`](../../docs/guides/external-evidence.md).

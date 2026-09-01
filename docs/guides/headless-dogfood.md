@@ -6,7 +6,7 @@ authorized repository, verify each result, and stop at a durable review/approval
 verification fails. Remediation is a normal digest-bound prospective revision; it does not rewrite
 completed work or enlarge the run's frozen authority.
 
-The complete example is [`examples/headless-dogfood-sequence.md`](../examples/headless-dogfood-sequence.md).
+The complete example is [`examples/headless-dogfood-sequence.md`](../../examples/headless-dogfood-sequence.md).
 Its capability identities are placeholders for operator-configured trusted-host process profiles.
 
 ## What the import creates
@@ -57,7 +57,7 @@ Registration canonicalizes the exact directory. Every invocation rechecks that i
 same ordinary directory under a configured read-write root. Milkdrift-owned context/input
 materialization and output publication remain in an isolated execution root. The process runs in
 the persistent repository. This is an authority boundary and provenance fact, not a sandbox; see
-[`LOCAL_PROCESS.md`](LOCAL_PROCESS.md).
+[local process operator guide](local-process.md).
 
 The repository section of the import is a bounded policy/reference document. `root_ref`, starting
 revision, credentials, and remote profile references are opaque identifiers interpreted by the

@@ -7,7 +7,7 @@ validity interval, grant identity/revision, and revocation generation are indepe
 immutable schema-4 grant. Authentication selects that exact actor and grant but grants nothing by
 itself.
 
-The checked [schema-9 fixture](../apps/daemon/tests/fixtures/daemon-config-v9.toml) is the complete
+The checked [schema-9 fixture](../../apps/daemon/tests/fixtures/daemon-config-v9.toml) is the complete
 safe pattern for one actor, one workflow lineage, and one local process capability. Its central
 selection reads as ordinary TOML:
 

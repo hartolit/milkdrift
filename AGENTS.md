@@ -6,23 +6,23 @@ rules remain with their canonical owners; do not copy them into task notes or ne
 ## Reading order
 
 1. `AGENTS.md`
-2. `VISION.md`
-3. `ARCHITECTURE.md`
-4. `docs/STATUS.md`
-5. `docs/ROADMAP.md`
+2. `docs/product/vision.md`
+3. `docs/architecture.md`
+4. `docs/product/status.md`
+5. `docs/product/roadmap.md`
 6. Relevant ADRs, references, source, and tests
 
 ## Source-of-truth map
 
 | Question | Owner |
 | --- | --- |
-| Enduring product intent and non-negotiable semantics | `VISION.md` |
-| Architecture, ownership, and dependency direction | `ARCHITECTURE.md` |
-| What works now and what remains limited | `docs/STATUS.md` |
-| Ordered unfinished product work | `docs/ROADMAP.md` |
+| Enduring product intent and non-negotiable semantics | `docs/product/vision.md` |
+| Architecture, ownership, and dependency direction | `docs/architecture.md` |
+| What works now and what remains limited | `docs/product/status.md` |
+| Ordered unfinished product work | `docs/product/roadmap.md` |
 | Durable design decisions and tradeoffs | `docs/decisions/` |
 | Schema and protocol contracts | Owning code constants/readers, fixtures, then `docs/reference/` |
-| Verified behavior and evidence | Tests, CI workflows, `docs/verification-evidence.md` |
+| Verified behavior and evidence | Tests, CI workflows, `docs/development/verification-evidence.md` |
 | Historical chronology | Git history, commits, CI runs, release notes, and external audits |
 
 When prose and executable behavior disagree, establish whether code or documentation drifted; do
@@ -73,4 +73,5 @@ implementation evidence for current versions.
   cargo test --workspace --all-features -- --list
   ```
 
-Use `docs/DEVELOPMENT.md` for focused suites, evidence lanes, fixture rules, and public-API review.
+Use `docs/development/workflow.md` for focused suites, evidence lanes, fixture rules, and public-API
+review. `docs/development/engineering-rules.md` owns standing implementation-quality policy.

@@ -1,6 +1,6 @@
 # Architecture constitution
 
-This document owns Milkdrift's durable product boundary, terminology, semantic ownership, dependency direction, and compatibility rules. Current implementation facts belong in `docs/STATUS.md`; ordered work belongs in `docs/ROADMAP.md`.
+This document owns Milkdrift's durable product boundary, terminology, semantic ownership, dependency direction, and compatibility rules. Current implementation facts belong in `docs/product/status.md`; ordered work belongs in `docs/product/roadmap.md`.
 
 ## 1. Product boundary and non-goals
 
@@ -330,7 +330,7 @@ The exact current logical-to-physical mapping is:
 Physical crates are extracted only for a real dependency, lifecycle, host, publication, or multiple-consumer boundary. No empty crate or placeholder directory may be created merely to resemble the diagram. A later pass may merge or split physical packages when it preserves logical ownership and reduces coupling. Within a cohesive crate, private modules are preferred until extraction creates a measurable boundary; conversely, a growing module must split when unrelated invariants, dependencies, lifecycle, or test ownership become entangled.
 
 Pre-release public APIs follow current consumers under
-[`docs/reference/public-api-policy.md`](docs/reference/public-api-policy.md). Semantic contracts,
+[`reference/public-api-policy.md`](reference/public-api-policy.md). Semantic contracts,
 adapter ports, validated serialized documents, and application entry points remain public.
 Provider wire payloads, storage rows, daemon read-model projection, operational profile inspection,
 and test fault hooks stay private or explicitly feature-gated with their owners. In particular,
