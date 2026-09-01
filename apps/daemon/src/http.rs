@@ -990,9 +990,9 @@ async fn run_stream(
         "run stream subscription established"
     );
     let output = stream! {
-        loop {
+        'events: loop {
             let Some(current_session) = state.host.authenticate_header(Some(&bearer)) else {
-                if let Ok(event) = observation_event(&feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision) {
+                if let Ok(event) = observation_event(&state.host, &feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision).await {
                     yield Ok(event);
                 }
                 break;
@@ -1008,7 +1008,7 @@ async fn run_stream(
                 Err(_) => break,
             };
             if state.host.health().draining {
-                if let Ok(event) = observation_event(&feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "daemon is draining".to_owned() }, &session, &decision) {
+                if let Ok(event) = observation_event(&state.host, &feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "daemon is draining".to_owned() }, &session, &decision).await {
                     yield Ok(event);
                 }
                 break;
@@ -1018,9 +1018,10 @@ async fn run_stream(
                 match state.host.run(session.clone(), run.clone()).await {
                     Ok(status) => {
                         stream_position = stream_position.saturating_add(1);
-                        if let Ok(event) = observation_event(&feed, stream_position, Observation::RunStatus(status), &session, &decision) {
-                            yield Ok(event);
-                        }
+                        let Ok(event) = observation_event(&state.host, &feed, stream_position, Observation::RunStatus(status), &session, &decision).await else {
+                            break 'events;
+                        };
+                        yield Ok(event);
                     }
                     _ => break,
                 }
@@ -1047,16 +1048,18 @@ async fn run_stream(
                 Ok(page) if !page.items.is_empty() => {
                     for entry in page.items {
                         stream_position = entry.sequence.saturating_mul(2);
-                        if let Ok(event) = observation_event(&feed, stream_position, Observation::Timeline(entry), &session, &decision) {
-                            yield Ok(event);
-                        }
+                        let Ok(event) = observation_event(&state.host, &feed, stream_position, Observation::Timeline(entry), &session, &decision).await else {
+                            break 'events;
+                        };
+                        yield Ok(event);
                     }
                     match state.host.run(session.clone(), run.clone()).await {
                         Ok(status) => {
                             stream_position = stream_position.saturating_add(1);
-                            if let Ok(event) = observation_event(&feed, stream_position, Observation::RunStatus(status), &session, &decision) {
-                                yield Ok(event);
-                            }
+                            let Ok(event) = observation_event(&state.host, &feed, stream_position, Observation::RunStatus(status), &session, &decision).await else {
+                                break 'events;
+                            };
+                            yield Ok(event);
                         }
                         _ => break,
                     }
@@ -1064,7 +1067,7 @@ async fn run_stream(
                 Ok(_) => tokio::time::sleep(Duration::from_millis(250)).await,
                 Err(error) => {
                     let reason = if error.code == ErrorCode::Unauthorized { "authorization changed" } else { "timeline cursor must be resynchronized" };
-                    if let Ok(event) = observation_event(&feed, stream_position.saturating_add(1), Observation::ResyncRequired { reason: reason.to_owned() }, &session, &decision) {
+                    if let Ok(event) = observation_event(&state.host, &feed, stream_position.saturating_add(1), Observation::ResyncRequired { reason: reason.to_owned() }, &session, &decision).await {
                         yield Ok(event);
                     }
                     break;
@@ -1111,9 +1114,9 @@ async fn capability_stream(
         "capability stream subscription established"
     );
     let output = stream! {
-        loop {
+        'events: loop {
             let Some(session) = state.host.authenticate_header(Some(&bearer)) else {
-                if let Ok(event) = observation_event(&feed, position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision) {
+                if let Ok(event) = observation_event(&state.host, &feed, position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision).await {
                     yield Ok(event);
                 }
                 break;
@@ -1129,7 +1132,7 @@ async fn capability_stream(
             };
             let binding = stream_cursor_binding(&session, &feed);
             if state.host.health().draining {
-                if let Ok(event) = observation_event(&feed, position.saturating_add(1), Observation::StreamClosing { reason: "daemon is draining".to_owned() }, &session, &decision) {
+                if let Ok(event) = observation_event(&state.host, &feed, position.saturating_add(1), Observation::StreamClosing { reason: "daemon is draining".to_owned() }, &session, &decision).await {
                     yield Ok(event);
                 }
                 break;
@@ -1163,16 +1166,17 @@ async fn capability_stream(
                 (resync, entries)
             };
             if resync {
-                if let Ok(event) = observation_event(&feed, position.saturating_add(1), Observation::ResyncRequired { reason: "capability cursor is outside the retained health window".to_owned() }, &session, &decision) {
+                if let Ok(event) = observation_event(&state.host, &feed, position.saturating_add(1), Observation::ResyncRequired { reason: "capability cursor is outside the retained health window".to_owned() }, &session, &decision).await {
                     yield Ok(event);
                 }
                 break;
             }
             for (entry_position, capability) in entries {
                 position = entry_position;
-                if let Ok(event) = observation_event(&feed, position, Observation::Capability(capability), &session, &decision) {
-                    yield Ok(event);
-                }
+                let Ok(event) = observation_event(&state.host, &feed, position, Observation::Capability(capability), &session, &decision).await else {
+                    break 'events;
+                };
+                yield Ok(event);
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
@@ -1235,9 +1239,9 @@ async fn health_stream(
         "health stream subscription established"
     );
     let output = stream! {
-        loop {
+        'events: loop {
             let Some(session) = state.host.authenticate_header(Some(&bearer)) else {
-                if let Ok(event) = observation_event(&feed, position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision) {
+                if let Ok(event) = observation_event(&state.host, &feed, position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision).await {
                     yield Ok(event);
                 }
                 break;
@@ -1254,9 +1258,10 @@ async fn health_stream(
             let (generation, health) = state.host.health_snapshot();
             if generation > position {
                 position = generation;
-                if let Ok(event) = observation_event(&feed, position, Observation::DaemonHealth(health.clone()), &session, &decision) {
-                    yield Ok(event);
-                }
+                let Ok(event) = observation_event(&state.host, &feed, position, Observation::DaemonHealth(health.clone()), &session, &decision).await else {
+                    break 'events;
+                };
+                yield Ok(event);
             }
             if health.draining {
                 break;
@@ -1465,45 +1470,44 @@ fn parse_range(value: Option<&HeaderValue>, request_id: &str) -> Result<(u64, u3
     Ok((start, maximum))
 }
 
-fn observation_event(
+async fn observation_event(
+    host: &DaemonHost,
     feed: &str,
     position: u64,
     observation: Observation,
     session: &ActorSession,
     decision_digest: &str,
-) -> Result<Event, milkdrift_control_protocol::ProtocolError> {
+) -> Result<Event, ()> {
+    let observed_at_ms = host.now().await.map_err(|error| {
+        warn!(
+            outcome = "closed",
+            code = "observation_clock_unavailable",
+            "observation stream closed because its timestamp boundary failed: {}",
+            error.message
+        );
+    })?;
     let cursor = Cursor::new_bound(
         feed,
         position,
         stream_cursor_binding(session, feed),
         decision_digest,
         session.cursor_key(),
-    )?;
+    )
+    .map_err(|_| ())?;
     let envelope = ObservationEnvelope {
         protocol: ProtocolVersion::CURRENT,
         cursor: cursor.clone(),
-        observed_at_ms: current_millis(),
+        observed_at_ms,
         feed: feed.to_owned(),
         observation,
     };
     let data =
-        String::from_utf8(milkdrift_control_protocol::encode_json(&envelope)?).map_err(|_| {
-            milkdrift_control_protocol::ProtocolError::InvalidJson(
-                "observation is not UTF-8".to_owned(),
-            )
-        })?;
+        String::from_utf8(milkdrift_control_protocol::encode_json(&envelope).map_err(|_| ())?)
+            .map_err(|_| ())?;
     Ok(Event::default()
         .id(cursor.as_str())
         .event("observation")
         .data(data))
-}
-
-fn current_millis() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

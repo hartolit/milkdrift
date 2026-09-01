@@ -31,7 +31,7 @@ impl PeerService {
         &self,
         worker: &WorkerId,
     ) -> Result<PeerClaimOutcome, PeerHttpError> {
-        let now = self.clock.now_unix_ms().max(1);
+        let now = self.now()?;
         self.executions
             .claim_peer_dispatch(&PeerDispatchClaimRequest {
                 worker,
@@ -69,13 +69,13 @@ impl PeerService {
                             terminal_evidence: Some(terminal),
                             detail: Some("durable cancellation prevented adapter entry".to_owned()),
                         },
-                        self.clock.now_unix_ms().max(1),
+                        self.now()?,
                     )
                     .map_err(map_execution_persistence)?;
             }
             return Ok(());
         }
-        if self.clock.now_unix_ms() > record.request.deadline_unix_ms {
+        if self.now()? > record.request.deadline_unix_ms {
             return self.append_pre_entry_failure(
                 &record,
                 "peer execution deadline elapsed before adapter entry",
@@ -89,6 +89,7 @@ impl PeerService {
         }
         let relationship = match self.relationship(&record.owner_peer) {
             Ok(relationship) => relationship,
+            Err(error @ PeerHttpError::Unavailable(_)) => return Err(error),
             Err(_) => {
                 return self.append_pre_entry_failure(
                     &record,
@@ -105,14 +106,16 @@ impl PeerService {
                 );
             }
         };
+        let entry_now = self.now()?;
         let entry_authority = match self.authorize_invocation(
             &relationship,
             &record.request,
             &generation.descriptor,
             &generation.authority_requirements,
-            self.clock.now_unix_ms(),
+            entry_now,
         ) {
             Ok(decision) => decision,
+            Err(error @ PeerHttpError::Unavailable(_)) => return Err(error),
             Err(_) => {
                 return self.append_pre_entry_failure(
                     &record,
@@ -128,7 +131,7 @@ impl PeerService {
                 worker: &claim.worker,
                 claim_generation: claim.generation,
                 relationship_generation: relationship_generation(&relationship),
-                entered_at_unix_ms: self.clock.now_unix_ms().max(1),
+                entered_at_unix_ms: entry_now,
                 authority: &entry_authority,
             })
             .map_err(map_execution_persistence)?
@@ -193,17 +196,18 @@ impl PeerService {
                 &entered.execution,
                 &claim.worker,
                 claim.generation,
-                self.clock.now_unix_ms().max(1),
+                self.now()?,
                 &reason,
             )
             .map_err(map_execution_persistence)?;
         Ok(())
     }
 
-    pub(crate) fn recover_panicked_worker(
+    pub(crate) fn recover_interrupted_worker(
         &self,
         claimed: &PeerExecutionRecord,
         worker: &WorkerId,
+        post_entry_reason: &str,
     ) -> Result<(), PeerHttpError> {
         let current = self
             .executions
@@ -226,8 +230,8 @@ impl PeerService {
                     &current.execution,
                     worker,
                     claim.generation,
-                    self.clock.now_unix_ms().max(1),
-                    "peer worker panicked after durable adapter entry",
+                    self.now()?,
+                    post_entry_reason,
                 )
                 .map_err(map_execution_persistence)?;
         } else {
@@ -237,7 +241,7 @@ impl PeerService {
                     &current.execution,
                     worker,
                     claim.generation,
-                    self.clock.now_unix_ms().max(1),
+                    self.now()?,
                 )
                 .map_err(map_execution_persistence)?;
             self.notify_workers();
@@ -282,7 +286,7 @@ impl PeerService {
                     sequence,
                     category: ObservationCategory::Terminal,
                     event,
-                    observed_at_unix_ms: self.clock.now_unix_ms().max(1),
+                    observed_at_unix_ms: self.now()?,
                 },
             )
             .map_err(map_execution_persistence)?;
@@ -333,7 +337,7 @@ impl PeerService {
             sequence,
             category: ObservationCategory::Terminal,
             event,
-            observed_at_unix_ms: self.clock.now_unix_ms().max(1),
+            observed_at_unix_ms: self.now()?,
         };
         self.executions
             .append_peer_observation(&current.owner_peer, &current.execution, &observation)
@@ -388,14 +392,24 @@ struct PeerStoreReporter {
 }
 
 impl PeerStoreReporter {
+    fn now(&self) -> Result<u64, AdapterError> {
+        self.clock.now_unix_ms().map_err(|error| {
+            AdapterError::external_failure(format!("peer boundary clock unavailable: {error}"))
+        })
+    }
+
     fn reject_report(&self, code: &str, detail: &str) -> AdapterError {
         let reason = bounded(&format!("{code}: {detail}"), 2_048);
+        let observed_at_unix_ms = match self.now() {
+            Ok(now) => now,
+            Err(error) => return error,
+        };
         let _ = self.executions.mark_peer_uncertain(
             &self.owner_peer,
             &self.execution,
             &self.worker,
             self.claim_generation,
-            self.clock.now_unix_ms().max(1),
+            observed_at_unix_ms,
             &reason,
         );
         AdapterError::external_failure(reason)
@@ -404,7 +418,8 @@ impl PeerStoreReporter {
 
 impl AdapterReporter for PeerStoreReporter {
     fn invocation(&self, event: InvocationEvent) -> Result<(), AdapterError> {
-        if self.clock.now_unix_ms() > self.deadline_unix_ms {
+        let now = self.now()?;
+        if now > self.deadline_unix_ms {
             return Err(
                 self.reject_report("peer_report_deadline", "peer execution deadline elapsed")
             );
@@ -464,7 +479,7 @@ impl AdapterReporter for PeerStoreReporter {
                     sequence: event.sequence(),
                     category,
                     event,
-                    observed_at_unix_ms: self.clock.now_unix_ms().max(1),
+                    observed_at_unix_ms: now,
                 },
             )
             .map(|_outcome| ())
@@ -474,7 +489,8 @@ impl AdapterReporter for PeerStoreReporter {
     }
 
     fn heartbeat(&self) -> Result<(), AdapterError> {
-        if self.clock.now_unix_ms() > self.deadline_unix_ms {
+        let now = self.now()?;
+        if now > self.deadline_unix_ms {
             return Err(
                 self.reject_report("peer_heartbeat_deadline", "peer execution deadline elapsed")
             );
@@ -485,7 +501,7 @@ impl AdapterReporter for PeerStoreReporter {
                 &self.execution,
                 &self.worker,
                 self.claim_generation,
-                self.clock.now_unix_ms().saturating_add(self.lease_ms),
+                now.saturating_add(self.lease_ms),
             )
             .map_err(|error| AdapterError::external_failure(error.to_string()))
     }

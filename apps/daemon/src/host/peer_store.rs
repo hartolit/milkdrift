@@ -5,13 +5,7 @@
 //! belong to the runtime owner thread. These adapters preserve the existing ports while making
 //! every off-owner call enter the same bounded owner queue as the local control plane.
 
-use std::{
-    sync::{
-        Arc, Weak,
-        mpsc::{SyncSender, TrySendError, sync_channel},
-    },
-    thread::{self, ThreadId},
-};
+use std::sync::Weak;
 
 use milkdrift_authority::PeerId;
 use milkdrift_capability::ArtifactReference;
@@ -32,93 +26,7 @@ use milkdrift_persistence::{
 };
 use milkdrift_redb_store::RedbStore;
 
-use super::{OWNER_RESPONSE_TIMEOUT, OwnerRequest, SharedHealth};
-
-#[derive(Clone)]
-pub(super) struct OwnerPeerQueue {
-    sender: SyncSender<OwnerRequest>,
-    health: Arc<SharedHealth>,
-    owner_thread: ThreadId,
-}
-
-impl OwnerPeerQueue {
-    pub(super) fn new(
-        sender: SyncSender<OwnerRequest>,
-        health: Arc<SharedHealth>,
-        owner_thread: ThreadId,
-    ) -> Self {
-        Self {
-            sender,
-            health,
-            owner_thread,
-        }
-    }
-
-    fn call<T, E>(
-        &self,
-        operation: impl FnOnce() -> Result<T, E> + Send + 'static,
-        map_failure: fn(OwnerCallFailure) -> E,
-    ) -> Result<T, E>
-    where
-        T: Send + 'static,
-        E: Send + 'static,
-    {
-        if thread::current().id() == self.owner_thread {
-            return operation();
-        }
-
-        let (reply, receiver) = sync_channel(1);
-        let owner_thread = self.owner_thread;
-        let mut request = OwnerRequest {
-            execute: Box::new(move |_| {
-                assert_eq!(
-                    thread::current().id(),
-                    owner_thread,
-                    "peer persistence escaped the daemon owner thread"
-                );
-                let _ = reply.send(operation());
-            }),
-            stop_owner: false,
-            queued: None,
-        };
-        request.mark_queued(&self.health);
-        match self.sender.try_send(request) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) => {
-                return Err(map_failure(OwnerCallFailure::QueueFull));
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                return Err(map_failure(OwnerCallFailure::Disconnected));
-            }
-        }
-        match receiver.recv_timeout(OWNER_RESPONSE_TIMEOUT) {
-            Ok(result) => result,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                Err(map_failure(OwnerCallFailure::ResponseTimeout))
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                Err(map_failure(OwnerCallFailure::Disconnected))
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum OwnerCallFailure {
-    QueueFull,
-    Disconnected,
-    ResponseTimeout,
-}
-
-impl OwnerCallFailure {
-    const fn message(self) -> &'static str {
-        match self {
-            Self::QueueFull => "daemon runtime owner queue is full",
-            Self::Disconnected => "daemon runtime owner is unavailable",
-            Self::ResponseTimeout => "daemon runtime owner response deadline elapsed",
-        }
-    }
-}
+use super::{OwnerCallFailure, OwnerQueue};
 
 fn execution_failure(failure: OwnerCallFailure) -> PersistenceError {
     PersistenceError::Storage {
@@ -142,12 +50,12 @@ fn artifact_failure(failure: OwnerCallFailure) -> PeerArtifactError {
 }
 
 pub(super) struct OwnerPeerExecutionStore {
-    queue: OwnerPeerQueue,
+    queue: OwnerQueue,
     direct: Weak<RedbStore>,
 }
 
 impl OwnerPeerExecutionStore {
-    pub(super) fn new(queue: OwnerPeerQueue, direct: Weak<RedbStore>) -> Self {
+    pub(super) fn new(queue: OwnerQueue, direct: Weak<RedbStore>) -> Self {
         Self { queue, direct }
     }
 
@@ -448,12 +356,12 @@ impl PeerExecutionStore for OwnerPeerExecutionStore {
 }
 
 pub(super) struct OwnerPeerArtifactStore {
-    queue: OwnerPeerQueue,
+    queue: OwnerQueue,
     direct: Weak<CorePeerArtifactStore>,
 }
 
 impl OwnerPeerArtifactStore {
-    pub(super) fn new(queue: OwnerPeerQueue, direct: Weak<CorePeerArtifactStore>) -> Self {
+    pub(super) fn new(queue: OwnerQueue, direct: Weak<CorePeerArtifactStore>) -> Self {
         Self { queue, direct }
     }
 

@@ -7,7 +7,7 @@ use super::{
     BlueprintRevisionDocument, Command, CommandAccepted, CommandId, CommandRequest, Deserialize,
     ErrorCode, IntegrityDigest, Owner, PublicFailure, RunId, RunSequence, Serialize,
     TimestampMillis, Value, bounded, conflict, corruption, internal, invalid, layouts,
-    parse_revision_id, proposals, public_persistence, public_protocol, unix_millis,
+    parse_revision_id, proposals, public_persistence, public_protocol,
 };
 
 pub(super) fn execute(
@@ -34,21 +34,18 @@ pub(super) fn execute(
         layout.author = session.actor.as_str().to_owned();
         layout.digest = layout.computed_digest().map_err(public_protocol)?;
     }
-    let created_at = TimestampMillis::new(unix_millis());
+    let created_at = TimestampMillis::new(owner.now()?);
     match owner.execute_new_command(session, &request) {
         Ok(result) => {
-            let (effect_reference, effect) = application_effect(
-                session,
-                &request,
-                &result,
-                TimestampMillis::new(unix_millis()),
-            )?;
+            let (effect_reference, effect) =
+                application_effect(session, &request, &result, created_at)?;
             let document = serde_json::to_vec(&StoredApplicationResult::Accepted(result.clone()))
                 .map_err(|_| internal())?;
             let receipt = application_receipt(
                 session,
                 command.clone(),
                 digest.clone(),
+                created_at,
                 created_at,
                 ApplicationCommandResult::Accepted {
                     document,
@@ -94,6 +91,7 @@ fn persist_rejection(
         session,
         command,
         digest,
+        created_at,
         created_at,
         ApplicationCommandResult::Rejected { document },
     )?;
@@ -149,6 +147,7 @@ fn application_receipt(
     command: CommandId,
     command_digest: IntegrityDigest,
     created_at: TimestampMillis,
+    completed_at: TimestampMillis,
     result: ApplicationCommandResult,
 ) -> Result<ApplicationCommandReceipt, PublicFailure> {
     ApplicationCommandReceipt::new(
@@ -161,7 +160,7 @@ fn application_receipt(
         session.grant.digest().map_err(|_| internal())?.clone(),
         None,
         created_at,
-        TimestampMillis::new(unix_millis()),
+        completed_at,
         result,
     )
     .map_err(public_persistence)

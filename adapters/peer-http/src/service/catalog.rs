@@ -43,7 +43,7 @@ impl PeerService {
             AuthorityBudget::default(),
         )?;
         self.check_rate(&relationship, "catalog")?;
-        let now = self.clock.now_unix_ms();
+        let now = self.now()?;
         let entries = self.catalog_entries(&relationship, now)?;
         let fingerprint = catalog_fingerprint(&entries)?;
         let mut catalogs = self

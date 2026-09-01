@@ -3,6 +3,64 @@
 use super::support::*;
 
 #[test]
+fn artifact_clock_failure_rejects_chunks_without_publishing_bytes() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let peer = PeerId::new("peer-artifact-clock")?;
+    let bytes = b"x".to_vec();
+    let reference = ArtifactReference::new(
+        ArtifactId::new("peer-artifact-clock-boundary")?,
+        ContentDigest::for_bytes(&bytes),
+        MediaType::new("application/octet-stream")?,
+        1,
+    );
+    let offer = ArtifactMetadataOffer {
+        transfer: TransferId::new("transfer-artifact-clock")?,
+        direction: ArtifactTransferDirection::Upload,
+        artifact: reference.clone(),
+        sensitivity: ArtifactSensitivity::Internal,
+        retention: ArtifactRetention::WhileReferenced,
+        provenance: ArtifactProvenance::new(
+            CausalReference::External {
+                source: CausalId::new("remote-clock-source")?,
+            },
+            Vec::new(),
+        )?,
+        source_peer: peer.clone(),
+        execution: PeerExecutionId::new("execution-artifact-clock")?,
+        expires_at_unix_ms: 1_000_000,
+    };
+    let clock = Arc::new(ControlledPeerClock::new(offer.expires_at_unix_ms));
+    let core = Arc::new(RedbStore::open(root.path())?);
+    let transfer = CorePeerArtifactStore::new(core.clone(), 1_048_576, 2_097_152, clock.clone())?;
+    assert!(matches!(
+        transfer.negotiate(&peer, &offer, 1_048_576)?,
+        ArtifactTransferDecision::Transfer { next_offset: 0, .. }
+    ));
+
+    clock.set_available(false)?;
+    let chunk = ArtifactChunk {
+        transfer: offer.transfer.clone(),
+        offset: 0,
+        bytes,
+        final_chunk: true,
+    };
+    assert!(matches!(
+        transfer.write_chunk(&peer, &chunk, 1_048_576),
+        Err(PeerArtifactError::Unavailable)
+    ));
+    assert!(core.metadata(reference.artifact())?.is_none());
+
+    clock.set_available(true)?;
+    clock.set(offer.expires_at_unix_ms.saturating_add(1))?;
+    assert!(matches!(
+        transfer.write_chunk(&peer, &chunk, 1_048_576),
+        Err(PeerArtifactError::Rejected(_))
+    ));
+    assert!(core.metadata(reference.artifact())?.is_none());
+    Ok(())
+}
+
+#[test]
 fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbound() -> TestResult {
     let root = tempfile::tempdir()?;
     let peer = PeerId::new("peer-a")?;
@@ -34,7 +92,8 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
     };
 
     let core = Arc::new(RedbStore::open(root.path())?);
-    let transfer = CorePeerArtifactStore::new(core.clone(), 1_048_576, 2_097_152)?;
+    let transfer =
+        CorePeerArtifactStore::new(core.clone(), 1_048_576, 2_097_152, system_peer_clock())?;
     assert!(
         transfer
             .negotiate(&peer, &offer, u64::try_from(bytes.len())?.saturating_sub(1),)
@@ -64,7 +123,8 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
     drop(core);
 
     let core = Arc::new(RedbStore::open(root.path())?);
-    let transfer = CorePeerArtifactStore::new(core.clone(), 1_048_576, 2_097_152)?;
+    let transfer =
+        CorePeerArtifactStore::new(core.clone(), 1_048_576, 2_097_152, system_peer_clock())?;
     assert!(matches!(
         transfer.negotiate(&peer, &offer, 1_048_576)?,
         ArtifactTransferDecision::Transfer { next_offset: 8, .. }

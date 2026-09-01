@@ -3,6 +3,8 @@ use super::{
     RedbStoreConfig, STORAGE_SCHEMA_VERSION, TEMP_DIRECTORY, ensure_regular_file_or_absent, error,
     fmt, initialize_schema, prepare_owned_directory, sync_owned_directory, validate_schema,
 };
+use crate::clock::require_accepted_clock;
+use milkdrift_persistence::ClockWatermarkStore as _;
 impl fmt::Debug for RedbStore {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -29,13 +31,14 @@ impl RedbStore {
     )]
     pub fn open_with_config(config: RedbStoreConfig) -> Result<Self, PersistenceError> {
         validate_config(&config)?;
+        let startup_observation = config.artifact_clock.now()?;
         prepare_owned_directory(&config.root, "storage root")?;
         let database_path = config.root.join(DATABASE_FILENAME);
         ensure_regular_file_or_absent(&database_path, "storage database")?;
         let database = Database::create(&database_path).map_err(error::database)?;
 
         if database_is_uninitialized(&database)? {
-            initialize_schema(&database, config.faults.as_ref())?;
+            initialize_schema(&database, config.faults.as_ref(), startup_observation)?;
             sync_owned_directory(&config.root)?;
         } else {
             validate_schema(&database)?;
@@ -61,6 +64,7 @@ impl RedbStore {
             artifact_clock: config.artifact_clock,
             artifact_serialization: Mutex::new(()),
         };
+        require_accepted_clock(store.observe_clock(startup_observation)?)?;
         store.reestablish_application_retention_bounds()?;
         Ok(store)
     }

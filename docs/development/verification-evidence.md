@@ -97,6 +97,13 @@ rejects duplicate identities, and fails closed on timeouts or unclassified survi
 Checksum-correct raw-row corruption tests exercise the peer primary-record and tombstone validators
 instead of classifying their individual guards.
 
+Deterministic clock boundary tests inject unavailability and rollback at inbound authority, remote
+catalog registration, artifact transfer, post-entry worker recovery, daemon owner/health, and
+restart boundaries. Redb tests independently prove that artifact acceptance and watermark
+advancement commit or roll back together and that a reopened store refuses time behind durable
+high-water evidence. These tests establish fail-closed software behavior; elapsed time while the
+daemon is absent still relies on the operating-system clock trust stated in ADR 0029.
+
 Build and smoke every benchmark once:
 
 ```sh

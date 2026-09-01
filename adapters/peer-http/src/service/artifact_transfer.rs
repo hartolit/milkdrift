@@ -91,7 +91,7 @@ impl PeerService {
                 ArtifactTransferDirection::Download => "artifact_download_negotiate",
             },
         )?;
-        if self.clock.now_unix_ms() > offer.expires_at_unix_ms {
+        if self.now()? > offer.expires_at_unix_ms {
             return Err(PeerHttpError::Unauthorized(
                 "artifact transfer authority expired".to_owned(),
             ));
@@ -232,7 +232,7 @@ impl From<PeerArtifactError> for PeerHttpError {
             PeerArtifactError::Persistence(message) => Self::Persistence(message),
             PeerArtifactError::Overloaded(message) => Self::Overloaded(message),
             PeerArtifactError::Unavailable => {
-                Self::Persistence("artifact state unavailable".to_owned())
+                Self::Unavailable("artifact transfer boundary unavailable".to_owned())
             }
         }
     }

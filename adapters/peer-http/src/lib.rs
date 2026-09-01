@@ -23,7 +23,9 @@ pub use config::{
 };
 pub use http::peer_router;
 pub use remote::{PeerRegistry, PeerRegistryStatus, RemoteCapabilityProvenance};
-pub use service::{PeerClock, PeerService, PeerWorkerShutdownReport, SystemPeerClock};
+pub use service::{
+    PeerClock, PeerClockError, PeerService, PeerWorkerShutdownReport, SystemPeerClock,
+};
 
 use thiserror::Error;
 

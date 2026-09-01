@@ -4,7 +4,7 @@ pub(super) use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
     sync::{
-        Arc, Barrier,
+        Arc, Barrier, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     thread,
@@ -32,8 +32,9 @@ pub(super) use milkdrift_capability_host::{
     CapabilitySelectionPolicy, HostConfig,
 };
 pub(super) use milkdrift_peer_http::{
-    CorePeerArtifactStore, InsecureLoopbackMode, PeerArtifactStore, PeerClientConfig,
-    PeerRelationship, PeerServerConfig, PeerService, PeerWorkerConfig, SystemPeerClock,
+    CorePeerArtifactStore, InsecureLoopbackMode, PeerArtifactError, PeerArtifactStore,
+    PeerClientConfig, PeerClock, PeerClockError, PeerHttpError, PeerRelationship, PeerServerConfig,
+    PeerService, PeerWorkerConfig, SystemPeerClock,
 };
 pub(super) use milkdrift_peer_protocol::{
     ArtifactChunk, ArtifactMetadataOffer, ArtifactTransferDecision, ArtifactTransferDirection,
@@ -71,6 +72,64 @@ pub(super) const PEER_EXECUTION_ACCOUNTING: TableDefinition<'static, &'static st
     TableDefinition::new("milkdrift.v2.peers.accounting");
 pub(super) const PEER_EXECUTIONS: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v2.peers.executions.hot");
+
+#[derive(Debug)]
+struct ControlledClockState {
+    observed_at_unix_ms: u64,
+    last_unix_ms: u64,
+    available: bool,
+}
+
+#[derive(Debug)]
+pub(super) struct ControlledPeerClock {
+    state: Mutex<ControlledClockState>,
+}
+
+impl ControlledPeerClock {
+    pub(super) fn new(observed_at_unix_ms: u64) -> Self {
+        Self {
+            state: Mutex::new(ControlledClockState {
+                observed_at_unix_ms,
+                last_unix_ms: 0,
+                available: true,
+            }),
+        }
+    }
+
+    pub(super) fn set(&self, observed_at_unix_ms: u64) -> Result<(), PeerClockError> {
+        self.state
+            .lock()
+            .map_err(|_| PeerClockError::Unavailable)?
+            .observed_at_unix_ms = observed_at_unix_ms;
+        Ok(())
+    }
+
+    pub(super) fn set_available(&self, available: bool) -> Result<(), PeerClockError> {
+        self.state
+            .lock()
+            .map_err(|_| PeerClockError::Unavailable)?
+            .available = available;
+        Ok(())
+    }
+}
+
+impl PeerClock for ControlledPeerClock {
+    fn now_unix_ms(&self) -> Result<u64, PeerClockError> {
+        let mut state = self.state.lock().map_err(|_| PeerClockError::Unavailable)?;
+        if !state.available {
+            return Err(PeerClockError::Unavailable);
+        }
+        if state.observed_at_unix_ms < state.last_unix_ms {
+            return Err(PeerClockError::MovedBackwards);
+        }
+        state.last_unix_ms = state.observed_at_unix_ms;
+        Ok(state.observed_at_unix_ms)
+    }
+}
+
+pub(super) fn system_peer_clock() -> Arc<dyn PeerClock> {
+    Arc::new(SystemPeerClock::default())
+}
 
 pub(super) struct FailOnce {
     point: FaultPoint,
@@ -141,6 +200,53 @@ pub(super) struct TerminalAdapter {
     pub(super) maximum: Arc<AtomicUsize>,
     pub(super) calls: Arc<AtomicUsize>,
     pub(super) requirements: CapabilityExecutionRequirements,
+}
+
+pub(super) struct ClockFailingAdapter {
+    pub(super) capability: CapabilityId,
+    pub(super) clock: Arc<ControlledPeerClock>,
+    pub(super) calls: Arc<AtomicUsize>,
+}
+
+impl CapabilityAdapter for ClockFailingAdapter {
+    fn execute(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+        _reporter: &dyn AdapterReporter,
+    ) -> Result<(), AdapterError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.clock
+            .set_available(false)
+            .map_err(|error| AdapterError::external_failure(error.to_string()))?;
+        Err(AdapterError::external_failure(
+            "deterministic adapter failure after entry",
+        ))
+    }
+
+    fn cancel(
+        &self,
+        request: &CancellationRequest,
+    ) -> Result<CancellationAcknowledgement, AdapterError> {
+        CancellationAcknowledgement::new(
+            request.invocation().clone(),
+            request.request_sequence(),
+            true,
+            true,
+            None,
+        )
+        .map_err(|error| AdapterError::external_failure(error.to_string()))
+    }
+
+    fn health(&self, observed_at_unix_ms: u64) -> Result<CapabilityObservation, AdapterError> {
+        CapabilityObservation::new(
+            self.capability.clone(),
+            observed_at_unix_ms,
+            true,
+            0,
+            "healthy",
+        )
+        .map_err(|error| AdapterError::external_failure(error.to_string()))
+    }
 }
 
 impl CapabilityAdapter for TerminalAdapter {

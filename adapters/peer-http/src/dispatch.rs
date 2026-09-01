@@ -5,9 +5,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use milkdrift_persistence::{PeerClaimOutcome, WorkerId};
+use milkdrift_persistence::{PeerClaimOutcome, PeerExecutionRecord, WorkerId};
 
 use crate::{PeerHttpError, config::PeerWorkerConfig, service::PeerService};
+
+struct PendingRecovery {
+    record: PeerExecutionRecord,
+    post_entry_reason: &'static str,
+}
 
 #[derive(Default)]
 struct SignalState {
@@ -143,18 +148,45 @@ fn worker_loop(
     poll_interval: Duration,
 ) {
     let mut observed_generation = 0;
+    let mut pending_recovery: Option<PendingRecovery> = None;
     loop {
         let Some(service) = service.upgrade() else {
             return;
         };
+        if let Some(recovery) = pending_recovery.as_ref() {
+            if service
+                .recover_interrupted_worker(&recovery.record, &worker, recovery.post_entry_reason)
+                .is_ok()
+            {
+                pending_recovery = None;
+            } else {
+                drop(service);
+                if signal.wait(&mut observed_generation, poll_interval) {
+                    return;
+                }
+                continue;
+            }
+        }
         if service.worker_claims_enabled() {
             match service.claim_for_worker(&worker) {
                 Ok(PeerClaimOutcome::Claimed(record))
                 | Ok(PeerClaimOutcome::CancellationRequested(record)) => {
                     let recovery_record = record.clone();
                     let result = catch_unwind(AssertUnwindSafe(|| service.run_claimed(record)));
-                    if !matches!(result, Ok(Ok(()))) {
-                        let _ = service.recover_panicked_worker(&recovery_record, &worker);
+                    match result {
+                        Ok(Ok(())) => {}
+                        Ok(Err(_)) => {
+                            pending_recovery = Some(PendingRecovery {
+                                record: recovery_record,
+                                post_entry_reason: "peer worker failed after durable adapter entry",
+                            });
+                        }
+                        Err(_) => {
+                            pending_recovery = Some(PendingRecovery {
+                                record: recovery_record,
+                                post_entry_reason: "peer worker panicked after durable adapter entry",
+                            });
+                        }
                     }
                     continue;
                 }

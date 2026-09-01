@@ -28,7 +28,7 @@ impl PeerService {
             .cloned()
             .ok_or(PeerHttpError::Unauthenticated)?;
         if !relationship.enabled
-            || self.clock.now_unix_ms() > relationship.expires_at_unix_ms
+            || self.now()? > relationship.expires_at_unix_ms
             || self
                 .revoked_peers
                 .lock()
@@ -91,7 +91,7 @@ impl PeerService {
             .get(&relationship.remote_peer)
             .ok_or_else(|| PeerHttpError::Unauthorized("peer grant is absent".to_owned()))?;
         resources.peer = Some(relationship.remote_peer.clone());
-        let now = self.clock.now_unix_ms();
+        let now = self.now()?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"milkdrift.peer-authority.v1\0");
         hasher.update(relationship.remote_peer.as_str().as_bytes());
@@ -122,7 +122,7 @@ impl PeerService {
         relationship: &PeerRelationship,
         bucket: &str,
     ) -> Result<(), PeerHttpError> {
-        let now = self.clock.now_unix_ms();
+        let now = self.now()?;
         let key = (relationship.remote_peer.clone(), bucket.to_owned());
         let mut windows = self
             .rate_windows

@@ -18,6 +18,8 @@ use milkdrift_workspace::{
 };
 use thiserror::Error;
 
+use crate::PeerClock;
+
 const MAX_ACTIVE_TRANSFERS: usize = 1_024;
 
 /// Safe core-publication or authorized-read failure for peer artifact transfer.
@@ -110,6 +112,7 @@ struct TransferState {
 /// Bounded peer transfer adapter over Milkdrift's ordinary artifact publication/read authority.
 pub struct CorePeerArtifactStore {
     core: Arc<dyn PeerCoreArtifactStore>,
+    clock: Arc<dyn PeerClock>,
     budget: WorkspaceBudget,
     transfers: Mutex<BTreeMap<TransferId, TransferState>>,
 }
@@ -129,6 +132,7 @@ impl CorePeerArtifactStore {
         core: Arc<dyn PeerCoreArtifactStore>,
         maximum_artifact_bytes: u64,
         maximum_total_import_bytes: u64,
+        clock: Arc<dyn PeerClock>,
     ) -> Result<Self, PeerArtifactError> {
         let budget = WorkspaceBudget::new(
             0,
@@ -141,9 +145,16 @@ impl CorePeerArtifactStore {
         .map_err(|error| PeerArtifactError::Rejected(error.to_string()))?;
         Ok(Self {
             core,
+            clock,
             budget,
             transfers: Mutex::new(BTreeMap::new()),
         })
+    }
+
+    fn now(&self) -> Result<u64, PeerArtifactError> {
+        self.clock
+            .now_unix_ms()
+            .map_err(|_| PeerArtifactError::Unavailable)
     }
 
     fn publication_request(
@@ -233,7 +244,13 @@ impl PeerArtifactStore for CorePeerArtifactStore {
         offer
             .validate()
             .map_err(|error| PeerArtifactError::Rejected(error.to_string()))?;
-        self.reap_expired(unix_millis())?;
+        let now = self.now()?;
+        self.reap_expired(now)?;
+        if now > offer.expires_at_unix_ms {
+            return Err(PeerArtifactError::Rejected(
+                "artifact transfer authority expired".to_owned(),
+            ));
+        }
         if offer.artifact.size_bytes() > maximum_artifact_bytes {
             return Err(PeerArtifactError::Rejected(
                 "artifact size exceeds relationship transfer authority".to_owned(),
@@ -380,7 +397,7 @@ impl PeerArtifactStore for CorePeerArtifactStore {
                 "artifact transfer owner or direction mismatch".to_owned(),
             ));
         }
-        if unix_millis() > state.offer.expires_at_unix_ms {
+        if self.now()? > state.offer.expires_at_unix_ms {
             let expired = transfers.remove(&chunk.transfer);
             drop(transfers);
             if let Some(publication) = expired.and_then(|state| state.publication) {
@@ -465,7 +482,7 @@ impl PeerArtifactStore for CorePeerArtifactStore {
                 "artifact download owner or direction mismatch".to_owned(),
             ));
         }
-        if unix_millis() > state.offer.expires_at_unix_ms {
+        if self.now()? > state.offer.expires_at_unix_ms {
             transfers.remove(transfer);
             return Err(PeerArtifactError::Rejected(
                 "artifact transfer authority expired".to_owned(),
@@ -574,14 +591,6 @@ fn import_run_id(transfer: &TransferId) -> Result<RunId, PeerArtifactError> {
 
 fn short_hash(value: &str) -> String {
     blake3::hash(value.as_bytes()).to_hex()[..32].to_owned()
-}
-
-fn unix_millis() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |duration| {
-            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
-        })
 }
 
 fn map_persistence(error: milkdrift_persistence::PersistenceError) -> PeerArtifactError {

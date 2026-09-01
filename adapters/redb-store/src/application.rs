@@ -14,7 +14,9 @@ use milkdrift_workspace::RunId;
 use redb::{ReadableTable as _, ReadableTableMetadata as _};
 
 use crate::{
-    RedbStore, codec, error,
+    RedbStore,
+    clock::require_clock_in_transaction,
+    codec, error,
     fault::FaultPoint,
     json,
     schema::{
@@ -38,6 +40,7 @@ impl RedbStore {
         let hot_bound = u64::from(self.hot_application_receipt_bound);
         if accounting.hot_count > hot_bound {
             let archived_at = self.artifact_clock.now()?;
+            require_clock_in_transaction(&write, archived_at)?;
             while accounting.hot_count > hot_bound {
                 let excess = accounting.hot_count - hot_bound;
                 let maximum = u32::try_from(excess)

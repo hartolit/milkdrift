@@ -5,7 +5,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use milkdrift_authority::{AuthorityBudget, CapabilityExecutionRequirements, NetworkProfileRef};
@@ -25,7 +24,7 @@ use milkdrift_peer_protocol::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{PeerHttpClient, PeerHttpError, PeerRelationship};
+use crate::{PeerClock, PeerHttpClient, PeerHttpError, PeerRelationship};
 
 /// Exact remote facts retained next to each ordinary local adapter registration.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -75,6 +74,7 @@ pub struct PeerRegistry {
     host: CapabilityHost,
     client: Arc<PeerHttpClient>,
     relationship: PeerRelationship,
+    clock: Arc<dyn PeerClock>,
     registrations: Mutex<BTreeMap<(CapabilityId, u64), Registration>>,
     registration_generation: Mutex<u64>,
     status: Mutex<PeerRegistryStatus>,
@@ -96,6 +96,7 @@ impl PeerRegistry {
         host: CapabilityHost,
         client: Arc<PeerHttpClient>,
         relationship: PeerRelationship,
+        clock: Arc<dyn PeerClock>,
     ) -> Result<Self, PeerHttpError> {
         relationship.validate()?;
         if &relationship.remote_peer != client.remote_peer() {
@@ -107,6 +108,7 @@ impl PeerRegistry {
             host,
             client,
             relationship,
+            clock,
             registrations: Mutex::new(BTreeMap::new()),
             registration_generation: Mutex::new(0),
             status: Mutex::new(PeerRegistryStatus {
@@ -116,23 +118,42 @@ impl PeerRegistry {
         })
     }
 
+    fn now(&self) -> Result<u64, PeerHttpError> {
+        self.clock
+            .now_unix_ms()
+            .map_err(|error| PeerHttpError::Unavailable(error.to_string()))
+    }
+
+    fn require_relationship_live(&self, now: u64) -> Result<(), PeerHttpError> {
+        if now > self.relationship.expires_at_unix_ms {
+            return Err(PeerHttpError::Unavailable(
+                "remote peer relationship expired".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Authenticates, fetches, validates, and generation-safely replaces the remote catalog.
     pub fn connect(&self) -> Result<Vec<RemoteCapabilityProvenance>, PeerHttpError> {
-        let result = self.client.handshake().and_then(|handshake| {
-            self.client.catalog().and_then(|catalog| {
-                let provenance = self.apply_catalog(catalog.clone())?;
-                let mut status = self.status.lock().map_err(|_| {
-                    PeerHttpError::Unavailable("peer registry status unavailable".to_owned())
-                })?;
-                status.connected = true;
-                status.remote_session = Some(handshake.session);
-                status.catalog_generation = Some(catalog.generation);
-                status.catalog_digest = Some(catalog.digest);
-                status.catalog_expires_at_unix_ms = Some(catalog.expires_at_unix_ms);
-                status.health = "authenticated_catalog_live".to_owned();
-                Ok(provenance)
-            })
-        });
+        let result = self
+            .now()
+            .and_then(|now| self.require_relationship_live(now))
+            .and_then(|()| self.client.handshake())
+            .and_then(|handshake| {
+                self.client.catalog().and_then(|catalog| {
+                    let provenance = self.apply_catalog(catalog.clone())?;
+                    let mut status = self.status.lock().map_err(|_| {
+                        PeerHttpError::Unavailable("peer registry status unavailable".to_owned())
+                    })?;
+                    status.connected = true;
+                    status.remote_session = Some(handshake.session);
+                    status.catalog_generation = Some(catalog.generation);
+                    status.catalog_digest = Some(catalog.digest);
+                    status.catalog_expires_at_unix_ms = Some(catalog.expires_at_unix_ms);
+                    status.health = "authenticated_catalog_live".to_owned();
+                    Ok(provenance)
+                })
+            });
         if let Err(error) = &result {
             self.disconnect()?;
             if let Ok(mut status) = self.status.lock() {
@@ -176,7 +197,11 @@ impl PeerRegistry {
         catalog
             .validate()
             .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
-        let now = unix_millis();
+        let now = self.now()?;
+        if let Err(error) = self.require_relationship_live(now) {
+            self.disconnect()?;
+            return Err(error);
+        }
         if !catalog.is_live_at(now) {
             self.disconnect()?;
             return Err(PeerHttpError::Unavailable(
@@ -237,6 +262,7 @@ impl PeerRegistry {
                 remote_descriptor: entry.descriptor.clone(),
                 local_capability: local_capability.clone(),
                 authority_requirements,
+                clock: self.clock.clone(),
                 active: Mutex::new(BTreeMap::new()),
                 draining: AtomicBool::new(false),
             });
@@ -312,6 +338,7 @@ struct RemoteCapabilityAdapter {
     remote_descriptor: CapabilityDescriptor,
     local_capability: CapabilityId,
     authority_requirements: CapabilityExecutionRequirements,
+    clock: Arc<dyn PeerClock>,
     active: Mutex<BTreeMap<InvocationId, PeerExecutionId>>,
     draining: AtomicBool,
 }
@@ -326,7 +353,16 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
         invocation: &AdapterInvocation<'_>,
         reporter: &dyn AdapterReporter,
     ) -> Result<(), AdapterError> {
-        if self.draining.load(Ordering::SeqCst) || unix_millis() > self.catalog_expires_at_unix_ms {
+        if self.draining.load(Ordering::SeqCst) {
+            return Err(AdapterError::unavailable(
+                "remote peer catalog is unavailable or expired",
+            ));
+        }
+        let now = self
+            .clock
+            .now_unix_ms()
+            .map_err(|error| AdapterError::unavailable(error.to_string()))?;
+        if now > self.catalog_expires_at_unix_ms || now > self.relationship.expires_at_unix_ms {
             return Err(AdapterError::unavailable(
                 "remote peer catalog is unavailable or expired",
             ));
@@ -343,7 +379,6 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
             invocation.request().invocation().as_str()
         ))
         .map_err(|error| AdapterError::rejected(error.to_string()))?;
-        let now = unix_millis();
         let deadline = now
             .saturating_add(self.relationship.execution_limits.duration_ms)
             .min(self.catalog_expires_at_unix_ms)
@@ -440,7 +475,19 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
             .insert(invocation.request().invocation().clone(), execution.clone());
         let mut after: u64 = 0;
         let result = 'observing: loop {
-            if unix_millis() > deadline {
+            let now = match self.clock.now_unix_ms() {
+                Ok(now) => now,
+                Err(_) => {
+                    break report_uncertainty(
+                        invocation.request().invocation(),
+                        after.saturating_add(1),
+                        invocation.resolution().operation_contract().side_effect(),
+                        "local clock became unavailable after remote execution acceptance",
+                        reporter,
+                    );
+                }
+            };
+            if now > deadline {
                 break report_uncertainty(
                     invocation.request().invocation(),
                     after.saturating_add(1),
@@ -553,7 +600,8 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
 
     fn health(&self, observed_at_unix_ms: u64) -> Result<CapabilityObservation, AdapterError> {
         let available = !self.draining.load(Ordering::SeqCst)
-            && observed_at_unix_ms <= self.catalog_expires_at_unix_ms;
+            && observed_at_unix_ms <= self.catalog_expires_at_unix_ms
+            && observed_at_unix_ms <= self.relationship.expires_at_unix_ms;
         CapabilityObservation::new(
             self.local_capability.clone(),
             observed_at_unix_ms,
@@ -760,14 +808,6 @@ fn report_archived_summary(
     )
 }
 
-fn unix_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| {
-            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
-        })
-}
-
 fn error_class(error: &PeerHttpError) -> &'static str {
     match error {
         PeerHttpError::Configuration(_) => "configuration",
@@ -779,5 +819,146 @@ fn error_class(error: &PeerHttpError) -> &'static str {
         PeerHttpError::Overloaded(_) => "overloaded",
         PeerHttpError::Persistence(_) => "persistence",
         PeerHttpError::Unavailable(_) => "unavailable",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::atomic::{AtomicBool, AtomicU64},
+        time::Duration,
+    };
+
+    use milkdrift_authority::{PeerId, SensitiveSecret};
+    use milkdrift_capability::{SideEffectClass, TrustZone};
+    use milkdrift_capability_host::{CapabilityHost, CapabilitySelectionPolicy, HostConfig};
+    use milkdrift_peer_protocol::{
+        CatalogSnapshot, DelegationRef, ExecutionLimits, PeerAuthority, ProtocolVersionRange,
+        SessionId,
+    };
+    use url::Url;
+
+    use super::*;
+    use crate::{InsecureLoopbackMode, PeerClientConfig, PeerClockError};
+
+    struct ControlledClock {
+        now: AtomicU64,
+        available: AtomicBool,
+    }
+
+    impl ControlledClock {
+        const fn new(now: u64) -> Self {
+            Self {
+                now: AtomicU64::new(now),
+                available: AtomicBool::new(true),
+            }
+        }
+    }
+
+    impl PeerClock for ControlledClock {
+        fn now_unix_ms(&self) -> Result<u64, PeerClockError> {
+            if !self.available.load(Ordering::SeqCst) {
+                return Err(PeerClockError::Unavailable);
+            }
+            Ok(self.now.load(Ordering::SeqCst))
+        }
+    }
+
+    #[test]
+    fn remote_catalog_registration_fails_closed_and_recovers_with_the_clock()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let local = PeerId::new("peer-remote-clock-local")?;
+        let remote = PeerId::new("peer-remote-clock-target")?;
+        let credential = Arc::new(SensitiveSecret::new(b"remote-clock-secret".to_vec()));
+        let client = PeerHttpClient::new(PeerClientConfig {
+            endpoint: Url::parse("http://127.0.0.1:1/")?,
+            local_peer: local,
+            expected_remote_peer: remote.clone(),
+            session: SessionId::new("session-remote-clock")?,
+            versions: ProtocolVersionRange::default(),
+            bearer_credential: credential.clone(),
+            insecure_loopback: InsecureLoopbackMode::AllowInsecureLoopbackDevelopment,
+            request_timeout: Duration::from_millis(10),
+            observation_poll_interval: Duration::from_millis(1),
+        })?;
+        let relationship = PeerRelationship {
+            remote_peer: remote,
+            bearer_credential: credential,
+            versions: ProtocolVersionRange::default(),
+            authority: PeerAuthority {
+                actions: BTreeSet::new(),
+            },
+            capability_allow: BTreeSet::new(),
+            capability_deny: BTreeSet::new(),
+            operation_allow: BTreeSet::new(),
+            maximum_side_effect: SideEffectClass::None,
+            execution_filesystem: Vec::new(),
+            execution_network_profiles: BTreeSet::new(),
+            execution_network_destinations: BTreeSet::new(),
+            execution_secrets: BTreeSet::new(),
+            execution_limits: ExecutionLimits {
+                artifact_bytes: 1,
+                duration_ms: 1,
+                cost_micros: 0,
+                observations: 1,
+            },
+            maximum_concurrent: 1,
+            maximum_requests_per_minute: 1,
+            maximum_artifact_bytes: 1,
+            artifact_sensitivities: BTreeSet::new(),
+            catalog_ttl_ms: 10,
+            trust_zone: TrustZone::new("remote-clock-zone")?,
+            delegation: DelegationRef::new("remote-clock-delegation")?,
+            revocation_generation: 0,
+            expires_at_unix_ms: 1_000,
+            enabled: true,
+        };
+        let host = CapabilityHost::new(
+            HostConfig {
+                max_registrations: 1,
+                max_generations_per_capability: 1,
+                max_concurrent_per_generation: 1,
+                observation_stale_after_ms: 1_000,
+            },
+            CapabilitySelectionPolicy::priorities(BTreeMap::new()),
+        )?;
+        let clock = Arc::new(ControlledClock::new(100));
+        let registry = PeerRegistry::new(host, client, relationship, clock.clone())?;
+        let catalog = CatalogSnapshot::new(1, 90, 110, Vec::new())?;
+
+        clock.available.store(false, Ordering::SeqCst);
+        assert!(matches!(
+            registry.apply_catalog(catalog.clone()),
+            Err(PeerHttpError::Unavailable(_))
+        ));
+        assert!(!registry.status().connected);
+
+        clock.available.store(true, Ordering::SeqCst);
+        assert!(registry.apply_catalog(catalog.clone()).is_ok());
+        assert!(registry.status().connected);
+
+        clock.now.store(111, Ordering::SeqCst);
+        assert!(matches!(
+            registry.apply_catalog(catalog),
+            Err(PeerHttpError::Unavailable(_))
+        ));
+        assert!(!registry.status().connected);
+
+        let relationship_expiry = registry.relationship.expires_at_unix_ms;
+        clock
+            .now
+            .store(relationship_expiry.saturating_add(1), Ordering::SeqCst);
+        let live_catalog = CatalogSnapshot::new(
+            2,
+            relationship_expiry,
+            relationship_expiry.saturating_add(10),
+            Vec::new(),
+        )?;
+        assert!(matches!(
+            registry.apply_catalog(live_catalog),
+            Err(PeerHttpError::Unavailable(_))
+        ));
+        assert!(!registry.status().connected);
+        Ok(())
     }
 }

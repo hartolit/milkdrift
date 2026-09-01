@@ -3,6 +3,125 @@
 use super::support::*;
 
 #[test]
+fn peer_clock_failure_and_backward_movement_fail_closed_at_expiry() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let store = Arc::new(RedbStore::open(root.path())?);
+    let peer = PeerId::new("peer-clock-boundary")?;
+    let target = PeerId::new("peer-clock-target")?;
+    let expiry = 1_000_000;
+    let clock = Arc::new(ControlledPeerClock::new(expiry));
+    let host = CapabilityHost::new(
+        HostConfig {
+            max_registrations: 32,
+            max_generations_per_capability: 4,
+            max_concurrent_per_generation: 16,
+            observation_stale_after_ms: 60_000,
+        },
+        CapabilitySelectionPolicy::priorities(BTreeMap::new()),
+    )?;
+    let mut config = server_config(peer.clone(), target, 1, 4)?;
+    config.relationships[0].expires_at_unix_ms = expiry;
+    let service = PeerService::new(config, host, store, clock.clone())?;
+
+    assert_eq!(service.authenticate_bearer(b"peer-secret")?, peer);
+    clock.set_available(false)?;
+    assert!(matches!(
+        service.authenticate_bearer(b"peer-secret"),
+        Err(PeerHttpError::Unavailable(_))
+    ));
+    assert!(matches!(
+        service.catalog(&peer),
+        Err(PeerHttpError::Unavailable(_))
+    ));
+
+    clock.set_available(true)?;
+    clock.set(expiry.saturating_add(1))?;
+    assert!(matches!(
+        service.authenticate_bearer(b"peer-secret"),
+        Err(PeerHttpError::Unauthenticated)
+    ));
+    clock.set(expiry.saturating_sub(1))?;
+    assert!(matches!(
+        service.authenticate_bearer(b"peer-secret"),
+        Err(PeerHttpError::Unavailable(_))
+    ));
+    assert!(service.shutdown_workers(Duration::from_secs(2)).clean);
+    Ok(())
+}
+
+#[test]
+fn post_entry_clock_failure_retries_recovery_until_uncertainty_is_durable() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let store = Arc::new(RedbStore::open(root.path())?);
+    let clock = Arc::new(ControlledPeerClock::new(now()));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (host, descriptor) = host_with_adapter(Arc::new(ClockFailingAdapter {
+        capability: CapabilityId::new("test-capability")?,
+        clock: clock.clone(),
+        calls: calls.clone(),
+    }))?;
+    let peer = PeerId::new("peer-clock-recovery")?;
+    let target = PeerId::new("peer-clock-recovery-target")?;
+    let service = PeerService::new(
+        server_config(peer.clone(), target.clone(), 1, 4)?,
+        host,
+        store.clone(),
+        clock.clone(),
+    )?;
+    service.recover(1_024)?;
+    let catalog = service.catalog(&peer)?;
+    let accepted = service.invoke(
+        &peer,
+        request(
+            &peer,
+            &target,
+            &descriptor,
+            catalog.generation,
+            catalog.digest,
+            "request-clock-recovery",
+            "invocation-clock-recovery",
+        )?,
+    )?;
+    let InvocationAcceptance::Accepted { execution, .. } = accepted else {
+        return Err("clock recovery invocation was not accepted".into());
+    };
+
+    let entry_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if calls.load(Ordering::SeqCst) == 1 {
+            break;
+        }
+        if std::time::Instant::now() >= entry_deadline {
+            return Err("adapter did not reach the post-entry failure boundary".into());
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert!(matches!(
+        store.peer_execution(&peer, &execution)?,
+        Some(PeerExecutionSnapshot::Hot(ref record))
+            if matches!(record.phase, PeerExecutionPhase::Entered { .. })
+    ));
+
+    clock.set_available(true)?;
+    let recovery_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(PeerExecutionSnapshot::Hot(record)) = store.peer_execution(&peer, &execution)?
+            && let PeerExecutionPhase::Uncertain { reason, .. } = record.phase
+        {
+            assert_eq!(reason, "peer worker failed after durable adapter entry");
+            break;
+        }
+        if std::time::Instant::now() >= recovery_deadline {
+            return Err("post-entry recovery did not converge after clock recovery".into());
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(service.shutdown_workers(Duration::from_secs(2)).clean);
+    Ok(())
+}
+
+#[test]
 fn durable_drain_and_relationship_generation_close_the_adapter_entry_race() -> TestResult {
     let root = tempfile::tempdir()?;
     let store = RedbStore::open(root.path())?;
@@ -413,7 +532,7 @@ fn inbound_peer_authority_includes_adapter_declared_secret_requirements() -> Tes
         server_config(peer.clone(), target.clone(), 1, 4)?,
         host,
         store,
-        Arc::new(SystemPeerClock),
+        system_peer_clock(),
     )?;
     service.recover(1_024)?;
     let catalog = service.catalog(&peer)?;
@@ -458,7 +577,7 @@ fn fixed_worker_owner_bounds_execution_and_shutdown_joins() -> TestResult {
         server_config(peer.clone(), target.clone(), 2, 16)?,
         host,
         store,
-        Arc::new(SystemPeerClock),
+        system_peer_clock(),
     )?;
     let closed_catalog = service.catalog(&peer)?;
     let closed_request = request(
@@ -557,7 +676,7 @@ fn service_archived_replay_returns_summary_without_second_adapter_entry() -> Tes
     config.workers.maximum_hot_terminal_records = 4;
     config.workers.archive_batch_size = 1;
     config.workers.observation_hot_retention = Duration::from_millis(1);
-    let service = PeerService::new(config, host, store.clone(), Arc::new(SystemPeerClock))?;
+    let service = PeerService::new(config, host, store.clone(), system_peer_clock())?;
     service.recover(1_024)?;
     let catalog = service.catalog(&peer)?;
     let invocation_request = request(

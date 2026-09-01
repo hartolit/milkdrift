@@ -177,7 +177,7 @@ async fn execute(arguments: Arguments) -> HarnessResult {
     let session_root = output.join("session");
     let repository = session_root.join("repository");
     fs::create_dir_all(&session_root).map_err(|error| error.to_string())?;
-    let now = unix_millis();
+    let now = unix_millis()?;
     let operator_secrets = forbidden_secret_values(&arguments.secret_source)?;
     let (milkdrift_commit, milkdrift_tree, dirty) = milkdrift_git_facts()?;
     let mut report = EvidenceReport {
@@ -377,8 +377,9 @@ fn configuration(
     model: &workflows::ModelProfileFacts,
     mut secret_sources: BTreeMap<String, SecretSourceConfig>,
 ) -> HarnessResult<(DaemonPlan, String, String, String)> {
-    let process_token = format!("process-{}-{}", std::process::id(), unix_millis());
-    let model_token = format!("model-{}-{}", std::process::id(), unix_millis());
+    let now = unix_millis()?;
+    let process_token = format!("process-{}-{now}", std::process::id());
+    let model_token = format!("model-{}-{now}", std::process::id());
     let process_token_path = session_root.join("process.token");
     let model_token_path = session_root.join("model.token");
     profiles::secure_file(&process_token_path, process_token.as_bytes())?;
@@ -503,6 +504,7 @@ fn explicit_grant(
     model: &workflows::ModelProfileFacts,
     configured_secrets: &BTreeMap<String, SecretSourceConfig>,
 ) -> HarnessResult<ActorGrantConfig> {
+    let now = unix_millis()?;
     let identities = capabilities
         .iter()
         .map(|value| CapabilityId::new(value).map_err(|error| error.to_string()))
@@ -616,8 +618,8 @@ fn explicit_grant(
             units: Some(1_000_000_000),
             concurrency: Some(32),
         },
-        valid_from: BoundaryTimeMillis::new(unix_millis().saturating_sub(60_000)),
-        valid_until: BoundaryTimeMillis::new(unix_millis().saturating_add(86_400_000)),
+        valid_from: BoundaryTimeMillis::new(now.saturating_sub(60_000)),
+        valid_until: BoundaryTimeMillis::new(now.saturating_add(86_400_000)),
         // Dynamic artifact/workspace identities require explicit run-wide acknowledgement;
         // workflow, capability, operation, filesystem, network, secret, time, and budgets remain exact.
         dangerous_allow_broad_authority: true,
@@ -1729,10 +1731,12 @@ fn forbidden_secret_values(mappings: &[String]) -> HarnessResult<Vec<Vec<u8>>> {
     Ok(values)
 }
 
-fn unix_millis() -> u64 {
+fn unix_millis() -> HarnessResult<u64> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
-        .unwrap_or(0)
+        .map_err(|_| "system clock precedes the Unix epoch".to_owned())
+        .and_then(|duration| {
+            u64::try_from(duration.as_millis())
+                .map_err(|_| "system clock exceeds the timestamp representation".to_owned())
+        })
 }

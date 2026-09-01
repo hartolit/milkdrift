@@ -27,6 +27,7 @@ use super::{
         verify_blob,
     },
 };
+use crate::clock::require_clock_in_transaction;
 impl ArtifactStore for RedbStore {
     #[tracing::instrument(
         name = "milkdrift.redb_store.begin_artifact_publication",
@@ -194,7 +195,9 @@ impl ArtifactStore for RedbStore {
             }
         }
 
-        let created_at_millis = self.artifact_clock.now()?.get();
+        let created_at = self.artifact_clock.now()?;
+        require_clock_in_transaction(&write, created_at)?;
+        let created_at_millis = created_at.get();
         let record = PublicationRecord::from_request(request, created_at_millis);
         let bytes = json::encode(&record, "artifact publication")?;
         let transaction_result = (|| {

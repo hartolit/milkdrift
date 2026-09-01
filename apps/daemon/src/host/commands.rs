@@ -9,7 +9,7 @@ use super::{
     ScopeId, SignalDeliveryMode, SignalId, SignalTypeId, TimestampMillis, Value, WorkflowId,
     WorkflowProposalDocument, WorkspaceScope, accepted_sequence, bounded, compile_prompt_sequence,
     default_workspace_budget, evidence, internal, internal_control_id, invalid, json, layouts,
-    map_resolve, not_found, parse_revision_id, public_control, public_persistence, unix_millis,
+    map_resolve, not_found, parse_revision_id, public_control, public_persistence,
 };
 
 impl Owner {
@@ -528,7 +528,7 @@ impl Owner {
         let document = ControlCommandDocument::new(
             internal_control_id(session, request, suffix)?,
             session.context.clone(),
-            TimestampMillis::new(unix_millis()),
+            TimestampMillis::new(self.now()?),
             OptimisticGuard {
                 expected_run_sequence: expected_sequence.map(RunSequence::new),
                 expected_revision: request

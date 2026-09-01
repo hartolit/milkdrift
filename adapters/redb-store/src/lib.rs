@@ -10,6 +10,7 @@
 mod admin;
 mod application;
 mod artifact;
+mod clock;
 mod codec;
 mod error;
 mod fault;

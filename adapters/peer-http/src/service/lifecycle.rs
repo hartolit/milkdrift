@@ -97,7 +97,7 @@ impl PeerService {
         loop {
             let recovered = self
                 .executions
-                .recover_peer_claims(self.clock.now_unix_ms().max(1), limit)
+                .recover_peer_claims(self.now()?, limit)
                 .map_err(map_execution_persistence)?;
             if !recovered.more {
                 break;
@@ -120,7 +120,7 @@ impl PeerService {
 
     /// Compacts one bounded page beyond the configured hot observation horizon.
     pub fn maintain_retention(&self) -> Result<PeerExecutionStatus, PeerHttpError> {
-        let now = self.clock.now_unix_ms().max(1);
+        let now = self.now()?;
         let retention_ms = u64::try_from(self.config.workers.observation_hot_retention.as_millis())
             .unwrap_or(u64::MAX);
         self.executions

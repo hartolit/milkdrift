@@ -36,6 +36,7 @@ use milkdrift_persistence::{
     PersistenceError, StorageFailureClass,
 };
 use subtle::ConstantTimeEq as _;
+use thiserror::Error;
 
 use crate::{
     PeerAuthenticator, PeerHttpError,
@@ -47,22 +48,57 @@ use crate::{
 
 /// Caller-supplied boundary clock for deterministic protocol and restart tests.
 pub trait PeerClock: Send + Sync {
-    /// Current Unix epoch milliseconds.
-    fn now_unix_ms(&self) -> u64;
+    /// Current Unix epoch milliseconds, rejecting unavailable or backward-moving time.
+    fn now_unix_ms(&self) -> Result<u64, PeerClockError>;
+}
+
+/// Failure to establish a trustworthy peer-boundary timestamp.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum PeerClockError {
+    /// The system clock is earlier than the Unix epoch.
+    #[error("system clock precedes the Unix epoch")]
+    BeforeUnixEpoch,
+    /// Unix epoch milliseconds do not fit in the protocol representation.
+    #[error("system clock exceeds the peer timestamp representation")]
+    MillisecondOverflow,
+    /// A later observation moved behind an earlier process-local observation.
+    #[error("system clock moved backwards")]
+    MovedBackwards,
+    /// The underlying clock state cannot be observed safely.
+    #[error("system clock is unavailable")]
+    Unavailable,
 }
 
 /// Production boundary clock.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SystemPeerClock;
+#[derive(Debug, Default)]
+pub struct SystemPeerClock {
+    last_unix_ms: Mutex<u64>,
+}
 
 impl PeerClock for SystemPeerClock {
-    fn now_unix_ms(&self) -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |duration| {
-                u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
-            })
+    fn now_unix_ms(&self) -> Result<u64, PeerClockError> {
+        let mut last = self
+            .last_unix_ms
+            .lock()
+            .map_err(|_| PeerClockError::Unavailable)?;
+        let now = unix_millis_at(SystemTime::now())?;
+        if now < *last {
+            return Err(PeerClockError::MovedBackwards);
+        }
+        *last = now;
+        Ok(now)
     }
+}
+
+fn unix_millis_at(now: SystemTime) -> Result<u64, PeerClockError> {
+    let duration = now
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| PeerClockError::BeforeUnixEpoch)?;
+    unix_millis_from_duration(duration)
+}
+
+fn unix_millis_from_duration(duration: std::time::Duration) -> Result<u64, PeerClockError> {
+    u64::try_from(duration.as_millis()).map_err(|_| PeerClockError::MillisecondOverflow)
 }
 
 #[derive(Clone)]
@@ -233,7 +269,7 @@ impl PeerService {
     /// Authenticates only the transport bearer value and returns its configured identity.
     /// Request payload identity fields never choose this result.
     pub fn authenticate_bearer(&self, supplied: &[u8]) -> Result<PeerId, PeerHttpError> {
-        let now = self.clock.now_unix_ms();
+        let now = self.now()?;
         if let Some(authenticator) = &self.authenticator {
             return authenticator
                 .authenticate(supplied, now)
@@ -262,6 +298,12 @@ impl PeerService {
             })
             .map(|relationship| relationship.remote_peer.clone())
             .ok_or(PeerHttpError::Unauthenticated)
+    }
+
+    pub(super) fn now(&self) -> Result<u64, PeerHttpError> {
+        self.clock
+            .now_unix_ms()
+            .map_err(|error| PeerHttpError::Unavailable(error.to_string()))
     }
 
     /// Negotiates a session and cross-checks the claimed identity against authentication.
@@ -356,7 +398,7 @@ impl PeerService {
             &relationship,
             &format!("invoke:{}", request.selection.operation().as_str()),
         )?;
-        let now = self.clock.now_unix_ms();
+        let now = self.now()?;
         if now > request.deadline_unix_ms {
             return Ok(rejection(
                 &request,
@@ -607,7 +649,7 @@ impl PeerService {
         };
         let record = self
             .executions
-            .request_peer_cancellation(authenticated_peer, request, self.clock.now_unix_ms().max(1))
+            .request_peer_cancellation(authenticated_peer, request, self.now()?)
             .map_err(map_execution_persistence)?;
         let acknowledgement = if matches!(before.phase, PeerExecutionPhase::Terminal { .. }) {
             PeerCancellationAcknowledgement {
@@ -684,11 +726,7 @@ impl PeerService {
             .validate()
             .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
         self.executions
-            .acknowledge_peer_cancellation(
-                authenticated_peer,
-                &acknowledgement,
-                self.clock.now_unix_ms().max(1),
-            )
+            .acknowledge_peer_cancellation(authenticated_peer, &acknowledgement, self.now()?)
             .map_err(map_execution_persistence)?;
         self.notify_workers();
         Ok(acknowledgement)
@@ -812,6 +850,18 @@ impl From<milkdrift_capability_host::HostError> for PeerHttpError {
 mod tests {
     use super::*;
     use crate::PeerArtifactError;
+
+    #[test]
+    fn system_clock_conversion_rejects_pre_epoch_and_overflow() {
+        assert_eq!(
+            unix_millis_at(UNIX_EPOCH - std::time::Duration::from_millis(1)),
+            Err(PeerClockError::BeforeUnixEpoch)
+        );
+        assert_eq!(
+            unix_millis_from_duration(std::time::Duration::from_secs(u64::MAX)),
+            Err(PeerClockError::MillisecondOverflow)
+        );
+    }
 
     #[test]
     fn bounded_owner_capacity_maps_to_typed_peer_overload() {

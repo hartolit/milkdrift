@@ -2,8 +2,8 @@ use super::{
     ActorSession, ArtifactMetadataRead, AttemptRead, AuthorityDecisionSnapshot, BTreeMap, BTreeSet,
     CommandAccepted, CommandRequest, ControlError, CursorBinding, ErrorCode, ExternalWorkAction,
     IndexedRunState, NodeRead, PersistenceError, PublicFailure, PublicRevisionSummary,
-    ResolveAction, RevisionChange, RevisionId, RunRead, SystemTime, TimelineCategory,
-    TimelineEntry, UNIX_EPOCH, Value, json,
+    ResolveAction, RevisionChange, RevisionId, RunRead, TimelineCategory, TimelineEntry, Value,
+    json,
 };
 
 pub(super) fn accepted_sequence(
@@ -469,12 +469,8 @@ pub(super) fn parse_revision_id(value: &str) -> Result<RevisionId, PublicFailure
         .map_err(|error| invalid(&error.to_string()))
 }
 
-pub(super) fn unix_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
-        .unwrap_or(0)
+pub(super) fn clock_unavailable() -> PublicFailure {
+    PublicFailure::new(ErrorCode::Unavailable, "daemon clock unavailable", true)
 }
 
 pub(super) fn snake_debug(value: &impl std::fmt::Debug) -> String {

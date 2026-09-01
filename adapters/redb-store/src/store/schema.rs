@@ -6,23 +6,25 @@ use super::{
     ARTIFACT_ACCOUNTING, ARTIFACT_DELETE_GUARDS, ARTIFACT_DIGEST_RESERVATIONS, ARTIFACT_MANIFEST,
     ARTIFACT_METADATA, ARTIFACT_PATHS, ARTIFACT_PUBLICATIONS, ARTIFACT_PUBLICATIONS_BY_AGE,
     ARTIFACT_REFERENCES, ARTIFACT_RESERVATIONS, ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS,
-    ARTIFACTS_BY_DIGEST, COMMAND_RESULTS, Database, EVENT_HISTORY_DIGESTS, FaultInjector,
-    INTERNAL_DOCUMENT_FORMAT_VERSION, INTERNAL_DOCUMENT_FORMAT_VERSION_KEY, LEASE_ENTRIES,
-    LEASE_INDEX, LEASE_SET_REVISION_KEY, METADATA, NONTERMINAL_RUNS, NONTERMINAL_SET_COUNT_KEY,
-    PEER_ACTIVE_CLAIMS, PEER_CATALOGS, PEER_DISPATCH_AVAILABLE, PEER_EXECUTION_ACCOUNTING,
-    PEER_EXECUTION_GLOBAL_ACCOUNTING_KEY, PEER_EXECUTION_LOCATIONS, PEER_EXECUTION_TOMBSTONES,
-    PEER_EXECUTIONS, PEER_EXECUTIONS_BY_REQUEST, PEER_OBSERVATION_ARTIFACTS, PEER_OBSERVATIONS,
-    PEER_RELATIONSHIPS, PEER_TERMINAL_INDEX, PersistenceError, REVISIONS, REVISIONS_BY_DIGEST,
-    ROOT_SCOPES, RUN_ARTIFACT_OWNERSHIP, RUN_EVENTS, RUN_HEADS, RUN_HISTORY_HEADS, RUN_SUMMARIES,
+    ARTIFACTS_BY_DIGEST, CLOCK_WATERMARK_UNIX_MS_KEY, COMMAND_RESULTS, Database,
+    EVENT_HISTORY_DIGESTS, FaultInjector, INTERNAL_DOCUMENT_FORMAT_VERSION,
+    INTERNAL_DOCUMENT_FORMAT_VERSION_KEY, LEASE_ENTRIES, LEASE_INDEX, LEASE_SET_REVISION_KEY,
+    METADATA, NONTERMINAL_RUNS, NONTERMINAL_SET_COUNT_KEY, PEER_ACTIVE_CLAIMS, PEER_CATALOGS,
+    PEER_DISPATCH_AVAILABLE, PEER_EXECUTION_ACCOUNTING, PEER_EXECUTION_GLOBAL_ACCOUNTING_KEY,
+    PEER_EXECUTION_LOCATIONS, PEER_EXECUTION_TOMBSTONES, PEER_EXECUTIONS,
+    PEER_EXECUTIONS_BY_REQUEST, PEER_OBSERVATION_ARTIFACTS, PEER_OBSERVATIONS, PEER_RELATIONSHIPS,
+    PEER_TERMINAL_INDEX, PersistenceError, REVISIONS, REVISIONS_BY_DIGEST, ROOT_SCOPES,
+    RUN_ARTIFACT_OWNERSHIP, RUN_EVENTS, RUN_HEADS, RUN_HISTORY_HEADS, RUN_SUMMARIES,
     RUNNABLE_ENTRIES, RUNNABLE_INDEX, RUNNABLE_RUN_HEADS, SCHEMA_VERSION_KEY, SCOPES,
     SECURITY_AUDIT, SECURITY_AUDIT_COUNT_KEY, SECURITY_AUDIT_NEXT_SEQUENCE_KEY, SIGNAL_RECEIPTS,
-    SNAPSHOT_LATEST, SNAPSHOTS, STORAGE_SCHEMA_VERSION, TIMER_ENTRIES, TIMER_INDEX, VALUES,
-    WORKSPACE_BUDGETS, WORKSPACE_USAGE, WORKSPACE_VALUE_HEADS, error,
+    SNAPSHOT_LATEST, SNAPSHOTS, STORAGE_SCHEMA_VERSION, TIMER_ENTRIES, TIMER_INDEX,
+    TimestampMillis, VALUES, WORKSPACE_BUDGETS, WORKSPACE_USAGE, WORKSPACE_VALUE_HEADS, error,
 };
 use redb::{ReadableTable as _, ReadableTableMetadata as _};
 pub(crate) fn initialize_schema(
     database: &Database,
     faults: &dyn FaultInjector,
+    startup_observation: TimestampMillis,
 ) -> Result<(), PersistenceError> {
     let write = database.begin_write().map_err(error::redb)?;
     {
@@ -35,6 +37,9 @@ pub(crate) fn initialize_schema(
                 INTERNAL_DOCUMENT_FORMAT_VERSION_KEY,
                 INTERNAL_DOCUMENT_FORMAT_VERSION,
             )
+            .map_err(error::redb)?;
+        table
+            .insert(CLOCK_WATERMARK_UNIX_MS_KEY, startup_observation.get())
             .map_err(error::redb)?;
         table
             .insert(LEASE_SET_REVISION_KEY, 0)
@@ -297,6 +302,7 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
     let (
         found,
         internal_document_format,
+        clock_watermark,
         lease_set_revision,
         nonterminal_set_count,
         application_hot_receipt_count,
@@ -314,6 +320,10 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
             .ok_or_else(|| error::corruption("storage schema version is missing"))?;
         let internal_document_format = table
             .get(INTERNAL_DOCUMENT_FORMAT_VERSION_KEY)
+            .map_err(error::redb)?
+            .map(|value| value.value());
+        let clock_watermark = table
+            .get(CLOCK_WATERMARK_UNIX_MS_KEY)
             .map_err(error::redb)?
             .map(|value| value.value());
         let lease_set_revision = table
@@ -351,6 +361,7 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
         (
             found,
             internal_document_format,
+            clock_watermark,
             lease_set_revision,
             nonterminal_set_count,
             application_hot_receipt_count,
@@ -385,6 +396,8 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
             supported: INTERNAL_DOCUMENT_FORMAT_VERSION as u32,
         });
     }
+    clock_watermark
+        .ok_or_else(|| error::corruption("boundary-clock high-water evidence is missing"))?;
     lease_set_revision.ok_or_else(|| error::corruption("lease-set revision is missing"))?;
     nonterminal_set_count.ok_or_else(|| error::corruption("nonterminal-set count is missing"))?;
     let application_hot_receipt_count = application_hot_receipt_count

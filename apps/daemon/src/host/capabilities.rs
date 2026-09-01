@@ -5,7 +5,7 @@ use super::{
     CapabilityRead, ControlService, EndpointProfile, ErrorCode, InvocationDataAccess,
     LocalProcessAdapter, LocalSecretResolver, ModelEndpointAdapter, Owner, ProcessProfileDocument,
     PublicFailure, RequestedResourceFacts, ResultSink, WorkflowControlAdapter, bounded,
-    descriptor_for_profile, fs, snake_debug, unix_millis, workflow_control_descriptor,
+    descriptor_for_profile, fs, snake_debug, workflow_control_descriptor,
 };
 
 impl Owner {
@@ -32,8 +32,9 @@ impl Owner {
             "read:provider-profile",
         )?;
         let scope = &session.grant.resources().capability;
+        let now = self.now()?;
         self.capability_host
-            .generations(scope, unix_millis())
+            .generations(scope, now)
             .map_err(|error| {
                 PublicFailure::new(ErrorCode::Unavailable, bounded(&error.to_string()), true)
             })
@@ -77,6 +78,7 @@ pub(super) fn register_control(
     host: &CapabilityHost,
     control: Arc<ControlService>,
     data: Arc<dyn InvocationDataAccess>,
+    observed_at_unix_ms: u64,
 ) -> Result<(), String> {
     let adapter = Arc::new(WorkflowControlAdapter::new(
         control,
@@ -87,7 +89,7 @@ pub(super) fn register_control(
     let revision = descriptor.descriptor_revision();
     host.register(descriptor, adapter, None)
         .map_err(|error| error.to_string())?;
-    host.refresh_health(&capability, revision, unix_millis())
+    host.refresh_health(&capability, revision, observed_at_unix_ms)
         .map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -97,6 +99,7 @@ pub(super) fn register_configured(
     host: &CapabilityHost,
     data: Arc<dyn InvocationDataAccess>,
     secrets: Arc<LocalSecretResolver>,
+    observed_at_unix_ms: u64,
 ) -> Result<(), String> {
     for path in &config.process_profiles {
         let bytes = fs::read(path)
@@ -113,7 +116,7 @@ pub(super) fn register_configured(
         let revision = descriptor.descriptor_revision();
         host.register(descriptor, adapter, None)
             .map_err(|error| error.to_string())?;
-        host.refresh_health(&capability, revision, unix_millis())
+        host.refresh_health(&capability, revision, observed_at_unix_ms)
             .map_err(|error| error.to_string())?;
     }
     for configured in &config.model_profiles {
@@ -132,7 +135,7 @@ pub(super) fn register_configured(
         let revision = descriptor.descriptor_revision();
         host.register(descriptor, adapter, None)
             .map_err(|error| error.to_string())?;
-        host.refresh_health(&capability, revision, unix_millis())
+        host.refresh_health(&capability, revision, observed_at_unix_ms)
             .map_err(|error| error.to_string())?;
     }
     Ok(())

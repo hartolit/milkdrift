@@ -8,7 +8,6 @@ It is an actionable engineering review, not a second owner for product status or
 
 | Priority | Finding | Main rule at risk |
 | --- | --- | --- |
-| High | Peer authority and expiry can consume a fabricated zero timestamp | Nondeterminism boundaries; explicit authority; truthful failure |
 | Medium | Public compatibility and test-support paths have no current production consumer | Narrow interfaces; remove obsolete compatibility |
 | Medium | `CapabilityAdapter` has several production implementations but no reusable conformance suite | Prove and enforce the rule |
 | Medium | Cohesion review is deferred until the 2,000-line backstop | Organize by responsibility; review large files |
@@ -16,41 +15,7 @@ It is an actionable engineering review, not a second owner for product status or
 
 ## Findings
 
-### 1. High — Clock failure can fail open at peer authority and expiry boundaries
-
-`PeerClock` is injected, but it cannot report failure. `SystemPeerClock::now_unix_ms` maps a clock
-before the Unix epoch to `0` and overflow to `u64::MAX`
-(`adapters/peer-http/src/service.rs:49-66`). The zero fallback is then used directly to:
-
-- authenticate bearer credentials (`adapters/peer-http/src/service.rs:234-247`);
-- decide whether a peer relationship is expired
-  (`adapters/peer-http/src/service/authority.rs:22-38`);
-- timestamp authority evaluation and rate limiting
-  (`adapters/peer-http/src/service/authority.rs:85-132`).
-
-When the production clock reports a pre-epoch error, `now = 0` makes
-`now > expires_at_unix_ms` false. That can treat an expired relationship, grant, catalog, or
-artifact offer as current. The same adapter also bypasses its injected service clock in
-`adapters/peer-http/src/remote.rs:763-769` and `adapters/peer-http/src/artifact.rs:579-585`, where
-separate helpers repeat the zero/maximum fallback. The daemon has another zero-fallback helper in
-`apps/daemon/src/host/read_model.rs:472-478`, and uses it for durable receipt/control timestamps and
-identifier seeds.
-
-This differs from `SystemBoundaryClock` and `SystemArtifactClock`, which return typed errors instead
-of manufacturing time (`crates/runtime/src/boundary.rs:20-32` and
-`adapters/redb-store/src/store/config.rs:23-34`).
-
-Recommended correction:
-
-1. Make peer and daemon clock acquisition fallible and propagate an unavailable/internal error;
-   authority, authentication, expiry, and durable timestamps must fail closed.
-2. Inject the same clock owner into remote capability and peer artifact lifecycles; remove their
-   direct `SystemTime` helpers.
-3. Add deterministic tests for pre-epoch/failing clock behavior, expiry at the exact boundary,
-   backwards clock movement, and overflow. Assert that no authentication, authority, catalog, or
-   transfer operation is admitted from a fabricated sentinel timestamp.
-
-### 2. Medium — Public compatibility and test-support APIs remain in the normal product surface
+### 1. Medium — Public compatibility and test-support APIs remain in the normal product surface
 
 The pre-1.0 public API policy says test-only exposure must be feature-gated or kept in tests, and
 compatibility is retained only for an explicit supported contract. Several current exports do not
@@ -80,7 +45,7 @@ Recommended correction:
    test/evidence support code. Add repository checks that production-default API inventories do not
    expose named test helpers.
 
-### 3. Medium — The open adapter interface has no shared conformance suite
+### 2. Medium — The open adapter interface has no shared conformance suite
 
 `CapabilityAdapter` is an open production interface with lifecycle, exact execution,
 cancellation, health, and authority semantics (`crates/capability-host/src/adapter.rs:280-319`). It
@@ -107,7 +72,7 @@ Recommended correction:
 3. Replace default lifecycle methods with required methods unless a no-resource lifecycle is an
    explicit, tested semantic variant.
 
-### 4. Medium — The cohesion guard starts much later than the engineering rule
+### 3. Medium — The cohesion guard starts much later than the engineering rule
 
 The engineering rules require a cohesion review as production files approach roughly 1,000 lines.
 The repository contract in `tools/evidence/tests/repository_contracts.rs:432-452` enforces only a
@@ -140,7 +105,7 @@ Recommended correction:
 3. Do not split the exhaustive projection event reducers solely to satisfy a metric; review them
    for duplicated transition mechanics first, as required by the engineering rules.
 
-### 5. Low — Repeated contract mechanics still have competing implementations
+### 4. Low — Repeated contract mechanics still have competing implementations
 
 The repository has already established `milkdrift-contracts` as the owner of cross-domain
 implementation mechanics, but two small mechanics remain repeatedly hand-written:
@@ -170,12 +135,10 @@ Recommended correction:
 
 ## Suggested remediation order
 
-1. Make security- and expiry-relevant clocks fallible and consistently injected.
-2. Remove/gate unused compatibility and test-only public APIs.
-3. Establish adapter conformance tests.
-4. Apply targeted cohesion refactors and strengthen the repository guard.
-5. Consolidate repeated lexical/bounding mechanics when touching their owners.
+1. Remove/gate unused compatibility and test-only public APIs.
+2. Establish adapter conformance tests.
+3. Apply targeted cohesion refactors and strengthen the repository guard.
+4. Consolidate repeated lexical/bounding mechanics when touching their owners.
 
-The clock boundary should be corrected before making any new peer interoperability claim. The
-remaining items are independently shippable cleanup slices and should not be bundled into one large
-architectural rewrite.
+The remaining items are independently shippable cleanup slices and should not be bundled into one
+large architectural rewrite.

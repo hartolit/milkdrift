@@ -139,6 +139,10 @@ pub(super) fn scan_invocation_facts(
 ) -> Result<(), PersistenceError> {
     let read = context.read;
     let metadata = read.open_table(METADATA).map_err(error::redb)?;
+    metadata
+        .get(crate::schema::CLOCK_WATERMARK_UNIX_MS_KEY)
+        .map_err(error::redb)?
+        .ok_or_else(|| error::corruption("boundary-clock high-water evidence is missing"))?;
     context.string_u64(
         phase::INVOCATION_FACTS,
         &metadata,
@@ -148,6 +152,7 @@ pub(super) fn scan_invocation_facts(
                 key,
                 crate::schema::SCHEMA_VERSION_KEY
                     | crate::schema::INTERNAL_DOCUMENT_FORMAT_VERSION_KEY
+                    | crate::schema::CLOCK_WATERMARK_UNIX_MS_KEY
                     | crate::schema::LEASE_SET_REVISION_KEY
                     | crate::schema::NONTERMINAL_SET_COUNT_KEY
                     | crate::schema::APPLICATION_HOT_RECEIPT_COUNT_KEY

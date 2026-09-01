@@ -18,6 +18,7 @@ mod admin;
 mod application;
 mod artifact;
 mod bounded;
+mod clock;
 mod document;
 mod error;
 mod event;
@@ -53,6 +54,7 @@ pub use bounded::{
     MAX_DETAIL_BYTES, MAX_EVENTS_PER_COMMIT, MAX_EVIDENCE_REFERENCES, MAX_PAGE_SIZE,
     MAX_REASON_BYTES, PageSize, Reason,
 };
+pub use clock::{ClockWatermarkObservation, ClockWatermarkStore};
 pub use document::{
     MAX_EVENT_DOCUMENT_BYTES, RUN_EVENT_SCHEMA_VERSION_V1, RUN_EVENT_SCHEMA_VERSION_V2,
     RunEventEnvelope,

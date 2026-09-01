@@ -7,7 +7,7 @@ use std::{
         mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel},
     },
     thread::{self, JoinHandle},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use milkdrift_authority::{
@@ -41,7 +41,7 @@ use milkdrift_model_provider::{EndpointProfile, ModelEndpointAdapter, descriptor
 use milkdrift_peer_http::{
     CorePeerArtifactStore, InsecureLoopbackMode, PeerAuthenticator, PeerClientConfig,
     PeerCredentialSource, PeerHttpClient, PeerHttpError, PeerRegistry, PeerRelationship,
-    PeerServerConfig, PeerService, PeerWorkerConfig, PeerWorkerShutdownReport, SystemPeerClock,
+    PeerServerConfig, PeerService, PeerWorkerConfig, PeerWorkerShutdownReport,
 };
 use milkdrift_peer_protocol::{
     DelegationRef, ExecutionLimits, HardLimits, HeartbeatLease, PROTOCOL_MAJOR_V1, PeerAuthority,
@@ -64,7 +64,7 @@ use milkdrift_prompt_sequence::{PromptSequenceDocument, compile as compile_promp
 use milkdrift_redb_store::{RedbStore, RedbStoreConfig};
 use milkdrift_runtime::{
     ExternalWorkAction, RetryPolicy, RuntimeConfig, RuntimeService, SchedulerLimits,
-    SequentialIdGenerator, SystemBoundaryClock,
+    SequentialIdGenerator,
 };
 use milkdrift_workspace::ArtifactSensitivity;
 use milkdrift_workspace::{ArtifactId, RunId, ScopeId, WorkspaceBudget, WorkspaceScope};
@@ -86,26 +86,30 @@ use crate::{
 mod artifacts;
 mod attempts;
 mod capabilities;
+mod clock;
 mod commands;
 mod definitions;
 mod health;
 mod layouts;
 mod peer_store;
 mod proposals;
+mod queue;
 mod read_model;
 mod receipts;
 mod requests;
 mod runs;
 
+use clock::{ArtifactClockAdapter, DaemonClockSource, DurableClock, SystemDaemonClock};
 use health::{Lifecycle, QueuedRequestGuard, SharedHealth};
-use peer_store::{OwnerPeerArtifactStore, OwnerPeerExecutionStore, OwnerPeerQueue};
+use peer_store::{OwnerPeerArtifactStore, OwnerPeerExecutionStore};
+use queue::{OwnerCallFailure, OwnerQueue};
 use read_model::{
-    accepted_sequence, bounded, conflict, corruption, cursor_binding, diff_keys,
+    accepted_sequence, bounded, clock_unavailable, conflict, corruption, cursor_binding, diff_keys,
     empty_attempt_read, internal, invalid, map_resolve, not_found, parse_revision_id,
     parse_run_state, public_artifact_metadata, public_attempt_usage, public_authority_decision,
     public_capability_provenance, public_control, public_execution_authority,
     public_invocation_artifact, public_persistence, public_protocol, public_revision_summary,
-    public_run, public_timeline, snake_debug, unauthorized, unauthorized_decision, unix_millis,
+    public_run, public_timeline, snake_debug, unauthorized, unauthorized_decision,
 };
 
 const OWNER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -163,7 +167,7 @@ impl PublicFailure {
 /// Cloneable daemon handle shared by HTTP route state.
 #[derive(Clone)]
 pub struct DaemonHost {
-    sender: SyncSender<OwnerRequest>,
+    sender: Arc<SyncSender<OwnerRequest>>,
     health: Arc<SharedHealth>,
     auth: AuthRegistry,
     mutating_admission: Arc<AtomicBool>,
@@ -172,6 +176,7 @@ pub struct DaemonHost {
     peer_service: Option<Arc<PeerService>>,
     peer_registries: Arc<BTreeMap<PeerId, Arc<PeerRegistry>>>,
     revoked_peers: Arc<Mutex<BTreeSet<PeerId>>>,
+    clock: DurableClock,
 }
 
 impl std::fmt::Debug for DaemonHost {
@@ -187,6 +192,13 @@ impl std::fmt::Debug for DaemonHost {
 impl DaemonHost {
     /// Starts the dedicated owner, completes recovery/adapters/workers, then returns ready.
     pub fn start(config: DaemonPlan) -> Result<Self, HostError> {
+        Self::start_with_clock(config, Arc::new(SystemDaemonClock))
+    }
+
+    fn start_with_clock(
+        config: DaemonPlan,
+        clock: Arc<dyn DaemonClockSource>,
+    ) -> Result<Self, HostError> {
         let DaemonPlanParts {
             storage,
             authentication,
@@ -202,11 +214,13 @@ impl DaemonHost {
         let queue_size = usize::try_from(queue_capacity)
             .map_err(|_| HostError::Configuration("request queue exceeds platform".to_owned()))?;
         let (sender, receiver) = sync_channel(queue_size);
+        let sender = Arc::new(sender);
         let (startup_sender, startup_receiver) = sync_channel(1);
         let health = Arc::new(SharedHealth::new(queue_capacity, &storage, &peers));
         let thread_health = health.clone();
         let thread_auth = auth.clone();
-        let owner_sender = sender.clone();
+        let owner_sender = Arc::downgrade(&sender);
+        let owner_clock = clock.clone();
         let maintenance = Duration::from_millis(runtime.maintenance_interval_ms);
         let owner_plan = OwnerPlan {
             storage,
@@ -219,23 +233,27 @@ impl DaemonHost {
             .name("milkdrift-runtime-owner".to_owned())
             .spawn(move || {
                 info!(phase = "startup", "runtime owner starting");
-                let (mut owner, startup) =
-                    match Owner::open(owner_plan, thread_auth, thread_health.clone(), owner_sender)
-                    {
-                        Ok(opened) => opened,
-                        Err(failure) => {
-                            warn!(
-                                phase = "startup",
-                                outcome = "failed",
-                                code = "initialization",
-                                "runtime owner failed before readiness"
-                            );
-                            thread_health.failure("daemon startup initialization failed");
-                            thread_health.set_lifecycle(Lifecycle::Failed);
-                            let _ = startup_sender.send(Err(failure));
-                            return;
-                        }
-                    };
+                let (mut owner, startup) = match Owner::open(
+                    owner_plan,
+                    thread_auth,
+                    thread_health.clone(),
+                    owner_sender,
+                    owner_clock,
+                ) {
+                    Ok(opened) => opened,
+                    Err(failure) => {
+                        warn!(
+                            phase = "startup",
+                            outcome = "failed",
+                            code = "initialization",
+                            "runtime owner failed before readiness"
+                        );
+                        thread_health.failure("daemon startup initialization failed");
+                        thread_health.set_lifecycle(Lifecycle::Failed);
+                        let _ = startup_sender.send(Err(failure));
+                        return;
+                    }
+                };
                 thread_health.set_lifecycle(Lifecycle::Ready);
                 let _ = startup_sender.send(Ok(startup));
                 info!(phase = "ready", "runtime owner ready after recovery");
@@ -253,6 +271,7 @@ impl DaemonHost {
                 peer_service: peer_runtime.service,
                 peer_registries: Arc::new(peer_runtime.registries),
                 revoked_peers: Arc::new(Mutex::new(BTreeSet::new())),
+                clock: peer_runtime.clock,
             }),
             Ok(Err(error)) => {
                 let _ = join.join();
@@ -265,6 +284,15 @@ impl DaemonHost {
                 ))
             }
         }
+    }
+
+    pub(crate) async fn now(&self) -> Result<u64, PublicFailure> {
+        let clock = self.clock.clone();
+        tokio::task::spawn_blocking(move || clock.now())
+            .await
+            .map_err(|_| clock_unavailable())?
+            .map(TimestampMillis::get)
+            .map_err(|_| clock_unavailable())
     }
 
     /// Returns current bounded liveness/readiness state without entering runtime storage.
@@ -428,13 +456,39 @@ impl DaemonHost {
         } else {
             None
         };
+        let effect_shutdown = match self
+            .dispatch_draining(|owner| owner.take_effect_workers_for_shutdown())
+            .await
+        {
+            Ok((workers, mode)) => {
+                let deadline = self
+                    .shutdown_deadline
+                    .saturating_sub(shutdown_started.elapsed());
+                let health = self.health.clone();
+                match tokio::task::spawn_blocking(move || {
+                    shutdown_effect_workers(&workers, mode, deadline, &health)
+                })
+                .await
+                {
+                    Ok(outcome) => outcome,
+                    Err(_) => EffectShutdownOutcome::failed(),
+                }
+            }
+            Err(error) => {
+                warn!(
+                    phase = "draining",
+                    code = "effect_worker_take",
+                    "{}",
+                    bounded(&error.message)
+                );
+                self.health.failure("effect worker shutdown failed");
+                EffectShutdownOutcome::failed()
+            }
+        };
         let health = self.health.clone();
-        let owner_deadline = self
-            .shutdown_deadline
-            .saturating_sub(shutdown_started.elapsed());
         let result = match self
             .dispatch(true, move |owner| {
-                owner.shutdown(&health, peer_shutdown, owner_deadline)
+                owner.shutdown(&health, peer_shutdown, effect_shutdown)
             })
             .await
         {
@@ -480,7 +534,31 @@ impl DaemonHost {
     where
         T: Send + 'static,
     {
-        if !shutdown && !self.health.is_ready() {
+        self.dispatch_inner(shutdown, !shutdown, shutdown, operation)
+            .await
+    }
+
+    async fn dispatch_draining<T>(
+        &self,
+        operation: impl FnOnce(&mut Owner) -> Result<T, PublicFailure> + Send + 'static,
+    ) -> Result<T, PublicFailure>
+    where
+        T: Send + 'static,
+    {
+        self.dispatch_inner(false, false, true, operation).await
+    }
+
+    async fn dispatch_inner<T>(
+        &self,
+        stop_owner: bool,
+        require_ready: bool,
+        use_shutdown_deadline: bool,
+        operation: impl FnOnce(&mut Owner) -> Result<T, PublicFailure> + Send + 'static,
+    ) -> Result<T, PublicFailure>
+    where
+        T: Send + 'static,
+    {
+        if require_ready && !self.health.is_ready() {
             return Err(PublicFailure::new(
                 ErrorCode::Unavailable,
                 "daemon is not ready",
@@ -493,14 +571,14 @@ impl DaemonHost {
             execute: Box::new(move |owner| {
                 let _ = reply.send(operation(owner));
             }),
-            stop_owner: shutdown,
+            stop_owner,
             queued: None,
         };
         loop {
             pending.mark_queued(&self.health);
             match self.sender.try_send(pending) {
                 Ok(()) => break,
-                Err(TrySendError::Full(mut returned)) if shutdown => {
+                Err(TrySendError::Full(mut returned)) if use_shutdown_deadline => {
                     returned.mark_dequeued();
                     if started.elapsed() >= self.shutdown_deadline {
                         return Err(PublicFailure::new(
@@ -528,7 +606,7 @@ impl DaemonHost {
                 }
             }
         }
-        let response_timeout = if shutdown {
+        let response_timeout = if use_shutdown_deadline {
             self.shutdown_deadline.saturating_sub(started.elapsed())
         } else {
             OWNER_RESPONSE_TIMEOUT
@@ -609,6 +687,7 @@ struct Owner {
     // Strong lifecycle lease; service-facing artifact adapters retain only a weak handle.
     _peer_artifacts: Option<Arc<CorePeerArtifactStore>>,
     peer_registries: BTreeMap<PeerId, Arc<PeerRegistry>>,
+    clock: DurableClock,
 }
 
 struct ShutdownOutcome {
@@ -616,10 +695,78 @@ struct ShutdownOutcome {
     unresolved: u32,
 }
 
+struct EffectShutdownOutcome {
+    clean: bool,
+    unresolved_invocations: usize,
+    outstanding_effects: usize,
+}
+
+impl EffectShutdownOutcome {
+    const fn failed() -> Self {
+        Self {
+            clean: false,
+            unresolved_invocations: 1,
+            outstanding_effects: 1,
+        }
+    }
+}
+
+fn shutdown_effect_workers(
+    workers: &EffectWorkerHost,
+    mode: EffectShutdownMode,
+    deadline: Duration,
+    health: &SharedHealth,
+) -> EffectShutdownOutcome {
+    match workers.shutdown(mode, deadline) {
+        Ok(result) => {
+            let execution_work = result
+                .health
+                .queued_executions
+                .saturating_add(result.health.active_executions);
+            let cancellation_work = result
+                .health
+                .queued_cancellations
+                .saturating_add(result.health.active_cancellations);
+            EffectShutdownOutcome {
+                clean: result.clean,
+                unresolved_invocations: result
+                    .unresolved_invocations
+                    .len()
+                    .max(execution_work)
+                    .saturating_add(cancellation_work),
+                outstanding_effects: execution_work.saturating_add(cancellation_work),
+            }
+        }
+        Err(error) => {
+            health.failure("effect worker shutdown failed");
+            warn!(
+                phase = "draining",
+                code = "effect_worker_shutdown",
+                "{}",
+                bounded(&error.to_string())
+            );
+            let outstanding = workers.health().map_or(1, |value| {
+                value
+                    .queued_executions
+                    .saturating_add(value.active_executions)
+                    .saturating_add(value.queued_cancellations)
+                    .saturating_add(value.active_cancellations)
+                    .max(1)
+            });
+            EffectShutdownOutcome {
+                clean: false,
+                unresolved_invocations: outstanding,
+                outstanding_effects: outstanding,
+            }
+        }
+    }
+}
+
 struct PeerRuntime {
     service: Option<Arc<PeerService>>,
     artifacts: Option<Arc<CorePeerArtifactStore>>,
     registries: BTreeMap<PeerId, Arc<PeerRegistry>>,
+    clock: DurableClock,
 }
 
 impl Owner {
@@ -627,7 +774,8 @@ impl Owner {
         plan: OwnerPlan,
         auth: AuthRegistry,
         health: Arc<SharedHealth>,
-        sender: SyncSender<OwnerRequest>,
+        sender: Weak<SyncSender<OwnerRequest>>,
+        clock_source: Arc<dyn DaemonClockSource>,
     ) -> Result<(Self, PeerRuntime), String> {
         let OwnerPlan {
             storage,
@@ -658,9 +806,17 @@ impl Owner {
                         storage.application_receipts.hot_receipt_bound,
                         storage.application_receipts.archive_batch_size,
                     )
-                    .with_security_audit_limit(storage.security_audit_record_bound),
+                    .with_security_audit_limit(storage.security_audit_record_bound)
+                    .with_artifact_clock(Arc::new(ArtifactClockAdapter(clock_source.clone()))),
             )
             .map_err(|error| error.to_string())?,
+        );
+        let owner_queue = OwnerQueue::new(sender, health.clone(), thread::current().id());
+        let clock = DurableClock::new(
+            clock_source,
+            owner_queue.clone(),
+            Arc::downgrade(&store),
+            health.clone(),
         );
         let authority = Arc::new(
             GrantSetEvaluator::new(
@@ -709,14 +865,18 @@ impl Owner {
             retry,
         )
         .map_err(|error| error.to_string())?;
+        let startup_now = clock
+            .now()
+            .map(TimestampMillis::get)
+            .map_err(|_| "daemon clock unavailable during startup".to_owned())?;
         let runtime = Arc::new(
             RuntimeService::open_closed_with_authority(
                 store.clone(),
                 Arc::new(capability_host.clone()),
                 authority.clone(),
-                Arc::new(SystemBoundaryClock),
+                clock.runtime_adapter(),
                 Arc::new(
-                    SequentialIdGenerator::new("daemon", unix_millis())
+                    SequentialIdGenerator::new("daemon", startup_now)
                         .map_err(|error| error.to_string())?,
                 ),
                 runtime_config,
@@ -762,15 +922,27 @@ impl Owner {
                 limit: PageSize::new(1).map_err(|error| error.to_string())?,
             })
             .map_err(|error| error.to_string())?;
-        capabilities::register_control(&capability_host, control.clone(), data.clone())?;
-        capabilities::register_configured(&adapters, &capability_host, data, auth.resolver())?;
+        capabilities::register_control(
+            &capability_host,
+            control.clone(),
+            data.clone(),
+            startup_now,
+        )?;
+        capabilities::register_configured(
+            &adapters,
+            &capability_host,
+            data,
+            auth.resolver(),
+            startup_now,
+        )?;
         let peer_runtime = build_peer_runtime(
             &peers,
             runtime_plan.lease_duration_ms,
             &capability_host,
             store.clone(),
             auth.resolver(),
-            OwnerPeerQueue::new(sender, health.clone(), thread::current().id()),
+            owner_queue,
+            clock.clone(),
         )?;
         if let Some(service) = &peer_runtime.service {
             service.recover(1_024).map_err(|error| error.to_string())?;
@@ -807,9 +979,17 @@ impl Owner {
                 peer_service: peer_runtime.service.as_ref().map(Arc::downgrade),
                 _peer_artifacts: peer_runtime.artifacts.clone(),
                 peer_registries: peer_runtime.registries.clone(),
+                clock,
             },
             peer_runtime,
         ))
+    }
+
+    fn now(&self) -> Result<u64, PublicFailure> {
+        self.clock
+            .now()
+            .map(TimestampMillis::get)
+            .map_err(|_| clock_unavailable())
     }
 
     fn run(
@@ -831,7 +1011,7 @@ impl Owner {
                 }
                 Err(RecvTimeoutError::Timeout) => self.maintenance(health),
                 Err(RecvTimeoutError::Disconnected) => {
-                    let _ = self.shutdown(health, None, Duration::ZERO);
+                    let _ = self.shutdown(health, None, EffectShutdownOutcome::failed());
                     return;
                 }
             }
@@ -841,19 +1021,22 @@ impl Owner {
     fn maintenance(&self, health: &SharedHealth) {
         match self.store.application_receipt_status() {
             Ok(status) if status.hot_count >= u64::from(status.hot_bound) => {
-                match self.store.archive_application_command_receipts(
-                    ApplicationReceiptArchiveRequest {
-                        expected_generation: status.archive_generation,
-                        archived_at: TimestampMillis::new(unix_millis()),
-                    },
-                ) {
+                let outcome = self.now().and_then(|now| {
+                    self.store
+                        .archive_application_command_receipts(ApplicationReceiptArchiveRequest {
+                            expected_generation: status.archive_generation,
+                            archived_at: TimestampMillis::new(now),
+                        })
+                        .map_err(public_persistence)
+                });
+                match outcome {
                     Ok(outcome) => health.receipt_status(outcome.status),
                     Err(error) => {
                         warn!(
                             outcome = "error",
                             code = "application_receipt_archive",
                             "{}",
-                            bounded(&error.to_string())
+                            bounded(&error.message)
                         );
                         health.receipt_failure();
                     }
@@ -934,7 +1117,7 @@ impl Owner {
         boundary: &str,
     ) -> Result<AuthorityDecisionSnapshot, PublicFailure> {
         let claim = session.context.authority();
-        let now = unix_millis();
+        let now = self.now()?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"milkdrift.daemon-authority.v1\0");
         hasher.update(session.actor.as_str().as_bytes());
@@ -994,83 +1177,59 @@ impl Owner {
         service.revoke_peer(peer).map_err(public_peer)
     }
 
-    fn shutdown(
+    fn take_effect_workers_for_shutdown(
         &mut self,
-        health: &SharedHealth,
-        peer_shutdown: Option<PeerWorkerShutdownReport>,
-        deadline: Duration,
-    ) -> Result<ShutdownOutcome, PublicFailure> {
-        info!(phase = "draining", "runtime owner closing admission");
-        health.set_lifecycle(Lifecycle::Draining);
-        let mut clean = true;
+    ) -> Result<(EffectWorkerHost, EffectShutdownMode), PublicFailure> {
         self.runtime.begin_shutdown();
         let mode = match self.shutdown.effect_policy {
             ShutdownEffectPolicy::Drain => EffectShutdownMode::Drain,
             ShutdownEffectPolicy::Cancel => EffectShutdownMode::Cancel,
             ShutdownEffectPolicy::Retain => EffectShutdownMode::Retain,
         };
-        let (effect_clean, unresolved_invocations, outstanding_effects) =
-            match self.effect_workers.take() {
-                Some(workers) => match workers.shutdown(mode, deadline) {
-                    Ok(result) => {
-                        let execution_work = result
-                            .health
-                            .queued_executions
-                            .saturating_add(result.health.active_executions);
-                        let cancellation_work = result
-                            .health
-                            .queued_cancellations
-                            .saturating_add(result.health.active_cancellations);
-                        let outstanding = result
-                            .unresolved_invocations
-                            .len()
-                            .max(execution_work)
-                            .saturating_add(cancellation_work);
-                        (
-                            result.clean,
-                            outstanding,
-                            execution_work.saturating_add(cancellation_work),
-                        )
-                    }
-                    Err(error) => {
-                        clean = false;
-                        health.failure("effect worker shutdown failed");
-                        warn!(
-                            phase = "draining",
-                            code = "effect_worker_shutdown",
-                            "{}",
-                            bounded(&error.to_string())
-                        );
-                        let outstanding = workers.health().map_or(1, |value| {
-                            value
-                                .queued_executions
-                                .saturating_add(value.active_executions)
-                                .saturating_add(value.queued_cancellations)
-                                .saturating_add(value.active_cancellations)
-                                .max(1)
-                        });
-                        (false, outstanding, outstanding)
-                    }
-                },
-                None => {
-                    clean = false;
-                    health.failure("effect worker owner was absent during shutdown");
-                    (false, 1, 1)
-                }
-            };
+        self.effect_workers
+            .take()
+            .map(|workers| (workers, mode))
+            .ok_or_else(|| {
+                PublicFailure::new(
+                    ErrorCode::Unavailable,
+                    "effect worker owner is unavailable",
+                    true,
+                )
+            })
+    }
+
+    fn shutdown(
+        &mut self,
+        health: &SharedHealth,
+        peer_shutdown: Option<PeerWorkerShutdownReport>,
+        mut effect_shutdown: EffectShutdownOutcome,
+    ) -> Result<ShutdownOutcome, PublicFailure> {
+        info!(phase = "draining", "runtime owner closing admission");
+        health.set_lifecycle(Lifecycle::Draining);
+        self.runtime.begin_shutdown();
+        if self.effect_workers.take().is_some() {
+            health.failure("effect worker owner was not transferred before shutdown");
+            effect_shutdown.clean = false;
+            effect_shutdown.unresolved_invocations =
+                effect_shutdown.unresolved_invocations.saturating_add(1);
+            effect_shutdown.outstanding_effects =
+                effect_shutdown.outstanding_effects.saturating_add(1);
+        }
         let peer_retained = peer_shutdown.map_or(0, |report| report.retained_workers);
-        clean &= effect_clean && peer_retained == 0;
+        let clean = effect_shutdown.clean && peer_retained == 0;
         health.set_active_effects(if clean {
             0
         } else {
-            u32::try_from(outstanding_effects).unwrap_or(u32::MAX)
+            u32::try_from(effect_shutdown.outstanding_effects).unwrap_or(u32::MAX)
         });
         health.set_lifecycle(if clean {
             Lifecycle::Stopped
         } else {
             Lifecycle::Failed
         });
-        let unresolved = unresolved_invocations.saturating_add(usize::from(peer_retained));
+        let unresolved = effect_shutdown
+            .unresolved_invocations
+            .saturating_add(usize::from(peer_retained));
         info!(
             phase = if clean { "stopped" } else { "failed" },
             clean, unresolved, "runtime owner shutdown completed"
@@ -1125,13 +1284,14 @@ impl Owner {
         expected_sequence: Option<u64>,
         suffix: &str,
     ) -> Result<ControlResult, PublicFailure> {
-        let seed = format!("{}:{suffix}:{}", session.actor.as_str(), unix_millis());
+        let now = self.now()?;
+        let seed = format!("{}:{suffix}:{now}", session.actor.as_str());
         let digest = blake3::hash(seed.as_bytes());
         let document = ControlCommandDocument::new(
             ControlId::new(format!("query-{}", &digest.to_hex().as_str()[..32]))
                 .map_err(public_control)?,
             session.context.clone(),
-            TimestampMillis::new(unix_millis()),
+            TimestampMillis::new(now),
             OptimisticGuard {
                 expected_run_sequence: expected_sequence.map(RunSequence::new),
                 expected_revision: None,
@@ -1219,7 +1379,8 @@ fn build_peer_runtime(
     host: &CapabilityHost,
     store: Arc<RedbStore>,
     secrets: Arc<LocalSecretResolver>,
-    owner_queue: OwnerPeerQueue,
+    owner_queue: OwnerQueue,
+    clock: DurableClock,
 ) -> Result<PeerRuntime, String> {
     let PeerHostConfig::Enabled {
         local_peer_id,
@@ -1231,13 +1392,18 @@ fn build_peer_runtime(
             service: None,
             artifacts: None,
             registries: BTreeMap::new(),
+            clock,
         });
     };
     let local_peer = PeerId::new(local_peer_id.clone()).map_err(|error| error.to_string())?;
     let mut session_hasher = blake3::Hasher::new();
     session_hasher.update(b"milkdrift.peer.session.v1\0");
     session_hasher.update(local_peer.as_str().as_bytes());
-    session_hasher.update(&unix_millis().to_be_bytes());
+    let session_now = clock
+        .now()
+        .map(TimestampMillis::get)
+        .map_err(|_| "daemon clock unavailable during peer initialization".to_owned())?;
+    session_hasher.update(&session_now.to_be_bytes());
     let session = SessionId::new(format!("session:{}", session_hasher.finalize().to_hex()))
         .map_err(|error| error.to_string())?;
     let versions = ProtocolVersionRange::default();
@@ -1361,6 +1527,7 @@ fn build_peer_runtime(
         clients.push((client, relationship.clone()));
         relationships.push(relationship);
     }
+    let peer_clock = clock.peer_adapter();
     let direct_artifacts = Arc::new(
         CorePeerArtifactStore::new(
             store.clone(),
@@ -1370,6 +1537,7 @@ fn build_peer_runtime(
                 .max()
                 .unwrap_or(1),
             10 * 1_073_741_824,
+            peer_clock.clone(),
         )
         .map_err(|error| error.to_string())?,
     );
@@ -1413,14 +1581,14 @@ fn build_peer_runtime(
             resolver: secrets,
             relationships: authentication,
         })),
-        Arc::new(SystemPeerClock),
+        peer_clock.clone(),
     )
     .map_err(|error| error.to_string())?;
     let mut registries = BTreeMap::new();
     for (client, relationship) in clients {
         let peer = relationship.remote_peer.clone();
         let registry = Arc::new(
-            PeerRegistry::new(host.clone(), client, relationship)
+            PeerRegistry::new(host.clone(), client, relationship, peer_clock.clone())
                 .map_err(|error| error.to_string())?,
         );
         registries.insert(peer, registry);
@@ -1429,6 +1597,7 @@ fn build_peer_runtime(
         service: Some(service),
         artifacts: Some(direct_artifacts),
         registries,
+        clock,
     })
 }
 
@@ -1551,7 +1720,78 @@ fn internal_control_id(
 
 #[cfg(test)]
 mod tests {
-    use super::{TimelineCategory, read_model::timeline_summary};
+    use std::{
+        collections::BTreeMap,
+        fs,
+        net::SocketAddr,
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
+    };
+
+    use super::clock::{DaemonClockError, DaemonClockSource};
+    use super::{DaemonHost, TimelineCategory, read_model::timeline_summary};
+    use crate::config::{
+        ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
+        AuthorityPresetConfig, ConfigError, DaemonConfig, PeerHostConfig, RuntimeHostConfig,
+        SecretSourceConfig, ShutdownConfig,
+    };
+
+    struct ControlledDaemonClock(AtomicU64);
+
+    impl ControlledDaemonClock {
+        const fn new(now: u64) -> Self {
+            Self(AtomicU64::new(now))
+        }
+
+        fn set(&self, now: u64) {
+            self.0.store(now, Ordering::SeqCst);
+        }
+    }
+
+    impl DaemonClockSource for ControlledDaemonClock {
+        fn now_unix_ms(&self) -> Result<u64, DaemonClockError> {
+            Ok(self.0.load(Ordering::SeqCst))
+        }
+    }
+
+    fn clock_test_config(
+        root: &std::path::Path,
+        token: &std::path::Path,
+    ) -> Result<crate::DaemonPlan, ConfigError> {
+        DaemonConfig {
+            schema_version: crate::DAEMON_CONFIG_SCHEMA_VERSION,
+            data_root: root.join("data"),
+            bind: SocketAddr::from(([127, 0, 0, 1], 0)),
+            secret_sources: BTreeMap::from([(
+                "credential:operator".to_owned(),
+                SecretSourceConfig::File {
+                    path: token.to_path_buf(),
+                },
+            )]),
+            actors: vec![ActorBindingConfig {
+                credential_ref: "credential:operator".to_owned(),
+                actor: "human:clock-operator".to_owned(),
+                grant_id: "grant:clock-operator".to_owned(),
+                grant_revision: 1,
+                revocation_generation: 0,
+                preset: AuthorityPresetConfig::Controller,
+                authority: ActorGrantConfig::dangerous_administrator(),
+                enabled: true,
+            }],
+            runtime: RuntimeHostConfig::default(),
+            adapters: AdapterConfig::default(),
+            peers: PeerHostConfig::default(),
+            shutdown: ShutdownConfig::default(),
+            application_receipts: ApplicationReceiptConfig {
+                hot_receipt_bound: 100,
+                archive_batch_size: 10,
+            },
+            security_audit_record_bound: 100,
+        }
+        .validate(root)
+    }
 
     #[test]
     fn timeline_projection_never_serializes_internal_event_body() {
@@ -1560,5 +1800,36 @@ mod tests {
             "node execution changed"
         );
         assert!(!timeline_summary(TimelineCategory::Execution).contains("NodeScheduled"));
+    }
+
+    #[tokio::test]
+    async fn daemon_restart_rejects_clock_rollback_before_readiness()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let token = root.path().join("operator.token");
+        fs::write(&token, "clock-test-token")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&token, fs::Permissions::from_mode(0o600))?;
+        }
+        let clock = Arc::new(ControlledDaemonClock::new(100));
+        let host =
+            DaemonHost::start_with_clock(clock_test_config(root.path(), &token)?, clock.clone())?;
+        clock.set(120);
+        assert_eq!(host.now().await.map_err(|error| error.message)?, 120);
+        host.shutdown().await?;
+
+        clock.set(119);
+        assert!(
+            DaemonHost::start_with_clock(clock_test_config(root.path(), &token)?, clock.clone(),)
+                .is_err()
+        );
+
+        clock.set(120);
+        let recovered =
+            DaemonHost::start_with_clock(clock_test_config(root.path(), &token)?, clock)?;
+        recovered.shutdown().await?;
+        Ok(())
     }
 }

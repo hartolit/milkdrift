@@ -487,7 +487,8 @@ fn archived_tombstones_reclaim_hot_capacity_and_preserve_replay_conflict_and_his
         MediaType::new("application/octet-stream")?,
         u64::try_from(artifact_bytes.len())?,
     );
-    let artifact_store = CorePeerArtifactStore::new(store.clone(), 1_048_576, 2_097_152)?;
+    let artifact_store =
+        CorePeerArtifactStore::new(store.clone(), 1_048_576, 2_097_152, system_peer_clock())?;
     for (ordinal, artifact, execution) in [
         (1_u8, first_artifact.clone(), first_execution.clone()),
         (

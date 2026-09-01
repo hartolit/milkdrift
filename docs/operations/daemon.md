@@ -15,7 +15,7 @@ Startup is deliberately fail-closed and ordered:
 
 1. Validate daemon configuration, normalized paths, credential references, grants, and bounds before opening storage.
 2. Refuse a data root containing legacy `control-state-v1.json`, `peer-executions-v1`, or `peer-artifacts-v1`. This release neither imports nor ignores old sidecar/prototype idempotency and artifact authority; move to a fresh data root or perform an explicitly reviewed offline conversion.
-3. Open exact-current redb physical schema 8/internal document format 11 and the immutable artifact root.
+3. Open exact-current redb physical schema 9/internal document format 11, verify the durable clock high-water boundary, and open the immutable artifact root.
 4. Open runtime admission closed and construct the shared control service. The production daemon
    deliberately leaves the experimental controller lifecycle uninstalled, so marked continuous
    controllers fail closed during recovery or activation.
@@ -60,7 +60,7 @@ Shutdown means owner completion, not merely stopping the HTTP listener. The daem
 
 ## Backup, compatibility, and repair
 
-Stop the daemon cleanly before copying its data root. Artifact bytes remain in the content-addressed filesystem store; application, peer execution, and runtime metadata remain in redb. This pre-release build implements no storage migration: physical schemas other than 8 and internal document formats other than 11 are refused. The advance refuses persisted schema-1 authority decisions rather than reinterpreting legacy capability envelopes. Do not edit rows or schema markers by hand.
+Stop the daemon cleanly before copying its data root. Artifact bytes remain in the content-addressed filesystem store; application, peer execution, runtime metadata, and the boundary-clock high-water fact remain in redb. This pre-release build implements no storage migration: physical schemas other than 9 and internal document formats other than 11 are refused. The advance refuses persisted schema-1 authority decisions rather than reinterpreting legacy capability envelopes. Do not edit rows or schema markers by hand.
 
 Exact command replay is preserved only within one store generation. To create a new generation, stop the daemon, make and independently verify a complete backup/export of the old data root, configure an empty new data root, and retain the old generation read-only for forensic/replay needs. There is no automatic rotation and no implemented cold-archive export/delete command. Command IDs must not be reused across generations unless every caller also rotates an explicit namespaced client epoch; otherwise a delayed request from the old generation is indistinguishable from new intent.
 
