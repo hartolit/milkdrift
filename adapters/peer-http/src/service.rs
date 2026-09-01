@@ -38,7 +38,8 @@ use milkdrift_persistence::{
     PeerAdmissionRejection, PeerArchivedDisposition, PeerCatalogState, PeerClaimOutcome,
     PeerDispatchClaimRequest, PeerEntryOutcome, PeerEntryRequest, PeerExecutionPhase,
     PeerExecutionRecord, PeerExecutionSnapshot, PeerExecutionStatus, PeerExecutionStore,
-    PeerRelationshipState, PeerRetentionRequest, TimestampMillis, WorkerId,
+    PeerRelationshipState, PeerRetentionRequest, PersistenceError, StorageFailureClass,
+    TimestampMillis, WorkerId,
 };
 use milkdrift_workspace::RunId;
 use subtle::ConstantTimeEq as _;
@@ -128,6 +129,10 @@ impl std::fmt::Debug for PeerService {
 }
 
 impl PeerService {
+    pub(crate) fn http_connection_limit(&self) -> usize {
+        usize::from(self.config.limits.connections)
+    }
+
     /// Constructs a ready service. Call [`Self::recover`] after local adapters register.
     pub fn new(
         config: PeerServerConfig,
@@ -195,7 +200,7 @@ impl PeerService {
         .map_err(|error| PeerHttpError::Configuration(error.to_string()))?;
         executions
             .set_peer_admission_open(false)
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .map_err(map_execution_persistence)?;
         for relationship in relationships.values() {
             executions
                 .configure_peer_relationship(&PeerRelationshipState {
@@ -205,7 +210,7 @@ impl PeerService {
                     expires_at_unix_ms: relationship.expires_at_unix_ms,
                     maximum_active: u32::from(relationship.maximum_concurrent),
                 })
-                .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+                .map_err(map_execution_persistence)?;
         }
         let worker_config = config.workers;
         let service = Arc::new(Self {
@@ -362,7 +367,7 @@ impl PeerService {
         let durable_generation = self
             .executions
             .peer_catalog(authenticated_peer)
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+            .map_err(map_execution_persistence)?
             .map_or(0, |catalog| catalog.generation);
         let generation = catalogs.get(authenticated_peer).map_or(
             durable_generation.saturating_add(1).max(1),
@@ -387,7 +392,7 @@ impl PeerService {
                 digest: snapshot.digest.as_str().to_owned(),
                 expires_at_unix_ms: snapshot.expires_at_unix_ms,
             })
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .map_err(map_execution_persistence)?;
         catalogs.insert(
             authenticated_peer.clone(),
             CachedCatalog {
@@ -411,7 +416,7 @@ impl PeerService {
         if let Some(existing) = self
             .executions
             .peer_execution_by_request(authenticated_peer, &request.request_id)
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+            .map_err(map_execution_persistence)?
         {
             return if existing.request_digest() == request.request_digest {
                 Ok(acceptance(&existing, true))
@@ -518,7 +523,7 @@ impl PeerService {
                     )
                     .max(1),
             })
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+            .map_err(map_execution_persistence)?
         {
             PeerAdmissionOutcome::Replayed(record) => Ok(acceptance(&record, true)),
             PeerAdmissionOutcome::Conflict(record) => Ok(rejection(
@@ -559,7 +564,7 @@ impl PeerService {
         Ok(self
             .executions
             .peer_execution_by_request(authenticated_peer, request)
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+            .map_err(map_execution_persistence)?
             .map_or_else(
                 || InvocationLookup::NotAccepted {
                     request_id: request.clone(),
@@ -590,7 +595,7 @@ impl PeerService {
         let page = self
             .executions
             .peer_observations(authenticated_peer, execution, after_sequence, limit)
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .map_err(map_execution_persistence)?;
         let status = snapshot_status(&page.execution);
         let history = match &page.execution {
             PeerExecutionSnapshot::Hot(_) => ObservationHistory::Hot,
@@ -633,7 +638,7 @@ impl PeerService {
         let before = self
             .executions
             .peer_execution(authenticated_peer, &request.execution)
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+            .map_err(map_execution_persistence)?
             .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
         let mut resources = RequestedResourceFacts::empty();
         match &before {
@@ -690,7 +695,7 @@ impl PeerService {
         let record = self
             .executions
             .request_peer_cancellation(authenticated_peer, request, self.clock.now_unix_ms().max(1))
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .map_err(map_execution_persistence)?;
         let acknowledgement = if matches!(before.phase, PeerExecutionPhase::Terminal { .. }) {
             PeerCancellationAcknowledgement {
                 request_id: request.request_id.clone(),
@@ -771,7 +776,7 @@ impl PeerService {
                 &acknowledgement,
                 self.clock.now_unix_ms().max(1),
             )
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .map_err(map_execution_persistence)?;
         self.notify_workers();
         Ok(acknowledgement)
     }
@@ -790,7 +795,7 @@ impl PeerService {
         let snapshot = self
             .executions
             .peer_execution(authenticated_peer, &offer.execution)
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+            .map_err(map_execution_persistence)?
             .ok_or_else(|| {
                 PeerHttpError::Unauthorized(
                     "artifact is not bound to an execution owned by this peer".to_owned(),
@@ -824,7 +829,7 @@ impl PeerService {
                 if self
                     .executions
                     .peer_observation_artifact(&record.execution, sequence)
-                    .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+                    .map_err(map_execution_persistence)?
                     .as_ref()
                     .is_some_and(|artifact| {
                         workspace_artifact_matches_capability(&offer.artifact, artifact)
@@ -970,7 +975,7 @@ impl PeerService {
     pub fn begin_drain(&self) -> Result<(), PeerHttpError> {
         self.executions
             .set_peer_admission_open(false)
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .map_err(map_execution_persistence)?;
         self.drain.store(1, Ordering::SeqCst);
         self.notify_workers();
         Ok(())
@@ -981,7 +986,7 @@ impl PeerService {
         let closed = self
             .executions
             .set_peer_admission_open(false)
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()));
+            .map_err(map_execution_persistence);
         self.drain.store(2, Ordering::SeqCst);
         self.notify_workers();
         closed
@@ -1024,7 +1029,7 @@ impl PeerService {
                 expires_at_unix_ms: relationship.expires_at_unix_ms,
                 maximum_active: u32::from(relationship.maximum_concurrent),
             })
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .map_err(map_execution_persistence)?;
         self.revoked_peers
             .lock()
             .map_err(|_| {
@@ -1048,21 +1053,21 @@ impl PeerService {
             let recovered = self
                 .executions
                 .recover_peer_claims(self.clock.now_unix_ms().max(1), limit)
-                .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+                .map_err(map_execution_persistence)?;
             if !recovered.more {
                 break;
             }
         }
         self.executions
             .verify_peer_execution_integrity()
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .map_err(map_execution_persistence)?;
         self.maintain_retention()?;
         self.executions
             .verify_peer_execution_integrity()
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .map_err(map_execution_persistence)?;
         self.executions
             .set_peer_admission_open(true)
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .map_err(map_execution_persistence)?;
         self.drain.store(0, Ordering::SeqCst);
         self.notify_workers();
         Ok(())
@@ -1082,17 +1087,17 @@ impl PeerService {
                 limit: PageSize::new(self.config.workers.archive_batch_size)
                     .map_err(|error| PeerHttpError::Protocol(error.to_string()))?,
             })
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .map_err(map_execution_persistence)?;
         self.executions
             .peer_execution_status()
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))
+            .map_err(map_execution_persistence)
     }
 
     /// Returns redacted serving execution accounting for daemon health projection.
     pub fn execution_status(&self) -> Result<PeerExecutionStatus, PeerHttpError> {
         self.executions
             .peer_execution_status()
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))
+            .map_err(map_execution_persistence)
     }
 
     fn relationship(&self, peer: &PeerId) -> Result<PeerRelationship, PeerHttpError> {
@@ -1433,7 +1438,7 @@ impl PeerService {
                 claimed_at_unix_ms: now,
                 lease_expires_at_unix_ms: now.saturating_add(self.config.lease.execution_lease_ms),
             })
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))
+            .map_err(map_execution_persistence)
     }
 
     pub(crate) fn run_claimed(&self, record: PeerExecutionRecord) -> Result<(), PeerHttpError> {
@@ -1466,7 +1471,7 @@ impl PeerService {
                         },
                         self.clock.now_unix_ms().max(1),
                     )
-                    .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+                    .map_err(map_execution_persistence)?;
             }
             return Ok(());
         }
@@ -1526,7 +1531,7 @@ impl PeerService {
                 entered_at_unix_ms: self.clock.now_unix_ms().max(1),
                 authority: &entry_authority,
             })
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+            .map_err(map_execution_persistence)?
         {
             PeerEntryOutcome::Entered(entered) => *entered,
             PeerEntryOutcome::AdmissionClosed => {
@@ -1567,7 +1572,7 @@ impl PeerService {
         let current = self
             .executions
             .peer_execution(&entered.owner_peer, &entered.execution)
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+            .map_err(map_execution_persistence)?
             .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
         let PeerExecutionSnapshot::Hot(current) = current else {
             return Ok(());
@@ -1591,7 +1596,7 @@ impl PeerService {
                 self.clock.now_unix_ms().max(1),
                 &reason,
             )
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .map_err(map_execution_persistence)?;
         Ok(())
     }
 
@@ -1603,7 +1608,7 @@ impl PeerService {
         let current = self
             .executions
             .peer_execution(&claimed.owner_peer, &claimed.execution)
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+            .map_err(map_execution_persistence)?
             .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
         let PeerExecutionSnapshot::Hot(current) = current else {
             return Ok(());
@@ -1624,7 +1629,7 @@ impl PeerService {
                     self.clock.now_unix_ms().max(1),
                     "peer worker panicked after durable adapter entry",
                 )
-                .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+                .map_err(map_execution_persistence)?;
         } else {
             self.executions
                 .release_peer_claim(
@@ -1634,7 +1639,7 @@ impl PeerService {
                     claim.generation,
                     self.clock.now_unix_ms().max(1),
                 )
-                .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+                .map_err(map_execution_persistence)?;
             self.notify_workers();
         }
         Ok(())
@@ -1680,7 +1685,7 @@ impl PeerService {
                     observed_at_unix_ms: self.clock.now_unix_ms().max(1),
                 },
             )
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .map_err(map_execution_persistence)?;
         Ok(())
     }
 
@@ -1691,7 +1696,7 @@ impl PeerService {
         let current = self
             .executions
             .peer_execution(&record.owner_peer, &record.execution)
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?
+            .map_err(map_execution_persistence)?
             .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
         let PeerExecutionSnapshot::Hot(current) = current else {
             return Err(PeerHttpError::Persistence(
@@ -1732,7 +1737,7 @@ impl PeerService {
         };
         self.executions
             .append_peer_observation(&current.owner_peer, &current.execution, &observation)
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .map_err(map_execution_persistence)?;
         Ok(observation)
     }
 
@@ -1752,7 +1757,7 @@ impl PeerService {
                 record.last_observation_sequence.saturating_sub(1),
                 PageSize::new(1).map_err(|error| PeerHttpError::Protocol(error.to_string()))?,
             )
-            .map_err(|error| PeerHttpError::Persistence(error.to_string()))?;
+            .map_err(map_execution_persistence)?;
         Ok(page
             .observations
             .into_iter()
@@ -2167,6 +2172,20 @@ fn bounded(value: &str, maximum: usize) -> String {
     value[..end].to_owned()
 }
 
+fn map_execution_persistence(error: PersistenceError) -> PeerHttpError {
+    match error {
+        PersistenceError::Storage {
+            class: StorageFailureClass::ResourceExhausted,
+            ..
+        } => PeerHttpError::Overloaded("durable peer owner capacity is exhausted".to_owned()),
+        PersistenceError::Storage {
+            class: StorageFailureClass::Unavailable | StorageFailureClass::OwnerBusy,
+            ..
+        } => PeerHttpError::Unavailable("durable peer storage is unavailable".to_owned()),
+        error => PeerHttpError::Persistence(error.to_string()),
+    }
+}
+
 impl From<milkdrift_capability_host::HostError> for PeerHttpError {
     fn from(error: milkdrift_capability_host::HostError) -> Self {
         Self::Unavailable(error.to_string())
@@ -2181,6 +2200,7 @@ impl From<PeerArtifactError> for PeerHttpError {
                 Self::Protocol(message)
             }
             PeerArtifactError::Persistence(message) => Self::Persistence(message),
+            PeerArtifactError::Overloaded(message) => Self::Overloaded(message),
             PeerArtifactError::Unavailable => {
                 Self::Persistence("artifact state unavailable".to_owned())
             }
@@ -2243,6 +2263,19 @@ impl PeerArtifactStore for DisabledArtifactStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_owner_capacity_maps_to_typed_peer_overload() {
+        let failure = map_execution_persistence(PersistenceError::Storage {
+            class: StorageFailureClass::ResourceExhausted,
+            message: "owner queue full".to_owned(),
+        });
+        assert!(matches!(failure, PeerHttpError::Overloaded(_)));
+        assert!(matches!(
+            PeerHttpError::from(PeerArtifactError::Overloaded("owner queue full".to_owned())),
+            PeerHttpError::Overloaded(_)
+        ));
+    }
 
     #[test]
     fn empty_peer_filters_are_explicit_deny_all_not_wildcards()

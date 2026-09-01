@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, Weak,
         atomic::{AtomicBool, Ordering},
         mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel},
     },
@@ -40,7 +40,7 @@ use milkdrift_model_provider::{EndpointProfile, ModelEndpointAdapter, descriptor
 use milkdrift_peer_http::{
     CorePeerArtifactStore, InsecureLoopbackMode, PeerAuthenticator, PeerClientConfig,
     PeerCredentialSource, PeerHttpClient, PeerHttpError, PeerRegistry, PeerRelationship,
-    PeerServerConfig, PeerService, PeerWorkerConfig, SystemPeerClock,
+    PeerServerConfig, PeerService, PeerWorkerConfig, PeerWorkerShutdownReport, SystemPeerClock,
 };
 use milkdrift_peer_protocol::{
     DelegationRef, ExecutionLimits, HardLimits, HeartbeatLease, PeerAuthority, ProtocolVersion,
@@ -89,6 +89,7 @@ mod commands;
 mod definitions;
 mod health;
 mod layouts;
+mod peer_store;
 mod proposals;
 mod read_model;
 mod receipts;
@@ -96,6 +97,7 @@ mod requests;
 mod runs;
 
 use health::{Lifecycle, QueuedRequestGuard, SharedHealth};
+use peer_store::{OwnerPeerArtifactStore, OwnerPeerExecutionStore, OwnerPeerQueue};
 use read_model::*;
 
 const OWNER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -196,6 +198,7 @@ impl DaemonHost {
         let health = Arc::new(SharedHealth::new(queue_capacity, &storage, &peers));
         let thread_health = health.clone();
         let thread_auth = auth.clone();
+        let owner_sender = sender.clone();
         let maintenance = Duration::from_millis(runtime.maintenance_interval_ms);
         let owner_plan = OwnerPlan {
             storage,
@@ -208,25 +211,23 @@ impl DaemonHost {
             .name("milkdrift-runtime-owner".to_owned())
             .spawn(move || {
                 info!(phase = "startup", "runtime owner starting");
-                let mut owner = match Owner::open(owner_plan, thread_auth, thread_health.clone()) {
-                    Ok(owner) => owner,
-                    Err(failure) => {
-                        warn!(
-                            phase = "startup",
-                            outcome = "failed",
-                            code = "initialization",
-                            "runtime owner failed before readiness"
-                        );
-                        thread_health.failure("daemon startup initialization failed");
-                        thread_health.set_lifecycle(Lifecycle::Failed);
-                        let _ = startup_sender.send(Err(failure));
-                        return;
-                    }
-                };
-                let startup = PeerRuntime {
-                    service: owner.peer_service.clone(),
-                    registries: owner.peer_registries.clone(),
-                };
+                let (mut owner, startup) =
+                    match Owner::open(owner_plan, thread_auth, thread_health.clone(), owner_sender)
+                    {
+                        Ok(opened) => opened,
+                        Err(failure) => {
+                            warn!(
+                                phase = "startup",
+                                outcome = "failed",
+                                code = "initialization",
+                                "runtime owner failed before readiness"
+                            );
+                            thread_health.failure("daemon startup initialization failed");
+                            thread_health.set_lifecycle(Lifecycle::Failed);
+                            let _ = startup_sender.send(Err(failure));
+                            return;
+                        }
+                    };
                 thread_health.set_lifecycle(Lifecycle::Ready);
                 let _ = startup_sender.send(Ok(startup));
                 info!(phase = "ready", "runtime owner ready after recovery");
@@ -279,19 +280,23 @@ impl DaemonHost {
         self.mutating_admission.load(Ordering::SeqCst)
     }
 
-    /// Closes mutation admission synchronously before graceful HTTP shutdown begins.
-    pub(crate) fn begin_draining(&self) -> Result<(), HostError> {
+    /// Closes durable admission on the owner before graceful HTTP shutdown begins.
+    pub(crate) async fn begin_draining(&self) -> Result<(), HostError> {
         self.mutating_admission.store(false, Ordering::SeqCst);
+        let durable = self
+            .dispatch(false, |owner| owner.begin_peer_drain())
+            .await
+            .map_err(|error| HostError::Shutdown(error.message));
         self.health.set_lifecycle(Lifecycle::Draining);
-        if let Some(service) = &self.peer_service {
-            service
-                .begin_drain()
-                .map_err(|error| HostError::Shutdown(error.to_string()))?;
-        }
-        for registry in self.peer_registries.values() {
-            let _ = registry.disconnect();
-        }
-        Ok(())
+        let registries = self.peer_registries.values().cloned().collect::<Vec<_>>();
+        tokio::task::spawn_blocking(move || {
+            for registry in registries {
+                let _ = registry.disconnect();
+            }
+        })
+        .await
+        .map_err(|_| HostError::Shutdown("peer disconnect task failed".to_owned()))?;
+        durable
     }
 
     /// Returns the optional distinct peer route service for router composition.
@@ -381,24 +386,48 @@ impl DaemonHost {
 
     /// Revokes one live relationship and drains its registrations until reload/restart.
     pub(crate) async fn revoke_peer(&self, peer: &PeerId) -> Result<PeerRead, HostError> {
+        let durable_peer = peer.clone();
+        self.dispatch(false, move |owner| owner.revoke_peer(&durable_peer))
+            .await
+            .map_err(|error| HostError::Configuration(error.message))?;
         self.revoked_peers
             .lock()
             .map_err(|_| HostError::Configuration("peer revocation state unavailable".to_owned()))?
             .insert(peer.clone());
-        if let Some(service) = &self.peer_service {
-            service
-                .revoke_peer(peer)
-                .map_err(|error| HostError::Configuration(error.to_string()))?;
-        }
         self.disconnect_peer(peer).await
     }
 
     /// Runs ordered shutdown and joins the owner thread.
     pub async fn shutdown(&self) -> Result<(), HostError> {
-        let drain_error = self.begin_draining().err();
+        let shutdown_started = std::time::Instant::now();
+        let drain_error = self.begin_draining().await.err();
+        let peer_shutdown = if let Some(service) = &self.peer_service {
+            let service = service.clone();
+            let deadline = self
+                .shutdown_deadline
+                .saturating_sub(shutdown_started.elapsed());
+            Some(
+                match tokio::task::spawn_blocking(move || service.shutdown_workers(deadline)).await
+                {
+                    Ok(report) => report,
+                    Err(_) => PeerWorkerShutdownReport {
+                        clean: false,
+                        joined: 0,
+                        retained_workers: 1,
+                    },
+                },
+            )
+        } else {
+            None
+        };
         let health = self.health.clone();
+        let owner_deadline = self
+            .shutdown_deadline
+            .saturating_sub(shutdown_started.elapsed());
         let result = match self
-            .dispatch(true, move |owner| owner.shutdown(&health))
+            .dispatch(true, move |owner| {
+                owner.shutdown(&health, peer_shutdown, owner_deadline)
+            })
             .await
         {
             Ok(result) => result,
@@ -568,7 +597,9 @@ struct Owner {
     capability_host: CapabilityHost,
     authority: Arc<GrantSetEvaluator>,
     effect_workers: Option<EffectWorkerHost>,
-    peer_service: Option<Arc<PeerService>>,
+    peer_service: Option<Weak<PeerService>>,
+    // Strong lifecycle lease; service-facing artifact adapters retain only a weak handle.
+    _peer_artifacts: Option<Arc<CorePeerArtifactStore>>,
     peer_registries: BTreeMap<PeerId, Arc<PeerRegistry>>,
 }
 
@@ -579,6 +610,7 @@ struct ShutdownOutcome {
 
 struct PeerRuntime {
     service: Option<Arc<PeerService>>,
+    artifacts: Option<Arc<CorePeerArtifactStore>>,
     registries: BTreeMap<PeerId, Arc<PeerRegistry>>,
 }
 
@@ -587,7 +619,8 @@ impl Owner {
         plan: OwnerPlan,
         auth: AuthRegistry,
         health: Arc<SharedHealth>,
-    ) -> Result<Self, String> {
+        sender: SyncSender<OwnerRequest>,
+    ) -> Result<(Self, PeerRuntime), String> {
         let OwnerPlan {
             storage,
             runtime: runtime_plan,
@@ -729,6 +762,7 @@ impl Owner {
             &capability_host,
             store.clone(),
             auth.resolver(),
+            OwnerPeerQueue::new(sender, health.clone(), thread::current().id()),
         )?;
         if let Some(service) = &peer_runtime.service {
             service.recover(1_024).map_err(|error| error.to_string())?;
@@ -753,17 +787,21 @@ impl Owner {
             .resume_admission()
             .map_err(|error| error.to_string())?;
         health.set_active_effects(0);
-        Ok(Self {
-            shutdown,
-            store,
-            runtime,
-            control,
-            capability_host,
-            authority,
-            effect_workers: Some(effect_workers),
-            peer_service: peer_runtime.service,
-            peer_registries: peer_runtime.registries,
-        })
+        Ok((
+            Self {
+                shutdown,
+                store,
+                runtime,
+                control,
+                capability_host,
+                authority,
+                effect_workers: Some(effect_workers),
+                peer_service: peer_runtime.service.as_ref().map(Arc::downgrade),
+                _peer_artifacts: peer_runtime.artifacts.clone(),
+                peer_registries: peer_runtime.registries.clone(),
+            },
+            peer_runtime,
+        ))
     }
 
     fn run(
@@ -785,7 +823,7 @@ impl Owner {
                 }
                 Err(RecvTimeoutError::Timeout) => self.maintenance(health),
                 Err(RecvTimeoutError::Disconnected) => {
-                    let _ = self.shutdown(health);
+                    let _ = self.shutdown(health, None, Duration::ZERO);
                     return;
                 }
             }
@@ -824,7 +862,7 @@ impl Owner {
                 health.receipt_failure();
             }
         }
-        if let Some(service) = &self.peer_service {
+        if let Some(service) = self.peer_service.as_ref().and_then(Weak::upgrade) {
             match service.maintain_retention() {
                 Ok(status) => health.peer_status(status),
                 Err(error) => {
@@ -928,41 +966,44 @@ impl Owner {
         Ok(decision)
     }
 
-    fn shutdown(&mut self, health: &SharedHealth) -> Result<ShutdownOutcome, PublicFailure> {
+    fn begin_peer_drain(&self) -> Result<(), PublicFailure> {
+        let Some(service) = self.peer_service.as_ref().and_then(Weak::upgrade) else {
+            return if self.peer_service.is_some() {
+                Err(peer_unavailable())
+            } else {
+                Ok(())
+            };
+        };
+        service.begin_drain().map_err(public_peer)
+    }
+
+    fn revoke_peer(&self, peer: &PeerId) -> Result<(), PublicFailure> {
+        let service = self
+            .peer_service
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .ok_or_else(peer_unavailable)?;
+        service.revoke_peer(peer).map_err(public_peer)
+    }
+
+    fn shutdown(
+        &mut self,
+        health: &SharedHealth,
+        peer_shutdown: Option<PeerWorkerShutdownReport>,
+        deadline: Duration,
+    ) -> Result<ShutdownOutcome, PublicFailure> {
         info!(phase = "draining", "runtime owner closing admission");
         health.set_lifecycle(Lifecycle::Draining);
         let mut clean = true;
-        if let Some(service) = &self.peer_service
-            && let Err(error) = service.begin_shutdown()
-        {
-            clean = false;
-            health.failure("peer shutdown admission failed");
-            warn!(
-                phase = "draining",
-                code = "peer_shutdown_admission",
-                "{}",
-                bounded(&error.to_string())
-            );
-        }
-        for registry in self.peer_registries.values() {
-            let _ = registry.disconnect();
-        }
         self.runtime.begin_shutdown();
         let mode = match self.shutdown.effect_policy {
             ShutdownEffectPolicy::Drain => EffectShutdownMode::Drain,
             ShutdownEffectPolicy::Cancel => EffectShutdownMode::Cancel,
             ShutdownEffectPolicy::Retain => EffectShutdownMode::Retain,
         };
-        let deadline = Duration::from_millis(self.shutdown.deadline_ms);
-        let shutdown_started = std::time::Instant::now();
-        let peer_shutdown = self
-            .peer_service
-            .as_ref()
-            .map(|service| service.shutdown_workers(deadline));
-        let effect_deadline = deadline.saturating_sub(shutdown_started.elapsed());
         let (effect_clean, unresolved_invocations, outstanding_effects) =
             match self.effect_workers.take() {
-                Some(workers) => match workers.shutdown(mode, effect_deadline) {
+                Some(workers) => match workers.shutdown(mode, deadline) {
                     Ok(result) => {
                         let execution_work = result
                             .health
@@ -1170,6 +1211,7 @@ fn build_peer_runtime(
     host: &CapabilityHost,
     store: Arc<RedbStore>,
     secrets: Arc<ConfiguredSecretResolver>,
+    owner_queue: OwnerPeerQueue,
 ) -> Result<PeerRuntime, String> {
     let PeerHostConfig::Enabled {
         local_peer_id,
@@ -1179,6 +1221,7 @@ fn build_peer_runtime(
     else {
         return Ok(PeerRuntime {
             service: None,
+            artifacts: None,
             registries: BTreeMap::new(),
         });
     };
@@ -1314,6 +1357,26 @@ fn build_peer_runtime(
         clients.push((client, relationship.clone()));
         relationships.push(relationship);
     }
+    let direct_artifacts = Arc::new(
+        CorePeerArtifactStore::new(
+            store.clone(),
+            configured_relationships
+                .iter()
+                .map(|relationship| relationship.maximum_artifact_bytes)
+                .max()
+                .unwrap_or(1),
+            10 * 1_073_741_824,
+        )
+        .map_err(|error| error.to_string())?,
+    );
+    let executions = Arc::new(OwnerPeerExecutionStore::new(
+        owner_queue.clone(),
+        Arc::downgrade(&store),
+    ));
+    let artifacts = Arc::new(OwnerPeerArtifactStore::new(
+        owner_queue,
+        Arc::downgrade(&direct_artifacts),
+    ));
     let service = PeerService::new_with_artifacts_and_authenticator(
         PeerServerConfig {
             local_peer,
@@ -1340,19 +1403,8 @@ fn build_peer_runtime(
             },
         },
         host.clone(),
-        store.clone(),
-        Arc::new(
-            CorePeerArtifactStore::new(
-                store,
-                configured_relationships
-                    .iter()
-                    .map(|relationship| relationship.maximum_artifact_bytes)
-                    .max()
-                    .unwrap_or(1),
-                10 * 1_073_741_824,
-            )
-            .map_err(|error| error.to_string())?,
-        ),
+        executions,
+        artifacts,
         Some(Arc::new(ConfiguredPeerAuthenticator {
             resolver: secrets,
             relationships: authentication,
@@ -1371,6 +1423,7 @@ fn build_peer_runtime(
     }
     Ok(PeerRuntime {
         service: Some(service),
+        artifacts: Some(direct_artifacts),
         registries,
     })
 }
@@ -1418,6 +1471,28 @@ impl PeerAuthenticator for ConfiguredPeerAuthenticator {
                     })
             })
             .map(|relationship| relationship.peer.clone())
+    }
+}
+
+fn peer_unavailable() -> PublicFailure {
+    PublicFailure::new(ErrorCode::Unavailable, "peer service is unavailable", true)
+}
+
+fn public_peer(error: PeerHttpError) -> PublicFailure {
+    match error {
+        PeerHttpError::Unauthenticated | PeerHttpError::Unauthorized(_) => unauthorized(),
+        PeerHttpError::NotFound(_) => not_found(),
+        PeerHttpError::Overloaded(_) => PublicFailure::new(
+            ErrorCode::Overload,
+            "peer service capacity is exhausted",
+            true,
+        ),
+        PeerHttpError::Persistence(_)
+        | PeerHttpError::Unavailable(_)
+        | PeerHttpError::Transport(_) => peer_unavailable(),
+        PeerHttpError::Configuration(message) | PeerHttpError::Protocol(message) => {
+            invalid(&bounded(&message))
+        }
     }
 }
 

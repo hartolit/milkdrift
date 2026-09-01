@@ -35,6 +35,9 @@ pub enum PeerArtifactError {
     /// Core persistence failed without disclosing a host path.
     #[error("peer artifact core storage unavailable: {0}")]
     Persistence(String),
+    /// The bounded durable owner cannot admit another transfer operation.
+    #[error("peer artifact durable owner overloaded: {0}")]
+    Overloaded(String),
     /// Internal bounded transfer state is unavailable.
     #[error("peer artifact transfer state is unavailable")]
     Unavailable,
@@ -594,6 +597,10 @@ fn map_persistence(error: milkdrift_persistence::PersistenceError) -> PeerArtifa
         milkdrift_persistence::PersistenceError::ArtifactNotCommitted(_) => {
             PeerArtifactError::Verification(error.to_string())
         }
+        milkdrift_persistence::PersistenceError::Storage {
+            class: milkdrift_persistence::StorageFailureClass::ResourceExhausted,
+            ..
+        } => PeerArtifactError::Overloaded(error.to_string()),
         _ => PeerArtifactError::Persistence(error.to_string()),
     }
 }

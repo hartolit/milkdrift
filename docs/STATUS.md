@@ -25,8 +25,13 @@ snapshot. Git, CI, releases, and external audits own chronology.
   channel. Typed one-shot closure messages remove the former parallel operation/result enums and
   make mismatched HTTP response variants unrepresentable; an owned queue guard and one coherent
   versioned health projection make overload, startup recovery, readiness, periodic maintenance,
-  health streaming, and ordered shutdown explicit. The CLI is a storage-free client of
-  `milkdrift-control-client`.
+  health streaming, and ordered shutdown explicit. The peer service consumes its existing narrow
+  execution and artifact ports through daemon-private owner adapters: owner-thread lifecycle work
+  executes inline, while durable calls originating in peer HTTP and fixed workers enter that same
+  bounded queue and retain typed overload. Weak service-facing store handles prevent router
+  lifetimes from extending redb ownership. Peer HTTP admits only a bounded number of synchronous
+  service calls off Tokio reactor tasks, and shutdown keeps the owner servicing final peer writes
+  while fixed peer workers join. The CLI is a storage-free client of `milkdrift-control-client`.
 - External control protocol 2.2 provides bounded duplicate-safe DTOs, exact negotiation,
   authenticated cursor schema 2, idempotent commands, revisions/diffs, runs/nodes/attempts,
   timelines, proposals, capabilities/providers, authority, peers, artifacts, layouts, health, and

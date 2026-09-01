@@ -27,6 +27,7 @@ use crate::{PeerHttpError, PeerService};
 #[derive(Clone)]
 struct AppState {
     service: Arc<PeerService>,
+    blocking_calls: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Clone, Copy)]
@@ -129,6 +130,7 @@ impl IntoResponse for ApiError {
 
 /// Builds the distinct `/peer/v1` route and authentication realm. CORS is absent.
 pub fn peer_router(service: Arc<PeerService>) -> Router {
+    let blocking_call_limit = service.http_connection_limit();
     authorized_peer_routes! { Router::new();
         "/peer/v1/handshake" => post(handshake), PeerRouteAuthorityMapping::Exact(AuthorityOperation::NegotiatePeerSession), PeerRouteResourceMapping::Relationship;
         "/peer/v1/catalog" => get(catalog), PeerRouteAuthorityMapping::QueryDerived, PeerRouteResourceMapping::Capability;
@@ -149,7 +151,10 @@ pub fn peer_router(service: Arc<PeerService>) -> Router {
                 .layer(CatchPanicLayer::new())
                 .layer(TraceLayer::new_for_http()),
         )
-        .with_state(AppState { service })
+        .with_state(AppState {
+            service,
+            blocking_calls: Arc::new(tokio::sync::Semaphore::new(blocking_call_limit)),
+        })
 }
 
 async fn handshake(
@@ -157,14 +162,19 @@ async fn handshake(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    let peer = authenticate(&state, &headers)?;
     let request: ProtocolEnvelope<HandshakeRequest> = decode(&body)?;
-    success(state.service.handshake(&peer, &request.message)?)
+    let response = authenticated_service_call(state, &headers, move |service, peer| {
+        service.handshake(&peer, &request.message)
+    })
+    .await?;
+    success(response)
 }
 
 async fn catalog(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
-    let peer = authenticate(&state, &headers)?;
-    success(state.service.catalog(&peer)?)
+    let catalog =
+        authenticated_service_call(state, &headers, move |service, peer| service.catalog(&peer))
+            .await?;
+    success(catalog)
 }
 
 async fn invoke(
@@ -172,9 +182,12 @@ async fn invoke(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    let peer = authenticate(&state, &headers)?;
     let request: ProtocolEnvelope<PeerInvocationRequest> = decode(&body)?;
-    success(state.service.invoke(&peer, request.message)?)
+    let accepted = authenticated_service_call(state, &headers, move |service, peer| {
+        service.invoke(&peer, request.message)
+    })
+    .await?;
+    success(accepted)
 }
 
 async fn lookup(
@@ -182,10 +195,13 @@ async fn lookup(
     headers: HeaderMap,
     Path(request): Path<String>,
 ) -> Result<Response, ApiError> {
-    let peer = authenticate(&state, &headers)?;
     let request = PeerRequestId::new(request)
         .map_err(|error| ApiError(PeerHttpError::Protocol(error.to_string())))?;
-    success(state.service.lookup(&peer, &request)?)
+    let execution = authenticated_service_call(state, &headers, move |service, peer| {
+        service.lookup(&peer, &request)
+    })
+    .await?;
+    success(execution)
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -207,14 +223,13 @@ async fn observations(
     Path(execution): Path<String>,
     Query(query): Query<ObservationQuery>,
 ) -> Result<Response, ApiError> {
-    let peer = authenticate(&state, &headers)?;
     let execution = PeerExecutionId::new(execution)
         .map_err(|error| ApiError(PeerHttpError::Protocol(error.to_string())))?;
-    success(
-        state
-            .service
-            .observations(&peer, &execution, query.after, query.limit)?,
-    )
+    let page = authenticated_service_call(state, &headers, move |service, peer| {
+        service.observations(&peer, &execution, query.after, query.limit)
+    })
+    .await?;
+    success(page)
 }
 
 async fn cancel(
@@ -223,14 +238,17 @@ async fn cancel(
     Path(execution): Path<String>,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    let peer = authenticate(&state, &headers)?;
     let envelope: ProtocolEnvelope<PeerCancellationRequest> = decode(&body)?;
     if envelope.message.execution.as_str() != execution {
         return Err(ApiError(PeerHttpError::Protocol(
             "cancellation path and body execution identities differ".to_owned(),
         )));
     }
-    success(state.service.cancel(&peer, &envelope.message)?)
+    let acknowledgement = authenticated_service_call(state, &headers, move |service, peer| {
+        service.cancel(&peer, &envelope.message)
+    })
+    .await?;
+    success(acknowledgement)
 }
 
 async fn observation_stream(
@@ -239,24 +257,33 @@ async fn observation_stream(
     Path(execution): Path<String>,
     Query(query): Query<ObservationQuery>,
 ) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    let peer = authenticate(&state, &headers)?;
     let bearer = bearer_value(&headers)?.to_owned();
+    let peer =
+        authenticated_service_call(state.clone(), &headers, |_service, peer| Ok(peer)).await?;
     let execution = PeerExecutionId::new(execution)
         .map_err(|error| ApiError(PeerHttpError::Protocol(error.to_string())))?;
     let service = state.service.clone();
+    let blocking_calls = state.blocking_calls.clone();
     let output = stream! {
         let mut after = query.after;
         loop {
-            if !matches!(
-                service.authenticate_bearer(bearer.as_bytes()),
-                Ok(current) if current == peer
-            ) {
-                yield Ok(Event::default()
-                    .event("authorization_terminated")
-                    .data("peer credential or authority was revoked or rotated"));
-                break;
-            }
-            match service.observations(&peer, &execution, after, query.limit) {
+            let observation_bearer = bearer.clone();
+            let observation_peer = peer.clone();
+            let observation_execution = execution.clone();
+            let page = service_call(service.clone(), blocking_calls.clone(), move |service| {
+                let current = service.authenticate_bearer(observation_bearer.as_bytes())?;
+                if current != observation_peer {
+                    return Err(PeerHttpError::Unauthenticated);
+                }
+                service.observations(
+                    &observation_peer,
+                    &observation_execution,
+                    after,
+                    query.limit,
+                )
+            })
+            .await;
+            match page {
                 Ok(page) => {
                     let closed = page.closed;
                     for observation in &page.observations {
@@ -274,6 +301,12 @@ async fn observation_stream(
                         yield Ok(Event::default().event("closed").data("terminal"));
                         break;
                     }
+                }
+                Err(PeerHttpError::Unauthenticated) => {
+                    yield Ok(Event::default()
+                        .event("authorization_terminated")
+                        .data("peer credential or authority was revoked or rotated"));
+                    break;
                 }
                 Err(error) => {
                     yield Ok(Event::default().event("error").data(bounded(&error.to_string(), 512)));
@@ -295,9 +328,12 @@ async fn artifact_negotiate(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    let peer = authenticate(&state, &headers)?;
     let envelope: ProtocolEnvelope<ArtifactMetadataOffer> = decode(&body)?;
-    success(state.service.negotiate_artifact(&peer, &envelope.message)?)
+    let decision = authenticated_service_call(state, &headers, move |service, peer| {
+        service.negotiate_artifact(&peer, &envelope.message)
+    })
+    .await?;
+    success(decision)
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -315,18 +351,19 @@ async fn artifact_write(
     Query(query): Query<ArtifactWriteQuery>,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    let peer = authenticate(&state, &headers)?;
     let transfer = TransferId::new(transfer)
         .map_err(|error| ApiError(PeerHttpError::Protocol(error.to_string())))?;
-    success(state.service.write_artifact_chunk(
-        &peer,
-        &ArtifactChunk {
-            transfer,
-            offset: query.offset,
-            bytes: body.to_vec(),
-            final_chunk: query.final_chunk,
-        },
-    )?)
+    let chunk = ArtifactChunk {
+        transfer,
+        offset: query.offset,
+        bytes: body.to_vec(),
+        final_chunk: query.final_chunk,
+    };
+    let decision = authenticated_service_call(state, &headers, move |service, peer| {
+        service.write_artifact_chunk(&peer, &chunk)
+    })
+    .await?;
+    success(decision)
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -347,13 +384,12 @@ async fn artifact_read(
     Path(transfer): Path<String>,
     Query(query): Query<ArtifactReadQuery>,
 ) -> Result<Response, ApiError> {
-    let peer = authenticate(&state, &headers)?;
     let transfer = TransferId::new(transfer)
         .map_err(|error| ApiError(PeerHttpError::Protocol(error.to_string())))?;
-    let chunk =
-        state
-            .service
-            .read_artifact_chunk(&peer, &transfer, query.offset, query.maximum_bytes)?;
+    let chunk = authenticated_service_call(state, &headers, move |service, peer| {
+        service.read_artifact_chunk(&peer, &transfer, query.offset, query.maximum_bytes)
+    })
+    .await?;
     let mut response = Response::new(Body::from(chunk.bytes));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -379,22 +415,58 @@ async fn artifact_abort(
     headers: HeaderMap,
     Path(transfer): Path<String>,
 ) -> Result<Response, ApiError> {
-    let peer = authenticate(&state, &headers)?;
     let transfer = TransferId::new(transfer)
         .map_err(|error| ApiError(PeerHttpError::Protocol(error.to_string())))?;
-    state.service.abort_artifact(&peer, &transfer)?;
-    success(serde_json::json!({"aborted": true, "transfer": transfer.as_str()}))
+    let response_transfer = transfer.clone();
+    authenticated_service_call(state, &headers, move |service, peer| {
+        service.abort_artifact(&peer, &transfer)
+    })
+    .await?;
+    success(serde_json::json!({"aborted": true, "transfer": response_transfer.as_str()}))
 }
 
-fn authenticate(
-    state: &AppState,
+async fn authenticated_service_call<T>(
+    state: AppState,
     headers: &HeaderMap,
-) -> Result<milkdrift_authority::PeerId, ApiError> {
-    let value = bearer_value(headers)?;
-    state
-        .service
-        .authenticate_bearer(value.as_bytes())
-        .map_err(ApiError)
+    operation: impl FnOnce(Arc<PeerService>, milkdrift_authority::PeerId) -> Result<T, PeerHttpError>
+    + Send
+    + 'static,
+) -> Result<T, ApiError>
+where
+    T: Send + 'static,
+{
+    let bearer = bearer_value(headers)?.as_bytes().to_vec();
+    service_call(state.service, state.blocking_calls, move |service| {
+        let peer = service.authenticate_bearer(&bearer)?;
+        operation(service, peer)
+    })
+    .await
+    .map_err(ApiError)
+}
+
+async fn service_call<T>(
+    service: Arc<PeerService>,
+    blocking_calls: Arc<tokio::sync::Semaphore>,
+    operation: impl FnOnce(Arc<PeerService>) -> Result<T, PeerHttpError> + Send + 'static,
+) -> Result<T, PeerHttpError>
+where
+    T: Send + 'static,
+{
+    let permit = blocking_permit(blocking_calls)?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        operation(service)
+    })
+    .await
+    .map_err(|_| PeerHttpError::Unavailable("peer service task failed".to_owned()))?
+}
+
+fn blocking_permit(
+    blocking_calls: Arc<tokio::sync::Semaphore>,
+) -> Result<tokio::sync::OwnedSemaphorePermit, PeerHttpError> {
+    blocking_calls.try_acquire_owned().map_err(|_| {
+        PeerHttpError::Overloaded("bounded peer HTTP service capacity is exhausted".to_owned())
+    })
 }
 
 fn bearer_value(headers: &HeaderMap) -> Result<&str, ApiError> {
@@ -435,6 +507,23 @@ fn bounded(value: &str, maximum: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use crate::PeerHttpError;
+
+    use super::blocking_permit;
+
+    #[test]
+    fn blocking_service_admission_sheds_excess_work() -> Result<(), Box<dyn std::error::Error>> {
+        let calls = Arc::new(tokio::sync::Semaphore::new(1));
+        let _admitted = blocking_permit(calls.clone())?;
+        assert!(matches!(
+            blocking_permit(calls),
+            Err(PeerHttpError::Overloaded(_))
+        ));
+        Ok(())
+    }
+
     #[test]
     fn every_peer_external_route_declares_typed_authority_and_resource_mapping() {
         let source = include_str!("http.rs");
