@@ -23,6 +23,7 @@ const CONTROL_OUT: &str = "out";
 const PASS: &str = "pass";
 const FAIL: &str = "fail";
 const APPROVED: &str = "approved";
+const SEQUENCE_SUCCEEDED: &str = "sequence-succeeded";
 
 /// Stable generated ordinary-node identities for one imported stage.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -95,45 +96,20 @@ pub fn compile(
     let mut operations = Vec::new();
     let mut summaries = Vec::new();
     let stages = &document.sequence().stages;
+    let repository_profile =
+        serde_json::to_value(&document.sequence().repository).map_err(json_error)?;
 
     for (index, stage) in stages.iter().enumerate() {
-        let ids = StageIds::new(stage);
-        let repository_profile =
-            serde_json::to_value(&document.sequence().repository).map_err(json_error)?;
-        let coding = coding_node(stage, &ids, index != 0, repository_profile.clone())?;
-        let verification = verification_node(stage, &ids, repository_profile)?;
-        let gate = gate_node(stage, &ids)?;
-        operations.extend([
-            Mutation::AddNode { node: coding },
-            Mutation::AddNode { node: verification },
-            Mutation::AddNode { node: gate },
-        ]);
-        operations.push(control_edge(
-            &format!("{}-coding-verification", stage.id),
-            &ids.coding,
-            CONTROL_OUT,
-            &ids.verification,
-            CONTROL_IN,
-        )?);
-        operations.push(control_edge(
-            &format!("{}-verification-gate", stage.id),
-            &ids.verification,
-            CONTROL_OUT,
-            &ids.gate,
-            CONTROL_IN,
-        )?);
-        operations.push(data_edge(
-            &format!("{}-verification-result-gate", stage.id),
-            &ids.verification,
-            &stage.verification.success_artifact,
-            &ids.gate,
-            &stage.verification.success_artifact,
-        )?);
+        let ids = StageTopologyIds::initial(stage)?;
+        let pipeline = stage_pipeline(stage, &ids, index != 0, repository_profile.clone())?;
+        operations.extend(pipeline.nodes);
+        operations.extend(pipeline.edges);
 
         let success_target = stages
             .get(index + 1)
-            .map(|next| format!("stage-{}-coding", next.id))
-            .unwrap_or_else(|| "sequence-succeeded".to_owned());
+            .map(initial_coding_id)
+            .transpose()?
+            .unwrap_or(sequence_success_id()?);
         operations.push(control_edge(
             &format!("{}-gate-pass", stage.id),
             &ids.gate,
@@ -144,9 +120,9 @@ pub fn compile(
 
         let (reviewer_node, approval_wait_node) = match stage.failure {
             FailurePolicy::PauseForReview => {
-                let reviewer = reviewer_node(stage, &ids)?;
-                let hold = approval_wait_node(&ids)?;
-                let failure = failure_terminal(&ids)?;
+                let reviewer = reviewer_node(stage, &ids.reviewer)?;
+                let hold = approval_wait_node(&ids.hold)?;
+                let failure = failure_terminal(&ids.failure_terminal)?;
                 operations.push(Mutation::AddNode { node: reviewer });
                 operations.push(Mutation::AddNode { node: hold });
                 operations.push(Mutation::AddNode { node: failure });
@@ -171,10 +147,10 @@ pub fn compile(
                     &ids.failure_terminal,
                     CONTROL_IN,
                 )?);
-                (Some(ids.reviewer.clone()), Some(ids.hold.clone()))
+                (Some(ids.reviewer.to_string()), Some(ids.hold.to_string()))
             }
             FailurePolicy::FailRun => {
-                let failure = failure_terminal(&ids)?;
+                let failure = failure_terminal(&ids.failure_terminal)?;
                 operations.push(Mutation::AddNode { node: failure });
                 operations.push(control_edge(
                     &format!("{}-gate-failure", stage.id),
@@ -189,9 +165,9 @@ pub fn compile(
 
         summaries.push(StageBlueprintSummary {
             stage_id: stage.id.clone(),
-            coding_node: ids.coding,
-            verification_node: ids.verification,
-            gate_node: ids.gate,
+            coding_node: ids.coding.to_string(),
+            verification_node: ids.verification.to_string(),
+            gate_node: ids.gate.to_string(),
             reviewer_node,
             approval_wait_node,
             prompt_digest: prompt_digest(&stage.prompt)?,
@@ -201,7 +177,7 @@ pub fn compile(
 
     operations.push(Mutation::AddNode {
         node: Node::new(
-            NodeId::new("sequence-succeeded").map_err(|error| compilation(error.to_string()))?,
+            sequence_success_id()?,
             NodeKind::Terminal {
                 outcome: TerminalOutcome::Success,
             },
@@ -237,37 +213,55 @@ pub fn compile(
     })
 }
 
-struct StageIds {
-    coding: String,
-    verification: String,
-    gate: String,
-    reviewer: String,
-    hold: String,
-    failure_terminal: String,
+struct StageTopologyIds {
+    coding: NodeId,
+    verification: NodeId,
+    gate: NodeId,
+    reviewer: NodeId,
+    hold: NodeId,
+    failure_terminal: NodeId,
+    coding_verification: EdgeId,
+    verification_gate: EdgeId,
+    verification_result_gate: EdgeId,
 }
 
-impl StageIds {
-    fn new(stage: &StageDefinition) -> Self {
-        Self {
-            coding: format!("stage-{}-coding", stage.id),
-            verification: format!("stage-{}-verification", stage.id),
-            gate: format!("stage-{}-gate", stage.id),
-            reviewer: format!("stage-{}-review", stage.id),
-            hold: format!("stage-{}-approval", stage.id),
-            failure_terminal: format!("stage-{}-failed", stage.id),
-        }
+impl StageTopologyIds {
+    fn initial(stage: &StageDefinition) -> Result<Self, PromptSequenceError> {
+        Self::from_prefix(
+            &format!("stage-{}", stage.id),
+            edge_id(format!("{}-coding-verification", stage.id))?,
+            edge_id(format!("{}-verification-gate", stage.id))?,
+            edge_id(format!("{}-verification-result-gate", stage.id))?,
+        )
     }
 
-    fn remediation(stage: &StageDefinition, generation: u16) -> Self {
+    fn remediation(stage: &StageDefinition, generation: u16) -> Result<Self, PromptSequenceError> {
         let prefix = format!("stage-{}-remediation-{generation}", stage.id);
-        Self {
-            coding: format!("{prefix}-coding"),
-            verification: format!("{prefix}-verification"),
-            gate: format!("{prefix}-gate"),
-            reviewer: format!("{prefix}-review"),
-            hold: format!("{prefix}-approval"),
-            failure_terminal: format!("{prefix}-failed"),
-        }
+        Self::from_prefix(
+            &prefix,
+            edge_id(format!("{prefix}-coding-coding-verification"))?,
+            edge_id(format!("{prefix}-verification-verification-gate"))?,
+            edge_id(format!("{prefix}-verification-verification-result-gate"))?,
+        )
+    }
+
+    fn from_prefix(
+        prefix: &str,
+        coding_verification: EdgeId,
+        verification_gate: EdgeId,
+        verification_result_gate: EdgeId,
+    ) -> Result<Self, PromptSequenceError> {
+        Ok(Self {
+            coding: node_id(format!("{prefix}-coding"))?,
+            verification: node_id(format!("{prefix}-verification"))?,
+            gate: node_id(format!("{prefix}-gate"))?,
+            reviewer: node_id(format!("{prefix}-review"))?,
+            hold: node_id(format!("{prefix}-approval"))?,
+            failure_terminal: node_id(format!("{prefix}-failed"))?,
+            coding_verification,
+            verification_gate,
+            verification_result_gate,
+        })
     }
 }
 
@@ -289,99 +283,79 @@ pub(crate) fn remediation_mutation(
     }
     let mut remediation_stage = stage.clone();
     remediation_stage.prompt = prompt;
-    let initial = StageIds::new(stage);
-    let ids = StageIds::remediation(stage, generation);
-    let failure_review = format!("stage-{}-remediation-{generation}-failure-review", stage.id);
-    let superseded_pass = format!(
+    let initial = StageTopologyIds::initial(stage)?;
+    let ids = StageTopologyIds::remediation(stage, generation)?;
+    let failure_review = node_id(format!(
+        "stage-{}-remediation-{generation}-failure-review",
+        stage.id
+    ))?;
+    let superseded_pass = node_id(format!(
         "stage-{}-remediation-{generation}-superseded-pass",
         stage.id
-    );
+    ))?;
     let repository = serde_json::to_value(&document.sequence().repository).map_err(json_error)?;
-    let coding = coding_node(&remediation_stage, &ids, true, repository.clone())?;
-    let verification = verification_node(&remediation_stage, &ids, repository)?;
-    let gate = gate_node(&remediation_stage, &ids)?;
-    let success_review = reviewer_node_named(&remediation_stage, &ids.reviewer)?;
-    let failure_review_node = reviewer_node_named(&remediation_stage, &failure_review)?;
-    let hold = approval_wait_node(&ids)?;
-    let failure = failure_terminal(&ids)?;
+    let pipeline = stage_pipeline(&remediation_stage, &ids, true, repository)?;
     let next = document
         .sequence()
         .stages
         .iter()
         .position(|candidate| candidate.id == stage.id)
         .and_then(|index| document.sequence().stages.get(index + 1))
-        .map(|next| format!("stage-{}-coding", next.id))
-        .unwrap_or_else(|| "sequence-succeeded".to_owned());
+        .map(initial_coding_id)
+        .transpose()?
+        .unwrap_or(sequence_success_id()?);
 
     let mut operations = vec![
         Mutation::RemoveEdge {
-            edge: EdgeId::new(format!("{}-hold-failure", stage.id))
-                .map_err(|error| compilation(error.to_string()))?,
+            edge: edge_id(format!("{}-hold-failure", stage.id))?,
         },
         Mutation::ReplaceEdge {
-            edge: Edge::new(
-                EdgeId::new(format!("{}-gate-pass", stage.id))
-                    .map_err(|error| compilation(error.to_string()))?,
+            edge: build_edge(
+                &format!("{}-gate-pass", stage.id),
                 EdgeKind::Control,
-                node_id(&initial.gate)?,
-                port(PASS)?,
-                node_id(&superseded_pass)?,
-                port(CONTROL_IN)?,
-            ),
+                &initial.gate,
+                PASS,
+                &superseded_pass,
+                CONTROL_IN,
+            )?,
         },
         Mutation::RemoveNode {
-            node: node_id(&initial.failure_terminal)?,
+            node: initial.failure_terminal,
         },
-        Mutation::AddNode { node: coding },
-        Mutation::AddNode { node: verification },
-        Mutation::AddNode { node: gate },
+    ];
+    operations.extend(pipeline.nodes);
+    operations.extend([
         Mutation::AddNode {
-            node: success_review,
+            node: reviewer_node(&remediation_stage, &ids.reviewer)?,
         },
         Mutation::AddNode {
-            node: failure_review_node,
+            node: reviewer_node_named(&remediation_stage, &failure_review)?,
         },
-        Mutation::AddNode { node: hold },
-        Mutation::AddNode { node: failure },
+        Mutation::AddNode {
+            node: approval_wait_node(&ids.hold)?,
+        },
+        Mutation::AddNode {
+            node: failure_terminal(&ids.failure_terminal)?,
+        },
         Mutation::AddNode {
             node: Node::new(
-                node_id(&superseded_pass)?,
+                superseded_pass.clone(),
                 NodeKind::Terminal {
                     outcome: TerminalOutcome::Success,
                 },
             )?
             .with_control_input(port(CONTROL_IN)?)?,
         },
-    ];
+    ]);
+    operations.push(control_edge(
+        &format!("{}-approved-remediation-{generation}", stage.id),
+        &initial.hold,
+        APPROVED,
+        &ids.coding,
+        CONTROL_IN,
+    )?);
+    operations.extend(pipeline.edges);
     operations.extend([
-        control_edge(
-            &format!("{}-approved-remediation-{generation}", stage.id),
-            &initial.hold,
-            APPROVED,
-            &ids.coding,
-            CONTROL_IN,
-        )?,
-        control_edge(
-            &format!("{}-coding-verification", ids.coding),
-            &ids.coding,
-            CONTROL_OUT,
-            &ids.verification,
-            CONTROL_IN,
-        )?,
-        control_edge(
-            &format!("{}-verification-gate", ids.verification),
-            &ids.verification,
-            CONTROL_OUT,
-            &ids.gate,
-            CONTROL_IN,
-        )?,
-        data_edge(
-            &format!("{}-verification-result-gate", ids.verification),
-            &ids.verification,
-            &stage.verification.success_artifact,
-            &ids.gate,
-            &stage.verification.success_artifact,
-        )?,
         control_edge(
             &format!("{}-gate-review", ids.gate),
             &ids.gate,
@@ -421,9 +395,64 @@ pub(crate) fn remediation_mutation(
     MutationBatch::new(operations).map_err(|error| compilation(format!("{error:?}")))
 }
 
+struct StagePipelineMutations {
+    nodes: [Mutation; 3],
+    edges: [Mutation; 3],
+}
+
+fn stage_pipeline(
+    stage: &StageDefinition,
+    ids: &StageTopologyIds,
+    has_predecessor: bool,
+    repository_profile: Value,
+) -> Result<StagePipelineMutations, PromptSequenceError> {
+    Ok(StagePipelineMutations {
+        nodes: [
+            Mutation::AddNode {
+                node: coding_node(
+                    stage,
+                    &ids.coding,
+                    has_predecessor,
+                    repository_profile.clone(),
+                )?,
+            },
+            Mutation::AddNode {
+                node: verification_node(stage, &ids.verification, repository_profile)?,
+            },
+            Mutation::AddNode {
+                node: gate_node(stage, &ids.verification, &ids.gate)?,
+            },
+        ],
+        edges: [
+            control_edge(
+                ids.coding_verification.as_str(),
+                &ids.coding,
+                CONTROL_OUT,
+                &ids.verification,
+                CONTROL_IN,
+            )?,
+            control_edge(
+                ids.verification_gate.as_str(),
+                &ids.verification,
+                CONTROL_OUT,
+                &ids.gate,
+                CONTROL_IN,
+            )?,
+            add_edge(
+                ids.verification_result_gate.as_str(),
+                EdgeKind::Data,
+                &ids.verification,
+                &stage.verification.success_artifact,
+                &ids.gate,
+                &stage.verification.success_artifact,
+            )?,
+        ],
+    })
+}
+
 fn coding_node(
     stage: &StageDefinition,
-    ids: &StageIds,
+    identity: &NodeId,
     has_predecessor: bool,
     repository_profile: Value,
 ) -> Result<Node, PromptSequenceError> {
@@ -435,7 +464,7 @@ fn coding_node(
     let config = TaskConfig::new(requirement(&stage.coding), policy)
         .and_then(|config| config.with_output_context_roles(roles))
         .map_err(|error| compilation(error.to_string()))?;
-    let mut node = Node::new(node_id(&ids.coding)?, NodeKind::Task { config })?
+    let mut node = Node::new(identity.clone(), NodeKind::Task { config })?
         .with_control_output(port(CONTROL_OUT)?)?
         .with_data_input(
             port("prompt")?,
@@ -463,7 +492,7 @@ fn coding_node(
 
 fn verification_node(
     stage: &StageDefinition,
-    ids: &StageIds,
+    identity: &NodeId,
     repository_profile: Value,
 ) -> Result<Node, PromptSequenceError> {
     let roles = BTreeSet::from([
@@ -483,7 +512,7 @@ fn verification_node(
     )
     .and_then(|config| config.with_output_context_roles(roles))
     .map_err(|error| compilation(error.to_string()))?;
-    let mut node = Node::new(node_id(&ids.verification)?, NodeKind::Task { config })?
+    let mut node = Node::new(identity.clone(), NodeKind::Task { config })?
         .with_control_input(port(CONTROL_IN)?)?
         .with_control_output(port(CONTROL_OUT)?)?
         .with_data_input(
@@ -511,16 +540,20 @@ fn verification_node(
     Ok(node)
 }
 
-fn gate_node(stage: &StageDefinition, ids: &StageIds) -> Result<Node, PromptSequenceError> {
+fn gate_node(
+    stage: &StageDefinition,
+    verification: &NodeId,
+    identity: &NodeId,
+) -> Result<Node, PromptSequenceError> {
     let success = port(PASS)?;
     let failure = port(FAIL)?;
     let source = BindingSource::NodeOutput {
-        node: node_id(&ids.verification)?,
+        node: verification.clone(),
         port: port(&stage.verification.success_artifact)?,
         path: PathSelector::new(Vec::new()).map_err(|error| compilation(error.to_string()))?,
     };
     Ok(Node::new(
-        node_id(&ids.gate)?,
+        identity.clone(),
         NodeKind::Branch {
             config: BranchConfig::new(
                 BTreeMap::from([(
@@ -542,13 +575,13 @@ fn gate_node(stage: &StageDefinition, ids: &StageIds) -> Result<Node, PromptSequ
     )?)
 }
 
-fn reviewer_node(stage: &StageDefinition, ids: &StageIds) -> Result<Node, PromptSequenceError> {
-    reviewer_node_named(stage, &ids.reviewer)
+fn reviewer_node(stage: &StageDefinition, identity: &NodeId) -> Result<Node, PromptSequenceError> {
+    reviewer_node_named(stage, identity)
 }
 
 fn reviewer_node_named(
     stage: &StageDefinition,
-    identity: &str,
+    identity: &NodeId,
 ) -> Result<Node, PromptSequenceError> {
     let selected_roles = BTreeSet::from([
         ContextSemanticRole::FailureEvidence,
@@ -565,7 +598,7 @@ fn reviewer_node_named(
         config.with_output_context_roles(BTreeSet::from([ContextSemanticRole::Review]))
     })
     .map_err(|error| compilation(error.to_string()))?;
-    Ok(Node::new(node_id(identity)?, NodeKind::Task { config })?
+    Ok(Node::new(identity.clone(), NodeKind::Task { config })?
         .with_control_input(port(CONTROL_IN)?)?
         .with_control_output(port(CONTROL_OUT)?)?
         .with_data_input(
@@ -587,9 +620,9 @@ fn reviewer_node_named(
         )?)
 }
 
-fn approval_wait_node(ids: &StageIds) -> Result<Node, PromptSequenceError> {
+fn approval_wait_node(identity: &NodeId) -> Result<Node, PromptSequenceError> {
     Ok(Node::new(
-        node_id(&ids.hold)?,
+        identity.clone(),
         NodeKind::SignalWait {
             signal: milkdrift_capability::OperationId::new("sequence.approved")
                 .map_err(|error| compilation(error.to_string()))?,
@@ -599,9 +632,9 @@ fn approval_wait_node(ids: &StageIds) -> Result<Node, PromptSequenceError> {
     .with_control_output(port(APPROVED)?)?)
 }
 
-fn failure_terminal(ids: &StageIds) -> Result<Node, PromptSequenceError> {
+fn failure_terminal(identity: &NodeId) -> Result<Node, PromptSequenceError> {
     Ok(Node::new(
-        node_id(&ids.failure_terminal)?,
+        identity.clone(),
         NodeKind::Terminal {
             outcome: TerminalOutcome::Failure,
         },
@@ -754,40 +787,50 @@ fn domain_digest(domain: &str, bytes: &[u8]) -> String {
 
 fn control_edge(
     identity: &str,
-    source: &str,
+    source: &NodeId,
     source_port: &str,
-    target: &str,
+    target: &NodeId,
+    target_port: &str,
+) -> Result<Mutation, PromptSequenceError> {
+    add_edge(
+        identity,
+        EdgeKind::Control,
+        source,
+        source_port,
+        target,
+        target_port,
+    )
+}
+
+fn add_edge(
+    identity: &str,
+    kind: EdgeKind,
+    source: &NodeId,
+    source_port: &str,
+    target: &NodeId,
     target_port: &str,
 ) -> Result<Mutation, PromptSequenceError> {
     Ok(Mutation::AddEdge {
-        edge: Edge::new(
-            EdgeId::new(identity).map_err(|error| compilation(error.to_string()))?,
-            EdgeKind::Control,
-            node_id(source)?,
-            port(source_port)?,
-            node_id(target)?,
-            port(target_port)?,
-        ),
+        edge: build_edge(identity, kind, source, source_port, target, target_port)?,
     })
 }
 
-fn data_edge(
+fn build_edge(
     identity: &str,
-    source: &str,
+    kind: EdgeKind,
+    source: &NodeId,
     source_port: &str,
-    target: &str,
+    target: &NodeId,
     target_port: &str,
-) -> Result<Mutation, PromptSequenceError> {
-    Ok(Mutation::AddEdge {
-        edge: Edge::new(
-            EdgeId::new(identity).map_err(|error| compilation(error.to_string()))?,
-            EdgeKind::Data,
-            node_id(source)?,
-            port(source_port)?,
-            node_id(target)?,
-            port(target_port)?,
-        ),
-    })
+) -> Result<Edge, PromptSequenceError> {
+    Ok(Edge::new(
+        edge_id(identity)?,
+        kind,
+        source.clone(),
+        port(source_port)?,
+        target.clone(),
+        port(target_port)?,
+    ))
 }
 
 fn schema(identity: &str) -> Result<SchemaRef, PromptSequenceError> {
@@ -817,8 +860,20 @@ fn artifact_schema() -> Result<SchemaRef, PromptSequenceError> {
     schema("milkdrift.artifact_reference")
 }
 
-fn node_id(value: &str) -> Result<NodeId, PromptSequenceError> {
+fn initial_coding_id(stage: &StageDefinition) -> Result<NodeId, PromptSequenceError> {
+    node_id(format!("stage-{}-coding", stage.id))
+}
+
+fn sequence_success_id() -> Result<NodeId, PromptSequenceError> {
+    node_id(SEQUENCE_SUCCEEDED)
+}
+
+fn node_id(value: impl Into<String>) -> Result<NodeId, PromptSequenceError> {
     NodeId::new(value).map_err(|error| compilation(error.to_string()))
+}
+
+fn edge_id(value: impl Into<String>) -> Result<EdgeId, PromptSequenceError> {
+    EdgeId::new(value).map_err(|error| compilation(error.to_string()))
 }
 
 fn port(value: &str) -> Result<PortId, PromptSequenceError> {

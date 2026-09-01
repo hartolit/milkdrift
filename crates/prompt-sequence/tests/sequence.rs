@@ -95,8 +95,22 @@ fn json_import_compiles_to_only_ordinary_blueprint_primitives() -> TestResult {
     assert_eq!(compiled.stages().len(), 2);
     assert_eq!(revision.semantic().nodes().len(), 13);
     assert_eq!(revision.semantic().edges().len(), 14);
-    assert!(compiled.import_digest().starts_with("b3_"));
-    assert!(compiled.repository_profile_digest().starts_with("b3_"));
+    assert_eq!(
+        compiled.import_digest(),
+        "b3_3479af944d962848d8879d2964e3ce07ca6b6ece62bf1d4e6d59a4cdec2b737f"
+    );
+    assert_eq!(
+        compiled.repository_profile_digest(),
+        "b3_ae47b260e3f89762e1431b0c39b884568e96d966f26199a37e55369f7d2bcc2d"
+    );
+    assert_eq!(
+        revision.content_digest().to_string(),
+        "b3_0e3a0aa28167457932ee5b89cf154c4dae0402a0f316374780984cb6eec8c4d6"
+    );
+    assert_eq!(
+        revision.id().as_str(),
+        "rev_2e89086b94e50070158aa771beda3d09fe44ab6f39797100a88ac263bc5304cb"
+    );
     assert!(revision.semantic().nodes().values().all(|node| {
         matches!(
             node.kind(),
@@ -132,6 +146,34 @@ fn json_import_compiles_to_only_ordinary_blueprint_primitives() -> TestResult {
     let bytes = BlueprintRevisionDocument::new(revision).to_canonical_json()?;
     let (_decoded, round_trip) = BlueprintRevisionDocument::from_json(&bytes)?;
     assert_eq!(&round_trip, revision);
+    Ok(())
+}
+
+#[test]
+fn fail_run_stage_has_one_direct_failure_route_without_review_state() -> TestResult {
+    let mut value = document_value();
+    value["sequence"]["stages"][1]["failure"] = json!("fail_run");
+    let document = PromptSequenceDocument::from_json(&serde_json::to_vec(&value)?)?;
+    let compiled = compile(&document, AuthorRef::new("human:sequence-test")?)?;
+    let semantic = compiled.revision().semantic();
+
+    assert_eq!(semantic.nodes().len(), 11);
+    assert_eq!(semantic.edges().len(), 12);
+    assert!(
+        semantic
+            .nodes()
+            .contains_key(&milkdrift_blueprint::NodeId::new("stage-two-failed")?)
+    );
+    assert!(
+        !semantic
+            .nodes()
+            .contains_key(&milkdrift_blueprint::NodeId::new("stage-two-review")?)
+    );
+    assert!(
+        semantic
+            .edges()
+            .contains_key(&milkdrift_blueprint::EdgeId::new("two-gate-failure")?)
+    );
     Ok(())
 }
 
@@ -271,6 +313,18 @@ fn remediation_is_a_digest_bound_prospective_ordinary_revision() -> TestResult {
         AuthorRef::new("human:sequence-test")?,
         "test prospective remediation",
     )?;
+    assert_eq!(
+        prospective.content_digest().to_string(),
+        "b3_c871a8c4cd945e358932d4cd318bd3f1f7ca8c06fec80e38ef1143502933a731"
+    );
+    assert_eq!(
+        prospective.id().as_str(),
+        "rev_ff0f4cf43247434e096eb4ad18d5367e78de15c08991cd4a4248a445d0ed4951"
+    );
+    assert_eq!(
+        proposal.proposal().mutation().id().as_str(),
+        "batch_7c77e104721ced1460758c05b602f4f603af0df1ed2d63c8b5ec44acefcfb385"
+    );
     assert!(
         prospective
             .semantic()
