@@ -98,7 +98,14 @@ mod runs;
 
 use health::{Lifecycle, QueuedRequestGuard, SharedHealth};
 use peer_store::{OwnerPeerArtifactStore, OwnerPeerExecutionStore, OwnerPeerQueue};
-use read_model::*;
+use read_model::{
+    accepted_sequence, bounded, conflict, corruption, cursor_binding, diff_keys,
+    empty_attempt_read, internal, invalid, map_resolve, not_found, parse_revision_id,
+    parse_run_state, public_artifact_metadata, public_attempt_usage, public_authority_decision,
+    public_capability_provenance, public_control, public_execution_authority,
+    public_invocation_artifact, public_persistence, public_protocol, public_revision_summary,
+    public_run, public_timeline, snake_debug, unauthorized, unauthorized_decision, unix_millis,
+};
 
 const OWNER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
 const APPLICATION_COMMAND_SCHEMA_VERSION: u32 = 1;
@@ -1547,7 +1554,7 @@ fn internal_control_id(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{TimelineCategory, read_model::timeline_summary};
 
     #[test]
     fn timeline_projection_never_serializes_internal_event_body() {

@@ -1,4 +1,7 @@
-use super::super::*;
+use super::super::{
+    BlueprintRevisionDocument, PersistenceError, REVISIONS, REVISIONS_BY_DIGEST, RevisionSummary,
+    codec, error,
+};
 use super::{ScanContext, phase};
 
 pub(super) fn scan(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceError> {

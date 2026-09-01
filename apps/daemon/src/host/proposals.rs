@@ -1,6 +1,13 @@
 //! Proposal discovery projection and exact control-state query ownership.
 
-use super::*;
+use super::{
+    ActorSession, ApplicationCommandEffect, ApplicationCursor, ApplicationEffectReference,
+    ApplicationPageQuery, AuthorityOperation, CommandAccepted, CommandId, CommandRequest,
+    ControlCommand, ControlResult, Cursor, Owner, Page, PageSize, ProposalId, ProposalIndexEntry,
+    ProposalIndexStore, ProposalRead, PublicFailure, RunId, TimestampMillis, Value,
+    WorkflowProposalDocument, bounded, corruption, cursor_binding, internal, invalid,
+    parse_revision_id, public_persistence, public_protocol, snake_debug,
+};
 
 pub(super) fn application_effect(
     session: &ActorSession,

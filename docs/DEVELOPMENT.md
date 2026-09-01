@@ -151,7 +151,8 @@ features separately. A lower count is evidence, not permission to hide a real po
 contract.
 
 Repository contract checks keep canonical links/version statements aligned with source constants,
-guard dependency direction, and prevent narrowed exports from returning:
+guard dependency direction, keep public re-exports explicit, and prevent narrowed exports from
+returning:
 
 ```sh
 cargo test -p milkdrift-evidence --test repository_contracts --all-features

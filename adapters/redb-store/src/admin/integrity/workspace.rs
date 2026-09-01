@@ -1,4 +1,9 @@
-use super::super::*;
+use super::super::{
+    PersistenceError, ROOT_SCOPES, RUN_ARTIFACT_OWNERSHIP, RunId, SCOPES, ScopeId, ScopeKind,
+    VALUES, WORKSPACE_BUDGETS, WORKSPACE_USAGE, WORKSPACE_VALUE_HEADS, WorkspaceBudget,
+    WorkspaceScope, WorkspaceUsage, WorkspaceValueEntry, WorkspaceValueReference, codec, error,
+    json,
+};
 use super::{ScanContext, phase};
 
 pub(super) fn scan_core(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceError> {

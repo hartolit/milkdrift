@@ -1,6 +1,14 @@
 //! External command idempotency, deterministic rejection, and recovery boundary.
 
-use super::*;
+use super::{
+    APPLICATION_COMMAND_SCHEMA_VERSION, ActorSession, ApplicationCommandCommit,
+    ApplicationCommandCommitOutcome, ApplicationCommandEffect, ApplicationCommandReceipt,
+    ApplicationCommandResult, ApplicationCommandStore, ApplicationEffectReference,
+    BlueprintRevisionDocument, Command, CommandAccepted, CommandId, CommandRequest, Deserialize,
+    ErrorCode, IntegrityDigest, Owner, PublicFailure, RunId, RunSequence, Serialize,
+    TimestampMillis, Value, bounded, conflict, corruption, internal, invalid, layouts,
+    parse_revision_id, proposals, public_persistence, public_protocol, unix_millis,
+};
 
 pub(super) fn execute(
     owner: &mut Owner,

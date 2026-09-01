@@ -1,6 +1,13 @@
 //! Authorized immutable workflow/revision lineage read-model ownership.
 
-use super::*;
+use super::{
+    ActorSession, AuthorityOperation, BlueprintRevisionDocument, ControlCommand, ControlResult,
+    Cursor, Owner, Page, PageSize, PublicFailure, PublicRevisionSummary, RequestedResourceFacts,
+    RevisionCursor, RevisionDiffRead, RevisionFilter, RevisionPageQuery, RevisionRead,
+    RevisionStore, WorkflowId, WorkflowRunScope, cursor_binding, diff_keys, internal, invalid,
+    not_found, parse_revision_id, public_persistence, public_protocol, public_revision_summary,
+    unauthorized,
+};
 
 impl Owner {
     pub(super) fn revision(

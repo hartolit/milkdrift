@@ -1,6 +1,12 @@
 //! Local capability registration, health checks, and authorized read-model ownership.
 
-use super::*;
+use super::{
+    ActorSession, AdapterConfig, Arc, AuthorityOperation, CapabilityHost, CapabilityId,
+    CapabilityRead, ConfiguredSecretResolver, ControlService, EndpointProfile, ErrorCode,
+    InvocationDataAccess, LocalProcessAdapter, ModelEndpointAdapter, Owner, ProcessProfileDocument,
+    PublicFailure, RequestedResourceFacts, ResultSink, WorkflowControlAdapter, bounded,
+    descriptor_for_profile, fs, snake_debug, unix_millis, workflow_control_descriptor,
+};
 
 impl Owner {
     pub(super) fn capabilities(

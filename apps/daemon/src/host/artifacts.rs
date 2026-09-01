@@ -1,6 +1,11 @@
 //! Authorized artifact metadata and bounded content-release ownership.
 
-use super::*;
+use super::{
+    ActorSession, ArtifactContentRead, ArtifactId, ArtifactMetadataRead, ArtifactReadAuthority,
+    ArtifactReadRequest, ArtifactSensitivity, ArtifactStore, AuthorityOperation, EvidenceId, Owner,
+    PublicFailure, RequestedResourceFacts, invalid, not_found, public_artifact_metadata,
+    public_persistence, unauthorized,
+};
 
 impl Owner {
     pub(super) fn artifact_metadata(

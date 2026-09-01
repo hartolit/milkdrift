@@ -197,7 +197,9 @@ fn status_is_current_fact_not_a_pass_diary() -> TestResult {
 fn semantic_and_protocol_packages_have_no_ui_inference_or_internal_adapter_edges() -> TestResult {
     let repository = root()?;
     let mut manifests = Vec::new();
-    collect_manifests(&repository, &mut manifests)?;
+    collect_files(&repository, &mut manifests, &|path| {
+        path.file_name().and_then(|name| name.to_str()) == Some("Cargo.toml")
+    })?;
     let forbidden_product_dependencies = [
         "iced", "egui", "tauri", "slint", "dioxus", "candle", "burn", "llama", "tch", "onnx", "ort",
     ];
@@ -283,6 +285,32 @@ fn narrowed_exports_and_validating_constructors_remain_narrow() -> TestResult {
 }
 
 #[test]
+fn public_reexports_are_explicit_and_reviewable() -> TestResult {
+    let repository = root()?;
+    let public_use = ["pub", "use"].concat();
+    let wildcard = [":", ":", "*"].concat();
+    let mut sources = Vec::new();
+    collect_files(&repository, &mut sources, &|path| {
+        path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+    })?;
+    for source in sources {
+        let contents = read(&source)?;
+        let compact: String = contents
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        for declaration in compact.split(';') {
+            assert!(
+                !(declaration.contains(&public_use) && declaration.contains(&wildcard)),
+                "wildcard public re-export in {}",
+                source.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn exact_current_process_fixture_uses_the_public_reader() -> TestResult {
     let fixtures = root()?.join("adapters/local-process/tests/fixtures");
     let current = fs::read(fixtures.join("process-profile-v2.json"))?;
@@ -292,7 +320,11 @@ fn exact_current_process_fixture_uses_the_public_reader() -> TestResult {
     Ok(())
 }
 
-fn collect_manifests(directory: &Path, manifests: &mut Vec<PathBuf>) -> std::io::Result<()> {
+fn collect_files(
+    directory: &Path,
+    files: &mut Vec<PathBuf>,
+    selects: &impl Fn(&Path) -> bool,
+) -> std::io::Result<()> {
     for entry in fs::read_dir(directory)? {
         let path = entry?.path();
         if path.is_dir() {
@@ -300,10 +332,10 @@ fn collect_manifests(directory: &Path, manifests: &mut Vec<PathBuf>) -> std::io:
                 path.file_name().and_then(|name| name.to_str()),
                 Some("target" | ".git")
             ) {
-                collect_manifests(&path, manifests)?;
+                collect_files(&path, files, selects)?;
             }
-        } else if path.file_name().and_then(|name| name.to_str()) == Some("Cargo.toml") {
-            manifests.push(path);
+        } else if selects(&path) {
+            files.push(path);
         }
     }
     Ok(())

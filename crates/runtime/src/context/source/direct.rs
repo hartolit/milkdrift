@@ -2,7 +2,12 @@
 
 use milkdrift_capability::InvocationValueReference;
 
-use super::*;
+use super::{
+    ArtifactSensitivity, AuthorityFact, BTreeSet, ContentDigest, ContextBuildError,
+    ContextCandidate, ContextCandidateAvailability, ContextProducerFact, ContextSemanticKind,
+    ContextSource, ContextSourceRequest, DurableContextCandidateSource, InputReference,
+    WorkspaceValueReference, combined_authority, workspace_artifact,
+};
 
 impl DurableContextCandidateSource<'_> {
     pub(super) fn direct_candidate(

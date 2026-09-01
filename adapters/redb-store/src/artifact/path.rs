@@ -1,5 +1,10 @@
 use super::publication::publication_in_transaction;
-use super::*;
+use super::{
+    ARTIFACT_DELETE_GUARDS, ARTIFACT_PATHS, ArtifactPublicationId, ArtifactReference,
+    ContentDigest, FaultPoint, File, MAX_CHUNK_BYTES, OpenOptions, Path, PathBuf, PersistenceError,
+    PublicationRecord, PublicationState, Read, ReadableTable, RedbStore, StorageFailureClass,
+    codec, error, fs,
+};
 impl RedbStore {
     pub(crate) fn lock_artifact_publications(
         &self,

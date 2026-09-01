@@ -1,6 +1,11 @@
 //! Typed request surface for work serialized through the daemon owner.
 
-use super::*;
+use super::{
+    ActorSession, ArtifactContentRead, ArtifactMetadataRead, AttemptRead, AuthorityOperation,
+    BTreeSet, CapabilityRead, CommandAccepted, CommandRequest, Cursor, DaemonHost, LayoutDocument,
+    NodeRead, Page, ProposalRead, PublicFailure, PublicRevisionSummary, RequestedResourceFacts,
+    RevisionDiffRead, RevisionRead, RunRead, StreamAuthority, TimelineEntry,
+};
 
 impl DaemonHost {
     pub(crate) async fn authorize_version(

@@ -1,5 +1,12 @@
 use super::queries::validated_run_head;
-use super::*;
+use super::{
+    AtomicRunCommitRequest, BTreeSet, MAX_SCOPE_DEPTH, MAX_VALUE_PROVENANCE_DEPTH,
+    PersistenceError, ROOT_SCOPES, RUN_EVENTS, RUN_HEADS, ReadableTable, RedbStore, RunId,
+    RunSequence, SCOPES, ScopeId, ScopeKind, ScopeReference, Table, VALUES, ValueKey, ValueOrigin,
+    WORKSPACE_BUDGETS, WORKSPACE_USAGE, WORKSPACE_VALUE_HEADS, WorkspaceMutation, WorkspaceScope,
+    WorkspaceStore, WorkspaceUsage, WorkspaceValueEntry, WorkspaceValueReference, codec, error,
+    json, validate_run_history_membership, validate_run_history_membership_in_transaction,
+};
 pub(crate) fn apply_workspace(
     write: &redb::WriteTransaction,
     request: &AtomicRunCommitRequest,
