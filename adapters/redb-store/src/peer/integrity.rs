@@ -11,8 +11,9 @@ use milkdrift_persistence::{
 use redb::{ReadableTable, ReadableTableMetadata};
 
 use super::{
-    LOCATION_ARCHIVED, LOCATION_HOT, PEER_ACCOUNTING_SCHEMA_VERSION, PerPeerAccounting,
-    available_key, claim_key, corruption, decode_record, decode_tombstone, global_accounting_read,
+    LOCATION_ARCHIVED, LOCATION_HOT,
+    accounting::{PEER_ACCOUNTING_SCHEMA_VERSION, PerPeerAccounting, global_accounting_read},
+    available_key, claim_key, corruption, decode_record, decode_tombstone,
     observation_genesis_digest, observation_key, observation_link_digest, ordered_key, request_key,
     snapshot_in_read_transaction_text,
 };

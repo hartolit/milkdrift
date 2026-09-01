@@ -311,6 +311,32 @@ fn public_reexports_are_explicit_and_reviewable() -> TestResult {
 }
 
 #[test]
+fn rust_modules_use_named_file_children_and_respect_the_size_backstop() -> TestResult {
+    const MAXIMUM_SOURCE_LINES: usize = 2_000;
+
+    let repository = root()?;
+    let mut sources = Vec::new();
+    collect_files(&repository, &mut sources, &|path| {
+        path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+    })?;
+    for source in sources {
+        assert_ne!(
+            source.file_name().and_then(|name| name.to_str()),
+            Some("mod.rs"),
+            "module ownership must use file.rs with file/ children: {}",
+            source.display()
+        );
+        let lines = read(&source)?.lines().count();
+        assert!(
+            lines < MAXIMUM_SOURCE_LINES,
+            "{} has {lines} lines; perform the required cohesion review before crossing the {MAXIMUM_SOURCE_LINES}-line backstop",
+            source.display()
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn exact_current_process_fixture_uses_the_public_reader() -> TestResult {
     let fixtures = root()?.join("adapters/local-process/tests/fixtures");
     let current = fs::read(fixtures.join("process-profile-v2.json"))?;
