@@ -92,6 +92,7 @@ mod layouts;
 mod proposals;
 mod read_model;
 mod receipts;
+mod requests;
 mod runs;
 
 use health::{Lifecycle, QueuedRequestGuard, SharedHealth};
@@ -395,7 +396,11 @@ impl DaemonHost {
     /// Runs ordered shutdown and joins the owner thread.
     pub async fn shutdown(&self) -> Result<(), HostError> {
         let drain_error = self.begin_draining().err();
-        let result = match self.request(OwnerOperation::Shutdown, true).await {
+        let health = self.health.clone();
+        let result = match self
+            .dispatch(true, move |owner| owner.shutdown(&health))
+            .await
+        {
             Ok(result) => result,
             Err(error) => {
                 self.health.set_lifecycle(Lifecycle::Failed);
@@ -414,30 +419,30 @@ impl DaemonHost {
                 .map_err(|_| HostError::Shutdown("runtime owner panicked".to_owned()))?;
         }
         match result {
-            OwnerValue::Shutdown {
+            ShutdownOutcome {
                 clean: true,
                 unresolved: 0,
             } => match drain_error {
                 Some(error) => Err(error),
                 None => Ok(()),
             },
-            OwnerValue::Shutdown { clean, unresolved } => {
+            ShutdownOutcome { clean, unresolved } => {
                 self.health.set_lifecycle(Lifecycle::Failed);
                 Err(HostError::Shutdown(format!(
                     "shutdown retained or could not resolve {unresolved} invocation(s); clean={clean}"
                 )))
             }
-            _ => Err(HostError::Shutdown(
-                "runtime owner returned an invalid shutdown result".to_owned(),
-            )),
         }
     }
 
-    pub(crate) async fn request(
+    async fn dispatch<T>(
         &self,
-        operation: OwnerOperation,
         shutdown: bool,
-    ) -> Result<OwnerValue, PublicFailure> {
+        operation: impl FnOnce(&mut Owner) -> Result<T, PublicFailure> + Send + 'static,
+    ) -> Result<T, PublicFailure>
+    where
+        T: Send + 'static,
+    {
         if !shutdown && !self.health.is_ready() {
             return Err(PublicFailure::new(
                 ErrorCode::Unavailable,
@@ -448,8 +453,10 @@ impl DaemonHost {
         let started = tokio::time::Instant::now();
         let (reply, receiver) = oneshot::channel();
         let mut pending = OwnerRequest {
-            operation,
-            reply,
+            execute: Box::new(move |owner| {
+                let _ = reply.send(operation(owner));
+            }),
+            stop_owner: shutdown,
             queued: None,
         };
         loop {
@@ -512,153 +519,24 @@ impl DaemonHost {
     }
 }
 
-pub(crate) enum OwnerOperation {
-    Version {
-        session: ActorSession,
-    },
-    Health {
-        session: ActorSession,
-    },
-    Readiness {
-        session: ActorSession,
-    },
-    Authority {
-        session: ActorSession,
-    },
-    Peers {
-        session: ActorSession,
-    },
-    Peer {
-        session: ActorSession,
-        peer: String,
-    },
-    AdministerPeer {
-        session: ActorSession,
-        peer: String,
-    },
-    StreamAuthority {
-        session: ActorSession,
-        stream: StreamAuthority,
-    },
-    Command {
-        session: ActorSession,
-        request: Box<CommandRequest>,
-    },
-    Revision {
-        session: ActorSession,
-        revision: String,
-    },
-    Revisions {
-        session: ActorSession,
-        workflow: Option<String>,
-        cursor: Option<Cursor>,
-        limit: u32,
-    },
-    RevisionDiff {
-        session: ActorSession,
-        from: String,
-        to: String,
-    },
-    Run {
-        session: ActorSession,
-        run: String,
-    },
-    Node {
-        session: ActorSession,
-        run: String,
-        execution: String,
-    },
-    Attempt {
-        session: ActorSession,
-        run: String,
-        attempt: String,
-    },
-    Runs {
-        session: ActorSession,
-        state: Option<String>,
-        workflow: Option<String>,
-        cursor: Option<Cursor>,
-        limit: u32,
-    },
-    Timeline {
-        session: ActorSession,
-        run: String,
-        cursor: Option<Cursor>,
-        limit: u32,
-    },
-    Proposals {
-        session: ActorSession,
-        run: String,
-        cursor: Option<Cursor>,
-        limit: u32,
-    },
-    Proposal {
-        session: ActorSession,
-        run: String,
-        proposal: String,
-        revision: String,
-    },
-    Capabilities {
-        session: ActorSession,
-    },
-    ArtifactMetadata {
-        session: ActorSession,
-        artifact: String,
-    },
-    ArtifactRange {
-        session: ActorSession,
-        artifact: String,
-        offset: u64,
-        maximum: u32,
-        evidence: String,
-    },
-    Layout {
-        session: ActorSession,
-        workflow: String,
-        revision: String,
-    },
-    Shutdown,
-}
-
-pub(crate) enum OwnerValue {
-    Authorized(String),
-    Authority(milkdrift_control_protocol::AuthorityRead),
-    PeerIds(BTreeSet<String>),
-    Command(CommandAccepted),
-    Revision(RevisionRead),
-    Revisions(Page<PublicRevisionSummary>),
-    RevisionDiff(RevisionDiffRead),
-    Run(RunRead),
-    Node(NodeRead),
-    Attempt(AttemptRead),
-    Runs(Page<RunRead>),
-    Timeline(Page<TimelineEntry>),
-    Proposals(Page<ProposalRead>),
-    Proposal(ProposalRead),
-    Capabilities(Vec<CapabilityRead>),
-    ArtifactMetadata(ArtifactMetadataRead),
-    ArtifactRange {
-        metadata: ArtifactMetadataRead,
-        offset: u64,
-        bytes: Vec<u8>,
-        end: bool,
-    },
-    Layout(LayoutDocument),
-    Shutdown {
-        clean: bool,
-        unresolved: u32,
-    },
-}
-
 pub(crate) enum StreamAuthority {
     Run(String),
     Capabilities,
     Health,
 }
 
+pub(crate) struct ArtifactContentRead {
+    pub(crate) metadata: ArtifactMetadataRead,
+    pub(crate) offset: u64,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) end: bool,
+}
+
+type OwnerTask = Box<dyn FnOnce(&mut Owner) + Send + 'static>;
+
 struct OwnerRequest {
-    operation: OwnerOperation,
-    reply: oneshot::Sender<Result<OwnerValue, PublicFailure>>,
+    execute: OwnerTask,
+    stop_owner: bool,
     queued: Option<QueuedRequestGuard>,
 }
 
@@ -692,6 +570,11 @@ struct Owner {
     effect_workers: Option<EffectWorkerHost>,
     peer_service: Option<Arc<PeerService>>,
     peer_registries: BTreeMap<PeerId, Arc<PeerRegistry>>,
+}
+
+struct ShutdownOutcome {
+    clean: bool,
+    unresolved: u32,
 }
 
 struct PeerRuntime {
@@ -893,14 +776,9 @@ impl Owner {
             match receiver.recv_timeout(maintenance) {
                 Ok(mut request) => {
                     request.mark_dequeued();
-                    let is_shutdown = matches!(request.operation, OwnerOperation::Shutdown);
-                    let result = if is_shutdown {
-                        self.shutdown(health)
-                    } else {
-                        self.execute(request.operation)
-                    };
-                    let _ = request.reply.send(result);
-                    if is_shutdown {
+                    let stop_owner = request.stop_owner;
+                    (request.execute)(self);
+                    if stop_owner {
                         return;
                     }
                     self.maintenance(health);
@@ -987,244 +865,6 @@ impl Owner {
         }
     }
 
-    fn execute(&mut self, operation: OwnerOperation) -> Result<OwnerValue, PublicFailure> {
-        match operation {
-            OwnerOperation::Version { session } => self
-                .authorize(
-                    &session,
-                    AuthorityOperation::NegotiateControlProtocol,
-                    RequestedResourceFacts::empty(),
-                    "read:version",
-                )
-                .map(|decision| OwnerValue::Authorized(decision.digest().to_owned())),
-            OwnerOperation::Health { session } => {
-                let mut resources = RequestedResourceFacts::empty();
-                resources.daemon_detailed_health = true;
-                self.authorize(
-                    &session,
-                    AuthorityOperation::InspectDaemonHealth,
-                    resources,
-                    "read:health",
-                )
-                .map(|decision| OwnerValue::Authorized(decision.digest().to_owned()))
-            }
-            OwnerOperation::Readiness { session } => {
-                let mut resources = RequestedResourceFacts::empty();
-                resources.daemon_readiness = true;
-                self.authorize(
-                    &session,
-                    AuthorityOperation::ReadReadiness,
-                    resources,
-                    "read:readiness",
-                )
-                .map(|decision| OwnerValue::Authorized(decision.digest().to_owned()))
-            }
-            OwnerOperation::Authority { session } => {
-                let mut resources = RequestedResourceFacts::empty();
-                resources.daemon_own_authority = true;
-                self.authorize(
-                    &session,
-                    AuthorityOperation::InspectOwnAuthority,
-                    resources,
-                    "read:own-authority",
-                )?;
-                let operations = session
-                    .grant
-                    .operations()
-                    .iter()
-                    .filter_map(|operation| serde_json::to_value(operation).ok())
-                    .filter_map(|value| value.as_str().map(str::to_owned))
-                    .collect();
-                Ok(OwnerValue::Authority(
-                    milkdrift_control_protocol::AuthorityRead {
-                        actor: session.actor.as_str().to_owned(),
-                        grant_id: session.grant.identity().as_str().to_owned(),
-                        grant_revision: session.grant.revision(),
-                        revocation_generation: session.grant.revocation_generation(),
-                        operations,
-                    },
-                ))
-            }
-            OwnerOperation::Peers { session } => {
-                let mut visible = BTreeSet::new();
-                for peer in self.peer_registries.keys() {
-                    let mut resources = RequestedResourceFacts::empty();
-                    resources.peer = Some(peer.clone());
-                    if self
-                        .evaluate_authority(
-                            &session,
-                            AuthorityOperation::InspectPeer,
-                            resources,
-                            "read:peers",
-                        )?
-                        .is_allowed()
-                    {
-                        visible.insert(peer.as_str().to_owned());
-                    }
-                }
-                Ok(OwnerValue::PeerIds(visible))
-            }
-            OwnerOperation::Peer { session, peer } => {
-                self.authorize_peer(
-                    &session,
-                    &peer,
-                    AuthorityOperation::InspectPeer,
-                    "read:peer",
-                )?;
-                Ok(OwnerValue::Authorized(String::new()))
-            }
-            OwnerOperation::AdministerPeer { session, peer } => {
-                let decision = self.authorize_peer(
-                    &session,
-                    &peer,
-                    AuthorityOperation::AdministerPeer,
-                    "command:administer-peer",
-                )?;
-                self.record_security_decision(&decision)?;
-                Ok(OwnerValue::Authorized(String::new()))
-            }
-            OwnerOperation::StreamAuthority { session, stream } => {
-                let decision = match stream {
-                    StreamAuthority::Run(run) => self.authorize_run_read(
-                        &session,
-                        &run,
-                        AuthorityOperation::InspectTimeline,
-                        "stream:run",
-                    )?,
-                    StreamAuthority::Capabilities => {
-                        self.authorize(
-                            &session,
-                            AuthorityOperation::ListCapabilities,
-                            RequestedResourceFacts::empty(),
-                            "stream:capabilities",
-                        )?;
-                        self.authorize(
-                            &session,
-                            AuthorityOperation::InspectCapabilityHealth,
-                            RequestedResourceFacts::empty(),
-                            "stream:capability-health",
-                        )?;
-                        self.authorize(
-                            &session,
-                            AuthorityOperation::InspectProviderProfile,
-                            RequestedResourceFacts::empty(),
-                            "stream:provider-profile",
-                        )?
-                    }
-                    StreamAuthority::Health => {
-                        let mut resources = RequestedResourceFacts::empty();
-                        resources.daemon_detailed_health = true;
-                        self.authorize(
-                            &session,
-                            AuthorityOperation::InspectDaemonHealth,
-                            resources,
-                            "stream:daemon-health",
-                        )?
-                    }
-                };
-                Ok(OwnerValue::Authorized(decision.digest().to_owned()))
-            }
-            OwnerOperation::Command { session, request } => {
-                self.command(&session, *request).map(OwnerValue::Command)
-            }
-            OwnerOperation::Revision { session, revision } => {
-                self.revision(&session, &revision).map(OwnerValue::Revision)
-            }
-            OwnerOperation::Revisions {
-                session,
-                workflow,
-                cursor,
-                limit,
-            } => self
-                .revisions(&session, workflow.as_deref(), cursor.as_ref(), limit)
-                .map(OwnerValue::Revisions),
-            OwnerOperation::RevisionDiff { session, from, to } => self
-                .revision_diff(&session, &from, &to)
-                .map(OwnerValue::RevisionDiff),
-            OwnerOperation::Run { session, run } => {
-                self.run_read(&session, &run).map(OwnerValue::Run)
-            }
-            OwnerOperation::Node {
-                session,
-                run,
-                execution,
-            } => self
-                .node_read(&session, &run, &execution)
-                .map(OwnerValue::Node),
-            OwnerOperation::Attempt {
-                session,
-                run,
-                attempt,
-            } => self
-                .attempt_read(&session, &run, &attempt)
-                .map(OwnerValue::Attempt),
-            OwnerOperation::Runs {
-                session,
-                state,
-                workflow,
-                cursor,
-                limit,
-            } => self
-                .runs(
-                    &session,
-                    state.as_deref(),
-                    workflow.as_deref(),
-                    cursor.as_ref(),
-                    limit,
-                )
-                .map(OwnerValue::Runs),
-            OwnerOperation::Timeline {
-                session,
-                run,
-                cursor,
-                limit,
-            } => self
-                .timeline(&session, &run, cursor.as_ref(), limit)
-                .map(OwnerValue::Timeline),
-            OwnerOperation::Proposals {
-                session,
-                run,
-                cursor,
-                limit,
-            } => self
-                .proposals(&session, &run, cursor.as_ref(), limit)
-                .map(OwnerValue::Proposals),
-            OwnerOperation::Proposal {
-                session,
-                run,
-                proposal,
-                revision,
-            } => self
-                .proposal(&session, &run, &proposal, &revision)
-                .map(OwnerValue::Proposal),
-            OwnerOperation::Capabilities { session } => {
-                self.capabilities(&session).map(OwnerValue::Capabilities)
-            }
-            OwnerOperation::ArtifactMetadata { session, artifact } => self
-                .artifact_metadata(&session, &artifact)
-                .map(OwnerValue::ArtifactMetadata),
-            OwnerOperation::ArtifactRange {
-                session,
-                artifact,
-                offset,
-                maximum,
-                evidence,
-            } => self.artifact_range(&session, &artifact, offset, maximum, &evidence),
-            OwnerOperation::Layout {
-                session,
-                workflow,
-                revision,
-            } => self
-                .layout(&session, &workflow, &revision)
-                .map(OwnerValue::Layout),
-            OwnerOperation::Shutdown => Err(PublicFailure::new(
-                ErrorCode::Internal,
-                "shutdown was dispatched through the ordinary operation path",
-                false,
-            )),
-        }
-    }
-
     fn authorize(
         &self,
         session: &ActorSession,
@@ -1288,7 +928,7 @@ impl Owner {
         Ok(decision)
     }
 
-    fn shutdown(&mut self, health: &SharedHealth) -> Result<OwnerValue, PublicFailure> {
+    fn shutdown(&mut self, health: &SharedHealth) -> Result<ShutdownOutcome, PublicFailure> {
         info!(phase = "draining", "runtime owner closing admission");
         health.set_lifecycle(Lifecycle::Draining);
         let mut clean = true;
@@ -1386,7 +1026,7 @@ impl Owner {
             phase = if clean { "stopped" } else { "failed" },
             clean, unresolved, "runtime owner shutdown completed"
         );
-        Ok(OwnerValue::Shutdown {
+        Ok(ShutdownOutcome {
             clean,
             unresolved: u32::try_from(unresolved).unwrap_or(u32::MAX),
         })

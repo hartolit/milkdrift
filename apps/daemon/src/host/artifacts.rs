@@ -51,7 +51,7 @@ impl Owner {
         offset: u64,
         maximum: u32,
         evidence: &str,
-    ) -> Result<OwnerValue, PublicFailure> {
+    ) -> Result<ArtifactContentRead, PublicFailure> {
         let artifact_id =
             ArtifactId::new(artifact.to_owned()).map_err(|error| invalid(&error.to_string()))?;
         preauthorize_artifact_identity(
@@ -95,7 +95,7 @@ impl Owner {
             )
             .map_err(public_persistence)?;
         self.record_security_decision(&decision)?;
-        Ok(OwnerValue::ArtifactRange {
+        Ok(ArtifactContentRead {
             metadata: public_artifact_metadata(&metadata),
             offset: chunk.offset,
             bytes: chunk.bytes,

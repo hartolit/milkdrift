@@ -22,9 +22,11 @@ snapshot. Git, CI, releases, and external audits own chronology.
   authentication, runtime, adapter, peer, and shutdown plans; the superseded JSON/global-document
   path is refused. It is the single bounded synchronous owner of redb, runtime, control, adapters,
   peers, receipts, layouts, and proposal discovery. A dedicated owner thread sits behind a bounded
-  channel; an owned queue guard and one coherent versioned health projection make overload,
-  startup recovery, readiness, periodic maintenance, health streaming, and ordered shutdown
-  explicit. The CLI is a storage-free client of `milkdrift-control-client`.
+  channel. Typed one-shot closure messages remove the former parallel operation/result enums and
+  make mismatched HTTP response variants unrepresentable; an owned queue guard and one coherent
+  versioned health projection make overload, startup recovery, readiness, periodic maintenance,
+  health streaming, and ordered shutdown explicit. The CLI is a storage-free client of
+  `milkdrift-control-client`.
 - External control protocol 2.2 provides bounded duplicate-safe DTOs, exact negotiation,
   authenticated cursor schema 2, idempotent commands, revisions/diffs, runs/nodes/attempts,
   timelines, proposals, capabilities/providers, authority, peers, artifacts, layouts, health, and

@@ -36,7 +36,7 @@ use tracing::{info, warn};
 use crate::{
     DaemonHost, HostError,
     auth::ActorSession,
-    host::{OwnerOperation, OwnerValue, PublicFailure, StreamAuthority},
+    host::{PublicFailure, StreamAuthority},
 };
 
 const MAX_ARTIFACT_HTTP_RANGE: u32 = 1_048_576;
@@ -213,14 +213,11 @@ pub(crate) fn router(host: DaemonHost) -> Router {
 
 async fn peers(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
     let (request_id, session) = authenticate(&state, &headers)?;
-    let result = state
+    let visible = state
         .host
-        .request(OwnerOperation::Peers { session }, false)
+        .visible_peers(session)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    let OwnerValue::PeerIds(visible) = result else {
-        return Err(internal_response(request_id));
-    };
     success(
         request_id,
         state
@@ -240,13 +237,7 @@ async fn peer(
     let (request_id, session) = authenticate(&state, &headers)?;
     state
         .host
-        .request(
-            OwnerOperation::Peer {
-                session,
-                peer: peer.clone(),
-            },
-            false,
-        )
+        .authorize_peer_read(session, peer.clone())
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
     let status = state
@@ -358,13 +349,7 @@ async fn authorize_peer_admin(
 ) -> Result<(), ApiError> {
     state
         .host
-        .request(
-            OwnerOperation::AdministerPeer {
-                session,
-                peer: peer.to_owned(),
-            },
-            false,
-        )
+        .authorize_peer_administration(session, peer.to_owned())
         .await
         .map_err(|error| owner_error(error, request_id.to_owned()))?;
     Ok(())
@@ -421,7 +406,7 @@ async fn version(
     let (request_id, session) = authenticate(&state, &headers)?;
     state
         .host
-        .request(OwnerOperation::Version { session }, false)
+        .authorize_version(session)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
     let request: VersionRequest =
@@ -443,7 +428,7 @@ async fn health(State(state): State<AppState>, headers: HeaderMap) -> Result<Res
     let (request_id, session) = authenticate(&state, &headers)?;
     state
         .host
-        .request(OwnerOperation::Health { session }, false)
+        .authorize_health(session)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
     success(request_id, state.host.health())
@@ -456,7 +441,7 @@ async fn readiness(
     let (request_id, session) = authenticate(&state, &headers)?;
     state
         .host
-        .request(OwnerOperation::Readiness { session }, false)
+        .authorize_readiness(session)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
     let health = state.host.health();
@@ -525,18 +510,9 @@ async fn command(
     let command_id = request.command_id.clone();
     let trace = command_trace(&request.command);
     let started = Instant::now();
-    let result = state
-        .host
-        .request(
-            OwnerOperation::Command {
-                session,
-                request: Box::new(request),
-            },
-            false,
-        )
-        .await;
+    let result = state.host.command(session, request).await;
     match result {
-        Ok(OwnerValue::Command(value)) => {
+        Ok(value) => {
             info!(
                 request_id,
                 command_id,
@@ -572,7 +548,6 @@ async fn command(
             );
             Err(owner_error(error, request_id))
         }
-        Ok(_) => Err(internal_response(request_id)),
     }
 }
 
@@ -699,23 +674,12 @@ async fn revisions(
     }
     .validate()
     .map_err(|error| protocol_error(error, request_id.clone()))?;
-    let result = state
+    let value = state
         .host
-        .request(
-            OwnerOperation::Revisions {
-                session,
-                workflow: query.workflow,
-                cursor: query.cursor,
-                limit: query.limit,
-            },
-            false,
-        )
+        .revisions(session, query.workflow, query.cursor, query.limit)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    match result {
-        OwnerValue::Revisions(value) => success(request_id, value),
-        _ => Err(internal_response(request_id)),
-    }
+    success(request_id, value)
 }
 
 async fn revision(
@@ -724,15 +688,12 @@ async fn revision(
     Path(revision): Path<String>,
 ) -> Result<Response, ApiError> {
     let (request_id, session) = authenticate(&state, &headers)?;
-    let result = state
+    let value = state
         .host
-        .request(OwnerOperation::Revision { session, revision }, false)
+        .revision(session, revision)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    match result {
-        OwnerValue::Revision(value) => success(request_id, value),
-        _ => Err(internal_response(request_id)),
-    }
+    success(request_id, value)
 }
 
 async fn revision_diff(
@@ -741,15 +702,12 @@ async fn revision_diff(
     Path((from, to)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
     let (request_id, session) = authenticate(&state, &headers)?;
-    let result = state
+    let value = state
         .host
-        .request(OwnerOperation::RevisionDiff { session, from, to }, false)
+        .revision_diff(session, from, to)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    match result {
-        OwnerValue::RevisionDiff(value) => success(request_id, value),
-        _ => Err(internal_response(request_id)),
-    }
+    success(request_id, value)
 }
 
 async fn runs(
@@ -764,24 +722,18 @@ async fn runs(
     }
     .validate()
     .map_err(|error| protocol_error(error, request_id.clone()))?;
-    let result = state
+    let value = state
         .host
-        .request(
-            OwnerOperation::Runs {
-                session,
-                state: query.state,
-                workflow: query.workflow,
-                cursor: query.cursor,
-                limit: query.limit,
-            },
-            false,
+        .runs(
+            session,
+            query.state,
+            query.workflow,
+            query.cursor,
+            query.limit,
         )
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    match result {
-        OwnerValue::Runs(value) => success(request_id, value),
-        _ => Err(internal_response(request_id)),
-    }
+    success(request_id, value)
 }
 
 async fn run(
@@ -799,15 +751,12 @@ async fn run_response(
     session: ActorSession,
     run: String,
 ) -> Result<Response, ApiError> {
-    let result = state
+    let value = state
         .host
-        .request(OwnerOperation::Run { session, run }, false)
+        .run(session, run)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    match result {
-        OwnerValue::Run(value) => success(request_id, value),
-        _ => Err(internal_response(request_id)),
-    }
+    success(request_id, value)
 }
 
 async fn node(
@@ -816,22 +765,12 @@ async fn node(
     Path((run, execution)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
     let (request_id, session) = authenticate(&state, &headers)?;
-    let result = state
+    let value = state
         .host
-        .request(
-            OwnerOperation::Node {
-                session,
-                run,
-                execution,
-            },
-            false,
-        )
+        .node(session, run, execution)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    match result {
-        OwnerValue::Node(value) => success(request_id, value),
-        _ => Err(internal_response(request_id)),
-    }
+    success(request_id, value)
 }
 
 async fn attempt(
@@ -840,22 +779,12 @@ async fn attempt(
     Path((run, attempt)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
     let (request_id, session) = authenticate(&state, &headers)?;
-    let result = state
+    let value = state
         .host
-        .request(
-            OwnerOperation::Attempt {
-                session,
-                run,
-                attempt,
-            },
-            false,
-        )
+        .attempt(session, run, attempt)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    match result {
-        OwnerValue::Attempt(value) => success(request_id, value),
-        _ => Err(internal_response(request_id)),
-    }
+    success(request_id, value)
 }
 
 async fn timeline(
@@ -871,23 +800,12 @@ async fn timeline(
     }
     .validate()
     .map_err(|error| protocol_error(error, request_id.clone()))?;
-    let result = state
+    let value = state
         .host
-        .request(
-            OwnerOperation::Timeline {
-                session,
-                run,
-                cursor: query.cursor,
-                limit: query.limit,
-            },
-            false,
-        )
+        .timeline(session, run, query.cursor, query.limit)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    match result {
-        OwnerValue::Timeline(value) => success(request_id, value),
-        _ => Err(internal_response(request_id)),
-    }
+    success(request_id, value)
 }
 
 async fn capabilities(
@@ -895,15 +813,12 @@ async fn capabilities(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let (request_id, session) = authenticate(&state, &headers)?;
-    let result = state
+    let value = state
         .host
-        .request(OwnerOperation::Capabilities { session }, false)
+        .capabilities(session)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    match result {
-        OwnerValue::Capabilities(value) => success(request_id, value),
-        _ => Err(internal_response(request_id)),
-    }
+    success(request_id, value)
 }
 
 async fn proposals(
@@ -919,23 +834,12 @@ async fn proposals(
     }
     .validate()
     .map_err(|error| protocol_error(error, request_id.clone()))?;
-    let result = state
+    let value = state
         .host
-        .request(
-            OwnerOperation::Proposals {
-                session,
-                run,
-                cursor: query.cursor,
-                limit: query.limit,
-            },
-            false,
-        )
+        .proposals(session, run, query.cursor, query.limit)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    match result {
-        OwnerValue::Proposals(value) => success(request_id, value),
-        _ => Err(internal_response(request_id)),
-    }
+    success(request_id, value)
 }
 
 #[derive(Deserialize)]
@@ -950,23 +854,12 @@ async fn proposal(
     Query(query): Query<ProposalQuery>,
 ) -> Result<Response, ApiError> {
     let (request_id, session) = authenticate(&state, &headers)?;
-    let result = state
+    let value = state
         .host
-        .request(
-            OwnerOperation::Proposal {
-                session,
-                run,
-                proposal,
-                revision: query.revision,
-            },
-            false,
-        )
+        .proposal(session, run, proposal, query.revision)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    match result {
-        OwnerValue::Proposal(value) => success(request_id, value),
-        _ => Err(internal_response(request_id)),
-    }
+    success(request_id, value)
 }
 
 async fn authority(
@@ -974,15 +867,12 @@ async fn authority(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let (request_id, session) = authenticate(&state, &headers)?;
-    let result = state
+    let value = state
         .host
-        .request(OwnerOperation::Authority { session }, false)
+        .own_authority(session)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    match result {
-        OwnerValue::Authority(value) => success(request_id, value),
-        _ => Err(internal_response(request_id)),
-    }
+    success(request_id, value)
 }
 
 async fn artifact_metadata(
@@ -991,18 +881,12 @@ async fn artifact_metadata(
     Path(artifact): Path<String>,
 ) -> Result<Response, ApiError> {
     let (request_id, session) = authenticate(&state, &headers)?;
-    let result = state
+    let value = state
         .host
-        .request(
-            OwnerOperation::ArtifactMetadata { session, artifact },
-            false,
-        )
+        .artifact_metadata(session, artifact)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    match result {
-        OwnerValue::ArtifactMetadata(value) => success(request_id, value),
-        _ => Err(internal_response(request_id)),
-    }
+    success(request_id, value)
 }
 
 async fn artifact_content(
@@ -1018,27 +902,15 @@ async fn artifact_content(
     );
     let result = state
         .host
-        .request(
-            OwnerOperation::ArtifactRange {
-                session,
-                artifact,
-                offset,
-                maximum,
-                evidence,
-            },
-            false,
-        )
+        .artifact_range(session, artifact, offset, maximum, evidence)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    let OwnerValue::ArtifactRange {
+    let crate::host::ArtifactContentRead {
         metadata,
         offset,
         bytes,
         end,
-    } = result
-    else {
-        return Err(internal_response(request_id));
-    };
+    } = result;
     let returned_end =
         offset.saturating_add(u64::try_from(bytes.len()).unwrap_or(0).saturating_sub(1));
     let mut response = Response::new(Body::from(bytes));
@@ -1076,22 +948,12 @@ async fn layout(
     Path((workflow, revision)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
     let (request_id, session) = authenticate(&state, &headers)?;
-    let result = state
+    let value = state
         .host
-        .request(
-            OwnerOperation::Layout {
-                session,
-                workflow,
-                revision,
-            },
-            false,
-        )
+        .layout(session, workflow, revision)
         .await
         .map_err(|error| owner_error(error, request_id.clone()))?;
-    match result {
-        OwnerValue::Layout(value) => success(request_id, value),
-        _ => Err(internal_response(request_id)),
-    }
+    success(request_id, value)
 }
 
 async fn run_stream(
@@ -1153,8 +1015,8 @@ async fn run_stream(
             }
             let last_sequence = stream_position / 2;
             if stream_position != 0 && stream_position % 2 == 0 {
-                match state.host.request(OwnerOperation::Run { session: session.clone(), run: run.clone() }, false).await {
-                    Ok(OwnerValue::Run(status)) => {
+                match state.host.run(session.clone(), run.clone()).await {
+                    Ok(status) => {
                         stream_position = stream_position.saturating_add(1);
                         if let Ok(event) = observation_event(&feed, stream_position, Observation::RunStatus(status), &session, &decision) {
                             yield Ok(event);
@@ -1176,21 +1038,21 @@ async fn run_stream(
                         session.cursor_key(),
                     ).ok())
             };
-            match state.host.request(OwnerOperation::Timeline {
-                session: session.clone(),
-                run: run.clone(),
-                cursor: timeline_cursor,
-                limit: STREAM_PAGE_ITEMS,
-            }, false).await {
-                Ok(OwnerValue::Timeline(page)) if !page.items.is_empty() => {
+            match state.host.timeline(
+                session.clone(),
+                run.clone(),
+                timeline_cursor,
+                STREAM_PAGE_ITEMS,
+            ).await {
+                Ok(page) if !page.items.is_empty() => {
                     for entry in page.items {
                         stream_position = entry.sequence.saturating_mul(2);
                         if let Ok(event) = observation_event(&feed, stream_position, Observation::Timeline(entry), &session, &decision) {
                             yield Ok(event);
                         }
                     }
-                    match state.host.request(OwnerOperation::Run { session: session.clone(), run: run.clone() }, false).await {
-                        Ok(OwnerValue::Run(status)) => {
+                    match state.host.run(session.clone(), run.clone()).await {
+                        Ok(status) => {
                             stream_position = stream_position.saturating_add(1);
                             if let Ok(event) = observation_event(&feed, stream_position, Observation::RunStatus(status), &session, &decision) {
                                 yield Ok(event);
@@ -1199,7 +1061,7 @@ async fn run_stream(
                         _ => break,
                     }
                 }
-                Ok(OwnerValue::Timeline(_)) => tokio::time::sleep(Duration::from_millis(250)).await,
+                Ok(_) => tokio::time::sleep(Duration::from_millis(250)).await,
                 Err(error) => {
                     let reason = if error.code == ErrorCode::Unauthorized { "authorization changed" } else { "timeline cursor must be resynchronized" };
                     if let Ok(event) = observation_event(&feed, stream_position.saturating_add(1), Observation::ResyncRequired { reason: reason.to_owned() }, &session, &decision) {
@@ -1207,7 +1069,6 @@ async fn run_stream(
                     }
                     break;
                 }
-                Ok(_) => break,
             }
         }
     };
@@ -1273,8 +1134,8 @@ async fn capability_stream(
                 }
                 break;
             }
-            let capabilities = match state.host.request(OwnerOperation::Capabilities { session: session.clone() }, false).await {
-                Ok(OwnerValue::Capabilities(values)) => values,
+            let capabilities = match state.host.capabilities(session.clone()).await {
+                Ok(values) => values,
                 _ => break,
             };
             let (resync, entries) = {
@@ -1416,15 +1277,12 @@ async fn stream_authority(
     stream: StreamAuthority,
     request_id: &str,
 ) -> Result<String, ApiError> {
-    let value = state
+    let decision = state
         .host
-        .request(OwnerOperation::StreamAuthority { session, stream }, false)
+        .authorize_stream(session, stream)
         .await
         .map_err(|error| owner_error(error, request_id.to_owned()))?;
-    match value {
-        OwnerValue::Authorized(decision) if !decision.is_empty() => Ok(decision),
-        _ => Err(internal_response(request_id.to_owned())),
-    }
+    Ok(decision)
 }
 
 fn stream_cursor_binding(session: &ActorSession, exact_resource_and_filter: &str) -> CursorBinding {
