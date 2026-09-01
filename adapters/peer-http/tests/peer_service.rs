@@ -1033,6 +1033,53 @@ fn peer_integrity_verification_detects_tombstone_index_and_counter_corruption() 
 }
 
 #[test]
+fn peer_integrity_requires_accounting_for_every_active_peer() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let peer = PeerId::new("peer-integrity-missing-accounting")?;
+    let target = PeerId::new("peer-integrity-missing-accounting-target")?;
+    let descriptor = descriptor()?;
+    let catalog = milkdrift_peer_protocol::CatalogSnapshot::new(
+        1,
+        1,
+        now().saturating_add(60_000),
+        Vec::new(),
+    )?;
+    let execution = PeerExecutionId::new("execution-integrity-missing-accounting")?;
+    let invocation = request(
+        &peer,
+        &target,
+        &descriptor,
+        1,
+        catalog.digest.clone(),
+        "request-integrity-missing-accounting",
+        "invocation-integrity-missing-accounting",
+    )?;
+    {
+        let store = RedbStore::open(root.path())?;
+        configure_store(&store, &peer, &catalog.digest, 1)?;
+        admit(&store, &peer, &invocation, &execution, 1)?;
+        store.verify_peer_execution_integrity()?;
+    }
+
+    let database = Database::open(root.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    let removed = {
+        let mut accounting = write.open_table(PEER_EXECUTION_ACCOUNTING)?;
+        accounting.remove(peer.as_str())?.is_some()
+    };
+    assert!(removed, "per-peer accounting row was absent");
+    write.commit()?;
+    drop(database);
+
+    let store = RedbStore::open(root.path())?;
+    assert!(
+        store.verify_peer_execution_integrity().is_err(),
+        "peer integrity accepted an active execution without per-peer accounting"
+    );
+    Ok(())
+}
+
+#[test]
 fn checksum_valid_peer_primary_and_tombstone_fact_corruption_is_rejected() -> TestResult {
     let root = tempfile::tempdir()?;
     let peer = PeerId::new("peer-fact-corruption")?;
