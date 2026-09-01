@@ -294,7 +294,7 @@ The exact current logical-to-physical mapping is:
 | Human/service/AI workflow control | `milkdrift-control::{document,command,policy,preset,service,adapter,controller::{policy,lifecycle},read}` owns strict proposals and application orchestration while durable revisions, authorization decisions, reconciliation, and events remain with their existing owners |
 | External control protocol | `milkdrift-control-protocol` owns protocol 2.2 common envelopes/cursors/codecs with focused private `command`, `read`, and `layout` modules for mutation DTOs, observation/read DTOs, and layout schema 1; it contains no async, HTTP, runtime, or storage types |
 | Reusable control client | `milkdrift-control-client` owns version negotiation, bearer-authenticated typed HTTP calls, bounded safe-query retries and artifact ranges, and exact-cursor SSE reconnect |
-| `blueprint/model` | `milkdrift-blueprint::model` (public types re-exported at crate root) |
+| `blueprint/model` | `milkdrift-blueprint::model::{contract,structured,node,graph}` keeps interface/data contracts, structured-node policy, node definitions, and complete graph state in focused private modules; public types are re-exported at crate root |
 | `blueprint/validation` | `milkdrift-blueprint::validation` |
 | `blueprint/revision` | `milkdrift-blueprint::revision` |
 | `blueprint/mutation` | `milkdrift-blueprint::mutation` |

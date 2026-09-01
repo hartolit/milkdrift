@@ -597,7 +597,6 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(deprecated)] // Legacy join handling remains isolated to the compatibility transition.
     #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     pub(super) fn try_satisfy_join(
         &self,
@@ -677,7 +676,7 @@ impl RuntimeService {
                 }
                 (JoinRule::AnyCompletion, completed, Vec::new())
             }
-            JoinPolicy::FirstSuccess | JoinPolicy::AnySuccessful => {
+            JoinPolicy::FirstSuccess => {
                 let has_success = completed
                     .iter()
                     .any(|result| result.outcome == RunOutcome::Succeeded);

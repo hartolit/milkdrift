@@ -782,6 +782,23 @@ fn tagged_core_values_reject_unknown_fields() -> TestResult {
 }
 
 #[test]
+fn join_policy_uses_only_the_current_v2_spelling() -> TestResult {
+    let current = serde_json::json!({"type": "first_success"});
+    assert_eq!(serde_json::to_value(JoinPolicy::FirstSuccess)?, current);
+    assert_eq!(
+        serde_json::from_value::<JoinPolicy>(current)?,
+        JoinPolicy::FirstSuccess
+    );
+    assert!(
+        serde_json::from_value::<JoinPolicy>(serde_json::json!({
+            "type": "any_successful"
+        }))
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
 fn illegal_cycle_reports_a_stable_code() -> TestResult {
     let a = task_node("a")?
         .with_control_input(port("in")?)?
