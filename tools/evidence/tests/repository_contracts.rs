@@ -321,6 +321,12 @@ fn narrowed_exports_and_validating_constructors_remain_narrow() -> TestResult {
     assert!(redb.contains(
         "#[cfg(feature = \"test-admin\")]\npub use fault::{FaultInjector, FaultPoint, injected_failure};"
     ));
+
+    let runtime_executor = read(repository.join("crates/runtime/src/executor.rs"))?;
+    assert!(runtime_executor.contains("fn execute_streaming("));
+    assert!(!runtime_executor.contains("ExecutionReportBatch"));
+    assert!(!runtime_executor.contains("bounded synchronous executors"));
+
     assert!(Selection::<OperationId>::only(BTreeSet::new()).is_err());
     Ok(())
 }

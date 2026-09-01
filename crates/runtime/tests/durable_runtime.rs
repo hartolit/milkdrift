@@ -31,7 +31,7 @@ use milkdrift_persistence::{
 };
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{
-    CommandAuthorityClaim, DeterministicExecutor, ExecutionDispatch, ExecutionReportBatch,
+    CommandAuthorityClaim, DeterministicExecutor, ExecutionDispatch, ExecutionReporter,
     ExecutorError, ExternalWorkAction, ManualClock, ResolvedCapability, RetryPolicy, RunCommand,
     RunCommandDocument, RunLifecycle, RuntimeConfig, RuntimeService, SchedulerLimits,
     SequentialIdGenerator, SystemTransition, TaskExecutor,
@@ -760,7 +760,11 @@ impl TaskExecutor for CountingExecutor {
         self.inner.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
+    fn execute_streaming(
+        &self,
+        dispatch: &ExecutionDispatch,
+        reporter: &dyn ExecutionReporter,
+    ) -> Result<(), ExecutorError> {
         self.entries.fetch_add(1, Ordering::SeqCst);
         if let Some(block) = &self.block {
             let (lock, changed) = &**block;
@@ -775,7 +779,7 @@ impl TaskExecutor for CountingExecutor {
                 })?;
             }
         }
-        self.inner.execute(dispatch)
+        self.inner.execute_streaming(dispatch, reporter)
     }
 
     fn cancel(

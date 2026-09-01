@@ -18,12 +18,13 @@ struct ContextProofExecutor {
 }
 
 impl ContextProofExecutor {
-    fn events(
+    fn report_events(
         &self,
         dispatch: &ExecutionDispatch,
+        reporter: &dyn ExecutionReporter,
         output: Option<(&str, InvocationArtifactReference)>,
         terminal: InvocationTerminal,
-    ) -> Result<ExecutionReportBatch, ExecutorError> {
+    ) -> Result<(), ExecutorError> {
         let mut events = Vec::new();
         if let Some((name, reference)) = output {
             events.push(InvocationEvent::new(
@@ -40,7 +41,10 @@ impl ContextProofExecutor {
             u64::try_from(events.len()).unwrap_or(0).saturating_add(1),
             InvocationEventKind::Terminal { terminal },
         )?);
-        ExecutionReportBatch::new(dispatch.request(), events)
+        for event in events {
+            let _disposition = reporter.invocation(event)?;
+        }
+        Ok(())
     }
 
     fn publish_review(
@@ -122,7 +126,11 @@ impl TaskExecutor for ContextProofExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
+    fn execute_streaming(
+        &self,
+        dispatch: &ExecutionDispatch,
+        reporter: &dyn ExecutionReporter,
+    ) -> Result<(), ExecutorError> {
         let node = dispatch.node().as_str();
         if node == "verify" {
             self.verification_requests
@@ -130,7 +138,7 @@ impl TaskExecutor for ContextProofExecutor {
                 .map_err(|_| ExecutorError::Boundary("verification capture poisoned".to_owned()))?
                 .push((dispatch.attempt().clone(), dispatch.request().clone()));
             if self.verification_calls.fetch_add(1, Ordering::SeqCst) == 0 {
-                return self.events(dispatch, None, retryable_failure()?);
+                return self.report_events(dispatch, reporter, None, retryable_failure()?);
             }
         }
         if node == "review" {
@@ -140,8 +148,9 @@ impl TaskExecutor for ContextProofExecutor {
                 .lock()
                 .map_err(|_| ExecutorError::Boundary("review capture poisoned".to_owned()))? =
                 Some(dispatch.request().clone());
-            return self.events(
+            return self.report_events(
                 dispatch,
+                reporter,
                 Some(("review", reference)),
                 successful_executor_terminal()?,
             );
@@ -151,7 +160,7 @@ impl TaskExecutor for ContextProofExecutor {
             .get(node)
             .cloned()
             .map(|reference| ("evidence", reference));
-        self.events(dispatch, output, successful_executor_terminal()?)
+        self.report_events(dispatch, reporter, output, successful_executor_terminal()?)
     }
 
     fn cancel(

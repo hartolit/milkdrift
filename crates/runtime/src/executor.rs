@@ -500,58 +500,6 @@ pub enum EffectAction {
     Cancel(CancellationDispatch),
 }
 
-/// Validated, bounded executor reports for one invocation.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ExecutionReportBatch(Vec<InvocationEvent>);
-
-impl ExecutionReportBatch {
-    /// Validates correlation, contiguity, terminal uniqueness, and the hard report bound.
-    pub fn new(
-        request: &InvocationRequest,
-        reports: Vec<InvocationEvent>,
-    ) -> Result<Self, ExecutorError> {
-        if reports.is_empty() || reports.len() > MAX_REPORTS_PER_DISPATCH {
-            return Err(ExecutorError::InvalidReports(format!(
-                "a dispatch must return 1..={MAX_REPORTS_PER_DISPATCH} reports"
-            )));
-        }
-        let mut terminal_seen = false;
-        for (index, report) in reports.iter().enumerate() {
-            let expected_sequence = u64::try_from(index)
-                .ok()
-                .and_then(|value| value.checked_add(1))
-                .ok_or_else(|| {
-                    ExecutorError::InvalidReports("report sequence overflow".to_owned())
-                })?;
-            if report.invocation() != request.invocation() || report.sequence() != expected_sequence
-            {
-                return Err(ExecutorError::InvalidReports(
-                    "reports must match the invocation and be contiguous from sequence one"
-                        .to_owned(),
-                ));
-            }
-            if terminal_seen {
-                return Err(ExecutorError::InvalidReports(
-                    "no report may follow a terminal report".to_owned(),
-                ));
-            }
-            terminal_seen = report.kind().terminal().is_some();
-        }
-        if !terminal_seen {
-            return Err(ExecutorError::InvalidReports(
-                "a synchronous report batch must end in exactly one terminal report".to_owned(),
-            ));
-        }
-        Ok(Self(reports))
-    }
-
-    /// Ordered immutable reports.
-    #[must_use]
-    pub fn reports(&self) -> &[InvocationEvent] {
-        &self.0
-    }
-}
-
 /// Durable result of submitting one executor observation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ObservationDisposition {
@@ -616,35 +564,15 @@ pub trait TaskExecutor: Send + Sync {
         ResolvedCapability::new_authorized(resolved.descriptor, resolved.snapshot, decision)
     }
 
-    /// Compatibility hook for bounded synchronous executors.
-    ///
-    /// Long-running adapters should implement [`Self::execute_streaming`]. This method
-    /// is never invoked by a scheduler tick.
-    fn execute(
-        &self,
-        _dispatch: &ExecutionDispatch,
-    ) -> Result<ExecutionReportBatch, ExecutorError> {
-        Err(ExecutorError::Boundary(
-            "executor implements neither streaming nor bounded execution".to_owned(),
-        ))
-    }
-
     /// Executes after immutable request, resolution, side-effect, and lease facts are durable.
     ///
     /// The caller owns the effect-host thread/task. The runtime itself never spawns hidden
-    /// work. The default implementation adapts a bounded legacy batch into independently
-    /// durable observations.
+    /// work. Every reported observation crosses the one incremental durability boundary.
     fn execute_streaming(
         &self,
         dispatch: &ExecutionDispatch,
         reporter: &dyn ExecutionReporter,
-    ) -> Result<(), ExecutorError> {
-        let reports = self.execute(dispatch)?;
-        for report in reports.reports() {
-            let _ = reporter.invocation(report.clone())?;
-        }
-        Ok(())
-    }
+    ) -> Result<(), ExecutorError>;
 
     /// Requests cancellation without implying a terminal outcome.
     fn cancel(
@@ -738,7 +666,11 @@ impl TaskExecutor for DeterministicExecutor {
         ResolvedCapability::new(self.descriptor.clone(), snapshot)
     }
 
-    fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
+    fn execute_streaming(
+        &self,
+        dispatch: &ExecutionDispatch,
+        reporter: &dyn ExecutionReporter,
+    ) -> Result<(), ExecutorError> {
         let kinds = {
             let scripts = self.scripts.lock().map_err(|_| {
                 ExecutorError::Boundary("deterministic executor lock poisoned".to_owned())
@@ -749,21 +681,18 @@ impl TaskExecutor for DeterministicExecutor {
             Some(kinds) => kinds,
             None => self.default_script(dispatch.request().operation())?,
         };
-        let reports = kinds
-            .into_iter()
-            .enumerate()
-            .map(|(index, kind)| {
-                let sequence = u64::try_from(index)
-                    .ok()
-                    .and_then(|value| value.checked_add(1))
-                    .ok_or_else(|| {
-                        ExecutorError::InvalidReports("report sequence overflow".to_owned())
-                    })?;
-                InvocationEvent::new(dispatch.request().invocation().clone(), sequence, kind)
-                    .map_err(ExecutorError::from)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        ExecutionReportBatch::new(dispatch.request(), reports)
+        for (index, kind) in kinds.into_iter().enumerate() {
+            let sequence = u64::try_from(index)
+                .ok()
+                .and_then(|value| value.checked_add(1))
+                .ok_or_else(|| {
+                    ExecutorError::InvalidReports("report sequence overflow".to_owned())
+                })?;
+            let report =
+                InvocationEvent::new(dispatch.request().invocation().clone(), sequence, kind)?;
+            let _disposition = reporter.invocation(report)?;
+        }
+        Ok(())
     }
 
     fn cancel(
@@ -785,90 +714,11 @@ impl TaskExecutor for DeterministicExecutor {
 mod tests {
     use std::error::Error;
 
-    use milkdrift_capability::{CapabilityDescriptorDocument, CapabilityId, InvocationId};
+    use milkdrift_capability::{CapabilityDescriptorDocument, InvocationId};
 
     use super::*;
 
     type TestResult<T = ()> = Result<T, Box<dyn Error>>;
-
-    fn request(invocation: &str) -> TestResult<InvocationRequest> {
-        Ok(InvocationRequest::new(
-            InvocationId::new(invocation)?,
-            CapabilityId::new("capability.test")?,
-            OperationId::new("tool.test")?,
-            None,
-            None,
-            Vec::new(),
-            BTreeMap::new(),
-        )?)
-    }
-
-    fn progress(invocation: &str, sequence: u64) -> TestResult<InvocationEvent> {
-        Ok(InvocationEvent::new(
-            InvocationId::new(invocation)?,
-            sequence,
-            InvocationEventKind::Progress {
-                message: "working".to_owned(),
-                completed_units: None,
-                total_units: None,
-            },
-        )?)
-    }
-
-    fn terminal(invocation: &str, sequence: u64) -> TestResult<InvocationEvent> {
-        Ok(InvocationEvent::new(
-            InvocationId::new(invocation)?,
-            sequence,
-            InvocationEventKind::Terminal {
-                terminal: InvocationTerminal::new(
-                    TerminalStatus::Success,
-                    Vec::new(),
-                    None,
-                    None,
-                    SideEffectClass::None,
-                )?,
-            },
-        )?)
-    }
-
-    #[test]
-    fn report_batches_reject_wrong_invocations_gaps_and_post_terminal_reports() -> TestResult {
-        let request = request("invocation-one")?;
-        assert!(
-            ExecutionReportBatch::new(&request, vec![terminal("invocation-other", 1)?]).is_err()
-        );
-        assert!(
-            ExecutionReportBatch::new(
-                &request,
-                vec![
-                    progress("invocation-one", 1)?,
-                    terminal("invocation-one", 3)?
-                ]
-            )
-            .is_err()
-        );
-        assert!(
-            ExecutionReportBatch::new(
-                &request,
-                vec![
-                    terminal("invocation-one", 1)?,
-                    progress("invocation-one", 2)?
-                ]
-            )
-            .is_err()
-        );
-        assert!(
-            ExecutionReportBatch::new(
-                &request,
-                vec![
-                    progress("invocation-one", 1)?,
-                    terminal("invocation-one", 2)?
-                ]
-            )
-            .is_ok()
-        );
-        Ok(())
-    }
 
     #[test]
     fn deterministic_cancellation_acknowledges_the_exact_request_without_claiming_terminal()

@@ -44,8 +44,8 @@ pub use engine::{
 pub use error::RuntimeError;
 pub use executor::{
     CancellationDispatch, CapabilityResolutionContext, DeterministicExecutor, EffectAction,
-    ExecutionDispatch, ExecutionReportBatch, ExecutionReporter, ExecutorError,
-    MAX_REPORTS_PER_DISPATCH, ObservationDisposition, ResolvedCapability, TaskExecutor,
+    ExecutionDispatch, ExecutionReporter, ExecutorError, MAX_REPORTS_PER_DISPATCH,
+    ObservationDisposition, ResolvedCapability, TaskExecutor,
 };
 pub use projection::{
     AttemptState, AttemptTerminal, BranchProjection, BranchState, CapabilityResolution,

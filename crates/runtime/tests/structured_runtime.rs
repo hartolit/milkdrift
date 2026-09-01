@@ -43,7 +43,7 @@ use milkdrift_persistence::{
 use milkdrift_redb_store::{RedbStore, testing as storage_fault};
 use milkdrift_runtime::{
     AttemptState, BoundaryClock, CommandAuthorityClaim, DeterministicExecutor, EffectAction,
-    EffectExecutionResult, ExecutionDispatch, ExecutionReportBatch, ExecutorError, IdGenerator,
+    EffectExecutionResult, ExecutionDispatch, ExecutionReporter, ExecutorError, IdGenerator,
     IterationState, LeaseState, ManualClock, NodeExecutionState, ResolvedCapability, RetryPolicy,
     RunCommand, RunLifecycle, RuntimeConfig, RuntimeError, RuntimeService, RuntimeStartupState,
     SchedulerLimits, SequentialIdGenerator, TaskExecutor, WorkerReport,
@@ -230,14 +230,23 @@ impl TaskExecutor for InvalidReportsCountingExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute(
+    fn execute_streaming(
         &self,
-        _dispatch: &ExecutionDispatch,
-    ) -> Result<ExecutionReportBatch, ExecutorError> {
+        dispatch: &ExecutionDispatch,
+        reporter: &dyn ExecutionReporter,
+    ) -> Result<(), ExecutorError> {
         self.dispatches.fetch_add(1, Ordering::SeqCst);
-        Err(ExecutorError::InvalidReports(
-            "deterministic invalid report fixture".to_owned(),
-        ))
+        let skipped_first = InvocationEvent::new(
+            dispatch.request().invocation().clone(),
+            2,
+            InvocationEventKind::Progress {
+                message: "invalid sequence fixture".to_owned(),
+                completed_units: None,
+                total_units: None,
+            },
+        )?;
+        let _disposition = reporter.invocation(skipped_first)?;
+        Ok(())
     }
 
     fn cancel(
@@ -270,9 +279,13 @@ impl TaskExecutor for DispatchCountingExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
+    fn execute_streaming(
+        &self,
+        dispatch: &ExecutionDispatch,
+        reporter: &dyn ExecutionReporter,
+    ) -> Result<(), ExecutorError> {
         self.dispatches.fetch_add(1, Ordering::SeqCst);
-        self.resolver.execute(dispatch)
+        self.resolver.execute_streaming(dispatch, reporter)
     }
 
     fn cancel(
@@ -385,7 +398,11 @@ impl TaskExecutor for AdmissionRaceExecutor {
         Ok(resolved)
     }
 
-    fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
+    fn execute_streaming(
+        &self,
+        dispatch: &ExecutionDispatch,
+        reporter: &dyn ExecutionReporter,
+    ) -> Result<(), ExecutorError> {
         {
             let (lock, entered) = &self.execute_entries;
             let mut count = lock
@@ -415,7 +432,8 @@ impl TaskExecutor for AdmissionRaceExecutor {
             1,
             InvocationEventKind::Terminal { terminal },
         )?;
-        ExecutionReportBatch::new(dispatch.request(), vec![event])
+        let _disposition = reporter.invocation(event)?;
+        Ok(())
     }
 
     fn cancel(
@@ -520,7 +538,11 @@ impl TaskExecutor for BoundaryThenBlockingExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
+    fn execute_streaming(
+        &self,
+        dispatch: &ExecutionDispatch,
+        reporter: &dyn ExecutionReporter,
+    ) -> Result<(), ExecutorError> {
         if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
             return Err(ExecutorError::Boundary(
                 "executor disconnected after accepting first dispatch".to_owned(),
@@ -554,7 +576,8 @@ impl TaskExecutor for BoundaryThenBlockingExecutor {
             1,
             InvocationEventKind::Terminal { terminal },
         )?;
-        ExecutionReportBatch::new(dispatch.request(), vec![event])
+        let _disposition = reporter.invocation(event)?;
+        Ok(())
     }
 
     fn cancel(
@@ -607,7 +630,11 @@ impl TaskExecutor for BoundaryFailingExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
+    fn execute_streaming(
+        &self,
+        dispatch: &ExecutionDispatch,
+        reporter: &dyn ExecutionReporter,
+    ) -> Result<(), ExecutorError> {
         self.dispatches
             .lock()
             .map_err(|_| ExecutorError::Boundary("dispatch log lock poisoned".to_owned()))?
@@ -626,7 +653,7 @@ impl TaskExecutor for BoundaryFailingExecutor {
                 "executor disconnected after accepting dispatch".to_owned(),
             ));
         }
-        self.resolver.execute(dispatch)
+        self.resolver.execute_streaming(dispatch, reporter)
     }
 
     fn cancel(
@@ -646,10 +673,11 @@ impl TaskExecutor for PanickingExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute(
+    fn execute_streaming(
         &self,
         _dispatch: &ExecutionDispatch,
-    ) -> Result<ExecutionReportBatch, ExecutorError> {
+        _reporter: &dyn ExecutionReporter,
+    ) -> Result<(), ExecutorError> {
         std::panic::resume_unwind(Box::new("intentional crash after durable invocation start"))
     }
 
@@ -724,7 +752,11 @@ impl TaskExecutor for BlockingExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
+    fn execute_streaming(
+        &self,
+        dispatch: &ExecutionDispatch,
+        reporter: &dyn ExecutionReporter,
+    ) -> Result<(), ExecutorError> {
         let blocked = dispatch.request().operation()
             == &*self.blocking_operation.lock().map_err(|_| {
                 ExecutorError::Boundary("blocking operation lock poisoned".to_owned())
@@ -769,7 +801,8 @@ impl TaskExecutor for BlockingExecutor {
             1,
             InvocationEventKind::Terminal { terminal },
         )?;
-        ExecutionReportBatch::new(dispatch.request(), vec![event])
+        let _disposition = reporter.invocation(event)?;
+        Ok(())
     }
 
     fn cancel(

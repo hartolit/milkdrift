@@ -34,7 +34,11 @@ impl TaskExecutor for OperationCountingExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute(&self, dispatch: &ExecutionDispatch) -> Result<ExecutionReportBatch, ExecutorError> {
+    fn execute_streaming(
+        &self,
+        dispatch: &ExecutionDispatch,
+        reporter: &dyn ExecutionReporter,
+    ) -> Result<(), ExecutorError> {
         let mut calls = self
             .calls
             .lock()
@@ -43,7 +47,7 @@ impl TaskExecutor for OperationCountingExecutor {
             .entry(dispatch.request().operation().clone())
             .or_default() += 1;
         drop(calls);
-        self.resolver.execute(dispatch)
+        self.resolver.execute_streaming(dispatch, reporter)
     }
 
     fn cancel(
