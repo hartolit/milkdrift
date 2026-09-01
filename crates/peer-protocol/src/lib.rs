@@ -33,7 +33,8 @@ pub use identity::{
 pub use milkdrift_authority::PeerId;
 pub use session::{
     DrainState, FeatureSet, HandshakeRequest, HandshakeResponse, HardLimits, HeartbeatLease,
-    PeerAction, PeerAuthority, ProtocolVersion, ProtocolVersionRange, SessionIdentity,
+    PROTOCOL_MAJOR_V1, PROTOCOL_MINOR_V1, PeerAction, PeerAuthority, ProtocolVersion,
+    ProtocolVersionRange, SessionIdentity,
 };
 
 use thiserror::Error;

@@ -7,8 +7,8 @@ use milkdrift_peer_protocol::{
     ArtifactChunk, ArtifactMetadataOffer, ArtifactTransferDecision, CatalogSnapshot,
     HandshakeRequest, HandshakeResponse, InvocationAcceptance, InvocationLookup,
     ObservationHistory, ObservationPage, PeerCancellationAcknowledgement, PeerCancellationRequest,
-    PeerExecutionId, PeerInvocationRequest, PeerRequestId, ProtocolEnvelope, TransferId,
-    decode_envelope, encode_envelope,
+    PeerExecutionId, PeerInvocationRequest, PeerRequestId, ProtocolEnvelope, ProtocolVersion,
+    TransferId, decode_envelope, encode_envelope,
 };
 use reqwest::{
     blocking::{Client, Response},
@@ -300,7 +300,7 @@ impl PeerHttpClient {
             .body(chunk.bytes.clone())
             .send()
             .map_err(transport)?;
-        decode_response(response)
+        decode_response(response, self.config.versions.maximum)
     }
 
     /// Downloads one raw bounded verified range after metadata negotiation.
@@ -430,7 +430,7 @@ impl PeerHttpClient {
             .body(body)
             .send()
             .map_err(transport)?;
-        decode_response(response)
+        decode_response(response, self.config.versions.maximum)
     }
 
     fn get<R: DeserializeOwned>(
@@ -451,7 +451,7 @@ impl PeerHttpClient {
             .header(AUTHORIZATION, self.authorization()?)
             .send()
             .map_err(transport)?;
-        decode_response(response)
+        decode_response(response, self.config.versions.maximum)
     }
 }
 
@@ -471,7 +471,10 @@ fn endpoint(base: &Url, path: &[&str]) -> Result<Url, PeerHttpError> {
     Ok(value)
 }
 
-fn decode_response<T: DeserializeOwned>(mut response: Response) -> Result<T, PeerHttpError> {
+fn decode_response<T: DeserializeOwned>(
+    mut response: Response,
+    expected_protocol: ProtocolVersion,
+) -> Result<T, PeerHttpError> {
     let status = response.status();
     let mut bytes = Vec::new();
     response
@@ -491,9 +494,21 @@ fn decode_response<T: DeserializeOwned>(mut response: Response) -> Result<T, Pee
     if !status.is_success() {
         return Err(status_error(status));
     }
+    decode_response_document(&bytes, expected_protocol)
+}
+
+fn decode_response_document<T: DeserializeOwned>(
+    bytes: &[u8],
+    expected_protocol: ProtocolVersion,
+) -> Result<T, PeerHttpError> {
     let envelope: ProtocolEnvelope<T> =
-        decode_envelope(&bytes, milkdrift_peer_protocol::DecodeLimits::default())
+        decode_envelope(bytes, milkdrift_peer_protocol::DecodeLimits::default())
             .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+    if envelope.protocol != expected_protocol {
+        return Err(PeerHttpError::Protocol(
+            "peer response envelope does not match the negotiated protocol version".to_owned(),
+        ));
+    }
     Ok(envelope.message)
 }
 
@@ -518,4 +533,32 @@ fn transport(error: reqwest::Error) -> PeerHttpError {
     } else {
         "peer response failed".to_owned()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use milkdrift_peer_protocol::{ProtocolEnvelope, ProtocolVersion, encode_envelope};
+
+    use super::decode_response_document;
+
+    #[test]
+    fn response_decoder_requires_the_exact_negotiated_version()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let bytes = encode_envelope(&ProtocolEnvelope::v1(serde_json::json!({"ok": true})))?;
+        let decoded: serde_json::Value = decode_response_document(&bytes, ProtocolVersion::V1_2)?;
+        assert_eq!(decoded, serde_json::json!({"ok": true}));
+
+        assert!(
+            decode_response_document::<serde_json::Value>(
+                &bytes,
+                ProtocolVersion { major: 1, minor: 1 },
+            )
+            .is_err()
+        );
+        let legacy = br#"{"protocol":{"major":1,"minor":1},"message":null,"extensions":{}}"#;
+        assert!(
+            decode_response_document::<serde_json::Value>(legacy, ProtocolVersion::V1_2).is_err()
+        );
+        Ok(())
+    }
 }

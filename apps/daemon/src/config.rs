@@ -14,7 +14,7 @@ use milkdrift_capability::SideEffectClass;
 use milkdrift_contracts::{JsonLimits, canonical_json_bytes};
 use milkdrift_control_protocol::MAX_DOCUMENT_BYTES;
 use milkdrift_local_secret::LocalSecretSource;
-use milkdrift_peer_protocol::PeerAction;
+use milkdrift_peer_protocol::{PROTOCOL_MINOR_V1, PeerAction};
 use milkdrift_workspace::ArtifactSensitivity;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -288,10 +288,10 @@ pub struct PeerRelationshipConfig {
     /// Explicit development-only plaintext loopback exception.
     #[serde(default)]
     pub insecure_loopback_development: bool,
-    /// Allowed protocol minimum minor on major version one.
+    /// Protocol minimum minor compatibility assertion; must equal the current minor.
     #[serde(default = "default_peer_protocol_minor")]
     pub minimum_minor: u16,
-    /// Allowed protocol maximum minor on major version one.
+    /// Protocol maximum minor compatibility assertion; must equal the current minor.
     #[serde(default = "default_peer_protocol_minor")]
     pub maximum_minor: u16,
     /// Exact allowed protocol action families; empty denies all.
@@ -380,7 +380,7 @@ const fn default_peer_concurrency() -> u16 {
 }
 
 const fn default_peer_protocol_minor() -> u16 {
-    1
+    PROTOCOL_MINOR_V1
 }
 
 const fn default_peer_requests_per_minute() -> u32 {
@@ -901,9 +901,8 @@ fn validate_peers(
         if relationship.peer_id == *local_peer_id
             || !identities.insert(&relationship.peer_id)
             || !secrets.contains_key(&relationship.credential_ref)
-            || relationship.maximum_minor < relationship.minimum_minor
-            || relationship.minimum_minor > 1
-            || relationship.maximum_minor < 1
+            || relationship.minimum_minor != PROTOCOL_MINOR_V1
+            || relationship.maximum_minor != PROTOCOL_MINOR_V1
             || relationship.maximum_concurrent == 0
             || relationship.maximum_requests_per_minute == 0
             || relationship.maximum_requests_per_minute > 100_000

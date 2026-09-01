@@ -156,7 +156,7 @@ fn invocation_lookup_is_bound_to_the_exact_queried_request() -> TestResult {
 }
 
 #[test]
-fn decoder_rejects_bytes_depth_duplicates_and_unknown_major() -> TestResult {
+fn decoder_rejects_bounds_duplicates_and_every_non_current_version() -> TestResult {
     let envelope = ProtocolEnvelope::v1(serde_json::json!({"ok": true}));
     let bytes = encode_envelope(&envelope)?;
     assert!(
@@ -183,6 +183,15 @@ fn decoder_rejects_bytes_depth_duplicates_and_unknown_major() -> TestResult {
         )
         .is_err()
     );
+    for minor in [0_u16, 1, 3, u16::MAX] {
+        let bytes = format!(
+            "{{\"protocol\":{{\"major\":1,\"minor\":{minor}}},\"message\":null,\"extensions\":{{}}}}"
+        );
+        assert!(matches!(
+            decode_envelope::<serde_json::Value>(bytes.as_bytes(), DecodeLimits::default()),
+            Err(milkdrift_peer_protocol::PeerProtocolError::IncompatibleVersion)
+        ));
+    }
     let nested = format!(
         "{{\"protocol\":{{\"major\":1,\"minor\":0}},\"message\":{} ,\"extensions\":{{}}}}",
         "[".repeat(40) + &"]".repeat(40)

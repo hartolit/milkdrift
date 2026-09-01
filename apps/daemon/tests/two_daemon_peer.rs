@@ -21,8 +21,11 @@ use milkdrift_daemon::{
     PeerRelationshipConfig, PeerServingConfig, PeerSideEffectConfig, RuntimeHostConfig,
     SecretSourceConfig, ShutdownConfig, serve,
 };
-use milkdrift_peer_protocol::PeerAction;
-use milkdrift_peer_protocol::PeerRequestId;
+use milkdrift_peer_protocol::{
+    DecodeLimits, FeatureSet, HandshakeRequest, HandshakeResponse, HardLimits, PeerAction,
+    PeerRequestId, ProtocolEnvelope, ProtocolVersion as PeerProtocolVersion, ProtocolVersionRange,
+    SessionId, decode_envelope,
+};
 use milkdrift_persistence::{PageSize, PeerExecutionStore};
 use milkdrift_redb_store::RedbStore;
 use tempfile::TempDir;
@@ -70,6 +73,8 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
     let endpoint_b = Url::parse(&format!("http://{address_b}/"))?;
     let daemon_a = start(&root_a, "peer-a", "peer-b", &endpoint_b, listener_a).await?;
     let daemon_b = start(&root_b, "peer-b", "peer-a", &endpoint_a, listener_b).await?;
+
+    assert_peer_protocol_boundary(&endpoint_a).await?;
 
     let unauthenticated = reqwest::Client::new()
         .get(endpoint_a.join("peer/v1/catalog")?)
@@ -323,6 +328,42 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
     Ok(())
 }
 
+async fn assert_peer_protocol_boundary(endpoint: &Url) -> TestResult {
+    let client = reqwest::Client::new();
+    let request = HandshakeRequest {
+        claimed_peer: PeerId::new("peer-b")?,
+        session: SessionId::new("session:protocol-boundary")?,
+        versions: ProtocolVersionRange::default(),
+        features: FeatureSet::default(),
+        limits: HardLimits::default(),
+    };
+    let current = serde_json::to_value(ProtocolEnvelope::v1(request.clone()))?;
+    for minor in [1_u16, 3] {
+        let mut incompatible = current.clone();
+        incompatible["protocol"]["minor"] = serde_json::json!(minor);
+        let response = client
+            .post(endpoint.join("peer/v1/handshake")?)
+            .bearer_auth(PEER_TOKEN)
+            .json(&incompatible)
+            .send()
+            .await?;
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    }
+
+    let response = client
+        .post(endpoint.join("peer/v1/handshake")?)
+        .bearer_auth(PEER_TOKEN)
+        .json(&ProtocolEnvelope::v1(request))
+        .send()
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let envelope: ProtocolEnvelope<HandshakeResponse> =
+        decode_envelope(&response.bytes().await?, DecodeLimits::default())?;
+    assert_eq!(envelope.protocol, PeerProtocolVersion::V1_2);
+    assert_eq!(envelope.message.selected_version, PeerProtocolVersion::V1_2);
+    Ok(())
+}
+
 async fn start(
     root: &TempDir,
     local_peer: &str,
@@ -425,8 +466,8 @@ fn configuration(
                 endpoint: remote_endpoint.to_string(),
                 credential_ref: "credential:peer".to_owned(),
                 insecure_loopback_development: true,
-                minimum_minor: 1,
-                maximum_minor: 1,
+                minimum_minor: milkdrift_peer_protocol::PROTOCOL_MINOR_V1,
+                maximum_minor: milkdrift_peer_protocol::PROTOCOL_MINOR_V1,
                 actions: BTreeSet::from([
                     PeerAction::ReadCatalog,
                     PeerAction::Invoke,

@@ -198,6 +198,31 @@ fn canonical_version_statements_match_source_constants() -> TestResult {
 }
 
 #[test]
+fn peer_protocol_version_is_exact_from_config_through_transport() -> TestResult {
+    let daemon_config = read(root()?.join("apps/daemon/src/config.rs"))?;
+    assert!(
+        daemon_config.match_indices("PROTOCOL_MINOR_V1").count() >= 4,
+        "daemon peer defaults and both configured bounds must derive from the protocol constant"
+    );
+
+    let daemon_host = read(root()?.join("apps/daemon/src/host.rs"))?;
+    assert!(daemon_host.contains("let versions = ProtocolVersionRange::default();"));
+    assert!(daemon_host.contains("major: PROTOCOL_MAJOR_V1"));
+    assert!(
+        !daemon_host.contains("minor: 1"),
+        "daemon peer composition must not restore the refused v1.1 minor"
+    );
+
+    let codec = read(root()?.join("crates/peer-protocol/src/document.rs"))?;
+    assert!(codec.contains("protocol != ProtocolVersion::V1_2"));
+    let client = read(root()?.join("adapters/peer-http/src/client.rs"))?;
+    assert!(
+        client.contains("peer response envelope does not match the negotiated protocol version")
+    );
+    Ok(())
+}
+
+#[test]
 fn status_is_current_fact_not_a_pass_diary() -> TestResult {
     let status = read(root()?.join("docs/product/status.md"))?;
     let headings: Vec<_> = status

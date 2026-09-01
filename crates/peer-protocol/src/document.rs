@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
-use crate::{PeerProtocolError, ProtocolVersion, session::PROTOCOL_MAJOR_V1};
+use crate::{PeerProtocolError, ProtocolVersion};
 
 /// Maximum encoded bytes for one peer control document. Artifact bytes use chunk routes.
 pub const MAX_PEER_DOCUMENT_BYTES: usize = 1_048_576;
@@ -51,7 +51,7 @@ pub struct ProtocolEnvelope<T> {
 }
 
 impl<T> ProtocolEnvelope<T> {
-    /// Wraps one v1.0 message without optional extensions.
+    /// Wraps one current v1.2 message without optional extensions.
     #[must_use]
     pub fn v1(message: T) -> Self {
         Self {
@@ -107,7 +107,7 @@ fn validate_envelope(
     protocol: ProtocolVersion,
     extensions: &BTreeMap<String, Value>,
 ) -> Result<(), PeerProtocolError> {
-    if protocol.major != PROTOCOL_MAJOR_V1 {
+    if protocol != ProtocolVersion::V1_2 {
         return Err(PeerProtocolError::IncompatibleVersion);
     }
     if extensions.len() > MAX_EXTENSION_ITEMS

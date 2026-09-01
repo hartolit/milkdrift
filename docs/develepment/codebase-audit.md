@@ -8,7 +8,6 @@ It is an actionable engineering review, not a second owner for product status or
 
 | Priority | Finding | Main rule at risk |
 | --- | --- | --- |
-| High | Peer v1.2 is advertised but the daemon negotiates v1.1 and decoders accept other minors | One coherent design; compatibility; prove the rule |
 | High | Peer authority and expiry can consume a fabricated zero timestamp | Nondeterminism boundaries; explicit authority; truthful failure |
 | Medium | Public compatibility and test-support paths have no current production consumer | Narrow interfaces; remove obsolete compatibility |
 | Medium | `CapabilityAdapter` has several production implementations but no reusable conformance suite | Prove and enforce the rule |
@@ -17,45 +16,7 @@ It is an actionable engineering review, not a second owner for product status or
 
 ## Findings
 
-### 1. High — Peer version negotiation contradicts the v1.2-only wire contract
-
-The canonical contract says major 1/minor 2 is the only implemented peer version and earlier
-minors are refused (`docs/reference/peer-protocol.md:1-3`). The package agrees:
-`crates/peer-protocol/src/session.rs:8-21` defines `PROTOCOL_MINOR_V1 = 2` and
-`ProtocolVersion::V1_2`.
-
-Production composition does something different:
-
-- `apps/daemon/src/config.rs:382-384` defaults both relationship bounds to minor 1.
-- `apps/daemon/src/config.rs:903-907` rejects a minimum above 1, so an exact v1.2-only
-  relationship cannot be configured.
-- `apps/daemon/src/host.rs:1242-1247` declares the serving daemon's supported range as exactly
-  v1.1.
-- `crates/peer-protocol/src/document.rs:100-112` validates only the major version, so v1.1 and
-  unknown future major-1 minors can be decoded as the current shape.
-- `adapters/peer-http/src/client.rs:474-496` discards the decoded envelope version without checking
-  that it equals the negotiated version.
-- `apps/daemon/tests/two_daemon_peer.rs:428-429` pins the vertical test to v1.1, which explains why
-  two identical daemons interoperate despite the contract mismatch.
-
-This is not harmless metadata drift. Minor 2 added the exact queried request identity to lookup
-results. A compliant v1.2-only peer should reject v1.1, while this daemon selects it; this daemon
-also accepts a future minor whose meaning it cannot know. The current vertical test proves only
-that both sides share the same bypass.
-
-Recommended correction:
-
-1. Make the daemon/server and relationship defaults use `ProtocolVersion::V1_2`; remove the raw
-   `1` literals. If only one version is supported, remove operator-configurable minor ranges until
-   there is a real compatibility contract.
-2. Make envelope decoding reject every version except v1.2, or pass the exact negotiated version
-   into decoding and require equality. Do not accept an arbitrary major-1 minor.
-3. Make the client verify the response envelope version before returning the message.
-4. Change the two-daemon test to assert v1.2 selection, add v1.1/future-minor refusal tests at both
-   decoder and HTTP boundaries, and extend the repository contract to trace the source version
-   constant into the daemon composition root rather than checking documentation text alone.
-
-### 2. High — Clock failure can fail open at peer authority and expiry boundaries
+### 1. High — Clock failure can fail open at peer authority and expiry boundaries
 
 `PeerClock` is injected, but it cannot report failure. `SystemPeerClock::now_unix_ms` maps a clock
 before the Unix epoch to `0` and overflow to `u64::MAX`
@@ -89,7 +50,7 @@ Recommended correction:
    backwards clock movement, and overflow. Assert that no authentication, authority, catalog, or
    transfer operation is admitted from a fabricated sentinel timestamp.
 
-### 3. Medium — Public compatibility and test-support APIs remain in the normal product surface
+### 2. Medium — Public compatibility and test-support APIs remain in the normal product surface
 
 The pre-1.0 public API policy says test-only exposure must be feature-gated or kept in tests, and
 compatibility is retained only for an explicit supported contract. Several current exports do not
@@ -119,7 +80,7 @@ Recommended correction:
    test/evidence support code. Add repository checks that production-default API inventories do not
    expose named test helpers.
 
-### 4. Medium — The open adapter interface has no shared conformance suite
+### 3. Medium — The open adapter interface has no shared conformance suite
 
 `CapabilityAdapter` is an open production interface with lifecycle, exact execution,
 cancellation, health, and authority semantics (`crates/capability-host/src/adapter.rs:280-319`). It
@@ -146,7 +107,7 @@ Recommended correction:
 3. Replace default lifecycle methods with required methods unless a no-resource lifecycle is an
    explicit, tested semantic variant.
 
-### 5. Medium — The cohesion guard starts much later than the engineering rule
+### 4. Medium — The cohesion guard starts much later than the engineering rule
 
 The engineering rules require a cohesion review as production files approach roughly 1,000 lines.
 The repository contract in `tools/evidence/tests/repository_contracts.rs:432-452` enforces only a
@@ -179,7 +140,7 @@ Recommended correction:
 3. Do not split the exhaustive projection event reducers solely to satisfy a metric; review them
    for duplicated transition mechanics first, as required by the engineering rules.
 
-### 6. Low — Repeated contract mechanics still have competing implementations
+### 5. Low — Repeated contract mechanics still have competing implementations
 
 The repository has already established `milkdrift-contracts` as the owner of cross-domain
 implementation mechanics, but two small mechanics remain repeatedly hand-written:
@@ -209,13 +170,12 @@ Recommended correction:
 
 ## Suggested remediation order
 
-1. Correct and vertically test the peer v1.2 boundary.
-2. Make security- and expiry-relevant clocks fallible and consistently injected.
-3. Remove/gate unused compatibility and test-only public APIs.
-4. Establish adapter conformance tests.
-5. Apply targeted cohesion refactors and strengthen the repository guard.
-6. Consolidate repeated lexical/bounding mechanics when touching their owners.
+1. Make security- and expiry-relevant clocks fallible and consistently injected.
+2. Remove/gate unused compatibility and test-only public APIs.
+3. Establish adapter conformance tests.
+4. Apply targeted cohesion refactors and strengthen the repository guard.
+5. Consolidate repeated lexical/bounding mechanics when touching their owners.
 
-The first two items should be completed before making any new peer interoperability claim. The
-remaining items are independently shippable cleanup slices and should not be bundled into one
-large architectural rewrite.
+The clock boundary should be corrected before making any new peer interoperability claim. The
+remaining items are independently shippable cleanup slices and should not be bundled into one large
+architectural rewrite.

@@ -44,8 +44,8 @@ use milkdrift_peer_http::{
     PeerServerConfig, PeerService, PeerWorkerConfig, PeerWorkerShutdownReport, SystemPeerClock,
 };
 use milkdrift_peer_protocol::{
-    DelegationRef, ExecutionLimits, HardLimits, HeartbeatLease, PeerAuthority, ProtocolVersion,
-    ProtocolVersionRange, SessionId,
+    DelegationRef, ExecutionLimits, HardLimits, HeartbeatLease, PROTOCOL_MAJOR_V1, PeerAuthority,
+    ProtocolVersion, ProtocolVersionRange, SessionId,
 };
 use milkdrift_persistence::{
     ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
@@ -1240,11 +1240,7 @@ fn build_peer_runtime(
     session_hasher.update(&unix_millis().to_be_bytes());
     let session = SessionId::new(format!("session:{}", session_hasher.finalize().to_hex()))
         .map_err(|error| error.to_string())?;
-    let versions = ProtocolVersionRange::new(
-        ProtocolVersion { major: 1, minor: 1 },
-        ProtocolVersion { major: 1, minor: 1 },
-    )
-    .map_err(|error| error.to_string())?;
+    let versions = ProtocolVersionRange::default();
     let mut relationships = Vec::new();
     let mut clients = Vec::new();
     let mut authentication = Vec::new();
@@ -1264,11 +1260,11 @@ fn build_peer_runtime(
             PeerId::new(configured.peer_id.clone()).map_err(|error| error.to_string())?;
         let relationship_versions = ProtocolVersionRange::new(
             ProtocolVersion {
-                major: 1,
+                major: PROTOCOL_MAJOR_V1,
                 minor: configured.minimum_minor,
             },
             ProtocolVersion {
-                major: 1,
+                major: PROTOCOL_MAJOR_V1,
                 minor: configured.maximum_minor,
             },
         )

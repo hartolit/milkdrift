@@ -117,9 +117,7 @@ impl fmt::Debug for PeerRelationship {
 impl PeerRelationship {
     /// Validates quotas, credential presence, TTL, and the default-deny relationship shape.
     pub fn validate(&self) -> Result<(), PeerHttpError> {
-        self.versions
-            .negotiate(self.versions)
-            .map_err(|error| PeerHttpError::Configuration(error.to_string()))?;
+        validate_current_protocol_range(self.versions)?;
         self.execution_limits
             .validate()
             .map_err(|error| PeerHttpError::Configuration(error.to_string()))?;
@@ -168,6 +166,7 @@ pub struct PeerServerConfig {
 impl PeerServerConfig {
     /// Validates all bounds and rejects duplicate remote identities.
     pub fn validate(&self) -> Result<(), PeerHttpError> {
+        validate_current_protocol_range(self.versions)?;
         self.limits
             .validate()
             .map_err(|error| PeerHttpError::Configuration(error.to_string()))?;
@@ -282,6 +281,7 @@ pub struct PeerClientConfig {
 impl PeerClientConfig {
     /// Refuses credentials in URLs, fragments, non-HTTP schemes, and plaintext non-loopback.
     pub fn validate(&self) -> Result<(), PeerHttpError> {
+        validate_current_protocol_range(self.versions)?;
         if !self.endpoint.username().is_empty()
             || self.endpoint.password().is_some()
             || self.endpoint.fragment().is_some()
@@ -313,11 +313,46 @@ impl PeerClientConfig {
     }
 }
 
+fn validate_current_protocol_range(versions: ProtocolVersionRange) -> Result<(), PeerHttpError> {
+    if versions != ProtocolVersionRange::default() {
+        return Err(PeerHttpError::Configuration(
+            "peer protocol configuration must select exactly v1.2".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 fn endpoint_is_loopback(endpoint: &Url) -> bool {
     match endpoint.host() {
         Some(Host::Ipv4(address)) => address.is_loopback(),
         Some(Host::Ipv6(address)) => address.is_loopback(),
         Some(Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
         None => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use milkdrift_peer_protocol::{ProtocolVersion, ProtocolVersionRange};
+
+    use super::validate_current_protocol_range;
+
+    #[test]
+    fn configured_protocol_ranges_must_name_only_v1_2() -> Result<(), Box<dyn std::error::Error>> {
+        assert!(validate_current_protocol_range(ProtocolVersionRange::default()).is_ok());
+        for (minimum, maximum) in [(1_u16, 1_u16), (1, 2), (2, 3), (3, 3)] {
+            let range = ProtocolVersionRange::new(
+                ProtocolVersion {
+                    major: 1,
+                    minor: minimum,
+                },
+                ProtocolVersion {
+                    major: 1,
+                    minor: maximum,
+                },
+            )?;
+            assert!(validate_current_protocol_range(range).is_err());
+        }
+        Ok(())
     }
 }
