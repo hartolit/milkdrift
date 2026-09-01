@@ -1,6 +1,6 @@
 [package]
 name = "milkdrift-daemon"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -12,24 +12,25 @@ axum.workspace = true
 blake3.workspace = true
 clap.workspace = true
 futures-util.workspace = true
-milkdrift-authority = { version = "=0.1.0", path = "../../crates/authority" }
-milkdrift-blueprint = { version = "=0.1.0", path = "../../crates/blueprint" }
-milkdrift-capability = { version = "=0.1.0", path = "../../crates/capability" }
-milkdrift-capability-host = { version = "=0.1.0", path = "../../crates/capability-host" }
+milkdrift-authority.workspace = true
+milkdrift-blueprint.workspace = true
+milkdrift-capability.workspace = true
+milkdrift-capability-host.workspace = true
 milkdrift-contracts.workspace = true
-milkdrift-control = { version = "=0.1.0", path = "../../crates/control" }
-milkdrift-control-client = { version = "=0.1.0", path = "../../crates/control-client" }
-milkdrift-control-protocol = { version = "=0.1.0", path = "../../crates/control-protocol" }
-milkdrift-local-process = { version = "=0.1.0", path = "../../adapters/local-process" }
-milkdrift-model-provider = { version = "=0.1.0", path = "../../adapters/model-provider" }
-milkdrift-model = { version = "=0.1.0", path = "../../crates/model" }
-milkdrift-peer-http = { version = "=0.1.0", path = "../../adapters/peer-http" }
-milkdrift-peer-protocol = { version = "=0.1.0", path = "../../crates/peer-protocol" }
-milkdrift-persistence = { version = "=0.1.0", path = "../../crates/persistence" }
-milkdrift-prompt-sequence = { version = "=0.1.0", path = "../../crates/prompt-sequence" }
-milkdrift-redb-store = { version = "=0.1.0", path = "../../adapters/redb-store" }
-milkdrift-runtime = { version = "=0.1.0", path = "../../crates/runtime" }
-milkdrift-workspace = { version = "=0.1.0", path = "../../crates/workspace" }
+milkdrift-control.workspace = true
+milkdrift-control-client.workspace = true
+milkdrift-control-protocol.workspace = true
+milkdrift-local-process.workspace = true
+milkdrift-local-secret.workspace = true
+milkdrift-model-provider.workspace = true
+milkdrift-model.workspace = true
+milkdrift-peer-http.workspace = true
+milkdrift-peer-protocol.workspace = true
+milkdrift-persistence.workspace = true
+milkdrift-prompt-sequence.workspace = true
+milkdrift-redb-store.workspace = true
+milkdrift-runtime.workspace = true
+milkdrift-workspace.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 subtle.workspace = true

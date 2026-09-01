@@ -1093,6 +1093,7 @@ dependencies = [
  "milkdrift-control-client",
  "milkdrift-control-protocol",
  "milkdrift-local-process",
+ "milkdrift-local-secret",
  "milkdrift-model",
  "milkdrift-model-provider",
  "milkdrift-peer-http",
@@ -1163,6 +1164,16 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "milkdrift-local-secret"
+version = "0.1.0"
+dependencies = [
+ "milkdrift-authority",
+ "milkdrift-capability-host",
  "tempfile",
  "thiserror",
 ]
@@ -1322,15 +1333,6 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
-]
-
-[[package]]
-name = "milkdrift-secret-env"
-version = "0.1.0"
-dependencies = [
- "milkdrift-authority",
- "milkdrift-capability-host",
- "thiserror",
 ]
 
 [[package]]

@@ -55,8 +55,10 @@ snapshot. Git, CI, releases, and external audits own chronology.
 - Models remain external provider capabilities. Provider-neutral task/response and context
   contracts are separate from bounded OpenAI-compatible and native Anthropic mappings. Exact
   profile/model/usage metadata and committed artifacts are recorded without logging prompts,
-  responses, bearer values, or resolved secrets. Local processes use byte-pinned safe-argv profile
-  schema 2, explicit inputs/outputs, bounded streams, cancellation, and process ownership.
+  responses, bearer values, or resolved secrets. One local-secret adapter resolves only configured
+  bounded environment or restricted-file references for authentication, process/model adapters,
+  and peer credentials. Local processes use byte-pinned safe-argv profile schema 2, explicit
+  inputs/outputs, bounded streams, cancellation, and process ownership.
 - Prompt-sequence schema 2 imports bounded JSON or Markdown, compiles to ordinary blueprints, and
   uses the normal daemon/control/CLI path for validation, execution, verification, review,
   approval, prospective remediation, restart recovery, and historical inspection. Its headless

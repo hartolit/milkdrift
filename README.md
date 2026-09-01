@@ -141,7 +141,7 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 - `adapters/local-process`: byte-pinned schema-v2 safe-argv profiles and the trusted-host process adapter; it is not a sandbox.
 - `adapters/model-provider`: bounded HTTP endpoint profiles plus OpenAI-compatible and native Anthropic mappings.
 - `adapters/peer-http`: authenticated HTTP peer transport, durable serving/reconnect, and remote capabilities mapped into the ordinary capability host.
-- `adapters/secret-env`: explicit opaque-secret-reference to environment-name resolution.
+- `adapters/local-secret`: explicit opaque-secret-reference resolution from bounded environment or restricted-file sources.
 - `apps/daemon`: authoritative local host, bounded runtime owner, authentication, HTTP/SSE API, recovery, and shutdown.
 - `apps/cli`: thin operator client with human and stable schema-v1 JSON output.
 - `tools/evidence`: development-only Divan and operational fixtures for critical bounded paths.

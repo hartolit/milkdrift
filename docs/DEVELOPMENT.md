@@ -22,18 +22,18 @@ Focused daemon/control-plane checks are:
 ```sh
 cargo test -p milkdrift-control-protocol --all-features -- --nocapture
 cargo test -p milkdrift-control-client --all-features -- --nocapture
-cargo test -p milkdrift-daemon --test control_plane daemon_auth_startup_readiness_and_authority -- --exact --nocapture
-cargo test -p milkdrift-daemon --test control_plane scoped_read_matrix_and_continuations_fail_closed -- --exact --nocapture
-cargo test -p milkdrift-daemon --test control_plane daemon_command_idempotency_restart_and_stale_conflict -- --exact --nocapture
-cargo test -p milkdrift-daemon --test control_plane daemon_bounded_overload_returns_stable_error -- --exact --nocapture
-cargo test -p milkdrift-daemon --test control_plane daemon_stream_reconnect_auth_rotation_and_shutdown -- --exact --nocapture
-cargo test -p milkdrift-daemon --test control_plane daemon_graceful_shutdown_and_restart -- --exact --nocapture
-cargo test -p milkdrift-daemon --test control_plane daemon_configured_process_adapter_executes_to_terminal -- --exact --nocapture
-cargo test -p milkdrift-daemon --test control_plane layout_is_optimistic_restart_durable_and_semantically_inert -- --exact --nocapture
-cargo test -p milkdrift-daemon --test control_plane proposal_listing_uses_durable_projection_and_survives_restart -- --exact --nocapture
-cargo test -p milkdrift-daemon --test control_plane prompt_sequence_validate_import_inspect_and_restart_are_one_control_path -- --exact --nocapture
-cargo test -p milkdrift-daemon --test control_plane headless_dogfood_failure_remediation_and_restart_are_durable -- --exact --nocapture
-cargo test -p milkdrift-daemon --test control_plane daemon_startup_refuses_legacy_sidecar_and_peer_prototype_authority -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane control_workflows::daemon_auth_startup_readiness_and_authority -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane control_workflows::scoped_read_matrix_and_continuations_fail_closed -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane durability::daemon_command_idempotency_restart_and_stale_conflict -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane operations::daemon_bounded_overload_returns_stable_error -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane operations::daemon_stream_reconnect_auth_rotation_and_shutdown -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane operations::daemon_graceful_shutdown_and_restart -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane operations::daemon_configured_process_adapter_executes_to_terminal -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane durability::layout_is_optimistic_restart_durable_and_semantically_inert -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane durability::proposal_listing_uses_durable_projection_and_survives_restart -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane control_workflows::prompt_sequence_validate_import_inspect_and_restart_are_one_control_path -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane control_workflows::headless_dogfood_failure_remediation_and_restart_are_durable -- --exact --nocapture
+cargo test -p milkdrift-daemon --test control_plane operations::daemon_startup_refuses_legacy_sidecar_and_peer_prototype_authority -- --exact --nocapture
 cargo test -p milkdrift-cli --all-features -- --nocapture
 cargo test -p milkdrift-prompt-sequence --all-features -- --nocapture
 cargo test -p milkdrift-local-process --test process_execution authorized_host_working_directory_ -- --nocapture

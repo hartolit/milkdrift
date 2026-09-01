@@ -1,6 +1,6 @@
 [package]
 name = "milkdrift-capability-host"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -8,18 +8,18 @@ rust-version.workspace = true
 
 [dependencies]
 blake3.workspace = true
-milkdrift-authority = { version = "=0.1.0", path = "../authority" }
-milkdrift-blueprint = { version = "=0.1.0", path = "../blueprint" }
-milkdrift-capability = { version = "=0.1.0", path = "../capability" }
-milkdrift-persistence = { version = "=0.1.0", path = "../persistence" }
-milkdrift-runtime = { version = "=0.1.0", path = "../runtime" }
-milkdrift-workspace = { version = "=0.1.0", path = "../workspace" }
+milkdrift-authority.workspace = true
+milkdrift-blueprint.workspace = true
+milkdrift-capability.workspace = true
+milkdrift-persistence.workspace = true
+milkdrift-runtime.workspace = true
+milkdrift-workspace.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-milkdrift-redb-store = { version = "=0.1.0", path = "../../adapters/redb-store", features = ["test-admin"] }
+milkdrift-redb-store = { workspace = true, features = ["test-admin"] }
 
 [lints]
 workspace = true

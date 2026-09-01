@@ -187,12 +187,12 @@ milkdrift-persistence -> {runtime, redb-store, control}
 milkdrift-model       -> {runtime, model-provider, control}
 milkdrift-runtime     -> {capability-host, control}
 milkdrift-capability-host -> {local-process, model-provider, control}
-milkdrift-authority   -> {secret-env, local-process, model-provider}
+milkdrift-authority   -> {local-secret, local-process, model-provider}
 milkdrift-control-protocol -> {control-client, daemon}
 milkdrift-control-client   -> {cli}
 {authority, blueprint, capability, contracts, control, persistence, workspace} -> prompt-sequence
 {authority, blueprint, capability-host, control, persistence, runtime, redb-store,
- local-process, model-provider, control-protocol, prompt-sequence} -> daemon
+ local-process, local-secret, model-provider, control-protocol, prompt-sequence} -> daemon
 ```
 
 `milkdrift-contracts` owns only cross-domain implementation mechanics with
@@ -215,8 +215,9 @@ persistence, runtime, model, and host contracts. Its workflow-control adapter ca
 the same `ControlService` reached by authenticated human/service clients and reports only normal
 capability observations; it owns neither durable truth nor a host lifecycle.
 `milkdrift-local-process` depends outward on that port and owns process/filesystem APIs;
-it never depends on redb or mutates runtime state. `milkdrift-secret-env` is a separate
-concrete secret boundary. `milkdrift-control-protocol` is a pure outward DTO boundary;
+it never depends on redb or mutates runtime state. `milkdrift-local-secret` is the sole concrete
+local environment/restricted-file secret boundary used by the daemon composition root.
+`milkdrift-control-protocol` is a pure outward DTO boundary;
 the HTTP stack exists only in `milkdrift-control-client` and `milkdrift-daemon`.
 `milkdrift-prompt-sequence` is an outer import/template layer over stable semantic, authority,
 control, persistence-identity, and workspace contracts; it emits ordinary revisions/proposals and
@@ -229,7 +230,7 @@ Forbidden in the semantic crates are Tokio or another executor, HTTP clients/ser
 
 Every disk, wire, provider, tool, peer, imported blueprint, artifact, path, signal, and AI-produced proposal is untrusted input. Readers enforce schema version, byte/count/depth/string/path bounds before expensive work; reject unknown core semantics; and preserve only bounded namespaced extensions. Conditions are data ASTs, not scripts.
 
-Credentials and secret values never appear in blueprints, descriptors, requirements, events, command bodies, diagnostics, logs, or peer advertisements. `SecretRef` serializes only an opaque reference, while resolved `SensitiveSecret` values are non-serializable, non-clone, redacted, and exposed only through a narrow closure. The local daemon accepts only loopback plaintext, requires an enabled bearer-reference binding, compares credential digests in constant time, rereads file/environment references for rotation, and maps a match to server-owned actor/grant facts. Authentication and authority remain separate; permissive CORS is absent. The host owns the resolver port; `milkdrift-secret-env` resolves only explicitly mapped references and never enumerates the environment. Local-process profiles are argv templates, never shell command strings; each substitution remains one OS argument. The child begins from `env_clear`, receives only allowlisted ambient names and resolved secret refs, and secret-bearing profiles cannot stream process text. Filesystem/process effects require canonical allowlisted roots, isolated materialization, bounded regular files, traversal/symlink/hardlink rejection, and declared output imports. Side effects, authority decisions, hostile output, cancellation observations, and uncertain outcomes are provenance facts. Budget and termination controls are enforced by their owning boundary, not trusted to an AI prompt.
+Credentials and secret values never appear in blueprints, descriptors, requirements, events, command bodies, diagnostics, logs, or peer advertisements. `SecretRef` serializes only an opaque reference, while resolved `SensitiveSecret` values are non-serializable, non-clone, redacted, and exposed only through a narrow closure. The local daemon accepts only loopback plaintext, requires an enabled bearer-reference binding, compares credential digests in constant time, rereads file/environment references for rotation, and maps a match to server-owned actor/grant facts. Authentication and authority remain separate; permissive CORS is absent. The host owns the resolver port; `milkdrift-local-secret` resolves only explicitly mapped environment or restricted-file references, never enumerates the environment, and bounds every resolved value. The daemon uses that same resolver for authentication, process/model adapters, and peer credentials. Local-process profiles are argv templates, never shell command strings; each substitution remains one OS argument. The child begins from `env_clear`, receives only allowlisted ambient names and resolved secret refs, and secret-bearing profiles cannot stream process text. Filesystem/process effects require canonical allowlisted roots, isolated materialization, bounded regular files, traversal/symlink/hardlink rejection, and declared output imports. Side effects, authority decisions, hostile output, cancellation observations, and uncertain outcomes are provenance facts. Budget and termination controls are enforced by their owning boundary, not trusted to an AI prompt.
 
 Every capability descriptor has an exact execution trust class. The current local-process adapter is `TrustedHostProcess`: the child runs with daemon-account host privileges, and mediation of argv, environment, materialization, import paths, and output bounds is not an isolation boundary around arbitrary executable behavior. `SandboxedProcess` is reserved for a separate adapter that actually enforces a complete container, namespace, VM, or equivalent boundary. Exact requirements and authority scopes may constrain the class, so sandbox-required work cannot resolve to the host-process adapter.
 
@@ -275,7 +276,7 @@ milkdrift/
 │   ├── model-provider/
 │   ├── peer-http/
 │   ├── redb-store/
-│   └── secret-env/
+│   └── local-secret/
 ├── apps/
 │   ├── cli/
 │   └── daemon/
@@ -290,7 +291,7 @@ The exact current logical-to-physical mapping is:
 | --- | --- |
 | Shared contract mechanics | `milkdrift-contracts` owns bounded/canonical JSON mechanics and the common validated-string implementation; semantic rules remain in consuming domain crates |
 | Actor/grant/policy/secret-reference authority | `milkdrift-authority::{identity,model::{capability,decision,execution,grant,resource},evaluator,secret,document}` remains pure and owns no transport authentication or live secret source; `milkdrift-daemon::auth` maps local credential references to those server-owned facts |
-| Human/service/AI workflow control | `milkdrift-control::{document,command,policy,preset,service,adapter,controller,read}` owns strict proposals and application orchestration while durable revisions, authorization decisions, reconciliation, and events remain with their existing owners |
+| Human/service/AI workflow control | `milkdrift-control::{document,command,policy,preset,service,adapter,controller::{policy,lifecycle},read}` owns strict proposals and application orchestration while durable revisions, authorization decisions, reconciliation, and events remain with their existing owners |
 | External control protocol | `milkdrift-control-protocol` owns protocol 2.2 common envelopes/cursors/codecs with focused private `command`, `read`, and `layout` modules for mutation DTOs, observation/read DTOs, and layout schema 1; it contains no async, HTTP, runtime, or storage types |
 | Reusable control client | `milkdrift-control-client` owns version negotiation, bearer-authenticated typed HTTP calls, bounded safe-query retries and artifact ranges, and exact-cursor SSE reconnect |
 | `blueprint/model` | `milkdrift-blueprint::model` (public types re-exported at crate root) |
@@ -303,22 +304,22 @@ The exact current logical-to-physical mapping is:
 | `runtime/reconciliation` | `milkdrift-runtime::reconciliation`, engine reconciliation, separate projection plan/action reducers and reconciliation views, and persistence-owned plan event documents |
 | `runtime/recovery` | `milkdrift-runtime::{query,engine::recovery,projection::replay}`, the focused recovery reducer, and recovery indexes in the redb adapter |
 | `capability/contracts` | `milkdrift-capability::{descriptor,invocation,document,identity,bounded}` |
-| `capability/registry` | `milkdrift-capability-host::registry` owns bounded live registrations, observations, actual permit ownership, generation lifecycle, and queries |
+| `capability/registry` | `milkdrift-capability-host::registry::{selection,lifecycle,execution}` owns bounded live registrations and selection, observations/generation lifecycle/queries, and exact permit-backed execution |
 | `capability/resolution` | Pure matching and exact snapshots remain in `milkdrift-capability`; deterministic authority/policy/health/capacity selection and the runtime executor bridge are in `milkdrift-capability-host` |
 | `capability/effect-host` | `milkdrift-capability-host::worker` owns explicit fixed execution/control threads, bounded queues, bounded claim pages, health, panic containment, and deadline-driven drain/cancel/retain shutdown |
 | `capability/materialization` | `milkdrift-capability-host::materialization` owns the exact workspace/artifact port and `RuntimeStore` bridge; concrete adapters see only isolated roots and capability-domain references |
-| `workspace/context` | Immutable task policy/output roles in `milkdrift-blueprint::context`, exact schema-v2 manifest contracts in `milkdrift-model::context`, authoritative candidate discovery with focused direct-input and selected-materialization owners in `milkdrift-runtime::context::source`, pure selection/publication in `milkdrift-runtime::context`, and scoped values/budgets in `milkdrift-workspace` |
+| `workspace/context` | Immutable task policy/output roles in `milkdrift-blueprint::context`, exact schema-v2 manifest contracts in `milkdrift-model::context`, authoritative candidate construction/discovery/explicit-source handling plus focused direct-input and selected-materialization owners in `milkdrift-runtime::context::source::{candidate,discovery,explicit,direct,materialize}`, pure selection/publication in `milkdrift-runtime::context`, and scoped values/budgets in `milkdrift-workspace` |
 | `workspace/artifacts` | Metadata/contracts in `milkdrift-workspace` and durable bytes in `milkdrift-redb-store` |
 | `workspace/branches` | `milkdrift-workspace::scope` plus runtime branch/iteration/subworkflow projections |
-| `persistence/events` | `milkdrift-persistence::{event,document}` with exact legacy schema-v1 and current schema-v2 golden fixtures |
-| `persistence/journal` | Narrow `milkdrift-persistence` ports implemented by `milkdrift-redb-store::journal::{append,discovery,queries,workspace}` |
+| `persistence/events` | `milkdrift-persistence::{event::{model,kind,references},document}` with exact legacy schema-v1 and current schema-v2 golden fixtures |
+| `persistence/journal` | Narrow receipt/atomic-commit/query ports in `milkdrift-persistence::journal::{receipt,commit,query}`, implemented by `milkdrift-redb-store::journal::{append,discovery,queries,workspace}` |
 | `persistence/projections` | Pure `milkdrift-runtime::projection`; optional checked snapshots use persistence envelope v2 around runtime projection payload v4 |
 | `peer/protocol` | `milkdrift-peer-protocol::{document,identity,session,catalog,execution,artifact}` owns bounded transport-neutral protocol 1.2 messages and semantic state |
 | `peer/capability-advertisement` | `milkdrift-peer-http::{service::{authority,catalog},remote}` derives authority-filtered expiring catalogs and maps exact remote generations into ordinary local capability registrations |
 | `model/contracts` | `milkdrift-model::{task,context,document}` owns provider-neutral schema-v1 model tasks/responses and schema-v2 exact causal-manifest bodies without HTTP, runtime, provider SDK, or secret dependencies |
 | `adapters/model` | `milkdrift-model-provider::{adapter,profile,http,stream,openai_compatible,anthropic}` owns endpoint policy, feature negotiation, bounded transport, two independent wire mappings, and artifact publication |
 | `adapters/process` | `milkdrift-local-process::config` owns byte-pinned trusted-host profile schema v2 and immutable descriptor construction; private `process::{identity,prepare,spawn,streams,monitor,outputs,reporting,platform}` modules own bounded identity verification, direct argv entry, environment mediation, pipes, declared imports, timeout/cancellation, and platform process ownership |
-| `adapters/secret-env` | `milkdrift-secret-env` maps explicitly configured opaque references to exact environment names without enumerating or retaining values |
+| `adapters/local-secret` | `milkdrift-local-secret` is the sole local resolver from explicitly configured opaque references to exact environment names or bounded restricted files; it never enumerates the environment or retains values |
 | `adapters/filesystem` | Content-addressed artifact ownership in `milkdrift-redb-store::artifact::{accounting,cleanup,path,publication}` |
 | `adapters/redb` | The transactional local adapter, split across `milkdrift-redb-store::{admin,journal,store}` facades and their private child modules; `peer::{accounting,integrity,retention,validation}` owns durable peer accounting, whole-store verification, archival compaction, and document validation around the cohesive execution-store implementation |
 | `adapters/peer-transport` | `milkdrift-peer-http::{auth,config,http,client,store,artifact,dispatch,remote,service::{artifact_transfer,authority,catalog,lifecycle,worker}}` owns fixed HTTPS/loopback transport, bearer identity, bounded worker lifecycle, core artifact transfer, quotas, and remote adapters; redb owns durable peer rows through persistence ports |

@@ -1,14 +1,13 @@
-use std::{collections::BTreeMap, env, fmt, fs, sync::Arc};
+use std::{collections::BTreeMap, fmt, sync::Arc};
 
-use milkdrift_authority::{ActorRef, AuthorityGrant, GrantId, SecretRef, SensitiveSecret};
-use milkdrift_capability_host::{SecretResolver, SecretResolverError};
+use milkdrift_authority::{ActorRef, AuthorityGrant, GrantId, SecretRef};
+use milkdrift_capability_host::SecretResolver;
 use milkdrift_control::{ActorAuthorityContext, AuthorityPreset};
+use milkdrift_local_secret::LocalSecretResolver;
 use milkdrift_runtime::CommandAuthorityClaim;
 use subtle::ConstantTimeEq;
 
-use crate::config::{
-    ActorBindingConfig, AuthenticationPlan, AuthorityPresetConfig, ConfigError, SecretSourceConfig,
-};
+use crate::config::{ActorBindingConfig, AuthenticationPlan, AuthorityPresetConfig, ConfigError};
 
 /// Immutable authenticated server-owned session facts.
 #[derive(Clone)]
@@ -39,51 +38,16 @@ impl fmt::Debug for ActorSession {
 
 #[derive(Clone)]
 struct Binding {
-    source: SecretSourceConfig,
+    reference: SecretRef,
     session: ActorSession,
     enabled: bool,
-}
-
-/// Secret resolver shared by authentication and configured adapters.
-pub(crate) struct ConfiguredSecretResolver {
-    sources: BTreeMap<String, SecretSourceConfig>,
-}
-
-impl ConfiguredSecretResolver {
-    pub fn new(sources: BTreeMap<String, SecretSourceConfig>) -> Self {
-        Self { sources }
-    }
-
-    fn resolve_name(&self, name: &str) -> Result<SensitiveSecret, SecretResolverError> {
-        let source = self
-            .sources
-            .get(name)
-            .ok_or(SecretResolverError::Unavailable)?;
-        read_secret(source)
-    }
-}
-
-impl SecretResolver for ConfiguredSecretResolver {
-    fn resolve(&self, reference: &SecretRef) -> Result<SensitiveSecret, SecretResolverError> {
-        self.resolve_name(reference.as_str())
-    }
-}
-
-impl fmt::Debug for ConfiguredSecretResolver {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("ConfiguredSecretResolver")
-            .field("configured_references", &self.sources.len())
-            .field("values", &"[redacted]")
-            .finish()
-    }
 }
 
 /// Request-time credential verifier supporting file-based rotation and configured revocation.
 #[derive(Clone)]
 pub(crate) struct AuthRegistry {
     bindings: Arc<Vec<Binding>>,
-    resolver: Arc<ConfiguredSecretResolver>,
+    resolver: Arc<LocalSecretResolver>,
     grants: Arc<Vec<AuthorityGrant>>,
     revocations: Arc<BTreeMap<GrantId, u64>>,
 }
@@ -100,7 +64,7 @@ impl fmt::Debug for AuthRegistry {
 
 impl AuthRegistry {
     pub fn from_plan(config: &AuthenticationPlan) -> Result<Self, ConfigError> {
-        let resolver = Arc::new(ConfiguredSecretResolver::new(config.secret_sources.clone()));
+        let resolver = Arc::new(LocalSecretResolver::new(config.secret_sources.clone()));
         let mut bindings = Vec::with_capacity(config.actors.len());
         let mut grants = Vec::with_capacity(config.actors.len());
         let mut revocations = BTreeMap::new();
@@ -109,14 +73,16 @@ impl AuthRegistry {
                 .map_err(|error| ConfigError::Invalid(error.to_string()))?;
             let grant = grant(configured, &actor)?;
             let session = session(configured, actor, grant.clone())?;
-            let source = config
-                .secret_sources
-                .get(&configured.credential_ref)
-                .ok_or_else(|| ConfigError::Invalid("credential source is absent".to_owned()))?
-                .clone();
+            let reference = SecretRef::new(configured.credential_ref.clone())
+                .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+            if !config.secret_sources.contains_key(&reference) {
+                return Err(ConfigError::Invalid(
+                    "credential source is absent".to_owned(),
+                ));
+            }
             if configured.enabled {
                 resolver
-                    .resolve_name(&configured.credential_ref)
+                    .resolve(&reference)
                     .map_err(|_| {
                         ConfigError::Invalid("configured credential is unavailable".to_owned())
                     })?
@@ -131,7 +97,7 @@ impl AuthRegistry {
                     })?;
             }
             bindings.push(Binding {
-                source,
+                reference,
                 session,
                 enabled: configured.enabled,
             });
@@ -160,7 +126,7 @@ impl AuthRegistry {
         let supplied_digest = blake3::hash(supplied);
         let mut matched = None;
         for binding in self.bindings.iter() {
-            let candidate = read_secret(&binding.source);
+            let candidate = self.resolver.resolve(&binding.reference);
             let equal = candidate
                 .ok()
                 .map(|candidate| {
@@ -189,7 +155,7 @@ impl AuthRegistry {
         self.grants.as_ref().clone()
     }
 
-    pub fn resolver(&self) -> Arc<ConfiguredSecretResolver> {
+    pub fn resolver(&self) -> Arc<LocalSecretResolver> {
         self.resolver.clone()
     }
 
@@ -246,62 +212,14 @@ fn grant(config: &ActorBindingConfig, actor: &ActorRef) -> Result<AuthorityGrant
         .map_err(|error| ConfigError::Invalid(error.to_string()))
 }
 
-fn read_secret(source: &SecretSourceConfig) -> Result<SensitiveSecret, SecretResolverError> {
-    let bytes = match source {
-        SecretSourceConfig::Environment { variable } => env::var_os(variable)
-            .map(os_bytes)
-            .transpose()?
-            .ok_or(SecretResolverError::Unavailable)?,
-        SecretSourceConfig::File { path } => {
-            let metadata = fs::metadata(path).map_err(|_| SecretResolverError::Unavailable)?;
-            if !metadata.is_file() || metadata.len() > 4_097 {
-                return Err(SecretResolverError::Unavailable);
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt as _;
-                if metadata.permissions().mode() & 0o077 != 0 {
-                    return Err(SecretResolverError::Unavailable);
-                }
-            }
-            let mut bytes = fs::read(path).map_err(|_| SecretResolverError::Unavailable)?;
-            if bytes.last() == Some(&b'\n') {
-                bytes.pop();
-                if bytes.last() == Some(&b'\r') {
-                    bytes.pop();
-                }
-            }
-            bytes
-        }
-    };
-    if bytes.is_empty() || bytes.len() > 4_096 {
-        return Err(SecretResolverError::Unavailable);
-    }
-    Ok(SensitiveSecret::new(bytes))
-}
-
-#[cfg(unix)]
-fn os_bytes(value: std::ffi::OsString) -> Result<Vec<u8>, SecretResolverError> {
-    use std::os::unix::ffi::OsStringExt as _;
-    Ok(value.into_vec())
-}
-
-#[cfg(not(unix))]
-fn os_bytes(value: std::ffi::OsString) -> Result<Vec<u8>, SecretResolverError> {
-    value
-        .into_string()
-        .map(String::into_bytes)
-        .map_err(|_| SecretResolverError::Unavailable)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::{
         AdapterConfig, ApplicationReceiptConfig, DaemonConfig, PeerHostConfig, RuntimeHostConfig,
-        ShutdownConfig,
+        SecretSourceConfig, ShutdownConfig,
     };
-    use std::{collections::BTreeMap, net::SocketAddr};
+    use std::{collections::BTreeMap, fs, net::SocketAddr};
 
     fn config(root: &std::path::Path, token: &std::path::Path) -> DaemonConfig {
         DaemonConfig {

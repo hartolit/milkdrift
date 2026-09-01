@@ -1,6 +1,6 @@
 [package]
 name = "milkdrift-local-process"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -14,11 +14,11 @@ bench = false
 
 [dependencies]
 blake3.workspace = true
-milkdrift-authority = { version = "=0.1.0", path = "../../crates/authority" }
-milkdrift-capability = { version = "=0.1.0", path = "../../crates/capability" }
-milkdrift-capability-host = { version = "=0.1.0", path = "../../crates/capability-host" }
+milkdrift-authority.workspace = true
+milkdrift-capability.workspace = true
+milkdrift-capability-host.workspace = true
 milkdrift-contracts.workspace = true
-milkdrift-workspace = { version = "=0.1.0", path = "../../crates/workspace" }
+milkdrift-workspace.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -27,10 +27,10 @@ thiserror.workspace = true
 rustix = { version = "1.1.4", features = ["process"] }
 
 [dev-dependencies]
-milkdrift-blueprint = { version = "=0.1.0", path = "../../crates/blueprint" }
-milkdrift-persistence = { version = "=0.1.0", path = "../../crates/persistence" }
-milkdrift-redb-store = { version = "=0.1.0", path = "../redb-store", features = ["test-admin"] }
-milkdrift-runtime = { version = "=0.1.0", path = "../../crates/runtime" }
+milkdrift-blueprint.workspace = true
+milkdrift-persistence.workspace = true
+milkdrift-redb-store = { workspace = true, features = ["test-admin"] }
+milkdrift-runtime.workspace = true
 tempfile.workspace = true
 
 [lints]

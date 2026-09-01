@@ -5,7 +5,7 @@ members = [
     "adapters/model-provider",
     "adapters/peer-http",
     "adapters/redb-store",
-    "adapters/secret-env",
+    "adapters/local-secret",
     "crates/authority",
     "crates/blueprint",
     "crates/capability",
@@ -26,6 +26,7 @@ members = [
 ]
 
 [workspace.package]
+version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/hartolit/milkdrift"
@@ -38,7 +39,26 @@ axum = { version = "0.8.9", features = ["json", "tokio", "http1"] }
 async-stream = "0.3.6"
 clap = { version = "4.6.6", features = ["derive", "env"] }
 futures-util = "0.3.31"
+milkdrift-authority = { version = "=0.1.0", path = "crates/authority" }
+milkdrift-blueprint = { version = "=0.1.0", path = "crates/blueprint" }
+milkdrift-capability = { version = "=0.1.0", path = "crates/capability" }
+milkdrift-capability-host = { version = "=0.1.0", path = "crates/capability-host" }
 milkdrift-contracts = { version = "=0.1.0", path = "crates/contracts" }
+milkdrift-control = { version = "=0.1.0", path = "crates/control" }
+milkdrift-control-client = { version = "=0.1.0", path = "crates/control-client" }
+milkdrift-control-protocol = { version = "=0.1.0", path = "crates/control-protocol" }
+milkdrift-daemon = { version = "=0.1.0", path = "apps/daemon" }
+milkdrift-local-process = { version = "=0.1.0", path = "adapters/local-process" }
+milkdrift-local-secret = { version = "=0.1.0", path = "adapters/local-secret" }
+milkdrift-model = { version = "=0.1.0", path = "crates/model" }
+milkdrift-model-provider = { version = "=0.1.0", path = "adapters/model-provider" }
+milkdrift-peer-http = { version = "=0.1.0", path = "adapters/peer-http" }
+milkdrift-peer-protocol = { version = "=0.1.0", path = "crates/peer-protocol" }
+milkdrift-persistence = { version = "=0.1.0", path = "crates/persistence" }
+milkdrift-prompt-sequence = { version = "=0.1.0", path = "crates/prompt-sequence" }
+milkdrift-redb-store = { version = "=0.1.0", path = "adapters/redb-store" }
+milkdrift-runtime = { version = "=0.1.0", path = "crates/runtime" }
+milkdrift-workspace = { version = "=0.1.0", path = "crates/workspace" }
 proptest = "1.7.0"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls", "stream"] }
 serde = { version = "1.0.219", features = ["derive"] }

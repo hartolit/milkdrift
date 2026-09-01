@@ -13,6 +13,7 @@ use milkdrift_authority::{
 use milkdrift_capability::SideEffectClass;
 use milkdrift_contracts::{JsonLimits, canonical_json_bytes};
 use milkdrift_control_protocol::MAX_DOCUMENT_BYTES;
+use milkdrift_local_secret::LocalSecretSource;
 use milkdrift_peer_protocol::PeerAction;
 use milkdrift_workspace::ArtifactSensitivity;
 use serde::{Deserialize, Serialize};
@@ -515,7 +516,7 @@ pub(crate) struct StoragePlan {
 
 #[derive(Clone, Debug)]
 pub(crate) struct AuthenticationPlan {
-    pub(crate) secret_sources: BTreeMap<String, SecretSourceConfig>,
+    pub(crate) secret_sources: BTreeMap<SecretRef, LocalSecretSource>,
     pub(crate) actors: Vec<ActorBindingConfig>,
 }
 
@@ -626,23 +627,8 @@ impl DaemonConfig {
             .map_err(|error| ConfigError::Read(error.kind().to_string()))?;
         self.data_root = normalize_owned_path(&base, &self.data_root)?;
         for source in self.secret_sources.values_mut() {
-            match source {
-                SecretSourceConfig::Environment { variable } => {
-                    if variable.is_empty()
-                        || variable.len() > 128
-                        || !variable.is_ascii()
-                        || !variable
-                            .bytes()
-                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-                    {
-                        return Err(ConfigError::Invalid(
-                            "environment secret source name is invalid".to_owned(),
-                        ));
-                    }
-                }
-                SecretSourceConfig::File { path } => {
-                    *path = normalize_existing_file(&base, path)?;
-                }
+            if let SecretSourceConfig::File { path } = source {
+                *path = normalize_existing_file(&base, path)?;
             }
         }
         let mut actors = BTreeSet::new();
@@ -680,6 +666,22 @@ impl DaemonConfig {
             ))
         })?;
         let normalized_digest = format!("b3_{}", blake3::hash(&normalized).to_hex());
+        let local_secret_sources = self
+            .secret_sources
+            .iter()
+            .map(|(reference, source)| {
+                let reference = SecretRef::new(reference.clone())
+                    .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+                let source = match source {
+                    SecretSourceConfig::Environment { variable } => {
+                        LocalSecretSource::environment(variable.clone())
+                    }
+                    SecretSourceConfig::File { path } => LocalSecretSource::file(path.clone()),
+                }
+                .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+                Ok((reference, source))
+            })
+            .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
         Ok(DaemonPlan {
             bind: self.bind,
             storage: StoragePlan {
@@ -688,7 +690,7 @@ impl DaemonConfig {
                 security_audit_record_bound: self.security_audit_record_bound,
             },
             authentication: AuthenticationPlan {
-                secret_sources: self.secret_sources,
+                secret_sources: local_secret_sources,
                 actors: self.actors,
             },
             runtime: self.runtime,

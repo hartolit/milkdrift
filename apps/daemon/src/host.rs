@@ -36,6 +36,7 @@ use milkdrift_control_protocol::{
     TimelineCategory, TimelineEntry,
 };
 use milkdrift_local_process::{LocalProcessAdapter, ProcessProfileDocument};
+use milkdrift_local_secret::LocalSecretResolver;
 use milkdrift_model_provider::{EndpointProfile, ModelEndpointAdapter, descriptor_for_profile};
 use milkdrift_peer_http::{
     CorePeerArtifactStore, InsecureLoopbackMode, PeerAuthenticator, PeerClientConfig,
@@ -75,7 +76,7 @@ use tokio::sync::oneshot;
 use tracing::{info, warn};
 
 use crate::{
-    auth::{ActorSession, AuthRegistry, ConfiguredSecretResolver},
+    auth::{ActorSession, AuthRegistry},
     config::{
         AdapterConfig, DaemonPlan, DaemonPlanParts, PeerHostConfig, PeerSideEffectConfig,
         RuntimeHostConfig, ShutdownConfig, ShutdownEffectPolicy, StoragePlan,
@@ -1217,7 +1218,7 @@ fn build_peer_runtime(
     execution_lease_ms: u64,
     host: &CapabilityHost,
     store: Arc<RedbStore>,
-    secrets: Arc<ConfiguredSecretResolver>,
+    secrets: Arc<LocalSecretResolver>,
     owner_queue: OwnerPeerQueue,
 ) -> Result<PeerRuntime, String> {
     let PeerHostConfig::Enabled {
@@ -1436,7 +1437,7 @@ fn build_peer_runtime(
 }
 
 struct ConfiguredPeerCredential {
-    resolver: Arc<ConfiguredSecretResolver>,
+    resolver: Arc<LocalSecretResolver>,
     reference: SecretRef,
 }
 
@@ -1456,7 +1457,7 @@ struct ConfiguredPeerAuthentication {
 }
 
 struct ConfiguredPeerAuthenticator {
-    resolver: Arc<ConfiguredSecretResolver>,
+    resolver: Arc<LocalSecretResolver>,
     relationships: Vec<ConfiguredPeerAuthentication>,
 }
 

@@ -2,8 +2,8 @@
 
 use super::{
     ActorSession, AdapterConfig, Arc, AuthorityOperation, CapabilityHost, CapabilityId,
-    CapabilityRead, ConfiguredSecretResolver, ControlService, EndpointProfile, ErrorCode,
-    InvocationDataAccess, LocalProcessAdapter, ModelEndpointAdapter, Owner, ProcessProfileDocument,
+    CapabilityRead, ControlService, EndpointProfile, ErrorCode, InvocationDataAccess,
+    LocalProcessAdapter, LocalSecretResolver, ModelEndpointAdapter, Owner, ProcessProfileDocument,
     PublicFailure, RequestedResourceFacts, ResultSink, WorkflowControlAdapter, bounded,
     descriptor_for_profile, fs, snake_debug, unix_millis, workflow_control_descriptor,
 };
@@ -96,7 +96,7 @@ pub(super) fn register_configured(
     config: &AdapterConfig,
     host: &CapabilityHost,
     data: Arc<dyn InvocationDataAccess>,
-    secrets: Arc<ConfiguredSecretResolver>,
+    secrets: Arc<LocalSecretResolver>,
 ) -> Result<(), String> {
     for path in &config.process_profiles {
         let bytes = fs::read(path)

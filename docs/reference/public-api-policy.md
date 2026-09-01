@@ -45,7 +45,7 @@ package entry point. Consumers otherwise import the canonical owner directly.
 | `milkdrift-model-provider` | Workspace adapter contract and versioned endpoint profiles; provider wire payloads stay private. `operational-evidence` is evidence-only. |
 | `milkdrift-peer-http` | Workspace adapter contract used by the daemon; transport, worker, and storage projections stay with private modules. |
 | `milkdrift-redb-store` | Workspace adapter implementations and configuration. Fault injection and mutation inspection are test-only under `test-admin`. |
-| `milkdrift-secret-env` | Workspace adapter contract for explicitly configured secret references; values and environment enumeration are not exposed. |
+| `milkdrift-local-secret` | Workspace adapter contract for explicitly configured environment/restricted-file secret references; locations, values, and environment enumeration are not exposed. |
 | `milkdrift-daemon` | Workspace application boundary used by its executable, integration tests, and evidence. Its HTTP router and read projections are internal. |
 | `milkdrift-cli` | No library surface. Its command behavior and schema-1 JSON output are external application contracts. |
 | `milkdrift-evidence` | Unpublished development/test-only contract. Reports belong under `target/evidence`. |

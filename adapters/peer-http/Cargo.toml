@@ -1,6 +1,6 @@
 [package]
 name = "milkdrift-peer-http"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -11,13 +11,13 @@ async-stream.workspace = true
 axum.workspace = true
 blake3.workspace = true
 futures-util.workspace = true
-milkdrift-authority = { version = "=0.1.0", path = "../../crates/authority" }
-milkdrift-blueprint = { version = "=0.1.0", path = "../../crates/blueprint" }
-milkdrift-capability = { version = "=0.1.0", path = "../../crates/capability" }
-milkdrift-capability-host = { version = "=0.1.0", path = "../../crates/capability-host" }
-milkdrift-peer-protocol = { version = "=0.1.0", path = "../../crates/peer-protocol" }
-milkdrift-persistence = { version = "=0.1.0", path = "../../crates/persistence" }
-milkdrift-workspace = { version = "=0.1.0", path = "../../crates/workspace" }
+milkdrift-authority.workspace = true
+milkdrift-blueprint.workspace = true
+milkdrift-capability.workspace = true
+milkdrift-capability-host.workspace = true
+milkdrift-peer-protocol.workspace = true
+milkdrift-persistence.workspace = true
+milkdrift-workspace.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -29,7 +29,7 @@ tower-http.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-milkdrift-redb-store = { version = "=0.1.0", path = "../redb-store", features = ["test-admin"] }
+milkdrift-redb-store = { workspace = true, features = ["test-admin"] }
 redb = "=2.6.3"
 tempfile.workspace = true
 

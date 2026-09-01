@@ -261,6 +261,47 @@ fn semantic_and_protocol_packages_have_no_ui_inference_or_internal_adapter_edges
 }
 
 #[test]
+fn workspace_owns_internal_package_versions_and_paths() -> TestResult {
+    let repository = root()?;
+    let workspace = read(repository.join("Cargo.toml"))?;
+    assert!(workspace.contains("[workspace.package]\nversion = \"0.1.0\""));
+
+    let mut manifests = Vec::new();
+    collect_files(&repository, &mut manifests, &|path| {
+        path.file_name().and_then(|name| name.to_str()) == Some("Cargo.toml")
+    })?;
+    for manifest_path in manifests {
+        if manifest_path == repository.join("Cargo.toml") {
+            continue;
+        }
+        let manifest = read(&manifest_path)?;
+        assert!(
+            manifest
+                .lines()
+                .any(|line| line == "version.workspace = true"),
+            "package version is not workspace-owned in {}",
+            manifest_path.display()
+        );
+        for line in manifest.lines().map(str::trim) {
+            if !line.starts_with("milkdrift-") || !line.contains('=') {
+                continue;
+            }
+            assert!(
+                !line.contains("path =") && !line.contains("version ="),
+                "internal dependency repeats its path/version in {}: {line}",
+                manifest_path.display()
+            );
+            assert!(
+                line.contains(".workspace = true") || line.contains("{ workspace = true"),
+                "internal dependency is not workspace-owned in {}: {line}",
+                manifest_path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn narrowed_exports_and_validating_constructors_remain_narrow() -> TestResult {
     let repository = root()?;
     let persistence = read(repository.join("crates/persistence/src/lib.rs"))?;
