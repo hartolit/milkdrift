@@ -54,7 +54,7 @@ parent traversal are refused.
 export MILKDRIFT_AGENT_TOKEN='replace-in-operator-environment'
 export MILKDRIFT_MODEL_TOKEN='replace-in-operator-environment'
 
-./scripts/run-external-evidence.sh \
+cargo external-evidence \
   --agent-profile /operator/private/coding-agent-profile.json \
   --agent-version-arg=--version \
   --model-profile /operator/private/model-profile.json \
@@ -189,7 +189,7 @@ The local self-test performs both workflows against a byte-pinned Python fixture
 mock endpoint, without external network or credentials:
 
 ```sh
-./scripts/run-external-evidence.sh \
+cargo external-evidence \
   --fixture --allow-fixture \
   --output target/milkdrift-external-evidence-fixture
 ```

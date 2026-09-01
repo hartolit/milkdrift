@@ -112,8 +112,8 @@ dogfood guide](docs/headless-dogfood.md), [schema-2 reference](docs/reference/pr
 and [complete example](examples/headless-dogfood-sequence.md).
 
 To generate redacted operator evidence against one real coding-agent executable and one real model
-endpoint, use [`scripts/run-external-evidence.sh`](scripts/run-external-evidence.sh) with the safe
-templates under [`examples/external-evidence`](examples/external-evidence/README.md). The exact
+endpoint, run `cargo external-evidence` with the safe templates under
+[`examples/external-evidence`](examples/external-evidence/README.md). The exact
 prerequisites, qualification rules, costs, restart/failure scenario, report schema, fixture mode,
 and cleanup guidance are in [the external-evidence guide](docs/external-evidence.md). Fixture mode
 tests the harness but never qualifies as external interoperability proof.

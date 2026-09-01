@@ -148,9 +148,10 @@ Current exact versions are:
   Four explicitly manual longevity/storage-bound tests remain ignored in the ordinary suite.
 - All four manual longevity lanes pass separately in release mode: 10,001 receipt commits across
   hot/cold turnover and restart, two-daemon peer retention/restart, controller checkpoint/restart,
-  and the 2,049-occurrence runtime frontier. The seven pinned mutation shards cover 398 mutants:
-  375 caught, 21 compiler-unviable, and two exact reviewed unreachable-state classifications, with
-  no timeout or unclassified survivor.
+  and the 2,049-occurrence runtime frontier. The seven pinned current-source mutation shards
+  enumerate 468 mutants after the authority, controller, and peer owner splits. Their complete
+  current-source campaign remains outstanding; the earlier 398-mutant result no longer qualifies
+  the split source paths.
 - The simplified all-feature `cargo-public-api` inventory is 6,597 items. The daemon has 140 items
   and exposes its effective configuration as an opaque compiled plan rather than validated raw
   fields. Redb has 156 all-feature items but only 88 default-feature items because 68
@@ -161,8 +162,9 @@ Current exact versions are:
   replay, reconciliation, causal context, process/model adapters, controller lifecycle, application
   and peer retention, artifact integrity/ranges, authentication/cursor revocation, daemon overload,
   shutdown, and a loopback two-daemon remote execution.
-- `milkdrift-evidence` owns repeatable storage/projection/context/artifact/daemon measurements and
-  operational reports under `target/evidence`. Current dirty-tree diagnostic runs cover 64, 256,
+- `milkdrift-evidence` owns repeatable storage/projection/context/artifact/daemon measurements,
+  the Cargo-native mutation shard/classification runner, and operational reports under
+  `target/evidence`. Current dirty-tree diagnostic runs cover 64, 256,
   and 1,024 operations and record Git commit/tree/dirty state plus `rustc -vV`; they are not release
   qualification. The hermetic external-evidence report remains explicitly non-qualifying for real
   interoperability.

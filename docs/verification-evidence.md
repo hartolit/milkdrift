@@ -7,8 +7,8 @@ are observations, not correctness thresholds, and are not used to conceal an unb
 ## Pinned tools and fixtures
 
 - Rust is pinned to 1.95.0 by `rust-toolchain.toml`.
-- Targeted mutation testing uses `cargo-mutants` 27.1.0 from `.cargo/mutants.toml` and
-  `scripts/run-mutation-shard.sh`.
+- Targeted mutation testing uses `cargo-mutants` 27.1.0 from `.cargo/mutants.toml` and the
+  Cargo-native `mutation-evidence` binary owned by `milkdrift-evidence`.
 - Microbenchmarks use Divan 0.1.21 as an exact development dependency of
   `milkdrift-evidence`.
 - The local-process measurement executes the separately built, byte-pinned
@@ -67,14 +67,14 @@ cargo install cargo-mutants --version 27.1.0 --locked
 List or execute one focused shard:
 
 ```sh
-scripts/run-mutation-shard.sh authority --list
-scripts/run-mutation-shard.sh authority
-scripts/run-mutation-shard.sh retention
-scripts/run-mutation-shard.sh runtime
-scripts/run-mutation-shard.sh uncertainty
-scripts/run-mutation-shard.sh controller
-scripts/run-mutation-shard.sh context
-scripts/run-mutation-shard.sh peer
+cargo mutation-evidence authority --list
+cargo mutation-evidence authority
+cargo mutation-evidence retention
+cargo mutation-evidence runtime
+cargo mutation-evidence uncertainty
+cargo mutation-evidence controller
+cargo mutation-evidence context
+cargo mutation-evidence peer
 ```
 
 The committed mutation scope is semantic: authority selector, validity, revocation, resource,
@@ -88,12 +88,14 @@ machine-readable result. A missed mutant must be fixed by a test or recorded by 
 unreachable under a validated public contract, or a mutation-tool limitation; unclassified survivors
 fail the lane.
 
-The complete local Linux campaign on 2026-09-01 tested 398 focused mutants: 375 were caught, 21
-were compiler-unviable, and two exact survivors were machine-matched to reviewed
-`unreachable_by_valid_contract` classifications. There were no timeouts and no unclassified
-survivors. Per-shard `mutants.out` directories retain the source identities, logs, outcomes, and
-generated classification reports. Checksum-correct raw-row corruption tests now exercise the peer
-primary-record and tombstone validators instead of classifying their individual guards.
+The seven current-source shards enumerate 468 focused mutants. The previous complete campaign
+covered 398 mutants before authority, controller, and peer policy moved into their named child
+modules, so it no longer qualifies the current source paths; a fresh complete campaign remains
+required. Per-shard `mutants.out` directories retain source identities, logs, outcomes, and
+generated classification reports. The Rust runner validates its strict classification policy,
+rejects duplicate identities, and fails closed on timeouts or unclassified survivors.
+Checksum-correct raw-row corruption tests exercise the peer primary-record and tombstone validators
+instead of classifying their individual guards.
 
 Build and smoke every benchmark once:
 

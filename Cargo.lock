@@ -1123,6 +1123,7 @@ name = "milkdrift-evidence"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "clap",
  "divan",
  "futures-util",
  "milkdrift-authority",

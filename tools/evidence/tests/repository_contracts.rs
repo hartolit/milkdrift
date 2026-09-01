@@ -194,6 +194,54 @@ fn status_is_current_fact_not_a_pass_diary() -> TestResult {
 }
 
 #[test]
+fn repository_evidence_tasks_have_one_cargo_owned_rust_path() -> TestResult {
+    let repository = root()?;
+    let aliases = read(repository.join(".cargo/config.toml"))?;
+    assert!(aliases.contains(
+        "external-evidence = \"run --package milkdrift-daemon --bin milkdrift-external-evidence --\""
+    ));
+    assert!(aliases.contains(
+        "mutation-evidence = \"run --package milkdrift-evidence --bin mutation-evidence --\""
+    ));
+    assert!(
+        repository
+            .join("tools/evidence/src/bin/mutation-evidence.rs")
+            .is_file()
+    );
+    assert!(
+        repository
+            .join("apps/daemon/src/bin/milkdrift-external-evidence/main.rs")
+            .is_file()
+    );
+    for obsolete in [
+        "scripts/check-mutation-classifications.mjs",
+        "scripts/run-mutation-shard.sh",
+        "scripts/run-external-evidence.sh",
+    ] {
+        assert!(
+            !repository.join(obsolete).is_file(),
+            "obsolete repository task path returned: {obsolete}"
+        );
+    }
+
+    let workflow = read(repository.join(".github/workflows/mutation.yml"))?;
+    assert!(workflow.contains("cargo mutation-evidence \"${{ matrix.shard }}\""));
+    for document in [
+        "README.md",
+        "docs/DEVELOPMENT.md",
+        "docs/external-evidence.md",
+        "docs/verification-evidence.md",
+    ] {
+        let contents = read(repository.join(document))?;
+        assert!(
+            !contents.contains("scripts/"),
+            "obsolete script path remains documented in {document}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn semantic_and_protocol_packages_have_no_ui_inference_or_internal_adapter_edges() -> TestResult {
     let repository = root()?;
     let mut manifests = Vec::new();

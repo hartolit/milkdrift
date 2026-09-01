@@ -136,7 +136,7 @@ MILKDRIFT_EVIDENCE_PROCESS_HELPER="$PWD/target/release/evidence-process-helper" 
   target/release/operational-evidence --operations 256 --output target/evidence
 ```
 
-Run `scripts/run-mutation-shard.sh SHARD` for the seven focused mutation areas. Do not accept a
+Run `cargo mutation-evidence SHARD` for the seven focused mutation areas. Do not accept a
 survivor because a benchmark looks healthy: add the missing correctness assertion or record an
 exact reviewed classification in `.cargo/mutation-classifications.json`.
 

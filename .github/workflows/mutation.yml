@@ -30,7 +30,7 @@ jobs:
       - name: Run focused mutation shard
         env:
           CARGO_MUTANTS_JOBS: "2"
-        run: scripts/run-mutation-shard.sh "${{ matrix.shard }}"
+        run: cargo mutation-evidence "${{ matrix.shard }}"
       - name: Upload mutation outcomes and logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
