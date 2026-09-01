@@ -1748,6 +1748,28 @@ async fn daemon_stream_reconnect_auth_rotation_and_shutdown() -> TestResult {
         initial_health.observation,
         Observation::DaemonHealth(_)
     ));
+    let initial_health_position = initial_health.cursor.position_for("daemon-health")?;
+    daemon
+        .client
+        .submit(&request(
+            "health-stream-operational-change",
+            None,
+            Command::ValidateBlueprint {
+                document: blueprint()?,
+            },
+        ))
+        .await?;
+    let changed_health = tokio::time::timeout(Duration::from_secs(3), health.next())
+        .await?
+        .ok_or("health stream did not publish an operational change")??;
+    assert!(matches!(
+        changed_health.observation,
+        Observation::DaemonHealth(_)
+    ));
+    assert!(
+        changed_health.cursor.position_for("daemon-health")? > initial_health_position,
+        "queue/receipt health changes must advance the coherent feed generation"
+    );
     write_secret(
         &directory.path().join("controller.token"),
         "rotated-controller-token",

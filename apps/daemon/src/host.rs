@@ -3,7 +3,7 @@ use std::{
     fs,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
         mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel},
     },
     thread::{self, JoinHandle},
@@ -29,11 +29,11 @@ use milkdrift_control::{
     WorkflowControlAdapter, WorkflowProposalDocument, workflow_control_descriptor,
 };
 use milkdrift_control_protocol::{
-    ApplicationReceiptHealthRead, ArtifactMetadataRead, AttemptRead, CapabilityRead, Command,
-    CommandAccepted, CommandRequest, ContextManifestRead, Cursor, CursorBinding, DaemonState,
-    ErrorCode, HealthRead, LayoutDocument, NodeRead, Page, PeerExecutionHealthRead, PeerRead,
-    ProposalDecision, ProposalRead, ResolveAction, RevisionChange, RevisionDiffRead, RevisionRead,
-    RevisionSummary as PublicRevisionSummary, RunRead, TimelineCategory, TimelineEntry,
+    ArtifactMetadataRead, AttemptRead, CapabilityRead, Command, CommandAccepted, CommandRequest,
+    ContextManifestRead, Cursor, CursorBinding, ErrorCode, HealthRead, LayoutDocument, NodeRead,
+    Page, PeerRead, ProposalDecision, ProposalRead, ResolveAction, RevisionChange,
+    RevisionDiffRead, RevisionRead, RevisionSummary as PublicRevisionSummary, RunRead,
+    TimelineCategory, TimelineEntry,
 };
 use milkdrift_local_process::{LocalProcessAdapter, ProcessProfileDocument};
 use milkdrift_model_provider::{EndpointProfile, ModelEndpointAdapter, descriptor_for_profile};
@@ -50,14 +50,14 @@ use milkdrift_persistence::{
     ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
     ApplicationCommandReceipt, ApplicationCommandResult, ApplicationCommandStore,
     ApplicationCursor, ApplicationEffectReference, ApplicationLayoutStore, ApplicationLayoutUpdate,
-    ApplicationPageQuery, ApplicationReceiptArchiveRequest, ApplicationReceiptStatus,
-    ArtifactReadAuthority, ArtifactReadRequest, ArtifactStore, AttemptId, CommandId,
-    CorrelationKey, EventPageQuery, EvidenceId, EvidenceKind, EvidenceReference, IndexedRunState,
-    IntegrityDigest, NodeExecutionId, PageSize, PeerExecutionStatus, PersistenceError,
-    ProposalIndexEntry, ProposalIndexStore, Reason, ReconciliationDecisionId, RepeatDecisionId,
-    RevisionCursor, RevisionFilter, RevisionPageQuery, RevisionStore, RunEventKind, RunQueryStore,
-    RunSequence, RunSummaryCursor, RunSummaryFilter, RunSummaryPageQuery, SecurityAuditEntry,
-    SecurityAuditStore, SignalDeliveryMode, SignalId, SignalTypeId, TimestampMillis, WorkerId,
+    ApplicationPageQuery, ApplicationReceiptArchiveRequest, ArtifactReadAuthority,
+    ArtifactReadRequest, ArtifactStore, AttemptId, CommandId, CorrelationKey, EventPageQuery,
+    EvidenceId, EvidenceKind, EvidenceReference, IndexedRunState, IntegrityDigest, NodeExecutionId,
+    PageSize, PersistenceError, ProposalIndexEntry, ProposalIndexStore, Reason,
+    ReconciliationDecisionId, RepeatDecisionId, RevisionCursor, RevisionFilter, RevisionPageQuery,
+    RevisionStore, RunEventKind, RunQueryStore, RunSequence, RunSummaryCursor, RunSummaryFilter,
+    RunSummaryPageQuery, SecurityAuditEntry, SecurityAuditStore, SignalDeliveryMode, SignalId,
+    SignalTypeId, TimestampMillis, WorkerId,
 };
 use milkdrift_prompt_sequence::{PromptSequenceDocument, compile as compile_prompt_sequence};
 use milkdrift_redb_store::{RedbStore, RedbStoreConfig};
@@ -77,8 +77,8 @@ use tracing::{info, warn};
 use crate::{
     auth::{ActorSession, AuthRegistry, ConfiguredSecretResolver},
     config::{
-        AdapterConfig, DaemonPlan, DaemonPlanParts, PeerHostConfig, PeerServingConfig,
-        PeerSideEffectConfig, RuntimeHostConfig, ShutdownConfig, ShutdownEffectPolicy, StoragePlan,
+        AdapterConfig, DaemonPlan, DaemonPlanParts, PeerHostConfig, PeerSideEffectConfig,
+        RuntimeHostConfig, ShutdownConfig, ShutdownEffectPolicy, StoragePlan,
     },
 };
 
@@ -87,12 +87,14 @@ mod attempts;
 mod capabilities;
 mod commands;
 mod definitions;
+mod health;
 mod layouts;
 mod proposals;
 mod read_model;
 mod receipts;
 mod runs;
 
+use health::{Lifecycle, QueuedRequestGuard, SharedHealth};
 use read_model::*;
 
 const OWNER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -147,197 +149,6 @@ impl PublicFailure {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-enum Lifecycle {
-    Starting = 0,
-    Ready = 1,
-    Draining = 2,
-    Stopped = 3,
-    Failed = 4,
-}
-
-impl Lifecycle {
-    fn from_u8(value: u8) -> Self {
-        match value {
-            1 => Self::Ready,
-            2 => Self::Draining,
-            3 => Self::Stopped,
-            4 => Self::Failed,
-            _ => Self::Starting,
-        }
-    }
-
-    const fn public(self) -> DaemonState {
-        match self {
-            Self::Starting => DaemonState::Starting,
-            Self::Ready => DaemonState::Ready,
-            Self::Draining => DaemonState::Draining,
-            Self::Stopped => DaemonState::Stopped,
-            Self::Failed => DaemonState::Failed,
-        }
-    }
-}
-
-struct SharedHealth {
-    lifecycle: AtomicU8,
-    generation: AtomicU64,
-    queued: AtomicU32,
-    capacity: u32,
-    active_effects: AtomicU32,
-    last_failure: Mutex<Option<String>>,
-    receipt_hot_count: AtomicU64,
-    receipt_hot_bound: u32,
-    receipt_archive_batch_size: u32,
-    receipt_cold_count: AtomicU64,
-    receipt_archive_generation: AtomicU64,
-    receipt_last_archived_at: AtomicU64,
-    receipt_archival_degraded: AtomicBool,
-    receipt_archival_failure: Mutex<Option<String>>,
-    peer_enabled: bool,
-    peer_active_count: AtomicU32,
-    peer_active_bound: u32,
-    peer_dispatch_queued: AtomicU32,
-    peer_dispatch_bound: u32,
-    peer_hot_terminal_count: AtomicU64,
-    peer_hot_terminal_bound: u64,
-    peer_tombstone_count: AtomicU64,
-    peer_archive_batch_size: u32,
-    peer_observation_hot_retention_ms: u64,
-    peer_archive_generation: AtomicU64,
-    peer_last_archived_at: AtomicU64,
-    peer_archival_degraded: AtomicBool,
-    peer_archival_failure: Mutex<Option<String>>,
-}
-
-impl SharedHealth {
-    fn set_lifecycle(&self, lifecycle: Lifecycle) {
-        self.lifecycle.store(lifecycle as u8, Ordering::SeqCst);
-        self.generation.fetch_add(1, Ordering::SeqCst);
-    }
-
-    fn failure(&self, message: &str) {
-        if let Ok(mut failure) = self.last_failure.lock() {
-            *failure = Some(bounded(message));
-        }
-    }
-
-    fn receipt_status(&self, status: ApplicationReceiptStatus) {
-        self.receipt_hot_count
-            .store(status.hot_count, Ordering::SeqCst);
-        self.receipt_cold_count
-            .store(status.cold_count, Ordering::SeqCst);
-        self.receipt_archive_generation
-            .store(status.archive_generation, Ordering::SeqCst);
-        self.receipt_last_archived_at.store(
-            status.last_archived_at.map_or(0, TimestampMillis::get),
-            Ordering::SeqCst,
-        );
-        self.receipt_archival_degraded
-            .store(false, Ordering::SeqCst);
-        if let Ok(mut failure) = self.receipt_archival_failure.lock() {
-            *failure = None;
-        }
-    }
-
-    fn receipt_failure(&self) {
-        self.receipt_archival_degraded.store(true, Ordering::SeqCst);
-        if let Ok(mut failure) = self.receipt_archival_failure.lock() {
-            *failure = Some("application receipt archival/storage operation failed".to_owned());
-        }
-    }
-
-    fn peer_status(&self, status: PeerExecutionStatus) {
-        self.peer_active_count
-            .store(status.active, Ordering::SeqCst);
-        self.peer_dispatch_queued
-            .store(status.dispatch_queued, Ordering::SeqCst);
-        self.peer_hot_terminal_count
-            .store(status.hot_terminal, Ordering::SeqCst);
-        self.peer_tombstone_count
-            .store(status.tombstones, Ordering::SeqCst);
-        self.peer_archive_generation
-            .store(status.archive_generation, Ordering::SeqCst);
-        self.peer_last_archived_at.store(
-            status.last_archived_at_unix_ms.unwrap_or(0),
-            Ordering::SeqCst,
-        );
-        self.peer_archival_degraded.store(false, Ordering::SeqCst);
-        if let Ok(mut failure) = self.peer_archival_failure.lock() {
-            *failure = None;
-        }
-    }
-
-    fn peer_failure(&self) {
-        self.peer_archival_degraded.store(true, Ordering::SeqCst);
-        if let Ok(mut failure) = self.peer_archival_failure.lock() {
-            *failure = Some("peer execution archival/storage operation failed".to_owned());
-        }
-    }
-
-    fn read(&self) -> HealthRead {
-        let lifecycle = Lifecycle::from_u8(self.lifecycle.load(Ordering::SeqCst));
-        HealthRead {
-            state: lifecycle.public(),
-            live: !matches!(lifecycle, Lifecycle::Stopped | Lifecycle::Failed),
-            ready: lifecycle == Lifecycle::Ready,
-            draining: lifecycle == Lifecycle::Draining,
-            queued_requests: self.queued.load(Ordering::SeqCst),
-            request_queue_capacity: self.capacity,
-            active_effects: self.active_effects.load(Ordering::SeqCst),
-            last_failure: self
-                .last_failure
-                .lock()
-                .ok()
-                .and_then(|failure| failure.clone()),
-            application_receipts: ApplicationReceiptHealthRead {
-                hot_count: self.receipt_hot_count.load(Ordering::SeqCst),
-                hot_bound: self.receipt_hot_bound,
-                archive_batch_size: self.receipt_archive_batch_size,
-                cold_count: self.receipt_cold_count.load(Ordering::SeqCst),
-                archive_generation: self.receipt_archive_generation.load(Ordering::SeqCst),
-                last_archived_at_unix_ms: match self
-                    .receipt_archive_generation
-                    .load(Ordering::SeqCst)
-                {
-                    0 => None,
-                    _ => Some(self.receipt_last_archived_at.load(Ordering::SeqCst)),
-                },
-                archival_degraded: self.receipt_archival_degraded.load(Ordering::SeqCst),
-                last_archival_failure: self
-                    .receipt_archival_failure
-                    .lock()
-                    .ok()
-                    .and_then(|failure| failure.clone()),
-            },
-            peer_executions: PeerExecutionHealthRead {
-                enabled: self.peer_enabled,
-                active_count: self.peer_active_count.load(Ordering::SeqCst),
-                active_bound: self.peer_active_bound,
-                dispatch_queued: self.peer_dispatch_queued.load(Ordering::SeqCst),
-                dispatch_bound: self.peer_dispatch_bound,
-                hot_terminal_count: self.peer_hot_terminal_count.load(Ordering::SeqCst),
-                hot_terminal_bound: self.peer_hot_terminal_bound,
-                tombstone_count: self.peer_tombstone_count.load(Ordering::SeqCst),
-                archive_batch_size: self.peer_archive_batch_size,
-                observation_hot_retention_ms: self.peer_observation_hot_retention_ms,
-                archive_generation: self.peer_archive_generation.load(Ordering::SeqCst),
-                last_archived_at_unix_ms: match self.peer_archive_generation.load(Ordering::SeqCst)
-                {
-                    0 => None,
-                    _ => Some(self.peer_last_archived_at.load(Ordering::SeqCst)),
-                },
-                archival_degraded: self.peer_archival_degraded.load(Ordering::SeqCst),
-                last_archival_failure: self
-                    .peer_archival_failure
-                    .lock()
-                    .ok()
-                    .and_then(|failure| failure.clone()),
-            },
-        }
-    }
-}
-
 /// Cloneable daemon handle shared by HTTP route state.
 #[derive(Clone)]
 pub struct DaemonHost {
@@ -362,13 +173,6 @@ impl std::fmt::Debug for DaemonHost {
     }
 }
 
-fn peer_serving(peers: &PeerHostConfig) -> Option<&PeerServingConfig> {
-    match peers {
-        PeerHostConfig::Disabled => None,
-        PeerHostConfig::Enabled { serving, .. } => Some(serving),
-    }
-}
-
 impl DaemonHost {
     /// Starts the dedicated owner, completes recovery/adapters/workers, then returns ready.
     pub fn start(config: DaemonPlan) -> Result<Self, HostError> {
@@ -388,41 +192,7 @@ impl DaemonHost {
             .map_err(|_| HostError::Configuration("request queue exceeds platform".to_owned()))?;
         let (sender, receiver) = sync_channel(queue_size);
         let (startup_sender, startup_receiver) = sync_channel(1);
-        let health = Arc::new(SharedHealth {
-            lifecycle: AtomicU8::new(Lifecycle::Starting as u8),
-            generation: AtomicU64::new(1),
-            queued: AtomicU32::new(0),
-            capacity: queue_capacity,
-            active_effects: AtomicU32::new(0),
-            last_failure: Mutex::new(None),
-            receipt_hot_count: AtomicU64::new(0),
-            receipt_hot_bound: storage.application_receipts.hot_receipt_bound,
-            receipt_archive_batch_size: storage.application_receipts.archive_batch_size,
-            receipt_cold_count: AtomicU64::new(0),
-            receipt_archive_generation: AtomicU64::new(0),
-            receipt_last_archived_at: AtomicU64::new(0),
-            receipt_archival_degraded: AtomicBool::new(false),
-            receipt_archival_failure: Mutex::new(None),
-            peer_enabled: matches!(&peers, PeerHostConfig::Enabled { .. }),
-            peer_active_count: AtomicU32::new(0),
-            peer_active_bound: peer_serving(&peers)
-                .map_or(0, |serving| serving.maximum_global_active),
-            peer_dispatch_queued: AtomicU32::new(0),
-            peer_dispatch_bound: peer_serving(&peers)
-                .map_or(0, |serving| serving.maximum_dispatch_queue),
-            peer_hot_terminal_count: AtomicU64::new(0),
-            peer_hot_terminal_bound: peer_serving(&peers)
-                .map_or(0, |serving| serving.maximum_hot_terminal_records),
-            peer_tombstone_count: AtomicU64::new(0),
-            peer_archive_batch_size: peer_serving(&peers)
-                .map_or(0, |serving| serving.archive_batch_size),
-            peer_observation_hot_retention_ms: peer_serving(&peers)
-                .map_or(0, |serving| serving.observation_hot_retention_ms),
-            peer_archive_generation: AtomicU64::new(0),
-            peer_last_archived_at: AtomicU64::new(0),
-            peer_archival_degraded: AtomicBool::new(false),
-            peer_archival_failure: Mutex::new(None),
-        });
+        let health = Arc::new(SharedHealth::new(queue_capacity, &storage, &peers));
         let thread_health = health.clone();
         let thread_auth = auth.clone();
         let maintenance = Duration::from_millis(runtime.maintenance_interval_ms);
@@ -493,10 +263,10 @@ impl DaemonHost {
         self.health.read()
     }
 
-    /// Monotonic in-process health feed generation; not a durable run event.
+    /// Coherent health snapshot and monotonic feed generation; neither is durable truth.
     #[must_use]
-    pub(crate) fn health_generation(&self) -> u64 {
-        self.health.generation.load(Ordering::SeqCst)
+    pub(crate) fn health_snapshot(&self) -> (u64, HealthRead) {
+        self.health.snapshot()
     }
 
     pub(crate) fn authenticate_header(&self, value: Option<&str>) -> Option<ActorSession> {
@@ -668,9 +438,7 @@ impl DaemonHost {
         operation: OwnerOperation,
         shutdown: bool,
     ) -> Result<OwnerValue, PublicFailure> {
-        if !shutdown
-            && Lifecycle::from_u8(self.health.lifecycle.load(Ordering::SeqCst)) != Lifecycle::Ready
-        {
+        if !shutdown && !self.health.is_ready() {
             return Err(PublicFailure::new(
                 ErrorCode::Unavailable,
                 "daemon is not ready",
@@ -679,13 +447,17 @@ impl DaemonHost {
         }
         let started = tokio::time::Instant::now();
         let (reply, receiver) = oneshot::channel();
-        let mut pending = OwnerRequest { operation, reply };
+        let mut pending = OwnerRequest {
+            operation,
+            reply,
+            queued: None,
+        };
         loop {
-            self.health.queued.fetch_add(1, Ordering::SeqCst);
+            pending.mark_queued(&self.health);
             match self.sender.try_send(pending) {
                 Ok(()) => break,
-                Err(TrySendError::Full(returned)) if shutdown => {
-                    self.health.queued.fetch_sub(1, Ordering::SeqCst);
+                Err(TrySendError::Full(mut returned)) if shutdown => {
+                    returned.mark_dequeued();
                     if started.elapsed() >= self.shutdown_deadline {
                         return Err(PublicFailure::new(
                             ErrorCode::Timeout,
@@ -697,7 +469,6 @@ impl DaemonHost {
                     tokio::time::sleep(Duration::from_millis(5)).await;
                 }
                 Err(TrySendError::Full(_)) => {
-                    self.health.queued.fetch_sub(1, Ordering::SeqCst);
                     return Err(PublicFailure::new(
                         ErrorCode::Overload,
                         "runtime owner request queue is full",
@@ -705,7 +476,6 @@ impl DaemonHost {
                     ));
                 }
                 Err(TrySendError::Disconnected(_)) => {
-                    self.health.queued.fetch_sub(1, Ordering::SeqCst);
                     return Err(PublicFailure::new(
                         ErrorCode::Unavailable,
                         "runtime owner is unavailable",
@@ -889,6 +659,19 @@ pub(crate) enum StreamAuthority {
 struct OwnerRequest {
     operation: OwnerOperation,
     reply: oneshot::Sender<Result<OwnerValue, PublicFailure>>,
+    queued: Option<QueuedRequestGuard>,
+}
+
+impl OwnerRequest {
+    fn mark_queued(&mut self, health: &Arc<SharedHealth>) {
+        self.queued = Some(health.track_queued_request());
+    }
+
+    fn mark_dequeued(&mut self) {
+        if let Some(queued) = self.queued.take() {
+            queued.release();
+        }
+    }
 }
 
 struct OwnerPlan {
@@ -1086,7 +869,7 @@ impl Owner {
         runtime
             .resume_admission()
             .map_err(|error| error.to_string())?;
-        health.active_effects.store(0, Ordering::SeqCst);
+        health.set_active_effects(0);
         Ok(Self {
             shutdown,
             store,
@@ -1108,8 +891,8 @@ impl Owner {
     ) {
         loop {
             match receiver.recv_timeout(maintenance) {
-                Ok(request) => {
-                    health.queued.fetch_sub(1, Ordering::SeqCst);
+                Ok(mut request) => {
+                    request.mark_dequeued();
                     let is_shutdown = matches!(request.operation, OwnerOperation::Shutdown);
                     let result = if is_shutdown {
                         self.shutdown(health)
@@ -1199,9 +982,7 @@ impl Owner {
                 let active = worker_health
                     .active_executions
                     .saturating_add(worker_health.active_cancellations);
-                health
-                    .active_effects
-                    .store(u32::try_from(active).unwrap_or(u32::MAX), Ordering::SeqCst);
+                health.set_active_effects(u32::try_from(active).unwrap_or(u32::MAX));
             }
         }
     }
@@ -1590,14 +1371,11 @@ impl Owner {
             };
         let peer_retained = peer_shutdown.map_or(0, |report| report.retained_workers);
         clean &= effect_clean && peer_retained == 0;
-        health.active_effects.store(
-            if clean {
-                0
-            } else {
-                u32::try_from(outstanding_effects).unwrap_or(u32::MAX)
-            },
-            Ordering::SeqCst,
-        );
+        health.set_active_effects(if clean {
+            0
+        } else {
+            u32::try_from(outstanding_effects).unwrap_or(u32::MAX)
+        });
         health.set_lifecycle(if clean {
             Lifecycle::Stopped
         } else {

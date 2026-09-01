@@ -1390,14 +1390,14 @@ async fn health_stream(
                 Ok(decision) => decision,
                 Err(_) => break,
             };
-            let generation = state.host.health_generation();
+            let (generation, health) = state.host.health_snapshot();
             if generation > position {
                 position = generation;
-                if let Ok(event) = observation_event(&feed, position, Observation::DaemonHealth(state.host.health()), &session, &decision) {
+                if let Ok(event) = observation_event(&feed, position, Observation::DaemonHealth(health.clone()), &session, &decision) {
                     yield Ok(event);
                 }
             }
-            if state.host.health().draining {
+            if health.draining {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
