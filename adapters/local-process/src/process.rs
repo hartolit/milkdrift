@@ -14,8 +14,9 @@ use milkdrift_authority::{
     AccessMode, AuthorityBudget, CapabilityExecutionRequirements, FilesystemScope, SensitiveSecret,
 };
 use milkdrift_capability::{
-    CancellationAcknowledgement, CancellationRequest, CapabilityDescriptor, CapabilityObservation,
-    ErrorClass, InvocationEventKind, InvocationId, InvocationTerminal, TerminalStatus,
+    AdmissionBound, CancellationAcknowledgement, CancellationRequest, CapabilityDescriptor,
+    CapabilityObservation, ErrorClass, InvocationAdmissionEnvelope, InvocationEventKind,
+    InvocationId, InvocationTerminal, TerminalStatus,
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, InputMaterialization,
@@ -625,6 +626,18 @@ impl LocalProcessAdapter {
 impl CapabilityAdapter for LocalProcessAdapter {
     fn authority_requirements(&self) -> CapabilityExecutionRequirements {
         self.authority_requirements.clone()
+    }
+
+    fn admission_envelope(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+    ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        Ok(InvocationAdmissionEnvelope::new(
+            AdmissionBound::NotApplicable,
+            AdmissionBound::NotApplicable,
+            AdmissionBound::Bounded(self.profile.limits.max_total_output_bytes),
+            AdmissionBound::NotApplicable,
+        ))
     }
 
     fn start(&self) -> Result<(), AdapterError> {

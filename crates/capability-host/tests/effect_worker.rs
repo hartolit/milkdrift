@@ -19,8 +19,9 @@ use milkdrift_blueprint::{
 };
 use milkdrift_capability::{
     CancellationAcknowledgement, CancellationRequest, CapabilityDescriptorDocument,
-    CapabilityObservation, CapabilityRequirement, ErrorClass, InvocationEvent, InvocationEventKind,
-    InvocationTerminal, OperationId, SideEffectClass, TerminalStatus,
+    CapabilityObservation, CapabilityRequirement, ErrorClass, InvocationAdmissionEnvelope,
+    InvocationEvent, InvocationEventKind, InvocationTerminal, OperationId, SideEffectClass,
+    TerminalStatus,
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, CapabilityHost,
@@ -28,12 +29,12 @@ use milkdrift_capability_host::{
     HostConfig,
 };
 use milkdrift_persistence::{
-    CommandId, Reason, RevisionStore, RunJournal, RunSequence, TimestampMillis, WorkerId,
+    CommandId, PageSize, Reason, RevisionStore, RunJournal, RunSequence, TimestampMillis, WorkerId,
 };
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{
-    CommandAuthorityClaim, ManualClock, RetryPolicy, RunCommand, RunCommandDocument, RuntimeConfig,
-    RuntimeService, SchedulerLimits, SequentialIdGenerator,
+    CommandAuthorityClaim, EffectAction, ManualClock, RetryPolicy, RunCommand, RunCommandDocument,
+    RuntimeConfig, RuntimeService, SchedulerLimits, SequentialIdGenerator,
 };
 use milkdrift_workspace::{RunId, ScopeId, WorkspaceBudget, WorkspaceScope};
 
@@ -59,6 +60,7 @@ impl AuthorityEvaluator for AllowAuthority {
 
 struct BlockingAdapter {
     gate: Arc<(Mutex<bool>, Condvar)>,
+    preparation_gate: Option<Arc<(Mutex<usize>, Condvar)>>,
     entered: AtomicUsize,
     exact_authority_seen: std::sync::atomic::AtomicBool,
 }
@@ -122,13 +124,52 @@ impl BlockingAdapter {
     fn new(gate: Arc<(Mutex<bool>, Condvar)>) -> Self {
         Self {
             gate,
+            preparation_gate: None,
             entered: AtomicUsize::new(0),
             exact_authority_seen: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn with_preparation_barrier(
+        gate: Arc<(Mutex<bool>, Condvar)>,
+        preparation_gate: Arc<(Mutex<usize>, Condvar)>,
+    ) -> Self {
+        Self {
+            preparation_gate: Some(preparation_gate),
+            ..Self::new(gate)
         }
     }
 }
 
 impl CapabilityAdapter for BlockingAdapter {
+    fn admission_envelope(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+    ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        if let Some((lock, changed)) = self.preparation_gate.as_deref() {
+            let mut prepared = lock
+                .lock()
+                .map_err(|_| AdapterError::external_failure("preparation gate poisoned"))?;
+            *prepared = prepared.saturating_add(1);
+            changed.notify_all();
+            let deadline = std::time::Instant::now() + Duration::from_millis(100);
+            while *prepared < 2 {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                let (next, timeout) = changed
+                    .wait_timeout(prepared, remaining)
+                    .map_err(|_| AdapterError::external_failure("preparation gate poisoned"))?;
+                prepared = next;
+                if timeout.timed_out() {
+                    break;
+                }
+            }
+        }
+        Ok(InvocationAdmissionEnvelope::not_applicable())
+    }
+
     fn execute(
         &self,
         invocation: &AdapterInvocation<'_>,
@@ -219,6 +260,109 @@ impl CapabilityAdapter for BlockingAdapter {
         changed.notify_all();
         Ok(())
     }
+}
+
+#[test]
+fn duplicate_effect_delivery_never_enters_twice_or_leaks_the_prepared_generation_permit()
+-> TestResult {
+    let directory = tempfile::tempdir()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let revision = revision()?;
+    store.put_revision(&revision)?;
+    let descriptor = CapabilityDescriptorDocument::from_json(include_bytes!(
+        "../../capability/tests/fixtures/descriptor-v1.json"
+    ))?
+    .body()
+    .clone();
+    let host = CapabilityHost::new(
+        HostConfig {
+            max_registrations: 4,
+            max_generations_per_capability: 2,
+            max_concurrent_per_generation: 4,
+            observation_stale_after_ms: 10_000,
+        },
+        CapabilitySelectionPolicy::priorities(BTreeMap::new()),
+    )?;
+    let gate = Arc::new((Mutex::new(true), Condvar::new()));
+    let preparation_gate = Arc::new((Mutex::new(0_usize), Condvar::new()));
+    let adapter = Arc::new(BlockingAdapter::with_preparation_barrier(
+        gate,
+        preparation_gate.clone(),
+    ));
+    host.register(
+        descriptor.clone(),
+        adapter.clone(),
+        Some(CapabilityObservation::new(
+            descriptor.identity().clone(),
+            1_000,
+            true,
+            0,
+            "ready",
+        )?),
+    )?;
+    let runtime = Arc::new(RuntimeService::new_with_authority(
+        store.clone(),
+        Arc::new(host.clone()),
+        Arc::new(AllowAuthority),
+        Arc::new(ManualClock::new(1_000)),
+        Arc::new(SequentialIdGenerator::new("prepared-conflict", 1)?),
+        RuntimeConfig::new(
+            WorkerId::new("worker-prepared-conflict")?,
+            ActorRef::new("controller:prepared-conflict")?,
+            30_000,
+            32,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(1, vec![ErrorClass::Transport], 10, 100, 0)?,
+        )?,
+    )?);
+    create_and_start(runtime.as_ref(), store.as_ref(), &revision, 77)?;
+    assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
+    let action = runtime
+        .claim_execution_effects(PageSize::new(1)?)?
+        .pop()
+        .ok_or("prepared conflict action is absent")?;
+    let EffectAction::Execute(dispatch) = action else {
+        return Err("prepared conflict fixture claimed cancellation".into());
+    };
+    let actions = [
+        EffectAction::Execute(Box::new((*dispatch).clone())),
+        EffectAction::Execute(dispatch),
+    ];
+    let workers = actions
+        .into_iter()
+        .map(|action| {
+            let runtime = runtime.clone();
+            std::thread::spawn(move || runtime.execute_effect(action))
+        })
+        .collect::<Vec<_>>();
+    let mut succeeded = 0;
+    let mut conflicted = 0;
+    for worker in workers {
+        match worker
+            .join()
+            .map_err(|_| "prepared conflict worker panicked")?
+        {
+            Ok(_) => succeeded += 1,
+            Err(_) => conflicted += 1,
+        }
+    }
+    assert_eq!(succeeded, 1);
+    assert_eq!(conflicted, 1);
+    assert_eq!(adapter.entered.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        *preparation_gate
+            .0
+            .lock()
+            .map_err(|_| "preparation gate poisoned")?,
+        1
+    );
+    let generations = host.generations(
+        &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
+        1_000,
+    )?;
+    assert_eq!(generations.len(), 1);
+    assert_eq!(generations[0].active_permits, 0);
+    Ok(())
 }
 
 fn revision() -> TestResult<BlueprintRevision> {

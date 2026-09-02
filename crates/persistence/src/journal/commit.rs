@@ -358,6 +358,8 @@ pub struct AtomicRunCommitRequest {
     /// concurrent runtime services cannot both admit against the same pre-lease
     /// global usage.
     expected_lease_revision: Option<IntegrityDigest>,
+    /// Optional controller-account mutation committed beside the event facts.
+    controller_account: Option<crate::ControllerAccountTransaction>,
     /// Optional projection payload commitment derived from the accepted resulting state.
     projection_checkpoint: Option<crate::ProjectionCheckpoint>,
     /// Fully durable result returned on redelivery.
@@ -679,6 +681,7 @@ impl AtomicRunCommitRequest {
             required_artifacts,
             newly_referenced_artifacts,
             expected_lease_revision,
+            controller_account: None,
             projection_checkpoint: None,
             result,
             indexes,
@@ -704,6 +707,25 @@ impl AtomicRunCommitRequest {
             ));
         }
         self.projection_checkpoint = Some(checkpoint);
+        Ok(self)
+    }
+
+    /// Attaches the sole controller-account mutation owned by this runtime commit.
+    pub fn with_controller_account_transaction(
+        mut self,
+        transaction: crate::ControllerAccountTransaction,
+    ) -> Result<Self, PersistenceError> {
+        if self.events.is_empty() {
+            return Err(PersistenceError::InvalidDocument(
+                "a rejected command cannot mutate a controller account".to_owned(),
+            ));
+        }
+        if self.controller_account.is_some() {
+            return Err(PersistenceError::InvalidDocument(
+                "an atomic command cannot replace its controller-account transaction".to_owned(),
+            ));
+        }
+        self.controller_account = Some(transaction);
         Ok(self)
     }
 
@@ -747,6 +769,14 @@ impl AtomicRunCommitRequest {
     #[must_use]
     pub const fn expected_lease_revision(&self) -> Option<&IntegrityDigest> {
         self.expected_lease_revision.as_ref()
+    }
+
+    /// Controller-account mutation committed with this command, when required.
+    #[must_use]
+    pub const fn controller_account_transaction(
+        &self,
+    ) -> Option<&crate::ControllerAccountTransaction> {
+        self.controller_account.as_ref()
     }
 
     /// Projection payload commitment recorded at the resulting journal head, when requested.

@@ -6,7 +6,8 @@ use super::{
     ARTIFACT_ACCOUNTING, ARTIFACT_DELETE_GUARDS, ARTIFACT_DIGEST_RESERVATIONS, ARTIFACT_MANIFEST,
     ARTIFACT_METADATA, ARTIFACT_PATHS, ARTIFACT_PUBLICATIONS, ARTIFACT_PUBLICATIONS_BY_AGE,
     ARTIFACT_REFERENCES, ARTIFACT_RESERVATIONS, ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS,
-    ARTIFACTS_BY_DIGEST, CLOCK_WATERMARK_UNIX_MS_KEY, COMMAND_RESULTS, Database,
+    ARTIFACTS_BY_DIGEST, CLOCK_WATERMARK_UNIX_MS_KEY, COMMAND_RESULTS, CONTROLLER_ACCOUNTS,
+    CONTROLLER_ARTIFACT_CHARGES, CONTROLLER_RUN_BINDINGS, CONTROLLER_TRANSITIONS, Database,
     EVENT_HISTORY_DIGESTS, FaultInjector, INTERNAL_DOCUMENT_FORMAT_VERSION,
     INTERNAL_DOCUMENT_FORMAT_VERSION_KEY, LEASE_ENTRIES, LEASE_INDEX, LEASE_SET_REVISION_KEY,
     METADATA, NONTERMINAL_RUNS, NONTERMINAL_SET_COUNT_KEY, PEER_ACTIVE_CLAIMS, PEER_CATALOGS,
@@ -89,6 +90,24 @@ pub(crate) fn initialize_schema(
     }
     {
         let _table = write.open_table(COMMAND_RESULTS).map_err(error::redb)?;
+    }
+    {
+        let _table = write.open_table(CONTROLLER_ACCOUNTS).map_err(error::redb)?;
+    }
+    {
+        let _table = write
+            .open_table(CONTROLLER_RUN_BINDINGS)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = write
+            .open_table(CONTROLLER_TRANSITIONS)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = write
+            .open_table(CONTROLLER_ARTIFACT_CHARGES)
+            .map_err(error::redb)?;
     }
     {
         let _table = write
@@ -446,6 +465,24 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
     }
     {
         let _table = read.open_table(COMMAND_RESULTS).map_err(error::redb)?;
+    }
+    {
+        let _table = read.open_table(CONTROLLER_ACCOUNTS).map_err(error::redb)?;
+    }
+    {
+        let _table = read
+            .open_table(CONTROLLER_RUN_BINDINGS)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = read
+            .open_table(CONTROLLER_TRANSITIONS)
+            .map_err(error::redb)?;
+    }
+    {
+        let _table = read
+            .open_table(CONTROLLER_ARTIFACT_CHARGES)
+            .map_err(error::redb)?;
     }
     {
         let hot = read

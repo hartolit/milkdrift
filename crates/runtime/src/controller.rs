@@ -7,8 +7,8 @@
 use milkdrift_blueprint::{BlueprintRevision, Node};
 use milkdrift_capability::BoundedJson;
 use milkdrift_persistence::{
-    ControllerAssessmentBoundary, ControllerAssessmentOutcome, NodeExecutionId, RunEventKind,
-    TimestampMillis,
+    ControllerAccountDeclaration, ControllerAccountState, ControllerAssessmentBoundary,
+    ControllerAssessmentOutcome, NodeExecutionId, RunEventKind, TimestampMillis,
 };
 use milkdrift_workspace::RunId;
 
@@ -29,6 +29,8 @@ pub struct ControllerAssessmentContext<'a> {
     pub execution: &'a NodeExecutionId,
     /// Verified projection through `through_sequence`.
     pub projection: &'a RunProjection,
+    /// Exact durable controller account bound to this run, when one exists.
+    pub account: Option<&'a ControllerAccountState>,
     /// Caller-owned clock fact for elapsed-time assessment.
     pub observed_at: TimestampMillis,
     /// Boundary being considered.
@@ -50,6 +52,8 @@ pub struct ControllerAssessment {
     pub cycle_id: Option<String>,
     /// Exact typed progress snapshot encoded by `milkdrift-control`.
     pub progress: BoundedJson,
+    /// Stable immutable resource declaration for this controller occurrence.
+    pub account_declaration: ControllerAccountDeclaration,
     /// Closed runtime-consumed result.
     pub outcome: ControllerAssessmentOutcome,
 }
@@ -67,6 +71,7 @@ impl ControllerAssessment {
             boundary: context.boundary,
             through_sequence: context.projection.sequence(),
             progress: self.progress,
+            account_declaration: Some(self.account_declaration),
             outcome: self.outcome,
         }
     }

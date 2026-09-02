@@ -394,13 +394,23 @@ impl StoreInvocationDataAccess {
             .store
             .workspace_usage(context.run())
             .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
-        let begin = BeginArtifactPublication::new(
-            publication.clone(),
-            context.run().clone(),
-            metadata,
-            self.workspace_budget.clone(),
-            usage,
-        )
+        let begin = match context.controller_reservation() {
+            Some(reservation) => BeginArtifactPublication::for_invocation(
+                publication.clone(),
+                context.run().clone(),
+                metadata,
+                self.workspace_budget.clone(),
+                usage,
+                reservation.clone(),
+            ),
+            None => BeginArtifactPublication::new(
+                publication.clone(),
+                context.run().clone(),
+                metadata,
+                self.workspace_budget.clone(),
+                usage,
+            ),
+        }
         .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
         let begin_outcome = self
             .store

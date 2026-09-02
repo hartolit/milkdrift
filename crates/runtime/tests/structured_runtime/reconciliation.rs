@@ -34,20 +34,26 @@ impl TaskExecutor for OperationCountingExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute_streaming(
-        &self,
+    fn prepare_exact_entry<'a>(
+        &'a self,
         dispatch: &ExecutionDispatch,
-        reporter: &dyn ExecutionReporter,
-    ) -> Result<(), ExecutorError> {
-        let mut calls = self
-            .calls
-            .lock()
-            .map_err(|_| ExecutorError::Boundary("operation-count lock poisoned".to_owned()))?;
-        *calls
-            .entry(dispatch.request().operation().clone())
-            .or_default() += 1;
-        drop(calls);
-        self.resolver.execute_streaming(dispatch, reporter)
+    ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        let prepared = self.resolver.prepare_exact_entry(dispatch)?;
+        let envelope = prepared.admission_envelope().clone();
+        Ok(PreparedExecution::new(
+            dispatch,
+            envelope,
+            move |dispatch, reporter| {
+                let mut calls = self.calls.lock().map_err(|_| {
+                    ExecutorError::Boundary("operation-count lock poisoned".to_owned())
+                })?;
+                *calls
+                    .entry(dispatch.request().operation().clone())
+                    .or_default() += 1;
+                drop(calls);
+                prepared.enter(dispatch, reporter)
+            },
+        ))
     }
 
     fn cancel(

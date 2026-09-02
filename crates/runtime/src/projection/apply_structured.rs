@@ -72,6 +72,7 @@ impl RunProjection {
             boundary,
             through_sequence,
             progress,
+            account_declaration: _,
             outcome,
         } = event.kind()
         else {

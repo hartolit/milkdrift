@@ -17,12 +17,12 @@ use milkdrift_authority::{
 };
 use milkdrift_blueprint::NodeId;
 use milkdrift_persistence::{
-    ArtifactStore, AtomicRunCommitOutcome, AttemptId, CommandResultDocument, EventPage,
-    EventPageQuery, MAX_PAGE_SIZE, NodeExecutionId, PageSize, PersistenceError, Reason,
-    RepeatContinuationDecision, RevisionStore, RunDiscoveryIntegrityStore, RunEventEnvelope,
-    RunJournal, RunQueryStore, RunSequence, RunSummaryCursor, RunnableCursor, SnapshotDocument,
-    SnapshotId, SnapshotStore, StorageAdmin, StorageHealth, StorageSchemaCompatibility,
-    TimestampMillis, WorkerId, WorkspaceStore,
+    ArtifactStore, AtomicRunCommitOutcome, AttemptId, CommandResultDocument,
+    ControllerAccountState, ControllerAccountStore, EventPage, EventPageQuery, MAX_PAGE_SIZE,
+    NodeExecutionId, PageSize, PersistenceError, Reason, RepeatContinuationDecision, RevisionStore,
+    RunDiscoveryIntegrityStore, RunEventEnvelope, RunJournal, RunQueryStore, RunSequence,
+    RunSummaryCursor, RunnableCursor, SnapshotDocument, SnapshotId, SnapshotStore, StorageAdmin,
+    StorageHealth, StorageSchemaCompatibility, TimestampMillis, WorkerId, WorkspaceStore,
 };
 use milkdrift_workspace::{BranchId, RunId, ScopeReference, SubworkflowId};
 use tracing::{debug, info, info_span, warn};
@@ -53,6 +53,7 @@ pub trait RuntimeStore:
     + WorkspaceStore
     + SnapshotStore
     + ArtifactStore
+    + ControllerAccountStore
     + StorageAdmin
 {
 }
@@ -65,6 +66,7 @@ impl<T> RuntimeStore for T where
         + WorkspaceStore
         + SnapshotStore
         + ArtifactStore
+        + ControllerAccountStore
         + StorageAdmin
 {
 }
@@ -568,6 +570,27 @@ impl RuntimeService {
     /// authoritative tail. Complete history remains available from the journal.
     pub fn projection(&self, run: &RunId) -> Result<RunProjection, RuntimeError> {
         project_from_latest_snapshot(self.store.as_ref(), run)
+    }
+
+    /// Loads the exact controller account immutably bound to a run, when present.
+    pub fn controller_account_for_run(
+        &self,
+        run: &RunId,
+    ) -> Result<Option<ControllerAccountState>, RuntimeError> {
+        let Some(account) = self.store.controller_account_binding(run)? else {
+            return Ok(None);
+        };
+        self.store.controller_account(&account)?.map_or_else(
+            || {
+                Err(RuntimeError::InvalidHistory(format!(
+                    "run {run} is bound to missing controller account {account}"
+                )))
+            },
+            |state| {
+                state.validate()?;
+                Ok(Some(state))
+            },
+        )
     }
 
     /// Reads one stable-cursor page from the complete immutable journal history.

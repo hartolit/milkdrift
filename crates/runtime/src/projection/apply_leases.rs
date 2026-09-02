@@ -102,6 +102,7 @@ impl RunProjection {
             RunEventKind::CapabilityAdapterEntryDecisionRecorded {
                 attempt,
                 authorization,
+                controller_admission: _,
             } => {
                 let attempt_view = self.attempt(attempt, event)?;
                 let basis = self.execution_authority.as_ref().ok_or_else(|| {

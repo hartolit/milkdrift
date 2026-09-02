@@ -7,10 +7,10 @@ This document owns ordered unfinished product slices. Completed core work belong
    mutation, longevity, operational, hosted, and external evidence after the independent review's
    schema, authority, lifecycle, peer, persistence, and adapter corrections. No UI is currently
    authorized as the next slice.
-2. **Production controller admission** — Add one final-entry-adjacent durable reservation and
-   accounting owner for every cumulative controller resource ceiling, including concurrent work,
-   retries, cancellation, uncertainty, and restart. Keep continuous controller activation refused
-   by the production daemon until hostile and longevity evidence proves that boundary.
+2. **Qualify production controller admission** — Complete independent hostile concurrency,
+   crash/reopen, artifact, compaction, longevity, operational, and mutation evidence for the new
+   final-entry durable account boundary. Keep continuous controller activation refused by the
+   production daemon until that evidence and independent review qualify installation.
 3. **Real external interoperability evidence** — With operator-supplied resources, run the strict
    external-evidence workflow using one byte-pinned real coding-agent executable and one real
    supported model endpoint/profile with private credentials. Preserve the redacted report and

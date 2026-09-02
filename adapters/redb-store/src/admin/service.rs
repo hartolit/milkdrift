@@ -259,6 +259,15 @@ impl StorageAdmin for RedbStore {
                             {
                                 push_failure(&mut result, "journal_history", &cause.to_string())?;
                             }
+                            if let Err(cause) =
+                                crate::controller_account::validate_event_link(&read, &event)
+                            {
+                                push_failure(
+                                    &mut result,
+                                    "controller_accounts",
+                                    &cause.to_string(),
+                                )?;
+                            }
                             if let milkdrift_persistence::RunEventKind::SignalReceived {
                                 signal,
                                 ..

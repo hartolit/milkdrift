@@ -5,7 +5,8 @@ use super::{
     ARTIFACT_ACCOUNTING, ARTIFACT_DELETE_GUARDS, ARTIFACT_DIGEST_RESERVATIONS, ARTIFACT_MANIFEST,
     ARTIFACT_PATHS, ARTIFACT_PUBLICATIONS, ARTIFACT_PUBLICATIONS_BY_AGE, ARTIFACT_REFERENCES,
     ARTIFACT_RESERVATIONS, ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST,
-    Bound, BoundedDetail, COMMAND_RESULTS, IntegrityScanCursor, IntegrityScanFamily,
+    Bound, BoundedDetail, COMMAND_RESULTS, CONTROLLER_ACCOUNTS, CONTROLLER_ARTIFACT_CHARGES,
+    CONTROLLER_RUN_BINDINGS, CONTROLLER_TRANSITIONS, IntegrityScanCursor, IntegrityScanFamily,
     IntegrityScanRequest, IntegrityScanResult, LEASE_ENTRIES, LEASE_INDEX, METADATA,
     NONTERMINAL_RUNS, PersistenceError, REVISIONS, REVISIONS_BY_DIGEST, ROOT_SCOPES,
     RUN_ARTIFACT_OWNERSHIP, RUN_HEADS, RUN_SUMMARIES, RUNNABLE_ENTRIES, RUNNABLE_INDEX,
@@ -188,7 +189,7 @@ pub(crate) fn index_cursor_position(
             "index integrity cursor has no phase".to_owned(),
         ));
     };
-    if phase > 41 || key.is_empty() {
+    if phase > 45 || key.is_empty() {
         return Err(PersistenceError::InvalidCursor(
             "index integrity cursor has an unknown phase or empty key".to_owned(),
         ));
@@ -991,6 +992,30 @@ pub(crate) fn index_integrity_cursor_exists(
                 .map_err(error::redb)
                 .map(|row| row.is_some())
         }
+        42 => read
+            .open_table(CONTROLLER_ACCOUNTS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        43 => read
+            .open_table(CONTROLLER_RUN_BINDINGS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        44 => read
+            .open_table(CONTROLLER_TRANSITIONS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        45 => read
+            .open_table(CONTROLLER_ARTIFACT_CHARGES)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
         _ => Err(PersistenceError::InvalidCursor(
             "index integrity cursor has an unknown phase".to_owned(),
         )),

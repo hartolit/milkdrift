@@ -1,8 +1,8 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 9;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 10;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
-pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 11;
+pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 12;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
 pub(crate) const CLOCK_WATERMARK_UNIX_MS_KEY: &str = "boundary_clock_high_water_unix_ms";
 pub(crate) const LEASE_SET_REVISION_KEY: &str = "lease_set_revision";
@@ -40,6 +40,18 @@ pub(crate) const RUN_HISTORY_HEADS: TableDefinition<'static, &'static str, &'sta
     TableDefinition::new("milkdrift.v2.runs.history_heads");
 pub(crate) const COMMAND_RESULTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
     TableDefinition::new("milkdrift.v1.commands.results");
+// Exact-current continuous-controller accounts, immutable run bindings, and transition receipts.
+pub(crate) const CONTROLLER_ACCOUNTS: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.controllers.accounts");
+pub(crate) const CONTROLLER_RUN_BINDINGS: TableDefinition<'static, &'static str, &'static str> =
+    TableDefinition::new("milkdrift.v1.controllers.run_bindings");
+pub(crate) const CONTROLLER_TRANSITIONS: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.controllers.transitions");
+pub(crate) const CONTROLLER_ARTIFACT_CHARGES: TableDefinition<
+    'static,
+    &'static str,
+    &'static [u8],
+> = TableDefinition::new("milkdrift.v1.controllers.artifact_charges");
 // Daemon-owned application receipts have exactly one authoritative physical placement.
 // The completion index is derived bounded operational state for the hot tier only.
 pub(crate) const APPLICATION_COMMAND_RECEIPTS_HOT: TableDefinition<

@@ -126,41 +126,44 @@ impl TaskExecutor for ContextProofExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute_streaming(
-        &self,
+    fn prepare_exact_entry<'a>(
+        &'a self,
         dispatch: &ExecutionDispatch,
-        reporter: &dyn ExecutionReporter,
-    ) -> Result<(), ExecutorError> {
-        let node = dispatch.node().as_str();
-        if node == "verify" {
-            self.verification_requests
-                .lock()
-                .map_err(|_| ExecutorError::Boundary("verification capture poisoned".to_owned()))?
-                .push((dispatch.attempt().clone(), dispatch.request().clone()));
-            if self.verification_calls.fetch_add(1, Ordering::SeqCst) == 0 {
-                return self.report_events(dispatch, reporter, None, retryable_failure()?);
+    ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        Ok(prepared_test_entry(dispatch, move |dispatch, reporter| {
+            let node = dispatch.node().as_str();
+            if node == "verify" {
+                self.verification_requests
+                    .lock()
+                    .map_err(|_| {
+                        ExecutorError::Boundary("verification capture poisoned".to_owned())
+                    })?
+                    .push((dispatch.attempt().clone(), dispatch.request().clone()));
+                if self.verification_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    return self.report_events(dispatch, reporter, None, retryable_failure()?);
+                }
             }
-        }
-        if node == "review" {
-            let reference = self.publish_review(dispatch)?;
-            *self
-                .reviewer_request
-                .lock()
-                .map_err(|_| ExecutorError::Boundary("review capture poisoned".to_owned()))? =
-                Some(dispatch.request().clone());
-            return self.report_events(
-                dispatch,
-                reporter,
-                Some(("review", reference)),
-                successful_executor_terminal()?,
-            );
-        }
-        let output = self
-            .outputs
-            .get(node)
-            .cloned()
-            .map(|reference| ("evidence", reference));
-        self.report_events(dispatch, reporter, output, successful_executor_terminal()?)
+            if node == "review" {
+                let reference = self.publish_review(dispatch)?;
+                *self
+                    .reviewer_request
+                    .lock()
+                    .map_err(|_| ExecutorError::Boundary("review capture poisoned".to_owned()))? =
+                    Some(dispatch.request().clone());
+                return self.report_events(
+                    dispatch,
+                    reporter,
+                    Some(("review", reference)),
+                    successful_executor_terminal()?,
+                );
+            }
+            let output = self
+                .outputs
+                .get(node)
+                .cloned()
+                .map(|reference| ("evidence", reference));
+            self.report_events(dispatch, reporter, output, successful_executor_terminal()?)
+        }))
     }
 
     fn cancel(

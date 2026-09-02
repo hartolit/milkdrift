@@ -184,6 +184,22 @@ impl RunJournal for StartupProbeStore {
     }
 }
 
+impl milkdrift_persistence::ControllerAccountStore for StartupProbeStore {
+    fn controller_account_binding(
+        &self,
+        run: &RunId,
+    ) -> PersistenceResult<Option<milkdrift_persistence::ControllerAccountId>> {
+        self.inner.controller_account_binding(run)
+    }
+
+    fn controller_account(
+        &self,
+        account: &milkdrift_persistence::ControllerAccountId,
+    ) -> PersistenceResult<Option<milkdrift_persistence::ControllerAccountState>> {
+        self.inner.controller_account(account)
+    }
+}
+
 impl RunQueryStore for StartupProbeStore {
     forward_store_methods! {
         fn events(

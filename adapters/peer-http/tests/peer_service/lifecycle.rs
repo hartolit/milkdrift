@@ -102,6 +102,17 @@ fn post_entry_clock_failure_retries_recovery_until_uncertainty_is_durable() -> T
             if matches!(record.phase, PeerExecutionPhase::Entered { .. })
     ));
 
+    let failure_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if clock.unavailable_observations()? > 0 {
+            break;
+        }
+        if std::time::Instant::now() >= failure_deadline {
+            return Err("worker did not observe the injected post-entry clock failure".into());
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+
     clock.set_available(true)?;
     let recovery_deadline = std::time::Instant::now() + Duration::from_secs(2);
     loop {

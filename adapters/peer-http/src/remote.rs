@@ -9,10 +9,11 @@ use std::{
 
 use milkdrift_authority::{AuthorityBudget, CapabilityExecutionRequirements, NetworkProfileRef};
 use milkdrift_capability::{
-    BoundedJson, CancellationAcknowledgement, CancellationRequest, CapabilityDescriptor,
-    CapabilityId, CapabilityObservation, DescriptorBuilder, ErrorClass, ExtensionKey,
-    InvocationEvent, InvocationEventKind, InvocationFailure, InvocationId, InvocationRequest,
-    InvocationTerminal, Locality, ResolvedCapabilitySnapshot, TerminalStatus,
+    AdmissionBound, BoundedJson, CancellationAcknowledgement, CancellationRequest,
+    CapabilityDescriptor, CapabilityId, CapabilityObservation, DescriptorBuilder, ErrorClass,
+    ExtensionKey, InvocationAdmissionEnvelope, InvocationEvent, InvocationEventKind,
+    InvocationFailure, InvocationId, InvocationRequest, InvocationTerminal, Locality,
+    ResolvedCapabilitySnapshot, TerminalStatus,
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, CapabilityHost,
@@ -348,6 +349,13 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
         self.authority_requirements.clone()
     }
 
+    fn admission_envelope(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+    ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        Ok(remote_admission_envelope())
+    }
+
     fn execute(
         &self,
         invocation: &AdapterInvocation<'_>,
@@ -619,6 +627,31 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
     fn begin_drain(&self) -> Result<(), AdapterError> {
         self.draining.store(true, Ordering::SeqCst);
         Ok(())
+    }
+}
+
+fn remote_admission_envelope() -> InvocationAdmissionEnvelope {
+    InvocationAdmissionEnvelope::new(
+        AdmissionBound::Unknown,
+        AdmissionBound::Unknown,
+        AdmissionBound::Unknown,
+        AdmissionBound::Unknown,
+    )
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+
+    #[test]
+    fn remote_generation_exposes_no_local_enforceable_resource_claim() {
+        let first = remote_admission_envelope();
+        let second = remote_admission_envelope();
+        assert_eq!(first, second);
+        assert!(first.input_units().is_unknown());
+        assert!(first.output_units().is_unknown());
+        assert!(first.artifact_bytes().is_unknown());
+        assert!(first.monetary_cost().is_unknown());
     }
 }
 

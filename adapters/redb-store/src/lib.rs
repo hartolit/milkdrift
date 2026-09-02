@@ -12,6 +12,7 @@ mod application;
 mod artifact;
 mod clock;
 mod codec;
+mod controller_account;
 mod error;
 mod fault;
 mod journal;

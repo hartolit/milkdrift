@@ -145,6 +145,16 @@ pub enum PersistenceError {
         /// Authoritative lease-set revision inside the lease-grant transaction.
         actual: IntegrityDigest,
     },
+    /// A controller account changed after runtime planned a guarded transition.
+    #[error("controller account {account} revision conflict: expected {expected}, actual {actual}")]
+    ControllerAccountRevisionConflict {
+        /// Conflicting controller account.
+        account: crate::ControllerAccountId,
+        /// Opaque revision digest observed by runtime.
+        expected: IntegrityDigest,
+        /// Authoritative revision digest inside the transaction.
+        actual: IntegrityDigest,
+    },
     /// Sensitive artifact content was requested without an explicit authority proof.
     #[error("artifact access denied: {0}")]
     ArtifactAccessDenied(String),

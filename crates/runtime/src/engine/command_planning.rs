@@ -20,8 +20,9 @@ use milkdrift_capability::{
 };
 use milkdrift_persistence::{
     AtomicRunCommitOutcome, AtomicRunCommitRequest, AttemptId, AttemptUsage, BoundedDetail,
-    CommandDisposition, CommandReceipt, CommandResultDocument, ControllerAssessmentBoundary,
-    ControllerAssessmentOutcome, CurrencyCode, MAX_WORKSPACE_MUTATIONS_PER_COMMIT, NodeExecutionId,
+    CommandDisposition, CommandReceipt, CommandResultDocument, ControllerAccountAction,
+    ControllerAccountTransaction, ControllerAssessmentBoundary, ControllerAssessmentOutcome,
+    ControllerTransitionId, CurrencyCode, MAX_WORKSPACE_MUTATIONS_PER_COMMIT, NodeExecutionId,
     NodeOutcome, ProjectionCheckpoint, Reason, RunEventEnvelope, RunEventKind, RunIndexUpdate,
     SignalDeliveryMode, TimerId, TimestampMillis, WaitSatisfaction, WorkerId, WorkspaceAccounting,
     WorkspaceMutation,
@@ -217,6 +218,7 @@ impl RuntimeService {
                         "controller checkpoint has no installed lifecycle owner".to_owned(),
                     ));
                 };
+                let account = self.controller_account_for_run(document.run_id())?;
                 let assessment = {
                     let context = ControllerAssessmentContext {
                         run: document.run_id(),
@@ -224,6 +226,7 @@ impl RuntimeService {
                         node,
                         execution: repeat_execution,
                         projection,
+                        account: account.as_ref(),
                         observed_at: document.issued_at(),
                         boundary: ControllerAssessmentBoundary::CheckpointContinuation,
                         next_cycle: None,
@@ -1020,14 +1023,56 @@ impl RuntimeService {
                     .to_owned(),
             ));
         }
-        Ok(CommandPlan::one(
-            RunEventKind::LateTerminalEvidenceRecorded {
-                attempt: attempt.clone(),
-                worker: worker.clone(),
-                report_sequence,
-                terminal: terminal.clone(),
-            },
-        ))
+        let mut plan = CommandPlan::one(RunEventKind::LateTerminalEvidenceRecorded {
+            attempt: attempt.clone(),
+            worker: worker.clone(),
+            report_sequence,
+            terminal: terminal.clone(),
+        });
+        let run = projection.run_id().ok_or_else(|| {
+            RuntimeError::InvalidHistory("late terminal projection has no run identity".to_owned())
+        })?;
+        if let Some(account) = self.controller_account_for_run(run)? {
+            let reservation = milkdrift_persistence::ControllerReservationId::for_attempt(
+                account.declaration().account(),
+                attempt,
+            )?;
+            if !account.reservations().contains_key(&reservation) {
+                return Err(RuntimeError::InvalidHistory(
+                    "controlled late terminal evidence has no exact outstanding reservation"
+                        .to_owned(),
+                ));
+            }
+            let usage = terminal
+                .usage()
+                .map(|usage| {
+                    let cost = match usage.cost_micros().zip(usage.currency()) {
+                        Some((micros, currency)) => Some(milkdrift_persistence::MonetaryUsage {
+                            micros,
+                            currency: CurrencyCode::new(currency.to_owned())?,
+                        }),
+                        None => None,
+                    };
+                    Ok::<_, RuntimeError>(AttemptUsage {
+                        input_units: usage.input_units(),
+                        output_units: usage.output_units(),
+                        duration_ms: usage.duration_ms(),
+                        cost,
+                    })
+                })
+                .transpose()?;
+            plan.expected_controller_revision = Some((
+                account.declaration().account().clone(),
+                account.revision_digest().clone(),
+            ));
+            plan.controller_actions
+                .push(ControllerAccountAction::SettleTerminal {
+                    account: account.declaration().account().clone(),
+                    reservation,
+                    usage,
+                });
+        }
+        Ok(plan)
     }
 
     fn plan_terminal_report(
@@ -1075,22 +1120,28 @@ impl RuntimeService {
             ));
         }
         let mut plan = CommandPlan::default();
-        if let Some(usage) = terminal.usage() {
-            let cost = match usage.cost_micros().zip(usage.currency()) {
-                Some((micros, currency)) => Some(milkdrift_persistence::MonetaryUsage {
-                    micros,
-                    currency: CurrencyCode::new(currency.to_owned())?,
-                }),
-                None => None,
-            };
-            plan.events.push(RunEventKind::AttemptUsageRecorded {
-                attempt: attempt.clone(),
-                usage: AttemptUsage {
+        let terminal_usage = terminal
+            .usage()
+            .map(|usage| {
+                let cost = match usage.cost_micros().zip(usage.currency()) {
+                    Some((micros, currency)) => Some(milkdrift_persistence::MonetaryUsage {
+                        micros,
+                        currency: CurrencyCode::new(currency.to_owned())?,
+                    }),
+                    None => None,
+                };
+                Ok::<_, RuntimeError>(AttemptUsage {
                     input_units: usage.input_units(),
                     output_units: usage.output_units(),
                     duration_ms: usage.duration_ms(),
                     cost,
-                },
+                })
+            })
+            .transpose()?;
+        if let Some(usage) = terminal_usage.as_ref() {
+            plan.events.push(RunEventKind::AttemptUsageRecorded {
+                attempt: attempt.clone(),
+                usage: usage.clone(),
             });
         }
         if terminal.status() == TerminalStatus::Uncertain {
@@ -1105,6 +1156,28 @@ impl RuntimeService {
                 evidence: document.evidence().to_vec(),
             });
             return Ok(plan);
+        }
+        if let Some(account) = self.controller_account_for_run(document.run_id())? {
+            let reservation = milkdrift_persistence::ControllerReservationId::for_attempt(
+                account.declaration().account(),
+                attempt,
+            )?;
+            if !account.reservations().contains_key(&reservation) {
+                return Err(RuntimeError::InvalidHistory(
+                    "controlled terminal observation has no exact outstanding reservation"
+                        .to_owned(),
+                ));
+            }
+            plan.expected_controller_revision = Some((
+                account.declaration().account().clone(),
+                account.revision_digest().clone(),
+            ));
+            plan.controller_actions
+                .push(ControllerAccountAction::SettleTerminal {
+                    account: account.declaration().account().clone(),
+                    reservation,
+                    usage: terminal_usage.clone(),
+                });
         }
         let (outcome, error_class, detail) = match terminal.status() {
             TerminalStatus::Success => (NodeOutcome::Succeeded, None, None),
@@ -1298,6 +1371,71 @@ impl RuntimeService {
                 &mut plan.workspace,
             )?;
         }
+        let mut bound_account = self.store.controller_account_binding(document.run_id())?;
+        let mut child_runs = Vec::new();
+        for event in &envelopes {
+            match event.kind() {
+                RunEventKind::ControllerAssessmentRecorded {
+                    boundary,
+                    account_declaration: Some(declaration),
+                    ..
+                } => match bound_account.as_ref() {
+                    Some(account) if account == declaration.account() => {
+                        let state = self.store.controller_account(account)?.ok_or_else(|| {
+                            RuntimeError::InvalidHistory(format!(
+                                "controller binding references missing account {account}"
+                            ))
+                        })?;
+                        if state.declaration() != declaration {
+                            return Err(RuntimeError::InvalidHistory(
+                                "controller assessment declaration differs from the durable account"
+                                    .to_owned(),
+                            ));
+                        }
+                    }
+                    Some(_) => {
+                        return Err(RuntimeError::InvalidHistory(
+                            "nested or conflicting controller account is unsupported".to_owned(),
+                        ));
+                    }
+                    None if *boundary == ControllerAssessmentBoundary::Activation => {
+                        plan.controller_actions
+                            .push(ControllerAccountAction::Establish {
+                                declaration: declaration.clone(),
+                                bind_run: document.run_id().clone(),
+                            });
+                        bound_account = Some(declaration.account().clone());
+                    }
+                    None => {
+                        return Err(RuntimeError::InvalidHistory(
+                            "non-activation controller assessment has no durable account binding"
+                                .to_owned(),
+                        ));
+                    }
+                },
+                RunEventKind::ControllerAssessmentRecorded {
+                    account_declaration: None,
+                    ..
+                } => {
+                    return Err(RuntimeError::InvalidHistory(
+                        "current controller assessment omitted its account declaration".to_owned(),
+                    ));
+                }
+                RunEventKind::SubworkflowCreated { child_run, .. } => {
+                    child_runs.push(child_run.clone());
+                }
+                _ => {}
+            }
+        }
+        if let Some(account) = bound_account {
+            for child in child_runs {
+                plan.controller_actions
+                    .push(ControllerAccountAction::BindRun {
+                        account: account.clone(),
+                        run: child,
+                    });
+            }
+        }
         let event_ids = envelopes
             .iter()
             .map(|event| event.event_id().clone())
@@ -1401,6 +1539,17 @@ impl RuntimeService {
             result,
             indexes,
         )?;
+        if !plan.controller_actions.is_empty() {
+            let transaction = ControllerAccountTransaction::new(
+                ControllerTransitionId::new(format!(
+                    "controller-transition:{}",
+                    document.command_id()
+                ))?,
+                plan.expected_controller_revision,
+                plan.controller_actions,
+            )?;
+            request = request.with_controller_account_transaction(transaction)?;
+        }
         if let Some(checkpoint) = projection_checkpoint {
             request = request.with_projection_checkpoint(checkpoint)?;
         }

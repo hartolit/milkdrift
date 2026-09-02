@@ -538,6 +538,13 @@ impl ArtifactStore for RedbStore {
                 "writable publication changed workspace usage before metadata commit",
             ));
         }
+        crate::controller_account::charge_artifact_publication(
+            &write,
+            &record.publication,
+            &record.run,
+            &record.controller_owner,
+            record.metadata.reference().size_bytes(),
+        )?;
         commit_artifact_metadata(self, &write, &mut record, content_deduplicated)?;
         self.faults
             .check(FaultPoint::BeforeArtifactMetadataCommit)?;

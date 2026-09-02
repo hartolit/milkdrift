@@ -315,6 +315,7 @@ impl Owner {
                     RunEventKind::CapabilityAdapterEntryDecisionRecorded {
                         attempt: entered,
                         authorization,
+                        controller_admission: _,
                     } if entered == &attempt_id => {
                         if let Some((_, _, value)) = located.as_mut() {
                             value.entry_authorization =

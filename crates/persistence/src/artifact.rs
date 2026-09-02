@@ -5,8 +5,8 @@ use milkdrift_workspace::{
 };
 
 use crate::{
-    ArtifactPublicationId, EvidenceId, PageSize, PersistenceError, TimestampMillis,
-    bounded::MAX_ARTIFACT_CHUNK_BYTES,
+    ArtifactPublicationId, ControllerArtifactOwner, ControllerReservationId, EvidenceId, PageSize,
+    PersistenceError, TimestampMillis, bounded::MAX_ARTIFACT_CHUNK_BYTES,
 };
 
 /// Maximum opaque key bytes retained by one resumable orphan-cleanup cursor.
@@ -36,6 +36,8 @@ pub struct BeginArtifactPublication {
     expected_usage: WorkspaceUsage,
     /// Exact usage after charging metadata/content once.
     resulting_usage: WorkspaceUsage,
+    /// Explicit controller-account source used at first logical commit.
+    controller_owner: ControllerArtifactOwner,
 }
 
 impl BeginArtifactPublication {
@@ -57,7 +59,22 @@ impl BeginArtifactPublication {
             budget,
             expected_usage,
             resulting_usage,
+            controller_owner: ControllerArtifactOwner::RunBinding,
         })
+    }
+
+    /// Constructs an invocation publication owned by its committed controller reservation.
+    pub fn for_invocation(
+        publication: ArtifactPublicationId,
+        run: RunId,
+        metadata: ArtifactMetadata,
+        budget: WorkspaceBudget,
+        expected_usage: WorkspaceUsage,
+        reservation: ControllerReservationId,
+    ) -> Result<Self, PersistenceError> {
+        let mut request = Self::new(publication, run, metadata, budget, expected_usage)?;
+        request.controller_owner = ControllerArtifactOwner::InvocationReservation(reservation);
+        Ok(request)
     }
 
     /// Returns the idempotent publication-session identity.
@@ -94,6 +111,12 @@ impl BeginArtifactPublication {
     #[must_use]
     pub const fn resulting_usage(&self) -> WorkspaceUsage {
         self.resulting_usage
+    }
+
+    /// Returns the explicit controller-account source for this logical publication.
+    #[must_use]
+    pub const fn controller_owner(&self) -> &ControllerArtifactOwner {
+        &self.controller_owner
     }
 
     /// Revalidates the request's derived accounting transition at a trust boundary.

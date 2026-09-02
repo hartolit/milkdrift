@@ -4,12 +4,13 @@ use std::{
 };
 
 use milkdrift_capability::{
-    AdmissionConstraints, ArtifactReference, BoundedJson, CancellationAcknowledgement,
-    CancellationBehavior, CancellationRequest, CapabilityCategory, CapabilityDescriptor,
-    CapabilityId, CapabilityObservation, DescriptorBuilder, ErrorClass, ExtensionKey, FeatureId,
-    IdempotencyBehavior, InvocationEvent, InvocationEventKind, InvocationFailure,
-    InvocationTerminal, InvocationValueReference, Locality, OperationContract, OperationId,
-    SchemaContract, SchemaId, SideEffectClass, StreamingMode, TerminalStatus, TrustZone,
+    AdmissionBound, AdmissionConstraints, ArtifactReference, BoundedJson,
+    CancellationAcknowledgement, CancellationBehavior, CancellationRequest, CapabilityCategory,
+    CapabilityDescriptor, CapabilityId, CapabilityObservation, DescriptorBuilder, ErrorClass,
+    ExtensionKey, FeatureId, IdempotencyBehavior, InvocationAdmissionEnvelope, InvocationEvent,
+    InvocationEventKind, InvocationFailure, InvocationTerminal, InvocationValueReference, Locality,
+    OperationContract, OperationId, SchemaContract, SchemaId, SideEffectClass, StreamingMode,
+    TerminalStatus, TrustZone,
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter,
@@ -136,6 +137,18 @@ impl WorkflowControlAdapter {
 }
 
 impl CapabilityAdapter for WorkflowControlAdapter {
+    fn admission_envelope(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+    ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        Ok(InvocationAdmissionEnvelope::new(
+            AdmissionBound::NotApplicable,
+            AdmissionBound::NotApplicable,
+            AdmissionBound::Unknown,
+            AdmissionBound::NotApplicable,
+        ))
+    }
+
     fn execute(
         &self,
         invocation: &AdapterInvocation<'_>,

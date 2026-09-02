@@ -88,7 +88,7 @@ machine-readable result. A missed mutant must be fixed by a test or recorded by 
 unreachable under a validated public contract, or a mutation-tool limitation; unclassified survivors
 fail the lane.
 
-The seven current-source shards enumerate 468 focused mutants. The previous complete campaign
+The seven current-source shards enumerate 564 focused mutants. The previous complete campaign
 covered 398 mutants before authority, controller, and peer policy moved into their named child
 modules, so it no longer qualifies the current source paths; a fresh complete campaign remains
 required. Per-shard `mutants.out` directories retain source identities, logs, outcomes, and

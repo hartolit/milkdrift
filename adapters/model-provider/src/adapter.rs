@@ -10,13 +10,13 @@ use std::{
 
 use milkdrift_authority::{AuthorityBudget, CapabilityExecutionRequirements, NetworkProfileRef};
 use milkdrift_capability::{
-    AdmissionConstraints, BoundedJson, CancellationAcknowledgement, CancellationBehavior,
-    CancellationRequest, CapabilityCategory, CapabilityDescriptor, CapabilityId,
-    CapabilityObservation, DescriptorBuilder, ErrorClass, FeatureContract, FeatureId,
-    IdempotencyBehavior, InvocationEvent, InvocationEventKind, InvocationFailure,
-    InvocationRequest, InvocationTerminal, InvocationValueReference, Locality, OperationContract,
-    OperationId, SchemaContract, SchemaId, SideEffectClass, StreamingMode, TerminalStatus,
-    TrustZone, UsageObservation,
+    AdmissionBound, AdmissionConstraints, BoundedJson, CancellationAcknowledgement,
+    CancellationBehavior, CancellationRequest, CapabilityCategory, CapabilityDescriptor,
+    CapabilityId, CapabilityObservation, DescriptorBuilder, ErrorClass, FeatureContract, FeatureId,
+    IdempotencyBehavior, InvocationAdmissionEnvelope, InvocationEvent, InvocationEventKind,
+    InvocationFailure, InvocationRequest, InvocationTerminal, InvocationValueReference, Locality,
+    OperationContract, OperationId, SchemaContract, SchemaId, SideEffectClass, StreamingMode,
+    TerminalStatus, TrustZone, UsageObservation,
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, InvocationDataAccess,
@@ -953,6 +953,18 @@ impl ModelEndpointAdapter {
 impl CapabilityAdapter for ModelEndpointAdapter {
     fn authority_requirements(&self) -> CapabilityExecutionRequirements {
         self.authority_requirements.clone()
+    }
+
+    fn admission_envelope(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+    ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        Ok(InvocationAdmissionEnvelope::new(
+            AdmissionBound::Unknown,
+            AdmissionBound::Unknown,
+            AdmissionBound::Bounded(self.profile.limits().max_response_bytes.saturating_mul(4)),
+            AdmissionBound::Unknown,
+        ))
     }
 
     fn start(&self) -> Result<(), AdapterError> {

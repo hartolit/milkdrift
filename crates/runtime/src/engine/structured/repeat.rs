@@ -920,6 +920,7 @@ impl RuntimeService {
         } else {
             ControllerAssessmentBoundary::CycleEntry
         };
+        let account = self.controller_account_for_run(request.run)?;
         let assessment = {
             let context = ControllerAssessmentContext {
                 run: request.run,
@@ -927,6 +928,7 @@ impl RuntimeService {
                 node: request.node,
                 execution: request.execution,
                 projection,
+                account: account.as_ref(),
                 observed_at: request.occurred_at,
                 boundary,
                 next_cycle: Some(request.iteration_number),

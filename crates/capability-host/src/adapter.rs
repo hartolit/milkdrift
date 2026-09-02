@@ -3,10 +3,10 @@ use milkdrift_authority::{
 };
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::{
-    CancellationAcknowledgement, CancellationRequest, CapabilityObservation, InvocationEvent,
-    InvocationRequest, ResolvedCapabilitySnapshot,
+    CancellationAcknowledgement, CancellationRequest, CapabilityObservation,
+    InvocationAdmissionEnvelope, InvocationEvent, InvocationRequest, ResolvedCapabilitySnapshot,
 };
-use milkdrift_persistence::{AttemptId, NodeExecutionId};
+use milkdrift_persistence::{AttemptId, ControllerReservationId, NodeExecutionId};
 use milkdrift_workspace::RunId;
 use thiserror::Error;
 
@@ -127,6 +127,7 @@ pub struct AdapterExecutionContext {
     authority: Option<ExecutionAuthorityBasis>,
     resolution_authorization: Option<AuthorityDecisionSnapshot>,
     entry_authorization: Option<AuthorityDecisionSnapshot>,
+    controller_reservation: Option<ControllerReservationId>,
 }
 
 impl AdapterExecutionContext {
@@ -148,10 +149,14 @@ impl AdapterExecutionContext {
             authority: None,
             resolution_authorization: None,
             entry_authorization: None,
+            controller_reservation: None,
         }
     }
 
-    pub(crate) fn from_dispatch(dispatch: &milkdrift_runtime::ExecutionDispatch) -> Self {
+    pub(crate) fn from_dispatch(
+        dispatch: &milkdrift_runtime::ExecutionDispatch,
+        controller_reservation: Option<&ControllerReservationId>,
+    ) -> Self {
         Self {
             run: dispatch.run().clone(),
             revision: dispatch.revision().clone(),
@@ -161,6 +166,7 @@ impl AdapterExecutionContext {
             authority: Some(dispatch.execution_authority().clone()),
             resolution_authorization: Some(dispatch.resolution_authorization().clone()),
             entry_authorization: Some(dispatch.entry_authorization().clone()),
+            controller_reservation: controller_reservation.cloned(),
         }
     }
 
@@ -192,6 +198,12 @@ impl AdapterExecutionContext {
     #[must_use]
     pub const fn attempt(&self) -> &AttemptId {
         &self.attempt
+    }
+
+    /// Exact controller reservation committed before this adapter entry, when controlled.
+    #[must_use]
+    pub const fn controller_reservation(&self) -> Option<&ControllerReservationId> {
+        self.controller_reservation.as_ref()
     }
 
     /// Frozen actor/grant/policy basis inherited from run acceptance.
@@ -278,6 +290,14 @@ pub trait AdapterReporter: Send + Sync {
 
 /// Object-safe boundary implemented by later process, model, peer, or human adapters.
 pub trait CapabilityAdapter: Send + Sync {
+    /// Derives enforceable bounds for this exact immutable request and generation.
+    fn admission_envelope(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+    ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        Ok(InvocationAdmissionEnvelope::unknown())
+    }
+
     /// Returns immutable filesystem/network/secret and budget facts for canonical evaluation.
     fn authority_requirements(&self) -> CapabilityExecutionRequirements {
         CapabilityExecutionRequirements::default()

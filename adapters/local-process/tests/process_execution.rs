@@ -15,14 +15,16 @@ use std::{
 use milkdrift_authority::SecretRef;
 use milkdrift_blueprint::NodeId;
 use milkdrift_capability::{
-    ArtifactReference, CancellationRequest, CapabilityObservation, CapabilityRequirement,
-    ExecutionTrustClass, ExtensionKey, InputReference, InvocationEvent, InvocationId,
-    InvocationRequest, InvocationValueReference, ResolvedCapabilitySnapshot, TerminalStatus,
+    AdmissionBound, ArtifactReference, CancellationRequest, CapabilityObservation,
+    CapabilityRequirement, ExecutionTrustClass, ExtensionKey, InputReference, InvocationEvent,
+    InvocationId, InvocationRequest, InvocationValueReference, ResolvedCapabilitySnapshot,
+    TerminalStatus,
 };
 use milkdrift_capability_host::{
-    AdapterError, AdapterExecutionContext, AdapterReporter, CapabilityAdapter, CapabilityHost,
-    CapabilitySelectionPolicy, HostConfig, InMemorySecretResolver, InputMaterialization,
-    InvocationDataAccess, InvocationDataError, MaterializationLimits, MaterializedExecution,
+    AdapterError, AdapterExecutionContext, AdapterInvocation, AdapterReporter, CapabilityAdapter,
+    CapabilityHost, CapabilitySelectionPolicy, HostConfig, InMemorySecretResolver,
+    InputMaterialization, InvocationDataAccess, InvocationDataError, MaterializationLimits,
+    MaterializedExecution,
 };
 use milkdrift_local_process::{
     LocalProcessAdapter, PlatformSupport, ProcessProfileDocument, ProcessProfileError,
@@ -484,6 +486,25 @@ fn registration_binds_bytes_profile_policy_trust_and_attempt_provenance() -> Tes
         snapshot.descriptor_extensions(),
         adapter.descriptor().extensions()
     );
+    let request = request(&profile, "invocation-admission-envelope", Vec::new())?;
+    let context = context()?;
+    let invocation = AdapterInvocation::with_context(&snapshot, &request, &context);
+    let first_envelope = adapter.admission_envelope(&invocation)?;
+    let second_envelope = adapter.admission_envelope(&invocation)?;
+    assert_eq!(first_envelope, second_envelope);
+    assert!(matches!(
+        first_envelope.input_units(),
+        AdmissionBound::NotApplicable
+    ));
+    assert!(matches!(
+        first_envelope.output_units(),
+        AdmissionBound::NotApplicable
+    ));
+    assert!(matches!(
+        first_envelope.monetary_cost(),
+        AdmissionBound::NotApplicable
+    ));
+    assert_eq!(first_envelope.artifact_bytes().bounded(), Some(&4_194_304));
     Ok(())
 }
 

@@ -14,9 +14,10 @@ use milkdrift_workspace::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AttemptId, BoundedDetail, CommandId, CorrelationKey, CurrencyCode, EvidenceReference, LeaseId,
-    NodeExecutionId, Reason, ReconciliationDecisionId, ReconciliationId, ReconciliationPlanId,
-    RepeatDecisionId, RunSequence, SignalId, SignalTypeId, TimerId, TimestampMillis, WorkerId,
+    AttemptId, BoundedDetail, CommandId, ControllerAccountDeclaration, ControllerAdmissionOutcome,
+    CorrelationKey, CurrencyCode, EvidenceReference, LeaseId, NodeExecutionId, Reason,
+    ReconciliationDecisionId, ReconciliationId, ReconciliationPlanId, RepeatDecisionId,
+    RunSequence, SignalId, SignalTypeId, TimerId, TimestampMillis, WorkerId,
 };
 
 use super::model::{
@@ -206,6 +207,9 @@ pub enum RunEventKind {
         attempt: AttemptId,
         /// Fresh allow or deny decision under current revocation/validity state.
         authorization: AuthorityDecisionSnapshot,
+        /// Atomic controller-resource result at this same final-entry gate.
+        #[serde(default)]
+        controller_admission: ControllerAdmissionOutcome,
     },
     /// A valid lease was extended by an authenticated heartbeat.
     LeaseHeartbeatRecorded {
@@ -476,6 +480,9 @@ pub enum RunEventKind {
         through_sequence: RunSequence,
         /// Exact typed progress snapshot encoded by the controller-policy owner.
         progress: BoundedJson,
+        /// Immutable resource account derived for this exact controller occurrence.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account_declaration: Option<ControllerAccountDeclaration>,
         /// Closed decision consumed by deterministic runtime control flow.
         outcome: ControllerAssessmentOutcome,
     },

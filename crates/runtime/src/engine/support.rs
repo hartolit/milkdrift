@@ -11,9 +11,10 @@ use milkdrift_capability::{
     BoundedJson, ErrorClass, IdempotencyKey, InvocationValueReference, SideEffectClass,
 };
 use milkdrift_persistence::{
-    IntegrityDigest, MAX_RECONCILIATION_PLAN_ITEMS, NodeExecutionId, NodeExecutionMode,
-    NodeOutcome, Reason, RecoveryClassification, RepeatContinuationCause, RunEventEnvelope,
-    RunEventKind, RunOutcome, TimestampMillis, WaitCondition, WorkspaceMutation,
+    ControllerAccountAction, ControllerAccountId, IntegrityDigest, MAX_RECONCILIATION_PLAN_ITEMS,
+    NodeExecutionId, NodeExecutionMode, NodeOutcome, Reason, RecoveryClassification,
+    RepeatContinuationCause, RunEventEnvelope, RunEventKind, RunOutcome, TimestampMillis,
+    WaitCondition, WorkspaceMutation,
 };
 use milkdrift_workspace::{
     ArtifactReference, BranchId, RunId, ScopeKind, ScopeReference, WorkspaceScope, WorkspaceUsage,
@@ -55,6 +56,8 @@ pub(super) struct CommandPlan {
         Option<(WorkspaceUsage, WorkspaceUsage, BTreeSet<ArtifactReference>)>,
     pub(super) required_artifacts: BTreeSet<ArtifactReference>,
     pub(super) expected_lease_revision: Option<IntegrityDigest>,
+    pub(super) controller_actions: Vec<ControllerAccountAction>,
+    pub(super) expected_controller_revision: Option<(ControllerAccountId, IntegrityDigest)>,
 }
 
 impl CommandPlan {

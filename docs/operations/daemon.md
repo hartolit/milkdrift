@@ -15,7 +15,7 @@ Startup is deliberately fail-closed and ordered:
 
 1. Validate daemon configuration, normalized paths, credential references, grants, and bounds before opening storage.
 2. Refuse a data root containing legacy `control-state-v1.json`, `peer-executions-v1`, or `peer-artifacts-v1`. This release neither imports nor ignores old sidecar/prototype idempotency and artifact authority; move to a fresh data root or perform an explicitly reviewed offline conversion.
-3. Open exact-current redb physical schema 9/internal document format 11, verify the durable clock high-water boundary, and open the immutable artifact root.
+3. Open exact-current redb physical schema 10/internal document format 12, verify the durable clock high-water and controller-account boundaries, and open the immutable artifact root.
 4. Open runtime admission closed and construct the shared control service. The production daemon
    deliberately leaves the experimental controller lifecycle uninstalled, so marked continuous
    controllers fail closed during recovery or activation.

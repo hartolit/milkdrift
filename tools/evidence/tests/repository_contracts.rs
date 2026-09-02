@@ -161,7 +161,7 @@ fn canonical_version_statements_match_source_constants() -> TestResult {
     )?;
     let run_event = numeric_const(
         "crates/persistence/src/document.rs",
-        "RUN_EVENT_SCHEMA_VERSION_V2",
+        "RUN_EVENT_SCHEMA_VERSION_V3",
     )?;
     let resolved_snapshot = numeric_const(
         "crates/capability/src/document.rs",
@@ -420,7 +420,8 @@ fn narrowed_exports_and_validating_constructors_remain_narrow() -> TestResult {
     ));
 
     let runtime_executor = read(repository.join("crates/runtime/src/executor.rs"))?;
-    assert!(runtime_executor.contains("fn execute_streaming("));
+    assert!(runtime_executor.contains("fn prepare_exact_entry<'a>("));
+    assert!(!runtime_executor.contains("fn execute_streaming("));
     assert!(!runtime_executor.contains("ExecutionReportBatch"));
     assert!(!runtime_executor.contains("bounded synchronous executors"));
 

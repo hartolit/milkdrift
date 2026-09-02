@@ -4,9 +4,10 @@ use std::{
 };
 
 use milkdrift_blueprint::{BlueprintRevision, Mutation, NodeKind, PinnedSubworkflow};
-use milkdrift_capability::{BoundedJson, CapabilityCategory};
+use milkdrift_capability::BoundedJson;
 use milkdrift_persistence::{
-    ControllerAssessmentBoundary, ControllerAssessmentOutcome, CurrencyCode, NodeExecutionId,
+    ControllerAccountDeclaration, ControllerAccountState, ControllerAssessmentBoundary,
+    ControllerAssessmentOutcome, ControllerResourceBudget, CurrencyCode, NodeExecutionId,
     RevisionStore,
 };
 use milkdrift_runtime::{
@@ -34,12 +35,36 @@ impl ControllerLifecycleOwner {
         Self { revisions }
     }
 
-    /// Derives current progress solely from durable projection, usage, revision, and decision facts.
+    fn account_declaration(
+        document: &ControllerPolicyDocument,
+        run: &milkdrift_workspace::RunId,
+        execution: &NodeExecutionId,
+    ) -> Result<ControllerAccountDeclaration, ControlError> {
+        let limits = document.policy().limits();
+        let budget = ControllerResourceBudget::new(
+            limits.max_cost_micros(),
+            CurrencyCode::new(document.policy().cost_currency().as_str())?,
+            limits.max_input_units(),
+            limits.max_output_units(),
+            limits.max_artifact_bytes(),
+            u64::from(limits.max_process_invocations()),
+            u64::from(limits.max_model_invocations()),
+        )?;
+        Ok(ControllerAccountDeclaration::new(
+            run.clone(),
+            execution.clone(),
+            document.digest().as_str(),
+            budget,
+        )?)
+    }
+
+    /// Derives current progress from the durable account plus lifecycle-owned projection facts.
     pub fn progress(
         &self,
         document: &ControllerPolicyDocument,
         projection: &RunProjection,
         execution: &NodeExecutionId,
+        account: Option<&ControllerAccountState>,
         observed_at_ms: u64,
     ) -> Result<ControllerProgress, ControlError> {
         let usage = projection.subworkflow_usage_for_execution(execution);
@@ -55,33 +80,26 @@ impl ControllerLifecycleOwner {
                         .to_owned(),
                 )
             })?;
+        let totals = account
+            .map(ControllerAccountState::committed_totals)
+            .transpose()?
+            .unwrap_or_default();
+        let account_blocked = account.and_then(ControllerAccountState::blocked).is_some();
         let mut progress = ControllerProgress {
             invocations: checked_u32(usage.map_or(0, |value| value.completed_children()))?,
             elapsed_ms: observed_at_ms.saturating_sub(started_at.get()),
-            cost_micros: usage
-                .and_then(|value| {
-                    CurrencyCode::new(document.policy().cost_currency().as_str())
-                        .ok()
-                        .and_then(|currency| value.cost_micros().get(&currency).copied())
-                })
-                .unwrap_or(0),
-            input_units: usage.and_then(|value| value.input_units()).unwrap_or(0),
-            output_units: usage.and_then(|value| value.output_units()).unwrap_or(0),
-            artifact_bytes: usage.map_or(0, |value| value.artifact_bytes()),
-            process_invocations: checked_u32(usage.map_or(0, |value| value.process_invocations()))?,
-            model_invocations: checked_u32(usage.map_or(0, |value| value.model_invocations()))?,
+            cost_micros: totals.cost_micros(),
+            input_units: totals.input_units(),
+            output_units: totals.output_units(),
+            artifact_bytes: totals.artifact_bytes(),
+            process_invocations: checked_u32(totals.process_admissions())?,
+            model_invocations: checked_u32(totals.model_admissions())?,
             failures: checked_u16(usage.map_or(0, |value| value.failed_children()))?,
             revisions: checked_u32(projection.run_actor_revision_requests())?,
             rejections: checked_u16(projection.run_actor_rejections())?,
-            unknown_cost_observations: checked_u32(
-                usage.map_or(0, |value| value.unknown_cost_usage()),
-            )?,
-            unknown_input_observations: checked_u32(
-                usage.map_or(0, |value| value.unknown_input_usage()),
-            )?,
-            unknown_output_observations: checked_u32(
-                usage.map_or(0, |value| value.unknown_output_usage()),
-            )?,
+            unknown_cost_observations: u32::from(account_blocked),
+            unknown_input_observations: u32::from(account_blocked),
+            unknown_output_observations: u32::from(account_blocked),
             ..ControllerProgress::default()
         };
         if let Some(previous) = previous_assessment {
@@ -91,7 +109,7 @@ impl ControllerLifecycleOwner {
                 .checkpoint_approved_invocations
                 .min(progress.invocations);
         }
-        let (repeat_depth, child_depth, _, _) = self.body_shape(document.policy().body())?;
+        let (repeat_depth, child_depth) = self.body_shape(document.policy().body())?;
         progress.repeat_depth = repeat_depth;
         progress.child_depth = child_depth;
         Ok(progress)
@@ -103,6 +121,7 @@ impl ControllerLifecycleOwner {
         run: &milkdrift_workspace::RunId,
         projection: &RunProjection,
         execution: &NodeExecutionId,
+        account: Option<&ControllerAccountState>,
         observed_at_ms: u64,
     ) -> Result<crate::ControllerStatusRead, ControlError> {
         let latest = projection.controller_assessment(execution);
@@ -144,7 +163,7 @@ impl ControllerLifecycleOwner {
                     "requested execution is not governed by a controller policy".to_owned(),
                 )
             })?;
-        let progress = self.progress(&document, projection, execution, observed_at_ms)?;
+        let progress = self.progress(&document, projection, execution, account, observed_at_ms)?;
         let current = document.policy().limits().assess(&progress);
         let (checkpoint_id, reached_bound) = match latest.map(|value| value.outcome()) {
             Some(ControllerAssessmentOutcome::HumanCheckpoint { checkpoint_id }) => {
@@ -205,6 +224,7 @@ impl ControllerLifecycleOwner {
         run: &milkdrift_workspace::RunId,
         projection: &RunProjection,
         proposal: &crate::WorkflowProposal,
+        account: Option<&ControllerAccountState>,
         observed_at_ms: u64,
     ) -> Result<(), ControlError> {
         if proposal.run() != Some(run) {
@@ -247,7 +267,8 @@ impl ControllerLifecycleOwner {
             .ok_or_else(|| {
             ControlError::InvalidContract("controller policy disappeared".to_owned())
         })?;
-        let mut progress = self.progress(&document, projection, execution, observed_at_ms)?;
+        let mut progress =
+            self.progress(&document, projection, execution, account, observed_at_ms)?;
         progress.mutations_in_proposal =
             u16::try_from(proposal.mutation().operations().len()).unwrap_or(u16::MAX);
         progress.nodes_in_proposal = u16::try_from(
@@ -286,6 +307,7 @@ impl ControllerLifecycleOwner {
         projection: &RunProjection,
         proposed_revision: &BlueprintRevision,
         boundary: ControllerAssessmentBoundary,
+        account: Option<&ControllerAccountState>,
         observed_at_ms: u64,
     ) -> Result<(), ControlError> {
         if !matches!(
@@ -336,7 +358,7 @@ impl ControllerLifecycleOwner {
             ControllerPolicyDocument::from_revision(revision, node)?.ok_or_else(|| {
                 ControlError::InvalidContract("controller policy disappeared".to_owned())
             })?;
-        let progress = self.progress(&document, projection, execution, observed_at_ms)?;
+        let progress = self.progress(&document, projection, execution, account, observed_at_ms)?;
         match self.outcome(&document, &progress, boundary, run, execution)? {
             ControllerAssessmentOutcome::Continue => Ok(()),
             ControllerAssessmentOutcome::HumanCheckpoint { .. } => {
@@ -353,13 +375,11 @@ impl ControllerLifecycleOwner {
         }
     }
 
-    fn body_shape(&self, body: &PinnedSubworkflow) -> Result<(u16, u16, u32, u32), ControlError> {
+    fn body_shape(&self, body: &PinnedSubworkflow) -> Result<(u16, u16), ControlError> {
         let mut pending = VecDeque::from([(body.revision().clone(), 1_u16, 1_u16)]);
         let mut visited = BTreeSet::new();
         let mut repeat_depth = 1_u16;
         let mut child_depth = 1_u16;
-        let mut process = 0_u32;
-        let mut model = 0_u32;
         while let Some((revision_id, repeats, children)) = pending.pop_front() {
             if !visited.insert(revision_id.clone()) {
                 continue;
@@ -376,30 +396,7 @@ impl ControllerLifecycleOwner {
                 .ok_or(ControlError::BaseRevisionNotFound)?;
             for node in revision.semantic().nodes().values() {
                 match node.kind() {
-                    NodeKind::Task { config } => {
-                        let categories = config.requirement().categories();
-                        // An unconstrained task can resolve to either resource-bearing
-                        // category. Count it conservatively in both pre-entry ceilings;
-                        // exact admitted attempts are later classified from the frozen
-                        // resolved descriptor snapshot.
-                        if categories.is_empty()
-                            || categories.contains(&CapabilityCategory::Process)
-                        {
-                            process = process.checked_add(1).ok_or_else(|| {
-                                ControlError::InvalidContract(
-                                    "controller process shape overflow".to_owned(),
-                                )
-                            })?;
-                        }
-                        if categories.is_empty() || categories.contains(&CapabilityCategory::Model)
-                        {
-                            model = model.checked_add(1).ok_or_else(|| {
-                                ControlError::InvalidContract(
-                                    "controller model shape overflow".to_owned(),
-                                )
-                            })?;
-                        }
-                    }
+                    NodeKind::Task { .. } => {}
                     NodeKind::Repeat { config } => {
                         let next = repeats.checked_add(1).ok_or_else(|| {
                             ControlError::InvalidContract(
@@ -428,7 +425,7 @@ impl ControllerLifecycleOwner {
                 }
             }
         }
-        Ok((repeat_depth, child_depth, process, model))
+        Ok((repeat_depth, child_depth))
     }
 
     fn outcome(
@@ -447,50 +444,7 @@ impl ControllerLifecycleOwner {
             document.policy().limits().assess(progress)
         };
         match stop {
-            ControllerStop::Continue => {
-                if matches!(
-                    boundary,
-                    ControllerAssessmentBoundary::Activation
-                        | ControllerAssessmentBoundary::CycleEntry
-                ) {
-                    let (_, _, process, model) = self.body_shape(document.policy().body())?;
-                    if progress
-                        .process_invocations
-                        .checked_add(process)
-                        .is_none_or(|value| {
-                            value > document.policy().limits().max_process_invocations()
-                        })
-                    {
-                        return Ok(ControllerAssessmentOutcome::BoundReached {
-                            bound: bound_name(ControllerBound::ProcessInvocations).to_owned(),
-                            current: Some(
-                                u64::from(progress.process_invocations)
-                                    .saturating_add(u64::from(process)),
-                            ),
-                            limit: u64::from(document.policy().limits().max_process_invocations()),
-                            unknown_usage: false,
-                        });
-                    }
-                    if progress
-                        .model_invocations
-                        .checked_add(model)
-                        .is_none_or(|value| {
-                            value > document.policy().limits().max_model_invocations()
-                        })
-                    {
-                        return Ok(ControllerAssessmentOutcome::BoundReached {
-                            bound: bound_name(ControllerBound::ModelInvocations).to_owned(),
-                            current: Some(
-                                u64::from(progress.model_invocations)
-                                    .saturating_add(u64::from(model)),
-                            ),
-                            limit: u64::from(document.policy().limits().max_model_invocations()),
-                            unknown_usage: false,
-                        });
-                    }
-                }
-                Ok(ControllerAssessmentOutcome::Continue)
-            }
+            ControllerStop::Continue => Ok(ControllerAssessmentOutcome::Continue),
             ControllerStop::HumanCheckpoint => Ok(ControllerAssessmentOutcome::HumanCheckpoint {
                 checkpoint_id: stable_controller_identity(
                     "checkpoint",
@@ -517,11 +471,34 @@ impl ControllerLifecycle for ControllerLifecycleOwner {
         let Some(document) = document else {
             return Ok(None);
         };
+        let declaration = Self::account_declaration(&document, context.run, context.execution)
+            .map_err(|error| RuntimeError::InvalidHistory(error.to_string()))?;
+        match context.account {
+            Some(account) if account.declaration() == &declaration => {}
+            Some(_) => {
+                return Err(RuntimeError::InvalidHistory(
+                    "a controller policy inside an account-bound run does not match the originating controller occurrence"
+                        .to_owned(),
+                ));
+            }
+            None if context.boundary != ControllerAssessmentBoundary::Activation
+                || context
+                    .projection
+                    .controller_assessment(context.execution)
+                    .is_some() =>
+            {
+                return Err(RuntimeError::InvalidHistory(
+                    "marked controller history has no exact durable account binding".to_owned(),
+                ));
+            }
+            None => {}
+        }
         let mut progress = self
             .progress(
                 &document,
                 context.projection,
                 context.execution,
+                context.account,
                 context.observed_at.get(),
             )
             .map_err(|error| RuntimeError::InvalidHistory(error.to_string()))?;
@@ -565,6 +542,7 @@ impl ControllerLifecycle for ControllerLifecycleOwner {
             assessment_id,
             cycle_id,
             progress,
+            account_declaration: declaration,
             outcome,
         }))
     }

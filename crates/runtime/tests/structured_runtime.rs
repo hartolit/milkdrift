@@ -24,9 +24,10 @@ use milkdrift_blueprint::{
 use milkdrift_capability::{
     ArtifactReference as InvocationArtifactReference, BoundedJson, CancellationAcknowledgement,
     CancellationRequest, CapabilityDescriptor, CapabilityDescriptorDocument, CapabilityRequirement,
-    ErrorClass, InvocationEvent, InvocationEventKind, InvocationFailure, InvocationId,
-    InvocationRequest, InvocationTerminal, InvocationValueReference, OperationId,
-    ResolvedCapabilitySnapshot, SchemaId, SideEffectClass, TerminalStatus,
+    ErrorClass, InvocationAdmissionEnvelope, InvocationEvent, InvocationEventKind,
+    InvocationFailure, InvocationId, InvocationRequest, InvocationTerminal,
+    InvocationValueReference, OperationId, ResolvedCapabilitySnapshot, SchemaId, SideEffectClass,
+    TerminalStatus,
 };
 use milkdrift_persistence::{
     ArtifactPublicationId, ArtifactStore, AtomicRunCommitRequest, AuthorityDecision,
@@ -44,9 +45,10 @@ use milkdrift_redb_store::{RedbStore, testing as storage_fault};
 use milkdrift_runtime::{
     AttemptState, BoundaryClock, CommandAuthorityClaim, DeterministicExecutor, EffectAction,
     EffectExecutionResult, ExecutionDispatch, ExecutionReporter, ExecutorError, IdGenerator,
-    IterationState, LeaseState, ManualClock, NodeExecutionState, ResolvedCapability, RetryPolicy,
-    RunCommand, RunLifecycle, RuntimeConfig, RuntimeError, RuntimeService, RuntimeStartupState,
-    SchedulerLimits, SequentialIdGenerator, TaskExecutor, WorkerReport,
+    IterationState, LeaseState, ManualClock, NodeExecutionState, PreparedExecution,
+    ResolvedCapability, RetryPolicy, RunCommand, RunLifecycle, RuntimeConfig, RuntimeError,
+    RuntimeService, RuntimeStartupState, SchedulerLimits, SequentialIdGenerator, TaskExecutor,
+    WorkerReport,
 };
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactRetention, ArtifactSensitivity,
@@ -59,6 +61,19 @@ use tempfile::TempDir;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 type PersistenceResult<T> = Result<T, milkdrift_persistence::PersistenceError>;
+
+fn prepared_test_entry<'a>(
+    dispatch: &ExecutionDispatch,
+    entry: impl FnOnce(&ExecutionDispatch, &dyn ExecutionReporter) -> Result<(), ExecutorError>
+    + Send
+    + 'a,
+) -> PreparedExecution<'a> {
+    PreparedExecution::new(
+        dispatch,
+        InvocationAdmissionEnvelope::not_applicable(),
+        entry,
+    )
+}
 type ClosedRuntimeFixture = (
     Arc<RedbStore>,
     Arc<ManualClock>,
@@ -230,23 +245,24 @@ impl TaskExecutor for InvalidReportsCountingExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute_streaming(
-        &self,
+    fn prepare_exact_entry<'a>(
+        &'a self,
         dispatch: &ExecutionDispatch,
-        reporter: &dyn ExecutionReporter,
-    ) -> Result<(), ExecutorError> {
-        self.dispatches.fetch_add(1, Ordering::SeqCst);
-        let skipped_first = InvocationEvent::new(
-            dispatch.request().invocation().clone(),
-            2,
-            InvocationEventKind::Progress {
-                message: "invalid sequence fixture".to_owned(),
-                completed_units: None,
-                total_units: None,
-            },
-        )?;
-        let _disposition = reporter.invocation(skipped_first)?;
-        Ok(())
+    ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        Ok(prepared_test_entry(dispatch, move |dispatch, reporter| {
+            self.dispatches.fetch_add(1, Ordering::SeqCst);
+            let skipped_first = InvocationEvent::new(
+                dispatch.request().invocation().clone(),
+                2,
+                InvocationEventKind::Progress {
+                    message: "invalid sequence fixture".to_owned(),
+                    completed_units: None,
+                    total_units: None,
+                },
+            )?;
+            let _disposition = reporter.invocation(skipped_first)?;
+            Ok(())
+        }))
     }
 
     fn cancel(
@@ -279,13 +295,20 @@ impl TaskExecutor for DispatchCountingExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute_streaming(
-        &self,
+    fn prepare_exact_entry<'a>(
+        &'a self,
         dispatch: &ExecutionDispatch,
-        reporter: &dyn ExecutionReporter,
-    ) -> Result<(), ExecutorError> {
-        self.dispatches.fetch_add(1, Ordering::SeqCst);
-        self.resolver.execute_streaming(dispatch, reporter)
+    ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        let prepared = self.resolver.prepare_exact_entry(dispatch)?;
+        let envelope = prepared.admission_envelope().clone();
+        Ok(PreparedExecution::new(
+            dispatch,
+            envelope,
+            move |dispatch, reporter| {
+                self.dispatches.fetch_add(1, Ordering::SeqCst);
+                prepared.enter(dispatch, reporter)
+            },
+        ))
     }
 
     fn cancel(
@@ -398,42 +421,43 @@ impl TaskExecutor for AdmissionRaceExecutor {
         Ok(resolved)
     }
 
-    fn execute_streaming(
-        &self,
+    fn prepare_exact_entry<'a>(
+        &'a self,
         dispatch: &ExecutionDispatch,
-        reporter: &dyn ExecutionReporter,
-    ) -> Result<(), ExecutorError> {
-        {
-            let (lock, entered) = &self.execute_entries;
-            let mut count = lock
-                .lock()
-                .map_err(|_| ExecutorError::Boundary("execute count lock poisoned".to_owned()))?;
-            *count = count.saturating_add(1);
-            entered.notify_all();
-        }
-        let (lock, released) = &self.released;
-        let mut permit = lock
-            .lock()
-            .map_err(|_| ExecutorError::Boundary("admission release lock poisoned".to_owned()))?;
-        while !*permit {
-            permit = released.wait(permit).map_err(|_| {
-                ExecutorError::Boundary("admission release wait poisoned".to_owned())
+    ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        Ok(prepared_test_entry(dispatch, move |dispatch, reporter| {
+            {
+                let (lock, entered) = &self.execute_entries;
+                let mut count = lock.lock().map_err(|_| {
+                    ExecutorError::Boundary("execute count lock poisoned".to_owned())
+                })?;
+                *count = count.saturating_add(1);
+                entered.notify_all();
+            }
+            let (lock, released) = &self.released;
+            let mut permit = lock.lock().map_err(|_| {
+                ExecutorError::Boundary("admission release lock poisoned".to_owned())
             })?;
-        }
-        let terminal = InvocationTerminal::new(
-            TerminalStatus::Success,
-            Vec::new(),
-            None,
-            None,
-            SideEffectClass::None,
-        )?;
-        let event = InvocationEvent::new(
-            dispatch.request().invocation().clone(),
-            1,
-            InvocationEventKind::Terminal { terminal },
-        )?;
-        let _disposition = reporter.invocation(event)?;
-        Ok(())
+            while !*permit {
+                permit = released.wait(permit).map_err(|_| {
+                    ExecutorError::Boundary("admission release wait poisoned".to_owned())
+                })?;
+            }
+            let terminal = InvocationTerminal::new(
+                TerminalStatus::Success,
+                Vec::new(),
+                None,
+                None,
+                SideEffectClass::None,
+            )?;
+            let event = InvocationEvent::new(
+                dispatch.request().invocation().clone(),
+                1,
+                InvocationEventKind::Terminal { terminal },
+            )?;
+            let _disposition = reporter.invocation(event)?;
+            Ok(())
+        }))
     }
 
     fn cancel(
@@ -538,46 +562,48 @@ impl TaskExecutor for BoundaryThenBlockingExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute_streaming(
-        &self,
+    fn prepare_exact_entry<'a>(
+        &'a self,
         dispatch: &ExecutionDispatch,
-        reporter: &dyn ExecutionReporter,
-    ) -> Result<(), ExecutorError> {
-        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
-            return Err(ExecutorError::Boundary(
-                "executor disconnected after accepting first dispatch".to_owned(),
-            ));
-        }
-        {
-            let (lock, entered) = &self.entered;
-            *lock
+    ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        Ok(prepared_test_entry(dispatch, move |dispatch, reporter| {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(ExecutorError::Boundary(
+                    "executor disconnected after accepting first dispatch".to_owned(),
+                ));
+            }
+            {
+                let (lock, entered) = &self.entered;
+                *lock
+                    .lock()
+                    .map_err(|_| ExecutorError::Boundary("entered lock poisoned".to_owned()))? =
+                    true;
+                entered.notify_all();
+            }
+            let (lock, released) = &self.released;
+            let mut permit = lock
                 .lock()
-                .map_err(|_| ExecutorError::Boundary("entered lock poisoned".to_owned()))? = true;
-            entered.notify_all();
-        }
-        let (lock, released) = &self.released;
-        let mut permit = lock
-            .lock()
-            .map_err(|_| ExecutorError::Boundary("release lock poisoned".to_owned()))?;
-        while !*permit {
-            permit = released
-                .wait(permit)
-                .map_err(|_| ExecutorError::Boundary("release wait poisoned".to_owned()))?;
-        }
-        let terminal = InvocationTerminal::new(
-            TerminalStatus::Cancelled,
-            Vec::new(),
-            None,
-            None,
-            dispatch.resolution().operation_contract().side_effect(),
-        )?;
-        let event = InvocationEvent::new(
-            dispatch.request().invocation().clone(),
-            1,
-            InvocationEventKind::Terminal { terminal },
-        )?;
-        let _disposition = reporter.invocation(event)?;
-        Ok(())
+                .map_err(|_| ExecutorError::Boundary("release lock poisoned".to_owned()))?;
+            while !*permit {
+                permit = released
+                    .wait(permit)
+                    .map_err(|_| ExecutorError::Boundary("release wait poisoned".to_owned()))?;
+            }
+            let terminal = InvocationTerminal::new(
+                TerminalStatus::Cancelled,
+                Vec::new(),
+                None,
+                None,
+                dispatch.resolution().operation_contract().side_effect(),
+            )?;
+            let event = InvocationEvent::new(
+                dispatch.request().invocation().clone(),
+                1,
+                InvocationEventKind::Terminal { terminal },
+            )?;
+            let _disposition = reporter.invocation(event)?;
+            Ok(())
+        }))
     }
 
     fn cancel(
@@ -630,30 +656,37 @@ impl TaskExecutor for BoundaryFailingExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute_streaming(
-        &self,
+    fn prepare_exact_entry<'a>(
+        &'a self,
         dispatch: &ExecutionDispatch,
-        reporter: &dyn ExecutionReporter,
-    ) -> Result<(), ExecutorError> {
-        self.dispatches
-            .lock()
-            .map_err(|_| ExecutorError::Boundary("dispatch log lock poisoned".to_owned()))?
-            .push(RecordedDispatch {
-                resolution: dispatch.resolution().clone(),
-                request: dispatch.request().clone(),
-            });
-        if self
-            .failures_remaining
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
-                remaining.checked_sub(1)
-            })
-            .is_ok()
-        {
-            return Err(ExecutorError::Boundary(
-                "executor disconnected after accepting dispatch".to_owned(),
-            ));
-        }
-        self.resolver.execute_streaming(dispatch, reporter)
+    ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        let prepared = self.resolver.prepare_exact_entry(dispatch)?;
+        let envelope = prepared.admission_envelope().clone();
+        Ok(PreparedExecution::new(
+            dispatch,
+            envelope,
+            move |dispatch, reporter| {
+                self.dispatches
+                    .lock()
+                    .map_err(|_| ExecutorError::Boundary("dispatch log lock poisoned".to_owned()))?
+                    .push(RecordedDispatch {
+                        resolution: dispatch.resolution().clone(),
+                        request: dispatch.request().clone(),
+                    });
+                if self
+                    .failures_remaining
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                        remaining.checked_sub(1)
+                    })
+                    .is_ok()
+                {
+                    return Err(ExecutorError::Boundary(
+                        "executor disconnected after accepting dispatch".to_owned(),
+                    ));
+                }
+                prepared.enter(dispatch, reporter)
+            },
+        ))
     }
 
     fn cancel(
@@ -673,12 +706,18 @@ impl TaskExecutor for PanickingExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute_streaming(
-        &self,
-        _dispatch: &ExecutionDispatch,
-        _reporter: &dyn ExecutionReporter,
-    ) -> Result<(), ExecutorError> {
-        std::panic::resume_unwind(Box::new("intentional crash after durable invocation start"))
+    fn prepare_exact_entry<'a>(
+        &'a self,
+        dispatch: &ExecutionDispatch,
+    ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        Ok(prepared_test_entry(
+            dispatch,
+            move |_dispatch, _reporter| {
+                std::panic::resume_unwind(Box::new(
+                    "intentional crash after durable invocation start",
+                ))
+            },
+        ))
     }
 
     fn cancel(
@@ -752,57 +791,59 @@ impl TaskExecutor for BlockingExecutor {
         self.resolver.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute_streaming(
-        &self,
+    fn prepare_exact_entry<'a>(
+        &'a self,
         dispatch: &ExecutionDispatch,
-        reporter: &dyn ExecutionReporter,
-    ) -> Result<(), ExecutorError> {
-        let blocked = dispatch.request().operation()
-            == &*self.blocking_operation.lock().map_err(|_| {
-                ExecutorError::Boundary("blocking operation lock poisoned".to_owned())
-            })?;
-        if blocked {
-            {
-                let (lock, entered) = &self.entered;
-                *lock
+    ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        Ok(prepared_test_entry(dispatch, move |dispatch, reporter| {
+            let blocked = dispatch.request().operation()
+                == &*self.blocking_operation.lock().map_err(|_| {
+                    ExecutorError::Boundary("blocking operation lock poisoned".to_owned())
+                })?;
+            if blocked {
+                {
+                    let (lock, entered) = &self.entered;
+                    *lock.lock().map_err(|_| {
+                        ExecutorError::Boundary("entered lock poisoned".to_owned())
+                    })? = true;
+                    entered.notify_all();
+                }
+                let (lock, released) = &self.released;
+                let mut permit = lock
                     .lock()
-                    .map_err(|_| ExecutorError::Boundary("entered lock poisoned".to_owned()))? =
-                    true;
-                entered.notify_all();
+                    .map_err(|_| ExecutorError::Boundary("release lock poisoned".to_owned()))?;
+                while !*permit {
+                    permit = released
+                        .wait(permit)
+                        .map_err(|_| ExecutorError::Boundary("release wait poisoned".to_owned()))?;
+                }
             }
-            let (lock, released) = &self.released;
-            let mut permit = lock
+            let cancellation_requested = self
+                .cancellation_sequences
                 .lock()
-                .map_err(|_| ExecutorError::Boundary("release lock poisoned".to_owned()))?;
-            while !*permit {
-                permit = released
-                    .wait(permit)
-                    .map_err(|_| ExecutorError::Boundary("release wait poisoned".to_owned()))?;
-            }
-        }
-        let cancellation_requested = self
-            .cancellation_sequences
-            .lock()
-            .map_err(|_| ExecutorError::Boundary("cancellation sequence lock poisoned".to_owned()))?
-            .contains_key(dispatch.request().invocation());
-        let terminal = InvocationTerminal::new(
-            if cancellation_requested {
-                TerminalStatus::Cancelled
-            } else {
-                TerminalStatus::Success
-            },
-            Vec::new(),
-            None,
-            None,
-            SideEffectClass::None,
-        )?;
-        let event = InvocationEvent::new(
-            dispatch.request().invocation().clone(),
-            1,
-            InvocationEventKind::Terminal { terminal },
-        )?;
-        let _disposition = reporter.invocation(event)?;
-        Ok(())
+                .map_err(|_| {
+                    ExecutorError::Boundary("cancellation sequence lock poisoned".to_owned())
+                })?
+                .contains_key(dispatch.request().invocation());
+            let terminal = InvocationTerminal::new(
+                if cancellation_requested {
+                    TerminalStatus::Cancelled
+                } else {
+                    TerminalStatus::Success
+                },
+                Vec::new(),
+                None,
+                None,
+                SideEffectClass::None,
+            )?;
+            let event = InvocationEvent::new(
+                dispatch.request().invocation().clone(),
+                1,
+                InvocationEventKind::Terminal { terminal },
+            )?;
+            let _disposition = reporter.invocation(event)?;
+            Ok(())
+        }))
     }
 
     fn cancel(

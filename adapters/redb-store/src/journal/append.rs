@@ -144,6 +144,7 @@ impl RunJournal for RedbStore {
         validate_required_artifacts(self, &write, request.required_artifacts())?;
         validate_artifact_accounting_references(&write, request)?;
         validate_workspace_accounting(&write, request)?;
+        crate::controller_account::apply_controller_transaction(&write, request)?;
         append_events(&write, request, self.faults.as_ref())?;
         if let Some(checkpoint) = request.projection_checkpoint() {
             crate::snapshot::attach_projection_checkpoint(

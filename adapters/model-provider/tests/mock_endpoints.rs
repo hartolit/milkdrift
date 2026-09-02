@@ -19,8 +19,8 @@ use milkdrift_blueprint::{
     TaskContextPolicy, TerminalOutcome, WorkflowId,
 };
 use milkdrift_capability::{
-    ArtifactReference, BoundedJson, CancellationRequest, CapabilityId, InputReference,
-    InvocationEvent, InvocationEventKind, InvocationId, InvocationRequest,
+    AdmissionBound, ArtifactReference, BoundedJson, CancellationRequest, CapabilityId,
+    InputReference, InvocationEvent, InvocationEventKind, InvocationId, InvocationRequest,
     InvocationValueReference, OperationId, ProviderProfileRef, ResolvedCapabilitySnapshot,
     TerminalStatus,
 };
@@ -416,13 +416,31 @@ fn execute_bound(
         &OperationId::new("model.generate")?,
     )?;
     let request = request(&capability, &profile, manifest, task, context_inputs)?;
+    let expected_artifact_bytes = limits().max_response_bytes.saturating_mul(4);
     let adapter = ModelEndpointAdapter::new(capability, profile, secrets, data)?;
     adapter.start()?;
     let reporter = Reporter::default();
-    adapter.execute(
-        &AdapterInvocation::with_context(&snapshot, &request, &context),
-        &reporter,
-    )?;
+    let invocation = AdapterInvocation::with_context(&snapshot, &request, &context);
+    let first_envelope = adapter.admission_envelope(&invocation)?;
+    let second_envelope = adapter.admission_envelope(&invocation)?;
+    assert_eq!(first_envelope, second_envelope);
+    assert!(matches!(
+        first_envelope.input_units(),
+        AdmissionBound::Unknown
+    ));
+    assert!(matches!(
+        first_envelope.output_units(),
+        AdmissionBound::Unknown
+    ));
+    assert!(matches!(
+        first_envelope.monetary_cost(),
+        AdmissionBound::Unknown
+    ));
+    assert_eq!(
+        first_envelope.artifact_bytes().bounded(),
+        Some(&expected_artifact_bytes)
+    );
+    adapter.execute(&invocation, &reporter)?;
     Ok(reporter.0.into_inner().map_err(|_| "reporter lock")?)
 }
 

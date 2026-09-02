@@ -8,8 +8,8 @@ use std::{
 use milkdrift_persistence::{
     ArtifactPublicationId, ArtifactReadChunk, ArtifactReadRequest, ArtifactStore,
     ArtifactWriteProgress, BeginArtifactOutcome, BeginArtifactPublication, CommitArtifactOutcome,
-    OrphanCleanupCursor, OrphanCleanupFamily, OrphanCleanupRequest, OrphanCleanupResult,
-    PersistenceError, StorageFailureClass, authorize_artifact_read,
+    ControllerArtifactOwner, OrphanCleanupCursor, OrphanCleanupFamily, OrphanCleanupRequest,
+    OrphanCleanupResult, PersistenceError, StorageFailureClass, authorize_artifact_read,
 };
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactReference, CausalReference, ContentDigest, RunId,
@@ -31,7 +31,7 @@ use crate::{
     },
 };
 
-const PUBLICATION_SCHEMA_VERSION: u32 = 1;
+const PUBLICATION_SCHEMA_VERSION: u32 = 2;
 pub(crate) const ARTIFACT_ACCOUNTING_SCHEMA_VERSION: u32 = 3;
 pub(crate) const GLOBAL_ARTIFACT_BYTES_KEY: &str = "artifact_content_bytes";
 const MAX_CHUNK_BYTES: usize = milkdrift_persistence::MAX_ARTIFACT_CHUNK_BYTES;
@@ -54,6 +54,7 @@ pub(crate) struct PublicationRecord {
     budget: milkdrift_workspace::WorkspaceBudget,
     expected_usage: WorkspaceUsage,
     resulting_usage: WorkspaceUsage,
+    controller_owner: ControllerArtifactOwner,
     created_at_millis: u64,
     state: PublicationState,
 }
@@ -82,6 +83,7 @@ impl PublicationRecord {
             budget: request.budget().clone(),
             expected_usage: request.expected_usage(),
             resulting_usage: request.resulting_usage(),
+            controller_owner: request.controller_owner().clone(),
             created_at_millis,
             state: PublicationState::Writable,
         }
@@ -94,6 +96,7 @@ impl PublicationRecord {
             && self.budget == *request.budget()
             && self.expected_usage == request.expected_usage()
             && self.resulting_usage == request.resulting_usage()
+            && self.controller_owner == *request.controller_owner()
     }
 }
 
@@ -235,6 +238,32 @@ pub(crate) fn validate_publication_scrub(
         }
     }
     Ok(())
+}
+
+pub(crate) fn validate_controller_charge_publication(
+    read: &redb::ReadTransaction,
+    publication: &ArtifactPublicationId,
+    owner: &ControllerArtifactOwner,
+    charged_bytes: u64,
+) -> Result<RunId, PersistenceError> {
+    let publications = read
+        .open_table(ARTIFACT_PUBLICATIONS)
+        .map_err(error::redb)?;
+    let bytes = publications
+        .get(publication.as_str())
+        .map_err(error::redb)?
+        .ok_or_else(|| error::corruption("controller artifact charge has no publication"))?;
+    let record = publication::decode_publication(bytes.value())?;
+    if record.publication != *publication
+        || record.controller_owner != *owner
+        || record.metadata.reference().size_bytes() != charged_bytes
+        || !matches!(record.state, PublicationState::Committed { .. })
+    {
+        return Err(error::corruption(
+            "controller artifact charge disagrees with its committed publication",
+        ));
+    }
+    Ok(record.run)
 }
 
 fn scrub_publication(

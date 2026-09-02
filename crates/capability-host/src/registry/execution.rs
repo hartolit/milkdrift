@@ -11,7 +11,7 @@ use milkdrift_capability::{
 };
 use milkdrift_runtime::{
     CapabilityResolutionContext, ExecutionDispatch, ExecutionReporter, ExecutorError,
-    ResolvedCapability, TaskExecutor,
+    PreparedExecution, ResolvedCapability, TaskExecutor,
 };
 
 use super::{CapabilityHost, GenerationHealth, GenerationKey, HostCore, HostError, RegistryState};
@@ -100,28 +100,6 @@ impl CapabilityHost {
         }
     }
 
-    fn execute_dispatch_exact(
-        &self,
-        dispatch: &ExecutionDispatch,
-        reporter: &dyn AdapterReporter,
-    ) -> Result<(), ExecutorError> {
-        let (adapter, mut permit) = self.acquire(dispatch.resolution(), dispatch.request())?;
-        let context = AdapterExecutionContext::from_dispatch(dispatch);
-        let invocation =
-            AdapterInvocation::with_context(dispatch.resolution(), dispatch.request(), &context);
-        match catch_unwind(AssertUnwindSafe(|| adapter.execute(&invocation, reporter))) {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => {
-                permit.failure = Some(error.summary().to_owned());
-                Err(executor_error_from_adapter(&error))
-            }
-            Err(_panic) => {
-                permit.failure = Some("adapter panicked".to_owned());
-                Err(ExecutorError::AdapterPanicked { after_entry: true })
-            }
-        }
-    }
-
     fn acquire(
         &self,
         snapshot: &ResolvedCapabilitySnapshot,
@@ -193,13 +171,50 @@ impl TaskExecutor for CapabilityHost {
         self.resolve_authorized_at(requirement, authority, evaluator, observed_at_unix_ms)
     }
 
-    fn execute_streaming(
-        &self,
+    fn prepare_exact_entry<'a>(
+        &'a self,
         dispatch: &ExecutionDispatch,
-        reporter: &dyn ExecutionReporter,
-    ) -> Result<(), ExecutorError> {
-        let bridge = ReporterBridge { reporter };
-        self.execute_dispatch_exact(dispatch, &bridge)
+    ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        let (adapter, mut permit) = self.acquire(dispatch.resolution(), dispatch.request())?;
+        let context = AdapterExecutionContext::from_dispatch(dispatch, None);
+        let invocation =
+            AdapterInvocation::with_context(dispatch.resolution(), dispatch.request(), &context);
+        let envelope =
+            match catch_unwind(AssertUnwindSafe(|| adapter.admission_envelope(&invocation))) {
+                Ok(Ok(envelope)) => envelope,
+                Ok(Err(error)) => {
+                    permit.mark_failure(error.summary());
+                    return Err(executor_error_from_adapter(&error));
+                }
+                Err(_panic) => {
+                    permit.mark_failure("adapter panicked while deriving admission envelope");
+                    return Err(ExecutorError::AdapterPanicked { after_entry: false });
+                }
+            };
+        Ok(PreparedExecution::new_with_controller_reservation(
+            dispatch,
+            envelope,
+            move |dispatch, reservation, reporter| {
+                let bridge = ReporterBridge { reporter };
+                let context = AdapterExecutionContext::from_dispatch(dispatch, reservation);
+                let invocation = AdapterInvocation::with_context(
+                    dispatch.resolution(),
+                    dispatch.request(),
+                    &context,
+                );
+                match catch_unwind(AssertUnwindSafe(|| adapter.execute(&invocation, &bridge))) {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(error)) => {
+                        permit.mark_failure(error.summary());
+                        Err(executor_error_from_adapter(&error))
+                    }
+                    Err(_panic) => {
+                        permit.mark_failure("adapter panicked");
+                        Err(ExecutorError::AdapterPanicked { after_entry: true })
+                    }
+                }
+            },
+        ))
     }
 
     fn cancel(
@@ -235,6 +250,12 @@ struct Permit {
     key: GenerationKey,
     invocation: InvocationId,
     failure: Option<String>,
+}
+
+impl Permit {
+    fn mark_failure(&mut self, summary: &str) {
+        self.failure = Some(summary.to_owned());
+    }
 }
 
 impl Drop for Permit {

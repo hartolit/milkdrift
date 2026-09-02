@@ -6,9 +6,10 @@ use milkdrift_authority::ActorRef;
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::BoundedJson;
 use milkdrift_persistence::{
-    ControllerAssessmentBoundary, ControllerAssessmentOutcome, CurrencyCode, EventId,
-    NodeExecutionId, ReconciliationId, ReconciliationPolicy, RunEventEnvelope, RunEventKind,
-    RunOutcome, RunSequence, SubworkflowResourceUsage, TimestampMillis,
+    ControllerAccountDeclaration, ControllerAssessmentBoundary, ControllerAssessmentOutcome,
+    ControllerResourceBudget, CurrencyCode, EventId, NodeExecutionId, ReconciliationId,
+    ReconciliationPolicy, RunEventEnvelope, RunEventKind, RunOutcome, RunSequence,
+    SubworkflowResourceUsage, TimestampMillis,
 };
 use milkdrift_workspace::{RunId, SubworkflowId};
 use serde_json::json;
@@ -86,8 +87,32 @@ fn legacy_fixtures() -> [(&'static str, &'static [u8]); 16] {
     ]
 }
 
+fn schema_v2_fixtures() -> [(&'static str, &'static [u8]); 3] {
+    [
+        (
+            "controller-assessment",
+            include_bytes!("fixtures/run-event-controller-assessment-v2.json"),
+        ),
+        (
+            "subworkflow-usage",
+            include_bytes!("fixtures/run-event-subworkflow-usage-v2.json"),
+        ),
+        (
+            "attributed-reconciliation",
+            include_bytes!("fixtures/run-event-attributed-reconciliation-v2.json"),
+        ),
+    ]
+}
+
 fn current_fixtures() -> TestResult<[(&'static str, RunEventEnvelope, &'static [u8]); 3]> {
     let currency = CurrencyCode::new("USD")?;
+    let controller_execution = NodeExecutionId::new("controller-execution-family")?;
+    let account_declaration = ControllerAccountDeclaration::new(
+        RunId::new("run-family-fixture")?,
+        controller_execution.clone(),
+        "policy-family",
+        ControllerResourceBudget::new(100, currency.clone(), 100, 100, 100, 100, 100)?,
+    )?;
     let usage = SubworkflowResourceUsage {
         input_units: Some(11),
         output_units: Some(13),
@@ -109,16 +134,17 @@ fn current_fixtures() -> TestResult<[(&'static str, RunEventEnvelope, &'static [
                     policy_digest: "policy-family".to_owned(),
                     governing_revision: revision('1')?,
                     controller_node: NodeId::new("controller-node-family")?,
-                    controller_execution: NodeExecutionId::new("controller-execution-family")?,
+                    controller_execution,
                     assessment_id: "assessment-family".to_owned(),
                     cycle_id: Some("cycle-family".to_owned()),
                     boundary: ControllerAssessmentBoundary::CycleEntry,
                     through_sequence: RunSequence::new(16),
                     progress: BoundedJson::new(json!({"completed_cycles": 1}))?,
+                    account_declaration: Some(account_declaration),
                     outcome: ControllerAssessmentOutcome::Continue,
                 },
             )?,
-            include_bytes!("fixtures/run-event-controller-assessment-v2.json"),
+            include_bytes!("fixtures/run-event-controller-assessment-v3.json"),
         ),
         (
             "subworkflow-usage",
@@ -133,7 +159,7 @@ fn current_fixtures() -> TestResult<[(&'static str, RunEventEnvelope, &'static [
                     usage,
                 },
             )?,
-            include_bytes!("fixtures/run-event-subworkflow-usage-v2.json"),
+            include_bytes!("fixtures/run-event-subworkflow-usage-v3.json"),
         ),
         (
             "attributed-reconciliation",
@@ -147,22 +173,32 @@ fn current_fixtures() -> TestResult<[(&'static str, RunEventEnvelope, &'static [
                     policy: ReconciliationPolicy::RequireAuthority,
                 },
             )?,
-            include_bytes!("fixtures/run-event-attributed-reconciliation-v2.json"),
+            include_bytes!("fixtures/run-event-attributed-reconciliation-v3.json"),
         ),
     ])
 }
 
 #[test]
-fn durable_event_families_retain_exact_v1_and_review_current_v2_goldens() -> TestResult {
+fn durable_event_families_retain_exact_v1_and_review_current_v3_goldens() -> TestResult {
     for (name, fixture) in legacy_fixtures() {
         let fixture = fixture.strip_suffix(b"\n").unwrap_or(fixture);
         let event = RunEventEnvelope::from_json(fixture)?;
         assert_eq!(event.schema_version(), 1, "legacy fixture {name}");
         assert_eq!(event.to_canonical_json()?, fixture, "legacy fixture {name}");
     }
+    for (name, fixture) in schema_v2_fixtures() {
+        let fixture = fixture.strip_suffix(b"\n").unwrap_or(fixture);
+        let event = RunEventEnvelope::from_json(fixture)?;
+        assert_eq!(event.schema_version(), 2, "schema-v2 fixture {name}");
+        assert_eq!(
+            event.to_canonical_json()?,
+            fixture,
+            "schema-v2 fixture {name}"
+        );
+    }
     for (name, event, fixture) in current_fixtures()? {
         let fixture = fixture.strip_suffix(b"\n").unwrap_or(fixture);
-        assert_eq!(event.schema_version(), 2, "current fixture {name}");
+        assert_eq!(event.schema_version(), 3, "current fixture {name}");
         assert_eq!(
             event.to_canonical_json()?,
             fixture,

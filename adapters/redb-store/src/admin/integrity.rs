@@ -7,6 +7,7 @@ use super::{IntegrityScanCursor, IntegrityScanFamily, IntegrityScanResult, Persi
 
 mod application;
 mod artifacts;
+mod controller;
 mod revisions;
 mod run;
 mod scheduler;
@@ -58,6 +59,10 @@ pub(super) mod phase {
     pub(super) const APPLICATION_LAYOUTS: u8 = 39;
     pub(super) const APPLICATION_PROPOSALS: u8 = 40;
     pub(super) const SECURITY_AUDIT: u8 = 41;
+    pub(super) const CONTROLLER_ACCOUNTS: u8 = 42;
+    pub(super) const CONTROLLER_RUN_BINDINGS: u8 = 43;
+    pub(super) const CONTROLLER_TRANSITIONS: u8 = 44;
+    pub(super) const CONTROLLER_ARTIFACT_CHARGES: u8 = 45;
 }
 
 /// Shared state for one ordered scan page. Domain modules own tables and validation.
@@ -316,5 +321,6 @@ pub(crate) fn scan_index_integrity(
     run::scan_invocation_facts(&mut context)?;
     snapshots::scan(&mut context)?;
     artifacts::scan_publications(&mut context)?;
-    application::scan(&mut context)
+    application::scan(&mut context)?;
+    controller::scan(&mut context)
 }

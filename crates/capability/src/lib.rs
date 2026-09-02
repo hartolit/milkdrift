@@ -4,6 +4,7 @@
 //! It deliberately owns no live registry, credentials, provider client, transport,
 //! or executor lifecycle.
 
+mod admission;
 mod bounded;
 mod descriptor;
 mod document;
@@ -11,6 +12,7 @@ mod identity;
 mod invocation;
 mod resolved;
 
+pub use admission::{AdmissionBound, AdmissionMonetaryBound, InvocationAdmissionEnvelope};
 pub use bounded::{BoundedJson, ContractError, MAX_DOCUMENT_BYTES, MAX_JSON_DEPTH};
 pub use descriptor::{
     AdmissionConstraints, CancellationBehavior, CapabilityCategory, CapabilityDescriptor,

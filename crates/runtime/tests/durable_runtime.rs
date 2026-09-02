@@ -21,7 +21,8 @@ use milkdrift_blueprint::{
 };
 use milkdrift_capability::{
     BoundedJson, CancellationAcknowledgement, CancellationRequest, CapabilityDescriptorDocument,
-    CapabilityId, CapabilityRequirement, ErrorClass, Locality, OperationId, SideEffectClass,
+    CapabilityId, CapabilityRequirement, ErrorClass, InvocationAdmissionEnvelope, Locality,
+    OperationId, SideEffectClass,
 };
 use milkdrift_persistence::{
     AttemptId, AuthorityDecision, CommandId, NodeExecutionId, NodeOutcome, PageSize, Reason,
@@ -31,9 +32,9 @@ use milkdrift_persistence::{
 };
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{
-    CommandAuthorityClaim, DeterministicExecutor, ExecutionDispatch, ExecutionReporter,
-    ExecutorError, ExternalWorkAction, ManualClock, ResolvedCapability, RetryPolicy, RunCommand,
-    RunCommandDocument, RunLifecycle, RuntimeConfig, RuntimeService, SchedulerLimits,
+    CommandAuthorityClaim, DeterministicExecutor, ExecutionDispatch, ExecutorError,
+    ExternalWorkAction, ManualClock, PreparedExecution, ResolvedCapability, RetryPolicy,
+    RunCommand, RunCommandDocument, RunLifecycle, RuntimeConfig, RuntimeService, SchedulerLimits,
     SequentialIdGenerator, SystemTransition, TaskExecutor,
 };
 use milkdrift_workspace::{RunId, ScopeId, WorkspaceBudget, WorkspaceScope};
@@ -760,26 +761,32 @@ impl TaskExecutor for CountingExecutor {
         self.inner.resolve(requirement, observed_at_unix_ms)
     }
 
-    fn execute_streaming(
-        &self,
+    fn prepare_exact_entry<'a>(
+        &'a self,
         dispatch: &ExecutionDispatch,
-        reporter: &dyn ExecutionReporter,
-    ) -> Result<(), ExecutorError> {
-        self.entries.fetch_add(1, Ordering::SeqCst);
-        if let Some(block) = &self.block {
-            let (lock, changed) = &**block;
-            let mut state = lock
-                .lock()
-                .map_err(|_error| ExecutorError::Boundary("entry gate poisoned".to_owned()))?;
-            state.entered = true;
-            changed.notify_all();
-            while !state.release {
-                state = changed.wait(state).map_err(|_error| {
-                    ExecutorError::Boundary("entry gate wait poisoned".to_owned())
-                })?;
-            }
-        }
-        self.inner.execute_streaming(dispatch, reporter)
+    ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        let prepared = self.inner.prepare_exact_entry(dispatch)?;
+        Ok(PreparedExecution::new(
+            dispatch,
+            InvocationAdmissionEnvelope::not_applicable(),
+            move |dispatch, reporter| {
+                self.entries.fetch_add(1, Ordering::SeqCst);
+                if let Some(block) = &self.block {
+                    let (lock, changed) = &**block;
+                    let mut state = lock.lock().map_err(|_error| {
+                        ExecutorError::Boundary("entry gate poisoned".to_owned())
+                    })?;
+                    state.entered = true;
+                    changed.notify_all();
+                    while !state.release {
+                        state = changed.wait(state).map_err(|_error| {
+                            ExecutorError::Boundary("entry gate wait poisoned".to_owned())
+                        })?;
+                    }
+                }
+                prepared.enter(dispatch, reporter)
+            },
+        ))
     }
 
     fn cancel(

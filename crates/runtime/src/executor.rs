@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, sync::Mutex};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use milkdrift_authority::{
     AuthorityBudget, AuthorityDecisionSnapshot, AuthorityEvaluator, AuthorityExecutionProvenance,
@@ -7,11 +13,14 @@ use milkdrift_authority::{
 };
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::{
-    CancellationAcknowledgement, CancellationRequest, CapabilityDescriptor, CapabilityRequirement,
-    ContractError, IdempotencyBehavior, InvocationEvent, InvocationEventKind, InvocationRequest,
-    InvocationTerminal, OperationId, ResolvedCapabilitySnapshot, SideEffectClass, TerminalStatus,
+    CancellationAcknowledgement, CancellationRequest, CapabilityCategory, CapabilityDescriptor,
+    CapabilityRequirement, ContractError, IdempotencyBehavior, InvocationAdmissionEnvelope,
+    InvocationEvent, InvocationEventKind, InvocationRequest, InvocationTerminal, OperationId,
+    ResolvedCapabilitySnapshot, SideEffectClass, TerminalStatus,
 };
-use milkdrift_persistence::{AttemptId, LeaseId, NodeExecutionId, TimestampMillis};
+use milkdrift_persistence::{
+    AttemptId, ControllerReservationId, LeaseId, NodeExecutionId, TimestampMillis,
+};
 use milkdrift_workspace::RunId;
 use thiserror::Error;
 
@@ -269,7 +278,7 @@ fn maximum_budget(left: Option<u64>, right: Option<u64>) -> Option<u64> {
 }
 
 /// Dispatch value delivered to an executor after schedule and lease facts are durable.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ExecutionDispatch {
     run: RunId,
     revision: RevisionId,
@@ -527,6 +536,102 @@ pub trait ExecutionReporter: Send + Sync {
     fn heartbeat(&self) -> Result<ObservationDisposition, ExecutorError>;
 }
 
+type PreparedEntry<'a> = Box<
+    dyn FnOnce(
+            &ExecutionDispatch,
+            Option<&ControllerReservationId>,
+            &dyn ExecutionReporter,
+        ) -> Result<(), ExecutorError>
+        + Send
+        + 'a,
+>;
+
+/// One-shot exact-generation entry prepared before the durable final-entry commit.
+pub struct PreparedExecution<'a> {
+    dispatch: ExecutionDispatch,
+    envelope: InvocationAdmissionEnvelope,
+    entry: Option<PreparedEntry<'a>>,
+}
+
+impl<'a> PreparedExecution<'a> {
+    /// Constructs a prepared handle around one exact dispatch and one entry closure.
+    pub fn new(
+        dispatch: &ExecutionDispatch,
+        envelope: InvocationAdmissionEnvelope,
+        entry: impl FnOnce(&ExecutionDispatch, &dyn ExecutionReporter) -> Result<(), ExecutorError>
+        + Send
+        + 'a,
+    ) -> Self {
+        Self {
+            dispatch: dispatch.clone(),
+            envelope,
+            entry: Some(Box::new(move |dispatch, _reservation, reporter| {
+                entry(dispatch, reporter)
+            })),
+        }
+    }
+
+    /// Constructs a prepared handle whose adapter context consumes a committed reservation.
+    pub fn new_with_controller_reservation(
+        dispatch: &ExecutionDispatch,
+        envelope: InvocationAdmissionEnvelope,
+        entry: impl FnOnce(
+            &ExecutionDispatch,
+            Option<&ControllerReservationId>,
+            &dyn ExecutionReporter,
+        ) -> Result<(), ExecutorError>
+        + Send
+        + 'a,
+    ) -> Self {
+        Self {
+            dispatch: dispatch.clone(),
+            envelope,
+            entry: Some(Box::new(entry)),
+        }
+    }
+
+    /// Request-specific enforceable admission facts.
+    #[must_use]
+    pub const fn admission_envelope(&self) -> &InvocationAdmissionEnvelope {
+        &self.envelope
+    }
+
+    /// Consumes this handle and enters the exact prepared generation once.
+    pub fn enter(
+        mut self,
+        dispatch: &ExecutionDispatch,
+        reporter: &dyn ExecutionReporter,
+    ) -> Result<(), ExecutorError> {
+        if dispatch != &self.dispatch {
+            return Err(ExecutorError::InvalidDispatch(
+                "final dispatch differs from the exact prepared entry".to_owned(),
+            ));
+        }
+        let entry = self.entry.take().ok_or_else(|| {
+            ExecutorError::InvalidDispatch("prepared entry was already consumed".to_owned())
+        })?;
+        entry(dispatch, None, reporter)
+    }
+
+    /// Consumes this handle with the exact reservation committed at final entry.
+    pub fn enter_with_controller_reservation(
+        mut self,
+        dispatch: &ExecutionDispatch,
+        reservation: Option<&ControllerReservationId>,
+        reporter: &dyn ExecutionReporter,
+    ) -> Result<(), ExecutorError> {
+        if dispatch != &self.dispatch {
+            return Err(ExecutorError::InvalidDispatch(
+                "final dispatch differs from the exact prepared entry".to_owned(),
+            ));
+        }
+        let entry = self.entry.take().ok_or_else(|| {
+            ExecutorError::InvalidDispatch("prepared entry was already consumed".to_owned())
+        })?;
+        entry(dispatch, reservation, reporter)
+    }
+}
+
 /// Narrow object-safe boundary implemented by Pass 3 registries/adapters.
 pub trait TaskExecutor: Send + Sync {
     /// Deterministically resolves an exact immutable descriptor and operation snapshot.
@@ -564,15 +669,11 @@ pub trait TaskExecutor: Send + Sync {
         ResolvedCapability::new_authorized(resolved.descriptor, resolved.snapshot, decision)
     }
 
-    /// Executes after immutable request, resolution, side-effect, and lease facts are durable.
-    ///
-    /// The caller owns the effect-host thread/task. The runtime itself never spawns hidden
-    /// work. Every reported observation crosses the one incremental durability boundary.
-    fn execute_streaming(
-        &self,
+    /// Acquires one exact generation and envelope without entering external adapter code.
+    fn prepare_exact_entry<'a>(
+        &'a self,
         dispatch: &ExecutionDispatch,
-        reporter: &dyn ExecutionReporter,
-    ) -> Result<(), ExecutorError>;
+    ) -> Result<PreparedExecution<'a>, ExecutorError>;
 
     /// Requests cancellation without implying a terminal outcome.
     fn cancel(
@@ -585,6 +686,7 @@ pub trait TaskExecutor: Send + Sync {
 pub struct DeterministicExecutor {
     descriptor: CapabilityDescriptor,
     scripts: Mutex<BTreeMap<OperationId, Vec<InvocationEventKind>>>,
+    entries: AtomicU64,
 }
 
 impl DeterministicExecutor {
@@ -594,7 +696,14 @@ impl DeterministicExecutor {
         Self {
             descriptor,
             scripts: Mutex::new(BTreeMap::new()),
+            entries: AtomicU64::new(0),
         }
+    }
+
+    /// Number of times adapter-equivalent execution was actually entered.
+    #[must_use]
+    pub fn entry_count(&self) -> u64 {
+        self.entries.load(Ordering::SeqCst)
     }
 
     /// Installs a bounded deterministic script for an operation.
@@ -666,33 +775,51 @@ impl TaskExecutor for DeterministicExecutor {
         ResolvedCapability::new(self.descriptor.clone(), snapshot)
     }
 
-    fn execute_streaming(
-        &self,
+    fn prepare_exact_entry<'a>(
+        &'a self,
         dispatch: &ExecutionDispatch,
-        reporter: &dyn ExecutionReporter,
-    ) -> Result<(), ExecutorError> {
-        let kinds = {
-            let scripts = self.scripts.lock().map_err(|_| {
-                ExecutorError::Boundary("deterministic executor lock poisoned".to_owned())
-            })?;
-            scripts.get(dispatch.request().operation()).cloned()
+    ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        let envelope = match self.descriptor.category() {
+            CapabilityCategory::Model | CapabilityCategory::Peer => {
+                InvocationAdmissionEnvelope::unknown()
+            }
+            CapabilityCategory::Tool
+            | CapabilityCategory::Process
+            | CapabilityCategory::Human
+            | CapabilityCategory::Custom(_) => InvocationAdmissionEnvelope::not_applicable(),
         };
-        let kinds = match kinds {
-            Some(kinds) => kinds,
-            None => self.default_script(dispatch.request().operation())?,
-        };
-        for (index, kind) in kinds.into_iter().enumerate() {
-            let sequence = u64::try_from(index)
-                .ok()
-                .and_then(|value| value.checked_add(1))
-                .ok_or_else(|| {
-                    ExecutorError::InvalidReports("report sequence overflow".to_owned())
-                })?;
-            let report =
-                InvocationEvent::new(dispatch.request().invocation().clone(), sequence, kind)?;
-            let _disposition = reporter.invocation(report)?;
-        }
-        Ok(())
+        Ok(PreparedExecution::new(
+            dispatch,
+            envelope,
+            move |dispatch, reporter| {
+                self.entries.fetch_add(1, Ordering::SeqCst);
+                let kinds = {
+                    let scripts = self.scripts.lock().map_err(|_| {
+                        ExecutorError::Boundary("deterministic executor lock poisoned".to_owned())
+                    })?;
+                    scripts.get(dispatch.request().operation()).cloned()
+                };
+                let kinds = match kinds {
+                    Some(kinds) => kinds,
+                    None => self.default_script(dispatch.request().operation())?,
+                };
+                for (index, kind) in kinds.into_iter().enumerate() {
+                    let sequence = u64::try_from(index)
+                        .ok()
+                        .and_then(|value| value.checked_add(1))
+                        .ok_or_else(|| {
+                            ExecutorError::InvalidReports("report sequence overflow".to_owned())
+                        })?;
+                    let report = InvocationEvent::new(
+                        dispatch.request().invocation().clone(),
+                        sequence,
+                        kind,
+                    )?;
+                    let _disposition = reporter.invocation(report)?;
+                }
+                Ok(())
+            },
+        ))
     }
 
     fn cancel(

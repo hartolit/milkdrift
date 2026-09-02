@@ -52,7 +52,7 @@ snapshot. Git, CI, releases, and external audits own chronology.
   remote ordinary capability registrations, transactional acceptance/claim/entry, append-only
   observations, cancellation, restart recovery, tombstone replay, and ordinary core artifact
   transfer. It introduces no second workflow truth.
-- Redb physical schema 9 and internal document format 11 own transactional journal, history chain,
+- Redb physical schema 10 and internal document format 12 own transactional journal, history chain,
   indexes, snapshots, workspace accounting, artifacts, application receipts/layouts/proposals,
   security audit, and peer execution/retention. Application receipts move independently from hot
   to cold while preserving exact replay; peer terminal detail compacts independently to replay and
@@ -74,10 +74,13 @@ snapshot. Git, CI, releases, and external audits own chronology.
   approval, prospective remediation, restart recovery, and historical inspection. Its headless
   dogfood fixture uses fresh byte-pinned processes and a persistent temporary Git repository.
 - The control/runtime libraries implement a bounded controller lifecycle using ordinary repeat,
-  proposal, reconciliation, authority, and event contracts. Focused integrations test durable
-  assessment, continuation, checkpoints, immutable limits, restart recovery, and attribution. The
-  production daemon leaves this lifecycle uninstalled, so continuous controller activation fails
-  closed until cumulative resource admission is enforced at final external entry.
+  proposal, reconciliation, authority, and event contracts. One durable account owns controller
+  cost, unit, artifact, process-entry, and model-entry ceilings across the controller run and its
+  descendants. The final adapter-entry event and account admission commit atomically after one
+  exact generation is prepared but before adapter code; artifact metadata and its logical-byte
+  charge also commit atomically. Unknown bounds, missing terminal usage, uncertainty, currency
+  mismatch, and adapter-contract violations fail closed. The production daemon still leaves this
+  lifecycle uninstalled until the independent hostile and longevity qualification is complete.
 - The public Rust surface follows the current policy in
   [`../reference/public-api-policy.md`](../reference/public-api-policy.md). Canonical identities come
   from their semantic owner; storage fault hooks are available only with redb `test-admin`; daemon
@@ -94,13 +97,13 @@ Current exact versions are:
 | Provider-neutral model task/response and endpoint profile | 1 |
 | Proposal, workflow-control command/risk policy, and controller policy | 1 |
 | Prompt-sequence import | 2; v1 refused |
-| Run command / run event | 1 / 2; exact legacy event v1 remains readable |
+| Run command / run event | 1 / 3; exact legacy event v1/v2 remains readable |
 | Authority grant / authorization decision | 4 / 2; earlier grant forms refused |
 | Authorized-command wrapper / command result | 1 / 2; result v1 reads only closed internal records |
 | Projection snapshot envelope / runtime payload | 2 / 4; old optional payloads replay from journal |
 | Administrative integrity cursor | 2 |
 | Peer hot record / compact tombstone | 3 / 1; hot v2 reads are upgraded on the next append |
-| Redb internal document format / physical schema | 11 / 9 |
+| Redb internal document format / physical schema | 12 / 10 |
 | Application command receipt / layout record | 1 / 1 |
 | Local-process profile / host materialization | 2 / 1; process v1 refused |
 | External control / authenticated cursor | 2.2 / 2; legacy forms refused |
@@ -130,12 +133,12 @@ Current exact versions are:
   event firehose, public configuration/audit/shutdown route, generalized plugin framework,
   optimized lifetime attempt index, or context search service. Historical attempt reads trade
   bounded memory for journal scan time.
-- Continuous controllers are not production-supported by the daemon. The library lifecycle's only
-  stop behavior is immutable fail-at-bound; it does not yet own an atomic final-entry ledger for
-  every cumulative resource dimension. Multiple active controller occurrences deliberately
-  prevent ambiguous proposer attribution. Prompt sequences currently use trusted-host process
-  stages; model-backed sequence stages, checkpoint capabilities, and automatic distributed dogfood
-  are not implemented.
+- Continuous controllers are not production-supported by the daemon while the new final-entry
+  ledger awaits complete hostile, mutation, longevity, and independent-review qualification. The
+  library lifecycle's only stop behavior remains immutable fail-at-bound. Multiple active
+  controller occurrences deliberately prevent ambiguous proposer attribution. Prompt sequences
+  currently use trusted-host process stages; model-backed sequence stages, checkpoint
+  capabilities, and automatic distributed dogfood are not implemented.
 - The provider adapter does not implement provider discovery, tokenization, pricing, generic file
   parts, managed sessions, or the separate OpenAI Responses API. Cancellation cannot prove remote
   termination, and malformed/truncated streams do not produce a successful partial artifact.
@@ -148,21 +151,22 @@ Current exact versions are:
 
 ## Current validation/evidence snapshot
 
-- Current Linux snapshot (2026-09-01): formatting, all-target/all-feature checking, the complete
+- Current Linux snapshot (2026-09-02): formatting, all-target/all-feature checking, the complete
   workspace test and doctest suite, Clippy with warnings denied, rustdoc with warnings denied,
   `cargo deny check`, `cargo machete`, duplicate dependency inspection, and test inventory all pass.
   Four explicitly manual longevity/storage-bound tests remain ignored in the ordinary suite.
 - All four manual longevity lanes pass separately in release mode: 10,001 receipt commits across
   hot/cold turnover and restart, two-daemon peer retention/restart, controller checkpoint/restart,
   and the 2,049-occurrence runtime frontier. The seven pinned current-source mutation shards
-  enumerate 468 mutants after the authority, controller, and peer owner splits. Their complete
+  enumerate 564 mutants after the controller shard was extended across final-entry admission,
+  account, and persistence owners. Their complete
   current-source campaign remains outstanding; the earlier 398-mutant result no longer qualifies
   the split source paths.
-- The simplified all-feature `cargo-public-api` inventory is 6,597 items. The daemon has 140 items
-  and exposes its effective configuration as an opaque compiled plan rather than validated raw
-  fields. Redb has 156 all-feature items but only 88 default-feature items because 68
-  fault/mutation items are test-only. Lint allowances are 81; every retained allowance has an
-  immediate reviewed rationale.
+- The simplified all-feature `cargo-public-api` inventory is retained under `target/public-api` for
+  per-package review. This boundary intentionally adds the narrow admission-envelope,
+  prepared-entry, and durable controller-account contracts shared by their real owners. The daemon
+  still exposes its effective configuration as an opaque compiled plan rather than validated raw
+  fields. Lint allowances remain individually justified at their use sites.
 - The maintained evidence suites cover immutable/schema readers, validating constructors, hostile
   bounds, exact idempotency/conflict, crash/reopen and deterministic fault boundaries, projection
   replay, reconciliation, causal context, process/model adapters, controller lifecycle, application

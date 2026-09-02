@@ -11,8 +11,9 @@ use milkdrift_capability::{
     CancellationAcknowledgement, CancellationRequest, ErrorClass, InvocationEvent,
 };
 use milkdrift_persistence::{
-    AttemptId, CommandDisposition, CommandId, LeaseId, PageSize, PersistenceError, Reason,
-    RunEventKind, TimestampMillis,
+    AttemptId, CommandDisposition, CommandId, ControllerAccountAction, ControllerAdmissionOutcome,
+    ControllerReservationId, LeaseId, PageSize, PersistenceError, Reason, RunEventKind,
+    TimestampMillis,
 };
 use milkdrift_workspace::RunId;
 use tracing::warn;
@@ -409,109 +410,219 @@ impl RuntimeService {
         &self,
         dispatch: &ExecutionDispatch,
     ) -> Result<EffectExecutionResult, RuntimeError> {
-        let projection = self.projection(dispatch.run())?;
         let now = self.clock.now()?;
-        let attempt = projection
-            .attempts()
-            .get(dispatch.attempt())
+        let prepared_entry = (0..MAX_OBSERVATION_COMMIT_RETRIES)
+            .find_map(|_| {
+                let attempt = (|| {
+                    let projection = self.projection(dispatch.run())?;
+                    let attempt = projection.attempts().get(dispatch.attempt()).ok_or_else(|| {
+                        RuntimeError::InvalidTransition(
+                            "effect ticket attempt is no longer active".to_owned(),
+                        )
+                    })?;
+                    let execution = projection
+                        .node_executions()
+                        .get(dispatch.execution())
+                        .ok_or_else(|| {
+                            RuntimeError::InvalidTransition(
+                                "effect ticket execution is no longer active".to_owned(),
+                            )
+                        })?;
+                    let lease = projection.leases().get(dispatch.lease()).ok_or_else(|| {
+                        RuntimeError::InvalidTransition(
+                            "effect ticket lease is no longer active".to_owned(),
+                        )
+                    })?;
+                    if attempt.state() != &AttemptState::Running
+                        || attempt.execution() != dispatch.execution()
+                        || attempt.request() != Some(dispatch.request())
+                        || attempt.capability().map(|value| value.snapshot())
+                            != Some(dispatch.resolution())
+                        || attempt.capability().and_then(|value| value.authorization())
+                            != Some(dispatch.resolution_authorization())
+                        || attempt.entry_authorization() != Some(dispatch.entry_authorization())
+                        || projection.execution_authority() != Some(dispatch.execution_authority())
+                        || !matches!(execution.state(), NodeExecutionState::Running(active) if active == dispatch.attempt())
+                        || execution.node() != dispatch.node()
+                        || projection.revision_for_attempt(dispatch.attempt()) != Some(dispatch.revision())
+                        || !lease.is_active()
+                        || lease.attempt() != dispatch.attempt()
+                        || lease.execution() != dispatch.execution()
+                        || lease.worker() != &self.config.worker
+                        || lease.expires_at() != dispatch.lease_expires_at()
+                        || lease.expires_at() <= now
+                    {
+                        return Err(RuntimeError::InvalidTransition(
+                            "effect ticket no longer matches the exact active attempt and lease"
+                                .to_owned(),
+                        ));
+                    }
+                    let next_sequence = attempt
+                        .last_report_sequence()
+                        .unwrap_or(0)
+                        .checked_add(1)
+                        .ok_or_else(|| {
+                            RuntimeError::InvalidTransition("report sequence overflow".to_owned())
+                        })?;
+                    let mut request = dispatch.resolution_authorization().request().clone();
+                    let identity =
+                        format!("{}:adapter-entry", dispatch.entry_authorization().digest());
+                    request.decision = DecisionId::new(format!(
+                        "decision:{}",
+                        blake3::hash(identity.as_bytes())
+                    ))?;
+                    request.evaluated_at = BoundaryTimeMillis::new(now.get());
+                    let authorization = self.authority.evaluate(&request)?;
+                    let adapter_dispatch = authorization
+                        .is_allowed()
+                        .then(|| dispatch.with_entry_authorization(authorization.clone()))
+                        .transpose()?;
+                    let prepared = adapter_dispatch
+                        .as_ref()
+                        .map(|exact| self.executor.prepare_exact_entry(exact))
+                        .transpose()?;
+                    let mut controller_actions = Vec::new();
+                    let mut expected_controller_revision = None;
+                    let controller_admission = if let (Some(prepared), Some(account)) = (
+                        prepared.as_ref(),
+                        self.controller_account_for_run(dispatch.run())?,
+                    ) {
+                        let category = dispatch.resolution().category().cloned().ok_or_else(|| {
+                            RuntimeError::InvalidHistory(
+                                "current resolved capability snapshot has no frozen category"
+                                    .to_owned(),
+                            )
+                        })?;
+                        let reservation = ControllerReservationId::for_attempt(
+                            account.declaration().account(),
+                            dispatch.attempt(),
+                        )?;
+                        let mut candidate = account.clone();
+                        let outcome = candidate.admit(
+                            reservation.clone(),
+                            dispatch.attempt().clone(),
+                            category.clone(),
+                            prepared.admission_envelope(),
+                        )?;
+                        expected_controller_revision = Some((
+                            account.declaration().account().clone(),
+                            account.revision_digest().clone(),
+                        ));
+                        controller_actions.push(ControllerAccountAction::AdmitEntry {
+                            account: account.declaration().account().clone(),
+                            reservation,
+                            attempt: dispatch.attempt().clone(),
+                            category,
+                            envelope: prepared.admission_envelope().clone(),
+                            expected_outcome: outcome.clone(),
+                        });
+                        outcome
+                    } else {
+                        ControllerAdmissionOutcome::NotControlled
+                    };
+                    let mut events = vec![
+                        RunEventKind::CapabilityAdapterEntryDecisionRecorded {
+                            attempt: dispatch.attempt().clone(),
+                            authorization: authorization.clone(),
+                            controller_admission: controller_admission.clone(),
+                        },
+                    ];
+                    if !authorization.is_allowed() {
+                        events.push(RunEventKind::NodeTerminal {
+                            execution: dispatch.execution().clone(),
+                            attempt: dispatch.attempt().clone(),
+                            report_sequence: next_sequence,
+                            outcome: milkdrift_persistence::NodeOutcome::Rejected,
+                            error_class: Some(ErrorClass::Authorization),
+                            detail: Some(milkdrift_persistence::BoundedDetail::new(format!(
+                                "authority decision {} denied final adapter entry",
+                                authorization.digest(),
+                            ))?),
+                        });
+                    } else if let ControllerAdmissionOutcome::Denied { reason, .. } =
+                        &controller_admission
+                    {
+                        events.push(RunEventKind::NodeTerminal {
+                            execution: dispatch.execution().clone(),
+                            attempt: dispatch.attempt().clone(),
+                            report_sequence: next_sequence,
+                            outcome: milkdrift_persistence::NodeOutcome::Rejected,
+                            error_class: Some(ErrorClass::RateLimit),
+                            detail: Some(milkdrift_persistence::BoundedDetail::new(format!(
+                                "controller resource admission denied: {reason:?}"
+                            ))?),
+                        });
+                    }
+                    let decision_commit = self.commit_internal_plan(
+                        dispatch.run(),
+                        now,
+                        SystemTransition::DecideCapabilityAdapterEntry {
+                            attempt: dispatch.attempt().clone(),
+                        },
+                        CommandPlan {
+                            events,
+                            controller_actions,
+                            expected_controller_revision,
+                            ..CommandPlan::default()
+                        },
+                    )?;
+                    if decision_commit.result().disposition() != CommandDisposition::Accepted
+                        || decision_commit.replayed()
+                    {
+                        return Err(RuntimeError::InvalidTransition(
+                            "final adapter-entry decision was not newly committed".to_owned(),
+                        ));
+                    }
+                    if !authorization.is_allowed()
+                        || matches!(
+                            controller_admission,
+                            ControllerAdmissionOutcome::Denied { .. }
+                        )
+                    {
+                        return Ok(None);
+                    }
+                    Ok(Some((
+                        prepared.ok_or_else(|| {
+                            RuntimeError::InvalidHistory(
+                                "allowed adapter entry lost its prepared handle".to_owned(),
+                            )
+                        })?,
+                        adapter_dispatch.ok_or_else(|| {
+                            RuntimeError::InvalidHistory(
+                                "allowed adapter entry lost its exact dispatch".to_owned(),
+                            )
+                        })?,
+                        controller_admission,
+                        next_sequence,
+                    )))
+                })();
+                match attempt {
+                    Ok(Some(entry)) => Some(Ok(Some(entry))),
+                    Ok(None) => Some(Ok(None)),
+                    Err(RuntimeError::Persistence(
+                        PersistenceError::SequenceConflict { .. }
+                        | PersistenceError::ControllerAccountRevisionConflict { .. },
+                    )) => None,
+                    Err(error) => Some(Err(error)),
+                }
+            })
+            .transpose()?
             .ok_or_else(|| {
-                RuntimeError::InvalidTransition(
-                    "effect ticket attempt is no longer active".to_owned(),
+                RuntimeError::Scheduling(
+                    "final adapter entry could not obtain a stable account revision".to_owned(),
                 )
             })?;
-        let execution = projection
-            .node_executions()
-            .get(dispatch.execution())
-            .ok_or_else(|| {
-                RuntimeError::InvalidTransition(
-                    "effect ticket execution is no longer active".to_owned(),
-                )
-            })?;
-        let lease = projection.leases().get(dispatch.lease()).ok_or_else(|| {
-            RuntimeError::InvalidTransition("effect ticket lease is no longer active".to_owned())
-        })?;
-        if attempt.state() != &AttemptState::Running
-            || attempt.execution() != dispatch.execution()
-            || attempt.request() != Some(dispatch.request())
-            || attempt.capability().map(|value| value.snapshot()) != Some(dispatch.resolution())
-            || attempt.capability().and_then(|value| value.authorization())
-                != Some(dispatch.resolution_authorization())
-            || attempt.entry_authorization() != Some(dispatch.entry_authorization())
-            || projection.execution_authority() != Some(dispatch.execution_authority())
-            || !matches!(execution.state(), NodeExecutionState::Running(active) if active == dispatch.attempt())
-            || execution.node() != dispatch.node()
-            || projection.revision_for_attempt(dispatch.attempt()) != Some(dispatch.revision())
-            || !lease.is_active()
-            || lease.attempt() != dispatch.attempt()
-            || lease.execution() != dispatch.execution()
-            || lease.worker() != &self.config.worker
-            || lease.expires_at() != dispatch.lease_expires_at()
-            || lease.expires_at() <= now
-        {
-            return Err(RuntimeError::InvalidTransition(
-                "effect ticket no longer matches the exact active attempt and lease".to_owned(),
-            ));
-        }
-        let next_sequence = attempt
-            .last_report_sequence()
-            .unwrap_or(0)
-            .checked_add(1)
-            .ok_or_else(|| {
-                RuntimeError::InvalidTransition("report sequence overflow".to_owned())
-            })?;
-        let mut adapter_entry_request = dispatch.resolution_authorization().request().clone();
-        let adapter_entry_identity =
-            format!("{}:adapter-entry", dispatch.entry_authorization().digest());
-        adapter_entry_request.decision = DecisionId::new(format!(
-            "decision:{}",
-            blake3::hash(adapter_entry_identity.as_bytes())
-        ))?;
-        adapter_entry_request.evaluated_at = BoundaryTimeMillis::new(now.get());
-        let adapter_entry_authorization = self.authority.evaluate(&adapter_entry_request)?;
-        let mut events = vec![RunEventKind::CapabilityAdapterEntryDecisionRecorded {
-            attempt: dispatch.attempt().clone(),
-            authorization: adapter_entry_authorization.clone(),
-        }];
-        if !adapter_entry_authorization.is_allowed() {
-            events.push(RunEventKind::NodeTerminal {
-                execution: dispatch.execution().clone(),
-                attempt: dispatch.attempt().clone(),
-                report_sequence: next_sequence,
-                outcome: milkdrift_persistence::NodeOutcome::Rejected,
-                error_class: Some(ErrorClass::Authorization),
-                detail: Some(milkdrift_persistence::BoundedDetail::new(format!(
-                    "authority decision {} denied final adapter entry",
-                    adapter_entry_authorization.digest(),
-                ))?),
-            });
-        }
-        let transition = SystemTransition::DecideCapabilityAdapterEntry {
-            attempt: dispatch.attempt().clone(),
-        };
-        let decision_commit = self.commit_internal_plan(
-            dispatch.run(),
-            now,
-            transition,
-            CommandPlan {
-                events,
-                ..CommandPlan::default()
-            },
-        )?;
-        if decision_commit.result().disposition() != CommandDisposition::Accepted
-            || decision_commit.replayed()
-        {
-            return Err(RuntimeError::InvalidTransition(
-                "final adapter-entry decision was not newly committed".to_owned(),
-            ));
-        }
-        if !adapter_entry_authorization.is_allowed() {
+        let Some((prepared, adapter_dispatch, controller_admission, next_sequence)) =
+            prepared_entry
+        else {
             return Ok(EffectExecutionResult::Completed { observations: 0 });
-        }
-        let adapter_dispatch = dispatch.with_entry_authorization(adapter_entry_authorization)?;
+        };
         let reporter = DurableExecutionReporter::new(self, &adapter_dispatch, next_sequence);
-        let boundary = self
-            .executor
-            .execute_streaming(&adapter_dispatch, &reporter);
+        let boundary = prepared.enter_with_controller_reservation(
+            &adapter_dispatch,
+            controller_admission.reservation(),
+            &reporter,
+        );
         let outcome = reporter.finish()?;
         if outcome.terminal_seen {
             if let Some(failure) = outcome.failure {
@@ -690,7 +801,10 @@ impl RuntimeService {
             )?;
             match self.handle_internal_command_preserving_rejection(&document) {
                 Ok(outcome) => return Ok(outcome),
-                Err(RuntimeError::Persistence(PersistenceError::SequenceConflict { .. })) => {}
+                Err(RuntimeError::Persistence(
+                    PersistenceError::SequenceConflict { .. }
+                    | PersistenceError::ControllerAccountRevisionConflict { .. },
+                )) => {}
                 Err(error) => return Err(error),
             }
         }

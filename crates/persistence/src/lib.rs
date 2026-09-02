@@ -19,6 +19,7 @@ mod application;
 mod artifact;
 mod bounded;
 mod clock;
+mod controller_account;
 mod document;
 mod error;
 mod event;
@@ -55,9 +56,16 @@ pub use bounded::{
     MAX_REASON_BYTES, PageSize, Reason,
 };
 pub use clock::{ClockWatermarkObservation, ClockWatermarkStore};
+pub use controller_account::{
+    ControllerAccountAction, ControllerAccountBlock, ControllerAccountDeclaration,
+    ControllerAccountId, ControllerAccountState, ControllerAccountStore,
+    ControllerAccountTransaction, ControllerAdmissionDenial, ControllerAdmissionOutcome,
+    ControllerArtifactOwner, ControllerReservation, ControllerReservationId,
+    ControllerResourceBudget, ControllerResourceTotals, ControllerTransitionId,
+};
 pub use document::{
     MAX_EVENT_DOCUMENT_BYTES, RUN_EVENT_SCHEMA_VERSION_V1, RUN_EVENT_SCHEMA_VERSION_V2,
-    RunEventEnvelope,
+    RUN_EVENT_SCHEMA_VERSION_V3, RunEventEnvelope,
 };
 pub use error::{PersistenceError, StorageFailureClass};
 pub use event::{

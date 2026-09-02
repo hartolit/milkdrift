@@ -125,6 +125,7 @@ impl ControlService {
                 controller_execution,
             } => {
                 let projection = self.runtime.projection(run)?;
+                let account = self.runtime.controller_account_for_run(run)?;
                 self.authorize_simple(
                     document,
                     AuthorityOperation::InspectRun,
@@ -136,6 +137,7 @@ impl ControlService {
                         run,
                         &projection,
                         controller_execution,
+                        account.as_ref(),
                         document.issued_at().get(),
                     )?,
                 })
@@ -287,11 +289,13 @@ impl ControlService {
                 )?;
                 ensure_accepted(&execution)?;
                 let projection = self.runtime.projection(run)?;
+                let account = self.runtime.controller_account_for_run(run)?;
                 Ok(ControlResult::ControllerStatus {
                     value: self.controller.status(
                         run,
                         &projection,
                         controller_execution,
+                        account.as_ref(),
                         document.issued_at().get(),
                     )?,
                 })
@@ -387,10 +391,12 @@ impl ControlService {
             None => None,
         };
         if let (Some(run), Some(projection)) = (proposal.run(), live_projection.as_ref()) {
+            let account = self.runtime.controller_account_for_run(run)?;
             self.controller.assess_proposal(
                 run,
                 projection,
                 proposal,
+                account.as_ref(),
                 document.issued_at().get(),
             )?;
             let controller_actor = projection.execution_authority().map(|value| value.actor());
@@ -474,11 +480,13 @@ impl ControlService {
             )?
         {
             let current = self.runtime.projection(run)?;
+            let account = self.runtime.controller_account_for_run(run)?;
             self.controller.assess_proposal_transition(
                 run,
                 &current,
                 &candidate,
                 milkdrift_persistence::ControllerAssessmentBoundary::ProposalApplication,
+                account.as_ref(),
                 document.issued_at().get(),
             )?;
             let plan = self
@@ -531,11 +539,13 @@ impl ControlService {
         let expected_sequence = required_sequence(document.guard())?;
         if outcome == AuthorityDecision::Approve {
             let projection = self.runtime.projection(run)?;
+            let account = self.runtime.controller_account_for_run(run)?;
             self.controller.assess_proposal_transition(
                 run,
                 &projection,
                 &candidate,
                 milkdrift_persistence::ControllerAssessmentBoundary::ProposalApproval,
+                account.as_ref(),
                 document.issued_at().get(),
             )?;
         }
@@ -591,11 +601,13 @@ impl ControlService {
             Some(run),
         )?;
         let projection = self.runtime.projection(run)?;
+        let account = self.runtime.controller_account_for_run(run)?;
         self.controller.assess_proposal_transition(
             run,
             &projection,
             &candidate,
             milkdrift_persistence::ControllerAssessmentBoundary::ProposalApplication,
+            account.as_ref(),
             document.issued_at().get(),
         )?;
         let status = self.proposal_status(run, proposal, proposed_revision)?;
