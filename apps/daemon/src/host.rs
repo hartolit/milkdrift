@@ -25,8 +25,8 @@ use milkdrift_capability_host::{
 };
 use milkdrift_control::{
     ControlCommand, ControlCommandDocument, ControlError, ControlId, ControlResult,
-    ControlResultSink, ControlService, OptimisticGuard, ProposalDigest, ProposalId,
-    WorkflowControlAdapter, WorkflowProposalDocument, workflow_control_descriptor,
+    ControlResultSink, ControlService, MAX_CONTROL_RESULT_BYTES, OptimisticGuard, ProposalDigest,
+    ProposalId, WorkflowControlAdapter, WorkflowProposalDocument, workflow_control_descriptor,
 };
 use milkdrift_control_protocol::{
     ArtifactMetadataRead, AttemptRead, CapabilityRead, Command, CommandAccepted, CommandRequest,
@@ -1359,9 +1359,9 @@ impl ControlResultSink for ResultSink {
                 "application/vnd.milkdrift.control-result+json",
                 bytes,
                 MaterializationLimits {
-                    max_files: 4,
-                    max_file_bytes: 1_310_720,
-                    max_total_bytes: 2_621_440,
+                    max_files: 1,
+                    max_file_bytes: MAX_CONTROL_RESULT_BYTES,
+                    max_total_bytes: MAX_CONTROL_RESULT_BYTES,
                     max_path_bytes: 256,
                     max_directory_depth: 8,
                     chunk_bytes: 262_144,

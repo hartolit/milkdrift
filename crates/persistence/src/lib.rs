@@ -60,8 +60,9 @@ pub use controller_account::{
     ControllerAccountAction, ControllerAccountBlock, ControllerAccountDeclaration,
     ControllerAccountId, ControllerAccountState, ControllerAccountStore,
     ControllerAccountTransaction, ControllerAdmissionDenial, ControllerAdmissionOutcome,
-    ControllerArtifactOwner, ControllerReservation, ControllerReservationId,
-    ControllerResourceBudget, ControllerResourceTotals, ControllerTransitionId,
+    ControllerArtifactChargeOutcome, ControllerArtifactOwner, ControllerReservation,
+    ControllerReservationId, ControllerResourceBudget, ControllerResourceTotals,
+    ControllerTransitionId,
 };
 pub use document::{
     MAX_EVENT_DOCUMENT_BYTES, RUN_EVENT_SCHEMA_VERSION_V1, RUN_EVENT_SCHEMA_VERSION_V2,

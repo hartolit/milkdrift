@@ -376,6 +376,7 @@ fn release_controller_longevity_stops_once_across_checkpoints_and_restart() -> T
     let actor = ActorRef::new("controller:longevity")?;
     let grant_id = GrantId::new("grant:controller-longevity")?;
     let controller_execution;
+    let controller_account;
 
     {
         let store = Arc::new(RedbStore::open(&database)?);
@@ -443,6 +444,16 @@ fn release_controller_longevity_stops_once_across_checkpoints_and_restart() -> T
             .find(|(_, value)| value.is_pending_approval())
             .map(|(execution, _)| execution.clone())
             .ok_or("controller did not reach the first exact checkpoint")?;
+        controller_account = store
+            .controller_account_binding(&run)?
+            .ok_or("controller longevity run has no durable account binding")?;
+        let account = store
+            .controller_account(&controller_account)?
+            .ok_or("controller longevity account is absent")?;
+        assert_eq!(
+            account.declaration().controller_execution(),
+            &controller_execution
+        );
         service.execute(&command(
             "longevity-continue-three",
             &context,
@@ -495,7 +506,12 @@ fn release_controller_longevity_stops_once_across_checkpoints_and_restart() -> T
     {
         let store = Arc::new(RedbStore::open(&database)?);
         let (runtime, service, context) =
-            services(store, &actor, &run, &grant_id, "longevity-after")?;
+            services(store.clone(), &actor, &run, &grant_id, "longevity-after")?;
+        assert_eq!(
+            store.controller_account_binding(&run)?.as_ref(),
+            Some(&controller_account)
+        );
+        assert!(store.controller_account(&controller_account)?.is_some());
         let checkpoint = runtime.projection(&run)?;
         service.execute(&command(
             "longevity-continue-six",
@@ -531,7 +547,11 @@ fn release_controller_longevity_stops_once_across_checkpoints_and_restart() -> T
 
     let store = Arc::new(RedbStore::open(&database)?);
     let (runtime, _service, _context) =
-        services(store, &actor, &run, &grant_id, "longevity-terminal")?;
+        services(store.clone(), &actor, &run, &grant_id, "longevity-terminal")?;
+    assert_eq!(
+        store.controller_account_binding(&run)?.as_ref(),
+        Some(&controller_account)
+    );
     let before = runtime.projection(&run)?.sequence();
     for _ in 0..512 {
         runtime.tick()?;
@@ -1175,6 +1195,12 @@ fn malformed_control_capability_input_is_a_normal_rejected_terminal() -> TestRes
         BTreeMap::new(),
     )?;
     let adapter = WorkflowControlAdapter::new(service, Arc::new(UnusedResultSink));
+    assert_eq!(
+        adapter
+            .admission_envelope(&AdapterInvocation::new(&resolution, &request))?
+            .artifact_bytes(),
+        &AdmissionBound::Bounded(MAX_CONTROL_RESULT_BYTES)
+    );
     let reporter = RecordingReporter::default();
     adapter.execute(&AdapterInvocation::new(&resolution, &request), &reporter)?;
 

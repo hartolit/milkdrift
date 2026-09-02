@@ -8,8 +8,9 @@ use std::{
 use milkdrift_persistence::{
     ArtifactPublicationId, ArtifactReadChunk, ArtifactReadRequest, ArtifactStore,
     ArtifactWriteProgress, BeginArtifactOutcome, BeginArtifactPublication, CommitArtifactOutcome,
-    ControllerArtifactOwner, OrphanCleanupCursor, OrphanCleanupFamily, OrphanCleanupRequest,
-    OrphanCleanupResult, PersistenceError, StorageFailureClass, authorize_artifact_read,
+    ControllerAccountId, ControllerArtifactOwner, OrphanCleanupCursor, OrphanCleanupFamily,
+    OrphanCleanupRequest, OrphanCleanupResult, PersistenceError, StorageFailureClass,
+    authorize_artifact_read,
 };
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactReference, CausalReference, ContentDigest, RunId,
@@ -26,8 +27,9 @@ use crate::{
         ARTIFACT_ACCOUNTING, ARTIFACT_DELETE_GUARDS, ARTIFACT_DIGEST_RESERVATIONS,
         ARTIFACT_MANIFEST, ARTIFACT_METADATA, ARTIFACT_PATHS, ARTIFACT_PUBLICATIONS,
         ARTIFACT_PUBLICATIONS_BY_AGE, ARTIFACT_REFERENCES, ARTIFACT_RESERVATIONS,
-        ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST, ROOT_SCOPES,
-        RUN_ARTIFACT_OWNERSHIP, RUN_EVENTS, SCOPES, VALUES, WORKSPACE_USAGE,
+        ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST,
+        CONTROLLER_ARTIFACT_CHARGES, CONTROLLER_RUN_BINDINGS, ROOT_SCOPES, RUN_ARTIFACT_OWNERSHIP,
+        RUN_EVENTS, SCOPES, VALUES, WORKSPACE_USAGE,
     },
 };
 
@@ -191,6 +193,7 @@ pub(crate) fn validate_publication_scrub(
         )
         .map_err(error::redb)?
         .map(|value| value.value());
+    validate_publication_controller_charge(read, &record)?;
     match record.state {
         PublicationState::Writable => {
             if age_owner.as_deref() != Some(key)
@@ -238,6 +241,49 @@ pub(crate) fn validate_publication_scrub(
         }
     }
     Ok(())
+}
+
+fn validate_publication_controller_charge(
+    read: &redb::ReadTransaction,
+    record: &PublicationRecord,
+) -> Result<(), PersistenceError> {
+    let bindings = read
+        .open_table(CONTROLLER_RUN_BINDINGS)
+        .map_err(error::redb)?;
+    let binding = bindings
+        .get(record.run.as_str())
+        .map_err(error::redb)?
+        .map(|value| ControllerAccountId::new(value.value().to_owned()))
+        .transpose()?;
+    let charges = read
+        .open_table(CONTROLLER_ARTIFACT_CHARGES)
+        .map_err(error::redb)?;
+    let charge = charges
+        .get(record.publication.as_str())
+        .map_err(error::redb)?
+        .map(|value| crate::controller_account::decode_artifact_charge(value.value()))
+        .transpose()?;
+
+    if !matches!(record.state, PublicationState::Committed { .. }) {
+        if charge.is_some() {
+            return Err(error::corruption(
+                "uncommitted artifact publication has a controller charge",
+            ));
+        }
+        return Ok(());
+    }
+
+    let expected_reservation = match &record.controller_owner {
+        ControllerArtifactOwner::RunBinding => None,
+        ControllerArtifactOwner::InvocationReservation(reservation) => Some(reservation),
+    };
+    match (binding, charge) {
+        (None, None) if expected_reservation.is_none() => Ok(()),
+        (Some(_), Some(_)) => Ok(()),
+        _ => Err(error::corruption(
+            "artifact publication has an impossible controller charge linkage",
+        )),
+    }
 }
 
 pub(crate) fn validate_controller_charge_publication(

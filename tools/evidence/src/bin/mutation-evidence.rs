@@ -144,10 +144,12 @@ impl MutationShard {
                     "crates/control/src/controller/policy.rs",
                     "crates/persistence/src/controller_account.rs",
                     "adapters/redb-store/src/controller_account.rs",
+                    "adapters/redb-store/src/artifact.rs",
+                    "adapters/redb-store/src/artifact/publication.rs",
                     "crates/runtime/src/engine/effects.rs",
                     "crates/capability-host/src/lib.rs",
                 ],
-                pattern: "(ControllerPolicy::assess|ControllerLifecycleOwner.*(progress|assess)|bound_outcome|ControllerAccountState::(admit|settle_terminal|charge_artifact)|apply_controller_transaction|charge_artifact_publication|validate_event_link|execute_invocation_effect|prepare_exact_entry)",
+                pattern: "(ControllerPolicy::assess|ControllerLifecycleOwner.*(progress|assess)|bound_outcome|ControllerAccountState::(admit|settle_terminal|charge_artifact)|apply_controller_transaction|charge_artifact_publication|validate_(account_key|event_link|event_transaction_contract|lineage_transaction_contract|publication_controller_charge)|terminal_(settlement|usage)|commit_artifact|execute_invocation_effect|prepare_exact_entry)",
                 test_packages: &[
                     "milkdrift-control",
                     "milkdrift-persistence",

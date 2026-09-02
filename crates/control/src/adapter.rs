@@ -28,6 +28,12 @@ use crate::{
 const CONTROL_CAPABILITY_ID: &str = "milkdrift-workflow-control";
 const CONTROL_REQUEST_INPUT: &str = "milkdrift.control_request";
 
+/// Maximum canonical bytes published by one workflow-control invocation.
+///
+/// The production result sink enforces this same limit before artifact publication, so the
+/// adapter can expose it as a truthful pre-entry controller reservation.
+pub const MAX_CONTROL_RESULT_BYTES: u64 = 1_310_720;
+
 /// Application port that publishes canonical control results as ordinary artifacts.
 pub trait ControlResultSink: Send + Sync {
     /// Publishes exact canonical result bytes and returns their immutable reference.
@@ -144,7 +150,7 @@ impl CapabilityAdapter for WorkflowControlAdapter {
         Ok(InvocationAdmissionEnvelope::new(
             AdmissionBound::NotApplicable,
             AdmissionBound::NotApplicable,
-            AdmissionBound::Unknown,
+            AdmissionBound::Bounded(MAX_CONTROL_RESULT_BYTES),
             AdmissionBound::NotApplicable,
         ))
     }
@@ -170,6 +176,11 @@ impl CapabilityAdapter for WorkflowControlAdapter {
             },
         )
         .map_err(|error| AdapterError::rejected(format!("{error:?}")))?;
+        if u64::try_from(bytes.len()).map_or(true, |len| len > MAX_CONTROL_RESULT_BYTES) {
+            return Err(AdapterError::rejected(format!(
+                "canonical control result exceeds {MAX_CONTROL_RESULT_BYTES} bytes"
+            )));
+        }
         let reference = self
             .results
             .publish(invocation, &bytes)

@@ -49,7 +49,7 @@ pub(super) use milkdrift_persistence::{
     PeerArchivedDisposition, PeerCancellationRecord, PeerCatalogState, PeerClaimOutcome,
     PeerDispatchClaimRequest, PeerEntryOutcome, PeerEntryRequest, PeerExecutionPhase,
     PeerExecutionSnapshot, PeerExecutionStore, PeerExecutionTombstone, PeerRelationshipState,
-    PeerRetentionRequest, TimestampMillis, WorkerId,
+    PeerRetentionRequest, PersistenceError, StorageFailureClass, TimestampMillis, WorkerId,
 };
 pub(super) use milkdrift_redb_store::{
     FaultInjector, FaultPoint, RedbStore, RedbStoreConfig, injected_failure,
@@ -72,6 +72,8 @@ pub(super) const PEER_EXECUTION_ACCOUNTING: TableDefinition<'static, &'static st
     TableDefinition::new("milkdrift.v2.peers.accounting");
 pub(super) const PEER_EXECUTIONS: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v2.peers.executions.hot");
+pub(super) const PEER_EXECUTIONS_BY_REQUEST: TableDefinition<'static, &'static [u8], &'static str> =
+    TableDefinition::new("milkdrift.v2.peers.executions_by_request");
 
 #[derive(Debug)]
 struct ControlledClockState {

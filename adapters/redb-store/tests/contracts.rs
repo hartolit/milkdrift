@@ -30,35 +30,38 @@ use milkdrift_blueprint::{
     WorkflowId,
 };
 use milkdrift_capability::{
-    BoundedJson, CapabilityCategory, CapabilityId, InvocationAdmissionEnvelope, InvocationRequest,
-    OperationId, SideEffectClass,
+    AdmissionBound, BoundedJson, CapabilityCategory, CapabilityId, InvocationAdmissionEnvelope,
+    InvocationRequest, InvocationTerminal, OperationId, SideEffectClass, TerminalStatus,
+    UsageObservation,
 };
 use milkdrift_persistence::{
     ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
     ApplicationCommandReceipt, ApplicationCommandResult, ApplicationCommandStore,
     ApplicationEffectReference, ArtifactPublicationId, ArtifactReadAuthority, ArtifactReadRequest,
-    ArtifactStore, AtomicRunCommitOutcome, AtomicRunCommitRequest, AttemptId, BeginArtifactOutcome,
-    BeginArtifactPublication, ClockWatermarkObservation, ClockWatermarkStore, CommandDisposition,
-    CommandId, CommandReceipt, CommandResultDocument, ControllerAccountAction,
+    ArtifactStore, AtomicRunCommitOutcome, AtomicRunCommitRequest, AttemptId, AttemptUsage,
+    BeginArtifactOutcome, BeginArtifactPublication, ClockWatermarkObservation, ClockWatermarkStore,
+    CommandDisposition, CommandId, CommandReceipt, CommandResultDocument, ControllerAccountAction,
     ControllerAccountDeclaration, ControllerAccountState, ControllerAccountStore,
-    ControllerAccountTransaction, ControllerAdmissionOutcome, ControllerReservationId,
-    ControllerResourceBudget, ControllerTransitionId, CurrencyCode, EventId, EventPageQuery,
-    ImmutableRevisionPut, IndexedRunState, IntegrityScanRequest, LeaseId, LeaseIndexEntry,
-    LeaseIndexMutation, NodeExecutionId, OrphanCleanupRequest, PageSize, PersistenceError,
-    RevisionStore, RunDiscoveryIntegrityStore, RunEventEnvelope, RunEventKind, RunIndexUpdate,
-    RunJournal, RunQueryStore, RunSequence, RunSummaryFilter, RunSummaryIndex, RunSummaryPageQuery,
+    ControllerAccountTransaction, ControllerAdmissionOutcome, ControllerAssessmentBoundary,
+    ControllerAssessmentOutcome, ControllerReservationId, ControllerResourceBudget,
+    ControllerTransitionId, CurrencyCode, EventId, EventPageQuery, ImmutableRevisionPut,
+    IndexedRunState, IntegrityScanRequest, LeaseId, LeaseIndexEntry, LeaseIndexMutation,
+    NodeExecutionId, NodeOutcome, OrphanCleanupRequest, PageSize, PersistenceError, RevisionStore,
+    RunDiscoveryIntegrityStore, RunEventEnvelope, RunEventKind, RunIndexUpdate, RunJournal,
+    RunQueryStore, RunSequence, RunSummaryFilter, RunSummaryIndex, RunSummaryPageQuery,
     RunnableIndexEntry, RunnableIndexMutation, SignalDeliveryMode, SignalId, SignalTypeId,
     SnapshotDocument, SnapshotId, SnapshotLoad, SnapshotStore, StorageAdmin, StorageFailureClass,
-    StorageHealthStatus, TimerId, TimerIndexEntry, TimerIndexMutation, TimestampMillis, WorkerId,
-    WorkspaceAccounting, WorkspaceMutation, WorkspaceStore, history_digest,
+    StorageHealthStatus, SubworkflowOwnership, TimerId, TimerIndexEntry, TimerIndexMutation,
+    TimestampMillis, WorkerId, WorkspaceAccounting, WorkspaceMutation, WorkspaceStore,
+    history_digest,
 };
 use milkdrift_redb_store::{
     ArtifactClock, FaultInjector, FaultPoint, RedbStore, RedbStoreConfig, injected_failure,
 };
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactRetention, ArtifactSensitivity,
-    BranchId, CausalId, CausalReference, ContentDigest, MediaType, RunId, ScopeId, ValueKey,
-    WorkspaceBudget, WorkspaceScope, WorkspaceUsage, WorkspaceValue, WorkspaceValueEntry,
+    BranchId, CausalId, CausalReference, ContentDigest, MediaType, RunId, ScopeId, SubworkflowId,
+    ValueKey, WorkspaceBudget, WorkspaceScope, WorkspaceUsage, WorkspaceValue, WorkspaceValueEntry,
     WorkspaceValueReference,
 };
 use redb::{Database, ReadableTable, TableDefinition};

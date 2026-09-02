@@ -80,7 +80,7 @@ snapshot. Git, CI, releases, and external audits own chronology.
   exact generation is prepared but before adapter code; artifact metadata and its logical-byte
   charge also commit atomically. Unknown bounds, missing terminal usage, uncertainty, currency
   mismatch, and adapter-contract violations fail closed. The production daemon still leaves this
-  lifecycle uninstalled until the independent hostile and longevity qualification is complete.
+  lifecycle uninstalled because no current qualifying real external-evidence run is available.
 - The public Rust surface follows the current policy in
   [`../reference/public-api-policy.md`](../reference/public-api-policy.md). Canonical identities come
   from their semantic owner; storage fault hooks are available only with redb `test-admin`; daemon
@@ -133,9 +133,10 @@ Current exact versions are:
   event firehose, public configuration/audit/shutdown route, generalized plugin framework,
   optimized lifetime attempt index, or context search service. Historical attempt reads trade
   bounded memory for journal scan time.
-- Continuous controllers are not production-supported by the daemon while the new final-entry
-  ledger awaits complete hostile, mutation, longevity, and independent-review qualification. The
-  library lifecycle's only stop behavior remains immutable fail-at-bound. Multiple active
+- Continuous controllers are not production-supported by the daemon until an operator-supplied,
+  current qualifying real external-evidence run closes the activation gate. The final-entry ledger
+  has passed the local hostile, mutation, longevity, and independent-review lanes. The library
+  lifecycle's only stop behavior remains immutable fail-at-bound. Multiple active
   controller occurrences deliberately prevent ambiguous proposer attribution. Prompt sequences
   currently use trusted-host process stages; model-backed sequence stages, checkpoint
   capabilities, and automatic distributed dogfood are not implemented.
@@ -158,12 +159,11 @@ Current exact versions are:
 - All five manual longevity lanes pass separately in release mode: 10,001 receipt commits across
   hot/cold turnover and restart, two-daemon peer retention/restart, controller checkpoint/restart,
   controller reservation/artifact turnover and restart, and the 2,049-occurrence runtime frontier.
-  The seven pinned current-source mutation shards enumerate 546 mutants after the controller shard
-  was extended across final-entry admission, account, and persistence owners. Their complete
-  current-source campaign remains outstanding; the earlier 398-mutant result no longer qualifies
-  the split source paths. The changed controller, runtime, uncertainty, and retention shards pass:
-  169 mutants are caught, nine are compiler-unviable, and one pre-existing runtime reconciliation
-  mutant retains its exact reviewed unreachable-contract classification.
+  The seven pinned current-source mutation shards enumerate 642 mutants after the controller shard
+  was extended across final-entry admission, account, and persistence owners. The complete current
+  campaign catches 606; 35 are compiler-unviable, and one pre-existing runtime reconciliation
+  mutant retains its exact reviewed unreachable-contract classification. There are no unclassified
+  survivors or timeouts.
 - The simplified all-feature `cargo-public-api` inventory is retained under `target/public-api` for
   per-package review. This boundary intentionally adds the narrow admission-envelope,
   prepared-entry, and durable controller-account contracts shared by their real owners. The daemon
@@ -176,8 +176,9 @@ Current exact versions are:
   shutdown, and a loopback two-daemon remote execution.
 - `milkdrift-evidence` owns repeatable storage/projection/context/artifact/daemon measurements,
   the Cargo-native mutation shard/classification runner, and operational reports under
-  `target/evidence`. Current dirty-tree diagnostic runs cover 64, 256,
-  and 1,024 operations and record Git commit/tree/dirty state plus `rustc -vV`; they are not release
+  `target/evidence`. The current dirty-tree 256-operation run accounts for all requests under
+  overload, reopens bounded receipt and peer state, reconnects the stream, and shuts down without
+  task growth; it records Git commit/tree/dirty state plus `rustc -vV` and is not release
   qualification. The hermetic external-evidence report remains explicitly non-qualifying for real
   interoperability.
 - Raw API inventories are generated under `target/public-api`; generated public-API reports and

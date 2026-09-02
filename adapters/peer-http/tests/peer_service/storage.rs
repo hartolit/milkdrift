@@ -185,6 +185,87 @@ fn atomic_final_slot_and_idempotency_survive_reopen() -> TestResult {
 }
 
 #[test]
+fn request_index_with_one_mismatched_identity_is_rejected_as_corruption() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let peer = PeerId::new("peer-request-index-corruption")?;
+    let target = PeerId::new("peer-request-index-target")?;
+    let descriptor = descriptor()?;
+    let catalog = milkdrift_peer_protocol::CatalogSnapshot::new(
+        1,
+        now().saturating_sub(1),
+        now().saturating_add(60_000),
+        Vec::new(),
+    )?;
+    let first = request(
+        &peer,
+        &target,
+        &descriptor,
+        1,
+        catalog.digest.clone(),
+        "request-index-first",
+        "invocation-index-first",
+    )?;
+    let second = request(
+        &peer,
+        &target,
+        &descriptor,
+        1,
+        catalog.digest.clone(),
+        "request-index-second",
+        "invocation-index-second",
+    )?;
+    let first_execution = PeerExecutionId::new("execution-index-first")?;
+    let second_execution = PeerExecutionId::new("execution-index-second")?;
+    {
+        let store = RedbStore::open(root.path())?;
+        configure_store(&store, &peer, &catalog.digest, 2)?;
+        admit(&store, &peer, &first, &first_execution, 2)?;
+        admit(&store, &peer, &second, &second_execution, 2)?;
+    }
+
+    let database = Database::open(root.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    let first_key = {
+        let by_request = write.open_table(PEER_EXECUTIONS_BY_REQUEST)?;
+        by_request
+            .iter()?
+            .find_map(|row| {
+                let (key, value) = row.ok()?;
+                (value.value() == first_execution.as_str()).then(|| key.value().to_vec())
+            })
+            .ok_or("first peer request index row is absent")?
+    };
+    write
+        .open_table(PEER_EXECUTIONS_BY_REQUEST)?
+        .insert(first_key.as_slice(), second_execution.as_str())?;
+    write.commit()?;
+    drop(database);
+
+    let reopened = RedbStore::open(root.path())?;
+    let result = reopened.admit_peer_execution(&PeerAdmission {
+        owner_peer: &peer,
+        request: &first,
+        authority: &allowed_decision(&peer)?,
+        execution: &first_execution,
+        relationship_generation: 1,
+        accepted_at_unix_ms: now(),
+        maximum_global_active: 2,
+        maximum_dispatch_queue: 2,
+        maximum_hot_terminal_records: 10,
+        archive_batch_size: 2,
+        archive_terminal_before_or_at_unix_ms: 1,
+    });
+    assert!(matches!(
+        result,
+        Err(PersistenceError::Storage {
+            class: StorageFailureClass::Corruption,
+            ..
+        } | PersistenceError::Corruption(_))
+    ));
+    Ok(())
+}
+
+#[test]
 fn commit_boundary_faults_preserve_acceptance_claim_and_observation_truth() -> TestResult {
     let descriptor = descriptor()?;
     let peer = PeerId::new("peer-a")?;

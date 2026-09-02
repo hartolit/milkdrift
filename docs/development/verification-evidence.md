@@ -88,16 +88,13 @@ machine-readable result. A missed mutant must be fixed by a test or recorded by 
 unreachable under a validated public contract, or a mutation-tool limitation; unclassified survivors
 fail the lane.
 
-The seven current-source shards enumerate 546 focused mutants. The controller, runtime,
-uncertainty, and retention shards pass against the current source: 169 mutants are caught, nine are
-compiler-unviable, and the one surviving runtime reconciliation mutant has the existing exact
-`unreachable_by_valid_contract` classification. The previous complete campaign
-covered 398 mutants before authority, controller, and peer policy moved into their named child
-modules, so it no longer qualifies the current source paths; a fresh complete campaign remains
-required. Per-shard `mutants.out` directories retain source identities, logs, outcomes, and
-generated classification reports. The Rust runner validates its strict classification policy,
-rejects duplicate identities, and fails closed on timeouts or unclassified survivors.
-Checksum-correct raw-row corruption tests exercise the peer primary-record and tombstone validators
+The seven current-source shards enumerate 642 focused mutants. The complete campaign catches 606;
+35 are compiler-unviable, and the one surviving runtime reconciliation mutant has the exact
+`unreachable_by_valid_contract` classification. There are no unclassified survivors or timeouts.
+Per-shard `mutants.out` directories retain source identities, logs, outcomes, and generated
+classification reports. The Rust runner validates its strict classification policy, rejects
+duplicate identities, and fails closed on timeouts or unclassified survivors. Checksum-correct
+raw-row corruption tests exercise peer primary-record, request-index, and tombstone validators
 instead of classifying their individual guards.
 
 The controller admission release lane turns over exact final-entry reservations and logical
@@ -163,15 +160,15 @@ cleanup defects remain inspectable.
 
 ## Interpretation and limitations
 
-On 2026-09-01 the complete post-change local Linux gate passed: formatting,
+On 2026-09-02 the complete post-change local Linux gate passed: formatting,
 all-target/all-feature check and tests, Clippy with warnings denied, rustdoc with warnings denied,
 `cargo deny check`, and `cargo machete`. The full release evidence lane also passed with 256 receipt
-operations and 256 peer executions/4,352 peer observations. It retained four hot and 252 cold
+operations and 256 peer executions/4,352 peer observations. It retained five hot and 251 cold
 receipts, replayed the oldest cold receipt after reopen, and measured 1,589,248 physical store bytes
-both before and after the final bounded archival transaction. The daemon queue bound was one; 70
-requests were accepted and 186 received the stable overload result, accounting for all 256
+both before and after the final bounded archival transaction. The daemon queue bound was one; 57
+requests were accepted and 199 received the stable overload result, accounting for all 256
 requests. Stream observation/reconnect, post-load recovery, and graceful shutdown succeeded, and
-the Linux task count remained 11. Exact latency distributions and logical byte breakdowns remain
+the Linux task count remained 12. Exact latency distributions and logical byte breakdowns remain
 in `target/evidence/operational-evidence.json` because they are machine- and filesystem-specific.
 
 The harness does not claim production traffic shape, universal throughput, a memory allocator

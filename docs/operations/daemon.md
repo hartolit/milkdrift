@@ -32,15 +32,17 @@ A controller is an ordinary immutable revision containing the validated
 `org.milkdrift/controller-policy` schema-1 extension and an explicit pinned `Repeat`. The control
 and runtime libraries expose one `ControllerLifecycleOwner` for focused integration and recovery
 tests, and never add a separate controller scheduler. The production daemon does not install that
-owner because projection-time cumulative accounting is not yet an atomic reservation at every
-final external-entry boundary. A marked controller therefore fails closed rather than running
-with a limit that concurrent or newly admitted work could exceed.
+owner because a current qualifying real external-evidence run is not available. The implemented
+final-entry account boundary passes the local independent hostile, mutation, longevity, and
+operational lanes. A marked controller therefore fails closed rather than treating incomplete
+qualification as production support.
 
 The controller read/command DTOs remain available for inspecting any durable lifecycle history
 created by an explicit embedding. `milkdrift-cli controller continue` cannot make the production
-daemon install or bypass the missing owner. Production support requires an entry-adjacent ledger
-whose reservation, accounting, retry, cancellation, and restart behavior is proven for every hard
-resource dimension; merely enabling the existing hook is unsupported.
+daemon install or bypass the withheld owner. The entry-adjacent ledger now owns reservation,
+accounting, retry, cancellation, artifact, uncertainty, and restart behavior for every hard
+resource dimension, but merely enabling the existing hook before the remaining evidence passes is
+unsupported.
 
 ## Application receipts and retention
 
@@ -60,8 +62,8 @@ Shutdown means owner completion, not merely stopping the HTTP listener. The daem
 
 ## Backup, compatibility, and repair
 
-Stop the daemon cleanly before copying its data root. Artifact bytes remain in the content-addressed filesystem store; application, peer execution, runtime metadata, and the boundary-clock high-water fact remain in redb. This pre-release build implements no storage migration: physical schemas other than 9 and internal document formats other than 11 are refused. The advance refuses persisted schema-1 authority decisions rather than reinterpreting legacy capability envelopes. Do not edit rows or schema markers by hand.
+Stop the daemon cleanly before copying its data root. Artifact bytes remain in the content-addressed filesystem store; application, peer execution, runtime metadata, controller accounts, and the boundary-clock high-water fact remain in redb. This pre-release build implements no storage migration: physical schemas other than 10 and internal document formats other than 12 are refused. The advance refuses persisted schema-1 authority decisions rather than reinterpreting legacy capability envelopes. Do not edit rows or schema markers by hand.
 
 Exact command replay is preserved only within one store generation. To create a new generation, stop the daemon, make and independently verify a complete backup/export of the old data root, configure an empty new data root, and retain the old generation read-only for forensic/replay needs. There is no automatic rotation and no implemented cold-archive export/delete command. Command IDs must not be reused across generations unless every caller also rotates an explicit namespaced client epoch; otherwise a delayed request from the old generation is indistinguishable from new intent.
 
-Use the bounded resumable storage-integrity scan for administrative verification. Integrity-cursor schema 2 uses physical phases `0..=41`; application phases validate hot receipts, cold receipts, hot completion order, placement exclusivity, layouts, proposal-to-receipt links, security-audit records, and independent counters. Proposal projection rebuilding is an explicit streaming adapter operation and should follow diagnosis of projection damage, not replace validation of authoritative receipts.
+Use the bounded resumable storage-integrity scan for administrative verification. Integrity-cursor schema 2 uses physical phases `0..=45`; application phases validate hot receipts, cold receipts, hot completion order, placement exclusivity, layouts, proposal-to-receipt links, security-audit records, and independent counters, while the final phases validate controller accounts, run bindings, transitions, and artifact charges. Proposal projection rebuilding is an explicit streaming adapter operation and should follow diagnosis of projection damage, not replace validation of authoritative receipts.

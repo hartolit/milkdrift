@@ -336,7 +336,7 @@ impl ControllerResourceTotals {
     }
 }
 
-/// Permanent fail-closed condition on a controller account.
+/// Fail-closed condition on a controller account.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum ControllerAccountBlock {
@@ -363,6 +363,15 @@ pub enum ControllerAccountBlock {
         /// Stable fail-closed explanation.
         reason: String,
     },
+}
+
+/// Durable result of attempting to charge one logical artifact publication.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControllerArtifactChargeOutcome {
+    /// The exact logical bytes were charged once.
+    Charged,
+    /// The publication exceeded its final-entry reservation and the account was blocked.
+    ContractViolation,
 }
 
 /// One exact outstanding final-entry obligation.
@@ -494,6 +503,17 @@ impl ControllerAccountState {
                     "controller reservation map identity mismatch".to_owned(),
                 ));
             }
+            if identity
+                != &ControllerReservationId::for_attempt(
+                    self.declaration.account(),
+                    reservation.attempt(),
+                )?
+            {
+                return Err(PersistenceError::InvalidDocument(
+                    "controller reservation identity does not match its account and attempt"
+                        .to_owned(),
+                ));
+            }
             summed.input_units =
                 checked_add(summed.input_units, reservation.input_remaining.unwrap_or(0))?;
             summed.output_units = checked_add(
@@ -570,6 +590,13 @@ impl ControllerAccountState {
         category: CapabilityCategory,
         envelope: &InvocationAdmissionEnvelope,
     ) -> Result<ControllerAdmissionOutcome, PersistenceError> {
+        if reservation
+            != ControllerReservationId::for_attempt(self.declaration.account(), &attempt)?
+        {
+            return Err(PersistenceError::InvalidDocument(
+                "controller reservation identity does not match its account and attempt".to_owned(),
+            ));
+        }
         if self.blocked.is_some() {
             return Ok(ControllerAdmissionOutcome::Denied {
                 account: self.declaration.account.clone(),
@@ -820,11 +847,15 @@ impl ControllerAccountState {
     }
 
     /// Charges first logical artifact publication against a reservation or directly to the account.
+    ///
+    /// An invocation publication above its exact reservation is not charged. It instead records a
+    /// durable contract-violation block so later admission cannot treat the failed publication as
+    /// though the adapter had remained within its declared envelope.
     pub fn charge_artifact(
         &mut self,
         reservation: Option<&ControllerReservationId>,
         bytes: u64,
-    ) -> Result<(), PersistenceError> {
+    ) -> Result<ControllerArtifactChargeOutcome, PersistenceError> {
         if reservation.is_none() && self.blocked.is_some() {
             return Err(PersistenceError::Bounds {
                 location: "controller.artifact_budget",
@@ -844,11 +875,16 @@ impl ControllerAccountState {
                 )
             })?;
             if bytes > remaining {
-                return Err(PersistenceError::Bounds {
-                    location: "controller.artifact_reservation",
-                    reason: "logical artifact bytes exceed the exact reservation remainder"
-                        .to_owned(),
-                });
+                if self.blocked.is_none() {
+                    self.blocked = Some(ControllerAccountBlock::ContractViolation {
+                        dimension: "artifact_bytes".to_owned(),
+                        reservation: reservation.clone(),
+                        observed: bytes,
+                        reserved: remaining,
+                    });
+                    self.advance()?;
+                }
+                return Ok(ControllerArtifactChargeOutcome::ContractViolation);
             }
             record.artifact_remaining = Some(remaining - bytes);
             self.outstanding.artifact_bytes = self
@@ -873,7 +909,8 @@ impl ControllerAccountState {
             }
         }
         self.settled.artifact_bytes = checked_add(self.settled.artifact_bytes, bytes)?;
-        self.advance()
+        self.advance()?;
+        Ok(ControllerArtifactChargeOutcome::Charged)
     }
 }
 
@@ -1123,7 +1160,12 @@ impl ControllerAccountTransaction {
 
 /// Artifact-account owner selected explicitly by every publication producer.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+#[serde(
+    rename_all = "snake_case",
+    tag = "type",
+    content = "reservation",
+    deny_unknown_fields
+)]
 pub enum ControllerArtifactOwner {
     /// Resolve the run's immutable binding; ordinary unbound runs remain unchanged.
     RunBinding,
@@ -1222,6 +1264,25 @@ mod tests {
         Ok(InvocationAdmissionEnvelope::new(
             input, output, artifact, cost,
         ))
+    }
+
+    #[test]
+    fn reservation_identity_is_derived_before_account_mutation() -> TestResult {
+        let mut state = account(2, 2)?;
+        let before = state.clone();
+        let attempt = AttemptId::new("attempt-forged-reservation")?;
+        let forged = ControllerReservationId::new("controller-reservation:forged")?;
+        assert!(matches!(
+            state.admit(
+                forged,
+                attempt,
+                CapabilityCategory::Tool,
+                &InvocationAdmissionEnvelope::not_applicable(),
+            ),
+            Err(PersistenceError::InvalidDocument(_))
+        ));
+        assert_eq!(state, before);
+        Ok(())
     }
 
     #[test]
@@ -1721,12 +1782,51 @@ mod tests {
         assert_eq!(state.settled().artifact_bytes(), 8);
         assert!(matches!(
             state.charge_artifact(Some(&reservation), 1),
-            Err(PersistenceError::Bounds {
-                location: "controller.artifact_reservation",
+            Ok(ControllerArtifactChargeOutcome::ContractViolation)
+        ));
+        assert!(matches!(
+            state.blocked(),
+            Some(ControllerAccountBlock::ContractViolation {
+                dimension,
+                observed: 1,
+                reserved: 0,
                 ..
-            })
+            }) if dimension == "artifact_bytes"
         ));
         state.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn controller_artifact_owner_wire_is_strict_and_preserves_run_binding_compatibility()
+    -> TestResult {
+        let reservation = ControllerReservationId::new("controller-reservation:wire-owner")?;
+        let owner = ControllerArtifactOwner::InvocationReservation(reservation.clone());
+        let encoded = serde_json::to_vec(&owner)?;
+        assert_eq!(
+            encoded,
+            br#"{"type":"invocation_reservation","reservation":"controller-reservation:wire-owner"}"#
+        );
+        assert_eq!(
+            serde_json::from_slice::<ControllerArtifactOwner>(&encoded)?,
+            owner
+        );
+        assert_eq!(
+            serde_json::to_vec(&ControllerArtifactOwner::RunBinding)?,
+            br#"{"type":"run_binding"}"#
+        );
+        assert!(
+            serde_json::from_slice::<ControllerArtifactOwner>(
+                br#"{"type":"invocation_reservation","reservation":"controller-reservation:wire-owner","extra":true}"#,
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_slice::<ControllerArtifactOwner>(
+                br#"{"type":"invocation_reservation"}"#,
+            )
+            .is_err()
+        );
         Ok(())
     }
 }

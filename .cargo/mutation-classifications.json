@@ -15,11 +15,6 @@
       "mutant": "crates/runtime/src/engine/reconciliation.rs:28:13: replace || with && in RuntimeService::plan_revision_adoption",
       "classification": "unreachable_by_valid_contract",
       "explanation": "A non-active projection without a termination record cannot produce a valid reconciliation history or plan; the ordinary command path rejects that invalid state after this defensive early guard as well."
-    },
-    {
-      "mutant": "adapters/redb-store/src/peer.rs:158:17: replace || with && in <impl PeerExecutionStore for RedbStore>::admit_peer_execution",
-      "classification": "unreachable_by_valid_contract",
-      "explanation": "The request index and stored snapshot are written atomically from the same validated owner/request identity, and startup integrity validates the complete index before readiness; a one-field mismatch requires out-of-band mutation of an open database."
     }
   ]
 }

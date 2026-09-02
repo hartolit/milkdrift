@@ -16,7 +16,10 @@ mod preset;
 mod read;
 mod service;
 
-pub use adapter::{ControlResultSink, WorkflowControlAdapter, workflow_control_descriptor};
+pub use adapter::{
+    ControlResultSink, MAX_CONTROL_RESULT_BYTES, WorkflowControlAdapter,
+    workflow_control_descriptor,
+};
 pub use command::{
     ActorAuthorityContext, CONTROL_COMMAND_SCHEMA_VERSION_V1, ControlCommand,
     ControlCommandDocument, ControlResult, OptimisticGuard,

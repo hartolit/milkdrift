@@ -37,9 +37,10 @@ use milkdrift_control::{
     ActorAuthorityContext, AuthorityPreset, ClaimedStopCondition, ControlCommand,
     ControlCommandDocument, ControlError, ControlId, ControlResult, ControlResultSink,
     ControlService, ControllerBlueprintSpec, ControllerLimits, ControllerPolicyDocument,
-    OptimisticGuard, ProposalApplicationPolicy, ProposalId, ProposalProvenance, RequestedRunAction,
-    RiskClass, WORKFLOW_PROPOSE_OPERATION, WorkflowControlAdapter, WorkflowProposal,
-    WorkflowProposalDocument, build_controller_blueprint, workflow_control_descriptor,
+    MAX_CONTROL_RESULT_BYTES, OptimisticGuard, ProposalApplicationPolicy, ProposalId,
+    ProposalProvenance, RequestedRunAction, RiskClass, WORKFLOW_PROPOSE_OPERATION,
+    WorkflowControlAdapter, WorkflowProposal, WorkflowProposalDocument, build_controller_blueprint,
+    workflow_control_descriptor,
 };
 use milkdrift_persistence::{
     ArtifactPublicationId, ArtifactStore, BeginArtifactPublication, ControllerAccountDeclaration,

@@ -11,15 +11,15 @@ use milkdrift_authority::{
     AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope,
     CapabilityAuthorityScopeBuilder, DaemonAuthorityScope, DecisionId, DecisionReasonCode,
     FilesystemScope, GrantId, GrantSetEvaluator, LayoutAuthorityScope, NetworkProfileRef,
-    NetworkScope, PeerAuthorityScope, PolicyId, RequestedResourceFacts, ResourceScope, SecretRef,
-    Selection, SensitiveSecret, WorkflowRunScope, WorkspaceAuthorityScope,
+    NetworkScope, PeerAuthorityScope, PeerId, PolicyId, RequestedResourceFacts, ResourceScope,
+    SecretRef, Selection, SensitiveSecret, WorkflowRunScope, WorkspaceAuthorityScope,
 };
-use milkdrift_blueprint::{AuthorRef, WorkflowId};
+use milkdrift_blueprint::{AuthorRef, RevisionId, WorkflowId};
 use milkdrift_capability::{
     CapabilityCategory, CapabilityId, ExecutionTrustClass, Locality, OperationId,
     ProviderProfileRef, SideEffectClass, TrustZone,
 };
-use milkdrift_workspace::{ArtifactId, ArtifactSensitivity, RunId};
+use milkdrift_workspace::{ArtifactId, ArtifactSensitivity, RunId, ScopeId};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -283,6 +283,22 @@ fn grant_schema_has_a_canonical_golden_fixture_and_hostile_bounds() -> TestResul
 fn evaluation_covers_allow_and_every_stable_denial_family() -> TestResult {
     let base = request()?;
     assert!(evaluate(&base)?.is_allowed());
+    for inclusive_boundary in [100, 200] {
+        let mut exact = base.clone();
+        exact.evaluated_at = BoundaryTimeMillis::new(inclusive_boundary);
+        let decision = evaluate(&exact)?;
+        assert!(decision.is_allowed());
+        assert!(
+            !decision
+                .reason_codes()
+                .contains(&DecisionReasonCode::NotYetValid)
+        );
+        assert!(
+            !decision
+                .reason_codes()
+                .contains(&DecisionReasonCode::Expired)
+        );
+    }
 
     let mut wrong_actor = base.clone();
     wrong_actor.actor = ActorRef::new("human:bob")?;
@@ -348,6 +364,28 @@ fn evaluation_covers_allow_and_every_stable_denial_family() -> TestResult {
             .reason_codes()
             .contains(&DecisionReasonCode::SideEffectExcess)
     );
+    let mut filesystem = base.clone();
+    filesystem.resources.filesystem =
+        vec![FilesystemScope::new("/outside", set(AccessMode::Read))?];
+    assert!(
+        evaluate(&filesystem)?
+            .reason_codes()
+            .contains(&DecisionReasonCode::FilesystemMismatch)
+    );
+    let mut network_profile = base.clone();
+    network_profile.resources.network_profiles = set(NetworkProfileRef::new("network-other")?);
+    assert!(
+        evaluate(&network_profile)?
+            .reason_codes()
+            .contains(&DecisionReasonCode::NetworkMismatch)
+    );
+    let mut network_destination = base.clone();
+    network_destination.resources.network_destinations = set("other.example:443".to_owned());
+    assert!(
+        evaluate(&network_destination)?
+            .reason_codes()
+            .contains(&DecisionReasonCode::NetworkMismatch)
+    );
     let mut exact_envelope = base.clone();
     exact_envelope.resources.capability_envelope = Some(
         CapabilityAuthorityScopeBuilder::new(SideEffectClass::ReadOnly)
@@ -370,12 +408,135 @@ fn evaluation_covers_allow_and_every_stable_denial_family() -> TestResult {
             .reason_codes()
             .contains(&DecisionReasonCode::CapabilityMismatch)
     );
+    for mismatch in [
+        {
+            let mut request = base.clone();
+            request.resources.capability = Some(CapabilityId::new("cap-b")?);
+            request
+        },
+        {
+            let mut request = base.clone();
+            request.resources.category = Some(CapabilityCategory::Process);
+            request
+        },
+        {
+            let mut request = base.clone();
+            request.resources.capability_operation = Some(OperationId::new("model.embed")?);
+            request
+        },
+        {
+            let mut request = base.clone();
+            request.resources.provider_profile = Some(ProviderProfileRef::new("profile-b")?);
+            request
+        },
+    ] {
+        let decision = evaluate(&mismatch)?;
+        assert!(
+            decision
+                .reason_codes()
+                .contains(&DecisionReasonCode::CapabilityMismatch),
+            "isolated capability selector mismatch was allowed: {:?}",
+            mismatch.resources
+        );
+    }
     let mut trust = base.clone();
     trust.resources.trust_zone = Some(TrustZone::new("untrusted")?);
     assert!(
         evaluate(&trust)?
             .reason_codes()
             .contains(&DecisionReasonCode::PlacementMismatch)
+    );
+    let mut trust_set = base.clone();
+    trust_set.resources.trust_zones = set(TrustZone::new("untrusted")?);
+    assert!(
+        evaluate(&trust_set)?
+            .reason_codes()
+            .contains(&DecisionReasonCode::PlacementMismatch)
+    );
+    let mut locality = base.clone();
+    locality.resources.locality = Some(Locality::Local);
+    assert!(
+        evaluate(&locality)?
+            .reason_codes()
+            .contains(&DecisionReasonCode::PlacementMismatch)
+    );
+
+    let source_grant = grant()?;
+    let mut peer_resources = source_grant.resources().clone();
+    peer_resources.capability = CapabilityAuthorityScopeBuilder::new(SideEffectClass::ReadOnly)
+        .only_capabilities(set(CapabilityId::new("cap-a")?))?
+        .only_categories(set(CapabilityCategory::Model))?
+        .only_operations(set(OperationId::new("model.generate")?))?
+        .only_provider_profiles(set(ProviderProfileRef::new("profile-a")?))?
+        .only_trust_zones(set(TrustZone::new("trusted")?))?
+        .only_localities(set(Locality::Remote))?
+        .only_peers(set(PeerId::new("peer-a")?))?
+        .build();
+    let peer_grant =
+        AuthorityGrantBuilder::new(GrantId::new("grant:peer-placement")?, 1, base.actor.clone())
+            .operations(set(AuthorityOperation::Approve))
+            .resources(peer_resources)
+            .budget(source_grant.budget())
+            .validity(BoundaryTimeMillis::new(100), BoundaryTimeMillis::new(200))
+            .build()?;
+    let peer_evaluator = GrantSetEvaluator::new(
+        PolicyId::new("policy:peer-placement")?,
+        1,
+        [peer_grant.clone()],
+        BTreeMap::new(),
+    )?;
+    let mut peer_request = base.clone();
+    peer_request.grant = peer_grant.identity().clone();
+    peer_request.grant_revision = peer_grant.revision();
+    peer_request.grant_digest = peer_grant.digest()?;
+    peer_request.revocation_generation = peer_grant.revocation_generation();
+    peer_request.resources.peer = Some(PeerId::new("peer-b")?);
+    assert!(
+        peer_evaluator
+            .evaluate(&peer_request)?
+            .reason_codes()
+            .contains(&DecisionReasonCode::PlacementMismatch)
+    );
+    let revision =
+        serde_json::from_value::<RevisionId>(serde_json::json!(format!("rev_{}", "0".repeat(64))))?;
+    let mut layout = base.clone();
+    layout.resources.revision = Some(revision);
+    layout.resources.layout_owner = Some(milkdrift_authority::LayoutOwner::Shared);
+    assert!(
+        evaluate(&layout)?
+            .reason_codes()
+            .contains(&DecisionReasonCode::LayoutScopeMismatch)
+    );
+    let mut peer_scope = base.clone();
+    peer_scope.operation = AuthorityOperation::InspectPeer;
+    peer_scope.resources.peer = Some(PeerId::new("peer-b")?);
+    assert!(
+        evaluate(&peer_scope)?
+            .reason_codes()
+            .contains(&DecisionReasonCode::PeerScopeMismatch)
+    );
+    for daemon_dimension in 0..5 {
+        let mut daemon = base.clone();
+        match daemon_dimension {
+            0 => daemon.resources.daemon_readiness = true,
+            1 => daemon.resources.daemon_detailed_health = true,
+            2 => daemon.resources.daemon_own_authority = true,
+            3 => daemon.resources.daemon_configuration = true,
+            4 => daemon.resources.daemon_audit = true,
+            _ => unreachable!(),
+        }
+        assert!(
+            evaluate(&daemon)?
+                .reason_codes()
+                .contains(&DecisionReasonCode::DaemonScopeMismatch)
+        );
+    }
+    let mut workspace = base.clone();
+    workspace.resources.workspace_scope = Some(ScopeId::new("scope-other")?);
+    assert!(
+        evaluate(&workspace)?
+            .reason_codes()
+            .contains(&DecisionReasonCode::WorkspaceScopeMismatch)
     );
     let mut budget = base.clone();
     budget.budget.cost_minor = Some(101);

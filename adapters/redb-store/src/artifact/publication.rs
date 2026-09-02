@@ -538,13 +538,24 @@ impl ArtifactStore for RedbStore {
                 "writable publication changed workspace usage before metadata commit",
             ));
         }
-        crate::controller_account::charge_artifact_publication(
+        let controller_charge = crate::controller_account::charge_artifact_publication(
             &write,
             &record.publication,
             &record.run,
             &record.controller_owner,
             record.metadata.reference().size_bytes(),
         )?;
+        if controller_charge
+            == milkdrift_persistence::ControllerArtifactChargeOutcome::ContractViolation
+        {
+            release_writable_publication(&write, &record)?;
+            write.commit().map_err(error::redb)?;
+            let _removed = finalize_released_publication_paths(self, &record, None)?;
+            return Err(PersistenceError::Bounds {
+                location: "controller.artifact_reservation",
+                reason: "logical artifact bytes exceed the exact reservation remainder".to_owned(),
+            });
+        }
         commit_artifact_metadata(self, &write, &mut record, content_deduplicated)?;
         self.faults
             .check(FaultPoint::BeforeArtifactMetadataCommit)?;

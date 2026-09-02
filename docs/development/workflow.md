@@ -194,6 +194,7 @@ locally in release mode rather than making every local and pull-request test pay
 cargo test --release \
   -p milkdrift-redb-store \
   --test application_state \
+  --all-features \
   release_receipt_longevity_crosses_many_hot_bounds_and_replays_after_restart \
   -- --ignored --exact --nocapture
 cargo test --release \
