@@ -130,9 +130,13 @@ impl MutationShard {
                     "crates/runtime/src/engine/effects.rs",
                     "crates/runtime/src/engine/support.rs",
                 ],
-                pattern: "(recovery_classification|record_effect_uncertainty)",
-                test_packages: &["milkdrift-runtime"],
-                cargo_test_arguments: &["--test", "structured_runtime"],
+                pattern: "(^|::)(recovery_classification|record_effect_uncertainty)$",
+                // cargo-mutants 27.1 also emits struct-field deletion mutants from the selected
+                // effects file even when their enclosing function does not match `--re`.
+                // Controller integration tests therefore remain in this lane so those incidental
+                // final-entry plan mutations cannot survive a runtime-only test selection.
+                test_packages: &["milkdrift-runtime", "milkdrift-control"],
+                cargo_test_arguments: &[],
             },
             Self::Controller => ShardSpecification {
                 files: &[
@@ -149,6 +153,7 @@ impl MutationShard {
                     "milkdrift-persistence",
                     "milkdrift-redb-store",
                     "milkdrift-capability-host",
+                    "milkdrift-runtime",
                 ],
                 cargo_test_arguments: &[],
             },

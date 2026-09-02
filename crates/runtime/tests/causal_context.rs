@@ -1,6 +1,9 @@
 //! Deterministic causal context selection tests.
 
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+};
 
 use milkdrift_blueprint::{
     AuthorRef, BlueprintRevision, ContextArtifactRetention, ContextArtifactSelector,
@@ -16,19 +19,112 @@ use milkdrift_model::{
     AuthorityFact, ContextInclusionReason, ContextManifestDocument, ContextOmissionReason,
     ContextProducerFact, ContextSemanticKind, ContextSource,
 };
-use milkdrift_persistence::{ArtifactStore, AttemptId, NodeExecutionId};
+use milkdrift_persistence::{
+    ArtifactPublicationId, ArtifactReadChunk, ArtifactReadRequest, ArtifactStore,
+    ArtifactWriteProgress, AttemptId, BeginArtifactOutcome, BeginArtifactPublication,
+    CommitArtifactOutcome, NodeExecutionId, OrphanCleanupRequest, OrphanCleanupResult,
+    PersistenceError, StorageFailureClass,
+};
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{
     CausalContextBuilder, ContextBuildIdentity, ContextBuildRequest, ContextCandidate,
     ContextCandidateAvailability, persist_context_manifest,
 };
 use milkdrift_workspace::{
-    ArtifactId, ArtifactSensitivity, ContentDigest, RunId, ScopeId, ScopeReference,
-    WorkspaceBudget, WorkspaceScope, WorkspaceUsage,
+    ArtifactId, ArtifactMetadata, ArtifactReference, ArtifactSensitivity, ContentDigest, RunId,
+    ScopeId, ScopeReference, WorkspaceBudget, WorkspaceScope, WorkspaceUsage,
 };
 use serde_json::json;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+struct CommitFailingArtifactStore {
+    inner: RedbStore,
+    fail_commit: AtomicBool,
+    aborts: AtomicU64,
+}
+
+impl CommitFailingArtifactStore {
+    fn new(inner: RedbStore) -> Self {
+        Self {
+            inner,
+            fail_commit: AtomicBool::new(true),
+            aborts: AtomicU64::new(0),
+        }
+    }
+}
+
+impl ArtifactStore for CommitFailingArtifactStore {
+    fn begin_publication(
+        &self,
+        request: &BeginArtifactPublication,
+    ) -> Result<BeginArtifactOutcome, PersistenceError> {
+        self.inner.begin_publication(request)
+    }
+
+    fn write_chunk(
+        &self,
+        publication: &ArtifactPublicationId,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<ArtifactWriteProgress, PersistenceError> {
+        self.inner.write_chunk(publication, offset, bytes)
+    }
+
+    fn commit_publication(
+        &self,
+        publication: &ArtifactPublicationId,
+    ) -> Result<CommitArtifactOutcome, PersistenceError> {
+        if self.fail_commit.swap(false, Ordering::SeqCst) {
+            return Err(PersistenceError::Storage {
+                class: StorageFailureClass::Unavailable,
+                message: "injected context-manifest commit failure".to_owned(),
+            });
+        }
+        self.inner.commit_publication(publication)
+    }
+
+    fn abort_publication(
+        &self,
+        publication: &ArtifactPublicationId,
+    ) -> Result<(), PersistenceError> {
+        self.aborts.fetch_add(1, Ordering::SeqCst);
+        self.inner.abort_publication(publication)
+    }
+
+    fn metadata(
+        &self,
+        artifact: &ArtifactId,
+    ) -> Result<Option<ArtifactMetadata>, PersistenceError> {
+        self.inner.metadata(artifact)
+    }
+
+    fn is_committed(&self, reference: &ArtifactReference) -> Result<bool, PersistenceError> {
+        self.inner.is_committed(reference)
+    }
+
+    fn is_referenced_by_run(
+        &self,
+        run: &RunId,
+        reference: &ArtifactReference,
+    ) -> Result<bool, PersistenceError> {
+        self.inner.is_referenced_by_run(run, reference)
+    }
+
+    fn read_chunk(
+        &self,
+        request: &ArtifactReadRequest,
+    ) -> Result<ArtifactReadChunk, PersistenceError> {
+        self.inner.read_chunk(request)
+    }
+
+    fn cleanup_orphans(
+        &self,
+        request: OrphanCleanupRequest,
+    ) -> Result<OrphanCleanupResult, PersistenceError> {
+        self.inner.cleanup_orphans(request)
+    }
+}
 
 fn policy(budget: ContextBudget) -> TestResult<TaskContextPolicy> {
     policy_with_fail_closed(budget, true)
@@ -790,5 +886,40 @@ fn exact_manifest_is_committed_before_dispatch_and_survives_restart() -> TestRes
         WorkspaceUsage::EMPTY,
     )?;
     assert_eq!(duplicate, reference);
+    Ok(())
+}
+
+#[test]
+fn context_manifest_commit_failure_aborts_writable_session_and_retry_succeeds() -> TestResult {
+    let policy = policy(ContextBudget::new(1, 10, 1, Some(10))?)?;
+    let revision = revision(policy.clone())?;
+    let manifest = CausalContextBuilder::build(ContextBuildRequest {
+        identity: identity(&revision)?,
+        semantic: revision.semantic(),
+        policy: &policy,
+        visible_scopes: BTreeSet::new(),
+        candidates: vec![candidate(
+            "prompt",
+            ContextSemanticKind::DirectInput,
+            None,
+            10,
+        )?],
+    })?;
+    let root = tempfile::tempdir()?;
+    let store = CommitFailingArtifactStore::new(RedbStore::open(root.path())?);
+    let budget = WorkspaceBudget::new(0, 0, 0, 1, 1_048_576, 1_048_576)?;
+
+    assert!(
+        persist_context_manifest(&store, &manifest, budget.clone(), WorkspaceUsage::EMPTY).is_err()
+    );
+    assert_eq!(store.aborts.load(Ordering::SeqCst), 1);
+
+    let reference = persist_context_manifest(&store, &manifest, budget, WorkspaceUsage::EMPTY)?;
+    assert_eq!(store.aborts.load(Ordering::SeqCst), 1);
+    let artifact = ArtifactId::new(reference.identity())?;
+    let durable = store
+        .metadata(&artifact)?
+        .ok_or("retried context manifest was not committed")?;
+    assert!(store.is_committed(durable.reference())?);
     Ok(())
 }

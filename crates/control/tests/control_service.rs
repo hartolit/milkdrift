@@ -3,10 +3,11 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
-        Arc, Barrier, Mutex,
+        Arc, Barrier, Condvar, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     thread,
+    time::Duration,
 };
 
 use milkdrift_authority::{
@@ -20,12 +21,13 @@ use milkdrift_blueprint::{
     WorkflowId, WorkflowInterface,
 };
 use milkdrift_capability::{
-    AdmissionConstraints, ArtifactReference, BoundedJson, CancellationAcknowledgement,
-    CancellationRequest, CapabilityCategory, CapabilityDescriptor, CapabilityDescriptorDocument,
-    CapabilityId, CapabilityObservation, CapabilityRequirement, DescriptorBuilder, ErrorClass,
-    InputReference, InvocationAdmissionEnvelope, InvocationEvent, InvocationEventKind,
-    InvocationId, InvocationRequest, InvocationTerminal, InvocationValueReference, OperationId,
-    ProviderProfileRef, ResolvedCapabilitySnapshot, SchemaId, SideEffectClass, TerminalStatus,
+    AdmissionBound, AdmissionConstraints, AdmissionMonetaryBound, ArtifactReference, BoundedJson,
+    CancellationAcknowledgement, CancellationRequest, CapabilityCategory, CapabilityDescriptor,
+    CapabilityDescriptorDocument, CapabilityId, CapabilityObservation, CapabilityRequirement,
+    DescriptorBuilder, ErrorClass, InputReference, InvocationAdmissionEnvelope, InvocationEvent,
+    InvocationEventKind, InvocationId, InvocationRequest, InvocationTerminal,
+    InvocationValueReference, OperationId, ProviderProfileRef, ResolvedCapabilitySnapshot,
+    SchemaId, SideEffectClass, TerminalStatus,
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, CapabilityHost,
@@ -40,21 +42,30 @@ use milkdrift_control::{
     WorkflowProposalDocument, build_controller_blueprint, workflow_control_descriptor,
 };
 use milkdrift_persistence::{
-    ArtifactPublicationId, ArtifactStore, BeginArtifactPublication, ControllerAccountStore,
-    ControllerAdmissionDenial, ControllerAdmissionOutcome, ControllerAssessmentBoundary,
-    ControllerAssessmentOutcome, IntegrityScanRequest, PageSize, Reason, ReconciliationDecisionId,
-    RepeatDecisionId, RevisionStore, RunEventKind, RunOutcome, RunSequence, StorageAdmin,
-    TimestampMillis, WorkerId, WorkspaceStore,
+    ArtifactPublicationId, ArtifactStore, BeginArtifactPublication, ControllerAccountDeclaration,
+    ControllerAccountState, ControllerAccountStore, ControllerAdmissionDenial,
+    ControllerAdmissionOutcome, ControllerAssessmentBoundary, ControllerAssessmentOutcome,
+    ControllerReservationId, ControllerResourceBudget, CurrencyCode, IntegrityScanRequest,
+    PageSize, Reason, ReconciliationDecisionId, RepeatDecisionId, RevisionStore, RunEventKind,
+    RunOutcome, RunSequence, StorageAdmin, TimestampMillis, WorkerId, WorkspaceStore,
 };
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{
-    CommandAuthorityClaim, DeterministicExecutor, ManualClock, RetryPolicy, RunLifecycle,
-    RuntimeConfig, RuntimeService, SchedulerLimits, SequentialIdGenerator, TaskExecutor,
+    CommandAuthorityClaim, ControllerAssessmentContext, ControllerLifecycle, DeterministicExecutor,
+    ExecutionDispatch, ExecutionReporter, ExecutorError, ManualClock, PreparedExecution,
+    ResolvedCapability, RetryPolicy, RunLifecycle, RuntimeConfig, RuntimeError, RuntimeService,
+    SchedulerLimits, SequentialIdGenerator, TaskExecutor,
 };
 use milkdrift_workspace::{RunId, ScopeId, WorkspaceBudget, WorkspaceScope};
 use tempfile::TempDir;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+type CountingProcessServices = (
+    Arc<RuntimeService>,
+    Arc<ControlService>,
+    ActorAuthorityContext,
+    Arc<CountingProcessAdapter>,
+);
 type DeterministicServices = (
     Arc<RuntimeService>,
     Arc<ControlService>,
@@ -66,6 +77,110 @@ const NOW: u64 = 20_000;
 
 #[derive(Default)]
 struct CountingProcessAdapter(AtomicU64);
+
+struct TerminalCancellationExecutor {
+    resolver: DeterministicExecutor,
+    entered: (Mutex<bool>, Condvar),
+    cancelled: (Mutex<bool>, Condvar),
+    entries: AtomicU64,
+    cancellations: AtomicU64,
+}
+
+impl TerminalCancellationExecutor {
+    fn new(descriptor: CapabilityDescriptor) -> Self {
+        Self {
+            resolver: DeterministicExecutor::new(descriptor),
+            entered: (Mutex::new(false), Condvar::new()),
+            cancelled: (Mutex::new(false), Condvar::new()),
+            entries: AtomicU64::new(0),
+            cancellations: AtomicU64::new(0),
+        }
+    }
+
+    fn wait_until_entered(&self) -> TestResult {
+        let entered = self.entered.0.lock().map_err(|_| "entry lock poisoned")?;
+        let (entered, timeout) = self
+            .entered
+            .1
+            .wait_timeout_while(entered, Duration::from_secs(5), |entered| !*entered)
+            .map_err(|_| "entry wait poisoned")?;
+        if timeout.timed_out() || !*entered {
+            return Err("controlled cancellation executor did not enter".into());
+        }
+        Ok(())
+    }
+
+    fn release_after_cancellation_commit(&self) -> TestResult {
+        *self
+            .cancelled
+            .0
+            .lock()
+            .map_err(|_| "cancellation lock poisoned")? = true;
+        self.cancelled.1.notify_all();
+        Ok(())
+    }
+}
+
+impl TaskExecutor for TerminalCancellationExecutor {
+    fn resolve(
+        &self,
+        requirement: &CapabilityRequirement,
+        observed_at_unix_ms: u64,
+    ) -> Result<ResolvedCapability, ExecutorError> {
+        self.resolver.resolve(requirement, observed_at_unix_ms)
+    }
+
+    fn prepare_exact_entry<'a>(
+        &'a self,
+        dispatch: &ExecutionDispatch,
+    ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        Ok(PreparedExecution::new(
+            dispatch,
+            InvocationAdmissionEnvelope::new(
+                AdmissionBound::Bounded(4),
+                AdmissionBound::NotApplicable,
+                AdmissionBound::NotApplicable,
+                AdmissionBound::NotApplicable,
+            ),
+            move |_dispatch, _reporter: &dyn ExecutionReporter| {
+                self.entries.fetch_add(1, Ordering::SeqCst);
+                *self
+                    .entered
+                    .0
+                    .lock()
+                    .map_err(|_| ExecutorError::Boundary("entry lock poisoned".to_owned()))? = true;
+                self.entered.1.notify_all();
+                let cancelled = self.cancelled.0.lock().map_err(|_| {
+                    ExecutorError::Boundary("cancellation lock poisoned".to_owned())
+                })?;
+                let _cancelled = self
+                    .cancelled
+                    .1
+                    .wait_while(cancelled, |cancelled| !*cancelled)
+                    .map_err(|_| {
+                        ExecutorError::Boundary("cancellation wait poisoned".to_owned())
+                    })?;
+                Err(ExecutorError::BoundaryAfterEntry(
+                    "terminal cancellation ended the controlled adapter".to_owned(),
+                ))
+            },
+        ))
+    }
+
+    fn cancel(
+        &self,
+        request: &CancellationRequest,
+    ) -> Result<CancellationAcknowledgement, ExecutorError> {
+        self.cancellations.fetch_add(1, Ordering::SeqCst);
+        Ok(CancellationAcknowledgement::new(
+            request.invocation().clone(),
+            request.request_sequence(),
+            true,
+            true,
+            Some("controlled adapter reached its terminal cancellation boundary".to_owned()),
+        )?)
+    }
+}
 
 impl CountingProcessAdapter {
     fn entries(&self) -> u64 {
@@ -461,6 +576,47 @@ fn services_with_executor_and_revocations(
     Ok((runtime, service, context))
 }
 
+fn counting_process_services(
+    store: Arc<RedbStore>,
+    actor: &ActorRef,
+    run: &RunId,
+    grant_id: &GrantId,
+    id_prefix: &str,
+) -> TestResult<CountingProcessServices> {
+    let descriptor = admission::process_descriptor()?;
+    let host = CapabilityHost::new(
+        HostConfig {
+            max_registrations: 4,
+            max_generations_per_capability: 2,
+            max_concurrent_per_generation: 4,
+            observation_stale_after_ms: 60_000,
+        },
+        CapabilitySelectionPolicy::priorities(BTreeMap::new()),
+    )?;
+    let adapter = Arc::new(CountingProcessAdapter::default());
+    host.register(
+        descriptor.clone(),
+        adapter.clone(),
+        Some(CapabilityObservation::new(
+            descriptor.identity().clone(),
+            NOW,
+            true,
+            0,
+            "controller admission longevity fixture ready",
+        )?),
+    )?;
+    let (runtime, service, context) = services_with_executor_and_revocations(
+        store,
+        actor,
+        grant_id,
+        id_prefix,
+        grant(actor, run, grant_id)?,
+        BTreeMap::new(),
+        Arc::new(host),
+    )?;
+    Ok((runtime, service, context, adapter))
+}
+
 fn command(
     identity: &str,
     context: &ActorAuthorityContext,
@@ -645,27 +801,128 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
     let document =
         ControllerPolicyDocument::from_revision(&wrapper, &NodeId::new("controller-repeat")?)?
             .ok_or("controller policy document is absent")?;
+    let limits = document.policy().limits();
+    let mut account = ControllerAccountState::establish(ControllerAccountDeclaration::new(
+        run.clone(),
+        controller_execution.clone(),
+        document.digest().as_str(),
+        ControllerResourceBudget::new(
+            limits.max_cost_micros(),
+            CurrencyCode::new(document.policy().cost_currency().as_str())?,
+            limits.max_input_units(),
+            limits.max_output_units(),
+            limits.max_artifact_bytes(),
+            u64::from(limits.max_process_invocations()),
+            u64::from(limits.max_model_invocations()),
+        )?,
+    )?)?;
+    let attempt = milkdrift_persistence::AttemptId::new("attempt-controller-progress-account")?;
+    let reservation =
+        ControllerReservationId::for_attempt(account.declaration().account(), &attempt)?;
+    assert!(matches!(
+        account.admit(
+            reservation.clone(),
+            attempt,
+            CapabilityCategory::Process,
+            &InvocationAdmissionEnvelope::new(
+                AdmissionBound::Bounded(11),
+                AdmissionBound::Bounded(13),
+                AdmissionBound::Bounded(17),
+                AdmissionBound::Bounded(AdmissionMonetaryBound::new(700, "USD")?),
+            ),
+        )?,
+        ControllerAdmissionOutcome::Reserved { .. }
+    ));
+    account.charge_artifact(Some(&reservation), 17)?;
+    let model_attempt = milkdrift_persistence::AttemptId::new("attempt-controller-progress-model")?;
+    let model_reservation =
+        ControllerReservationId::for_attempt(account.declaration().account(), &model_attempt)?;
+    assert!(matches!(
+        account.admit(
+            model_reservation,
+            model_attempt,
+            CapabilityCategory::Model,
+            &InvocationAdmissionEnvelope::not_applicable(),
+        )?,
+        ControllerAdmissionOutcome::Reserved { .. }
+    ));
+    account.settle_terminal(&reservation, None)?;
     let progress = service.controller_lifecycle_owner().progress(
         &document,
         &projection,
         &controller_execution,
-        None,
+        Some(&account),
         NOW + 47,
     )?;
     assert_eq!(progress.invocations, 3);
     assert_eq!(progress.elapsed_ms, 47);
-    assert_eq!(progress.cost_micros, 0);
-    assert_eq!(progress.input_units, 0);
-    assert_eq!(progress.output_units, 0);
-    assert_eq!(progress.artifact_bytes, 0);
-    assert_eq!(progress.process_invocations, 0);
-    assert_eq!(progress.model_invocations, 0);
+    assert_eq!(progress.cost_micros, 700);
+    assert_eq!(progress.input_units, 11);
+    assert_eq!(progress.output_units, 13);
+    assert_eq!(progress.artifact_bytes, 17);
+    assert_eq!(progress.process_invocations, 1);
+    assert_eq!(progress.model_invocations, 1);
     assert_eq!(progress.failures, 2);
     assert_eq!(progress.revisions, 41);
     assert_eq!(progress.rejections, 43);
-    assert_eq!(progress.unknown_input_observations, 0);
-    assert_eq!(progress.unknown_output_observations, 0);
-    assert_eq!(progress.unknown_cost_observations, 0);
+    assert_eq!(progress.unknown_input_observations, 1);
+    assert_eq!(progress.unknown_output_observations, 1);
+    assert_eq!(progress.unknown_cost_observations, 1);
+
+    let controller_node = wrapper
+        .semantic()
+        .nodes()
+        .get(&NodeId::new("controller-repeat")?)
+        .ok_or("controller repeat node is absent")?;
+    let assessment_context = |account| ControllerAssessmentContext {
+        run: &run,
+        revision: &wrapper,
+        node: controller_node,
+        execution: &controller_execution,
+        projection: &projection,
+        account,
+        observed_at: TimestampMillis::new(NOW + 47),
+        boundary: ControllerAssessmentBoundary::CycleEntry,
+        next_cycle: Some(2),
+    };
+    assert!(
+        service
+            .controller_lifecycle_owner()
+            .assess(&assessment_context(Some(&account)))?
+            .is_some()
+    );
+    let foreign = ControllerAccountState::establish(ControllerAccountDeclaration::new(
+        run.clone(),
+        milkdrift_persistence::NodeExecutionId::new("foreign-controller-execution")?,
+        document.digest().as_str(),
+        account.declaration().budget().clone(),
+    )?)?;
+    assert!(matches!(
+        service
+            .controller_lifecycle_owner()
+            .assess(&assessment_context(Some(&foreign))),
+        Err(RuntimeError::InvalidHistory(reason))
+            if reason.contains("does not match the originating controller occurrence")
+    ));
+    assert!(matches!(
+        service
+            .controller_lifecycle_owner()
+            .assess(&assessment_context(None)),
+        Err(RuntimeError::InvalidHistory(reason))
+            if reason.contains("no exact durable account binding")
+    ));
+    let activation_without_account = ControllerAssessmentContext {
+        boundary: ControllerAssessmentBoundary::Activation,
+        next_cycle: Some(1),
+        ..assessment_context(None)
+    };
+    assert!(matches!(
+        service
+            .controller_lifecycle_owner()
+            .assess(&activation_without_account),
+        Err(RuntimeError::InvalidHistory(reason))
+            if reason.contains("no exact durable account binding")
+    ));
 
     let proposed = wrapper.revise(
         wrapper.id(),
@@ -686,7 +943,7 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
             &projection,
             &proposed,
             ControllerAssessmentBoundary::ProposalApproval,
-            None,
+            Some(&account),
             NOW + 47,
         ),
         Err(ControlError::Bounds { location, .. })

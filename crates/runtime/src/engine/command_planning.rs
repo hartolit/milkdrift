@@ -780,6 +780,29 @@ impl RuntimeService {
                     acknowledgement: acknowledgement.clone(),
                 });
                 if acknowledgement.accepted() && acknowledgement.terminal_boundary() {
+                    if let Some(account) = self.controller_account_for_run(document.run_id())? {
+                        let reservation =
+                            milkdrift_persistence::ControllerReservationId::for_attempt(
+                                account.declaration().account(),
+                                attempt,
+                            )?;
+                        if !account.reservations().contains_key(&reservation) {
+                            return Err(RuntimeError::InvalidHistory(
+                                "controlled terminal cancellation has no exact outstanding reservation"
+                                    .to_owned(),
+                            ));
+                        }
+                        plan.expected_controller_revision = Some((
+                            account.declaration().account().clone(),
+                            account.revision_digest().clone(),
+                        ));
+                        plan.controller_actions
+                            .push(ControllerAccountAction::SettleTerminal {
+                                account: account.declaration().account().clone(),
+                                reservation,
+                                usage: None,
+                            });
+                    }
                     plan.events.push(RunEventKind::NodeTerminal {
                         execution: attempt_view.execution().clone(),
                         attempt: attempt.clone(),

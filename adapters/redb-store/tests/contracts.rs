@@ -4,6 +4,8 @@
 mod artifact;
 #[path = "contracts/clock.rs"]
 mod clock;
+#[path = "contracts/controller_account.rs"]
+mod controller_account;
 #[path = "contracts/discovery_snapshot_revision.rs"]
 mod discovery_snapshot_revision;
 #[path = "contracts/event_page.rs"]
@@ -18,20 +20,29 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use milkdrift_authority::ActorRef;
-use milkdrift_authority::{GrantDigest, GrantId};
+use milkdrift_authority::{
+    ActorRef, AuthorityBudget, AuthorityDecisionSnapshot, AuthorityExecutionProvenance,
+    AuthorityOperation, AuthorityRequest, BoundaryTimeMillis, DecisionId, DecisionReasonCode,
+    GrantDigest, GrantId, PolicyId, RequestedResourceFacts,
+};
 use milkdrift_blueprint::{
     BlueprintRevisionDocument, ContentDigest as BlueprintContentDigest, NodeId, PortId, RevisionId,
     WorkflowId,
 };
-use milkdrift_capability::{BoundedJson, CapabilityId, InvocationRequest, OperationId};
+use milkdrift_capability::{
+    BoundedJson, CapabilityCategory, CapabilityId, InvocationAdmissionEnvelope, InvocationRequest,
+    OperationId, SideEffectClass,
+};
 use milkdrift_persistence::{
     ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
     ApplicationCommandReceipt, ApplicationCommandResult, ApplicationCommandStore,
     ApplicationEffectReference, ArtifactPublicationId, ArtifactReadAuthority, ArtifactReadRequest,
     ArtifactStore, AtomicRunCommitOutcome, AtomicRunCommitRequest, AttemptId, BeginArtifactOutcome,
     BeginArtifactPublication, ClockWatermarkObservation, ClockWatermarkStore, CommandDisposition,
-    CommandId, CommandReceipt, CommandResultDocument, EventId, EventPageQuery,
+    CommandId, CommandReceipt, CommandResultDocument, ControllerAccountAction,
+    ControllerAccountDeclaration, ControllerAccountState, ControllerAccountStore,
+    ControllerAccountTransaction, ControllerAdmissionOutcome, ControllerReservationId,
+    ControllerResourceBudget, ControllerTransitionId, CurrencyCode, EventId, EventPageQuery,
     ImmutableRevisionPut, IndexedRunState, IntegrityScanRequest, LeaseId, LeaseIndexEntry,
     LeaseIndexMutation, NodeExecutionId, OrphanCleanupRequest, PageSize, PersistenceError,
     RevisionStore, RunDiscoveryIntegrityStore, RunEventEnvelope, RunEventKind, RunIndexUpdate,

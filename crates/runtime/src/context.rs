@@ -460,9 +460,13 @@ pub fn persist_context_manifest(
             return Err(ContextBuildError::Persistence(error.to_string()));
         }
     }
-    let outcome = store
-        .commit_publication(&publication)
-        .map_err(|error| ContextBuildError::Persistence(error.to_string()))?;
+    let outcome = match store.commit_publication(&publication) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            let _abort = store.abort_publication(&publication);
+            return Err(ContextBuildError::Persistence(error.to_string()));
+        }
+    };
     capability_artifact(outcome.metadata().reference())
 }
 

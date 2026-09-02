@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::ContractError;
 
@@ -37,11 +37,28 @@ impl<T> AdmissionBound<T> {
 }
 
 /// Enforceable monetary maximum in one exact currency.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdmissionMonetaryBound {
     maximum_micros: u64,
     currency: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AdmissionMonetaryBoundWire {
+    maximum_micros: u64,
+    currency: String,
+}
+
+impl<'de> Deserialize<'de> for AdmissionMonetaryBound {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = AdmissionMonetaryBoundWire::deserialize(deserializer)?;
+        Self::new(wire.maximum_micros, wire.currency).map_err(serde::de::Error::custom)
+    }
 }
 
 impl AdmissionMonetaryBound {
@@ -157,6 +174,25 @@ mod tests {
         assert_eq!(bound.currency(), "USD");
         assert_eq!(bound.maximum_micros(), 0);
         Ok(())
+    }
+
+    #[test]
+    fn monetary_currency_cannot_bypass_validation_during_decode() {
+        assert!(
+            serde_json::from_value::<AdmissionMonetaryBound>(serde_json::json!({
+                "maximum_micros": 1,
+                "currency": "usd"
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<AdmissionMonetaryBound>(serde_json::json!({
+                "maximum_micros": 1,
+                "currency": "USD",
+                "ignored": true
+            }))
+            .is_err()
+        );
     }
 
     #[test]

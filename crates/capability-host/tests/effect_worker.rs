@@ -70,6 +70,13 @@ struct BlockingLifecycleAdapter {
 }
 
 impl CapabilityAdapter for BlockingLifecycleAdapter {
+    fn admission_envelope(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+    ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        Ok(InvocationAdmissionEnvelope::not_applicable())
+    }
+
     fn execute(
         &self,
         _invocation: &AdapterInvocation<'_>,

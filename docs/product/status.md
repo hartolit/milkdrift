@@ -154,14 +154,16 @@ Current exact versions are:
 - Current Linux snapshot (2026-09-02): formatting, all-target/all-feature checking, the complete
   workspace test and doctest suite, Clippy with warnings denied, rustdoc with warnings denied,
   `cargo deny check`, `cargo machete`, duplicate dependency inspection, and test inventory all pass.
-  Four explicitly manual longevity/storage-bound tests remain ignored in the ordinary suite.
-- All four manual longevity lanes pass separately in release mode: 10,001 receipt commits across
+  Five explicitly manual longevity/storage-bound tests remain ignored in the ordinary suite.
+- All five manual longevity lanes pass separately in release mode: 10,001 receipt commits across
   hot/cold turnover and restart, two-daemon peer retention/restart, controller checkpoint/restart,
-  and the 2,049-occurrence runtime frontier. The seven pinned current-source mutation shards
-  enumerate 564 mutants after the controller shard was extended across final-entry admission,
-  account, and persistence owners. Their complete
+  controller reservation/artifact turnover and restart, and the 2,049-occurrence runtime frontier.
+  The seven pinned current-source mutation shards enumerate 546 mutants after the controller shard
+  was extended across final-entry admission, account, and persistence owners. Their complete
   current-source campaign remains outstanding; the earlier 398-mutant result no longer qualifies
-  the split source paths.
+  the split source paths. The changed controller, runtime, uncertainty, and retention shards pass:
+  169 mutants are caught, nine are compiler-unviable, and one pre-existing runtime reconciliation
+  mutant retains its exact reviewed unreachable-contract classification.
 - The simplified all-feature `cargo-public-api` inventory is retained under `target/public-api` for
   per-package review. This boundary intentionally adds the narrow admission-envelope,
   prepared-entry, and durable controller-account contracts shared by their real owners. The daemon

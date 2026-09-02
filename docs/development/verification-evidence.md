@@ -88,7 +88,10 @@ machine-readable result. A missed mutant must be fixed by a test or recorded by 
 unreachable under a validated public contract, or a mutation-tool limitation; unclassified survivors
 fail the lane.
 
-The seven current-source shards enumerate 564 focused mutants. The previous complete campaign
+The seven current-source shards enumerate 546 focused mutants. The controller, runtime,
+uncertainty, and retention shards pass against the current source: 169 mutants are caught, nine are
+compiler-unviable, and the one surviving runtime reconciliation mutant has the existing exact
+`unreachable_by_valid_contract` classification. The previous complete campaign
 covered 398 mutants before authority, controller, and peer policy moved into their named child
 modules, so it no longer qualifies the current source paths; a fresh complete campaign remains
 required. Per-shard `mutants.out` directories retain source identities, logs, outcomes, and
@@ -96,6 +99,13 @@ generated classification reports. The Rust runner validates its strict classific
 rejects duplicate identities, and fails closed on timeouts or unclassified survivors.
 Checksum-correct raw-row corruption tests exercise the peer primary-record and tombstone validators
 instead of classifying their individual guards.
+
+The controller admission release lane turns over exact final-entry reservations and logical
+artifact charges across checkpoints and a redb reopen, then proves the terminal account has no
+outstanding reservation. It complements the lifecycle-only controller checkpoint/restart lane;
+both are explicit `--ignored --exact` release tests in `stress.yml`, not ordinary pull-request
+tests. The hermetic external-evidence fixture remains an integration regression check and is
+explicitly non-qualifying for real provider interoperability.
 
 Deterministic clock boundary tests inject unavailability and rollback at inbound authority, remote
 catalog registration, artifact transfer, post-entry worker recovery, daemon owner/health, and
@@ -143,8 +153,8 @@ projection serialization from production durable discovery and snapshot-envelope
   every complete `mutants.out` directory, including logs and JSON outcomes.
 - `benchmarks.yml` runs the Divan smoke/full lanes, operational runner, and fixed effect-worker
   saturation regression, then uploads the text, JSON, and CSV evidence.
-- `stress.yml` retains the long-run bounded-frontier cases that are intentionally inappropriate for
-  every pull request.
+- `stress.yml` retains the receipt, peer, controller lifecycle, controller admission, and runtime
+  bounded-frontier cases that are intentionally inappropriate for every pull request.
 
 Checkout, Rust installation, and artifact upload actions use immutable commit SHAs. Jobs have
 explicit timeouts, least-privilege read permissions, and workflow-level concurrency policy. The

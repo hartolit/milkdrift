@@ -649,11 +649,21 @@ impl ControllerAccountState {
                 self.declaration.budget.cost_micros,
             ),
         ] {
-            let exceeds = if let Some(value) = value {
-                checked_add(checked_add(settled, outstanding)?, value)? > limit
-            } else {
-                false
+            let Some(value) = value else {
+                continue;
             };
+            let Some(candidate) = settled
+                .checked_add(outstanding)
+                .and_then(|committed| committed.checked_add(value))
+            else {
+                return Ok(ControllerAdmissionOutcome::Denied {
+                    account: self.declaration.account.clone(),
+                    reason: ControllerAdmissionDenial::Overflow {
+                        dimension: dimension.to_owned(),
+                    },
+                });
+            };
+            let exceeds = candidate > limit;
             if exceeds {
                 return Ok(ControllerAdmissionOutcome::Denied {
                     account: self.declaration.account.clone(),
@@ -671,9 +681,15 @@ impl ControllerAccountState {
             | CapabilityCategory::Peer
             | CapabilityCategory::Custom(_) => (0, 0),
         };
-        if checked_add(self.settled.process_admissions, process)?
-            > self.declaration.budget.process_admissions
-        {
+        let Some(process_candidate) = self.settled.process_admissions.checked_add(process) else {
+            return Ok(ControllerAdmissionOutcome::Denied {
+                account: self.declaration.account.clone(),
+                reason: ControllerAdmissionDenial::Overflow {
+                    dimension: "process_admissions".to_owned(),
+                },
+            });
+        };
+        if process_candidate > self.declaration.budget.process_admissions {
             return Ok(ControllerAdmissionOutcome::Denied {
                 account: self.declaration.account.clone(),
                 reason: ControllerAdmissionDenial::Limit {
@@ -681,9 +697,15 @@ impl ControllerAccountState {
                 },
             });
         }
-        if checked_add(self.settled.model_admissions, model)?
-            > self.declaration.budget.model_admissions
-        {
+        let Some(model_candidate) = self.settled.model_admissions.checked_add(model) else {
+            return Ok(ControllerAdmissionOutcome::Denied {
+                account: self.declaration.account.clone(),
+                reason: ControllerAdmissionDenial::Overflow {
+                    dimension: "model_admissions".to_owned(),
+                },
+            });
+        };
+        if model_candidate > self.declaration.budget.model_admissions {
             return Ok(ControllerAdmissionOutcome::Denied {
                 account: self.declaration.account.clone(),
                 reason: ControllerAdmissionDenial::Limit {
@@ -916,6 +938,11 @@ pub enum ControllerAdmissionDenial {
         /// Resource dimension whose ceiling would be exceeded.
         dimension: String,
     },
+    /// Candidate arithmetic could not be represented without wrapping.
+    Overflow {
+        /// Resource dimension whose candidate overflowed.
+        dimension: String,
+    },
     /// A prior unknown or contract violation permanently closed admission.
     Blocked,
 }
@@ -1020,6 +1047,40 @@ impl ControllerAccountTransaction {
                 location: "controller.account_actions",
                 reason: format!("must contain 1..={MAX_CONTROLLER_ACCOUNT_ACTIONS} actions"),
             });
+        }
+        let mut guarded_account = None;
+        for account in actions.iter().filter_map(|action| match action {
+            ControllerAccountAction::AdmitEntry { account, .. }
+            | ControllerAccountAction::SettleTerminal { account, .. } => Some(account),
+            ControllerAccountAction::Establish { .. } | ControllerAccountAction::BindRun { .. } => {
+                None
+            }
+        }) {
+            if guarded_account
+                .as_ref()
+                .is_some_and(|guarded| guarded != account)
+            {
+                return Err(PersistenceError::InvalidDocument(
+                    "one controller transaction cannot guard multiple accounts".to_owned(),
+                ));
+            }
+            guarded_account = Some(account.clone());
+        }
+        match (guarded_account.as_ref(), expected_account_revision.as_ref()) {
+            (Some(account), Some((expected, _))) if account == expected => {}
+            (Some(_), _) => {
+                return Err(PersistenceError::InvalidDocument(
+                    "controller admission and settlement require the exact account revision guard"
+                        .to_owned(),
+                ));
+            }
+            (None, Some(_)) => {
+                return Err(PersistenceError::InvalidDocument(
+                    "controller establishment and inheritance cannot carry an unrelated account revision guard"
+                        .to_owned(),
+                ));
+            }
+            (None, None) => {}
         }
         let fingerprint = IntegrityDigest::hash(&canonical_json_bytes(
             &(
@@ -1141,6 +1202,28 @@ mod tests {
         ))
     }
 
+    fn single_dimension_envelope(
+        dimension: &str,
+        maximum: u64,
+    ) -> TestResult<InvocationAdmissionEnvelope> {
+        let mut input = AdmissionBound::NotApplicable;
+        let mut output = AdmissionBound::NotApplicable;
+        let mut artifact = AdmissionBound::NotApplicable;
+        let mut cost = AdmissionBound::NotApplicable;
+        match dimension {
+            "input_units" => input = AdmissionBound::Bounded(maximum),
+            "output_units" => output = AdmissionBound::Bounded(maximum),
+            "artifact_bytes" => artifact = AdmissionBound::Bounded(maximum),
+            "monetary_cost" => {
+                cost = AdmissionBound::Bounded(AdmissionMonetaryBound::new(maximum, "USD")?)
+            }
+            _ => return Err(format!("unsupported test dimension {dimension}").into()),
+        }
+        Ok(InvocationAdmissionEnvelope::new(
+            input, output, artifact, cost,
+        ))
+    }
+
     #[test]
     fn exact_process_ceiling_accepts_n_and_denies_n_plus_one() -> TestResult {
         let mut state = account(2, 2)?;
@@ -1172,6 +1255,182 @@ mod tests {
         ));
         assert_eq!(state.revision(), revision);
         assert_eq!(state.committed_totals()?.process_admissions(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn every_resource_ceiling_accepts_exact_equality_and_denies_one_more() -> TestResult {
+        for dimension in [
+            "input_units",
+            "output_units",
+            "artifact_bytes",
+            "monetary_cost",
+        ] {
+            let mut state = account(2, 2)?;
+            let (exact, exact_attempt) = reservation(&state, &format!("{dimension}-exact"))?;
+            assert!(matches!(
+                state.admit(
+                    exact,
+                    exact_attempt,
+                    CapabilityCategory::Tool,
+                    &single_dimension_envelope(dimension, 8)?,
+                )?,
+                ControllerAdmissionOutcome::Reserved { .. }
+            ));
+            let (over, over_attempt) = reservation(&state, &format!("{dimension}-over"))?;
+            assert!(matches!(
+                state.admit(
+                    over,
+                    over_attempt,
+                    CapabilityCategory::Tool,
+                    &single_dimension_envelope(dimension, 1)?,
+                )?,
+                ControllerAdmissionOutcome::Denied {
+                    reason: ControllerAdmissionDenial::Limit {
+                        dimension: denied,
+                    },
+                    ..
+                } if denied == dimension
+            ));
+        }
+
+        for (category, dimension) in [
+            (CapabilityCategory::Process, "process_admissions"),
+            (CapabilityCategory::Model, "model_admissions"),
+        ] {
+            let mut state = account(1, 1)?;
+            let (exact, exact_attempt) = reservation(&state, &format!("{dimension}-exact"))?;
+            assert!(matches!(
+                state.admit(
+                    exact,
+                    exact_attempt,
+                    category.clone(),
+                    &InvocationAdmissionEnvelope::not_applicable(),
+                )?,
+                ControllerAdmissionOutcome::Reserved { .. }
+            ));
+            let (over, over_attempt) = reservation(&state, &format!("{dimension}-over"))?;
+            assert!(matches!(
+                state.admit(
+                    over,
+                    over_attempt,
+                    category,
+                    &InvocationAdmissionEnvelope::not_applicable(),
+                )?,
+                ControllerAdmissionOutcome::Denied {
+                    reason: ControllerAdmissionDenial::Limit {
+                        dimension: denied,
+                    },
+                    ..
+                } if denied == dimension
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_currency_and_overflow_are_distinct_fail_closed_denials() -> TestResult {
+        let mut state = account(2, 2)?;
+        for (dimension, envelope) in [
+            (
+                "input_units",
+                InvocationAdmissionEnvelope::new(
+                    AdmissionBound::Unknown,
+                    AdmissionBound::NotApplicable,
+                    AdmissionBound::NotApplicable,
+                    AdmissionBound::NotApplicable,
+                ),
+            ),
+            (
+                "output_units",
+                InvocationAdmissionEnvelope::new(
+                    AdmissionBound::NotApplicable,
+                    AdmissionBound::Unknown,
+                    AdmissionBound::NotApplicable,
+                    AdmissionBound::NotApplicable,
+                ),
+            ),
+            (
+                "artifact_bytes",
+                InvocationAdmissionEnvelope::new(
+                    AdmissionBound::NotApplicable,
+                    AdmissionBound::NotApplicable,
+                    AdmissionBound::Unknown,
+                    AdmissionBound::NotApplicable,
+                ),
+            ),
+            (
+                "monetary_cost",
+                InvocationAdmissionEnvelope::new(
+                    AdmissionBound::NotApplicable,
+                    AdmissionBound::NotApplicable,
+                    AdmissionBound::NotApplicable,
+                    AdmissionBound::Unknown,
+                ),
+            ),
+        ] {
+            let (reservation, attempt) = reservation(&state, &format!("unknown-{dimension}"))?;
+            assert!(matches!(
+                state.admit(reservation, attempt, CapabilityCategory::Tool, &envelope)?,
+                ControllerAdmissionOutcome::Denied {
+                    reason: ControllerAdmissionDenial::Unknown {
+                        dimension: denied,
+                    },
+                    ..
+                } if denied == dimension
+            ));
+        }
+        let (currency_reservation, currency_attempt) = reservation(&state, "currency")?;
+        let currency = InvocationAdmissionEnvelope::new(
+            AdmissionBound::NotApplicable,
+            AdmissionBound::NotApplicable,
+            AdmissionBound::NotApplicable,
+            AdmissionBound::Bounded(AdmissionMonetaryBound::new(1, "EUR")?),
+        );
+        assert!(matches!(
+            state.admit(
+                currency_reservation,
+                currency_attempt,
+                CapabilityCategory::Tool,
+                &currency,
+            )?,
+            ControllerAdmissionOutcome::Denied {
+                reason: ControllerAdmissionDenial::CurrencyMismatch,
+                ..
+            }
+        ));
+
+        let budget =
+            ControllerResourceBudget::new(1, CurrencyCode::new("USD")?, u64::MAX, 1, 1, 1, 1)?;
+        let mut overflow = ControllerAccountState::establish(ControllerAccountDeclaration::new(
+            RunId::new("run-controller-overflow")?,
+            NodeExecutionId::new("execution-controller-overflow")?,
+            "policy:controller-overflow",
+            budget,
+        )?)?;
+        let (exact, exact_attempt) = reservation(&overflow, "overflow-exact")?;
+        assert!(matches!(
+            overflow.admit(
+                exact,
+                exact_attempt,
+                CapabilityCategory::Tool,
+                &single_dimension_envelope("input_units", u64::MAX)?,
+            )?,
+            ControllerAdmissionOutcome::Reserved { .. }
+        ));
+        let (over, over_attempt) = reservation(&overflow, "overflow-over")?;
+        assert!(matches!(
+            overflow.admit(
+                over,
+                over_attempt,
+                CapabilityCategory::Tool,
+                &single_dimension_envelope("input_units", 1)?,
+            )?,
+            ControllerAdmissionOutcome::Denied {
+                reason: ControllerAdmissionDenial::Overflow { dimension },
+                ..
+            } if dimension == "input_units"
+        ));
         Ok(())
     }
 
@@ -1215,6 +1474,200 @@ mod tests {
         let reopened: ControllerAccountState = serde_json::from_slice(&stored)?;
         reopened.validate()?;
         assert_eq!(reopened, state);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_usage_blocks_and_late_evidence_settles_the_original_reservation_once() -> TestResult
+    {
+        let mut state = account(2, 2)?;
+        let (reservation, attempt) = reservation(&state, "late-usage")?;
+        state.admit(
+            reservation.clone(),
+            attempt,
+            CapabilityCategory::Tool,
+            &single_dimension_envelope("input_units", 8)?,
+        )?;
+        state.settle_terminal(&reservation, None)?;
+        assert!(matches!(
+            state.blocked(),
+            Some(ControllerAccountBlock::UnknownUsage { dimension, .. })
+                if dimension == "input_units"
+        ));
+        assert_eq!(state.outstanding().input_units(), 8);
+
+        state.settle_terminal(
+            &reservation,
+            Some(&AttemptUsage {
+                input_units: Some(3),
+                output_units: None,
+                duration_ms: None,
+                cost: None,
+            }),
+        )?;
+        assert_eq!(state.outstanding().input_units(), 0);
+        assert_eq!(state.settled().input_units(), 3);
+        assert!(!state.reservations().contains_key(&reservation));
+        assert!(matches!(
+            state.settle_terminal(&reservation, None),
+            Err(PersistenceError::NotFound { .. })
+        ));
+        state.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn terminal_cost_currency_and_partial_dimension_retention_are_exact() -> TestResult {
+        let cost_envelope = InvocationAdmissionEnvelope::new(
+            AdmissionBound::NotApplicable,
+            AdmissionBound::NotApplicable,
+            AdmissionBound::NotApplicable,
+            AdmissionBound::Bounded(AdmissionMonetaryBound::new(4, "USD")?),
+        );
+        let mut matching = account(4, 4)?;
+        let (matching_reservation, matching_attempt) = reservation(&matching, "matching-cost")?;
+        matching.admit(
+            matching_reservation.clone(),
+            matching_attempt,
+            CapabilityCategory::Tool,
+            &cost_envelope,
+        )?;
+        matching.settle_terminal(
+            &matching_reservation,
+            Some(&AttemptUsage {
+                input_units: None,
+                output_units: None,
+                duration_ms: None,
+                cost: Some(MonetaryUsage {
+                    micros: 3,
+                    currency: CurrencyCode::new("USD")?,
+                }),
+            }),
+        )?;
+        assert_eq!(matching.settled().cost_micros(), 3);
+        assert_eq!(matching.outstanding().cost_micros(), 0);
+        assert!(matching.blocked().is_none());
+        assert!(!matching.reservations().contains_key(&matching_reservation));
+
+        let mut mismatching = account(4, 4)?;
+        let (mismatching_reservation, mismatching_attempt) =
+            reservation(&mismatching, "mismatching-cost")?;
+        mismatching.admit(
+            mismatching_reservation.clone(),
+            mismatching_attempt,
+            CapabilityCategory::Tool,
+            &cost_envelope,
+        )?;
+        mismatching.settle_terminal(
+            &mismatching_reservation,
+            Some(&AttemptUsage {
+                input_units: None,
+                output_units: None,
+                duration_ms: None,
+                cost: Some(MonetaryUsage {
+                    micros: 3,
+                    currency: CurrencyCode::new("EUR")?,
+                }),
+            }),
+        )?;
+        assert!(matches!(
+            mismatching.blocked(),
+            Some(ControllerAccountBlock::Integrity { reason })
+                if reason.contains("currency differs")
+        ));
+        assert_eq!(mismatching.settled().cost_micros(), 0);
+        assert_eq!(mismatching.outstanding().cost_micros(), 4);
+        assert!(
+            mismatching
+                .reservations()
+                .contains_key(&mismatching_reservation)
+        );
+
+        let mut partial = account(4, 4)?;
+        let (partial_reservation, partial_attempt) = reservation(&partial, "partial-usage")?;
+        partial.admit(
+            partial_reservation.clone(),
+            partial_attempt,
+            CapabilityCategory::Tool,
+            &InvocationAdmissionEnvelope::new(
+                AdmissionBound::Bounded(4),
+                AdmissionBound::Bounded(4),
+                AdmissionBound::NotApplicable,
+                AdmissionBound::NotApplicable,
+            ),
+        )?;
+        partial.settle_terminal(
+            &partial_reservation,
+            Some(&AttemptUsage {
+                input_units: Some(2),
+                output_units: None,
+                duration_ms: None,
+                cost: None,
+            }),
+        )?;
+        assert_eq!(partial.settled().input_units(), 2);
+        assert_eq!(partial.outstanding().input_units(), 0);
+        assert_eq!(partial.outstanding().output_units(), 4);
+        assert!(partial.reservations().contains_key(&partial_reservation));
+        partial.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn account_mutating_transactions_require_the_exact_revision_guard() -> TestResult {
+        let state = account(4, 4)?;
+        let (reservation, attempt) = reservation(&state, "transaction-guard")?;
+        let envelope = InvocationAdmissionEnvelope::not_applicable();
+        let mut candidate = state.clone();
+        let outcome = candidate.admit(
+            reservation.clone(),
+            attempt.clone(),
+            CapabilityCategory::Process,
+            &envelope,
+        )?;
+        let action = ControllerAccountAction::AdmitEntry {
+            account: state.declaration().account().clone(),
+            reservation,
+            attempt,
+            category: CapabilityCategory::Process,
+            envelope,
+            expected_outcome: outcome,
+        };
+        assert!(matches!(
+            ControllerAccountTransaction::new(
+                ControllerTransitionId::new("transition-controller-unguarded")?,
+                None,
+                vec![action.clone()],
+            ),
+            Err(PersistenceError::InvalidDocument(reason))
+                if reason.contains("require the exact account revision guard")
+        ));
+        assert!(matches!(
+            ControllerAccountTransaction::new(
+                ControllerTransitionId::new("transition-controller-wrong-guard")?,
+                Some((
+                    ControllerAccountId::new("controller-account:foreign")?,
+                    state.revision_digest().clone(),
+                )),
+                vec![action.clone()],
+            ),
+            Err(PersistenceError::InvalidDocument(reason))
+                if reason.contains("require the exact account revision guard")
+        ));
+        let guarded = ControllerAccountTransaction::new(
+            ControllerTransitionId::new("transition-controller-guarded")?,
+            Some((
+                state.declaration().account().clone(),
+                state.revision_digest().clone(),
+            )),
+            vec![action],
+        )?;
+        assert_eq!(
+            guarded
+                .expected_account_revision()
+                .map(|(account, _)| account),
+            Some(state.declaration().account())
+        );
         Ok(())
     }
 

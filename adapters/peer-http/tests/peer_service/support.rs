@@ -22,10 +22,10 @@ pub(super) use milkdrift_capability::{
     AdmissionConstraints, ArtifactReference as InvocationArtifactReference, BoundedJson,
     CancellationAcknowledgement, CancellationBehavior, CancellationRequest, CapabilityCategory,
     CapabilityDescriptor, CapabilityId, CapabilityObservation, DescriptorBuilder,
-    IdempotencyBehavior, InputReference, InvocationEvent, InvocationEventKind, InvocationId,
-    InvocationRequest, InvocationTerminal, InvocationValueReference, Locality, OperationContract,
-    OperationId, ResolvedCapabilitySnapshot, SchemaContract, SchemaId, SideEffectClass,
-    StreamingMode, TerminalStatus, TrustZone,
+    IdempotencyBehavior, InputReference, InvocationAdmissionEnvelope, InvocationEvent,
+    InvocationEventKind, InvocationId, InvocationRequest, InvocationTerminal,
+    InvocationValueReference, Locality, OperationContract, OperationId, ResolvedCapabilitySnapshot,
+    SchemaContract, SchemaId, SideEffectClass, StreamingMode, TerminalStatus, TrustZone,
 };
 pub(super) use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, CapabilityHost,
@@ -220,6 +220,13 @@ pub(super) struct ClockFailingAdapter {
 }
 
 impl CapabilityAdapter for ClockFailingAdapter {
+    fn admission_envelope(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+    ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        Ok(InvocationAdmissionEnvelope::not_applicable())
+    }
+
     fn execute(
         &self,
         _invocation: &AdapterInvocation<'_>,
@@ -261,6 +268,13 @@ impl CapabilityAdapter for ClockFailingAdapter {
 }
 
 impl CapabilityAdapter for TerminalAdapter {
+    fn admission_envelope(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+    ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        Ok(InvocationAdmissionEnvelope::not_applicable())
+    }
+
     fn authority_requirements(&self) -> CapabilityExecutionRequirements {
         self.requirements.clone()
     }

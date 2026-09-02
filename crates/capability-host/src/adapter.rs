@@ -293,10 +293,8 @@ pub trait CapabilityAdapter: Send + Sync {
     /// Derives enforceable bounds for this exact immutable request and generation.
     fn admission_envelope(
         &self,
-        _invocation: &AdapterInvocation<'_>,
-    ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
-        Ok(InvocationAdmissionEnvelope::unknown())
-    }
+        invocation: &AdapterInvocation<'_>,
+    ) -> Result<InvocationAdmissionEnvelope, AdapterError>;
 
     /// Returns immutable filesystem/network/secret and budget facts for canonical evaluation.
     fn authority_requirements(&self) -> CapabilityExecutionRequirements {

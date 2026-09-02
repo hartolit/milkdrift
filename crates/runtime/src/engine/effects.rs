@@ -433,25 +433,28 @@ impl RuntimeService {
                             "effect ticket lease is no longer active".to_owned(),
                         )
                     })?;
-                    if attempt.state() != &AttemptState::Running
-                        || attempt.execution() != dispatch.execution()
-                        || attempt.request() != Some(dispatch.request())
-                        || attempt.capability().map(|value| value.snapshot())
-                            != Some(dispatch.resolution())
-                        || attempt.capability().and_then(|value| value.authorization())
-                            != Some(dispatch.resolution_authorization())
-                        || attempt.entry_authorization() != Some(dispatch.entry_authorization())
-                        || projection.execution_authority() != Some(dispatch.execution_authority())
-                        || !matches!(execution.state(), NodeExecutionState::Running(active) if active == dispatch.attempt())
-                        || execution.node() != dispatch.node()
-                        || projection.revision_for_attempt(dispatch.attempt()) != Some(dispatch.revision())
-                        || !lease.is_active()
-                        || lease.attempt() != dispatch.attempt()
-                        || lease.execution() != dispatch.execution()
-                        || lease.worker() != &self.config.worker
-                        || lease.expires_at() != dispatch.lease_expires_at()
-                        || lease.expires_at() <= now
-                    {
+                    let exact_ticket_coordinates = [
+                        attempt.state() == &AttemptState::Running,
+                        attempt.execution() == dispatch.execution(),
+                        attempt.request() == Some(dispatch.request()),
+                        attempt.capability().map(|value| value.snapshot())
+                            == Some(dispatch.resolution()),
+                        attempt.capability().and_then(|value| value.authorization())
+                            == Some(dispatch.resolution_authorization()),
+                        attempt.entry_authorization() == Some(dispatch.entry_authorization()),
+                        projection.execution_authority() == Some(dispatch.execution_authority()),
+                        matches!(execution.state(), NodeExecutionState::Running(active) if active == dispatch.attempt()),
+                        execution.node() == dispatch.node(),
+                        projection.revision_for_attempt(dispatch.attempt())
+                            == Some(dispatch.revision()),
+                        lease.is_active(),
+                        lease.attempt() == dispatch.attempt(),
+                        lease.execution() == dispatch.execution(),
+                        lease.worker() == &self.config.worker,
+                        lease.expires_at() == dispatch.lease_expires_at(),
+                        lease.expires_at() > now,
+                    ];
+                    if exact_ticket_coordinates.contains(&false) {
                         return Err(RuntimeError::InvalidTransition(
                             "effect ticket no longer matches the exact active attempt and lease"
                                 .to_owned(),
@@ -566,9 +569,10 @@ impl RuntimeService {
                             ..CommandPlan::default()
                         },
                     )?;
-                    if decision_commit.result().disposition() != CommandDisposition::Accepted
-                        || decision_commit.replayed()
-                    {
+                    if !adapter_entry_decision_is_new(
+                        decision_commit.result().disposition(),
+                        decision_commit.replayed(),
+                    ) {
                         return Err(RuntimeError::InvalidTransition(
                             "final adapter-entry decision was not newly committed".to_owned(),
                         ));
@@ -820,9 +824,11 @@ impl RuntimeService {
         detail: &str,
     ) -> Result<(), RuntimeError> {
         let projection = self.projection(run)?;
-        let attempt_view = projection.attempts().get(attempt).ok_or_else(|| {
-            RuntimeError::InvalidHistory("uncertain effect attempt is absent".to_owned())
-        })?;
+        let Some(attempt_view) = projection.attempts().get(attempt) else {
+            // A concurrent terminal cancellation can compact the attempt before the adapter's
+            // owned execution call returns. That accepted terminal fact is authoritative.
+            return Ok(());
+        };
         if !matches!(
             attempt_view.state(),
             AttemptState::Leased | AttemptState::Running
@@ -1160,6 +1166,10 @@ fn terminal_report_identity(report: &WorkerReport) -> Option<(AttemptId, u64)> {
     }
 }
 
+fn adapter_entry_decision_is_new(disposition: CommandDisposition, replayed: bool) -> bool {
+    disposition == CommandDisposition::Accepted && !replayed
+}
+
 fn stable_effect_command_id(
     run: &RunId,
     attempt: &AttemptId,
@@ -1182,4 +1192,30 @@ fn stable_effect_command_id(
         hasher.update(component);
     }
     CommandId::new(format!("effect:{}", hasher.finalize().to_hex())).map_err(RuntimeError::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::adapter_entry_decision_is_new;
+    use milkdrift_persistence::CommandDisposition;
+
+    #[test]
+    fn adapter_entry_requires_both_acceptance_and_a_new_commit() {
+        assert!(adapter_entry_decision_is_new(
+            CommandDisposition::Accepted,
+            false,
+        ));
+        assert!(!adapter_entry_decision_is_new(
+            CommandDisposition::Accepted,
+            true,
+        ));
+        assert!(!adapter_entry_decision_is_new(
+            CommandDisposition::Rejected,
+            false,
+        ));
+        assert!(!adapter_entry_decision_is_new(
+            CommandDisposition::Rejected,
+            true,
+        ));
+    }
 }

@@ -20,9 +20,9 @@ use milkdrift_blueprint::{NodeId, RevisionId, WorkflowId};
 use milkdrift_capability::{
     AdmissionConstraints, CancellationAcknowledgement, CancellationRequest, CapabilityDescriptor,
     CapabilityDescriptorDocument, CapabilityId, CapabilityObservation, CapabilityRequirement,
-    DescriptorBuilder, InvocationEvent, InvocationEventKind, InvocationId, InvocationRequest,
-    InvocationTerminal, Locality, OperationId, ProviderProfileRef, ResolvedCapabilitySnapshot,
-    SideEffectClass, TerminalStatus,
+    DescriptorBuilder, InvocationAdmissionEnvelope, InvocationEvent, InvocationEventKind,
+    InvocationId, InvocationRequest, InvocationTerminal, Locality, OperationId, ProviderProfileRef,
+    ResolvedCapabilitySnapshot, SideEffectClass, TerminalStatus,
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterFailureKind, AdapterInvocation, AdapterReporter, CapabilityAdapter,
@@ -138,6 +138,13 @@ impl FakeAdapter {
 }
 
 impl CapabilityAdapter for FakeAdapter {
+    fn admission_envelope(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+    ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        Ok(InvocationAdmissionEnvelope::not_applicable())
+    }
+
     fn authority_requirements(&self) -> CapabilityExecutionRequirements {
         self.authority_requirements.clone()
     }
@@ -321,6 +328,13 @@ struct FailingAdapter {
 }
 
 impl CapabilityAdapter for FailingAdapter {
+    fn admission_envelope(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+    ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        Ok(InvocationAdmissionEnvelope::not_applicable())
+    }
+
     fn execute(
         &self,
         _invocation: &AdapterInvocation<'_>,

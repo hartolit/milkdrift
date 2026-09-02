@@ -831,18 +831,23 @@ fn late_worker_reports_cannot_be_forged_through_external_commands() -> TestResul
 
 #[test]
 fn expired_leases_cannot_cross_or_reenter_the_external_execution_boundary() -> TestResult {
-    for claim_before_expiry in [false, true] {
+    for (claim_before_expiry, elapsed_ms) in [
+        (false, 30_000),
+        (true, 30_000),
+        (false, 30_001),
+        (true, 30_001),
+    ] {
         let directory = TempDir::new()?;
         let identity = if claim_before_expiry {
-            "expired-claimed-ticket"
+            format!("expired-claimed-ticket-{elapsed_ms}")
         } else {
-            "expired-unclaimed-lease"
+            format!("expired-unclaimed-lease-{elapsed_ms}")
         };
         let executor = Arc::new(DispatchCountingExecutor::new(test_descriptor()?));
         let (store, clock, runtime) = runtime_with_executor_at(
             directory.path(),
-            identity,
-            identity,
+            &identity,
+            &identity,
             NOW,
             8,
             executor.clone(),
@@ -878,7 +883,7 @@ fn expired_leases_cannot_cross_or_reenter_the_external_execution_boundary() -> T
         } else {
             None
         };
-        clock.advance(30_001)?;
+        clock.advance(elapsed_ms)?;
         if let Some(action) = action {
             assert!(matches!(
                 runtime.execute_effect(action),

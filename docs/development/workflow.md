@@ -82,6 +82,8 @@ Focused workflow-control checks are:
 cargo test -p milkdrift-control --test proposal_contracts -- --nocapture
 cargo test -p milkdrift-control --test authority_policy_controller -- --nocapture
 cargo test -p milkdrift-control --test control_service -- --nocapture
+cargo test -p milkdrift-persistence controller_account --all-features -- --nocapture
+cargo test -p milkdrift-redb-store --features test-admin --test contracts controller_account -- --nocapture
 ```
 
 These cover canonical/digest-bound and hostile proposal documents, exact ordinary-grant preset
@@ -183,13 +185,32 @@ worker-lease-churn 10,000-cycle cases individually in release mode. Keep their e
 names synchronized only in the workflow; use the bounded-module filter above for local
 development.
 
-The ordinary workspace test suite excludes tests whose fixture intentionally crosses a
-large persistence bound and therefore performs thousands of durable redb index
-mutations. The manual and weekly `stress` workflow retains this end-to-end evidence. Run
-it locally in release mode rather than making every local and pull-request test pay its
-cost:
+The ordinary workspace test suite excludes five tests whose fixtures intentionally cross large
+persistence or operational bounds. The manual and weekly `stress` workflow retains these
+end-to-end receipt, peer, controller, controller-admission, and runtime-frontier proofs. Run them
+locally in release mode rather than making every local and pull-request test pay their cost:
 
 ```sh
+cargo test --release \
+  -p milkdrift-redb-store \
+  --test application_state \
+  release_receipt_longevity_crosses_many_hot_bounds_and_replays_after_restart \
+  -- --ignored --exact --nocapture
+cargo test --release \
+  -p milkdrift-daemon \
+  --test two_daemon_peer \
+  peer_execution_retention_longevity_survives_turnover_and_restart \
+  -- --ignored --exact --nocapture
+cargo test --release \
+  -p milkdrift-control \
+  --test control_service \
+  revision_and_lifecycle::release_controller_longevity_stops_once_across_checkpoints_and_restart \
+  -- --ignored --exact --nocapture
+cargo test --release \
+  -p milkdrift-control \
+  --test control_service \
+  admission::release_controller_admission_longevity_turns_over_reservations_artifacts_and_restart \
+  -- --ignored --exact --nocapture
 cargo test --release \
   -p milkdrift-runtime \
   --test structured_runtime \
