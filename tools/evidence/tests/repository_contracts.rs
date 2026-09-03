@@ -1,7 +1,7 @@
 //! Repository-level documentation, dependency-direction, and public-boundary contracts.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     error::Error,
     fs,
     path::{Path, PathBuf},
@@ -12,6 +12,139 @@ use milkdrift_capability::OperationId;
 use milkdrift_local_process::ProcessProfileDocument;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
+
+const COHESION_REVIEW_LINES: usize = 1_000;
+const MAXIMUM_SOURCE_LINES: usize = 2_000;
+
+#[derive(Clone, Copy, Debug)]
+struct CohesionException {
+    path: &'static str,
+    ceiling: usize,
+    rationale: &'static str,
+}
+
+const PRODUCTION_COHESION_EXCEPTIONS: &[CohesionException] = &[
+    CohesionException {
+        path: "adapters/local-process/src/config.rs",
+        ceiling: 1_152,
+        rationale: "one versioned process-profile reader validates the complete external adapter contract",
+    },
+    CohesionException {
+        path: "adapters/model-provider/src/adapter.rs",
+        ceiling: 1_291,
+        rationale: "one provider adapter owns request mapping, streaming, and bounded response classification",
+    },
+    CohesionException {
+        path: "adapters/peer-http/src/remote.rs",
+        ceiling: 1_357,
+        rationale: "one remote peer adapter owns authenticated protocol exchange and failure translation",
+    },
+    CohesionException {
+        path: "adapters/redb-store/src/admin/cursor.rs",
+        ceiling: 1_072,
+        rationale: "one durable cursor owner validates every administrative scan phase transition",
+    },
+    CohesionException {
+        path: "adapters/redb-store/src/application.rs",
+        ceiling: 1_152,
+        rationale: "one storage owner implements the complete application-state persistence port",
+    },
+    CohesionException {
+        path: "adapters/redb-store/src/controller_account.rs",
+        ceiling: 1_178,
+        rationale: "one storage owner implements the controller-account durable ledger contract",
+    },
+    CohesionException {
+        path: "adapters/redb-store/src/journal/workspace.rs",
+        ceiling: 1_067,
+        rationale: "one journal transaction owner keeps workspace accounting and event commit atomic",
+    },
+    CohesionException {
+        path: "adapters/redb-store/src/peer.rs",
+        ceiling: 1_561,
+        rationale: "one storage owner implements the complete peer-state persistence port",
+    },
+    CohesionException {
+        path: "apps/daemon/src/config.rs",
+        ceiling: 1_368,
+        rationale: "one daemon configuration reader owns validation across the versioned host document",
+    },
+    CohesionException {
+        path: "apps/daemon/src/host.rs",
+        ceiling: 1_830,
+        rationale: "one daemon composition owner coordinates lifecycle across focused private host modules",
+    },
+    CohesionException {
+        path: "apps/daemon/src/http.rs",
+        ceiling: 1_531,
+        rationale: "one transport owner keeps route adaptation and public failure mapping consistent",
+    },
+    CohesionException {
+        path: "crates/blueprint/src/validation.rs",
+        ceiling: 1_158,
+        rationale: "one validator owns the complete immutable blueprint semantic invariant set",
+    },
+    CohesionException {
+        path: "crates/capability/src/descriptor.rs",
+        ceiling: 1_213,
+        rationale: "one descriptor owner validates the complete versioned capability declaration contract",
+    },
+    CohesionException {
+        path: "crates/capability/src/invocation.rs",
+        ceiling: 1_284,
+        rationale: "one invocation owner validates exact values, references, and accounting metadata",
+    },
+    CohesionException {
+        path: "crates/control/src/service.rs",
+        ceiling: 1_346,
+        rationale: "one control service owns authorization and durable command admission ordering",
+    },
+    CohesionException {
+        path: "crates/persistence/src/controller_account.rs",
+        ceiling: 1_966,
+        rationale: "one persistence contract owns controller-account ledger types and transition invariants",
+    },
+    CohesionException {
+        path: "crates/runtime/src/engine/command_planning.rs",
+        ceiling: 1_645,
+        rationale: "one planner exhaustively maps closed run commands into durable event batches",
+    },
+    CohesionException {
+        path: "crates/runtime/src/engine/completion.rs",
+        ceiling: 1_198,
+        rationale: "one completion pass owns terminal classification and its ordered durable consequences",
+    },
+    CohesionException {
+        path: "crates/runtime/src/engine/effects.rs",
+        ceiling: 1_221,
+        rationale: "one effect pass owns dispatch eligibility and uncertain-outcome persistence ordering",
+    },
+    CohesionException {
+        path: "crates/runtime/src/engine/structured/repeat.rs",
+        ceiling: 1_088,
+        rationale: "one structured-repeat owner preserves iteration identity and expansion invariants",
+    },
+    CohesionException {
+        path: "crates/runtime/src/engine/support.rs",
+        ceiling: 1_086,
+        rationale: "one engine support owner centralizes private event construction shared by passes",
+    },
+    CohesionException {
+        path: "crates/runtime/src/projection/node.rs",
+        ceiling: 1_296,
+        rationale: "one node projection reducer owns exhaustive event-to-node-state interpretation",
+    },
+    CohesionException {
+        path: "crates/runtime/src/query.rs",
+        ceiling: 1_175,
+        rationale: "one query owner constructs bounded read models from authoritative projections",
+    },
+    CohesionException {
+        path: "crates/runtime/src/reconciliation.rs",
+        ceiling: 1_390,
+        rationale: "one reconciliation owner classifies uncertain effects without rewriting execution history",
+    },
+];
 
 fn root() -> TestResult<PathBuf> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -637,8 +770,6 @@ fn public_reexports_are_explicit_and_reviewable() -> TestResult {
 
 #[test]
 fn rust_modules_use_named_file_children_and_respect_the_size_backstop() -> TestResult {
-    const MAXIMUM_SOURCE_LINES: usize = 2_000;
-
     let repository = root()?;
     let mut sources = Vec::new();
     collect_files(&repository, &mut sources, &|path| {
@@ -659,6 +790,95 @@ fn rust_modules_use_named_file_children_and_respect_the_size_backstop() -> TestR
         );
     }
     Ok(())
+}
+
+#[test]
+fn production_sources_over_the_review_threshold_have_exact_bounded_exceptions() -> TestResult {
+    let repository = root()?;
+    let mut paths = Vec::new();
+    collect_files(&repository, &mut paths, &|path| {
+        path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+    })?;
+    let sources = paths
+        .iter()
+        .map(|path| {
+            let relative = path
+                .strip_prefix(&repository)
+                .map_err(|_| {
+                    std::io::Error::other(format!(
+                        "collected source escaped repository root: {}",
+                        path.display()
+                    ))
+                })?
+                .to_string_lossy()
+                .replace('\\', "/");
+            Ok(SourceLineCount {
+                production: is_production_source(&relative),
+                path: relative,
+                lines: read(path)?.lines().count(),
+            })
+        })
+        .collect::<TestResult<Vec<_>>>()?;
+    let errors = cohesion_policy_errors(PRODUCTION_COHESION_EXCEPTIONS, &sources);
+    assert!(
+        errors.is_empty(),
+        "production cohesion exception policy failed:\n{}",
+        errors.join("\n")
+    );
+    Ok(())
+}
+
+#[test]
+fn cohesion_policy_rejects_missing_stale_duplicate_over_broad_and_exceeded_exceptions() {
+    let sources = vec![
+        SourceLineCount::production("crates/example/src/missing.rs", 1_001),
+        SourceLineCount::production("crates/example/src/stale.rs", 900),
+        SourceLineCount::production("crates/example/src/duplicate.rs", 1_001),
+        SourceLineCount::production("crates/example/src/exceeded.rs", 1_101),
+        SourceLineCount {
+            path: "crates/example/tests/large.rs".to_owned(),
+            lines: 1_500,
+            production: false,
+        },
+    ];
+    let exceptions = [
+        CohesionException {
+            path: "crates/example/src/stale.rs",
+            ceiling: 1_050,
+            rationale: "this deliberately stale fixture has enough words for policy validation",
+        },
+        CohesionException {
+            path: "crates/example/src/duplicate.rs",
+            ceiling: 1_050,
+            rationale: "this deliberately duplicate fixture has enough words for policy validation",
+        },
+        CohesionException {
+            path: "crates/example/src/duplicate.rs",
+            ceiling: 1_060,
+            rationale: "this second duplicate fixture has enough words for policy validation",
+        },
+        CohesionException {
+            path: "crates/example/src/*",
+            ceiling: 1_050,
+            rationale: "this deliberately broad fixture has enough words for policy validation",
+        },
+        CohesionException {
+            path: "crates/example/src/exceeded.rs",
+            ceiling: 1_050,
+            rationale: "this deliberately exceeded fixture has enough words for policy validation",
+        },
+    ];
+    let errors = cohesion_policy_errors(&exceptions, &sources).join("\n");
+    for category in ["missing", "stale", "duplicate", "over-broad", "exceeded"] {
+        assert!(
+            errors.contains(category),
+            "missing {category} diagnostic: {errors}"
+        );
+    }
+    assert!(
+        !errors.contains("crates/example/tests/large.rs"),
+        "test and evidence sources must remain separate from production review exceptions"
+    );
 }
 
 #[test]
@@ -690,4 +910,111 @@ fn collect_files(
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct SourceLineCount {
+    path: String,
+    lines: usize,
+    production: bool,
+}
+
+impl SourceLineCount {
+    fn production(path: &str, lines: usize) -> Self {
+        Self {
+            path: path.to_owned(),
+            lines,
+            production: true,
+        }
+    }
+}
+
+fn is_production_source(relative: &str) -> bool {
+    let mut components = relative.split('/');
+    let Some(area) = components.next() else {
+        return false;
+    };
+    if !matches!(area, "adapters" | "apps" | "crates") || !relative.contains("/src/") {
+        return false;
+    }
+    if relative == "apps/daemon/src/bin/milkdrift-external-evidence/main.rs" {
+        return false;
+    }
+    !relative
+        .split('/')
+        .any(|component| matches!(component, "tests" | "tests.rs" | "testing.rs"))
+}
+
+fn cohesion_policy_errors(
+    exceptions: &[CohesionException],
+    sources: &[SourceLineCount],
+) -> Vec<String> {
+    let source_by_path = sources
+        .iter()
+        .map(|source| (source.path.as_str(), source))
+        .collect::<BTreeMap<_, _>>();
+    let mut exception_by_path = BTreeMap::new();
+    let mut errors = Vec::new();
+    let mut prior_path = None;
+    for exception in exceptions {
+        if prior_path.is_some_and(|prior| prior >= exception.path) {
+            errors.push(format!(
+                "unordered exception: {} must follow exact lexical path order",
+                exception.path
+            ));
+        }
+        prior_path = Some(exception.path);
+        let exact_path = exception.path.ends_with(".rs")
+            && !exception.path.starts_with('/')
+            && !exception.path.contains("..")
+            && !exception.path.contains(['*', '?', '[', ']'])
+            && is_production_source(exception.path);
+        if !exact_path {
+            errors.push(format!("over-broad exception: {}", exception.path));
+            continue;
+        }
+        if exception.rationale.split_whitespace().count() < 6 {
+            errors.push(format!("empty or weak rationale: {}", exception.path));
+        }
+        if exception.ceiling <= COHESION_REVIEW_LINES || exception.ceiling >= MAXIMUM_SOURCE_LINES {
+            errors.push(format!(
+                "invalid bounded ceiling for {}: {}",
+                exception.path, exception.ceiling
+            ));
+        }
+        if exception_by_path
+            .insert(exception.path, exception)
+            .is_some()
+        {
+            errors.push(format!("duplicate exception: {}", exception.path));
+        }
+    }
+
+    for exception in exception_by_path.values() {
+        match source_by_path.get(exception.path) {
+            None => errors.push(format!("stale exception path: {}", exception.path)),
+            Some(source) if !source.production || source.lines <= COHESION_REVIEW_LINES => errors
+                .push(format!(
+                    "stale exception below review threshold: {} has {} lines",
+                    exception.path, source.lines
+                )),
+            Some(source) if source.lines > exception.ceiling => errors.push(format!(
+                "exceeded exception ceiling: {} has {} lines above {}",
+                exception.path, source.lines, exception.ceiling
+            )),
+            Some(_) => {}
+        }
+    }
+    for source in sources
+        .iter()
+        .filter(|source| source.production && source.lines > COHESION_REVIEW_LINES)
+    {
+        if !exception_by_path.contains_key(source.path.as_str()) {
+            errors.push(format!(
+                "missing exception: {} has {} production lines",
+                source.path, source.lines
+            ));
+        }
+    }
+    errors
 }

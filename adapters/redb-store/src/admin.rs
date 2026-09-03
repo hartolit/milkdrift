@@ -23,7 +23,7 @@ use milkdrift_blueprint::BlueprintRevisionDocument;
 use milkdrift_persistence::{
     ApplicationCommandStore, ArtifactPublicationId, BoundedDetail, IndexedRunState,
     IntegrityScanCursor, IntegrityScanFamily, IntegrityScanRequest, IntegrityScanResult,
-    LeaseIndexEntry, PersistenceError, RevisionSummary, RunSequence, RunnableIndexEntry, SignalId,
+    LeaseIndexEntry, PersistenceError, RevisionSummary, RunnableIndexEntry, SignalId,
     SnapshotDocument, SnapshotId, StorageAdmin, StorageComponentHealth, StorageHealth,
     StorageHealthStatus, StorageSchemaCompatibility, StorageSchemaInfo, TimerIndexEntry,
     TimestampMillis,

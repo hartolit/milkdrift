@@ -4,13 +4,12 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use milkdrift_blueprint::{
     ContextArtifactRetention, ContextArtifactSensitivity, ContextCategory, ContextProvenanceClass,
-    ContextSemanticRole, ContextTruncation, EdgeKind, NodeId, RevisionId, SemanticBlueprint,
-    TaskContextPolicy,
+    ContextSemanticRole, EdgeKind, NodeId, RevisionId, SemanticBlueprint, TaskContextPolicy,
 };
 use milkdrift_model::{
     AuthorityFact, ContextEvidenceReference, ContextInclusionReason, ContextManifest,
-    ContextManifestEntry, ContextOmission, ContextOmissionReason, ContextProducerFact,
-    ContextSemanticKind, ContextSource, ContextTotals, ModelContractError,
+    ContextOmission, ContextOmissionReason, ContextProducerFact, ContextSemanticKind,
+    ContextSource, ContextTotals, ModelContractError,
 };
 use milkdrift_persistence::{AttemptId, NodeExecutionId};
 use milkdrift_workspace::{
@@ -21,6 +20,7 @@ use milkdrift_workspace::{
 };
 use thiserror::Error;
 
+mod selection;
 mod source;
 
 pub use source::{
@@ -173,206 +173,7 @@ impl CausalContextBuilder {
     /// Builds one exact manifest. Stable order is causal depth, semantic kind,
     /// source node, then canonical source-reference bytes.
     pub fn build(request: ContextBuildRequest<'_>) -> Result<ContextManifest, ContextBuildError> {
-        if !request
-            .semantic
-            .nodes()
-            .contains_key(&request.identity.node)
-        {
-            return Err(ContextBuildError::MissingNode(request.identity.node));
-        }
-        for node in request.policy.selected_nodes() {
-            if !request.semantic.nodes().contains_key(node) {
-                return Err(ContextBuildError::MissingNode(node.clone()));
-            }
-        }
-        let ancestor_depths = ancestor_depths(
-            request.semantic,
-            &request.identity.node,
-            request.policy.ancestor_depth(),
-        );
-        let mut ranked = Vec::with_capacity(request.candidates.len());
-        for candidate in request.candidates {
-            let (eligible, reason, omission) = eligibility(
-                request.policy,
-                &request.visible_scopes,
-                &ancestor_depths,
-                &candidate,
-            );
-            let depth = candidate
-                .causal_distance
-                .or_else(|| {
-                    candidate
-                        .node
-                        .as_ref()
-                        .and_then(|node| ancestor_depths.get(node).copied())
-                })
-                .unwrap_or(u16::MAX);
-            let source_key = candidate
-                .source
-                .as_ref()
-                .map(serde_json::to_vec)
-                .transpose()
-                .map_err(|error| ModelContractError::Invalid(error.to_string()))?
-                .unwrap_or_default();
-            ranked.push((
-                depth,
-                candidate.kind,
-                candidate.node.clone(),
-                source_key,
-                eligible,
-                reason,
-                omission,
-                candidate,
-            ));
-        }
-        ranked.sort_by(|left, right| {
-            (&left.0, &left.1, &left.2, &left.3).cmp(&(&right.0, &right.1, &right.2, &right.3))
-        });
-
-        let budget = request.policy.budget();
-        let mut entries = Vec::new();
-        let mut omissions = Vec::new();
-        let mut totals = ContextTotals::default();
-        let mut stopped = false;
-        for (_, _, _, _, eligible, reason, omission_reason, candidate) in ranked {
-            if !eligible || stopped {
-                if !eligible
-                    && candidate.required
-                    && request.policy.fail_closed()
-                    && exact_source_requested(request.policy, &candidate)
-                {
-                    return Err(ContextBuildError::RequiredUnavailable(
-                        "exact context source is excluded or not visible",
-                    ));
-                }
-                omissions.push(omission(
-                    &candidate,
-                    if stopped {
-                        ContextOmissionReason::SelectionStopped
-                    } else {
-                        omission_reason.unwrap_or(ContextOmissionReason::NotSelected)
-                    },
-                ));
-                continue;
-            }
-            if candidate.availability != ContextCandidateAvailability::Available {
-                if candidate.required && request.policy.fail_closed() {
-                    return Err(ContextBuildError::RequiredUnavailable(
-                        "missing exact source",
-                    ));
-                }
-                let reason = match candidate.availability {
-                    ContextCandidateAvailability::Available => unreachable!(),
-                    ContextCandidateAvailability::MissingOrCorrupt => {
-                        ContextOmissionReason::MissingOrCorrupt
-                    }
-                    ContextCandidateAvailability::Unsupported => ContextOmissionReason::Unsupported,
-                    ContextCandidateAvailability::Superseded => ContextOmissionReason::Superseded,
-                };
-                omissions.push(omission(&candidate, reason));
-                continue;
-            }
-            if candidate.authority.required && !candidate.authority.authorized {
-                if candidate.required && request.policy.fail_closed() {
-                    return Err(ContextBuildError::AuthorityDenied);
-                }
-                omissions.push(omission(&candidate, ContextOmissionReason::AuthorityDenied));
-                continue;
-            }
-            let overflow = budget_overflow(budget, totals, &candidate)?;
-            if let Some((omission_reason, budget_name)) = overflow {
-                if candidate.required && request.policy.fail_closed() {
-                    return Err(ContextBuildError::RequiredBudget(budget_name));
-                }
-                omissions.push(omission(&candidate, omission_reason));
-                stopped = request.policy.truncation() == ContextTruncation::StopAtFirstOverflow;
-                continue;
-            }
-            totals.items = totals
-                .items
-                .checked_add(1)
-                .ok_or(ContextBuildError::AccountingOverflow)?;
-            totals.bytes = totals
-                .bytes
-                .checked_add(candidate.selected_bytes)
-                .ok_or(ContextBuildError::AccountingOverflow)?;
-            totals.artifact_bytes = totals
-                .artifact_bytes
-                .checked_add(candidate.selected_artifact_bytes)
-                .ok_or(ContextBuildError::AccountingOverflow)?;
-            let selected_artifact = candidate_is_artifact(&candidate);
-            if selected_artifact {
-                totals.artifacts = totals
-                    .artifacts
-                    .checked_add(1)
-                    .ok_or(ContextBuildError::AccountingOverflow)?;
-            }
-            if let Some(units) = candidate.estimated_model_input_units {
-                totals.model_input_units = Some(
-                    totals
-                        .model_input_units
-                        .unwrap_or(0)
-                        .checked_add(units)
-                        .ok_or(ContextBuildError::AccountingOverflow)?,
-                );
-            }
-            let source = candidate.source.ok_or({
-                if candidate.required {
-                    ContextBuildError::RequiredUnavailable("missing source reference")
-                } else {
-                    ContextBuildError::RequiredUnavailable("eligible source reference")
-                }
-            })?;
-            let ordinal = totals.items;
-            entries.push(ContextManifestEntry::new(
-                ordinal,
-                candidate.kind,
-                candidate.roles,
-                source,
-                candidate.content_digest,
-                candidate.source_revision,
-                candidate.execution,
-                candidate.attempt,
-                candidate.scope,
-                candidate.causal_distance,
-                candidate.source_sequence,
-                candidate.occurred_at_ms,
-                candidate.producer,
-                candidate.causal_parents,
-                selected_artifact,
-                candidate.selected_bytes,
-                candidate.selected_artifact_bytes,
-                candidate.estimated_model_input_units,
-                candidate.sensitivity,
-                candidate.authority,
-                reason.unwrap_or(ContextInclusionReason::IncludedCategory),
-            )?);
-        }
-        let digest = request
-            .policy
-            .digest()
-            .map_err(|error| ContextBuildError::Policy(error.to_string()))?;
-        let manifest = ContextManifest::new(
-            request.identity.run,
-            request.identity.revision,
-            request.identity.node,
-            request.identity.execution,
-            request.identity.attempt,
-            1,
-            digest,
-            entries,
-            omissions,
-            totals,
-            budget,
-        )?;
-        let encoded =
-            milkdrift_model::ContextManifestDocument::new(manifest.clone()).to_canonical_json()?;
-        if u64::try_from(encoded.len()).map_or(true, |size| size > budget.max_manifest_bytes) {
-            return Err(ContextBuildError::RequiredBudget(
-                "serialized manifest byte",
-            ));
-        }
-        Ok(manifest)
+        selection::build(request)
     }
 }
 

@@ -53,6 +53,10 @@ snapshot. Git, CI, releases, and external audits own chronology.
   restart do not re-enter the adapter. The owner continues serving final worker clock/persistence
   calls while peer and effect workers drain, preventing shutdown from waiting on work that only the
   owner can complete. The CLI is a storage-free client of `milkdrift-control-client`.
+  Daemon command adaptation is partitioned into private definition, run, controller, proposal, and
+  control-result owners behind one exhaustive protocol route. Attempt inspection separately owns
+  current projection lookup, bounded historical folding, authority filtering, and context/provenance
+  attachment without changing the public attempt meaning.
 - External control protocol 2.2 provides bounded duplicate-safe DTOs, exact negotiation,
   authenticated cursor schema 2, idempotent commands, revisions/diffs, runs/nodes/attempts,
   timelines, proposals, capabilities/providers, authority, peers, artifacts, layouts, health, and
@@ -68,11 +72,15 @@ snapshot. Git, CI, releases, and external audits own chronology.
   security audit, and peer execution/retention. Application receipts move independently from hot
   to cold while preserving exact replay; peer terminal detail compacts independently to replay and
   conflict tombstones. Older/future stores are refused because no migration is claimed.
+  Administrative integrity scanning uses one private typed phase driver, one read transaction, and
+  one cursor/refusal policy across revision, event, artifact, and index checks.
 - Causal context is discovered from a bounded durable tail plus compact projection anchors at the
   frozen journal head. Historical revisions, branch/join/subworkflow visibility, sensitivity,
   authority, selection budgets, omissions, and exact provenance are explicit. Only selected
   content is materialized. Required denied, missing, corrupt, unsupported, or over-budget evidence
   fails before dispatch; retries rebind the prior frozen selection.
+  Private discovery state owns projection, journal, explicit-source, and exposure phases; private
+  selection state owns final deterministic ordering, omissions, authority, sensitivity, and budgets.
 - Models remain external provider capabilities. Provider-neutral task/response and context
   contracts are separate from bounded OpenAI-compatible and native Anthropic mappings. Exact
   profile/model/usage metadata and committed artifacts are recorded without logging prompts,
@@ -105,6 +113,9 @@ snapshot. Git, CI, releases, and external audits own chronology.
   canonical operations with no blocking compatibility driver. Cross-domain UTF-8 truncation and
   canonical `b3_` lexical validation have one implementation in `milkdrift-contracts`, while
   semantic digest types and errors remain domain-owned. There are no UI packages or UI dependencies.
+  Repository contracts require exact reviewed exceptions with rationales and bounded ceilings when
+  production Rust sources cross 1,000 lines; all Rust sources remain below the 2,000-line backstop,
+  and test/evidence sources cannot weaken the production policy.
 
 Current exact versions are:
 

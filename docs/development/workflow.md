@@ -181,9 +181,12 @@ Keep module ownership visible. A source file that accumulates multiple lifecycle
 domain responsibilities must be split into real Rust child modules; `include!` and
 facade-wide wildcard re-exports are not substitutes for module boundaries. Production
 files approaching roughly 1,000 lines require an explicit cohesion review. The repository
-contract prevents any Rust source from crossing the 2,000-line hard backstop and rejects
-`mod.rs`; use `owner.rs` with named `owner/child.rs` modules. Integration tests must be
-grouped by behavior with shared support kept separate.
+contract rejects production sources above 1,000 lines unless their exact path has a meaningful
+review rationale and a bounded ceiling. Missing, stale, duplicate, over-broad, and exceeded
+exceptions fail the contract; test/evidence sources are classified separately and cannot grant a
+production exception. Every Rust source remains below the 2,000-line hard backstop, and `mod.rs`
+is rejected; use `owner.rs` with named `owner/child.rs` modules. Integration tests must be grouped
+by behavior with shared support kept separate.
 
 ## Storage-boundary stress tests
 

@@ -6,48 +6,31 @@ It is an actionable engineering review, not a second owner for product status or
 
 ## Priority summary
 
-| Priority | Finding | Main rule at risk |
-| --- | --- | --- |
-| Medium | Cohesion review is deferred until the 2,000-line backstop | Organize by responsibility; review large files |
+No unresolved codebase-audit finding remains in the current cohesion scope.
 
-## Findings
+## Current cohesion review
 
-### 1. Medium — The cohesion guard starts much later than the engineering rule
+The named production hotspots have focused private ownership:
 
-The engineering rules require a cohesion review as production files approach roughly 1,000 lines.
-The repository contract in `tools/evidence/tests/repository_contracts.rs:432-452` enforces only a
-hard `< 2,000` line limit. There are currently 23 production files at or above 1,000 lines. A
-diagnostic Clippy pass over workspace library/binary targets with `too_many_lines` and
-`cognitive_complexity` enabled reports 127 long functions across 85 files and 12 high-complexity
-functions.
+- the CLI root owns argument composition while command-family modules call one shared session owner
+  for credentials, request envelopes, confirmation, bounded input/output, errors, and exit codes;
+- runtime causal-context discovery uses one private state across projection seeding, bounded journal
+  folding, event classification, explicit-source completion, and branch/join/subworkflow exposure;
+  a separate private selection state owns validation, deterministic ranking, omissions, and final
+  manifest construction;
+- daemon command adaptation uses one exhaustive protocol routing map over private command families,
+  with common envelope validation and public result handling owned once;
+- daemon attempt reads separate current projection lookup, bounded historical reconstruction,
+  authority filtering, and context/provenance attachment while producing one public meaning; and
+- redb administrative integrity scanning uses one private typed phase driver under one transaction
+  and one refusal/cursor policy.
 
-The counts are diagnostic, not a request to split exhaustive reducers mechanically. The clearest
-first review targets are responsibilities that already have natural phases or command families:
+Repository contracts require an exact reviewed exception, meaningful rationale, and bounded ceiling
+for every production Rust source above 1,000 lines. They reject missing, stale, duplicate,
+over-broad, and exceeded exceptions. Test and evidence code is classified separately, while the
+strict `< 2,000`-line backstop and named-module rule apply to every Rust source. Cohesive exhaustive
+reducers retain source-local `#[expect]` rationales instead of global lint suppression.
 
-- `apps/cli/src/main.rs:377` — a 438-line command dispatcher, cognitive complexity 62;
-- `crates/runtime/src/context/source/discovery.rs:19` — a 472-line function combining projection
-  seeding, history reconstruction, event classification, explicit-source resolution, branch/join
-  exposure, and final policy validation;
-- `apps/daemon/src/host/commands.rs:16` — a 347-line external command dispatcher;
-- `apps/daemon/src/host/attempts.rs:190` — a 239-line historical reconstruction path, cognitive
-  complexity 34;
-- `adapters/redb-store/src/admin/service.rs:120` — a 266-line integrity phase driver, cognitive
-  complexity 34.
-
-Recommended correction:
-
-1. Replace the single backstop with a reviewed-exception mechanism: fail new/expanded production
-   files above the review threshold, and require a local `#[expect]` rationale for cohesive long
-   functions that should remain intact.
-2. Refactor the listed dispatchers into private command-family or phase functions. For context
-   discovery, introduce one private state object and separate projection seeding, bounded journal
-   folding, explicit-source completion, and final validation without changing the owning boundary.
-3. Do not split the exhaustive projection event reducers solely to satisfy a metric; review them
-   for duplicated transition mechanics first, as required by the engineering rules.
-
-## Suggested remediation
-
-Apply targeted cohesion refactors and strengthen the repository guard.
-
-The remaining item is an independently shippable cleanup slice and should not be bundled into a
-large architectural rewrite.
+Diagnostic `clippy::too_many_lines` and `clippy::cognitive_complexity` output remains review input,
+not an instruction to split a single invariant mechanically. New findings belong here only when
+they remain actionable in the current tree.
