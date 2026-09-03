@@ -130,7 +130,7 @@ fn undeclared_executor_output_is_durably_rejected_without_workspace_mutation() -
     harness.put_revision(&revision)?;
     harness.create_and_start(&run, &revision)?;
 
-    let error = match harness.runtime.tick() {
+    let error = match runtime_tick(&harness.runtime) {
         Ok(result) => {
             return Err(
                 format!("undeclared executor output unexpectedly completed: {result:?}").into(),
@@ -213,7 +213,7 @@ fn oversized_provider_retry_after_preserves_the_terminal_failure() -> TestResult
     )?;
     harness.put_revision(&revision)?;
     harness.create_and_start(&run, &revision)?;
-    assert_eq!(harness.runtime.tick()?.completed, 1);
+    assert_eq!(runtime_tick(&harness.runtime)?.completed, 1);
 
     let projection = harness.runtime.projection(&run)?;
     assert_eq!(
@@ -496,7 +496,7 @@ fn orphan_latest_optional_input_is_rejected_against_the_projection() -> TestResu
 
     let (store, _clock, runtime) =
         runtime_at(directory.path(), "orphan-optional-input-reopen", NOW, 64)?;
-    let Err(error) = runtime.tick() else {
+    let Err(error) = runtime_tick(&runtime) else {
         return Err("scheduler accepted an unprojected durable latest input".into());
     };
     assert_integrity_error(&error);
@@ -524,7 +524,7 @@ fn deleted_required_producer_output_cannot_be_scheduled_as_an_invocation_input()
     )?;
     harness.put_revision(&revision)?;
     harness.create_and_start(&run, &revision)?;
-    assert_eq!(harness.runtime.tick()?.dispatched, 1);
+    assert_eq!(runtime_tick(&harness.runtime)?.dispatched, 1);
     let projection = harness.runtime.projection(&run)?;
     let output_reference = projection
         .executions_for_node(&NodeId::new("produce")?)
@@ -770,7 +770,7 @@ fn runnable_cursor_keeps_its_cycle_boundary_across_an_advancing_clock() -> TestR
         );
     }
 
-    assert_eq!(runtime.tick()?.dispatched, 1);
+    assert_eq!(runtime_tick(&runtime)?.dispatched, 1);
     let first_after_tick = runtime.projection(&first)?.lifecycle();
     let second_after_tick = runtime.projection(&second)?.lifecycle();
     assert_eq!(
@@ -782,7 +782,7 @@ fn runnable_cursor_keeps_its_cycle_boundary_across_an_advancing_clock() -> TestR
         "one bounded page must dispatch exactly one of the equally eligible runs"
     );
     clock.advance(1)?;
-    assert_eq!(runtime.tick()?.dispatched, 1);
+    assert_eq!(runtime_tick(&runtime)?.dispatched, 1);
     assert_eq!(
         runtime.projection(&first)?.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Succeeded)
@@ -839,7 +839,7 @@ fn orphan_latest_value_cannot_become_a_worker_output_predecessor() -> TestResult
         submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
         CommandDisposition::Accepted
     );
-    let crash = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.tick()));
+    let crash = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime_tick(&runtime)));
     assert!(
         crash.is_err(),
         "executor did not stop after durable dispatch"
@@ -1167,7 +1167,7 @@ fn paused_runs_record_signal_and_timer_facts_without_advancing_until_resume() ->
             CommandDisposition::Accepted
         );
         harness.clock.advance(100)?;
-        assert_eq!(harness.runtime.tick()?.dispatched, 0);
+        assert_eq!(runtime_tick(&harness.runtime)?.dispatched, 0);
         let paused = harness.runtime.projection(&run)?;
         assert_eq!(paused.lifecycle(), RunLifecycle::Paused);
         assert!(paused.timers().values().all(|timer| timer.is_completed()));
@@ -1355,7 +1355,7 @@ fn immutable_task_input_path_error_is_durably_failed_before_dispatch() -> TestRe
         CommandDisposition::Accepted
     );
 
-    let tick = harness.runtime.tick()?;
+    let tick = runtime_tick(&harness.runtime)?;
     assert_eq!(tick.dispatched, 0);
     assert_eq!(tick.completed, 1);
     let projection = harness.runtime.projection(&run)?;
@@ -1378,7 +1378,7 @@ fn immutable_task_input_path_error_is_durably_failed_before_dispatch() -> TestRe
         RunEventKind::NodeScheduled { .. } | RunEventKind::LeaseGranted { .. }
     )));
     let head = harness.store.head(&run)?;
-    let _ = harness.runtime.tick()?;
+    let _ = runtime_tick(&harness.runtime)?;
     assert_eq!(harness.store.head(&run)?, head);
     Ok(())
 }
@@ -1410,7 +1410,7 @@ fn oversized_immutable_invocation_is_durably_failed_before_dispatch() -> TestRes
     harness.put_revision(&revision)?;
     harness.create_and_start(&run, &revision)?;
 
-    let tick = harness.runtime.tick()?;
+    let tick = runtime_tick(&harness.runtime)?;
     assert_eq!(tick.dispatched, 0);
     assert_eq!(tick.completed, 1);
     let projection = harness.runtime.projection(&run)?;

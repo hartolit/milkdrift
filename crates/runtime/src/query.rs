@@ -569,13 +569,6 @@ mod tests {
             })
         }
 
-        fn nonterminal_runs(
-            &self,
-            _limit: PageSize,
-        ) -> Result<Vec<RunSummaryIndex>, PersistenceError> {
-            Ok(Vec::new())
-        }
-
         fn nonterminal_run_page(
             &self,
             _cursor: Option<&milkdrift_persistence::RunSummaryCursor>,

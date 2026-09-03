@@ -72,7 +72,7 @@ cargo test -p milkdrift-blueprint --test kernel -- --nocapture
 cargo test -p milkdrift-model --test contracts -- --nocapture
 cargo test -p milkdrift-runtime --test causal_context -- --nocapture
 cargo test -p milkdrift-model-provider --test mock_endpoints -- --nocapture
-cargo test -p milkdrift-runtime --test structured_runtime causal_context_production -- --nocapture
+cargo test -p milkdrift-runtime --all-features --test structured_runtime causal_context_production -- --nocapture
 cargo test -p milkdrift-capability-host --test materialization -- --nocapture
 ```
 
@@ -214,6 +214,7 @@ cargo test --release \
   -- --ignored --exact --nocapture
 cargo test --release \
   -p milkdrift-runtime \
+  --all-features \
   --test structured_runtime \
   lifecycle::historical_execution_frontier_stays_bounded_across_index_limit \
   -- --ignored --exact --nocapture

@@ -1164,14 +1164,10 @@ fn report_fragment(
 ) -> Result<(), HttpError> {
     let mut rest = fragment;
     while !rest.is_empty() {
-        let mut end = rest.len().min(max as usize);
-        while !rest.is_char_boundary(end) {
-            end -= 1;
-        }
-        if end == 0 {
+        let piece = milkdrift_contracts::truncate_utf8(rest, max as usize);
+        if piece.is_empty() {
             return Err(HttpError::MalformedResponse);
         }
-        let piece = &rest[..end];
         reporter
             .invocation(
                 InvocationEvent::new(
@@ -1189,7 +1185,7 @@ fn report_fragment(
         *sequence = sequence
             .checked_add(1)
             .ok_or(HttpError::MalformedResponse)?;
-        rest = &rest[end..];
+        rest = &rest[piece.len()..];
     }
     Ok(())
 }

@@ -25,6 +25,7 @@ jobs:
         run: >-
           cargo test --release
           -p milkdrift-runtime
+          --all-features
           --test structured_runtime
           lifecycle::historical_execution_frontier_stays_bounded_across_index_limit
           -- --ignored --exact --nocapture

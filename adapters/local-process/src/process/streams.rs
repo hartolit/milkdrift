@@ -103,13 +103,8 @@ pub(super) fn progress_message(stream: Stream, bytes: &[u8]) -> String {
     };
     let value = String::from_utf8_lossy(bytes);
     let mut message = format!("{prefix}{value}");
-    if message.len() > 4_096 {
-        let mut end = 4_096;
-        while !message.is_char_boundary(end) {
-            end -= 1;
-        }
-        message.truncate(end);
-    }
+    let boundary = milkdrift_contracts::truncate_utf8(&message, 4_096).len();
+    message.truncate(boundary);
     message
 }
 

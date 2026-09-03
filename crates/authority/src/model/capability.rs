@@ -2,11 +2,11 @@ use std::collections::BTreeSet;
 
 use milkdrift_capability::{
     CapabilityCategory, CapabilityId, CapabilityRequirement, ExecutionTrustClass, Locality,
-    OperationId, ProviderProfileRef, SideEffectClass, TrustZone,
+    OperationId, PeerId, ProviderProfileRef, SideEffectClass, TrustZone,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{AuthorityError, PeerId, Selection};
+use crate::{AuthorityError, Selection};
 
 /// Capability-selection constraints in a grant.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]

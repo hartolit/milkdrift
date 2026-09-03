@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use milkdrift_authority::PeerId;
+use milkdrift_capability::PeerId;
 use serde::{Deserialize, Serialize};
 
 use crate::{PeerProtocolError, SessionId};

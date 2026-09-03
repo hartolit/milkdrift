@@ -93,13 +93,8 @@ impl AdapterError {
         if summary.is_empty() {
             summary = fallback.to_owned();
         }
-        if summary.len() > 512 {
-            let mut end = 512;
-            while !summary.is_char_boundary(end) {
-                end -= 1;
-            }
-            summary.truncate(end);
-        }
+        let boundary = milkdrift_contracts::truncate_utf8(&summary, 512).len();
+        summary.truncate(boundary);
         Self { kind, summary }
     }
 

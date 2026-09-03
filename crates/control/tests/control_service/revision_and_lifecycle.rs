@@ -58,7 +58,7 @@ fn controller_checkpoint_survives_restart_and_duplicate_approval() -> TestResult
         store.put_revision(&wrapper)?;
         create_and_start(&service, &runtime, &context, &run, &wrapper)?;
         for _ in 0..48 {
-            runtime.tick()?;
+            runtime_tick(&runtime)?;
             let projection = runtime.projection(&run)?;
             if projection
                 .repeat_continuations()
@@ -213,7 +213,7 @@ fn controller_oversized_proposal_is_rejected_before_revision_persistence() -> Te
     })?;
     store.put_revision(&wrapper)?;
     create_and_start(&service, &runtime, &context, &run, &wrapper)?;
-    runtime.tick()?;
+    runtime_tick(&runtime)?;
     let observed = runtime.projection(&run)?.sequence();
     let inserted = task_node("proposal-extra", "tool.publish")?;
     let mutation = MutationBatch::new(vec![
@@ -427,7 +427,7 @@ fn release_controller_longevity_stops_once_across_checkpoints_and_restart() -> T
         store.put_revision(&wrapper)?;
         create_and_start(&service, &runtime, &context, &run, &wrapper)?;
         for _ in 0..128 {
-            runtime.tick()?;
+            runtime_tick(&runtime)?;
             if runtime
                 .projection(&run)?
                 .repeat_continuations()
@@ -469,7 +469,7 @@ fn release_controller_longevity_stops_once_across_checkpoints_and_restart() -> T
             },
         )?)?;
         for _ in 0..128 {
-            runtime.tick()?;
+            runtime_tick(&runtime)?;
             let projection = runtime.projection(&run)?;
             if projection
                 .repeat_continuations()
@@ -528,7 +528,7 @@ fn release_controller_longevity_stops_once_across_checkpoints_and_restart() -> T
             },
         )?)?;
         for _ in 0..512 {
-            runtime.tick()?;
+            runtime_tick(&runtime)?;
         }
         let projection = runtime.projection(&run)?;
         assert_eq!(
@@ -554,7 +554,7 @@ fn release_controller_longevity_stops_once_across_checkpoints_and_restart() -> T
     );
     let before = runtime.projection(&run)?.sequence();
     for _ in 0..512 {
-        runtime.tick()?;
+        runtime_tick(&runtime)?;
     }
     assert_eq!(runtime.projection(&run)?.sequence(), before);
     assert_eq!(

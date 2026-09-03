@@ -34,9 +34,11 @@ impl BoundaryClock for SystemBoundaryClock {
 }
 
 /// Deterministic mutable clock for scheduler/recovery tests.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug)]
 pub struct ManualClock(AtomicU64);
 
+#[cfg(any(test, feature = "test-support"))]
 impl ManualClock {
     /// Starts at an exact recorded timestamp.
     #[must_use]
@@ -67,6 +69,7 @@ impl ManualClock {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl BoundaryClock for ManualClock {
     fn now(&self) -> Result<TimestampMillis, RuntimeError> {
         Ok(TimestampMillis::new(self.0.load(Ordering::SeqCst)))

@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use milkdrift_authority::PeerId;
+use milkdrift_capability::PeerId;
 use milkdrift_persistence::{
     PageSize, PeerExecutionStatus, PeerRelationshipState, PeerRetentionRequest, TimestampMillis,
 };

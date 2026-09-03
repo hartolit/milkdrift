@@ -179,16 +179,6 @@ impl RuntimeService {
         Ok(result)
     }
 
-    /// Compatibility driver for simple synchronous hosts and existing embeddings.
-    ///
-    /// This combines one nonblocking scheduler pass with one caller-owned blocking effect
-    /// pass. Production daemons should call [`Self::scheduler_tick`] and
-    /// [`Self::claim_effects`] independently so a long-running capability cannot occupy
-    /// scheduler ownership.
-    pub fn tick(&self) -> Result<SchedulerTickResult, RuntimeError> {
-        self.drive_once()
-    }
-
     fn drive_structured_runs(
         &self,
         now: TimestampMillis,

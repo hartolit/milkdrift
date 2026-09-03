@@ -126,13 +126,7 @@ impl Diagnostic {
 }
 
 fn bound_text(mut value: String, limit: usize) -> String {
-    if value.len() <= limit {
-        return value;
-    }
-    let mut boundary = limit;
-    while boundary > 0 && !value.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
+    let boundary = milkdrift_contracts::truncate_utf8(&value, limit).len();
     value.truncate(boundary);
     value
 }

@@ -97,9 +97,7 @@ fn is_git_object(value: &str) -> bool {
 }
 
 fn is_blake3_digest(value: &str) -> bool {
-    value.len() == 67
-        && value.starts_with("b3_")
-        && value[3..].bytes().all(|byte| byte.is_ascii_hexdigit())
+    milkdrift_contracts::is_canonical_blake3_digest(value)
 }
 
 fn is_blake3_hex(value: &str) -> bool {

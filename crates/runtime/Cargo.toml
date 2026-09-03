@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+test-support = []
+
 [dependencies]
 blake3.workspace = true
 milkdrift-authority.workspace = true
@@ -23,6 +27,14 @@ tracing.workspace = true
 [dev-dependencies]
 milkdrift-redb-store = { workspace = true, features = ["test-admin"] }
 tempfile = "3.21.0"
+
+[[test]]
+name = "durable_runtime"
+required-features = ["test-support"]
+
+[[test]]
+name = "structured_runtime"
+required-features = ["test-support"]
 
 [lints]
 workspace = true

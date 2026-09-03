@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use milkdrift_capability::PeerId;
 use milkdrift_peer_protocol::{
     ArtifactChunk, ArtifactMetadataOffer, ArtifactTransferDecision, CatalogSnapshot,
     HandshakeRequest, HandshakeResponse, InvocationAcceptance, InvocationLookup,
@@ -75,13 +76,13 @@ impl PeerHttpClient {
 
     /// Local configured peer identity.
     #[must_use]
-    pub const fn local_peer(&self) -> &milkdrift_authority::PeerId {
+    pub const fn local_peer(&self) -> &PeerId {
         &self.config.local_peer
     }
 
     /// Exact remote configured peer identity.
     #[must_use]
-    pub const fn remote_peer(&self) -> &milkdrift_authority::PeerId {
+    pub const fn remote_peer(&self) -> &PeerId {
         &self.config.expected_remote_peer
     }
 

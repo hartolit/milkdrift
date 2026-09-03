@@ -428,7 +428,7 @@ async fn artifact_abort(
 async fn authenticated_service_call<T>(
     state: AppState,
     headers: &HeaderMap,
-    operation: impl FnOnce(Arc<PeerService>, milkdrift_authority::PeerId) -> Result<T, PeerHttpError>
+    operation: impl FnOnce(Arc<PeerService>, milkdrift_capability::PeerId) -> Result<T, PeerHttpError>
     + Send
     + 'static,
 ) -> Result<T, ApiError>
@@ -495,14 +495,7 @@ fn success<T: Serialize>(message: T) -> Result<Response, ApiError> {
 }
 
 fn bounded(value: &str, maximum: usize) -> String {
-    if value.len() <= maximum {
-        return value.to_owned();
-    }
-    let mut end = maximum;
-    while !value.is_char_boundary(end) {
-        end = end.saturating_sub(1);
-    }
-    value[..end].to_owned()
+    milkdrift_contracts::truncate_utf8(value, maximum).to_owned()
 }
 
 #[cfg(test)]

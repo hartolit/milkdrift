@@ -3,10 +3,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use milkdrift_authority::{CapabilityExecutionRequirements, PeerId};
+use milkdrift_authority::CapabilityExecutionRequirements;
 use milkdrift_capability::{
     CapabilityCategory, CapabilityDescriptor, CapabilityId, CapabilityObservation,
-    ExecutionTrustClass, InvocationId, Locality, OperationId, ProviderProfileRef, TrustZone,
+    ExecutionTrustClass, InvocationId, Locality, OperationId, PeerId, ProviderProfileRef,
+    TrustZone,
 };
 use thiserror::Error;
 

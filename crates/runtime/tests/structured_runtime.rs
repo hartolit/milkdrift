@@ -1,5 +1,8 @@
 //! Black-box structured-runtime evidence using the production redb store.
 
+#[path = "support/runtime_driver.rs"]
+mod runtime_driver;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -58,6 +61,8 @@ use milkdrift_workspace::{
 };
 use serde_json::json;
 use tempfile::TempDir;
+
+use runtime_driver::runtime_tick;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 type PersistenceResult<T> = Result<T, milkdrift_persistence::PersistenceError>;
@@ -1077,7 +1082,7 @@ impl Harness {
             if self.runtime.projection(run)?.is_completed() {
                 break;
             }
-            let tick = self.runtime.tick()?;
+            let tick = runtime_tick(&self.runtime)?;
             dispatched = dispatched.saturating_add(tick.dispatched);
         }
         Ok(dispatched)

@@ -19,9 +19,9 @@ mod query;
 mod reconciliation;
 mod scheduler;
 
-pub use boundary::{
-    BoundaryClock, IdGenerator, ManualClock, SequentialIdGenerator, SystemBoundaryClock,
-};
+#[cfg(any(test, feature = "test-support"))]
+pub use boundary::ManualClock;
+pub use boundary::{BoundaryClock, IdGenerator, SequentialIdGenerator, SystemBoundaryClock};
 pub use command::{
     AUTHORIZED_RUN_COMMAND_SCHEMA_VERSION_V1, CommandAuthorityClaim, ExternalWorkAction,
     MAX_COMMAND_ITEMS, RUN_COMMAND_SCHEMA_VERSION_V1, RunCommand, RunCommandDocument,
@@ -38,14 +38,16 @@ pub use controller::{
     ControllerLifecycle,
 };
 pub use engine::{
-    CommandExecution, EffectExecutionResult, EffectTickResult, RecoveryResult, RuntimeConfig,
-    RuntimeHealth, RuntimeService, RuntimeStartupState, RuntimeStore, SchedulerTickResult,
+    CommandExecution, EffectExecutionResult, RecoveryResult, RuntimeConfig, RuntimeHealth,
+    RuntimeService, RuntimeStartupState, RuntimeStore, SchedulerTickResult,
 };
 pub use error::RuntimeError;
+#[cfg(any(test, feature = "test-support"))]
+pub use executor::DeterministicExecutor;
 pub use executor::{
-    CancellationDispatch, CapabilityResolutionContext, DeterministicExecutor, EffectAction,
-    ExecutionDispatch, ExecutionReporter, ExecutorError, MAX_REPORTS_PER_DISPATCH,
-    ObservationDisposition, PreparedExecution, ResolvedCapability, TaskExecutor,
+    CancellationDispatch, CapabilityResolutionContext, EffectAction, ExecutionDispatch,
+    ExecutionReporter, ExecutorError, MAX_REPORTS_PER_DISPATCH, ObservationDisposition,
+    PreparedExecution, ResolvedCapability, TaskExecutor,
 };
 pub use projection::{
     AttemptState, AttemptTerminal, BranchProjection, BranchState, CapabilityResolution,

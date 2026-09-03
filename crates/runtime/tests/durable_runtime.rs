@@ -1,5 +1,8 @@
 //! Process-style headless runtime evidence against the production local store.
 
+#[path = "support/runtime_driver.rs"]
+mod runtime_driver;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
@@ -39,6 +42,8 @@ use milkdrift_runtime::{
 };
 use milkdrift_workspace::{RunId, ScopeId, WorkspaceBudget, WorkspaceScope};
 use tempfile::TempDir;
+
+use runtime_driver::runtime_tick;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -640,7 +645,7 @@ fn redb_run_replays_after_complete_object_teardown_and_finishes() -> TestResult 
                 .map(ExecutionAuthorityBasis::digest)
         );
         runtime.recover()?;
-        let tick = runtime.tick()?;
+        let tick = runtime_tick(&runtime)?;
         assert_eq!(tick.dispatched, 0);
         assert_eq!(tick.completed, 1);
         let projection = runtime.projection(&run)?;

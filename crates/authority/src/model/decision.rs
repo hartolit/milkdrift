@@ -2,15 +2,15 @@ use std::collections::BTreeSet;
 
 use milkdrift_blueprint::{RevisionId, WorkflowId};
 use milkdrift_capability::{
-    CapabilityCategory, CapabilityId, ExecutionTrustClass, Locality, OperationId,
+    CapabilityCategory, CapabilityId, ExecutionTrustClass, Locality, OperationId, PeerId,
     ProviderProfileRef, SideEffectClass, TrustZone,
 };
 use milkdrift_workspace::{ArtifactId, ArtifactSensitivity, RunId, ScopeId};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActorRef, AuthorityError, DecisionId, GrantDigest, GrantId, NetworkProfileRef, PeerId,
-    PolicyId, SecretRef, document::canonical_json,
+    ActorRef, AuthorityError, DecisionId, GrantDigest, GrantId, NetworkProfileRef, PolicyId,
+    SecretRef, document::canonical_json,
 };
 
 use super::{

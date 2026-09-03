@@ -1,14 +1,12 @@
-use milkdrift_authority::{ActorRef, PeerId};
+use milkdrift_authority::ActorRef;
 use milkdrift_capability::{
     CapabilityId, InvocationEvent, InvocationRequest, InvocationRequestDocument, OperationId,
-    ResolvedCapabilitySnapshot, TerminalStatus,
+    PeerId, ResolvedCapabilitySnapshot, TerminalStatus,
 };
+use milkdrift_contracts::is_canonical_blake3_digest;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    CatalogDigest, DelegationRef, PeerExecutionId, PeerProtocolError, PeerRequestId,
-    identity::validate_blake3_digest,
-};
+use crate::{CatalogDigest, DelegationRef, PeerExecutionId, PeerProtocolError, PeerRequestId};
 
 const INVOCATION_DIGEST_DOMAIN: &[u8] = b"milkdrift.peer.invocation.v1\0";
 const MAX_OBSERVATIONS_PER_PAGE: usize = 256;
@@ -267,7 +265,7 @@ impl PeerInvocationRequest {
             || self.delegation.capability != *self.selection.capability()
             || self.delegation.operation != *self.selection.operation()
             || !self.delegation.limits.contains(self.limits)
-            || !validate_blake3_digest(self.catalog_digest.as_str())
+            || !is_canonical_blake3_digest(self.catalog_digest.as_str())
         {
             return Err(PeerProtocolError::InvalidContract(
                 "peer invocation selection, catalog, request, or delegation mismatch".to_owned(),
@@ -505,7 +503,7 @@ impl InvocationLookup {
             } => {
                 request_id == request
                     && *accepted_at_unix_ms > 0
-                    && valid_blake3_digest(request_digest)
+                    && is_canonical_blake3_digest(request_digest)
                     && match history {
                         ObservationHistory::Hot => true,
                         ObservationHistory::Archived { summary } => {
@@ -565,7 +563,7 @@ impl ArchivedExecutionSummary {
     /// Validates terminal/uncertain summary consistency for one execution.
     pub fn validate(&self, execution: &PeerExecutionId) -> Result<(), PeerProtocolError> {
         if self.archived_at_unix_ms == 0
-            || !valid_blake3_digest(&self.observation_digest)
+            || !is_canonical_blake3_digest(&self.observation_digest)
             || self
                 .uncertainty_reason
                 .as_ref()
@@ -745,14 +743,6 @@ impl ObservationPage {
         }
         Ok(())
     }
-}
-
-fn valid_blake3_digest(value: &str) -> bool {
-    value.len() == 67
-        && value.starts_with("b3_")
-        && value[3..]
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 /// Exact cancellation request; socket closure is deliberately unrelated.

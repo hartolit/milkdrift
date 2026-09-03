@@ -3,8 +3,9 @@
 //! Transport-neutral, bounded protocol contracts between authenticated Milkdrift peers.
 //!
 //! This package intentionally owns no socket, async runtime, TLS, database, provider,
-//! process, or workflow state. A transport authenticates a [`PeerId`] and then decodes
-//! these messages under the limits negotiated by the two configured daemons.
+//! process, or workflow state. A transport authenticates a
+//! [`PeerId`](milkdrift_capability::PeerId) and then decodes these messages under the limits
+//! negotiated by the two configured daemons.
 
 mod artifact;
 mod catalog;
@@ -30,7 +31,6 @@ pub use execution::{
 pub use identity::{
     CatalogDigest, DelegationRef, PeerExecutionId, PeerRequestId, SessionId, TransferId,
 };
-pub use milkdrift_authority::PeerId;
 pub use session::{
     DrainState, FeatureSet, HandshakeRequest, HandshakeResponse, HardLimits, HeartbeatLease,
     PROTOCOL_MAJOR_V1, PROTOCOL_MINOR_V1, PeerAction, PeerAuthority, ProtocolVersion,

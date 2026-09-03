@@ -1,6 +1,6 @@
 //! Durable global and per-peer admission accounting.
 
-use milkdrift_authority::PeerId;
+use milkdrift_capability::PeerId;
 use milkdrift_persistence::PersistenceError;
 use redb::ReadableTable;
 use serde::{Deserialize, Serialize};

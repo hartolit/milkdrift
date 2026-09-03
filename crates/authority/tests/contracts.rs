@@ -11,12 +11,12 @@ use milkdrift_authority::{
     AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope,
     CapabilityAuthorityScopeBuilder, DaemonAuthorityScope, DecisionId, DecisionReasonCode,
     FilesystemScope, GrantId, GrantSetEvaluator, LayoutAuthorityScope, NetworkProfileRef,
-    NetworkScope, PeerAuthorityScope, PeerId, PolicyId, RequestedResourceFacts, ResourceScope,
-    SecretRef, Selection, SensitiveSecret, WorkflowRunScope, WorkspaceAuthorityScope,
+    NetworkScope, PeerAuthorityScope, PolicyId, RequestedResourceFacts, ResourceScope, SecretRef,
+    Selection, SensitiveSecret, WorkflowRunScope, WorkspaceAuthorityScope,
 };
 use milkdrift_blueprint::{AuthorRef, RevisionId, WorkflowId};
 use milkdrift_capability::{
-    CapabilityCategory, CapabilityId, ExecutionTrustClass, Locality, OperationId,
+    CapabilityCategory, CapabilityId, ExecutionTrustClass, Locality, OperationId, PeerId,
     ProviderProfileRef, SideEffectClass, TrustZone,
 };
 use milkdrift_workspace::{ArtifactId, ArtifactSensitivity, RunId, ScopeId};

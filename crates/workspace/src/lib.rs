@@ -56,5 +56,3 @@ pub use identity::{
 };
 pub use scope::{MAX_SCOPE_DEPTH, ScopeKind, ScopeLineage, ScopeReference, WorkspaceScope};
 pub use value::{ValueOrigin, WorkspaceValue, WorkspaceValueEntry, WorkspaceValueReference};
-
-pub use milkdrift_capability::BoundedJson;

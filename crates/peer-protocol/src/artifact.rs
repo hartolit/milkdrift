@@ -1,4 +1,4 @@
-use milkdrift_authority::PeerId;
+use milkdrift_capability::PeerId;
 use milkdrift_workspace::{
     ArtifactProvenance, ArtifactReference, ArtifactRetention, ArtifactSensitivity,
 };

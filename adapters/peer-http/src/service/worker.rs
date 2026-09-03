@@ -2,10 +2,9 @@
 
 use std::sync::{Arc, atomic::Ordering};
 
-use milkdrift_authority::PeerId;
 use milkdrift_capability::{
     ErrorClass, InvocationEvent, InvocationEventKind, InvocationFailure, InvocationTerminal,
-    TerminalStatus,
+    PeerId, TerminalStatus,
 };
 use milkdrift_capability_host::{AdapterError, AdapterReporter};
 use milkdrift_peer_protocol::{

@@ -3,7 +3,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use milkdrift_authority::{ActorRef, PeerId};
+use milkdrift_authority::ActorRef;
+use milkdrift_capability::PeerId;
 use milkdrift_peer_protocol::{
     ArtifactChunk, ArtifactMetadataOffer, ArtifactTransferDecision, ArtifactTransferDirection,
     TransferId,

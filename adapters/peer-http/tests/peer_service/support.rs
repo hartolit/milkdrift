@@ -14,7 +14,7 @@ pub(super) use std::{
 pub(super) use milkdrift_authority::{
     ActorRef, AuthorityBudget, AuthorityDecisionSnapshot, AuthorityExecutionProvenance,
     AuthorityOperation, AuthorityRequest, BoundaryTimeMillis, CapabilityExecutionRequirements,
-    DecisionId, DecisionReasonCode, GrantDigest, GrantId, PeerId, PolicyId, RequestedResourceFacts,
+    DecisionId, DecisionReasonCode, GrantDigest, GrantId, PolicyId, RequestedResourceFacts,
     SecretRef, SensitiveSecret,
 };
 pub(super) use milkdrift_blueprint::{NodeId, RevisionId};
@@ -24,8 +24,9 @@ pub(super) use milkdrift_capability::{
     CapabilityDescriptor, CapabilityId, CapabilityObservation, DescriptorBuilder,
     IdempotencyBehavior, InputReference, InvocationAdmissionEnvelope, InvocationEvent,
     InvocationEventKind, InvocationId, InvocationRequest, InvocationTerminal,
-    InvocationValueReference, Locality, OperationContract, OperationId, ResolvedCapabilitySnapshot,
-    SchemaContract, SchemaId, SideEffectClass, StreamingMode, TerminalStatus, TrustZone,
+    InvocationValueReference, Locality, OperationContract, OperationId, PeerId,
+    ResolvedCapabilitySnapshot, SchemaContract, SchemaId, SideEffectClass, StreamingMode,
+    TerminalStatus, TrustZone,
 };
 pub(super) use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, CapabilityHost,

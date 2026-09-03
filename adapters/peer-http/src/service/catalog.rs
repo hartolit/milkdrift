@@ -2,8 +2,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use milkdrift_authority::{AuthorityBudget, AuthorityOperation, PeerId, RequestedResourceFacts};
-use milkdrift_capability::{CapabilityDescriptor, DescriptorBuilder};
+use milkdrift_authority::{AuthorityBudget, AuthorityOperation, RequestedResourceFacts};
+use milkdrift_capability::{CapabilityDescriptor, DescriptorBuilder, PeerId};
 use milkdrift_capability_host::CatalogGenerationView;
 use milkdrift_peer_protocol::{CatalogEntry, CatalogSnapshot, DrainState};
 use milkdrift_persistence::PeerCatalogState;

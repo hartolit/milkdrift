@@ -29,7 +29,7 @@ fn controller_model_usage_is_descriptor_classified_and_unknown_units_fail_closed
     store.put_revision(&wrapper)?;
     create_and_start(&service, &runtime, &context, &run, &wrapper)?;
     for _ in 0..128 {
-        runtime.tick()?;
+        runtime_tick(&runtime)?;
         if runtime.projection(&run)?.lifecycle().is_completed() {
             break;
         }
@@ -169,7 +169,7 @@ fn controller_process_ceiling_denies_n_plus_one_before_executor_entry() -> TestR
             .map_err(|_| "controller admission worker panicked")??;
     }
     for _ in 0..128 {
-        runtime.tick()?;
+        runtime_tick(&runtime)?;
         if runtime.projection(&run)?.lifecycle().is_completed() {
             break;
         }
@@ -456,7 +456,7 @@ fn terminal_cancellation_retains_missing_bounded_usage_and_blocks_the_account() 
         ControlCommand::RequestCancellation { run: child },
     )?)?;
     for _ in 0..64 {
-        runtime.tick()?;
+        runtime_tick(&runtime)?;
         if executor.cancellations.load(Ordering::SeqCst) == 1 {
             break;
         }
@@ -528,7 +528,7 @@ fn controller_artifact_charge_is_exact_replay_safe_abort_safe_and_restart_durabl
         store.put_revision(&wrapper)?;
         create_and_start(&service, &runtime, &context, &run, &wrapper)?;
         for _ in 0..64 {
-            runtime.tick()?;
+            runtime_tick(&runtime)?;
             if runtime.projection(&run)?.lifecycle().is_completed() {
                 break;
             }
@@ -691,8 +691,7 @@ fn release_controller_admission_longevity_turns_over_reservations_artifacts_and_
         store.put_revision(&wrapper)?;
         create_and_start(&service, &runtime, &context, &run, &wrapper)?;
         for _ in 0..512 {
-            runtime
-                .tick()
+            runtime_tick(&runtime)
                 .map_err(|error| format!("pre-restart controller tick failed: {error}"))?;
             if runtime
                 .projection(&run)?
@@ -763,8 +762,7 @@ fn release_controller_admission_longevity_turns_over_reservations_artifacts_and_
             },
         )?)?;
         for _ in 0..512 {
-            runtime
-                .tick()
+            runtime_tick(&runtime)
                 .map_err(|error| format!("post-restart checkpoint tick failed: {error}"))?;
             if runtime
                 .projection(&run)?
@@ -826,8 +824,7 @@ fn release_controller_admission_longevity_turns_over_reservations_artifacts_and_
             },
         )?)?;
         for _ in 0..1_024 {
-            runtime
-                .tick()
+            runtime_tick(&runtime)
                 .map_err(|error| format!("terminal controller tick failed: {error}"))?;
             if runtime.projection(&run)?.lifecycle().is_completed() {
                 break;

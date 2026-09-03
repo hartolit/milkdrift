@@ -1,9 +1,9 @@
 use std::{collections::BTreeSet, fmt, sync::Arc, time::Duration};
 
 use milkdrift_authority::{
-    FilesystemScope, NetworkProfileRef, NetworkScope, PeerId, SecretRef, SensitiveSecret,
+    FilesystemScope, NetworkProfileRef, NetworkScope, SecretRef, SensitiveSecret,
 };
-use milkdrift_capability::{CapabilityId, OperationId, SideEffectClass, TrustZone};
+use milkdrift_capability::{CapabilityId, OperationId, PeerId, SideEffectClass, TrustZone};
 use milkdrift_peer_protocol::{
     DelegationRef, ExecutionLimits, HardLimits, HeartbeatLease, PeerAuthority,
     ProtocolVersionRange, SessionId,

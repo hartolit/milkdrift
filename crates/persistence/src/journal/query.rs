@@ -239,11 +239,6 @@ pub trait RunQueryStore: Send + Sync {
         limit: PageSize,
     ) -> Result<RunSummaryPage, PersistenceError>;
 
-    /// Compatibility shorthand for the first nonterminal page.
-    fn nonterminal_runs(&self, limit: PageSize) -> Result<Vec<RunSummaryIndex>, PersistenceError> {
-        Ok(self.nonterminal_run_page(None, limit)?.runs)
-    }
-
     /// Discovers eligible work with at most one deterministic candidate per run.
     ///
     /// The page bound applies directly to validated per-run heads, so a run
@@ -260,15 +255,6 @@ pub trait RunQueryStore: Send + Sync {
         cursor: Option<&RunnableCursor>,
         limit: PageSize,
     ) -> Result<RunnablePage, PersistenceError>;
-
-    /// Compatibility shorthand for the first fair runnable page.
-    fn runnable(
-        &self,
-        eligible_through: TimestampMillis,
-        limit: PageSize,
-    ) -> Result<Vec<RunnableIndexEntry>, PersistenceError> {
-        Ok(self.runnable_page(eligible_through, None, limit)?.entries)
-    }
 
     /// Reads up to `limit` active durable leases in stable expiry/identity order.
     ///

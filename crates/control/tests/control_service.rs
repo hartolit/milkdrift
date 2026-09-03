@@ -47,16 +47,16 @@ use milkdrift_persistence::{
     ControllerAccountDeclaration, ControllerAccountState, ControllerAccountStore,
     ControllerAdmissionDenial, ControllerAdmissionOutcome, ControllerAssessmentBoundary,
     ControllerAssessmentOutcome, ControllerReservationId, ControllerResourceBudget, CurrencyCode,
-    IntegrityScanRequest, MonetaryUsage, PageSize, Reason, ReconciliationDecisionId,
+    IntegrityScanRequest, MAX_PAGE_SIZE, MonetaryUsage, PageSize, Reason, ReconciliationDecisionId,
     RepeatDecisionId, RevisionStore, RunEventKind, RunOutcome, RunSequence, StorageAdmin,
     TimestampMillis, WorkerId, WorkspaceStore,
 };
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{
     CommandAuthorityClaim, ControllerAssessmentContext, ControllerLifecycle, DeterministicExecutor,
-    ExecutionDispatch, ExecutionReporter, ExecutorError, ManualClock, PreparedExecution,
-    ResolvedCapability, RetryPolicy, RunLifecycle, RuntimeConfig, RuntimeError, RuntimeService,
-    SchedulerLimits, SequentialIdGenerator, TaskExecutor,
+    EffectExecutionResult, ExecutionDispatch, ExecutionReporter, ExecutorError, ManualClock,
+    PreparedExecution, ResolvedCapability, RetryPolicy, RunLifecycle, RuntimeConfig, RuntimeError,
+    RuntimeService, SchedulerLimits, SchedulerTickResult, SequentialIdGenerator, TaskExecutor,
 };
 use milkdrift_workspace::{RunId, ScopeId, WorkspaceBudget, WorkspaceScope};
 use tempfile::TempDir;
@@ -76,6 +76,24 @@ type DeterministicServices = (
 );
 
 const NOW: u64 = 20_000;
+
+fn runtime_tick(runtime: &RuntimeService) -> Result<SchedulerTickResult, RuntimeError> {
+    let mut scheduled = runtime.scheduler_tick()?;
+    let actions = runtime.claim_effects(PageSize::new(MAX_PAGE_SIZE)?)?;
+    for action in actions {
+        match runtime.execute_effect(action)? {
+            EffectExecutionResult::Completed { .. } => {
+                scheduled.completed = scheduled.completed.saturating_add(1);
+            }
+            EffectExecutionResult::Uncertain { .. } => {
+                scheduled.uncertain = scheduled.uncertain.saturating_add(1);
+            }
+            EffectExecutionResult::CancellationAcknowledged
+            | EffectExecutionResult::CancellationDeferred => {}
+        }
+    }
+    Ok(scheduled)
+}
 
 #[derive(Default)]
 struct CountingProcessAdapter(AtomicU64);
@@ -684,7 +702,7 @@ fn installed_runtime_assesses_and_stops_a_controller_at_exact_cycle_bound() -> T
     create_and_start(&service, &runtime, &context, &run, &wrapper)?;
 
     for _ in 0..64 {
-        runtime.tick()?;
+        runtime_tick(&runtime)?;
         if runtime.projection(&run)?.lifecycle().is_completed() {
             break;
         }

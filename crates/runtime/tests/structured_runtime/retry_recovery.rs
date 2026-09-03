@@ -658,7 +658,7 @@ fn idempotent_boundary_error_retries_exact_request_and_keeps_first_attempt_truth
         CommandDisposition::Accepted
     );
 
-    let first_tick = runtime.tick()?;
+    let first_tick = runtime_tick(&runtime)?;
     assert_eq!(first_tick.dispatched, 1);
     assert_eq!(first_tick.completed, 0);
     assert_eq!(first_tick.uncertain, 1);
@@ -685,7 +685,7 @@ fn idempotent_boundary_error_retries_exact_request_and_keeps_first_attempt_truth
     )));
 
     clock.advance(1)?;
-    let retry_tick = runtime.tick()?;
+    let retry_tick = runtime_tick(&runtime)?;
     assert_eq!(retry_tick.dispatched, 1);
     assert_eq!(retry_tick.completed, 1);
     let projection = runtime.projection(&run)?;
@@ -819,7 +819,7 @@ fn uncertainty_and_retry_share_one_boundary_clock_observation() -> TestResult {
         },
     )?;
     submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?;
-    let tick = runtime.tick()?;
+    let tick = runtime_tick(&runtime)?;
     assert_eq!(tick.uncertain, 1);
     let history = runtime.history(&run)?;
     assert!(
@@ -888,7 +888,7 @@ fn uncertainty_survives_transient_retry_id_failure_and_recovery_retries_later() 
         CommandDisposition::Accepted
     );
 
-    let first_tick = runtime.tick()?;
+    let first_tick = runtime_tick(&runtime)?;
     assert_eq!(first_tick.uncertain, 1);
     let uncertain = runtime.projection(&run)?;
     assert_eq!(uncertain.unresolved_attempts().count(), 1);
@@ -911,7 +911,7 @@ fn uncertainty_survives_transient_retry_id_failure_and_recovery_retries_later() 
     assert_eq!(pending.retries().len(), 1);
     assert_eq!(pending.unresolved_attempts().count(), 1);
     clock.advance(1)?;
-    assert_eq!(runtime.tick()?.completed, 1);
+    assert_eq!(runtime_tick(&runtime)?.completed, 1);
     let completed = runtime.projection(&run)?;
     assert_eq!(
         completed.lifecycle(),
@@ -968,7 +968,7 @@ fn uncertainty_is_committed_when_retry_deadline_overflows() -> TestResult {
         CommandDisposition::Accepted
     );
 
-    assert_eq!(runtime.tick()?.uncertain, 1);
+    assert_eq!(runtime_tick(&runtime)?.uncertain, 1);
     let projection = runtime.projection(&run)?;
     assert_eq!(projection.unresolved_attempts().count(), 1);
     assert!(projection.retries().is_empty());
@@ -1047,8 +1047,7 @@ fn concurrent_runtime_services_cannot_oversubscribe_one_global_lease_slot() -> T
     );
     let first_tick_runtime = first_runtime.clone();
     let first_tick = std::thread::spawn(move || {
-        first_tick_runtime
-            .tick()
+        runtime_tick(&first_tick_runtime)
             .map_err(|error| format!("first cross-service tick failed: {error}"))
     });
     executor.wait_for_resolvers(1)?;
@@ -1083,8 +1082,7 @@ fn concurrent_runtime_services_cannot_oversubscribe_one_global_lease_slot() -> T
     );
     let second_tick_runtime = second_runtime.clone();
     let second_tick = std::thread::spawn(move || {
-        second_tick_runtime
-            .tick()
+        runtime_tick(&second_tick_runtime)
             .map_err(|error| format!("second cross-service tick failed: {error}"))
     });
     executor.wait_for_resolvers(2)?;
@@ -1122,7 +1120,7 @@ fn concurrent_runtime_services_cannot_oversubscribe_one_global_lease_slot() -> T
         {
             break;
         }
-        first_runtime.tick()?;
+        runtime_tick(&first_runtime)?;
     }
     assert!(first_runtime.projection(&first_run)?.is_completed());
     assert!(first_runtime.projection(&second_run)?.is_completed());
@@ -1181,9 +1179,9 @@ fn harmless_uncertain_attempt_is_covered_by_exact_terminal_failure_retry() -> Te
         submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
         CommandDisposition::Accepted
     );
-    runtime.tick()?;
+    runtime_tick(&runtime)?;
     clock.advance(1)?;
-    runtime.tick()?;
+    runtime_tick(&runtime)?;
     let projection = runtime.projection(&run)?;
     assert_eq!(
         projection.lifecycle(),
@@ -1277,9 +1275,9 @@ fn exhausted_idempotent_boundary_retries_remain_uncertain_without_fabricated_fai
         submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
         CommandDisposition::Accepted
     );
-    runtime.tick()?;
+    runtime_tick(&runtime)?;
     clock.advance(1)?;
-    runtime.tick()?;
+    runtime_tick(&runtime)?;
     let projection = runtime.projection(&run)?;
     assert_eq!(projection.lifecycle(), RunLifecycle::Running);
     assert_eq!(projection.attempts().len(), 2);
@@ -1354,12 +1352,11 @@ fn active_retry_cancellation_only_closes_harmless_prior_uncertainty() -> TestRes
             submit_command(runtime.as_ref(), store.as_ref(), &run, RunCommand::StartRun,)?,
             CommandDisposition::Accepted
         );
-        runtime.tick()?;
+        runtime_tick(&runtime)?;
         clock.advance(1)?;
         let retry_runtime = runtime.clone();
         let retry = std::thread::spawn(move || {
-            retry_runtime
-                .tick()
+            runtime_tick(&retry_runtime)
                 .map_err(|error| format!("active retry tick failed: {error}"))
         });
         executor.wait_until_entered()?;
@@ -1372,7 +1369,7 @@ fn active_retry_cancellation_only_closes_harmless_prior_uncertainty() -> TestRes
             )?,
             CommandDisposition::Accepted
         );
-        runtime.tick()?;
+        runtime_tick(&runtime)?;
         assert_eq!(executor.cancellation_requests.load(Ordering::SeqCst), 1);
         executor.release()?;
         retry
@@ -1382,7 +1379,7 @@ fn active_retry_cancellation_only_closes_harmless_prior_uncertainty() -> TestRes
             if runtime.projection(&run)?.is_completed() {
                 break;
             }
-            runtime.tick()?;
+            runtime_tick(&runtime)?;
         }
         let projection = runtime.projection(&run)?;
         let history = runtime.history(&run)?;

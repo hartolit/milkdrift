@@ -1,4 +1,4 @@
-//! Low-level deterministic JSON mechanics shared by durable contract owners.
+//! Low-level deterministic JSON and lexical mechanics shared by durable contract owners.
 //!
 //! This crate deliberately owns no workflow identities, schema versions, error policy,
 //! or business limits. Domain crates supply those policies explicitly and map violations
@@ -11,6 +11,10 @@ use serde::{
     de::{MapAccess, SeqAccess, Visitor},
 };
 use serde_json::{Map, Value};
+
+mod text;
+
+pub use text::{is_canonical_blake3_digest, truncate_utf8};
 
 /// Defines a private-storage validated string newtype while leaving validation and errors
 /// in the invoking domain.

@@ -1,6 +1,7 @@
 //! Authorized peer artifact negotiation, transfer, and disabled-store behavior.
 
-use milkdrift_authority::{AuthorityBudget, AuthorityOperation, PeerId, RequestedResourceFacts};
+use milkdrift_authority::{AuthorityBudget, AuthorityOperation, RequestedResourceFacts};
+use milkdrift_capability::PeerId;
 use milkdrift_peer_protocol::{
     ArtifactChunk, ArtifactMetadataOffer, ArtifactTransferDecision, ArtifactTransferDirection,
     TransferId,

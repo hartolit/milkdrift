@@ -11,7 +11,9 @@ use milkdrift_capability::{
     ProviderProfileRef, SchemaContract, SchemaId, SideEffectClass, StreamingMode, TrustZone,
 };
 use milkdrift_capability_host::MaterializationLimits;
-use milkdrift_contracts::{JsonLimits, canonical_json_bytes, parse_json_without_duplicates};
+use milkdrift_contracts::{
+    JsonLimits, canonical_json_bytes, is_canonical_blake3_digest, parse_json_without_duplicates,
+};
 use milkdrift_workspace::MediaType;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
@@ -976,7 +978,7 @@ impl ProcessProfile {
 fn validate_implementation(
     implementation: &ExecutableIdentityDeclaration,
 ) -> Result<(), ProcessProfileError> {
-    if !valid_blake3_digest(&implementation.content_digest)
+    if !is_canonical_blake3_digest(&implementation.content_digest)
         || implementation.size_bytes == 0
         || implementation.size_bytes > MAX_EXECUTABLE_BYTES
     {
@@ -1013,15 +1015,6 @@ fn validate_implementation(
         ));
     }
     Ok(())
-}
-
-fn valid_blake3_digest(value: &str) -> bool {
-    value.strip_prefix("b3_").is_some_and(|hex| {
-        hex.len() == 64
-            && hex
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    })
 }
 
 fn validate_environment(policy: &EnvironmentPolicy) -> Result<(), ProcessProfileError> {

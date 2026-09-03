@@ -7,11 +7,11 @@ use milkdrift_authority::{
     AuthorityExecutionProvenance, AuthorityGrant, AuthorityGrantBuilder, AuthorityOperation,
     AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope,
     CapabilityAuthorityScopeBuilder, CapabilityExecutionRequirements, DaemonAuthorityScope,
-    DecisionId, GrantId, LayoutAuthorityScope, NetworkScope, PeerAuthorityScope, PeerId,
+    DecisionId, GrantId, LayoutAuthorityScope, NetworkScope, PeerAuthorityScope,
     RequestedResourceFacts, ResourceScope, Selection, WorkflowRunScope, WorkspaceAuthorityScope,
 };
 use milkdrift_blueprint::{NodeId, RevisionId};
-use milkdrift_capability::CapabilityDescriptor;
+use milkdrift_capability::{CapabilityDescriptor, PeerId};
 use milkdrift_capability_host::{AdapterExecutionContext, CatalogGenerationView};
 use milkdrift_peer_protocol::{PeerAction, PeerInvocationRequest};
 use milkdrift_persistence::{AttemptId, NodeExecutionId};

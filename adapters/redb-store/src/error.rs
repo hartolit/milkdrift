@@ -40,18 +40,7 @@ pub(crate) fn internal(message: impl Into<String>) -> PersistenceError {
 }
 
 fn storage(class: StorageFailureClass, message: String) -> PersistenceError {
-    let message = truncate_utf8(message, MAX_STORAGE_MESSAGE_BYTES);
+    let message =
+        milkdrift_contracts::truncate_utf8(&message, MAX_STORAGE_MESSAGE_BYTES).to_owned();
     PersistenceError::Storage { class, message }
-}
-
-fn truncate_utf8(mut message: String, maximum: usize) -> String {
-    if message.len() <= maximum {
-        return message;
-    }
-    let mut boundary = maximum;
-    while !message.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
-    message.truncate(boundary);
-    message
 }

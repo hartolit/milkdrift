@@ -7,12 +7,12 @@ use std::{
     time::Duration,
 };
 
-use milkdrift_authority::{AccessMode, FilesystemScope, NetworkProfileRef, NetworkScope, PeerId};
+use milkdrift_authority::{AccessMode, FilesystemScope, NetworkProfileRef, NetworkScope};
 use milkdrift_blueprint::{
     AuthorRef, BlueprintRevision, BlueprintRevisionDocument, Edge, EdgeId, EdgeKind, Mutation,
     MutationBatch, Node, NodeId, NodeKind, PortId, TerminalOutcome, WorkflowId,
 };
-use milkdrift_capability::{CapabilityRequirement, OperationId};
+use milkdrift_capability::{CapabilityRequirement, OperationId, PeerId};
 use milkdrift_control_client::{BearerCredential, ClientConfig, ControlClient};
 use milkdrift_control_protocol::{Command, CommandRequest, PageRequest, ProtocolVersion};
 use milkdrift_daemon::{

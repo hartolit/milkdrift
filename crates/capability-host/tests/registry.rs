@@ -13,16 +13,15 @@ use milkdrift_authority::{
     AuthorityGrantBuilder, AuthorityOperation, AuthorityRequest, BoundaryTimeMillis,
     CapabilityAuthorityScope, CapabilityAuthorityScopeBuilder, CapabilityExecutionRequirements,
     DecisionId, DecisionReasonCode, ExecutionAuthorityBasis, GrantId, GrantSetEvaluator,
-    NetworkScope, PeerId, PolicyId, RequestedResourceFacts, ResourceScope, SecretRef,
-    WorkflowRunScope,
+    NetworkScope, PolicyId, RequestedResourceFacts, ResourceScope, SecretRef, WorkflowRunScope,
 };
 use milkdrift_blueprint::{NodeId, RevisionId, WorkflowId};
 use milkdrift_capability::{
     AdmissionConstraints, CancellationAcknowledgement, CancellationRequest, CapabilityDescriptor,
     CapabilityDescriptorDocument, CapabilityId, CapabilityObservation, CapabilityRequirement,
     DescriptorBuilder, InvocationAdmissionEnvelope, InvocationEvent, InvocationEventKind,
-    InvocationId, InvocationRequest, InvocationTerminal, Locality, OperationId, ProviderProfileRef,
-    ResolvedCapabilitySnapshot, SideEffectClass, TerminalStatus,
+    InvocationId, InvocationRequest, InvocationTerminal, Locality, OperationId, PeerId,
+    ProviderProfileRef, ResolvedCapabilitySnapshot, SideEffectClass, TerminalStatus,
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterFailureKind, AdapterInvocation, AdapterReporter, CapabilityAdapter,

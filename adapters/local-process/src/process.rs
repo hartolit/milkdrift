@@ -763,12 +763,5 @@ enum Lifecycle {
 }
 
 fn bounded(value: &str) -> String {
-    if value.len() <= 4_096 {
-        return value.to_owned();
-    }
-    let mut end = 4_096;
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_owned()
+    milkdrift_contracts::truncate_utf8(value, 4_096).to_owned()
 }

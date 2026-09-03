@@ -3,14 +3,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use milkdrift_authority::{
     ActorRef, AuthorityBudget, AuthorityDecisionSnapshot, AuthorityExecutionProvenance,
     AuthorityOperation, AuthorityRequest, BoundaryTimeMillis, DecisionId, DecisionReasonCode,
-    GrantDigest, GrantId, PeerId, PolicyId, RequestedResourceFacts,
+    GrantDigest, GrantId, PolicyId, RequestedResourceFacts,
 };
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::{
     AdmissionConstraints, BoundedJson, CancellationBehavior, CapabilityCategory,
     CapabilityDescriptor, CapabilityId, DescriptorBuilder, IdempotencyBehavior, InvocationEvent,
     InvocationEventKind, InvocationId, InvocationRequest, InvocationTerminal, Locality,
-    OperationContract, OperationId, ResolvedCapabilitySnapshot, SchemaContract, SchemaId,
+    OperationContract, OperationId, PeerId, ResolvedCapabilitySnapshot, SchemaContract, SchemaId,
     SideEffectClass, StreamingMode, TerminalStatus,
 };
 use milkdrift_peer_protocol::{

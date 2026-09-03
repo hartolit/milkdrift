@@ -108,20 +108,10 @@ impl GrantDigest {
     /// Parses one lowercase BLAKE3 grant digest.
     pub fn new(value: impl Into<String>) -> Result<Self, AuthorityError> {
         let value = value.into();
-        let Some(hex) = value.strip_prefix("b3_") else {
+        if !milkdrift_contracts::is_canonical_blake3_digest(&value) {
             return Err(AuthorityError::InvalidIdentity {
                 kind: "GrantDigest",
-                reason: "missing b3_ prefix".to_owned(),
-            });
-        };
-        if hex.len() != 64
-            || !hex
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return Err(AuthorityError::InvalidIdentity {
-                kind: "GrantDigest",
-                reason: "expected 64 lowercase hexadecimal characters".to_owned(),
+                reason: "expected b3_ plus 64 lowercase hexadecimal characters".to_owned(),
             });
         }
         Ok(Self(value))

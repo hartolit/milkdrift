@@ -1,11 +1,10 @@
 use milkdrift_blueprint::{NodeId, RevisionId, WorkflowId};
-use milkdrift_capability::IdempotencyBehavior;
+use milkdrift_capability::{IdempotencyBehavior, PeerId};
 use milkdrift_workspace::RunId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActorRef, AuthorityError, DecisionId, GrantDigest, GrantId, PeerId, PolicyId,
-    document::canonical_json,
+    ActorRef, AuthorityError, DecisionId, GrantDigest, GrantId, PolicyId, document::canonical_json,
 };
 
 use super::{
@@ -266,7 +265,7 @@ impl ExecutionAuthorityBasis {
         if self.schema_version != 1
             || self.grant_revision == 0
             || self.policy_version == 0
-            || !valid_digest(&self.accepted_decision_digest)
+            || !milkdrift_contracts::is_canonical_blake3_digest(&self.accepted_decision_digest)
             || self.digest != self.compute_digest()?
         {
             return Err(AuthorityError::InvalidContract(
@@ -315,13 +314,4 @@ impl ExecutionAuthorityBasis {
         hasher.update(&bytes);
         Ok(format!("b3_{}", hasher.finalize()))
     }
-}
-
-fn valid_digest(value: &str) -> bool {
-    value.strip_prefix("b3_").is_some_and(|hex| {
-        hex.len() == 64
-            && hex
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    })
 }

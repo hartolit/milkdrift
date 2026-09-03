@@ -182,23 +182,6 @@ pub struct SchedulerTickResult {
     pub uncertain: u32,
 }
 
-/// Bounded observations from one explicit external-effect host call.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct EffectTickResult {
-    /// Durable effects claimed from already committed leases/cancellation intents.
-    pub claimed: u32,
-    /// Invocation and heartbeat observations durably incorporated.
-    pub observations: u32,
-    /// Invocations whose terminal observation became durable.
-    pub completed: u32,
-    /// Invocations retained because the external boundary returned without a terminal fact.
-    pub uncertain: u32,
-    /// Cancellation requests durably acknowledged.
-    pub cancellations: u32,
-    /// Cancellation requests whose adapter boundary failed and remain eligible for redelivery.
-    pub cancellation_deferred: u32,
-}
-
 /// Bounded observations from one explicit restart-recovery call.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RecoveryResult {

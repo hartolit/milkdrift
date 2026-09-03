@@ -20,10 +20,10 @@ use std::{
 };
 
 use milkdrift_authority::{
-    AuthorityBudget, AuthorityGrant, AuthorityOperation, GrantSetEvaluator, PeerId, PolicyId,
+    AuthorityBudget, AuthorityGrant, AuthorityOperation, GrantSetEvaluator, PolicyId,
     RequestedResourceFacts,
 };
-use milkdrift_capability::{CancellationBehavior, CancellationRequest};
+use milkdrift_capability::{CancellationBehavior, CancellationRequest, PeerId};
 use milkdrift_capability_host::CapabilityHost;
 use milkdrift_peer_protocol::{
     CancellationDisposition, CatalogSnapshot, DrainState, HandshakeRequest, HandshakeResponse,
@@ -817,14 +817,7 @@ const fn admission_rejection_detail(reason: PeerAdmissionRejection) -> &'static 
 }
 
 fn bounded(value: &str, maximum: usize) -> String {
-    if value.len() <= maximum {
-        return value.to_owned();
-    }
-    let mut end = maximum;
-    while !value.is_char_boundary(end) {
-        end = end.saturating_sub(1);
-    }
-    value[..end].to_owned()
+    milkdrift_contracts::truncate_utf8(value, maximum).to_owned()
 }
 
 fn map_execution_persistence(error: PersistenceError) -> PeerHttpError {

@@ -12,7 +12,7 @@ use milkdrift_capability::{
     AdmissionBound, BoundedJson, CancellationAcknowledgement, CancellationRequest,
     CapabilityDescriptor, CapabilityId, CapabilityObservation, DescriptorBuilder, ErrorClass,
     ExtensionKey, InvocationAdmissionEnvelope, InvocationEvent, InvocationEventKind,
-    InvocationFailure, InvocationId, InvocationRequest, InvocationTerminal, Locality,
+    InvocationFailure, InvocationId, InvocationRequest, InvocationTerminal, Locality, PeerId,
     ResolvedCapabilitySnapshot, TerminalStatus,
 };
 use milkdrift_capability_host::{
@@ -32,7 +32,7 @@ use crate::{PeerClock, PeerHttpClient, PeerHttpError, PeerRelationship};
 #[serde(deny_unknown_fields)]
 pub struct RemoteCapabilityProvenance {
     /// Authenticated remote peer.
-    pub peer: milkdrift_authority::PeerId,
+    pub peer: PeerId,
     /// Exact remote catalog generation.
     pub catalog_generation: u64,
     /// Exact remote catalog digest.
@@ -166,7 +166,7 @@ impl PeerRegistry {
 
     /// Authenticated remote peer managed by this registry.
     #[must_use]
-    pub const fn remote_peer(&self) -> &milkdrift_authority::PeerId {
+    pub const fn remote_peer(&self) -> &PeerId {
         &self.relationship.remote_peer
     }
 
@@ -752,7 +752,7 @@ fn local_descriptor(
 }
 
 fn mapped_capability_id(
-    peer: &milkdrift_authority::PeerId,
+    peer: &PeerId,
     remote: &CapabilityId,
 ) -> Result<CapabilityId, PeerHttpError> {
     let peer_hash = &blake3::hash(peer.as_str().as_bytes()).to_hex()[..12];
@@ -862,8 +862,8 @@ mod tests {
         time::Duration,
     };
 
-    use milkdrift_authority::{PeerId, SensitiveSecret};
-    use milkdrift_capability::{SideEffectClass, TrustZone};
+    use milkdrift_authority::SensitiveSecret;
+    use milkdrift_capability::{PeerId, SideEffectClass, TrustZone};
     use milkdrift_capability_host::{CapabilityHost, CapabilitySelectionPolicy, HostConfig};
     use milkdrift_peer_protocol::{
         CatalogSnapshot, DelegationRef, ExecutionLimits, PeerAuthority, ProtocolVersionRange,

@@ -262,7 +262,7 @@ fn reviewer_receives_frozen_causal_evidence_without_private_sibling_transcript()
     }
     command(RunCommand::ResumeRun)?;
     for _ in 0..32 {
-        runtime.tick()?;
+        runtime_tick(&runtime)?;
         clock.advance(2)?;
         if runtime.projection(&run)?.is_completed() {
             break;

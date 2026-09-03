@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use milkdrift_authority::PeerId;
+use milkdrift_capability::PeerId;
 use milkdrift_peer_protocol::PeerObservation;
 use milkdrift_persistence::{
     PeerDispatchClaim, PeerExecutionPhase, PeerExecutionRecord, PeerExecutionSnapshot,

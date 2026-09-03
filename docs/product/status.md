@@ -90,8 +90,12 @@ snapshot. Git, CI, releases, and external audits own chronology.
   qualifying real external-evidence run is available.
 - The public Rust surface follows the current policy in
   [`../reference/public-api-policy.md`](../reference/public-api-policy.md). Canonical identities come
-  from their semantic owner; storage fault hooks are available only with redb `test-admin`; daemon
-  routing and read projections remain internal. There are no UI packages or UI dependencies.
+  from their semantic owner; deterministic runtime/secret implementations require non-default
+  `test-support` features; storage fault hooks require redb `test-admin`; daemon routing and read
+  projections remain internal. Runtime scheduling and caller-owned effect execution are separate
+  canonical operations with no blocking compatibility driver. Cross-domain UTF-8 truncation and
+  canonical `b3_` lexical validation have one implementation in `milkdrift-contracts`, while
+  semantic digest types and errors remain domain-owned. There are no UI packages or UI dependencies.
 
 Current exact versions are:
 

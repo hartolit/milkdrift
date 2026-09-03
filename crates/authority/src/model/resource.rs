@@ -1,10 +1,11 @@
 use std::{collections::BTreeSet, path::Path};
 
 use milkdrift_blueprint::{RevisionId, WorkflowId};
+use milkdrift_capability::PeerId;
 use milkdrift_workspace::{ArtifactId, ArtifactSensitivity, RunId, ScopeId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
-use crate::{ActorRef, AuthorityError, NetworkProfileRef, PeerId, SecretRef, Selection};
+use crate::{ActorRef, AuthorityError, NetworkProfileRef, SecretRef, Selection};
 
 use super::{capability::CapabilityAuthorityScope, decision::RequestedResourceFacts};
 

@@ -7,7 +7,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use milkdrift_contracts::{JsonLimits, parse_json_without_duplicates, validate_json_value};
+use milkdrift_contracts::{
+    JsonLimits, is_canonical_blake3_digest, parse_json_without_duplicates, validate_json_value,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
@@ -181,7 +183,8 @@ impl ErrorEnvelope {
     #[must_use]
     pub fn new(code: ErrorCode, message: impl Into<String>, retryable: bool) -> Self {
         let mut message = message.into();
-        truncate_utf8(&mut message, MAX_REASON_BYTES);
+        let boundary = milkdrift_contracts::truncate_utf8(&message, MAX_REASON_BYTES).len();
+        message.truncate(boundary);
         Self {
             protocol: ProtocolVersion::CURRENT,
             request_id: None,
@@ -312,7 +315,7 @@ impl Cursor {
     ) -> Result<Self, ProtocolError> {
         validate_identifier("feed", feed, 256)?;
         validate_cursor_binding(&binding)?;
-        validate_identifier("cursor.decision_digest", decision_digest, 256)?;
+        validate_cursor_digest("cursor decision", decision_digest)?;
         let mac = cursor_mac(feed, &position, &binding, decision_digest, key)?;
         let bytes = serde_json::to_vec(&BoundCursorWire {
             version: 2,
@@ -374,6 +377,9 @@ impl Cursor {
             .map_err(|_| ProtocolError::InvalidCursor("malformed payload".to_owned()))?;
         let wire: BoundCursorWire = serde_json::from_value(value)
             .map_err(|_| ProtocolError::InvalidCursor("malformed fields".to_owned()))?;
+        validate_cursor_binding(expected_binding)?;
+        validate_cursor_binding(&wire.binding)?;
+        validate_cursor_digest("cursor decision", &wire.decision_digest)?;
         let expected_mac = cursor_mac(
             &wire.feed,
             &wire.position,
@@ -522,12 +528,21 @@ impl Cursor {
 fn validate_cursor_binding(binding: &CursorBinding) -> Result<(), ProtocolError> {
     validate_identifier("cursor.actor", &binding.actor, 256)?;
     validate_identifier("cursor.grant_id", &binding.grant_id, 256)?;
-    validate_identifier("cursor.grant_digest", &binding.grant_digest, 256)?;
-    validate_identifier("cursor.scope_digest", &binding.scope_digest, 256)?;
+    validate_cursor_digest("cursor grant", &binding.grant_digest)?;
+    validate_cursor_digest("cursor scope", &binding.scope_digest)?;
     if binding.grant_revision == 0 {
         return Err(ProtocolError::InvalidCursor(
             "cursor grant revision must be nonzero".to_owned(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_cursor_digest(label: &str, value: &str) -> Result<(), ProtocolError> {
+    if !is_canonical_blake3_digest(value) {
+        return Err(ProtocolError::InvalidCursor(format!(
+            "{label} digest is not canonical BLAKE3 text"
+        )));
     }
     Ok(())
 }
@@ -627,17 +642,6 @@ fn validate_identifier(
         )));
     }
     Ok(())
-}
-
-fn truncate_utf8(value: &mut String, maximum: usize) {
-    if value.len() <= maximum {
-        return;
-    }
-    let mut boundary = maximum;
-    while !value.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
-    value.truncate(boundary);
 }
 
 #[cfg(test)]

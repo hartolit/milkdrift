@@ -15,6 +15,7 @@ milkdrift-authority.workspace = true
 milkdrift-blueprint.workspace = true
 milkdrift-capability.workspace = true
 milkdrift-capability-host.workspace = true
+milkdrift-contracts.workspace = true
 milkdrift-peer-protocol.workspace = true
 milkdrift-persistence.workspace = true
 milkdrift-runtime.workspace = true

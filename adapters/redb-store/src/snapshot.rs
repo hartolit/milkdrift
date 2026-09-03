@@ -785,13 +785,9 @@ fn rejected(
             }
         })
         .collect();
-    if reason.len() > milkdrift_persistence::MAX_DETAIL_BYTES {
-        let mut boundary = milkdrift_persistence::MAX_DETAIL_BYTES;
-        while !reason.is_char_boundary(boundary) {
-            boundary -= 1;
-        }
-        reason.truncate(boundary);
-    }
+    let boundary =
+        milkdrift_contracts::truncate_utf8(&reason, milkdrift_persistence::MAX_DETAIL_BYTES).len();
+    reason.truncate(boundary);
     Ok(SnapshotLoad::Rejected {
         snapshot,
         reason: BoundedDetail::new(reason)?,

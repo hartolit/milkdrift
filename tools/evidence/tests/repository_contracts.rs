@@ -43,6 +43,15 @@ fn numeric_const(relative: &str, name: &str) -> TestResult<u64> {
     Ok(literal.parse()?)
 }
 
+fn manifest_section<'a>(manifest: &'a str, heading: &str) -> &'a str {
+    let Some((_, remainder)) = manifest.split_once(heading) else {
+        return "";
+    };
+    remainder
+        .split_once("\n[")
+        .map_or(remainder, |(section, _)| section)
+}
+
 #[test]
 fn canonical_entrypoint_and_local_links_resolve() -> TestResult {
     let repository = root()?;
@@ -354,6 +363,177 @@ fn semantic_and_protocol_packages_have_no_ui_inference_or_internal_adapter_edges
             );
         }
     }
+    Ok(())
+}
+
+#[test]
+fn contract_dependency_direction_and_semantic_owners_are_exact() -> TestResult {
+    let repository = root()?;
+    let contracts_manifest = read(repository.join("crates/contracts/Cargo.toml"))?;
+    assert!(
+        !manifest_section(&contracts_manifest, "[dependencies]").contains("milkdrift-"),
+        "shared mechanics must not depend on a Milkdrift domain package"
+    );
+    let mut contract_sources = Vec::new();
+    collect_files(
+        &repository.join("crates/contracts/src"),
+        &mut contract_sources,
+        &|path| path.extension().and_then(|extension| extension.to_str()) == Some("rs"),
+    )?;
+    for source in contract_sources {
+        assert!(
+            !read(&source)?.contains("SCHEMA_VERSION"),
+            "shared mechanics must not own semantic schema constants in {}",
+            source.display()
+        );
+    }
+
+    let capability_manifest = read(repository.join("crates/capability/Cargo.toml"))?;
+    assert!(
+        !manifest_section(&capability_manifest, "[dependencies]").contains("milkdrift-blueprint"),
+        "capability contracts must not depend on workflow definitions"
+    );
+    let blueprint_manifest = read(repository.join("crates/blueprint/Cargo.toml"))?;
+    let blueprint_dependencies = manifest_section(&blueprint_manifest, "[dependencies]");
+    for forbidden in [
+        "milkdrift-runtime",
+        "milkdrift-capability-host",
+        "milkdrift-redb-store",
+        "milkdrift-local-process",
+        "milkdrift-model-provider",
+        "milkdrift-peer-http",
+    ] {
+        assert!(
+            !blueprint_dependencies.contains(forbidden),
+            "blueprint imports host/runtime/adapter state through {forbidden}"
+        );
+    }
+
+    let capability_identity = read(repository.join("crates/capability/src/identity.rs"))?;
+    for canonical in ["SchemaId", "ExtensionKey", "TrustZone", "PeerId"] {
+        assert!(
+            capability_identity.contains(canonical),
+            "capability no longer owns {canonical}"
+        );
+    }
+    assert!(
+        read(repository.join("crates/capability/src/bounded.rs"))?.contains("struct BoundedJson"),
+        "capability no longer owns BoundedJson"
+    );
+    assert!(
+        read(repository.join("crates/blueprint/src/model/contract.rs"))?
+            .contains("struct SchemaRef")
+    );
+    assert!(
+        read(repository.join("crates/capability/src/descriptor.rs"))?
+            .contains("struct SchemaContract")
+    );
+    Ok(())
+}
+
+#[test]
+fn test_support_and_removed_compatibility_paths_stay_out_of_default_surfaces() -> TestResult {
+    let repository = root()?;
+    let runtime_manifest = read(repository.join("crates/runtime/Cargo.toml"))?;
+    let host_manifest = read(repository.join("crates/capability-host/Cargo.toml"))?;
+    for (name, manifest) in [
+        ("runtime", runtime_manifest.as_str()),
+        ("capability-host", host_manifest.as_str()),
+    ] {
+        assert!(manifest.contains("default = []\ntest-support = []"));
+        assert!(
+            !manifest_section(manifest, "[dependencies]").contains("test-support"),
+            "{name} enables test support for default production dependencies"
+        );
+    }
+
+    let runtime_root = read(repository.join("crates/runtime/src/lib.rs"))?;
+    assert!(
+        runtime_root.contains(
+            "#[cfg(any(test, feature = \"test-support\"))]\npub use boundary::ManualClock;"
+        )
+    );
+    assert!(runtime_root.contains(
+        "#[cfg(any(test, feature = \"test-support\"))]\npub use executor::DeterministicExecutor;"
+    ));
+    let host_root = read(repository.join("crates/capability-host/src/lib.rs"))?;
+    assert!(host_root.contains(
+        "#[cfg(any(test, feature = \"test-support\"))]\npub use secret::InMemorySecretResolver;"
+    ));
+
+    let runtime_engine = read(repository.join("crates/runtime/src/engine.rs"))?;
+    let runtime_effects = read(repository.join("crates/runtime/src/engine/effects.rs"))?;
+    let runtime_scheduling = read(repository.join("crates/runtime/src/engine/scheduling.rs"))?;
+    for removed in ["EffectTickResult", "effect_tick", "drive_once"] {
+        assert!(
+            !runtime_engine.contains(removed) && !runtime_effects.contains(removed),
+            "removed runtime compatibility API returned: {removed}"
+        );
+    }
+    assert!(!runtime_scheduling.contains("pub fn tick("));
+    let query = read(repository.join("crates/persistence/src/journal/query.rs"))?;
+    assert!(!query.contains("fn nonterminal_runs("));
+    assert!(!query.contains("fn runnable("));
+
+    let mut manifests = Vec::new();
+    collect_files(&repository, &mut manifests, &|path| {
+        path.file_name().and_then(|name| name.to_str()) == Some("Cargo.toml")
+    })?;
+    for manifest_path in manifests {
+        if manifest_path == repository.join("tools/evidence/Cargo.toml") {
+            continue;
+        }
+        let manifest = read(&manifest_path)?;
+        assert!(
+            !manifest_section(&manifest, "[dependencies]").contains("test-support"),
+            "production dependencies enable test support in {}",
+            manifest_path.display()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn shared_text_mechanics_and_canonical_import_paths_do_not_diverge() -> TestResult {
+    let repository = root()?;
+    let mut sources = Vec::new();
+    for directory in ["crates", "adapters", "apps"] {
+        collect_files(&repository.join(directory), &mut sources, &|path| {
+            path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+        })?;
+    }
+    let shared_text = repository.join("crates/contracts/src/text.rs");
+    for source in sources {
+        if source == shared_text {
+            continue;
+        }
+        let contents = read(&source)?;
+        assert!(
+            !contents.contains(".is_char_boundary("),
+            "UTF-8 truncation boundary logic escaped shared mechanics in {}",
+            source.display()
+        );
+        assert!(
+            !contents.contains(".strip_prefix(\"b3_\")"),
+            "canonical BLAKE3 lexical logic escaped shared mechanics in {}",
+            source.display()
+        );
+    }
+
+    for relative in [
+        "crates/authority/src/lib.rs",
+        "crates/peer-protocol/src/lib.rs",
+    ] {
+        assert!(
+            !read(repository.join(relative))?.contains("pub use milkdrift_capability::PeerId"),
+            "PeerId regained an alternate public import through {relative}"
+        );
+    }
+    assert!(
+        !read(repository.join("crates/workspace/src/lib.rs"))?
+            .contains("pub use milkdrift_capability::BoundedJson"),
+        "BoundedJson regained an alternate workspace import"
+    );
     Ok(())
 }
 

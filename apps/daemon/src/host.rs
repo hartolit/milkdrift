@@ -13,11 +13,11 @@ use std::{
 use milkdrift_authority::{
     ActorRef, AuthorityBudget, AuthorityDecisionSnapshot, AuthorityEvaluator,
     AuthorityExecutionProvenance, AuthorityOperation, AuthorityRequest, BoundaryTimeMillis,
-    DecisionId, GrantSetEvaluator, LayoutOwner, PeerId, PolicyId, RequestedResourceFacts,
-    SecretRef, WorkflowRunScope,
+    DecisionId, GrantSetEvaluator, LayoutOwner, PolicyId, RequestedResourceFacts, SecretRef,
+    WorkflowRunScope,
 };
 use milkdrift_blueprint::{AuthorRef, BlueprintRevisionDocument, RevisionId, WorkflowId};
-use milkdrift_capability::{CapabilityId, ErrorClass, SideEffectClass};
+use milkdrift_capability::{CapabilityId, ErrorClass, PeerId, SideEffectClass};
 use milkdrift_capability_host::{
     AdapterInvocation, CapabilityHost, CapabilitySelectionPolicy, EffectShutdownMode,
     EffectWorkerConfig, EffectWorkerHost, HostConfig, InvocationDataAccess, MaterializationLimits,
@@ -148,13 +148,8 @@ pub(crate) struct PublicFailure {
 impl PublicFailure {
     fn new(code: ErrorCode, message: impl Into<String>, retryable: bool) -> Self {
         let mut message = message.into();
-        if message.len() > 4_096 {
-            let mut end = 4_096;
-            while !message.is_char_boundary(end) {
-                end -= 1;
-            }
-            message.truncate(end);
-        }
+        let boundary = milkdrift_contracts::truncate_utf8(&message, 4_096).len();
+        message.truncate(boundary);
         Self {
             code,
             message,

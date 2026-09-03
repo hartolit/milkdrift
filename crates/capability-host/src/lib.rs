@@ -22,7 +22,9 @@ pub use registry::{
     CapabilityHost, CapabilitySelectionPolicy, CatalogGenerationView, GenerationHealth,
     GenerationView, HostConfig, HostError, RegistrationOutcome, ShutdownReport,
 };
-pub use secret::{InMemorySecretResolver, SecretResolver, SecretResolverError};
+#[cfg(any(test, feature = "test-support"))]
+pub use secret::InMemorySecretResolver;
+pub use secret::{SecretResolver, SecretResolverError};
 pub use worker::{
     EffectPollReport, EffectShutdownMode, EffectWorkerConfig, EffectWorkerError,
     EffectWorkerHealth, EffectWorkerHost, EffectWorkerShutdown,

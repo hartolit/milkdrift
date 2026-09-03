@@ -48,11 +48,3 @@ identity!(/// Idempotent artifact-transfer session identity.
     TransferId, 192);
 identity!(/// Canonical BLAKE3 catalog digest including its `b3_` prefix.
     CatalogDigest, 67);
-
-pub(crate) fn validate_blake3_digest(value: &str) -> bool {
-    value.len() == 67
-        && value.starts_with("b3_")
-        && value[3..]
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}

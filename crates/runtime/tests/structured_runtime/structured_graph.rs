@@ -483,16 +483,16 @@ fn durable_timer_wait_fires_only_at_its_recorded_deadline() -> TestResult {
     assert_eq!(initial.timers().len(), 1);
     assert!(initial.timers().values().all(|timer| timer.is_pending()));
     assert!(initial.waits().values().all(|wait| wait.is_pending()));
-    assert_eq!(harness.runtime.tick()?.dispatched, 0);
+    assert_eq!(runtime_tick(&harness.runtime)?.dispatched, 0);
     harness.clock.advance(99)?;
-    assert_eq!(harness.runtime.tick()?.dispatched, 0);
+    assert_eq!(runtime_tick(&harness.runtime)?.dispatched, 0);
     assert_eq!(
         harness.runtime.projection(&run)?.lifecycle(),
         RunLifecycle::Running
     );
 
     harness.clock.advance(1)?;
-    harness.runtime.tick()?;
+    runtime_tick(&harness.runtime)?;
     let completed = harness.runtime.projection(&run)?;
     assert!(completed.is_completed());
     assert!(completed.timers().is_empty());
@@ -562,7 +562,7 @@ fn typed_signal_is_consumed_once_and_duplicate_delivery_is_a_durable_fact() -> T
     );
 
     harness.clock.advance(50)?;
-    harness.runtime.tick()?;
+    runtime_tick(&harness.runtime)?;
     assert!(harness.runtime.projection(&run)?.is_completed());
     Ok(())
 }
@@ -626,7 +626,7 @@ fn broadcast_signal_fanout_is_received_once_then_drained_in_bounded_batches() ->
         if harness.runtime.projection(&run)?.is_completed() {
             break;
         }
-        harness.runtime.tick()?;
+        runtime_tick(&harness.runtime)?;
     }
     let completed = harness.runtime.projection(&run)?;
     assert_eq!(
@@ -682,7 +682,7 @@ fn unchanged_runnable_index_remains_dispatchable_after_an_unrelated_commit() -> 
         )?,
         CommandDisposition::Accepted
     );
-    assert_eq!(harness.runtime.tick()?.dispatched, 1);
+    assert_eq!(runtime_tick(&harness.runtime)?.dispatched, 1);
     assert_eq!(
         harness.runtime.projection(&run)?.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Succeeded)

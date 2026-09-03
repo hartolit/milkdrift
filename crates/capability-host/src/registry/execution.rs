@@ -383,12 +383,5 @@ fn executor_error_from_adapter(error: &AdapterError) -> ExecutorError {
 }
 
 fn bounded_summary(value: &str) -> String {
-    if value.len() <= 512 {
-        return value.to_owned();
-    }
-    let mut end = 512;
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_owned()
+    milkdrift_contracts::truncate_utf8(value, 512).to_owned()
 }

@@ -139,7 +139,12 @@ impl ContentDigest {
     }
 
     pub(crate) fn parse(value: String) -> Result<Self, IdentityError> {
-        validate_digest_identity(&value, "ContentDigest", "b3_")?;
+        if !milkdrift_contracts::is_canonical_blake3_digest(&value) {
+            return Err(IdentityError {
+                kind: "ContentDigest",
+                reason: "must contain a canonical BLAKE3 digest".to_owned(),
+            });
+        }
         Ok(Self(value))
     }
 

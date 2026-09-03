@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use milkdrift_authority::{PeerId, SensitiveSecret};
+use milkdrift_authority::SensitiveSecret;
+use milkdrift_capability::PeerId;
 
 use crate::PeerHttpError;
 

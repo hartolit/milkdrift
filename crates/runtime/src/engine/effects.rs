@@ -21,7 +21,7 @@ use tracing::warn;
 use super::support::{
     CommandPlan, cancellation_reason_for_execution, checked_timestamp_add, run_drain_reason,
 };
-use super::{CommandExecution, EffectTickResult, RuntimeService};
+use super::{CommandExecution, RuntimeService};
 use crate::projection::{AttemptState, NodeExecutionState};
 use crate::{
     CancellationDispatch, EffectAction, ExecutionDispatch, ExecutionReporter, ExecutorError,
@@ -167,51 +167,6 @@ impl RuntimeService {
             EffectAction::Execute(dispatch) => self.execute_invocation_effect(&dispatch),
             EffectAction::Cancel(dispatch) => self.execute_cancellation_effect(&dispatch),
         }
-    }
-
-    /// Blocking compatibility host for tests and simple embeddings.
-    ///
-    /// Production daemons should claim effects and execute them on caller-owned bounded
-    /// workers so scheduling, cancellation intent, inspection, and heartbeats remain
-    /// independently responsive.
-    pub fn effect_tick(&self) -> Result<EffectTickResult, RuntimeError> {
-        let limit = PageSize::new(u32::from(self.config.maximum_tick_items))?;
-        let actions = self.claim_effects(limit)?;
-        let mut result = EffectTickResult {
-            claimed: u32::try_from(actions.len()).map_err(|_error| {
-                RuntimeError::Scheduling("claimed effect count exceeds u32".to_owned())
-            })?,
-            ..EffectTickResult::default()
-        };
-        for action in actions {
-            match self.execute_effect(action)? {
-                EffectExecutionResult::Completed { observations } => {
-                    result.completed = result.completed.saturating_add(1);
-                    result.observations = result.observations.saturating_add(observations);
-                }
-                EffectExecutionResult::Uncertain { observations } => {
-                    result.uncertain = result.uncertain.saturating_add(1);
-                    result.observations = result.observations.saturating_add(observations);
-                }
-                EffectExecutionResult::CancellationAcknowledged => {
-                    result.cancellations = result.cancellations.saturating_add(1);
-                    result.observations = result.observations.saturating_add(1);
-                }
-                EffectExecutionResult::CancellationDeferred => {
-                    result.cancellation_deferred = result.cancellation_deferred.saturating_add(1);
-                }
-            }
-        }
-        Ok(result)
-    }
-
-    /// Explicit blocking compatibility driver: schedule once, then execute claimed effects.
-    pub fn drive_once(&self) -> Result<super::SchedulerTickResult, RuntimeError> {
-        let mut scheduled = self.scheduler_tick()?;
-        let effects = self.effect_tick()?;
-        scheduled.completed = scheduled.completed.saturating_add(effects.completed);
-        scheduled.uncertain = scheduled.uncertain.saturating_add(effects.uncertain);
-        Ok(scheduled)
     }
 
     fn claim_invocation(
@@ -912,13 +867,8 @@ fn bounded_uncertainty_reason(detail: &str) -> Result<Reason, PersistenceError> 
     if value.is_empty() {
         value.push_str("external effect boundary returned without terminal evidence");
     }
-    if value.len() > 2_000 {
-        let mut end = 2_000;
-        while !value.is_char_boundary(end) {
-            end -= 1;
-        }
-        value.truncate(end);
-    }
+    let boundary = milkdrift_contracts::truncate_utf8(&value, 2_000).len();
+    value.truncate(boundary);
     Reason::new(value)
 }
 

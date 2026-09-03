@@ -7,8 +7,7 @@
 
 use std::sync::Weak;
 
-use milkdrift_authority::PeerId;
-use milkdrift_capability::ArtifactReference;
+use milkdrift_capability::{ArtifactReference, PeerId};
 use milkdrift_peer_http::{
     CorePeerArtifactStore, PeerArtifactError, PeerArtifactStore, PeerArtifactTransferFacts,
 };

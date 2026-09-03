@@ -1,8 +1,8 @@
 use milkdrift_authority::{
-    ActorRef, AuthorityDecisionSnapshot, DecisionId, GrantDigest, GrantId, PeerId, PolicyId,
+    ActorRef, AuthorityDecisionSnapshot, DecisionId, GrantDigest, GrantId, PolicyId,
 };
 use milkdrift_capability::{
-    ArtifactReference, CapabilityId, IdempotencyBehavior, OperationId, SideEffectClass,
+    ArtifactReference, CapabilityId, IdempotencyBehavior, OperationId, PeerId, SideEffectClass,
 };
 use milkdrift_peer_protocol::{
     DelegationRef, PeerCancellationAcknowledgement, PeerCancellationRequest, PeerExecutionId,

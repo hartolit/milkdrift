@@ -1,3 +1,4 @@
+#[cfg(any(test, feature = "test-support"))]
 use std::{
     collections::BTreeMap,
     sync::{
@@ -13,10 +14,13 @@ use milkdrift_authority::{
 };
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::{
-    CancellationAcknowledgement, CancellationRequest, CapabilityCategory, CapabilityDescriptor,
-    CapabilityRequirement, ContractError, IdempotencyBehavior, InvocationAdmissionEnvelope,
-    InvocationEvent, InvocationEventKind, InvocationRequest, InvocationTerminal, OperationId,
-    ResolvedCapabilitySnapshot, SideEffectClass, TerminalStatus,
+    CancellationAcknowledgement, CancellationRequest, CapabilityDescriptor, CapabilityRequirement,
+    ContractError, IdempotencyBehavior, InvocationAdmissionEnvelope, InvocationEvent,
+    InvocationRequest, OperationId, ResolvedCapabilitySnapshot, SideEffectClass,
+};
+#[cfg(any(test, feature = "test-support"))]
+use milkdrift_capability::{
+    CapabilityCategory, InvocationEventKind, InvocationTerminal, TerminalStatus,
 };
 use milkdrift_persistence::{
     AttemptId, ControllerReservationId, LeaseId, NodeExecutionId, TimestampMillis,
@@ -683,12 +687,14 @@ pub trait TaskExecutor: Send + Sync {
 }
 
 /// Deterministic bounded executor used by runtime and crash-recovery tests.
+#[cfg(any(test, feature = "test-support"))]
 pub struct DeterministicExecutor {
     descriptor: CapabilityDescriptor,
     scripts: Mutex<BTreeMap<OperationId, Vec<InvocationEventKind>>>,
     entries: AtomicU64,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl DeterministicExecutor {
     /// Creates a deterministic executor around one immutable descriptor.
     #[must_use]
@@ -758,6 +764,7 @@ impl DeterministicExecutor {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl TaskExecutor for DeterministicExecutor {
     fn resolve(
         &self,

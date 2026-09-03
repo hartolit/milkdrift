@@ -1,3 +1,4 @@
+#[cfg(any(test, feature = "test-support"))]
 use std::{collections::BTreeMap, fmt, sync::Mutex};
 
 use milkdrift_authority::{SecretRef, SensitiveSecret};
@@ -21,11 +22,13 @@ pub trait SecretResolver: Send + Sync {
 }
 
 /// Deterministic in-memory resolver for tests; it performs no file or environment I/O.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Default)]
 pub struct InMemorySecretResolver {
     values: Mutex<BTreeMap<SecretRef, Vec<u8>>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl InMemorySecretResolver {
     /// Creates an empty resolver.
     #[must_use]
@@ -43,6 +46,7 @@ impl InMemorySecretResolver {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl SecretResolver for InMemorySecretResolver {
     fn resolve(&self, reference: &SecretRef) -> Result<SensitiveSecret, SecretResolverError> {
         let values = self
@@ -56,6 +60,7 @@ impl SecretResolver for InMemorySecretResolver {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl fmt::Debug for InMemorySecretResolver {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("InMemorySecretResolver([redacted])")

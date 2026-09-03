@@ -22,7 +22,8 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::Stream;
-use milkdrift_authority::{AuthorityOperation, PeerId};
+use milkdrift_authority::AuthorityOperation;
+use milkdrift_capability::PeerId;
 use milkdrift_control_protocol::{
     CapabilityRead, Command, CommandRequest, Cursor, CursorBinding, ErrorCode, ErrorEnvelope,
     Observation, ObservationEnvelope, PageRequest, ProtocolVersion, ResponseEnvelope,
@@ -356,14 +357,7 @@ async fn authorize_peer_admin(
 }
 
 fn bounded_http(value: &str) -> String {
-    if value.len() <= 1_024 {
-        return value.to_owned();
-    }
-    let mut end = 1_024;
-    while !value.is_char_boundary(end) {
-        end = end.saturating_sub(1);
-    }
-    value[..end].to_owned()
+    milkdrift_contracts::truncate_utf8(value, 1_024).to_owned()
 }
 
 /// Serves until `shutdown` resolves, then closes admission, drains the host, and joins it.

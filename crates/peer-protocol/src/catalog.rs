@@ -3,9 +3,10 @@ use std::collections::BTreeSet;
 use milkdrift_capability::{
     CapabilityDescriptor, CapabilityDescriptorDocument, CapabilityObservation, OperationId,
 };
+use milkdrift_contracts::is_canonical_blake3_digest;
 use serde::{Deserialize, Serialize};
 
-use crate::{CatalogDigest, PeerProtocolError, identity::validate_blake3_digest};
+use crate::{CatalogDigest, PeerProtocolError};
 
 const MAX_CATALOG_ENTRIES: usize = 256;
 const MAX_CATALOG_UPDATES: usize = 256;
@@ -151,7 +152,7 @@ impl CatalogSnapshot {
                 ));
             }
         }
-        if !validate_blake3_digest(self.digest.as_str())
+        if !is_canonical_blake3_digest(self.digest.as_str())
             || self.digest
                 != compute_digest(
                     self.generation,
@@ -229,7 +230,7 @@ impl CatalogUpdate {
             || self.generation <= self.prior_generation
             || self.updates.is_empty()
             || self.updates.len() > MAX_CATALOG_UPDATES
-            || !validate_blake3_digest(self.digest.as_str())
+            || !is_canonical_blake3_digest(self.digest.as_str())
         {
             return Err(PeerProtocolError::InvalidContract(
                 "invalid incremental catalog update".to_owned(),

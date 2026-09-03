@@ -168,13 +168,8 @@ fn executable_version_output(
     if version_output.is_empty() {
         version_output = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     }
-    if version_output.len() > 1_024 {
-        let mut end = 1_024;
-        while !version_output.is_char_boundary(end) {
-            end -= 1;
-        }
-        version_output.truncate(end);
-    }
+    let boundary = milkdrift_contracts::truncate_utf8(&version_output, 1_024).len();
+    version_output.truncate(boundary);
     if version_output.is_empty() {
         return Err("agent version command produced no bounded output".to_owned());
     }

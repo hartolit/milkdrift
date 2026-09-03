@@ -158,7 +158,7 @@ fn remediation_survives_reopen_and_dispatches_only_the_target_revision_operation
         submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
         CommandDisposition::Accepted
     );
-    assert_eq!(runtime.tick()?.completed, 1);
+    assert_eq!(runtime_tick(&runtime)?.completed, 1);
     assert_eq!(executor.calls("model.generate")?, 1);
     assert_eq!(executor.calls("model.fail")?, 0);
 
@@ -298,7 +298,7 @@ fn compacted_remediation_cannot_downgrade_its_source_side_effect_risk() -> TestR
         submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
         CommandDisposition::Accepted
     );
-    assert_eq!(runtime.tick()?.completed, 1);
+    assert_eq!(runtime_tick(&runtime)?.completed, 1);
     assert_eq!(
         submit_command(
             &runtime,
@@ -330,7 +330,7 @@ fn compacted_remediation_cannot_downgrade_its_source_side_effect_risk() -> TestR
         )?,
         CommandDisposition::Accepted
     );
-    assert_eq!(runtime.tick()?.completed, 1);
+    assert_eq!(runtime_tick(&runtime)?.completed, 1);
     assert_eq!(executor.calls("model.generate")?, 1);
     assert_eq!(executor.calls("model.fail")?, 1);
 
@@ -662,9 +662,9 @@ fn compacted_retry_history_still_blocks_retrospective_side_effect_rewrite() -> T
         CommandDisposition::Accepted
     );
 
-    assert_eq!(runtime.tick()?.uncertain, 1);
+    assert_eq!(runtime_tick(&runtime)?.uncertain, 1);
     clock.advance(1)?;
-    assert_eq!(runtime.tick()?.completed, 1);
+    assert_eq!(runtime_tick(&runtime)?.completed, 1);
     let compacted = runtime.projection(&run)?;
     let completed = compacted
         .settled_node_executions()
@@ -1373,12 +1373,11 @@ fn active_branch_frontier_does_not_capture_unowned_post_join_pending_work() -> T
     );
     let blocked_runtime = runtime.clone();
     let blocked = std::thread::spawn(move || {
-        blocked_runtime
-            .tick()
+        runtime_tick(&blocked_runtime)
             .map_err(|error| format!("blocked branch tick failed: {error}"))
     });
     executor.wait_until_entered()?;
-    assert_eq!(runtime.tick()?.dispatched, 1);
+    assert_eq!(runtime_tick(&runtime)?.dispatched, 1);
 
     let active = runtime.projection(&run)?;
     assert!(active.branches().values().any(|branch| branch.is_active()));
@@ -1477,7 +1476,7 @@ fn active_branch_frontier_does_not_capture_unowned_post_join_pending_work() -> T
             .values()
             .any(|attempt| attempt.is_active())
     );
-    runtime.tick()?;
+    runtime_tick(&runtime)?;
     assert_eq!(executor.cancellation_requests.load(Ordering::SeqCst), 1);
     executor.release()?;
     blocked
@@ -1529,8 +1528,8 @@ fn revision_adoption_materializes_a_new_root_entry_exactly_once() -> TestResult 
             .count(),
         1
     );
-    harness.runtime.tick()?;
-    harness.runtime.tick()?;
+    runtime_tick(&harness.runtime)?;
+    runtime_tick(&harness.runtime)?;
     assert_eq!(
         harness
             .runtime
@@ -1598,8 +1597,9 @@ fn cancel_and_restart_adoption_creates_one_replacement_after_confirmed_cancellat
     runtime.handle_authorized_command(&start, &test_authority_claim()?)?;
 
     let dispatch_runtime = runtime.clone();
-    let dispatch =
-        std::thread::spawn(move || dispatch_runtime.tick().map_err(|error| error.to_string()));
+    let dispatch = std::thread::spawn(move || {
+        runtime_tick(&dispatch_runtime).map_err(|error| error.to_string())
+    });
     executor.wait_until_entered()?;
     let request = runtime.command(
         run.clone(),
@@ -1645,7 +1645,7 @@ fn cancel_and_restart_adoption_creates_one_replacement_after_confirmed_cancellat
         CommandDisposition::Accepted
     );
 
-    runtime.tick()?;
+    runtime_tick(&runtime)?;
     assert_eq!(executor.cancellation_requests.load(Ordering::SeqCst), 1);
     executor.release()?;
     dispatch
@@ -1656,7 +1656,7 @@ fn cancel_and_restart_adoption_creates_one_replacement_after_confirmed_cancellat
         if runtime.projection(&run)?.is_completed() {
             break;
         }
-        runtime.tick()?;
+        runtime_tick(&runtime)?;
     }
 
     let projection = runtime.projection(&run)?;

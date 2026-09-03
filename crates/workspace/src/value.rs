@@ -1,8 +1,7 @@
+use milkdrift_capability::BoundedJson;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{
-    ArtifactReference, BoundedJson, ScopeReference, ValueKey, ValueVersion, WorkspaceError,
-};
+use crate::{ArtifactReference, ScopeReference, ValueKey, ValueVersion, WorkspaceError};
 
 /// Exact durable reference to one immutable workspace value version.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]

@@ -181,16 +181,9 @@ impl IntegrityDigest {
     /// Parses and validates a canonical digest.
     pub fn new(value: impl Into<String>) -> Result<Self, PersistenceError> {
         let value = value.into();
-        let bytes = value
-            .strip_prefix("b3_")
-            .ok_or_else(|| PersistenceError::InvalidDigest("missing b3_ prefix".to_owned()))?;
-        if bytes.len() != 64
-            || !bytes
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
+        if !milkdrift_contracts::is_canonical_blake3_digest(&value) {
             return Err(PersistenceError::InvalidDigest(
-                "expected 64 lowercase hexadecimal characters after b3_".to_owned(),
+                "expected b3_ plus 64 lowercase hexadecimal characters".to_owned(),
             ));
         }
         Ok(Self(value))

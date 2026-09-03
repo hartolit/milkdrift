@@ -1065,12 +1065,8 @@ pub(crate) fn bounded_detail(detail: &str) -> Result<BoundedDetail, PersistenceE
             }
         })
         .collect();
-    if detail.len() > milkdrift_persistence::MAX_DETAIL_BYTES {
-        let mut boundary = milkdrift_persistence::MAX_DETAIL_BYTES;
-        while !detail.is_char_boundary(boundary) {
-            boundary -= 1;
-        }
-        detail.truncate(boundary);
-    }
+    let boundary =
+        milkdrift_contracts::truncate_utf8(&detail, milkdrift_persistence::MAX_DETAIL_BYTES).len();
+    detail.truncate(boundary);
     BoundedDetail::new(detail)
 }

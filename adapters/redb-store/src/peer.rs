@@ -15,7 +15,7 @@ use validation::{
     validate_relationship, validate_tombstone,
 };
 
-use milkdrift_authority::PeerId;
+use milkdrift_capability::PeerId;
 use milkdrift_peer_protocol::{
     PeerCancellationAcknowledgement, PeerCancellationRequest, PeerExecutionId, PeerObservation,
     PeerRequestId,
@@ -1532,7 +1532,7 @@ fn observation_link_digest(
     previous: &str,
     observation_document: &[u8],
 ) -> Result<String, PersistenceError> {
-    if !valid_prefixed_blake3(previous) {
+    if !milkdrift_contracts::is_canonical_blake3_digest(previous) {
         return Err(corruption("peer observation history digest is invalid"));
     }
     let mut hasher = blake3::Hasher::new();
@@ -1558,13 +1558,4 @@ fn corruption(message: impl Into<String>) -> PersistenceError {
         class: StorageFailureClass::Corruption,
         message: message.into(),
     }
-}
-
-fn valid_prefixed_blake3(value: &str) -> bool {
-    value.strip_prefix("b3_").is_some_and(|digest| {
-        digest.len() == 64
-            && digest
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    })
 }

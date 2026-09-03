@@ -25,12 +25,7 @@ impl ContextManifestDigest {
     /// Validates a domain-separated digest string.
     pub fn new(value: impl Into<String>) -> Result<Self, ModelContractError> {
         let value = value.into();
-        if value.len() != 67
-            || !value.starts_with("b3_")
-            || !value[3..]
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
+        if !milkdrift_contracts::is_canonical_blake3_digest(&value) {
             return Err(ModelContractError::Invalid(
                 "context manifest digest must be b3_ plus 64 lowercase hexadecimal characters"
                     .to_owned(),

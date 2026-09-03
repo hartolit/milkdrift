@@ -214,9 +214,10 @@ milkdrift-control-client   -> {cli}
 
 `milkdrift-contracts` owns only cross-domain implementation mechanics with
 multiple production consumers: bounded JSON traversal, duplicate-key rejection,
-canonical recursive JSON ordering, and the common validated-string newtype
-implementation. Domain crates continue to own their identities, validation
-rules, byte limits, schema versions, error vocabulary, and durable meaning.
+canonical recursive JSON ordering, UTF-8-safe byte truncation, canonical `b3_`
+lexical validation, and the common validated-string newtype implementation.
+Domain crates continue to own their identities, digest domains, validation rules,
+byte limits, schema versions, error vocabulary, and durable meaning.
 The redb adapter also consumes blueprint documents directly for immutable
 revision storage. Capability contracts know nothing about blueprints.
 Blueprint uses only pure capability requirements and schema identities.
@@ -306,7 +307,7 @@ The exact current logical-to-physical mapping is:
 
 | Logical responsibility | Current physical crate/module |
 | --- | --- |
-| Shared contract mechanics | `milkdrift-contracts` owns bounded/canonical JSON mechanics and the common validated-string implementation; semantic rules remain in consuming domain crates |
+| Shared contract mechanics | `milkdrift-contracts` owns bounded/canonical JSON mechanics, UTF-8-safe byte truncation, canonical `b3_` lexical validation, and the common validated-string implementation; semantic rules remain in consuming domain crates |
 | Actor/grant/policy/secret-reference authority | `milkdrift-authority::{identity,model::{capability,decision,execution,grant,resource},evaluator,secret,document}` remains pure and owns no transport authentication or live secret source; `milkdrift-daemon::auth` maps local credential references to those server-owned facts |
 | Human/service/AI workflow control | `milkdrift-control::{document,command,policy,preset,service,adapter,controller::{policy,lifecycle},read}` owns strict proposals and application orchestration while durable revisions, authorization decisions, reconciliation, and events remain with their existing owners |
 | External control protocol | `milkdrift-control-protocol` owns protocol 2.2 common envelopes/cursors/codecs with focused private `command`, `read`, and `layout` modules for mutation DTOs, observation/read DTOs, and layout schema 1; it contains no async, HTTP, runtime, or storage types |
@@ -352,6 +353,9 @@ adapter ports, validated serialized documents, and application entry points rema
 Provider wire payloads, storage rows, daemon read-model projection, operational profile inspection,
 and test fault hooks stay private or explicitly feature-gated with their owners. In particular,
 peer HTTP does not re-export persistence records merely because it consumes the persistence port.
+`PeerId`, `SchemaId`, `ExtensionKey`, `BoundedJson`, and `TrustZone` use their canonical
+`milkdrift-capability` import path; authority, peer protocol, and workspace do not publish
+alternate convenience re-exports.
 
 ## 17. Testing philosophy
 

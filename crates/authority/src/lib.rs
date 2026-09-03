@@ -19,7 +19,6 @@ pub use identity::{
     ActorRef, AuthorityError, DecisionId, GrantDigest, GrantId, NetworkProfileRef, PolicyId,
     SecretRef,
 };
-pub use milkdrift_capability::PeerId;
 pub use model::{
     AccessMode, ArtifactAuthorityScope, AuthorityBudget, AuthorityDecisionSnapshot,
     AuthorityExecutionProvenance, AuthorityGrant, AuthorityGrantBuilder, AuthorityOperation,

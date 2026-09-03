@@ -1,6 +1,7 @@
 //! Validation of durable peer execution documents and authority envelopes.
 
 use milkdrift_authority::{AuthorityDecisionSnapshot, AuthorityOperation};
+use milkdrift_contracts::is_canonical_blake3_digest;
 use milkdrift_persistence::{
     PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2, PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3,
     PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1, PeerAdmission, PeerArchivedDisposition,
@@ -8,7 +9,7 @@ use milkdrift_persistence::{
     PeerRelationshipState, PersistenceError,
 };
 
-use super::{MAX_UNCERTAINTY_REASON_BYTES, corruption, invalid, valid_prefixed_blake3};
+use super::{MAX_UNCERTAINTY_REASON_BYTES, corruption, invalid};
 
 pub(super) fn validate_relationship(value: &PeerRelationshipState) -> Result<(), PersistenceError> {
     if value.generation == 0 || value.expires_at_unix_ms == 0 || value.maximum_active == 0 {
@@ -21,7 +22,7 @@ pub(super) fn validate_catalog(value: &PeerCatalogState) -> Result<(), Persisten
     if value.relationship_generation == 0
         || value.generation == 0
         || value.expires_at_unix_ms == 0
-        || !valid_prefixed_blake3(&value.digest)
+        || !is_canonical_blake3_digest(&value.digest)
     {
         return Err(invalid("peer catalog persistence facts are invalid"));
     }
@@ -108,7 +109,7 @@ pub(super) fn validate_record(record: &PeerExecutionRecord) -> Result<(), Persis
                 < record.request.input_artifact_bytes().map_err(|cause| {
                     corruption(format!("stored peer input is invalid: {cause}"))
                 })?)
-        || !valid_prefixed_blake3(&record.observation_digest)
+        || !is_canonical_blake3_digest(&record.observation_digest)
     {
         return Err(corruption(
             "stored peer execution primary facts are invalid",
@@ -148,11 +149,11 @@ pub(super) fn validate_tombstone(
         || tombstone.archived_at_unix_ms == 0
         || tombstone.compacted_through_sequence != tombstone.last_observation_sequence
         || u64::from(tombstone.accounting.observations) != tombstone.last_observation_sequence
-        || !valid_prefixed_blake3(&tombstone.request_digest)
-        || !valid_prefixed_blake3(&tombstone.catalog_digest)
+        || !is_canonical_blake3_digest(&tombstone.request_digest)
+        || !is_canonical_blake3_digest(&tombstone.catalog_digest)
         || !valid_capability_digest(&tombstone.capability_digest)
-        || !valid_prefixed_blake3(&tombstone.authority.decision_digest)
-        || !valid_prefixed_blake3(&tombstone.observation_digest)
+        || !is_canonical_blake3_digest(&tombstone.authority.decision_digest)
+        || !is_canonical_blake3_digest(&tombstone.observation_digest)
     {
         return Err(corruption(
             "stored peer execution tombstone facts are invalid",

@@ -42,7 +42,7 @@ impl StartupProbeStore {
 }
 
 #[test]
-fn effect_tick_reports_claimed_work_and_durable_entry_transition() -> TestResult {
+fn claimed_effect_execution_reports_durable_entry_transition() -> TestResult {
     let harness = Harness::new("effect-tick-claimed")?;
     let revision = task_revision("workflow-effect-tick-claimed")?;
     let run = RunId::new("run-effect-tick-claimed")?;
@@ -50,10 +50,18 @@ fn effect_tick_reports_claimed_work_and_durable_entry_transition() -> TestResult
     harness.create_and_start(&run, &revision)?;
 
     assert_eq!(harness.runtime.scheduler_tick()?.dispatched, 1);
-    let tick = harness.runtime.effect_tick()?;
-    assert_eq!(tick.claimed, 1);
-    assert_eq!(tick.completed, 1);
-    assert_eq!(tick.uncertain, 0);
+    let actions = harness.runtime.claim_effects(PageSize::new(1)?)?;
+    assert_eq!(actions.len(), 1);
+    let result = harness.runtime.execute_effect(
+        actions
+            .into_iter()
+            .next()
+            .ok_or("claimed effect is absent")?,
+    )?;
+    assert!(matches!(
+        result,
+        EffectExecutionResult::Completed { observations } if observations > 0
+    ));
     assert_eq!(
         harness.runtime.projection(&run)?.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Succeeded)
@@ -1022,9 +1030,9 @@ fn explicit_terminal_waits_for_an_already_dispatched_any_join_loser() -> TestRes
 
     let first_runtime = runtime.clone();
     let first_tick =
-        std::thread::spawn(move || first_runtime.tick().map_err(|error| error.to_string()));
+        std::thread::spawn(move || runtime_tick(&first_runtime).map_err(|error| error.to_string()));
     executor.wait_until_entered()?;
-    let second_tick = runtime.tick()?;
+    let second_tick = runtime_tick(&runtime)?;
     assert_eq!(second_tick.dispatched, 1);
 
     let midway = runtime.projection(&run)?;
@@ -1053,7 +1061,7 @@ fn explicit_terminal_waits_for_an_already_dispatched_any_join_loser() -> TestRes
             .any(|event| matches!(event.kind(), RunEventKind::RunTerminal { .. }))
     );
 
-    runtime.tick()?;
+    runtime_tick(&runtime)?;
     assert_eq!(executor.cancellation_requests.load(Ordering::SeqCst), 1);
     assert_eq!(runtime.projection(&run)?.lifecycle(), RunLifecycle::Running);
     executor.release()?;
@@ -1136,12 +1144,11 @@ fn later_cancellation_dominates_completed_explicit_success_and_failure_terminals
 
         let blocked_runtime = runtime.clone();
         let blocked = std::thread::spawn(move || {
-            blocked_runtime
-                .tick()
+            runtime_tick(&blocked_runtime)
                 .map_err(|error| format!("terminal cancellation blocked tick failed: {error}"))
         });
         executor.wait_until_entered()?;
-        assert_eq!(runtime.tick()?.dispatched, 1);
+        assert_eq!(runtime_tick(&runtime)?.dispatched, 1);
         let midway = runtime.projection(&run)?;
         let done = NodeId::new("done")?;
         assert_eq!(
@@ -1187,7 +1194,7 @@ fn later_cancellation_dominates_completed_explicit_success_and_failure_terminals
             )?,
             CommandDisposition::Accepted
         );
-        runtime.tick()?;
+        runtime_tick(&runtime)?;
         assert_eq!(executor.cancellation_requests.load(Ordering::SeqCst), 1);
         executor.release()?;
         blocked
@@ -1197,7 +1204,7 @@ fn later_cancellation_dominates_completed_explicit_success_and_failure_terminals
             if runtime.projection(&run)?.is_completed() {
                 break;
             }
-            runtime.tick()?;
+            runtime_tick(&runtime)?;
         }
         let completed = runtime.projection(&run)?;
         assert_eq!(
@@ -1272,12 +1279,11 @@ fn explicit_failure_terminal_drains_owned_work_and_finishes_failed() -> TestResu
 
     let blocked_runtime = runtime.clone();
     let blocked = std::thread::spawn(move || {
-        blocked_runtime
-            .tick()
+        runtime_tick(&blocked_runtime)
             .map_err(|error| format!("explicit failure blocked tick failed: {error}"))
     });
     executor.wait_until_entered()?;
-    assert_eq!(runtime.tick()?.dispatched, 1);
+    assert_eq!(runtime_tick(&runtime)?.dispatched, 1);
 
     let draining = runtime.projection(&run)?;
     assert_eq!(draining.lifecycle(), RunLifecycle::Running);
@@ -1296,7 +1302,7 @@ fn explicit_failure_terminal_drains_owned_work_and_finishes_failed() -> TestResu
             .any(|event| matches!(event.kind(), RunEventKind::RunCancellationRequested { .. }))
     );
 
-    runtime.tick()?;
+    runtime_tick(&runtime)?;
     assert_eq!(executor.cancellation_requests.load(Ordering::SeqCst), 1);
     executor.release()?;
     blocked
@@ -1306,7 +1312,7 @@ fn explicit_failure_terminal_drains_owned_work_and_finishes_failed() -> TestResu
         if runtime.projection(&run)?.is_completed() {
             break;
         }
-        runtime.tick()?;
+        runtime_tick(&runtime)?;
     }
     let completed = runtime.projection(&run)?;
     assert_eq!(
@@ -1385,7 +1391,7 @@ fn active_invocation_cancellation_reaches_the_executor_and_is_acknowledged_durab
 
     let tick_runtime = runtime.clone();
     let dispatch =
-        std::thread::spawn(move || tick_runtime.tick().map_err(|error| error.to_string()));
+        std::thread::spawn(move || runtime_tick(&tick_runtime).map_err(|error| error.to_string()));
     executor.wait_until_entered()?;
     let invocation = runtime
         .projection(&run)?
@@ -1411,7 +1417,7 @@ fn active_invocation_cancellation_reaches_the_executor_and_is_acknowledged_durab
         CommandDisposition::Accepted
     );
 
-    runtime.tick()?;
+    runtime_tick(&runtime)?;
     assert_eq!(executor.cancellation_requests.load(Ordering::SeqCst), 1);
     assert_eq!(
         executor.cancellation_request_sequence(&invocation)?,
@@ -1459,7 +1465,7 @@ fn shutdown_closes_admission_and_cancellation_explicitly_drains_wait_ownership()
 
     harness.runtime.begin_shutdown();
     assert!(!harness.runtime.is_accepting_admission());
-    assert_eq!(harness.runtime.tick()?.deferred, 1);
+    assert_eq!(runtime_tick(&harness.runtime)?.deferred, 1);
     assert_eq!(
         harness.command(&run, RunCommand::StartRun)?,
         CommandDisposition::Rejected

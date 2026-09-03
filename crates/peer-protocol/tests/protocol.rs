@@ -2,12 +2,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use milkdrift_authority::{ActorRef, PeerId};
+use milkdrift_authority::ActorRef;
 use milkdrift_capability::{
     AdmissionConstraints, ArtifactReference, BoundedJson, CancellationBehavior, CapabilityCategory,
     CapabilityId, CapabilityObservation, DescriptorBuilder, IdempotencyBehavior, InputReference,
     InvocationId, InvocationRequest, InvocationValueReference, Locality, OperationContract,
-    OperationId, ResolvedCapabilitySnapshot, SchemaContract, SchemaId, SideEffectClass,
+    OperationId, PeerId, ResolvedCapabilitySnapshot, SchemaContract, SchemaId, SideEffectClass,
     StreamingMode,
 };
 use milkdrift_peer_protocol::{
