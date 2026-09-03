@@ -407,6 +407,12 @@ fn configuration(
             .port_or_known_default()
             .ok_or("peer endpoint port absent")?
     );
+    let executable_root = std::path::Path::new("/bin/echo")
+        .canonicalize()?
+        .parent()
+        .ok_or("canonical test executable has no parent")?
+        .to_owned();
+    let temporary_root = std::path::Path::new("/tmp").canonicalize()?;
     let mut operator_authority = ActorGrantConfig::dangerous_administrator();
     operator_authority.resources.network = NetworkScope::new(
         BTreeSet::from([NetworkProfileRef::new(format!("peer:{remote_peer}"))?]),
@@ -478,9 +484,12 @@ fn configuration(
                 operation_allow: BTreeSet::from(["process.execute".to_owned()]),
                 maximum_side_effect: PeerSideEffectConfig::None,
                 execution_filesystem: vec![
-                    FilesystemScope::new("/usr/bin", BTreeSet::from([AccessMode::Execute]))?,
-                    FilesystemScope::new(
-                        "/tmp",
+                    FilesystemScope::from_canonical_host_path(
+                        &executable_root,
+                        BTreeSet::from([AccessMode::Execute]),
+                    )?,
+                    FilesystemScope::from_canonical_host_path(
+                        &temporary_root,
                         BTreeSet::from([AccessMode::Read, AccessMode::Write]),
                     )?,
                 ],

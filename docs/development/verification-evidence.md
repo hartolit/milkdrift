@@ -160,10 +160,14 @@ cleanup defects remain inspectable.
 
 ## Interpretation and limitations
 
-On 2026-09-03 the complete post-change local Linux gate passed: formatting,
-all-target/all-feature check and tests, Clippy with warnings denied, rustdoc with warnings denied,
-`cargo deny check`, `cargo machete`, duplicate dependency inspection, and complete test listing. The
-most recent full release evidence lane, run on 2026-09-02, passed with 256 receipt operations and
+On 2026-09-03 the final Pass 1 local Linux worktree passed formatting, the all-target/all-feature
+check and complete test/doctest suite, Clippy with warnings denied, rustdoc with warnings denied,
+`cargo deny check`, `cargo machete`, duplicate dependency inspection, and complete test listing.
+Focused peer-service, local-process, authority-path, daemon-configuration, two-daemon, and
+external-evidence suites also passed. A Windows GNU cross-target check passed for the authority
+crate and the local-process library; the complete workspace cross-target check could not build
+`aws-lc-sys` because this Linux host has no `x86_64-w64-mingw32-gcc`, so it is not Windows runtime
+evidence. The most recent full release evidence lane, run on 2026-09-02, passed with 256 receipt operations and
 256 peer executions/4,352 peer observations. It retained five hot and 251 cold
 receipts, replayed the oldest cold receipt after reopen, and measured 1,589,248 physical store bytes
 both before and after the final bounded archival transaction. The daemon queue bound was one; 57
@@ -184,3 +188,10 @@ matrix and the scheduled/manual mutation and benchmark workflows. A local Linux 
 their definitions and commands but cannot honestly substitute for those hosted results. Until the
 new workflows have run successfully on their declared runners, status must say that cross-platform
 and hosted evidence is configured and awaiting execution, not complete.
+
+The latest hosted results inspected for this pass target source commit `8b7b2e2`: the 2026-09-03
+Linux quality workflow passed all of its required steps, and the platform workflow passed on
+Ubuntu 24.04 and macOS 15. Its Windows 2025 job completed the all-target/all-feature check but failed
+thirteen local-process tests because canonical native Windows roots were refused by the old
+Unix-only `FilesystemScope` constructor. Those runs predate the local correction and therefore do
+not qualify it; a new hosted Windows run remains required.

@@ -37,11 +37,13 @@ snapshot. Git, CI, releases, and external audits own chronology.
   service calls off Tokio reactor tasks, and shutdown keeps the owner servicing final peer writes
   while fixed peer workers join. One daemon-owned fallible clock feeds runtime, peer, control,
   artifact, and stream boundaries through the owner queue and redb physical-schema-9 durable
-  high-water evidence. Failure or rollback refuses operations and is visible in health/logs;
-  post-entry peer recovery retains and retries its exact record without duplicate invocation. The
-  owner continues serving final worker clock/persistence calls while peer and effect workers drain,
-  preventing shutdown from waiting on work that only the owner can complete. The CLI is a
-  storage-free client of `milkdrift-control-client`.
+  high-water evidence. Failure or rollback refuses operations and is visible in health/logs. The
+  peer execution service owns a closed post-entry classification for adapter failure, missing
+  terminal evidence, adapter panic, and interrupted service work; fixed workers retain and retry
+  only the exact release-or-uncertainty transition. Clock/store failure, shutdown, replay, and
+  restart do not re-enter the adapter. The owner continues serving final worker clock/persistence
+  calls while peer and effect workers drain, preventing shutdown from waiting on work that only the
+  owner can complete. The CLI is a storage-free client of `milkdrift-control-client`.
 - External control protocol 2.2 provides bounded duplicate-safe DTOs, exact negotiation,
   authenticated cursor schema 2, idempotent commands, revisions/diffs, runs/nodes/attempts,
   timelines, proposals, capabilities/providers, authority, peers, artifacts, layouts, health, and
@@ -68,7 +70,10 @@ snapshot. Git, CI, releases, and external audits own chronology.
   responses, bearer values, or resolved secrets. One local-secret adapter resolves only configured
   bounded environment or restricted-file references for authentication, process/model adapters,
   and peer credentials. Local processes use byte-pinned safe-argv profile schema 2, explicit
-  inputs/outputs, bounded streams, cancellation, and process ownership.
+  inputs/outputs, bounded streams, cancellation, and process ownership. Their native canonical
+  roots convert to one pure authority representation supporting Unix absolute roots and ordinary
+  Windows drive-absolute roots with exact component containment; ambiguous Windows path families
+  fail closed.
 - Prompt-sequence schema 2 imports bounded JSON or Markdown, compiles to ordinary blueprints, and
   uses the normal daemon/control/CLI path for validation, execution, verification, review,
   approval, prospective remediation, restart recovery, and historical inspection. Its headless
@@ -120,8 +125,12 @@ Current exact versions are:
   hermetic external-evidence mode validates the harness but is explicitly non-qualifying. Real
   closure requires a byte-pinned real agent, a real supported endpoint that returns response
   identity and usage, private credential sources, and a clean strict-mode run.
-- Hosted Windows/macOS, mutation, benchmark, and operational workflow executions are not evidenced
-  here. Their pinned workflows exist, and local Linux evidence cannot substitute for hosted runs.
+- No hosted workflow has run this final Pass 1 worktree. At source commit `8b7b2e2`, the 2026-09-03
+  hosted Linux quality gate and the Ubuntu/macOS platform jobs passed, while the Windows platform
+  job failed thirteen local-process tests at the former Unix-only filesystem-authority constructor.
+  The local correction has not yet received hosted Windows evidence. Mutation, benchmark, and
+  operational workflow executions for this worktree are likewise not evidenced here; local Linux
+  or cross-target checks cannot substitute for those runs.
 - The local-process adapter provides mediation and ownership, not a sandbox. Trusted processes run
   with the daemon account's privileges. Network isolation, CPU/memory quotas, malicious descendant
   containment, atomic hashed-handle execution on every OS, directory artifacts, writable shared
@@ -154,7 +163,7 @@ Current exact versions are:
 
 ## Current validation/evidence snapshot
 
-- Current Linux snapshot (2026-09-02): formatting, all-target/all-feature checking, the complete
+- Current local Linux worktree snapshot (2026-09-03): formatting, all-target/all-feature checking, the complete
   workspace test and doctest suite, Clippy with warnings denied, rustdoc with warnings denied,
   `cargo deny check`, `cargo machete`, duplicate dependency inspection, and test inventory all pass.
   Five explicitly manual longevity/storage-bound tests remain ignored in the ordinary suite.

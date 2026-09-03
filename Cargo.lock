@@ -1234,6 +1234,7 @@ dependencies = [
  "milkdrift-peer-protocol",
  "milkdrift-persistence",
  "milkdrift-redb-store",
+ "milkdrift-runtime",
  "milkdrift-workspace",
  "redb",
  "reqwest",

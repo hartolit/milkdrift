@@ -16,11 +16,104 @@ use milkdrift_persistence::{
     PageSize, PeerClaimOutcome, PeerDispatchClaimRequest, PeerEntryOutcome, PeerEntryRequest,
     PeerExecutionPhase, PeerExecutionRecord, PeerExecutionSnapshot, PeerExecutionStore, WorkerId,
 };
+use milkdrift_runtime::ExecutorError;
 
 use super::{
     PeerClock, PeerHttpError, PeerService, adapter_execution_context, bounded,
     map_execution_persistence, relationship_generation,
 };
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum PeerUncertainty {
+    AdapterFailure { detail: String },
+    MissingTerminalEvidence,
+    AdapterPanicked,
+    ServiceInterrupted { detail: String },
+    WorkerPanicked,
+}
+
+impl PeerUncertainty {
+    fn from_execution(result: &Result<(), ExecutorError>) -> Self {
+        match result {
+            Ok(()) => Self::MissingTerminalEvidence,
+            Err(ExecutorError::BoundaryAfterEntry(detail)) => Self::AdapterFailure {
+                detail: bounded(detail, 1_920),
+            },
+            Err(ExecutorError::AdapterPanicked { after_entry: true }) => Self::AdapterPanicked,
+            Err(error) => Self::ServiceInterrupted {
+                detail: bounded(&error.to_string(), 1_920),
+            },
+        }
+    }
+
+    fn reason(&self) -> String {
+        match self {
+            Self::AdapterFailure { detail } => bounded(
+                &format!("peer adapter failed after durable entry: {detail}"),
+                2_048,
+            ),
+            Self::MissingTerminalEvidence => {
+                "peer adapter returned without terminal evidence".to_owned()
+            }
+            Self::AdapterPanicked => "peer adapter panicked after durable entry".to_owned(),
+            Self::ServiceInterrupted { detail } => bounded(
+                &format!("peer execution service failed after durable entry: {detail}"),
+                2_048,
+            ),
+            Self::WorkerPanicked => "peer worker panicked after durable entry".to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PeerRecoveryTransition {
+    InspectClaim { post_entry: PeerUncertainty },
+    ReleasePreEntryClaim,
+    MarkPostEntryUncertain(PeerUncertainty),
+}
+
+#[derive(Debug)]
+pub(crate) struct PeerWorkerRecovery {
+    owner_peer: PeerId,
+    execution: PeerExecutionId,
+    transition: PeerRecoveryTransition,
+}
+
+impl PeerWorkerRecovery {
+    pub(crate) fn inspect(record: PeerExecutionRecord, post_entry: PeerUncertainty) -> Self {
+        Self {
+            owner_peer: record.owner_peer,
+            execution: record.execution,
+            transition: PeerRecoveryTransition::InspectClaim { post_entry },
+        }
+    }
+
+    fn exact(record: PeerExecutionRecord, transition: PeerRecoveryTransition) -> Self {
+        Self {
+            owner_peer: record.owner_peer,
+            execution: record.execution,
+            transition,
+        }
+    }
+}
+
+pub(crate) enum PeerWorkerRun {
+    Settled,
+    Recover(PeerWorkerRecovery),
+}
+
+enum ClaimedRunFailure {
+    Inspect(PeerUncertainty),
+    Exact(PeerRecoveryTransition),
+}
+
+impl From<PeerHttpError> for ClaimedRunFailure {
+    fn from(error: PeerHttpError) -> Self {
+        Self::Inspect(PeerUncertainty::ServiceInterrupted {
+            detail: bounded(&error.to_string(), 1_920),
+        })
+    }
+}
 
 impl PeerService {
     pub(crate) fn worker_claims_enabled(&self) -> bool {
@@ -41,7 +134,19 @@ impl PeerService {
             .map_err(map_execution_persistence)
     }
 
-    pub(crate) fn run_claimed(&self, record: PeerExecutionRecord) -> Result<(), PeerHttpError> {
+    pub(crate) fn run_claimed(&self, record: PeerExecutionRecord) -> PeerWorkerRun {
+        match self.run_claimed_once(&record) {
+            Ok(()) => PeerWorkerRun::Settled,
+            Err(ClaimedRunFailure::Inspect(post_entry)) => {
+                PeerWorkerRun::Recover(PeerWorkerRecovery::inspect(record, post_entry))
+            }
+            Err(ClaimedRunFailure::Exact(transition)) => {
+                PeerWorkerRun::Recover(PeerWorkerRecovery::exact(record, transition))
+            }
+        }
+    }
+
+    fn run_claimed_once(&self, record: &PeerExecutionRecord) -> Result<(), ClaimedRunFailure> {
         let claim = record.phase.claim().cloned().ok_or_else(|| {
             PeerHttpError::Persistence("claimed peer work lacks a claim".to_owned())
         })?;
@@ -49,7 +154,7 @@ impl PeerService {
             &record.phase,
             PeerExecutionPhase::CancellationRequested { evidence: None, .. }
         ) {
-            let terminal = self.append_cancelled_before_entry(&record)?;
+            let terminal = self.append_cancelled_before_entry(record)?;
             if record
                 .cancellation
                 .as_ref()
@@ -76,34 +181,42 @@ impl PeerService {
             return Ok(());
         }
         if self.now()? > record.request.deadline_unix_ms {
-            return self.append_pre_entry_failure(
-                &record,
-                "peer execution deadline elapsed before adapter entry",
-            );
+            return self
+                .append_pre_entry_failure(
+                    record,
+                    "peer execution deadline elapsed before adapter entry",
+                )
+                .map_err(ClaimedRunFailure::from);
         }
         if self.drain_state() != DrainState::Ready {
-            return self.append_pre_entry_failure(
-                &record,
-                "peer service stopped admission before adapter entry",
-            );
+            return self
+                .append_pre_entry_failure(
+                    record,
+                    "peer service stopped admission before adapter entry",
+                )
+                .map_err(ClaimedRunFailure::from);
         }
         let relationship = match self.relationship(&record.owner_peer) {
             Ok(relationship) => relationship,
-            Err(error @ PeerHttpError::Unavailable(_)) => return Err(error),
+            Err(error @ PeerHttpError::Unavailable(_)) => return Err(error.into()),
             Err(_) => {
-                return self.append_pre_entry_failure(
-                    &record,
-                    "peer relationship was revoked or expired before adapter entry",
-                );
+                return self
+                    .append_pre_entry_failure(
+                        record,
+                        "peer relationship was revoked or expired before adapter entry",
+                    )
+                    .map_err(ClaimedRunFailure::from);
             }
         };
         let generation = match self.exact_generation(&relationship, &record.request) {
             Ok(generation) => generation,
             Err(_) => {
-                return self.append_pre_entry_failure(
-                    &record,
-                    "selected capability generation was unavailable before adapter entry",
-                );
+                return self
+                    .append_pre_entry_failure(
+                        record,
+                        "selected capability generation was unavailable before adapter entry",
+                    )
+                    .map_err(ClaimedRunFailure::from);
             }
         };
         let entry_now = self.now()?;
@@ -115,12 +228,14 @@ impl PeerService {
             entry_now,
         ) {
             Ok(decision) => decision,
-            Err(error @ PeerHttpError::Unavailable(_)) => return Err(error),
+            Err(error @ PeerHttpError::Unavailable(_)) => return Err(error.into()),
             Err(_) => {
-                return self.append_pre_entry_failure(
-                    &record,
-                    "peer execution authority was denied before adapter entry",
-                );
+                return self
+                    .append_pre_entry_failure(
+                        record,
+                        "peer execution authority was denied before adapter entry",
+                    )
+                    .map_err(ClaimedRunFailure::from);
             }
         };
         let entered = match self
@@ -138,16 +253,20 @@ impl PeerService {
         {
             PeerEntryOutcome::Entered(entered) => *entered,
             PeerEntryOutcome::AdmissionClosed => {
-                return self.append_pre_entry_failure(
-                    &record,
-                    "peer service stopped admission before adapter entry",
-                );
+                return self
+                    .append_pre_entry_failure(
+                        record,
+                        "peer service stopped admission before adapter entry",
+                    )
+                    .map_err(ClaimedRunFailure::from);
             }
             PeerEntryOutcome::RelationshipUnavailable => {
-                return self.append_pre_entry_failure(
-                    &record,
-                    "peer relationship was revoked or expired before adapter entry",
-                );
+                return self
+                    .append_pre_entry_failure(
+                        record,
+                        "peer relationship was revoked or expired before adapter entry",
+                    )
+                    .map_err(ClaimedRunFailure::from);
             }
         };
         let reporter = PeerStoreReporter {
@@ -172,11 +291,14 @@ impl PeerService {
             &context,
             &reporter,
         );
+        let uncertainty = PeerUncertainty::from_execution(&result);
+        let recovery = PeerRecoveryTransition::MarkPostEntryUncertain(uncertainty.clone());
         let current = self
             .executions
             .peer_execution(&entered.owner_peer, &entered.execution)
-            .map_err(map_execution_persistence)?
-            .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
+            .map_err(map_execution_persistence)
+            .map_err(|_| ClaimedRunFailure::Exact(recovery.clone()))?
+            .ok_or_else(|| ClaimedRunFailure::Exact(recovery.clone()))?;
         let PeerExecutionSnapshot::Hot(current) = current else {
             return Ok(());
         };
@@ -186,32 +308,32 @@ impl PeerService {
         ) {
             return Ok(());
         }
-        let reason = result.map_or_else(
-            |error| bounded(&error.to_string(), 2_048),
-            |()| "peer adapter returned without terminal evidence".to_owned(),
-        );
+        let reason = uncertainty.reason();
+        let uncertain_at_unix_ms = self
+            .now()
+            .map_err(|_| ClaimedRunFailure::Exact(recovery.clone()))?;
         self.executions
             .mark_peer_uncertain(
                 &entered.owner_peer,
                 &entered.execution,
                 &claim.worker,
                 claim.generation,
-                self.now()?,
+                uncertain_at_unix_ms,
                 &reason,
             )
-            .map_err(map_execution_persistence)?;
+            .map_err(map_execution_persistence)
+            .map_err(|_| ClaimedRunFailure::Exact(recovery))?;
         Ok(())
     }
 
-    pub(crate) fn recover_interrupted_worker(
+    pub(crate) fn recover_worker(
         &self,
-        claimed: &PeerExecutionRecord,
+        recovery: &mut PeerWorkerRecovery,
         worker: &WorkerId,
-        post_entry_reason: &str,
     ) -> Result<(), PeerHttpError> {
         let current = self
             .executions
-            .peer_execution(&claimed.owner_peer, &claimed.execution)
+            .peer_execution(&recovery.owner_peer, &recovery.execution)
             .map_err(map_execution_persistence)?
             .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
         let PeerExecutionSnapshot::Hot(current) = current else {
@@ -223,28 +345,49 @@ impl PeerService {
         if claim.worker != *worker {
             return Ok(());
         }
-        if current.phase.entry_evidence().is_some() {
-            self.executions
-                .mark_peer_uncertain(
-                    &current.owner_peer,
-                    &current.execution,
-                    worker,
-                    claim.generation,
-                    self.now()?,
-                    post_entry_reason,
-                )
-                .map_err(map_execution_persistence)?;
-        } else {
-            self.executions
-                .release_peer_claim(
-                    &current.owner_peer,
-                    &current.execution,
-                    worker,
-                    claim.generation,
-                    self.now()?,
-                )
-                .map_err(map_execution_persistence)?;
-            self.notify_workers();
+        if let PeerRecoveryTransition::InspectClaim { post_entry } = &recovery.transition {
+            recovery.transition = if current.phase.entry_evidence().is_some() {
+                PeerRecoveryTransition::MarkPostEntryUncertain(post_entry.clone())
+            } else {
+                PeerRecoveryTransition::ReleasePreEntryClaim
+            };
+        }
+        match &recovery.transition {
+            PeerRecoveryTransition::InspectClaim { .. } => unreachable!("recovery is resolved"),
+            PeerRecoveryTransition::ReleasePreEntryClaim => {
+                if current.phase.entry_evidence().is_some() {
+                    return Err(PeerHttpError::Persistence(
+                        "pre-entry recovery found durable adapter entry".to_owned(),
+                    ));
+                }
+                self.executions
+                    .release_peer_claim(
+                        &current.owner_peer,
+                        &current.execution,
+                        worker,
+                        claim.generation,
+                        self.now()?,
+                    )
+                    .map_err(map_execution_persistence)?;
+                self.notify_workers();
+            }
+            PeerRecoveryTransition::MarkPostEntryUncertain(uncertainty) => {
+                if current.phase.entry_evidence().is_none() {
+                    return Err(PeerHttpError::Persistence(
+                        "post-entry recovery lacks durable adapter entry".to_owned(),
+                    ));
+                }
+                self.executions
+                    .mark_peer_uncertain(
+                        &current.owner_peer,
+                        &current.execution,
+                        worker,
+                        claim.generation,
+                        self.now()?,
+                        &uncertainty.reason(),
+                    )
+                    .map_err(map_execution_persistence)?;
+            }
         }
         Ok(())
     }

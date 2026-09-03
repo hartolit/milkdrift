@@ -201,11 +201,12 @@ milkdrift-workspace   -> {authority, persistence, runtime, redb-store, control}
 milkdrift-authority   -> {persistence, runtime, capability-host, control}
 milkdrift-persistence -> {runtime, redb-store, control}
 milkdrift-model       -> {runtime, model-provider, control}
-milkdrift-runtime     -> {capability-host, control}
-milkdrift-capability-host -> {local-process, model-provider, control}
+milkdrift-runtime     -> {capability-host, control, peer-http}
+milkdrift-capability-host -> {local-process, model-provider, control, peer-http}
 milkdrift-authority   -> {local-secret, local-process, model-provider}
 milkdrift-control-protocol -> {control-client, daemon}
 milkdrift-control-client   -> {cli}
+{authority, blueprint, capability, capability-host, peer-protocol, persistence, runtime, workspace} -> peer-http
 {authority, blueprint, capability, contracts, control, persistence, workspace} -> prompt-sequence
 {authority, blueprint, capability-host, control, persistence, runtime, redb-store,
  local-process, local-secret, model-provider, control-protocol, prompt-sequence} -> daemon

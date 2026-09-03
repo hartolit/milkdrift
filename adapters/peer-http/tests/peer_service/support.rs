@@ -4,7 +4,7 @@ pub(super) use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
     sync::{
-        Arc, Barrier, Mutex,
+        Arc, Barrier, Condvar, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     thread,
@@ -86,6 +86,7 @@ struct ControlledClockState {
 #[derive(Debug)]
 pub(super) struct ControlledPeerClock {
     state: Mutex<ControlledClockState>,
+    changed: Condvar,
 }
 
 impl ControlledPeerClock {
@@ -97,6 +98,7 @@ impl ControlledPeerClock {
                 available: true,
                 unavailable_observations: 0,
             }),
+            changed: Condvar::new(),
         }
     }
 
@@ -113,15 +115,23 @@ impl ControlledPeerClock {
             .lock()
             .map_err(|_| PeerClockError::Unavailable)?
             .available = available;
+        self.changed.notify_all();
         Ok(())
     }
 
-    pub(super) fn unavailable_observations(&self) -> Result<u64, PeerClockError> {
-        Ok(self
-            .state
-            .lock()
-            .map_err(|_| PeerClockError::Unavailable)?
-            .unavailable_observations)
+    pub(super) fn wait_for_unavailable_observations(
+        &self,
+        minimum: u64,
+        timeout: Duration,
+    ) -> Result<bool, PeerClockError> {
+        let state = self.state.lock().map_err(|_| PeerClockError::Unavailable)?;
+        let (state, timed) = self
+            .changed
+            .wait_timeout_while(state, timeout, |state| {
+                state.unavailable_observations < minimum
+            })
+            .map_err(|_| PeerClockError::Unavailable)?;
+        Ok(state.unavailable_observations >= minimum && !timed.timed_out())
     }
 }
 
@@ -130,6 +140,7 @@ impl PeerClock for ControlledPeerClock {
         let mut state = self.state.lock().map_err(|_| PeerClockError::Unavailable)?;
         if !state.available {
             state.unavailable_observations = state.unavailable_observations.saturating_add(1);
+            self.changed.notify_all();
             return Err(PeerClockError::Unavailable);
         }
         if state.observed_at_unix_ms < state.last_unix_ms {
@@ -218,7 +229,45 @@ pub(super) struct TerminalAdapter {
 pub(super) struct ClockFailingAdapter {
     pub(super) capability: CapabilityId,
     pub(super) clock: Arc<ControlledPeerClock>,
-    pub(super) calls: Arc<AtomicUsize>,
+    pub(super) entry: Arc<AdapterEntryProbe>,
+    pub(super) outcome: PostEntryTestOutcome,
+    pub(super) disable_clock: bool,
+}
+
+#[derive(Default)]
+pub(super) struct AdapterEntryProbe {
+    calls: Mutex<usize>,
+    changed: Condvar,
+}
+
+impl AdapterEntryProbe {
+    pub(super) fn calls(&self) -> TestResult<usize> {
+        Ok(*self.calls.lock().map_err(|_| "adapter probe poisoned")?)
+    }
+
+    pub(super) fn wait_for_call(&self, timeout: Duration) -> TestResult<bool> {
+        let calls = self.calls.lock().map_err(|_| "adapter probe poisoned")?;
+        let (calls, timed) = self
+            .changed
+            .wait_timeout_while(calls, timeout, |calls| *calls == 0)
+            .map_err(|_| "adapter probe poisoned")?;
+        Ok(*calls > 0 && !timed.timed_out())
+    }
+
+    fn record_call(&self) {
+        if let Ok(mut calls) = self.calls.lock() {
+            *calls = calls.saturating_add(1);
+            self.changed.notify_all();
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum PostEntryTestOutcome {
+    Error,
+    MissingTerminal,
+    Panic,
+    Terminal,
 }
 
 impl CapabilityAdapter for ClockFailingAdapter {
@@ -231,16 +280,43 @@ impl CapabilityAdapter for ClockFailingAdapter {
 
     fn execute(
         &self,
-        _invocation: &AdapterInvocation<'_>,
-        _reporter: &dyn AdapterReporter,
+        invocation: &AdapterInvocation<'_>,
+        reporter: &dyn AdapterReporter,
     ) -> Result<(), AdapterError> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        self.clock
-            .set_available(false)
-            .map_err(|error| AdapterError::external_failure(error.to_string()))?;
-        Err(AdapterError::external_failure(
-            "deterministic adapter failure after entry",
-        ))
+        self.entry.record_call();
+        if matches!(self.outcome, PostEntryTestOutcome::Terminal) {
+            reporter.invocation(
+                InvocationEvent::new(
+                    invocation.request().invocation().clone(),
+                    1,
+                    InvocationEventKind::Terminal {
+                        terminal: InvocationTerminal::new(
+                            TerminalStatus::Success,
+                            Vec::new(),
+                            None,
+                            None,
+                            SideEffectClass::ReadOnly,
+                        )
+                        .map_err(|error| AdapterError::external_failure(error.to_string()))?,
+                    },
+                )
+                .map_err(|error| AdapterError::external_failure(error.to_string()))?,
+            )?;
+        }
+        if self.disable_clock {
+            self.clock
+                .set_available(false)
+                .map_err(|error| AdapterError::external_failure(error.to_string()))?;
+        }
+        match self.outcome {
+            PostEntryTestOutcome::Error => Err(AdapterError::external_failure(
+                "deterministic adapter failure after entry",
+            )),
+            PostEntryTestOutcome::MissingTerminal | PostEntryTestOutcome::Terminal => Ok(()),
+            PostEntryTestOutcome::Panic => {
+                std::panic::resume_unwind(Box::new("deterministic adapter panic after entry"))
+            }
+        }
     }
 
     fn cancel(

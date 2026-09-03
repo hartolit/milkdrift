@@ -338,13 +338,5 @@ fn capability_facts_are_requested(resources: &crate::RequestedResourceFacts) -> 
 }
 
 fn filesystem_contains(allowed: &FilesystemScope, requested: &FilesystemScope) -> bool {
-    let path_matches = requested.root() == allowed.root()
-        || (requested.root().starts_with(allowed.root())
-            && (allowed.root() == "/"
-                || requested
-                    .root()
-                    .as_bytes()
-                    .get(allowed.root().len())
-                    .is_some_and(|byte| *byte == b'/')));
-    path_matches && requested.access().is_subset(allowed.access())
+    allowed.contains(requested)
 }

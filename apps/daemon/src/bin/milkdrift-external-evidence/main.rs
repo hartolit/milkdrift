@@ -524,37 +524,32 @@ fn explicit_grant(
     // The same model workflow also contains local evidence-source tasks whose requirements
     // intentionally have no provider profile. The model task itself pins the exact profile and
     // the report verifies that frozen identity through attempt provenance.
-    let mut filesystem = vec![
-        FilesystemScope::new(
-            session_root
-                .to_str()
-                .ok_or_else(|| "session root is not UTF-8".to_owned())?,
+    let session_root = session_root
+        .canonicalize()
+        .map_err(|error| format!("session root canonicalization: {error}"))?;
+    let repository = repository
+        .canonicalize()
+        .map_err(|error| format!("repository root canonicalization: {error}"))?;
+    let filesystem = vec![
+        FilesystemScope::from_canonical_host_path(
+            &session_root,
             BTreeSet::from([AccessMode::Read, AccessMode::Write, AccessMode::Execute]),
         )
         .map_err(|error| error.to_string())?,
-        FilesystemScope::new(
-            repository
-                .to_str()
-                .ok_or_else(|| "repository root is not UTF-8".to_owned())?,
+        FilesystemScope::from_canonical_host_path(
+            &repository,
             BTreeSet::from([AccessMode::Read, AccessMode::Write, AccessMode::Execute]),
         )
         .map_err(|error| error.to_string())?,
-        FilesystemScope::new("/usr/bin", BTreeSet::from([AccessMode::Execute]))
-            .map_err(|error| error.to_string())?,
+        FilesystemScope::from_canonical_host_path(
+            agent
+                .canonical_executable
+                .parent()
+                .ok_or_else(|| "agent executable has no parent".to_owned())?,
+            BTreeSet::from([AccessMode::Execute]),
+        )
+        .map_err(|error| error.to_string())?,
     ];
-    if model_profile.is_none() {
-        filesystem.push(
-            FilesystemScope::new(
-                agent
-                    .canonical_executable
-                    .parent()
-                    .and_then(Path::to_str)
-                    .ok_or_else(|| "agent executable parent is not UTF-8".to_owned())?,
-                BTreeSet::from([AccessMode::Execute]),
-            )
-            .map_err(|error| error.to_string())?,
-        );
-    }
     let network = if model_profile.is_some() {
         let destination = model
             .endpoint_origin

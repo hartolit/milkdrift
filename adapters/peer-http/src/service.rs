@@ -8,6 +8,7 @@ use artifact_transfer::DisabledArtifactStore;
 #[cfg(test)]
 use authority::peer_capability_authority;
 use authority::{adapter_execution_context, peer_authority_grant};
+pub(crate) use worker::{PeerUncertainty, PeerWorkerRecovery, PeerWorkerRun};
 
 use std::{
     collections::{BTreeMap, BTreeSet},

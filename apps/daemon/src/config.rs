@@ -112,11 +112,17 @@ impl ActorGrantConfig {
     /// Deliberately constructs visually broad administration for migration/tests.
     #[must_use]
     pub fn dangerous_administrator() -> Self {
+        #[cfg(unix)]
+        let filesystem = vec![FilesystemScope::dangerous_all_access_unix_root()];
+        #[cfg(windows)]
+        let filesystem = FilesystemScope::dangerous_all_access_windows_drives();
+        #[cfg(not(any(unix, windows)))]
+        let filesystem = Vec::new();
         Self {
             resources: ResourceScope {
                 workflow_run: WorkflowRunScope::Any,
                 capability: CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
-                filesystem: vec![milkdrift_authority::FilesystemScope::dangerous_all_access_root()],
+                filesystem,
                 network: NetworkScope::empty(),
                 secrets: BTreeSet::new(),
                 artifacts: ArtifactAuthorityScope::dangerous_all(),
@@ -1225,6 +1231,26 @@ mod tests {
         legacy_array["actors"][0]["authority"]["resources"]["capability"]["operations"] =
             toml::Value::Array(Vec::new());
         assert!(toml::from_str::<DaemonConfig>(&toml::to_string(&legacy_array)?).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn daemon_authority_uses_canonical_cross_platform_filesystem_roots()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut config = fixture_document()?;
+        config.actors[0].authority.resources.filesystem = vec![FilesystemScope::new(
+            "C:/work/tools",
+            BTreeSet::from([milkdrift_authority::AccessMode::Execute]),
+        )?];
+        let encoded = toml::to_string(&config)?;
+        let decoded: DaemonConfig = toml::from_str(&encoded)?;
+        assert_eq!(
+            decoded.actors[0].authority.resources.filesystem[0].root(),
+            "C:/work/tools"
+        );
+
+        let hostile = encoded.replacen("C:/work/tools", "C:\\\\work\\\\tools", 1);
+        assert!(toml::from_str::<DaemonConfig>(&hostile).is_err());
         Ok(())
     }
 

@@ -5,14 +5,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use milkdrift_persistence::{PeerClaimOutcome, PeerExecutionRecord, WorkerId};
+use milkdrift_persistence::{PeerClaimOutcome, WorkerId};
 
-use crate::{PeerHttpError, config::PeerWorkerConfig, service::PeerService};
-
-struct PendingRecovery {
-    record: PeerExecutionRecord,
-    post_entry_reason: &'static str,
-}
+use crate::{
+    PeerHttpError,
+    config::PeerWorkerConfig,
+    service::{PeerService, PeerUncertainty, PeerWorkerRecovery, PeerWorkerRun},
+};
 
 #[derive(Default)]
 struct SignalState {
@@ -142,26 +141,28 @@ impl PeerDispatchWorkers {
 }
 
 fn worker_loop(
-    service: Weak<PeerService>,
+    weak_service: Weak<PeerService>,
     signal: Arc<DispatchSignal>,
     worker: WorkerId,
     poll_interval: Duration,
 ) {
     let mut observed_generation = 0;
-    let mut pending_recovery: Option<PendingRecovery> = None;
+    let mut pending_recovery: Option<PeerWorkerRecovery> = None;
     loop {
-        let Some(service) = service.upgrade() else {
+        let Some(service) = weak_service.upgrade() else {
             return;
         };
-        if let Some(recovery) = pending_recovery.as_ref() {
-            if service
-                .recover_interrupted_worker(&recovery.record, &worker, recovery.post_entry_reason)
-                .is_ok()
-            {
+        if let Some(recovery) = pending_recovery.as_mut() {
+            if service.recover_worker(recovery, &worker).is_ok() {
                 pending_recovery = None;
             } else {
                 drop(service);
                 if signal.wait(&mut observed_generation, poll_interval) {
+                    if let Some(service) = weak_service.upgrade()
+                        && let Some(recovery) = pending_recovery.as_mut()
+                    {
+                        let _ = service.recover_worker(recovery, &worker);
+                    }
                     return;
                 }
                 continue;
@@ -174,18 +175,15 @@ fn worker_loop(
                     let recovery_record = record.clone();
                     let result = catch_unwind(AssertUnwindSafe(|| service.run_claimed(record)));
                     match result {
-                        Ok(Ok(())) => {}
-                        Ok(Err(_)) => {
-                            pending_recovery = Some(PendingRecovery {
-                                record: recovery_record,
-                                post_entry_reason: "peer worker failed after durable adapter entry",
-                            });
+                        Ok(PeerWorkerRun::Settled) => {}
+                        Ok(PeerWorkerRun::Recover(recovery)) => {
+                            pending_recovery = Some(recovery);
                         }
                         Err(_) => {
-                            pending_recovery = Some(PendingRecovery {
-                                record: recovery_record,
-                                post_entry_reason: "peer worker panicked after durable adapter entry",
-                            });
+                            pending_recovery = Some(PeerWorkerRecovery::inspect(
+                                recovery_record,
+                                PeerUncertainty::WorkerPanicked,
+                            ));
                         }
                     }
                     continue;

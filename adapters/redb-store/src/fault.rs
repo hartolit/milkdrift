@@ -56,6 +56,14 @@ pub enum FaultPoint {
     BeforePeerClaimCommit,
     /// Immediately after a durable peer dispatch claim commits.
     AfterPeerClaimCommit,
+    /// After peer entry and accounting rows are prepared, before their atomic commit.
+    BeforePeerEntryCommit,
+    /// Immediately after durable peer entry commits.
+    AfterPeerEntryCommit,
+    /// After peer uncertainty and accounting rows are prepared, before their atomic commit.
+    BeforePeerUncertainCommit,
+    /// Immediately after durable peer uncertainty commits.
+    AfterPeerUncertainCommit,
     /// After a peer observation row and execution head are prepared, before their atomic commit.
     BeforePeerObservationCommit,
     /// Immediately after a durable peer observation commit.

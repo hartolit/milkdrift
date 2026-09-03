@@ -51,17 +51,49 @@ fn peer_clock_failure_and_backward_movement_fail_closed_at_expiry() -> TestResul
 
 #[test]
 fn post_entry_clock_failure_retries_recovery_until_uncertainty_is_durable() -> TestResult {
+    assert_post_entry_clock_recovery(
+        PostEntryTestOutcome::Error,
+        "adapter-error",
+        "peer adapter failed after durable entry: deterministic adapter failure after entry",
+    )
+}
+
+#[test]
+fn missing_terminal_evidence_survives_post_entry_clock_failure() -> TestResult {
+    assert_post_entry_clock_recovery(
+        PostEntryTestOutcome::MissingTerminal,
+        "missing-terminal",
+        "peer adapter returned without terminal evidence",
+    )
+}
+
+#[test]
+fn adapter_panic_has_distinct_stable_post_entry_classification() -> TestResult {
+    assert_post_entry_clock_recovery(
+        PostEntryTestOutcome::Panic,
+        "adapter-panic",
+        "peer adapter panicked after durable entry",
+    )
+}
+
+fn assert_post_entry_clock_recovery(
+    outcome: PostEntryTestOutcome,
+    identity: &str,
+    expected_reason: &str,
+) -> TestResult {
     let root = tempfile::tempdir()?;
     let store = Arc::new(RedbStore::open(root.path())?);
     let clock = Arc::new(ControlledPeerClock::new(now()));
-    let calls = Arc::new(AtomicUsize::new(0));
+    let entry = Arc::new(AdapterEntryProbe::default());
     let (host, descriptor) = host_with_adapter(Arc::new(ClockFailingAdapter {
         capability: CapabilityId::new("test-capability")?,
         clock: clock.clone(),
-        calls: calls.clone(),
+        entry: entry.clone(),
+        outcome,
+        disable_clock: true,
     }))?;
-    let peer = PeerId::new("peer-clock-recovery")?;
-    let target = PeerId::new("peer-clock-recovery-target")?;
+    let peer = PeerId::new(format!("peer-clock-recovery-{identity}"))?;
+    let target = PeerId::new(format!("peer-clock-recovery-target-{identity}"))?;
     let service = PeerService::new(
         server_config(peer.clone(), target.clone(), 1, 4)?,
         host,
@@ -78,57 +110,228 @@ fn post_entry_clock_failure_retries_recovery_until_uncertainty_is_durable() -> T
             &descriptor,
             catalog.generation,
             catalog.digest,
-            "request-clock-recovery",
-            "invocation-clock-recovery",
+            &format!("request-clock-recovery-{identity}"),
+            &format!("invocation-clock-recovery-{identity}"),
         )?,
     )?;
     let InvocationAcceptance::Accepted { execution, .. } = accepted else {
         return Err("clock recovery invocation was not accepted".into());
     };
 
-    let entry_deadline = std::time::Instant::now() + Duration::from_secs(2);
-    loop {
-        if calls.load(Ordering::SeqCst) == 1 {
-            break;
-        }
-        if std::time::Instant::now() >= entry_deadline {
-            return Err("adapter did not reach the post-entry failure boundary".into());
-        }
-        thread::sleep(Duration::from_millis(2));
-    }
+    assert!(entry.wait_for_call(Duration::from_secs(2))?);
+    assert!(clock.wait_for_unavailable_observations(1, Duration::from_secs(2))?);
     assert!(matches!(
         store.peer_execution(&peer, &execution)?,
         Some(PeerExecutionSnapshot::Hot(ref record))
             if matches!(record.phase, PeerExecutionPhase::Entered { .. })
     ));
 
-    let failure_deadline = std::time::Instant::now() + Duration::from_secs(2);
-    loop {
-        if clock.unavailable_observations()? > 0 {
-            break;
-        }
-        if std::time::Instant::now() >= failure_deadline {
-            return Err("worker did not observe the injected post-entry clock failure".into());
-        }
-        thread::sleep(Duration::from_millis(2));
-    }
-
     clock.set_available(true)?;
-    let recovery_deadline = std::time::Instant::now() + Duration::from_secs(2);
-    loop {
-        if let Some(PeerExecutionSnapshot::Hot(record)) = store.peer_execution(&peer, &execution)?
-            && let PeerExecutionPhase::Uncertain { reason, .. } = record.phase
-        {
-            assert_eq!(reason, "peer worker failed after durable adapter entry");
-            break;
-        }
-        if std::time::Instant::now() >= recovery_deadline {
-            return Err("post-entry recovery did not converge after clock recovery".into());
-        }
-        thread::sleep(Duration::from_millis(2));
-    }
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert!(service.shutdown_workers(Duration::from_secs(2)).clean);
+    assert!(matches!(
+        store.peer_execution(&peer, &execution)?,
+        Some(PeerExecutionSnapshot::Hot(record))
+            if matches!(record.phase, PeerExecutionPhase::Uncertain { ref reason, .. }
+                if reason == expected_reason)
+    ));
+    assert_eq!(entry.calls()?, 1);
+    Ok(())
+}
+
+struct RunningTestInvocation {
+    _root: tempfile::TempDir,
+    store: Arc<RedbStore>,
+    clock: Arc<ControlledPeerClock>,
+    entry: Arc<AdapterEntryProbe>,
+    service: Arc<PeerService>,
+    config: PeerServerConfig,
+    peer: PeerId,
+    execution: PeerExecutionId,
+}
+
+fn start_test_invocation(
+    identity: &str,
+    outcome: PostEntryTestOutcome,
+    disable_clock: bool,
+    fault: Option<FaultPoint>,
+) -> TestResult<RunningTestInvocation> {
+    let root = tempfile::tempdir()?;
+    let store = Arc::new(match fault {
+        Some(point) => RedbStore::open_with_config(
+            RedbStoreConfig::new(root.path()).with_fault_injector(Arc::new(FailOnce::new(point))),
+        )?,
+        None => RedbStore::open(root.path())?,
+    });
+    let clock = Arc::new(ControlledPeerClock::new(now()));
+    let entry = Arc::new(AdapterEntryProbe::default());
+    let (host, descriptor) = host_with_adapter(Arc::new(ClockFailingAdapter {
+        capability: CapabilityId::new("test-capability")?,
+        clock: clock.clone(),
+        entry: entry.clone(),
+        outcome,
+        disable_clock,
+    }))?;
+    let peer = PeerId::new(format!("peer-recovery-{identity}"))?;
+    let target = PeerId::new(format!("peer-recovery-target-{identity}"))?;
+    let config = server_config(peer.clone(), target.clone(), 1, 4)?;
+    let service = PeerService::new(config.clone(), host, store.clone(), clock.clone())?;
+    service.recover(1_024)?;
+    let catalog = service.catalog(&peer)?;
+    let accepted = service.invoke(
+        &peer,
+        request(
+            &peer,
+            &target,
+            &descriptor,
+            catalog.generation,
+            catalog.digest,
+            &format!("request-recovery-{identity}"),
+            &format!("invocation-recovery-{identity}"),
+        )?,
+    )?;
+    let InvocationAcceptance::Accepted { execution, .. } = accepted else {
+        return Err("test invocation was not accepted".into());
+    };
+    Ok(RunningTestInvocation {
+        _root: root,
+        store,
+        clock,
+        entry,
+        service,
+        config,
+        peer,
+        execution,
+    })
+}
+
+#[test]
+fn pre_entry_store_failure_releases_claim_and_retries_without_uncertainty() -> TestResult {
+    let running = start_test_invocation(
+        "pre-entry-store",
+        PostEntryTestOutcome::Terminal,
+        false,
+        Some(FaultPoint::BeforePeerEntryCommit),
+    )?;
+    assert!(running.entry.wait_for_call(Duration::from_secs(2))?);
+    assert!(
+        running
+            .service
+            .shutdown_workers(Duration::from_secs(2))
+            .clean
+    );
+    assert_eq!(running.entry.calls()?, 1);
+    assert!(matches!(
+        running
+            .store
+            .peer_execution(&running.peer, &running.execution)?,
+        Some(PeerExecutionSnapshot::Hot(record))
+            if matches!(record.phase, PeerExecutionPhase::Terminal { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn terminal_committed_before_recovery_is_never_replaced_by_uncertainty() -> TestResult {
+    let running = start_test_invocation(
+        "terminal-before-recovery",
+        PostEntryTestOutcome::Terminal,
+        false,
+        Some(FaultPoint::AfterPeerObservationCommit),
+    )?;
+    assert!(running.entry.wait_for_call(Duration::from_secs(2))?);
+    assert!(
+        running
+            .service
+            .shutdown_workers(Duration::from_secs(2))
+            .clean
+    );
+    assert_eq!(running.entry.calls()?, 1);
+    assert!(matches!(
+        running
+            .store
+            .peer_execution(&running.peer, &running.execution)?,
+        Some(PeerExecutionSnapshot::Hot(record))
+            if matches!(record.phase, PeerExecutionPhase::Terminal { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn post_entry_store_commit_replay_is_an_exact_noop() -> TestResult {
+    let running = start_test_invocation(
+        "post-entry-store",
+        PostEntryTestOutcome::Error,
+        false,
+        Some(FaultPoint::AfterPeerUncertainCommit),
+    )?;
+    assert!(running.entry.wait_for_call(Duration::from_secs(2))?);
+    assert!(
+        running
+            .service
+            .shutdown_workers(Duration::from_secs(2))
+            .clean
+    );
+    assert_eq!(running.entry.calls()?, 1);
+    assert!(matches!(
+        running
+            .store
+            .peer_execution(&running.peer, &running.execution)?,
+        Some(PeerExecutionSnapshot::Hot(record))
+            if matches!(record.phase, PeerExecutionPhase::Uncertain { ref reason, .. }
+                if reason == "peer adapter failed after durable entry: deterministic adapter failure after entry")
+    ));
+    Ok(())
+}
+
+#[test]
+fn shutdown_and_restart_recover_entered_claim_without_duplicate_adapter_entry() -> TestResult {
+    let running =
+        start_test_invocation("shutdown-restart", PostEntryTestOutcome::Error, true, None)?;
+    assert!(running.entry.wait_for_call(Duration::from_secs(2))?);
+    assert!(
+        running
+            .clock
+            .wait_for_unavailable_observations(1, Duration::from_secs(2))?
+    );
+    assert!(
+        running
+            .service
+            .shutdown_workers(Duration::from_secs(2))
+            .clean
+    );
+    assert!(matches!(
+        running
+            .store
+            .peer_execution(&running.peer, &running.execution)?,
+        Some(PeerExecutionSnapshot::Hot(ref record))
+            if matches!(record.phase, PeerExecutionPhase::Entered { .. })
+    ));
+
+    running.clock.set_available(true)?;
+    let (restart_host, _) = host_with_adapter(Arc::new(ClockFailingAdapter {
+        capability: CapabilityId::new("test-capability")?,
+        clock: running.clock.clone(),
+        entry: running.entry.clone(),
+        outcome: PostEntryTestOutcome::Error,
+        disable_clock: false,
+    }))?;
+    let restarted = PeerService::new(
+        running.config.clone(),
+        restart_host,
+        running.store.clone(),
+        running.clock.clone(),
+    )?;
+    restarted.recover(1_024)?;
+    assert!(restarted.shutdown_workers(Duration::from_secs(2)).clean);
+    assert_eq!(running.entry.calls()?, 1);
+    assert!(matches!(
+        running
+            .store
+            .peer_execution(&running.peer, &running.execution)?,
+        Some(PeerExecutionSnapshot::Hot(record))
+            if matches!(record.phase, PeerExecutionPhase::Uncertain { ref reason, .. }
+                if reason == "serving daemon restarted after durable adapter entry")
+    ));
     Ok(())
 }
 

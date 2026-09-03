@@ -235,6 +235,182 @@ fn evaluate(
     .evaluate(request)?)
 }
 
+fn filesystem_is_allowed(allowed: FilesystemScope, requested: FilesystemScope) -> TestResult<bool> {
+    let actor = ActorRef::new("service:filesystem-contract")?;
+    let grant =
+        AuthorityGrantBuilder::new(GrantId::new("grant:filesystem-contract")?, 1, actor.clone())
+            .operations(set(AuthorityOperation::Inspect))
+            .resources(ResourceScope {
+                workflow_run: WorkflowRunScope::Any,
+                capability: CapabilityAuthorityScope::deny_all(),
+                filesystem: vec![allowed],
+                network: NetworkScope::empty(),
+                secrets: BTreeSet::new(),
+                artifacts: ArtifactAuthorityScope::none(),
+                layouts: LayoutAuthorityScope::none(),
+                peers: PeerAuthorityScope::none(),
+                daemon: DaemonAuthorityScope::default(),
+                workspace: WorkspaceAuthorityScope::none(),
+            })
+            .build()?;
+    let evaluator = GrantSetEvaluator::new(
+        PolicyId::new("policy:filesystem-contract")?,
+        1,
+        [grant.clone()],
+        BTreeMap::new(),
+    )?;
+    let mut resources = RequestedResourceFacts::empty();
+    resources.filesystem = vec![requested];
+    let request = AuthorityRequest {
+        decision: DecisionId::new("decision:filesystem-contract")?,
+        actor,
+        grant: grant.identity().clone(),
+        grant_revision: grant.revision(),
+        grant_digest: grant.digest()?,
+        revocation_generation: grant.revocation_generation(),
+        operation: AuthorityOperation::Inspect,
+        resources,
+        budget: AuthorityBudget::default(),
+        evaluated_at: BoundaryTimeMillis::new(1),
+        provenance: AuthorityExecutionProvenance::default(),
+    };
+    Ok(evaluator.evaluate(&request)?.is_allowed())
+}
+
+#[test]
+fn filesystem_scope_uses_canonical_family_and_component_containment() -> TestResult {
+    let read = set(AccessMode::Read);
+    assert!(filesystem_is_allowed(
+        FilesystemScope::new("/", read.clone())?,
+        FilesystemScope::new("/work/a", read.clone())?,
+    )?);
+    assert!(filesystem_is_allowed(
+        FilesystemScope::new("/work/a", read.clone())?,
+        FilesystemScope::new("/work/a", read.clone())?,
+    )?);
+    assert!(filesystem_is_allowed(
+        FilesystemScope::new("/work/a", read.clone())?,
+        FilesystemScope::new("/work/a/child", read.clone())?,
+    )?);
+    assert!(!filesystem_is_allowed(
+        FilesystemScope::new("/work/a", read.clone())?,
+        FilesystemScope::new("/work/ab", read.clone())?,
+    )?);
+
+    assert!(filesystem_is_allowed(
+        FilesystemScope::new("C:/", read.clone())?,
+        FilesystemScope::new("C:/work/a", read.clone())?,
+    )?);
+    assert!(filesystem_is_allowed(
+        FilesystemScope::new("C:/work/a", read.clone())?,
+        FilesystemScope::new("C:/work/a/child", read.clone())?,
+    )?);
+    assert!(!filesystem_is_allowed(
+        FilesystemScope::new("C:/work/a", read.clone())?,
+        FilesystemScope::new("C:/work/ab", read.clone())?,
+    )?);
+    assert!(!filesystem_is_allowed(
+        FilesystemScope::new("C:/work", read.clone())?,
+        FilesystemScope::new("D:/work", read.clone())?,
+    )?);
+    assert!(!filesystem_is_allowed(
+        FilesystemScope::new("C:/Work", read.clone())?,
+        FilesystemScope::new("C:/work", read.clone())?,
+    )?);
+    assert!(!filesystem_is_allowed(
+        FilesystemScope::new("/", read.clone())?,
+        FilesystemScope::new("C:/work", read.clone())?,
+    )?);
+    assert_eq!(
+        FilesystemScope::dangerous_all_access_windows_drive('c')?.root(),
+        "C:/"
+    );
+    let broad_windows = FilesystemScope::dangerous_all_access_windows_drives();
+    assert_eq!(broad_windows.len(), 26);
+    assert_eq!(
+        broad_windows.first().ok_or("missing A drive")?.root(),
+        "A:/"
+    );
+    assert_eq!(broad_windows.last().ok_or("missing Z drive")?.root(), "Z:/");
+    Ok(())
+}
+
+#[test]
+fn filesystem_scope_rejects_ambiguous_and_hostile_roots() -> TestResult {
+    let read = set(AccessMode::Read);
+    for root in [
+        "",
+        "relative",
+        "./relative",
+        "/work/../secret",
+        "/work/./child",
+        "/work//child",
+        "/work/",
+        "C:relative",
+        "c:/work",
+        "C:\\work",
+        "C:/work\\child",
+        "C:/work/../secret",
+        "C:/work/file:stream",
+        "C:/work/file.",
+        "C:/work/file ",
+        "C:/work/NUL",
+        "C:/work/con.txt",
+        "C:/work/COM1",
+        "C:/work/name?",
+        "//server/share",
+        "//?/C:/work",
+        "\\\\server\\share",
+        "\\\\?\\C:\\work",
+    ] {
+        assert!(
+            FilesystemScope::new(root, read.clone()).is_err(),
+            "accepted hostile root {root:?}"
+        );
+    }
+    assert!(FilesystemScope::new("/work", BTreeSet::new()).is_err());
+    assert!(FilesystemScope::dangerous_all_access_windows_drive('/').is_err());
+
+    let hostile = serde_json::json!({"root":"C:/work/file:stream","access":["read"]});
+    assert!(serde_json::from_value::<FilesystemScope>(hostile).is_err());
+    Ok(())
+}
+
+#[test]
+fn filesystem_scope_serialization_and_host_conversion_are_stable() -> TestResult {
+    let scope = FilesystemScope::new(
+        "C:/work/Δ",
+        BTreeSet::from([AccessMode::Read, AccessMode::Write]),
+    )?;
+    let encoded = serde_json::to_vec(&scope)?;
+    assert_eq!(
+        encoded,
+        r#"{"root":"C:/work/Δ","access":["read","write"]}"#.as_bytes()
+    );
+    assert_eq!(serde_json::from_slice::<FilesystemScope>(&encoded)?, scope);
+
+    let first = grant()?.digest()?;
+    let second = AuthorityGrant::from_json(&grant()?.to_canonical_json()?)?.digest()?;
+    assert_eq!(first, second);
+
+    let canonical = std::env::current_exe()?.canonicalize()?;
+    let converted =
+        FilesystemScope::from_canonical_host_path(&canonical, set(AccessMode::Execute))?;
+    assert_eq!(converted.access(), &set(AccessMode::Execute));
+    #[cfg(windows)]
+    assert!(
+        converted.root().as_bytes()[0].is_ascii_uppercase()
+            && converted.root().contains(":/")
+            && !converted.root().contains('\\')
+    );
+    #[cfg(unix)]
+    assert_eq!(
+        converted.root(),
+        canonical.to_str().ok_or("non-UTF-8 test path")?
+    );
+    Ok(())
+}
+
 #[test]
 fn actor_author_grant_and_capability_identities_are_distinct_types() {
     assert_ne!(TypeId::of::<ActorRef>(), TypeId::of::<AuthorRef>());

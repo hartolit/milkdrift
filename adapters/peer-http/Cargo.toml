@@ -17,6 +17,7 @@ milkdrift-capability.workspace = true
 milkdrift-capability-host.workspace = true
 milkdrift-peer-protocol.workspace = true
 milkdrift-persistence.workspace = true
+milkdrift-runtime.workspace = true
 milkdrift-workspace.workspace = true
 reqwest.workspace = true
 serde.workspace = true

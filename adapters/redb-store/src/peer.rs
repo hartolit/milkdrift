@@ -548,7 +548,9 @@ impl PeerExecutionStore for RedbStore {
             .ok_or_else(|| corruption("peer dispatch count underflowed at entry"))?;
         put_execution(&write, &record)?;
         put_global_accounting(&write, global)?;
+        self.faults.check(FaultPoint::BeforePeerEntryCommit)?;
         write.commit().map_err(error::redb)?;
+        self.faults.check(FaultPoint::AfterPeerEntryCommit)?;
         Ok(PeerEntryOutcome::Entered(Box::new(record)))
     }
 
@@ -674,7 +676,9 @@ impl PeerExecutionStore for RedbStore {
         release_active_accounting(&write, &record.owner_peer, false)?;
         insert_terminal_index(&write, &record, uncertain_at_unix_ms)?;
         put_execution(&write, &record)?;
+        self.faults.check(FaultPoint::BeforePeerUncertainCommit)?;
         write.commit().map_err(error::redb)?;
+        self.faults.check(FaultPoint::AfterPeerUncertainCommit)?;
         Ok(record)
     }
 

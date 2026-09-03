@@ -43,10 +43,24 @@ capability profile and workflow you intend to run.
 Capability authority is either `{ "type": "deny_all" }` or an explicit conjunctive allow scope.
 Every allow dimension is `{ "type": "any" }` or `{ "type": "only", "values": [...] }`.
 `Only` requires 1..=128 ordered unique values; an empty array is invalid and never means wildcard.
-The side-effect ceiling applies in addition to every selector.
-Filesystem roots are normalized absolute lexical roots. Network destinations are credential-free
-`host:port` values and network profiles are named immutable transport profiles. Secret references
-are opaque names; secret values never belong in the document.
+The side-effect ceiling applies in addition to every selector. Filesystem roots use one canonical
+durable grammar: Unix roots are `/` or begin with `/`, and ordinary Windows drive roots are `C:/`
+or begin with an uppercase ASCII drive plus `:/`. Both forms use `/` separators and compare exact
+components rather than string prefixes. A Unix root never contains a Windows root, different
+Windows drives never contain one another, and component case is exact. Host adapters first
+canonicalize native paths and then convert them to this grammar; exact case intentionally fails
+closed rather than approximating Windows Unicode case rules. Relative paths, traversal, repeated
+or trailing separators, backslashes or mixed separators, drive-relative paths, UNC/device paths,
+alternate-data-stream syntax, reserved Windows device names/characters, trailing-dot/space aliases,
+control characters, and non-UTF-8 paths are refused. Broad authority is explicit as Unix `/` or a
+named Windows drive root such as `C:/`; `/` is not a cross-platform wildcard. Network destinations
+are credential-free `host:port` values and network profiles are named immutable transport profiles.
+Secret references are opaque names; secret values never belong in the document.
+
+This path correction does not advance authority-grant schema 4 or daemon configuration schema 9.
+The field shape and canonical meaning remain an absolute normalized root, existing Unix canonical
+bytes and digests are unchanged, and older readers refuse rather than misinterpret newly valid
+Windows drive roots.
 
 Artifact authority is either `{ "type": "deny_all" }` or an allow scope containing an explicit
 `Any`/nonempty `Only` identity selector and a nonempty sensitivity set; there is no implicit empty

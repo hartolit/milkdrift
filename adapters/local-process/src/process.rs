@@ -103,13 +103,8 @@ impl LocalProcessAdapter {
                 }
                 FilesystemAccessMode::ReadOnly => BTreeSet::from([AccessMode::Read]),
             };
-            let root_text = root.to_str().ok_or_else(|| {
-                ProcessProfileError::Invalid(
-                    "canonical filesystem root is not valid UTF-8 for authority".to_owned(),
-                )
-            })?;
             authority_filesystem.push(
-                FilesystemScope::new(root_text, access)
+                FilesystemScope::from_canonical_host_path(&root, access)
                     .map_err(|error| ProcessProfileError::Invalid(error.to_string()))?,
             );
         }

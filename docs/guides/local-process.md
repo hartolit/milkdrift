@@ -146,10 +146,16 @@ workspace isolation contract.
 
 ## Registration, rotation, and health
 
-At registration the adapter canonicalizes the executable, verifies it remains within an execute
-root, opens and streams the regular file, verifies executable permissions on Unix, and compares
-the observed size and BLAKE3 digest with the declaration. A symlink resolution change, root escape,
-non-regular source, permission failure, or identity mismatch refuses registration.
+At registration the adapter canonicalizes the executable and every configured native root,
+verifies the executable remains within an execute root using native path components, and converts
+the resulting host evidence to the authority grammar (`/...` on Unix and uppercase `C:/...` with
+`/` separators for ordinary Windows drives). It likewise verifies an authorized host working
+directory is beneath a canonical read-write root before conversion. Authority evaluation is then
+pure and uses exact root identity and component containment; it does not query the filesystem or
+approximate Windows case behavior. The adapter opens and streams the regular file, verifies
+executable permissions on Unix, and compares the observed size and BLAKE3 digest with the
+declaration. A symlink resolution change, root escape, non-regular source, permission failure, or
+identity mismatch refuses registration.
 
 Health repeats the same identity check. A mismatch marks that immutable adapter generation
 unavailable with a bounded `tool_*` reason code and does not mutate its descriptor. Invalidation is

@@ -27,6 +27,14 @@ Serving work uses the schema-9 enabled-mode `peers.serving` policy. `worker_thre
 
 Graceful shutdown stops new acceptance and claims, joins workers until the configured deadline, and reports retained workers/effects if the deadline expires. Active executions are never archived. Once terminal or uncertain history is older than the observation horizon, maintenance or the new-admission transaction can atomically replace it with a compact tombstone and reclaim a hot slot. Exact request replay and digest conflict remain permanent within the store generation. Archived lookup/observation responses are explicitly typed and retain the final terminal observation or uncertainty plus an observation-chain digest; intermediate progress/stream rows and peer observation-artifact links are no longer queryable. Core artifact retention and provenance are unchanged.
 
+After durable entry, the peer execution service classifies adapter failure, missing terminal
+evidence, and adapter panic once. The worker owns only the exact pending release-or-uncertainty
+operation and retries it unchanged through transient clock or store failure. A pre-entry claim is
+released for retry, while an entered claim is never sent to the adapter again. Existing terminal or
+uncertain evidence makes a repeated recovery write an idempotent no-op. Shutdown performs a final
+in-memory retry when possible; a still-unavailable boundary leaves the durable entered claim for
+startup recovery rather than guessing an outcome.
+
 Detailed health reports active, dispatch, hot-terminal, and tombstone counts; configured active/queue/hot/batch bounds; archive generation/time; and a redacted degraded reason. Readiness remains deliberately coarse. A nonzero degraded state means admission stays closed after restart verification; inspect storage and restore a known-good generation rather than editing redb rows.
 
 This pre-release store format refuses physical schema versions other than 11 and internal document formats other than 14. Physical schema 9 introduced the boundary-clock high-water fact, schema 10 added controller accounts and their binding/transition/charge links, and schema 11 adds immutable controller-account revision evidence; format 14 makes each account mutation replayable from its predecessor and exact source. Startup also refuses obsolete `peer-executions-v1` or `peer-artifacts-v1` directories instead of silently ignoring or partially importing prototype authority.

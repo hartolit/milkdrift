@@ -1,8 +1,8 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, path::Path};
 
 use milkdrift_blueprint::{RevisionId, WorkflowId};
 use milkdrift_workspace::{ArtifactId, ArtifactSensitivity, RunId, ScopeId};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 use crate::{ActorRef, AuthorityError, NetworkProfileRef, PeerId, SecretRef, Selection};
 
@@ -192,56 +192,295 @@ pub enum AccessMode {
     Execute,
 }
 
-/// One normalized absolute filesystem root and allowed access modes.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum FilesystemRootFamily {
+    Unix,
+    WindowsDrive(u8),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CanonicalFilesystemRoot {
+    text: String,
+    family: FilesystemRootFamily,
+    components: Vec<String>,
+}
+
+impl CanonicalFilesystemRoot {
+    fn parse(text: String) -> Result<Self, AuthorityError> {
+        if text.is_empty()
+            || text.len() > 4_096
+            || text.contains('\0')
+            || text.contains('\\')
+            || text.chars().any(char::is_control)
+        {
+            return Err(invalid_filesystem_scope());
+        }
+        let (family, remainder) = if let Some(remainder) = text.strip_prefix('/') {
+            (FilesystemRootFamily::Unix, remainder)
+        } else if text.len() >= 3
+            && text.as_bytes()[0].is_ascii_uppercase()
+            && text.as_bytes()[0].is_ascii_alphabetic()
+            && text.as_bytes()[1] == b':'
+            && text.as_bytes()[2] == b'/'
+        {
+            (
+                FilesystemRootFamily::WindowsDrive(text.as_bytes()[0]),
+                &text[3..],
+            )
+        } else {
+            return Err(invalid_filesystem_scope());
+        };
+        if remainder.ends_with('/') || remainder.contains("//") {
+            return Err(invalid_filesystem_scope());
+        }
+        let components = if remainder.is_empty() {
+            Vec::new()
+        } else {
+            remainder
+                .split('/')
+                .map(|component| {
+                    if component.is_empty()
+                        || matches!(component, "." | "..")
+                        || (matches!(family, FilesystemRootFamily::WindowsDrive(_))
+                            && !windows_component_is_canonical(component))
+                    {
+                        return Err(invalid_filesystem_scope());
+                    }
+                    Ok(component.to_owned())
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        Ok(Self {
+            text,
+            family,
+            components,
+        })
+    }
+
+    fn contains(&self, requested: &Self) -> bool {
+        self.family == requested.family && requested.components.starts_with(&self.components)
+    }
+}
+
+fn windows_component_is_canonical(component: &str) -> bool {
+    if component.ends_with(['.', ' ']) || component.contains(['<', '>', '"', '|', '?', '*', ':']) {
+        return false;
+    }
+    let stem = component.split('.').next().unwrap_or_default();
+    let upper = stem.to_ascii_uppercase();
+    if matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
+        return false;
+    }
+    let bytes = upper.as_bytes();
+    if bytes.len() == 4
+        && (bytes.starts_with(b"COM") || bytes.starts_with(b"LPT"))
+        && matches!(bytes[3], b'1'..=b'9')
+    {
+        return false;
+    }
+    !["COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³"]
+        .iter()
+        .any(|reserved| stem.eq_ignore_ascii_case(reserved))
+}
+
+fn invalid_filesystem_scope() -> AuthorityError {
+    AuthorityError::InvalidContract(
+        "filesystem scope requires one canonical Unix or Windows drive-absolute root and a nonempty access set"
+            .to_owned(),
+    )
+}
+
+/// One canonical Unix or Windows drive-absolute filesystem root and allowed access modes.
+///
+/// Durable roots use `/` separators. Unix roots begin with `/`; Windows roots begin with an
+/// uppercase ASCII drive and `:/`. UNC, device, drive-relative, traversal, alternate-data-stream,
+/// mixed-separator, and non-UTF-8 forms are deliberately not representable. Windows drive letters
+/// are normalized by the host conversion boundary, while path components retain exact case so
+/// authority evaluation fails closed instead of approximating filesystem Unicode case behavior.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FilesystemScope {
-    root: String,
+    root: CanonicalFilesystemRoot,
     access: BTreeSet<AccessMode>,
 }
 
 impl FilesystemScope {
-    /// Deliberately broad root scope for explicitly acknowledged administration.
+    /// Deliberately broad Unix root scope for explicitly acknowledged administration.
+    ///
+    /// This does not grant access to any Windows drive.
     #[must_use]
-    pub fn dangerous_all_access_root() -> Self {
+    pub fn dangerous_all_access_unix_root() -> Self {
         Self {
-            root: "/".to_owned(),
+            root: CanonicalFilesystemRoot {
+                text: "/".to_owned(),
+                family: FilesystemRootFamily::Unix,
+                components: Vec::new(),
+            },
             access: BTreeSet::from([AccessMode::Read, AccessMode::Write, AccessMode::Execute]),
         }
     }
 
-    /// Constructs a lexical absolute root without `.` or `..` segments.
+    /// Deliberately broad all-access scope for one explicit Windows drive.
+    pub fn dangerous_all_access_windows_drive(drive: char) -> Result<Self, AuthorityError> {
+        if !drive.is_ascii_alphabetic() {
+            return Err(invalid_filesystem_scope());
+        }
+        Self::new(
+            format!("{}:/", drive.to_ascii_uppercase()),
+            BTreeSet::from([AccessMode::Read, AccessMode::Write, AccessMode::Execute]),
+        )
+    }
+
+    /// Deliberately broad all-access scopes for every ordinary Windows drive identity.
+    #[must_use]
+    pub fn dangerous_all_access_windows_drives() -> Vec<Self> {
+        (b'A'..=b'Z')
+            .map(|drive| Self {
+                root: CanonicalFilesystemRoot {
+                    text: format!("{}:/", char::from(drive)),
+                    family: FilesystemRootFamily::WindowsDrive(drive),
+                    components: Vec::new(),
+                },
+                access: BTreeSet::from([AccessMode::Read, AccessMode::Write, AccessMode::Execute]),
+            })
+            .collect()
+    }
+
+    /// Constructs one canonical durable Unix or Windows drive-absolute root.
     pub fn new(
         root: impl Into<String>,
         access: BTreeSet<AccessMode>,
     ) -> Result<Self, AuthorityError> {
-        let root = root.into();
-        if root.len() > 4_096
-            || !root.starts_with('/')
-            || root.contains('\0')
-            || root.split('/').any(|part| matches!(part, "." | ".."))
-            || (root.len() > 1 && root.ends_with('/'))
-            || root.contains("//")
-            || access.is_empty()
-        {
-            return Err(AuthorityError::InvalidContract(
-                "filesystem scope requires a normalized absolute root and nonempty access set"
-                    .to_owned(),
-            ));
+        if access.is_empty() {
+            return Err(invalid_filesystem_scope());
         }
-        Ok(Self { root, access })
+        Ok(Self {
+            root: CanonicalFilesystemRoot::parse(root.into())?,
+            access,
+        })
     }
 
-    /// Normalized root text.
+    /// Converts a host-canonicalized native path into the durable authority representation.
+    ///
+    /// This performs no filesystem access. The caller remains responsible for canonicalizing and
+    /// inspecting the native path at its trust boundary before calling this conversion.
+    pub fn from_canonical_host_path(
+        path: &Path,
+        access: BTreeSet<AccessMode>,
+    ) -> Result<Self, AuthorityError> {
+        #[cfg(unix)]
+        {
+            if !path.is_absolute() {
+                return Err(invalid_filesystem_scope());
+            }
+            let text = path.to_str().ok_or_else(invalid_filesystem_scope)?;
+            Self::new(text, access)
+        }
+        #[cfg(windows)]
+        {
+            use std::path::{Component, Prefix};
+
+            let mut components = path.components();
+            let drive = match components.next() {
+                Some(Component::Prefix(prefix)) => match prefix.kind() {
+                    Prefix::Disk(drive) | Prefix::VerbatimDisk(drive)
+                        if drive.is_ascii_alphabetic() =>
+                    {
+                        drive.to_ascii_uppercase()
+                    }
+                    Prefix::Verbatim(_)
+                    | Prefix::VerbatimUNC(_, _)
+                    | Prefix::UNC(_, _)
+                    | Prefix::DeviceNS(_)
+                    | Prefix::Disk(_)
+                    | Prefix::VerbatimDisk(_) => return Err(invalid_filesystem_scope()),
+                },
+                Some(Component::RootDir)
+                | Some(Component::CurDir)
+                | Some(Component::ParentDir)
+                | Some(Component::Normal(_))
+                | None => return Err(invalid_filesystem_scope()),
+            };
+            if !matches!(components.next(), Some(Component::RootDir)) {
+                return Err(invalid_filesystem_scope());
+            }
+            let mut text = String::from(char::from(drive));
+            text.push_str(":/");
+            for component in components {
+                let Component::Normal(component) = component else {
+                    return Err(invalid_filesystem_scope());
+                };
+                let component = component.to_str().ok_or_else(invalid_filesystem_scope)?;
+                if component.is_empty()
+                    || component.contains(['/', '\\', ':', '\0'])
+                    || component.chars().any(char::is_control)
+                {
+                    return Err(invalid_filesystem_scope());
+                }
+                if !text.ends_with('/') {
+                    text.push('/');
+                }
+                text.push_str(component);
+            }
+            Self::new(text, access)
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = path;
+            let _ = access;
+            Err(invalid_filesystem_scope())
+        }
+    }
+
+    /// Canonical durable root text.
     #[must_use]
     pub fn root(&self) -> &str {
-        &self.root
+        &self.root.text
     }
 
     /// Allowed access modes.
     #[must_use]
     pub const fn access(&self) -> &BTreeSet<AccessMode> {
         &self.access
+    }
+
+    pub(crate) fn contains(&self, requested: &Self) -> bool {
+        self.root.contains(&requested.root) && requested.access.is_subset(&self.access)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilesystemScopeDocument {
+    root: String,
+    access: BTreeSet<AccessMode>,
+}
+
+#[derive(Serialize)]
+struct FilesystemScopeRef<'a> {
+    root: &'a str,
+    access: &'a BTreeSet<AccessMode>,
+}
+
+impl Serialize for FilesystemScope {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        FilesystemScopeRef {
+            root: self.root(),
+            access: &self.access,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for FilesystemScope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let document = FilesystemScopeDocument::deserialize(deserializer)?;
+        Self::new(document.root, document.access).map_err(D::Error::custom)
     }
 }
 

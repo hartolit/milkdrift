@@ -1,7 +1,7 @@
 //! Deterministic configuration, execution, output, cancellation, and tree-cleanup tests.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use milkdrift_authority::SecretRef;
+use milkdrift_authority::{AccessMode, FilesystemScope, SecretRef};
 use milkdrift_blueprint::NodeId;
 use milkdrift_capability::{
     AdmissionBound, ArtifactReference, CancellationRequest, CapabilityObservation,
@@ -437,6 +437,11 @@ fn registration_binds_bytes_profile_policy_trust_and_attempt_provenance() -> Tes
     let executable_owner = tempfile::tempdir()?;
     let executable = copy_test_helper(executable_owner.path(), "pinned-helper")?;
     let data = Arc::new(TestDataAccess::new()?);
+    let canonical_executable_root = executable
+        .parent()
+        .ok_or("test executable has no parent")?
+        .canonicalize()?;
+    let canonical_data_root = data.root.canonicalize()?;
     let mut value = profile_value(&data.root, vec![json!("exit"), json!("0")])?;
     retarget_profile(&mut value, &executable)?;
     let profile = parse_profile(&value)?;
@@ -448,6 +453,23 @@ fn registration_binds_bytes_profile_policy_trust_and_attempt_provenance() -> Tes
     assert_eq!(
         adapter.descriptor().execution_trust(),
         ExecutionTrustClass::TrustedHostProcess
+    );
+    let requirements = adapter.authority_requirements();
+    assert!(
+        requirements
+            .filesystem
+            .contains(&FilesystemScope::from_canonical_host_path(
+                &canonical_executable_root,
+                BTreeSet::from([AccessMode::Execute]),
+            )?)
+    );
+    assert!(
+        requirements
+            .filesystem
+            .contains(&FilesystemScope::from_canonical_host_path(
+                &canonical_data_root,
+                BTreeSet::from([AccessMode::Read, AccessMode::Write]),
+            )?)
     );
     let extension = process_extension(&adapter)?;
     assert_eq!(

@@ -61,6 +61,11 @@ expires_at_unix_ms = 1798761600000
 
 The peer credential remains in `secret_sources`, is resolved at each request, and is never printed. Capability/operation allowlists do not grant host resources: `execution_filesystem`, network, and secret scopes must explicitly contain the selected adapter's declared requirements. Configure the inverse relationship on daemon A, start both daemons, then run:
 
+Filesystem authority uses canonical durable roots: `/opt/...` on Unix or an uppercase drive form
+such as `C:/tools/...` on Windows. Windows configuration still uses `/` in this authority field;
+native adapter paths are canonicalized before conversion. UNC/device, drive-relative, mixed
+separator, traversal, and alternate-data-stream forms are refused.
+
 ```sh
 milkdrift peer list
 milkdrift --yes peer connect peer-a
