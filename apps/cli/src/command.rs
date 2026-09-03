@@ -13,6 +13,7 @@ mod peer;
 mod proposal;
 mod run;
 mod sequence;
+mod stream;
 
 pub(crate) async fn execute(cli: Cli) -> Result<(), CliError> {
     let session = CliSession::connect(cli).await?;
@@ -23,7 +24,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<(), CliError> {
         TopCommand::Run { command } => run::execute(&session, command).await,
         TopCommand::Controller { command } => controller::execute(&session, command).await,
         TopCommand::Node(arguments) => inspection::node(&session, arguments).await,
-        TopCommand::Attempt(arguments) => inspection::attempt(&session, arguments).await,
+        TopCommand::Attempt { command } => inspection::execute(&session, command).await,
         TopCommand::Proposal { command } => proposal::execute(&session, command).await,
         TopCommand::Capability { command } => capability::execute(&session, command).await,
         TopCommand::Peer { command } => peer::execute(&session, command).await,

@@ -6,14 +6,21 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "milkdrift"
+path = "src/main.rs"
+
 [dependencies]
+blake3.workspace = true
 clap.workspace = true
 futures-util.workspace = true
 milkdrift-authority.workspace = true
 milkdrift-blueprint.workspace = true
+milkdrift-capability.workspace = true
 milkdrift-control.workspace = true
 milkdrift-control-client.workspace = true
 milkdrift-control-protocol.workspace = true
+milkdrift-contracts.workspace = true
 milkdrift-persistence.workspace = true
 milkdrift-prompt-sequence.workspace = true
 milkdrift-workspace.workspace = true

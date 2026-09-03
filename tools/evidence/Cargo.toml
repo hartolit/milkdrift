@@ -19,6 +19,7 @@ milkdrift-authority.workspace = true
 milkdrift-blueprint.workspace = true
 milkdrift-capability.workspace = true
 milkdrift-capability-host = { workspace = true, features = ["test-support"] }
+milkdrift-control.workspace = true
 milkdrift-control-client.workspace = true
 milkdrift-control-protocol.workspace = true
 milkdrift-daemon.workspace = true
@@ -34,6 +35,7 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
+toml.workspace = true
 url.workspace = true
 
 [dev-dependencies]

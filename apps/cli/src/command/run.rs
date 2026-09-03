@@ -1,4 +1,3 @@
-use futures_util::StreamExt as _;
 use milkdrift_control_protocol::{Command, Cursor};
 use serde_json::Value;
 
@@ -34,13 +33,12 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
         }
         RunCommand::Show { run } => {
             let run = session.client().run(run).await?;
-            session.output("run.show", &run)?;
             if run.terminal.as_deref() == Some("failed") {
                 return Err(CliError::FailedTask(
                     "run reached a failed terminal outcome".to_owned(),
                 ));
             }
-            Ok(())
+            session.output("run.show", &run)
         }
         RunCommand::Pause { run } => {
             submit(
@@ -102,7 +100,17 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
 }
 
 fn signal_payload(payload: &str) -> Result<Value, CliError> {
-    serde_json::from_str(payload).map_err(|error| CliError::Invalid(error.to_string()))
+    if payload.len() > milkdrift_capability::MAX_DOCUMENT_BYTES {
+        return Err(CliError::Invalid(format!(
+            "signal payload exceeds {} bytes",
+            milkdrift_capability::MAX_DOCUMENT_BYTES
+        )));
+    }
+    let value = milkdrift_contracts::parse_json_without_duplicates(payload.as_bytes())
+        .map_err(|error| CliError::Invalid(error.to_string()))?;
+    milkdrift_capability::BoundedJson::new(value)
+        .map(|bounded| bounded.value().clone())
+        .map_err(|error| CliError::Invalid(error.to_string()))
 }
 
 async fn timeline(
@@ -122,43 +130,32 @@ async fn timeline(
 }
 
 async fn submit(session: &CliSession, kind: &str, command: Command) -> Result<(), CliError> {
-    let request = session.command_request(command);
+    let request = session.command_request(command)?;
     session.output(kind, &session.client().submit(&request).await?)
 }
 
 async fn follow(session: &CliSession, run: &str, cursor: Option<Cursor>) -> Result<(), CliError> {
     crate::session::safe_identity(run)?;
-    let mut observations = session
-        .client()
-        .subscribe(format!("v1/runs/{run}/stream"), cursor);
-    loop {
-        tokio::select! {
-            signal = tokio::signal::ctrl_c() => {
-                signal.map_err(|error| CliError::Internal(error.to_string()))?;
-                return Ok(());
-            }
-            item = observations.next() => match item {
-                Some(Ok(observation)) => session.output("run.observation", &observation)?,
-                Some(Err(error)) => {
-                    session.stream_status(error.retryable(), &error)?;
-                    if !error.retryable() {
-                        return Err(error.into());
-                    }
-                }
-                None => return Ok(()),
-            }
-        }
-    }
+    super::stream::follow(
+        session,
+        format!("v1/runs/{run}/stream"),
+        cursor,
+        "run.observation",
+    )
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
+    use super::signal_payload;
+
     #[test]
     fn signal_payload_shape_remains_json() -> Result<(), Box<dyn std::error::Error>> {
-        let value: serde_json::Value = serde_json::from_str(r#"{"answer":42}"#)?;
+        let value = signal_payload(r#"{"answer":42}"#)?;
         assert_eq!(value, json!({"answer": 42}));
+        assert!(signal_payload(r#"{"answer":1,"answer":2}"#).is_err());
         Ok(())
     }
 }

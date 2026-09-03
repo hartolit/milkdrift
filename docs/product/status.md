@@ -62,6 +62,15 @@ snapshot. Git, CI, releases, and external audits own chronology.
   timelines, proposals, capabilities/providers, authority, peers, artifacts, layouts, health, and
   resumable SSE. Protocol-1 clients are refused. Internal events, redb rows, snapshots, provider
   payloads, process handles, and framework types are not wire contracts.
+- The `milkdrift` CLI is the comprehensive storage-free operator projection of that current
+  protocol. It exposes blueprint and prompt-sequence validation/import, exact canonical blueprint
+  export, run/controller/proposal/peer/layout control, retained-work resolution, explicit envelope
+  guards and evidence, bounded pages/files/stdin, verified create-new artifact downloads, and all
+  three resumable observation feeds. Schema-1 JSON success, JSON Lines streams, bounded structured
+  failures, and exit classifications are automation contracts. Prompt-sequence stage association
+  is derived by `milkdrift-prompt-sequence` from owned typed revision metadata rather than CLI node
+  naming inference; command legality, authority, transitions, uncertainty, proposal policy, and
+  persistence remain in their existing owners.
 - Peer protocol 1.2 is transport-neutral. The HTTP adapter owns relationship authorization,
   rotating bearer authentication, fixed endpoints, bounded quotas/workers, catalog generations,
   remote ordinary capability registrations, transactional acceptance/claim/entry, append-only
@@ -209,6 +218,12 @@ Current exact versions are:
   replay, reconciliation, causal context, process/model adapters, controller lifecycle, application
   and peer retention, artifact integrity/ranges, authentication/cursor revocation, daemon overload,
   shutdown, and a loopback two-daemon remote execution.
+- The shell-free headless CLI evidence scenario spawns the actual daemon and CLI executables over
+  ephemeral loopback HTTP with temporary redb/artifact roots and private bearer files. It proves
+  validate/import, explicit replay/conflict, run and evidence inspection, pause/signal/resume,
+  guarded proposal adoption, verified artifact download, abrupt-restart uncertainty retention and
+  resolution, durable restart reads, stable machine failures, and that no CLI invocation receives
+  the database path. Its deterministic process fixtures are not real model interoperability.
 - `milkdrift-evidence` owns repeatable storage/projection/context/artifact/daemon measurements,
   the Cargo-native mutation shard/classification runner, and operational reports under
   `target/evidence`. The current dirty-tree 256-operation run accounts for all requests under

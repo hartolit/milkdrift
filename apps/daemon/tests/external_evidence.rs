@@ -1,10 +1,23 @@
 //! Hermetic contract tests for the operator-driven external evidence harness.
 
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs,
+    path::Path,
+    process::Command,
+    sync::{Mutex, MutexGuard},
+};
 
 use serde_json::Value;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+static HARNESS_PROCESS: Mutex<()> = Mutex::new(());
+
+fn serialize_harness_process() -> Result<MutexGuard<'static, ()>, Box<dyn std::error::Error>> {
+    HARNESS_PROCESS
+        .lock()
+        .map_err(|_| "external-evidence test harness lock is poisoned".into())
+}
 
 fn evidence_command(output: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_milkdrift-external-evidence"));
@@ -20,6 +33,7 @@ fn read_report(output: &Path) -> Result<(String, Value), Box<dyn std::error::Err
 
 #[test]
 fn fixture_proves_the_harness_without_claiming_external_qualification() -> TestResult {
+    let _harness = serialize_harness_process()?;
     let root = tempfile::tempdir()?;
     let output = root.path().join("fixture-evidence");
     let secret = "external-evidence-test-secret-9f8f623a";
@@ -87,6 +101,7 @@ fn fixture_proves_the_harness_without_claiming_external_qualification() -> TestR
 
 #[test]
 fn missing_real_resources_are_non_qualifying_and_fail_closed() -> TestResult {
+    let _harness = serialize_harness_process()?;
     let root = tempfile::tempdir()?;
     let output = root.path().join("missing-resources");
     let result = evidence_command(&output).output()?;
@@ -106,6 +121,7 @@ fn missing_real_resources_are_non_qualifying_and_fail_closed() -> TestResult {
 
 #[test]
 fn fixture_process_and_model_scenario_failures_exit_nonzero() -> TestResult {
+    let _harness = serialize_harness_process()?;
     let root = tempfile::tempdir()?;
     for fault in ["process", "model"] {
         let output = root.path().join(format!("{fault}-failure"));
@@ -130,6 +146,7 @@ fn fixture_process_and_model_scenario_failures_exit_nonzero() -> TestResult {
 
 #[test]
 fn fixture_requires_acknowledgement_and_tracked_outputs_are_refused() -> TestResult {
+    let _harness = serialize_harness_process()?;
     let root = tempfile::tempdir()?;
     let unacknowledged = root.path().join("unacknowledged");
     let result = evidence_command(&unacknowledged)

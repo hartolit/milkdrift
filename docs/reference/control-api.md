@@ -166,10 +166,81 @@ Layout cannot contain executable edges, node/task configuration, requirements, p
 
 ## CLI automation contract
 
-`milkdrift-cli --json` prints one compact line per result:
+`milkdrift --json` prints one compact schema-1 document per successful non-streaming result:
 
 ```json
 {"schema_version":1,"type":"run.show","value":{}}
 ```
 
-JSON mode has no colors or terminal control sequences. Exit categories are 0 success, 2 invalid input/confirmation, 3 authentication or authority, 4 conflict, 5 retryable unavailable/overload/transport, 6 not found, 7 internal/nonclassified failure, and 8 when `run show` observes a failed terminal task. `milkdrift-cli controller status RUN CONTROLLER_EXECUTION` is read-only; `milkdrift-cli controller continue RUN CONTROLLER_EXECUTION DECISION_ID` requires interactive `yes` or `--yes`. Cancel, controller continuation, and proposal decision/apply operations require confirmation; JSON-mode high-risk operations require `--yes`. Credentials come from `--token-file`/`MILKDRIFT_TOKEN_FILE` or the configured environment-variable name, never a token command argument. Artifact downloads require an explicit new destination and remove a partial file after failure.
+Failures emit exactly one bounded document on stderr and no success document:
+
+```json
+{"schema_version":1,"type":"error","value":{"classification":"conflict","daemon_code":"conflict","retryable":false,"detail":"bounded public detail"}}
+```
+
+`classification` is one of `invalid_input`, `authorization`, `conflict`, `unavailable`,
+`not_found`, `daemon_api`, `failed_terminal`, or `internal_client`. `daemon_code` is present only
+for a public daemon error. Detail is limited to public daemon text or a CLI-owned safe description;
+transport causes, internal errors, credentials, headers, documents, provider bodies, prompts,
+artifact bytes, and filesystem paths are not serialized.
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | Success, including a stream closed normally or by Ctrl-C. |
+| 2 | Invalid local input, configuration, or missing confirmation. |
+| 3 | Authentication or authority failure. |
+| 4 | Optimistic/idempotency conflict. |
+| 5 | Retryable overload, unavailability, timeout, or transport failure. |
+| 6 | Not found. |
+| 7 | Other public daemon API failure. |
+| 8 | `run show` observed a failed terminal outcome. |
+| 9 | Internal client/protocol/presentation failure. |
+
+JSON mode has no colors, ANSI sequences, or prompts. Cancel, controller continuation, proposal
+decision/apply, retry, compensation, and evidence-based terminal resolution require interactive
+`yes` or `--yes`; JSON mode requires `--yes`. Help and version require no endpoint or credential.
+Safe query retry remains inside `milkdrift-control-client`; command presentation never implicitly
+replays a mutation.
+
+Followed run, capability, and daemon-health feeds emit JSON Lines. Each observation is a complete
+schema-1 wrapper. A retryable reconnect emits a `stream_status` document and continues from the
+last successfully decoded authenticated cursor. A nonretryable stream error emits the one final
+error document and exits by the table above. Pages are always explicit and never auto-drained.
+
+### CLI operation disposition
+
+The current operator surface intentionally covers every legitimate external operation:
+
+| CLI family | Protocol/client disposition |
+| --- | --- |
+| `daemon health`, `readiness`, `authority` | Detailed/coarse health and actor/grant reads; `health --follow` exposes the health SSE feed. |
+| `blueprint validate`, `import`, `show`, `list`, `diff` | Both definition commands and every revision read/diff route. `show --document` emits exact canonical bytes; `show --output FILE` creates a new file. |
+| `sequence validate`, `import`, `show`, `status`, `stage`, `remediate` | Prompt-sequence command variants plus owner-derived stage association and prospective proposal construction. These are conveniences over ordinary revision/run/proposal operations, not another workflow model. |
+| `run start`, `list`, `show`, `pause`, `resume`, `cancel`, `signal`, `timeline` | Every run command/read; `timeline --follow` exposes the run SSE feed. |
+| `controller status`, `continue` | Both controller command variants and the exact controller read. |
+| `node`; `attempt inspect`, `resolve` | Exact node/attempt reads and `resolve_work` actions `query`, `retry`, `compensate`, `retain`, `resolve-succeeded`, and `resolve-failed`. |
+| `proposal submit`, `list`, `show`, `approve`, `reject`, `apply` | Every proposal command and read route. |
+| `capability list`, `show` | The scoped capability read; `list --follow` exposes the capability SSE feed. |
+| `peer list`, `show`, `connect`, `reload`, `disconnect`, `drain`, `revoke` | Every peer read and administration route. |
+| `artifact metadata`, `get` | Metadata plus a verified sequence of bounded range reads into one create-new destination. |
+| `layout get`, `put` | The layout read and `put_layout` command. |
+
+Protocol negotiation is performed automatically when a CLI session connects; it is not a separate
+operator command. Individual artifact-range calls are an implementation detail of verified
+`artifact get`, not a byte-splicing operator surface. Public configuration, audit, shutdown, and
+local artifact upload routes do not exist, so the CLI does not invent them or access daemon storage.
+
+Every command can carry exact `--command-id`, `--expected-sequence`, `--expected-revision`, bounded
+`--reason`, and repeatable `--evidence KIND=ID`. Actor, grant, authority decision, and timestamp
+remain daemon-owned. Generated command IDs are only a human convenience; automation must supply a
+stable explicit identity.
+
+Canonical document inputs are byte-bounded while reading, reject duplicate JSON keys, and accept
+one regular file or the documented single `-` stdin source. Blueprint validation and import use the
+exact owner document. Prompt-sequence Markdown/JSON parsing and stage association remain owned by
+`milkdrift-prompt-sequence`; proposal policy remains owned by `milkdrift-control`; layout validation
+remains protocol-owned. Credentials come from a bounded restricted `--token-file`/
+`MILKDRIFT_TOKEN_FILE` or a configured environment-variable name, never a token command argument.
+Artifact and canonical-document file output uses create-new semantics and removes partial output on
+failure. Artifact completion verifies exact size and the workspace owner’s canonical 64-hex BLAKE3
+content digest.

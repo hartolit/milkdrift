@@ -1,15 +1,16 @@
 //! Thin operator CLI over `milkdrift-control-client`.
 
-use std::{path::PathBuf, process::ExitCode};
+use std::{env, path::PathBuf, process::ExitCode};
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum, error::ErrorKind};
+use milkdrift_control_protocol::EvidenceRef;
 use url::Url;
 
 mod command;
 mod error;
 mod session;
 
-use error::exit_code;
+use error::{CliError, emit_error, exit_code};
 
 #[derive(Parser)]
 #[command(
@@ -46,6 +47,17 @@ struct Cli {
     /// Optional optimistic run-sequence guard.
     #[arg(long, global = true)]
     expected_sequence: Option<u64>,
+    /// Optional exact semantic revision guard.
+    #[arg(long, global = true)]
+    expected_revision: Option<String>,
+    /// Durable external evidence reference in KIND=ID form; repeat at most 32 times.
+    #[arg(
+        long,
+        global = true,
+        value_name = "KIND=ID",
+        value_parser = parse_evidence_reference
+    )]
+    evidence: Vec<EvidenceRef>,
     #[command(subcommand)]
     command: TopCommand,
 }
@@ -79,8 +91,11 @@ enum TopCommand {
     },
     /// Inspect one node execution.
     Node(NodeInspect),
-    /// Inspect one attempt.
-    Attempt(AttemptInspect),
+    /// Inspect or resolve one exact attempt.
+    Attempt {
+        #[command(subcommand)]
+        command: AttemptCommand,
+    },
     /// Workflow proposal operations.
     Proposal {
         #[command(subcommand)]
@@ -111,7 +126,7 @@ enum TopCommand {
 #[derive(Subcommand)]
 enum DaemonCommand {
     /// Read liveness state.
-    Health,
+    Health(StreamArgs),
     /// Require readiness after recovery/adapters.
     Readiness,
     /// Inspect the server-owned actor and exact immutable grant revision.
@@ -154,10 +169,20 @@ enum SequenceCommand {
 
 #[derive(Subcommand)]
 enum BlueprintCommand {
+    /// Validate one exact versioned blueprint JSON document without storing it.
+    Validate { file: PathBuf },
     /// Import one exact versioned blueprint JSON document.
     Import { file: PathBuf },
     /// Inspect one immutable revision.
-    Show { revision: String },
+    Show {
+        revision: String,
+        /// Emit the exact canonical stored document to stdout without a presentation wrapper.
+        #[arg(long, conflicts_with = "output")]
+        document: bool,
+        /// Write the exact canonical stored document to a new file.
+        #[arg(long, value_name = "FILE")]
+        output: Option<PathBuf>,
+    },
     /// List one bounded stable revision page.
     List(PageArgs),
     /// Compare two semantic revisions.
@@ -178,6 +203,16 @@ struct PageArgs {
     /// Optional run state filter.
     #[arg(long)]
     state: Option<String>,
+}
+
+#[derive(Args)]
+struct StreamArgs {
+    /// Opaque stream continuation from an earlier observation.
+    #[arg(long)]
+    cursor: Option<String>,
+    /// Follow resumable observations after the initial read.
+    #[arg(long)]
+    follow: bool,
 }
 
 #[derive(Subcommand)]
@@ -257,6 +292,46 @@ struct AttemptInspect {
 }
 
 #[derive(Subcommand)]
+enum AttemptCommand {
+    /// Inspect one exact current or historical attempt.
+    Inspect(AttemptInspect),
+    /// Ask the daemon to resolve retained or uncertain external work.
+    Resolve(AttemptResolve),
+}
+
+#[derive(Args)]
+struct AttemptResolve {
+    /// Run aggregate.
+    run: String,
+    /// Immutable retained or uncertain attempt identity.
+    attempt: String,
+    /// Exact reconciliation decision identity.
+    decision: String,
+    /// Explicit daemon-evaluated resolution action.
+    #[arg(long, value_enum)]
+    action: ResolveChoice,
+    /// Exact remediation node; required only for compensation.
+    #[arg(long)]
+    remediation_node: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum ResolveChoice {
+    /// Query external truth without claiming a terminal outcome.
+    Query,
+    /// Request retry under the runtime's durable idempotency policy.
+    Retry,
+    /// Create explicit compensation at the selected remediation node.
+    Compensate,
+    /// Keep the uncertain obligation visible.
+    Retain,
+    /// Resolve succeeded only from supplied durable evidence.
+    ResolveSucceeded,
+    /// Resolve failed only from supplied durable evidence.
+    ResolveFailed,
+}
+
+#[derive(Subcommand)]
 enum ProposalCommand {
     /// Submit one exact versioned proposal JSON document.
     Submit { file: PathBuf },
@@ -302,7 +377,7 @@ struct ProposalApplyArgs {
 #[derive(Subcommand)]
 enum CapabilityCommand {
     /// List visible generation health.
-    List,
+    List(StreamArgs),
     /// Show all generations for one capability identity.
     Show { capability: String },
 }
@@ -347,14 +422,54 @@ enum LayoutCommand {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let json_requested = env::args_os().any(|argument| argument.to_str() == Some("--json"));
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+            ) =>
+        {
+            let code = error.exit_code();
+            let _ = error.print();
+            return ExitCode::from(u8::try_from(code).unwrap_or(0));
+        }
+        Err(error) => {
+            if json_requested {
+                let failure = CliError::Invalid(
+                    "command-line arguments are invalid; use --help for the accepted syntax"
+                        .to_owned(),
+                );
+                emit_error(true, &failure);
+                return ExitCode::from(exit_code(&failure));
+            }
+            let code = error.exit_code();
+            let _ = error.print();
+            return ExitCode::from(u8::try_from(code).unwrap_or(2));
+        }
+    };
+    let json = cli.json;
     match command::execute(cli).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("milkdrift: {error}");
+            emit_error(json, &error);
             ExitCode::from(exit_code(&error))
         }
     }
+}
+
+fn parse_evidence_reference(value: &str) -> Result<EvidenceRef, String> {
+    let (kind, id) = value
+        .split_once('=')
+        .ok_or_else(|| "evidence must use KIND=ID syntax".to_owned())?;
+    if kind.is_empty() || id.is_empty() || id.contains('=') {
+        return Err("evidence must contain one nonempty KIND and ID".to_owned());
+    }
+    Ok(EvidenceRef {
+        id: id.to_owned(),
+        kind: kind.to_owned(),
+    })
 }
 
 #[cfg(test)]
@@ -381,6 +496,37 @@ mod tests {
             TopCommand::Run {
                 command: RunCommand::Start { run, workflow, revision }
             } if run == "run-one" && workflow == "workflow-one" && revision == "revision-one"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn attempt_resolution_and_evidence_have_unambiguous_shapes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from([
+            "milkdrift",
+            "--expected-revision",
+            "revision-one",
+            "--evidence",
+            "artifact=artifact-one",
+            "attempt",
+            "resolve",
+            "run-one",
+            "attempt-one",
+            "decision-one",
+            "--action",
+            "resolve-succeeded",
+        ])?;
+        assert_eq!(cli.expected_revision.as_deref(), Some("revision-one"));
+        assert_eq!(cli.evidence.len(), 1);
+        assert!(matches!(
+            cli.command,
+            TopCommand::Attempt {
+                command: AttemptCommand::Resolve(AttemptResolve {
+                    action: ResolveChoice::ResolveSucceeded,
+                    ..
+                })
+            }
         ));
         Ok(())
     }

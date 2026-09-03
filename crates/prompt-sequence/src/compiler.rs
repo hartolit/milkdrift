@@ -82,6 +82,89 @@ impl CompiledPromptSequence {
     }
 }
 
+/// Returns the exact ordinary-node identities associated with one imported stage.
+///
+/// The import layer owns this association, including remediation generations. Consumers must not
+/// infer it from generated node-name prefixes.
+pub fn stage_node_ids(
+    revision: &BlueprintRevision,
+    stage_id: &str,
+) -> Result<Vec<String>, PromptSequenceError> {
+    let key = ExtensionKey::new("org.milkdrift/prompt-sequence")
+        .map_err(|error| compilation(error.to_string()))?;
+    let provenance = revision
+        .semantic()
+        .metadata()
+        .extensions()
+        .get(&key)
+        .map(BoundedJson::value)
+        .ok_or_else(|| {
+            PromptSequenceError::Invalid("revision has no prompt-sequence provenance".to_owned())
+        })?;
+    if provenance.get("schema_version").and_then(Value::as_u64) != Some(2) {
+        return Err(PromptSequenceError::Invalid(
+            "revision has unsupported prompt-sequence provenance".to_owned(),
+        ));
+    }
+    let stages: Vec<StageBlueprintSummary> =
+        serde_json::from_value(provenance.get("stages").cloned().ok_or_else(|| {
+            PromptSequenceError::Invalid(
+                "prompt-sequence provenance has no stage association".to_owned(),
+            )
+        })?)
+        .map_err(|error| {
+            PromptSequenceError::Invalid(format!(
+                "prompt-sequence stage association is invalid: {error}"
+            ))
+        })?;
+    let stage = stages
+        .iter()
+        .find(|stage| stage.stage_id == stage_id)
+        .ok_or_else(|| PromptSequenceError::Invalid("imported stage is absent".to_owned()))?;
+    let mut boundaries = BTreeSet::from([SEQUENCE_SUCCEEDED.to_owned()]);
+    for other in stages.iter().filter(|other| other.stage_id != stage_id) {
+        boundaries.extend(declared_stage_nodes(other));
+    }
+    let mut associated = declared_stage_nodes(stage);
+    if associated.iter().any(|node| {
+        !revision
+            .semantic()
+            .nodes()
+            .keys()
+            .any(|candidate| candidate.as_str() == node)
+    }) {
+        return Err(PromptSequenceError::Invalid(
+            "prompt-sequence stage association references an absent node".to_owned(),
+        ));
+    }
+    let mut frontier = associated.iter().cloned().collect::<Vec<_>>();
+    while let Some(source) = frontier.pop() {
+        for target in revision
+            .semantic()
+            .edges()
+            .values()
+            .filter(|edge| edge.source_node().as_str() == source)
+            .map(|edge| edge.target_node().as_str())
+        {
+            if !boundaries.contains(target) && associated.insert(target.to_owned()) {
+                frontier.push(target.to_owned());
+            }
+        }
+    }
+    Ok(associated.into_iter().collect())
+}
+
+fn declared_stage_nodes(stage: &StageBlueprintSummary) -> BTreeSet<String> {
+    let mut nodes = BTreeSet::from([
+        stage.coding_node.clone(),
+        stage.verification_node.clone(),
+        stage.gate_node.clone(),
+    ]);
+    nodes.extend(stage.reviewer_node.iter().cloned());
+    nodes.extend(stage.approval_wait_node.iter().cloned());
+    nodes
+}
+
 /// Compiles one bounded sequence into ordinary task, branch, signal-wait, and terminal nodes.
 pub fn compile(
     document: &PromptSequenceDocument,

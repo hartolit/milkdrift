@@ -45,6 +45,23 @@ headless daemon proof uses a temporary repository and real byte-pinned local pro
 network or credential. It crosses proposal-created and revision-adopted restart boundaries, proves
 failure gating and causal reviewer context, and verifies exact-once attempts plus persistent files.
 
+Build and run the shell-free actual-binary CLI/daemon proof separately:
+
+```sh
+cargo build -p milkdrift-daemon --bin milkdrift-daemon \
+  -p milkdrift-cli --bin milkdrift \
+  -p milkdrift-evidence --bin headless-cli-evidence
+target/debug/headless-cli-evidence \
+  --daemon target/debug/milkdrift-daemon \
+  --cli target/debug/milkdrift
+```
+
+The harness owns the child lifecycle and uses ephemeral loopback HTTP, temporary storage/artifact
+roots, private bearer files, and byte-pinned deterministic process profiles. Every client action is
+an actual `milkdrift` process using explicit command identities; no CLI process receives a redb
+path. It covers durable reads and command replay across restart, guarded proposals, verified
+artifact download, abrupt-restart uncertainty resolution, and stable JSON success/failure exits.
+
 Focused capability-adapter contract checks are:
 
 ```sh

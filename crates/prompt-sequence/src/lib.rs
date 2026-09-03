@@ -10,7 +10,7 @@ mod document;
 mod markdown;
 mod remediation;
 
-pub use compiler::{CompiledPromptSequence, StageBlueprintSummary, compile};
+pub use compiler::{CompiledPromptSequence, StageBlueprintSummary, compile, stage_node_ids};
 pub use document::{
     ApprovalPolicy, CapabilityProfileRef, DeclaredOutput, DirtyTreePolicy, FailurePolicy,
     PROMPT_SEQUENCE_SCHEMA_VERSION_V2, PromptSequence, PromptSequenceBudget,

@@ -6,7 +6,20 @@ pub(super) async fn execute(
 ) -> Result<(), CliError> {
     let capabilities = session.client().capabilities().await?;
     match command {
-        CapabilityCommand::List => session.output("capability.list", &capabilities),
+        CapabilityCommand::List(arguments) => {
+            session.output("capability.list", &capabilities)?;
+            if arguments.follow {
+                let cursor = session.cursor(arguments.cursor.as_deref())?;
+                super::stream::follow(
+                    session,
+                    "v1/stream/capabilities".to_owned(),
+                    cursor,
+                    "capability.observation",
+                )
+                .await?;
+            }
+            Ok(())
+        }
         CapabilityCommand::Show { capability } => {
             let matches = capabilities
                 .into_iter()

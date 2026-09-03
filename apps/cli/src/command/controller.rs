@@ -14,7 +14,7 @@ pub(super) async fn execute(
             let request = session.command_request(Command::InspectController {
                 run_id: run.clone(),
                 controller_execution: controller_execution.clone(),
-            });
+            })?;
             session.output(
                 "controller.status",
                 &session.client().submit(&request).await?,
@@ -30,7 +30,7 @@ pub(super) async fn execute(
                 run_id: run.clone(),
                 controller_execution: controller_execution.clone(),
                 decision_id: decision_id.clone(),
-            });
+            })?;
             session.output(
                 "controller.continue",
                 &session.client().submit(&request).await?,

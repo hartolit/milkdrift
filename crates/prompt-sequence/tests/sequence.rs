@@ -3,7 +3,7 @@
 use milkdrift_blueprint::{AuthorRef, BlueprintRevisionDocument, ContextSessionPolicy, NodeKind};
 use milkdrift_prompt_sequence::{
     MAX_INLINE_PROMPT_BYTES, PromptSequenceDocument, PromptSequenceError, PromptSource,
-    RemediationProposalSpec, build_remediation_proposal, compile,
+    RemediationProposalSpec, build_remediation_proposal, compile, stage_node_ids,
 };
 use serde_json::{Value, json};
 
@@ -93,6 +93,18 @@ fn json_import_compiles_to_only_ordinary_blueprint_primitives() -> TestResult {
     let compiled = compile(&document, AuthorRef::new("human:sequence-test")?)?;
     let revision = compiled.revision();
     assert_eq!(compiled.stages().len(), 2);
+    assert_eq!(
+        stage_node_ids(revision, "one")?,
+        vec![
+            "stage-one-approval",
+            "stage-one-coding",
+            "stage-one-failed",
+            "stage-one-gate",
+            "stage-one-review",
+            "stage-one-verification",
+        ]
+    );
+    assert!(stage_node_ids(revision, "on").is_err());
     assert_eq!(revision.semantic().nodes().len(), 13);
     assert_eq!(revision.semantic().edges().len(), 14);
     assert_eq!(
@@ -354,6 +366,18 @@ fn remediation_is_a_digest_bound_prospective_ordinary_revision() -> TestResult {
             .semantic()
             .nodes()
             .contains_key(&milkdrift_blueprint::NodeId::new("stage-two-failed")?)
+    );
+    let stage_nodes = stage_node_ids(&prospective, "two")?;
+    assert!(stage_nodes.iter().any(|node| node == "stage-two-coding"));
+    assert!(
+        stage_nodes
+            .iter()
+            .any(|node| node == "stage-two-remediation-1-coding")
+    );
+    assert!(
+        stage_nodes
+            .iter()
+            .any(|node| node == "stage-two-remediation-1-failure-review")
     );
     assert_eq!(
         proposal.proposal().base_revision(),

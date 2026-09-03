@@ -1001,10 +1001,13 @@ dependencies = [
 name = "milkdrift-cli"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "clap",
  "futures-util",
  "milkdrift-authority",
  "milkdrift-blueprint",
+ "milkdrift-capability",
+ "milkdrift-contracts",
  "milkdrift-control",
  "milkdrift-control-client",
  "milkdrift-control-protocol",
@@ -1131,6 +1134,7 @@ dependencies = [
  "milkdrift-blueprint",
  "milkdrift-capability",
  "milkdrift-capability-host",
+ "milkdrift-control",
  "milkdrift-control-client",
  "milkdrift-control-protocol",
  "milkdrift-daemon",
@@ -1146,6 +1150,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "toml",
  "url",
 ]
 

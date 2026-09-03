@@ -13,7 +13,7 @@ pub(super) async fn execute(
     match command {
         SequenceCommand::Validate { file } => {
             let document = session.read_prompt_sequence(file)?;
-            let request = session.command_request(Command::ValidatePromptSequence { document });
+            let request = session.command_request(Command::ValidatePromptSequence { document })?;
             session.output(
                 "sequence.validate",
                 &session.client().submit(&request).await?,
@@ -21,7 +21,7 @@ pub(super) async fn execute(
         }
         SequenceCommand::Import { file } => {
             let document = session.read_prompt_sequence(file)?;
-            let request = session.command_request(Command::ImportPromptSequence { document });
+            let request = session.command_request(Command::ImportPromptSequence { document })?;
             session.output("sequence.import", &session.client().submit(&request).await?)
         }
         SequenceCommand::Show { revision } => {
@@ -45,6 +45,11 @@ pub(super) async fn execute(
             proposal,
             prompt,
         } => {
+            if sequence_file == std::path::Path::new("-") && prompt == std::path::Path::new("-") {
+                return Err(CliError::Invalid(
+                    "sequence and remediation prompt cannot both consume stdin".to_owned(),
+                ));
+            }
             remediate(
                 session,
                 RemediationArguments {
@@ -65,11 +70,24 @@ pub(super) async fn execute(
 async fn show_stage(session: &CliSession, run: &str, stage: &str) -> Result<(), CliError> {
     crate::session::safe_identity(stage)?;
     let state = session.client().run(run).await?;
-    let prefix = format!("stage-{stage}-");
+    let revision_id = state
+        .revision_id
+        .as_deref()
+        .ok_or_else(|| CliError::Internal("run has no current revision".to_owned()))?;
+    let revision_read = session.client().revision(revision_id).await?;
+    let document = revision_read
+        .document
+        .ok_or_else(|| CliError::Internal("revision document is unavailable".to_owned()))?;
+    let bytes =
+        serde_json::to_vec(&document).map_err(|error| CliError::Internal(error.to_string()))?;
+    let (_document, revision) = milkdrift_blueprint::BlueprintRevisionDocument::from_json(&bytes)
+        .map_err(|error| CliError::Internal(error.to_string()))?;
+    let node_ids = milkdrift_prompt_sequence::stage_node_ids(&revision, stage)
+        .map_err(|error| CliError::Invalid(error.to_string()))?;
     let nodes = state
         .nodes
         .iter()
-        .filter(|node| node.node_id.starts_with(&prefix))
+        .filter(|node| node_ids.iter().any(|identity| identity == &node.node_id))
         .collect::<Vec<_>>();
     if nodes.is_empty() {
         return Err(CliError::NotFound(
@@ -138,10 +156,12 @@ async fn remediate(
             .map_err(|error| CliError::Invalid(error.to_string()))?,
     )
     .map_err(|error| CliError::Internal(error.to_string()))?;
-    let mut request = session.command_request(Command::SubmitProposal {
-        document: proposal_value,
-    });
-    request.expected_revision = Some(base.id().as_str().to_owned());
+    let request = session.command_request_with_revision(
+        Command::SubmitProposal {
+            document: proposal_value,
+        },
+        base.id().as_str(),
+    )?;
     session.output(
         "sequence.remediate",
         &session.client().submit(&request).await?,

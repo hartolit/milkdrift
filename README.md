@@ -96,7 +96,8 @@ In another terminal:
 export MILKDRIFT_TOKEN='replace-with-the-same-long-random-local-token'
 cargo run -p milkdrift-cli -- daemon readiness
 cargo run -p milkdrift-cli -- --json capability list
-cargo run -p milkdrift-cli -- blueprint import crates/blueprint/tests/fixtures/revision-v2.json
+cargo run -p milkdrift-cli -- --command-id quickstart-blueprint-import-v1 \
+  blueprint import crates/blueprint/tests/fixtures/revision-v2.json
 ```
 
 With exact coding, verification, and reviewer capability profiles registered and included in the
@@ -104,9 +105,13 @@ actor's scoped grant, the same headless client can import and run an ordered Mar
 sequence:
 
 ```sh
-cargo run -p milkdrift-cli -- sequence validate examples/headless-dogfood-sequence.md
-cargo run -p milkdrift-cli -- sequence import examples/headless-dogfood-sequence.md
-cargo run -p milkdrift-cli -- run start RUN_ID milkdrift-core-convergence REVISION_ID
+cargo run -p milkdrift-cli -- --command-id quickstart-sequence-validate-v1 \
+  sequence validate examples/headless-dogfood-sequence.md
+cargo run -p milkdrift-cli -- --command-id quickstart-sequence-import-v1 \
+  sequence import examples/headless-dogfood-sequence.md
+cargo run -p milkdrift-cli -- --command-id quickstart-run-start-v1 \
+  --expected-revision REVISION_ID \
+  run start RUN_ID milkdrift-core-convergence REVISION_ID
 cargo run -p milkdrift-cli -- run timeline RUN_ID --follow
 ```
 
@@ -148,7 +153,8 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 - `adapters/peer-http`: authenticated HTTP peer transport, durable serving/reconnect, and remote capabilities mapped into the ordinary capability host.
 - `adapters/local-secret`: explicit opaque-secret-reference resolution from bounded environment or restricted-file sources.
 - `apps/daemon`: authoritative local host, bounded runtime owner, authentication, HTTP/SSE API, recovery, and shutdown.
-- `apps/cli`: thin operator client with human and stable schema-v1 JSON output.
+- `apps/cli`: comprehensive storage-free operator client with human output, stable schema-v1
+  success/failure JSON, and resumable JSON Lines streams.
 - `tools/evidence`: development-only Divan and operational fixtures for critical bounded paths.
 - `.github/workflows`: pinned Linux quality/stress/evidence lanes plus Linux, Windows, and macOS contract validation.
 - `docs`: product, architecture, development, operator, reference, and durable decision documentation.

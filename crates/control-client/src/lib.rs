@@ -12,6 +12,7 @@ use milkdrift_control_protocol::{
     ErrorEnvelope, HealthRead, LayoutDocument, ObservationEnvelope, Page, PageRequest, PeerRead,
     ProposalRead, ProtocolError, ProtocolVersion, ResponseEnvelope, RevisionDiffRead, RevisionRead,
     RevisionSummary, RunRead, TimelineEntry, VersionRequest, VersionResponse, decode_json,
+    encode_json,
 };
 use reqwest::{Method, StatusCode, header};
 use serde::de::DeserializeOwned;
@@ -209,8 +210,25 @@ impl ControlClient {
     /// Submits one exact idempotent command. The client does not retry it implicitly.
     pub async fn submit(&self, request: &CommandRequest) -> Result<CommandAccepted, ClientError> {
         request.validate()?;
-        self.json_request(Method::POST, "v1/commands", Some(request), false)
+        let body = encode_json(request)?;
+        let url = self.url("v1/commands")?;
+        let response = self
+            .authorized(
+                self.http
+                    .request(Method::POST, url)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(body),
+            )
+            .send()
             .await
+            .map_err(|error| {
+                if error.is_timeout() {
+                    ClientError::Timeout
+                } else {
+                    redacted_transport(error)
+                }
+            })?;
+        decode_response(response).await
     }
 
     /// Reads one immutable revision.
@@ -586,10 +604,7 @@ impl ControlClient {
         if !response.status().is_success() {
             return Err(read_error(response).await);
         }
-        let bytes = response.bytes().await.map_err(redacted_transport)?;
-        let envelope: ResponseEnvelope<T> = decode_json(&bytes)?;
-        envelope.protocol.negotiate()?;
-        Ok(envelope.value)
+        decode_response(response).await
     }
 
     fn authorized(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -612,6 +627,18 @@ impl ControlClient {
             .join(path)
             .map_err(|_| ClientError::Configuration("invalid control request path".to_owned()))
     }
+}
+
+async fn decode_response<T: DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<T, ClientError> {
+    if !response.status().is_success() {
+        return Err(read_error(response).await);
+    }
+    let bytes = response.bytes().await.map_err(redacted_transport)?;
+    let envelope: ResponseEnvelope<T> = decode_json(&bytes)?;
+    envelope.protocol.negotiate()?;
+    Ok(envelope.value)
 }
 
 async fn read_error(response: reqwest::Response) -> ClientError {

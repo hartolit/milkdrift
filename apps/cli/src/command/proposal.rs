@@ -9,14 +9,19 @@ pub(super) async fn execute(
 ) -> Result<(), CliError> {
     match command {
         ProposalCommand::Submit { file } => {
-            let document = session.read_json(file)?;
+            let document = session.read_json(
+                file,
+                milkdrift_control::MAX_PROPOSAL_DOCUMENT_BYTES,
+                "proposal document",
+            )?;
             let bytes = serde_json::to_vec(&document)
                 .map_err(|error| CliError::Internal(error.to_string()))?;
             let proposal = WorkflowProposalDocument::from_json(&bytes)
                 .map_err(|error| CliError::Invalid(error.to_string()))?;
-            let mut request = session.command_request(Command::SubmitProposal { document });
-            request.expected_revision =
-                Some(proposal.proposal().base_revision().as_str().to_owned());
+            let request = session.command_request_with_revision(
+                Command::SubmitProposal { document },
+                proposal.proposal().base_revision().as_str(),
+            )?;
             session.output("proposal.submit", &session.client().submit(&request).await?)
         }
         ProposalCommand::List { run, limit, cursor } => {
@@ -44,13 +49,15 @@ pub(super) async fn execute(
         }
         ProposalCommand::Apply(arguments) => {
             session.confirm("apply this exact workflow proposal")?;
-            let mut request = session.command_request(Command::ApplyProposal {
-                run_id: arguments.run.clone(),
-                proposal_id: arguments.proposal.clone(),
-                proposal_digest: arguments.proposal_digest.clone(),
-                proposed_revision: arguments.proposed_revision.clone(),
-            });
-            request.expected_revision = Some(arguments.proposed_revision.clone());
+            let request = session.command_request_with_revision(
+                Command::ApplyProposal {
+                    run_id: arguments.run.clone(),
+                    proposal_id: arguments.proposal.clone(),
+                    proposal_digest: arguments.proposal_digest.clone(),
+                    proposed_revision: arguments.proposed_revision.clone(),
+                },
+                &arguments.proposed_revision,
+            )?;
             session.output("proposal.apply", &session.client().submit(&request).await?)
         }
     }
@@ -61,14 +68,16 @@ async fn decide(
     arguments: &ProposalDecisionArgs,
     decision: ProposalDecision,
 ) -> Result<(), CliError> {
-    let mut request = session.command_request(Command::DecideProposal {
-        run_id: arguments.run.clone(),
-        proposal_id: arguments.proposal.clone(),
-        proposal_digest: arguments.proposal_digest.clone(),
-        proposed_revision: arguments.proposed_revision.clone(),
-        decision_id: arguments.decision_id.clone(),
-        decision,
-    });
-    request.expected_revision = Some(arguments.proposed_revision.clone());
+    let request = session.command_request_with_revision(
+        Command::DecideProposal {
+            run_id: arguments.run.clone(),
+            proposal_id: arguments.proposal.clone(),
+            proposal_digest: arguments.proposal_digest.clone(),
+            proposed_revision: arguments.proposed_revision.clone(),
+            decision_id: arguments.decision_id.clone(),
+            decision,
+        },
+        &arguments.proposed_revision,
+    )?;
     session.output("proposal.decide", &session.client().submit(&request).await?)
 }

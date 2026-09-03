@@ -10,7 +10,7 @@ pub(super) async fn execute(session: &CliSession, command: &LayoutCommand) -> Re
         ),
         LayoutCommand::Put { file } => {
             let layout = session.read_layout(file)?;
-            let request = session.command_request(Command::PutLayout { layout });
+            let request = session.command_request(Command::PutLayout { layout })?;
             session.output("layout.put", &session.client().submit(&request).await?)
         }
     }

@@ -19,6 +19,9 @@ are observations, not correctness thresholds, and are not used to conceal an unb
 - Daemon measurements use temporary redb/artifact roots, private temporary bearer files, an
   ephemeral loopback listener, and controlled local concurrency. No fixed port or external
   service is required.
+- Headless CLI evidence builds and spawns the actual `milkdrift-daemon` and `milkdrift` binaries.
+  Its temporary configuration registers the evidence executable itself as two byte-pinned process
+  profiles, uses no shell or network service, and never supplies the database path to a CLI process.
 
 `milkdrift-evidence` is a development-only leaf package. Product crates do not depend on it. The
 model-provider `operational-evidence` feature only exposes a network-free driver around its
@@ -41,6 +44,7 @@ production mapping or policy.
 | Local process | stdout/stderr streaming and publication | fixed 512 KiB combined output | local-process tests |
 | Model provider | SSE plus provider state machines | 2,048 complete fixed responses | mock-endpoint tests |
 | Daemon | authenticated owner round trip | loopback health request | control-plane tests |
+| Headless CLI | actual-binary command/read/restart workflow | temporary loopback daemon and deterministic processes | CLI units, daemon control plane, and `headless-cli-evidence` |
 
 The operational runner separately performs sustained receipt turnover and reopen recovery. It
 replays a 10,000-event projection to assert a bounded current frontier, verifies old cold receipt
@@ -62,6 +66,20 @@ failures while checking permit cleanup, exact correlation, drain behavior, and l
 callbacks.
 
 ## Local commands
+
+Run the actual-binary headless product scenario:
+
+```sh
+cargo build -p milkdrift-daemon --bin milkdrift-daemon \
+  -p milkdrift-cli --bin milkdrift \
+  -p milkdrift-evidence --bin headless-cli-evidence
+target/debug/headless-cli-evidence \
+  --daemon target/debug/milkdrift-daemon \
+  --cli target/debug/milkdrift
+```
+
+This is deterministic local control-path evidence, including abrupt restart and retained
+uncertainty. It makes no real model or provider interoperability claim.
 
 Install the mutation tool outside the workspace dependency graph:
 
