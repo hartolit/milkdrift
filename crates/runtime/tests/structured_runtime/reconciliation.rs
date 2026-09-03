@@ -465,7 +465,68 @@ fn run_cancellation_after_lease_prevents_external_start() -> TestResult {
 }
 
 #[test]
-fn reconciliation_cancellation_after_lease_prevents_the_old_external_start() -> TestResult {
+fn run_cancellation_after_effect_claim_prevents_final_adapter_entry() -> TestResult {
+    let directory = TempDir::new()?;
+    let executor = Arc::new(OperationCountingExecutor::new(test_descriptor()?));
+    let (store, _clock, runtime) = runtime_with_executor_at(
+        directory.path(),
+        "cancel-after-claim",
+        "cancel-after-claim",
+        NOW,
+        64,
+        executor.clone(),
+    )?;
+    let revision = task_revision("workflow-cancel-after-claim")?;
+    let run = RunId::new("run-cancel-after-claim")?;
+    store.put_revision(&revision)?;
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-cancel-after-claim")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
+    let mut actions = runtime.claim_execution_effects(PageSize::new(1)?)?;
+    assert_eq!(actions.len(), 1);
+    assert_eq!(
+        submit_command(
+            &runtime,
+            store.as_ref(),
+            &run,
+            RunCommand::RequestCancellation,
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        runtime.execute_effect(actions.remove(0))?,
+        EffectExecutionResult::Completed { observations: 0 }
+    );
+    assert_eq!(executor.calls("model.generate")?, 0);
+    assert!(!runtime.history(&run)?.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::CapabilityAdapterEntryDecisionRecorded { .. }
+    )));
+    Ok(())
+}
+
+#[test]
+fn reconciliation_cancellation_after_effect_claim_prevents_the_old_external_start() -> TestResult {
     let directory = TempDir::new()?;
     let executor = Arc::new(OperationCountingExecutor::new(test_descriptor()?));
     let (store, _clock, runtime) = runtime_with_executor_at(
@@ -504,6 +565,8 @@ fn reconciliation_cancellation_after_lease_prevents_the_old_external_start() -> 
         CommandDisposition::Accepted
     );
     assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
+    let mut actions = runtime.claim_execution_effects(PageSize::new(1)?)?;
+    assert_eq!(actions.len(), 1);
     assert_eq!(
         submit_command(
             &runtime,
@@ -535,14 +598,15 @@ fn reconciliation_cancellation_after_lease_prevents_the_old_external_start() -> 
         )?,
         CommandDisposition::Accepted
     );
-    assert!(runtime.claim_effects(PageSize::new(1)?)?.is_empty());
-    assert_eq!(executor.calls("model.generate")?, 0);
-    assert!(
-        !runtime
-            .history(&run)?
-            .iter()
-            .any(|event| matches!(event.kind(), RunEventKind::NodeStarted { .. }))
+    assert_eq!(
+        runtime.execute_effect(actions.remove(0))?,
+        EffectExecutionResult::Completed { observations: 0 }
     );
+    assert_eq!(executor.calls("model.generate")?, 0);
+    assert!(!runtime.history(&run)?.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::CapabilityAdapterEntryDecisionRecorded { .. }
+    )));
     Ok(())
 }
 

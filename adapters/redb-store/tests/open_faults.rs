@@ -99,7 +99,7 @@ fn a_nonempty_partially_initialized_database_is_refused() -> Result<(), Box<dyn 
 #[test]
 fn older_and_future_internal_document_formats_are_refused_without_migration()
 -> Result<(), Box<dyn std::error::Error>> {
-    for found in [12, 14] {
+    for found in [13, 15] {
         let directory = TempDir::new()?;
         drop(RedbStore::open(directory.path())?);
 
@@ -117,7 +117,7 @@ fn older_and_future_internal_document_formats_are_refused_without_migration()
             Err(PersistenceError::UnsupportedVersion {
                 document: "redb internal document envelope",
                 found: observed,
-                supported: 13,
+                supported: 14,
             }) if observed == found as u32
         ));
     }

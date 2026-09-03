@@ -193,7 +193,7 @@ pub(crate) fn validate_publication_scrub(
         )
         .map_err(error::redb)?
         .map(|value| value.value());
-    validate_publication_controller_charge(read, &record)?;
+    let retained_controller_violation = validate_publication_controller_charge(read, &record)?;
     match record.state {
         PublicationState::Writable => {
             if age_owner.as_deref() != Some(key)
@@ -231,7 +231,7 @@ pub(crate) fn validate_publication_scrub(
                 || manifest.is_some()
                 || digest_reserved.is_some()
                 || (pending && ready)
-                || (!pending && !ready && !content)
+                || (!pending && !ready && !content && !retained_controller_violation)
                 || (temp_guard.is_some() && !pending && !ready)
             {
                 return Err(error::corruption(
@@ -246,7 +246,7 @@ pub(crate) fn validate_publication_scrub(
 fn validate_publication_controller_charge(
     read: &redb::ReadTransaction,
     record: &PublicationRecord,
-) -> Result<(), PersistenceError> {
+) -> Result<bool, PersistenceError> {
     let bindings = read
         .open_table(CONTROLLER_RUN_BINDINGS)
         .map_err(error::redb)?;
@@ -264,22 +264,34 @@ fn validate_publication_controller_charge(
         .map(|value| crate::controller_account::decode_artifact_charge(value.value()))
         .transpose()?;
 
-    if !matches!(record.state, PublicationState::Committed { .. }) {
-        if charge.is_some() {
-            return Err(error::corruption(
-                "uncommitted artifact publication has a controller charge",
-            ));
-        }
-        return Ok(());
-    }
-
     let expected_reservation = match &record.controller_owner {
         ControllerArtifactOwner::RunBinding => None,
         ControllerArtifactOwner::InvocationReservation(reservation) => Some(reservation),
     };
-    match (binding, charge) {
-        (None, None) if expected_reservation.is_none() => Ok(()),
-        (Some(_), Some(_)) => Ok(()),
+    match (&record.state, binding, charge) {
+        (PublicationState::Writable, _, None) => Ok(false),
+        (PublicationState::Released, _, None) => Ok(false),
+        (PublicationState::Committed { .. }, None, None) if expected_reservation.is_none() => {
+            Ok(false)
+        }
+        (state, Some(account), Some(charge))
+            if charge.account == account
+                && charge.reservation.as_ref() == expected_reservation
+                && charge.bytes == record.metadata.reference().size_bytes()
+                && matches!(
+                    (state, charge.outcome),
+                    (
+                        PublicationState::Committed { .. },
+                        crate::controller_account::ControllerArtifactMutationOutcome::Charged
+                    ) | (
+                        PublicationState::Released,
+                        crate::controller_account::ControllerArtifactMutationOutcome::ContractViolation
+                    )
+                ) =>
+        {
+            Ok(charge.outcome
+                == crate::controller_account::ControllerArtifactMutationOutcome::ContractViolation)
+        }
         _ => Err(error::corruption(
             "artifact publication has an impossible controller charge linkage",
         )),
@@ -289,8 +301,10 @@ fn validate_publication_controller_charge(
 pub(crate) fn validate_controller_charge_publication(
     read: &redb::ReadTransaction,
     publication: &ArtifactPublicationId,
+    expected_run: &RunId,
     owner: &ControllerArtifactOwner,
     charged_bytes: u64,
+    outcome: crate::controller_account::ControllerArtifactMutationOutcome,
 ) -> Result<RunId, PersistenceError> {
     let publications = read
         .open_table(ARTIFACT_PUBLICATIONS)
@@ -298,15 +312,25 @@ pub(crate) fn validate_controller_charge_publication(
     let bytes = publications
         .get(publication.as_str())
         .map_err(error::redb)?
-        .ok_or_else(|| error::corruption("controller artifact charge has no publication"))?;
+        .ok_or_else(|| error::corruption("controller artifact mutation has no publication"))?;
     let record = publication::decode_publication(bytes.value())?;
     if record.publication != *publication
+        || &record.run != expected_run
         || record.controller_owner != *owner
         || record.metadata.reference().size_bytes() != charged_bytes
-        || !matches!(record.state, PublicationState::Committed { .. })
+        || !matches!(
+            (&record.state, outcome),
+            (
+                PublicationState::Committed { .. },
+                crate::controller_account::ControllerArtifactMutationOutcome::Charged
+            ) | (
+                PublicationState::Released,
+                crate::controller_account::ControllerArtifactMutationOutcome::ContractViolation
+            )
+        )
     {
         return Err(error::corruption(
-            "controller artifact charge disagrees with its committed publication",
+            "controller artifact mutation disagrees with its publication outcome",
         ));
     }
     Ok(record.run)

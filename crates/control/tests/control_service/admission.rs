@@ -224,6 +224,137 @@ fn controller_process_ceiling_denies_n_plus_one_before_executor_entry() -> TestR
 }
 
 #[test]
+fn cancellation_after_effect_claim_creates_no_controller_reservation_or_adapter_entry() -> TestResult
+{
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(
+        directory.path().join("controller-cancel-after-claim.redb"),
+    )?);
+    let run = RunId::new("run-controller-cancel-after-claim")?;
+    let actor = ActorRef::new("controller:cancel-after-claim")?;
+    let grant_id = GrantId::new("grant:controller-cancel-after-claim")?;
+    let descriptor = process_descriptor()?;
+    let host = CapabilityHost::new(
+        HostConfig {
+            max_registrations: 4,
+            max_generations_per_capability: 2,
+            max_concurrent_per_generation: 4,
+            observation_stale_after_ms: 60_000,
+        },
+        CapabilitySelectionPolicy::priorities(BTreeMap::new()),
+    )?;
+    let adapter = Arc::new(CountingProcessAdapter::default());
+    host.register(
+        descriptor.clone(),
+        adapter.clone(),
+        Some(CapabilityObservation::new(
+            descriptor.identity().clone(),
+            NOW,
+            true,
+            0,
+            "controller cancellation fixture ready",
+        )?),
+    )?;
+    let broad_grant = AuthorityPreset::Autonomous
+        .template(
+            grant_id.clone(),
+            1,
+            actor.clone(),
+            WorkflowRunScope::Any,
+            CapabilityAuthorityScope::allow_any(SideEffectClass::ReadOnly),
+            AuthorityBudget {
+                cost_minor: Some(1_000_000),
+                duration_ms: Some(3_600_000),
+                invocations: Some(1_000),
+                artifact_bytes: Some(16_777_216),
+                units: Some(1_000_000),
+                concurrency: Some(32),
+            },
+        )
+        .build()?;
+    let (runtime, service, context) = services_with_executor_and_revocations(
+        store.clone(),
+        &actor,
+        &grant_id,
+        "controller-cancel-after-claim",
+        broad_grant,
+        BTreeMap::new(),
+        Arc::new(host),
+    )?;
+    let body = base_revision("controller-cancel-after-claim-body")?;
+    store.put_revision(&body)?;
+    let wrapper = build_controller_blueprint(ControllerBlueprintSpec {
+        workflow: WorkflowId::new("controller-cancel-after-claim-wrapper")?,
+        body: PinnedSubworkflow::new(
+            body.semantic().workflow().clone(),
+            body.id().clone(),
+            WorkflowInterface::new([], [])?,
+        ),
+        continue_condition: Condition::Constant { value: true },
+        limits: ControllerLimits::new(
+            2, 2, 8, 4, 60_000, 1_000_000, 8, 8, 1_000_000, 2, 2, 2, 2, 2, 2, None,
+        )?,
+        author: AuthorRef::new("human:controller-cancel-after-claim")?,
+    })?;
+    store.put_revision(&wrapper)?;
+    create_and_start(&service, &runtime, &context, &run, &wrapper)?;
+
+    let mut action = None;
+    for _ in 0..128 {
+        let _ = runtime.scheduler_tick()?;
+        if let Some(claimed) = runtime.claim_execution_effects(PageSize::new(1)?)?.pop() {
+            action = Some(claimed);
+            break;
+        }
+    }
+    let action = action.ok_or("controlled effect was not claimed")?;
+    let child = runtime
+        .history(&run)?
+        .iter()
+        .find_map(|event| match event.kind() {
+            RunEventKind::SubworkflowCreated { child_run, .. } => Some(child_run.clone()),
+            _ => None,
+        })
+        .ok_or("controller body child is absent")?;
+    let account = store
+        .controller_account_binding(&child)?
+        .ok_or("controller body child is unbound")?;
+    let before = store
+        .controller_account(&account)?
+        .ok_or("controller account is absent before cancellation")?;
+
+    let projection = runtime.projection(&child)?;
+    service.execute(&command(
+        "controller-cancel-after-claim-request",
+        &context,
+        OptimisticGuard {
+            expected_run_sequence: Some(projection.sequence()),
+            expected_revision: projection.revision().cloned(),
+            expected_proposal_digest: None,
+        },
+        ControlCommand::RequestCancellation { run: child.clone() },
+    )?)?;
+    assert_eq!(
+        runtime.execute_effect(action)?,
+        milkdrift_runtime::EffectExecutionResult::Completed { observations: 0 }
+    );
+
+    let after = store
+        .controller_account(&account)?
+        .ok_or("controller account disappeared after cancellation")?;
+    assert_eq!(after, before);
+    assert!(after.reservations().is_empty());
+    assert_eq!(after.settled().process_admissions(), 0);
+    assert_eq!(adapter.entries(), 0);
+    assert!(!runtime.history(&child)?.iter().any(|event| matches!(
+        event.kind(),
+        RunEventKind::CapabilityAdapterEntryDecisionRecorded { .. }
+    )));
+    assert_complete_integrity(store.as_ref())?;
+    Ok(())
+}
+
+#[test]
 fn terminal_cancellation_retains_missing_bounded_usage_and_blocks_the_account() -> TestResult {
     let directory = TempDir::new()?;
     let store = Arc::new(RedbStore::open(

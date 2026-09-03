@@ -2,9 +2,9 @@ use super::{
     ARTIFACT_DIGEST_RESERVATIONS, ARTIFACT_PATHS, ARTIFACT_PUBLICATIONS,
     ARTIFACT_PUBLICATIONS_BY_AGE, ARTIFACT_REFERENCES, ARTIFACT_RESERVATIONS,
     ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST, ArtifactPublicationId,
-    ContentDigest, FaultPoint, OrphanCleanupCursor, OrphanCleanupFamily, OrphanCleanupRequest,
-    OrphanCleanupResult, Path, PersistenceError, PublicationRecord, PublicationState,
-    ReadableTable, RedbStore, codec, error, fs, json,
+    CONTROLLER_ARTIFACT_CHARGES, ContentDigest, FaultPoint, OrphanCleanupCursor,
+    OrphanCleanupFamily, OrphanCleanupRequest, OrphanCleanupResult, Path, PersistenceError,
+    PublicationRecord, PublicationState, ReadableTable, RedbStore, codec, error, fs, json,
 };
 use super::{
     accounting::validate_artifact_state,
@@ -735,6 +735,17 @@ pub(crate) fn remove_released_publication_if_uninventoried(
             return Ok(());
         }
     }
+    let charges = write
+        .open_table(CONTROLLER_ARTIFACT_CHARGES)
+        .map_err(error::redb)?;
+    if charges
+        .get(publication.as_str())
+        .map_err(error::redb)?
+        .is_some()
+    {
+        return Ok(());
+    }
+    drop(charges);
     let mut publications = write
         .open_table(ARTIFACT_PUBLICATIONS)
         .map_err(error::redb)?;

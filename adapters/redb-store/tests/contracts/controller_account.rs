@@ -624,13 +624,7 @@ fn same_account_identity_with_an_altered_budget_is_not_idempotent() -> TestResul
             bind_run: owner,
         }],
     )?)?;
-    assert!(matches!(
-        store.commit_command(&request),
-        Err(PersistenceError::ImmutableConflict {
-            entity: "controller account",
-            ..
-        })
-    ));
+    assert_storage_corruption(store.commit_command(&request));
     Ok(())
 }
 
@@ -1978,3 +1972,5 @@ fn final_entry_integrity_distinguishes_denied_uncontrolled_and_reserved_links() 
 
 #[path = "controller_account/final_entry.rs"]
 mod final_entry;
+#[path = "controller_account/integrity.rs"]
+mod integrity;

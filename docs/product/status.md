@@ -52,7 +52,7 @@ snapshot. Git, CI, releases, and external audits own chronology.
   remote ordinary capability registrations, transactional acceptance/claim/entry, append-only
   observations, cancellation, restart recovery, tombstone replay, and ordinary core artifact
   transfer. It introduces no second workflow truth.
-- Redb physical schema 10 and internal document format 13 own transactional journal, history chain,
+- Redb physical schema 11 and internal document format 14 own transactional journal, history chain,
   indexes, snapshots, workspace accounting, artifacts, application receipts/layouts/proposals,
   security audit, and peer execution/retention. Application receipts move independently from hot
   to cold while preserving exact replay; peer terminal detail compacts independently to replay and
@@ -78,9 +78,11 @@ snapshot. Git, CI, releases, and external audits own chronology.
   cost, unit, artifact, process-entry, and model-entry ceilings across the controller run and its
   descendants. The final adapter-entry event and account admission commit atomically after one
   exact generation is prepared but before adapter code; artifact metadata and its logical-byte
-  charge also commit atomically. Unknown bounds, missing terminal usage, uncertainty, currency
-  mismatch, and adapter-contract violations fail closed. The production daemon still leaves this
-  lifecycle uninstalled because no current qualifying real external-evidence run is available.
+  charge also commit atomically. Immutable per-account revision evidence replays every total and
+  reservation change from its predecessor and exact transition or publication source. Unknown
+  bounds, missing terminal usage, uncertainty, currency mismatch, and adapter-contract violations
+  fail closed. The production daemon still leaves this lifecycle uninstalled because no current
+  qualifying real external-evidence run is available.
 - The public Rust surface follows the current policy in
   [`../reference/public-api-policy.md`](../reference/public-api-policy.md). Canonical identities come
   from their semantic owner; storage fault hooks are available only with redb `test-admin`; daemon
@@ -103,7 +105,7 @@ Current exact versions are:
 | Projection snapshot envelope / runtime payload | 2 / 4; old optional payloads replay from journal |
 | Administrative integrity cursor | 2 |
 | Peer hot record / compact tombstone | 3 / 1; hot v2 reads are upgraded on the next append |
-| Redb internal document format / physical schema | 13 / 10 |
+| Redb internal document format / physical schema | 14 / 11 |
 | Application command receipt / layout record | 1 / 1 |
 | Local-process profile / host materialization | 2 / 1; process v1 refused |
 | External control / authenticated cursor | 2.2 / 2; legacy forms refused |

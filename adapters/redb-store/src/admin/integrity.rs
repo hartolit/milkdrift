@@ -63,6 +63,7 @@ pub(super) mod phase {
     pub(super) const CONTROLLER_RUN_BINDINGS: u8 = 43;
     pub(super) const CONTROLLER_TRANSITIONS: u8 = 44;
     pub(super) const CONTROLLER_ARTIFACT_CHARGES: u8 = 45;
+    pub(super) const CONTROLLER_ACCOUNT_REVISIONS: u8 = 46;
 }
 
 /// Shared state for one ordered scan page. Domain modules own tables and validation.

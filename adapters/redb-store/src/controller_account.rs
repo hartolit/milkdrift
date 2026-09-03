@@ -10,8 +10,8 @@ use redb::{ReadableTable as _, WriteTransaction};
 use serde::{Deserialize, Serialize};
 
 use crate::schema::{
-    CONTROLLER_ACCOUNTS, CONTROLLER_ARTIFACT_CHARGES, CONTROLLER_RUN_BINDINGS,
-    CONTROLLER_TRANSITIONS,
+    CONTROLLER_ACCOUNT_REVISIONS, CONTROLLER_ACCOUNTS, CONTROLLER_ARTIFACT_CHARGES,
+    CONTROLLER_RUN_BINDINGS, CONTROLLER_TRANSITIONS,
 };
 use crate::{RedbStore, error, json};
 
@@ -19,11 +19,61 @@ use crate::{RedbStore, error, json};
 #[serde(deny_unknown_fields)]
 pub(crate) struct ControllerArtifactCharge {
     pub(crate) account: ControllerAccountId,
+    pub(crate) run: RunId,
     pub(crate) reservation: Option<ControllerReservationId>,
     pub(crate) bytes: u64,
+    pub(crate) outcome: ControllerArtifactMutationOutcome,
+    pub(crate) account_revision: Option<u64>,
 }
 
-const CONTROLLER_TRANSITION_RECORD_SCHEMA_VERSION: u32 = 1;
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ControllerArtifactMutationOutcome {
+    Charged,
+    ContractViolation,
+}
+
+impl From<ControllerArtifactChargeOutcome> for ControllerArtifactMutationOutcome {
+    fn from(value: ControllerArtifactChargeOutcome) -> Self {
+        match value {
+            ControllerArtifactChargeOutcome::Charged => Self::Charged,
+            ControllerArtifactChargeOutcome::ContractViolation => Self::ContractViolation,
+        }
+    }
+}
+
+const CONTROLLER_TRANSITION_RECORD_SCHEMA_VERSION: u32 = 2;
+const CONTROLLER_ACCOUNT_REVISION_RECORD_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+pub(crate) enum ControllerAccountRevisionSource {
+    Transition {
+        transition: milkdrift_persistence::ControllerTransitionId,
+        action_index: u32,
+    },
+    ArtifactPublication {
+        publication: ArtifactPublicationId,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ControllerAccountRevisionRecord {
+    schema_version: u32,
+    pub(crate) account: ControllerAccountId,
+    pub(crate) revision: u64,
+    pub(crate) state: ControllerAccountState,
+    pub(crate) source: ControllerAccountRevisionSource,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ControllerTransitionAccountRevision {
+    pub(crate) account: ControllerAccountId,
+    pub(crate) revision: u64,
+    pub(crate) action_index: u32,
+}
 
 /// Self-validating transition evidence retained beside the atomic command receipt.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -33,6 +83,7 @@ pub(crate) struct ControllerTransitionRecord {
     pub(crate) run: RunId,
     pub(crate) command: CommandId,
     pub(crate) transaction: ControllerAccountTransaction,
+    pub(crate) account_revisions: Vec<ControllerTransitionAccountRevision>,
 }
 
 impl ControllerAccountStore for RedbStore {
@@ -62,6 +113,10 @@ impl ControllerAccountStore for RedbStore {
         };
         let state = decode_account(bytes.value())?;
         validate_account_key(account, &state)?;
+        let revisions = read
+            .open_table(CONTROLLER_ACCOUNT_REVISIONS)
+            .map_err(error::redb)?;
+        validate_account_revision_head(&revisions, &state)?;
         Ok(Some(state))
     }
 }
@@ -90,11 +145,6 @@ pub(crate) fn charge_artifact_publication(
             (account, Some(reservation.clone()))
         }
     };
-    let charge = ControllerArtifactCharge {
-        account: account.clone(),
-        reservation: reservation.clone(),
-        bytes,
-    };
     {
         let charges = write
             .open_table(CONTROLLER_ARTIFACT_CHARGES)
@@ -102,7 +152,11 @@ pub(crate) fn charge_artifact_publication(
         if let Some(existing) = charges.get(publication.as_str()).map_err(error::redb)? {
             let existing: ControllerArtifactCharge =
                 json::decode(existing.value(), "controller artifact charge")?;
-            return if existing == charge {
+            return if existing.account == account
+                && &existing.run == run
+                && existing.reservation == reservation
+                && existing.bytes == bytes
+            {
                 Err(error::corruption(
                     "controller artifact charge exists before publication is committed",
                 ))
@@ -119,11 +173,26 @@ pub(crate) fn charge_artifact_publication(
             entity: "controller account",
             identity: account.as_str().to_owned(),
         })?;
+    let prior_revision = state.revision();
     let outcome = state.charge_artifact(reservation.as_ref(), bytes)?;
-    persist_account(write, &state)?;
-    if outcome == ControllerArtifactChargeOutcome::ContractViolation {
-        return Ok(outcome);
+    let account_revision = (state.revision() != prior_revision).then_some(state.revision());
+    if account_revision.is_some() {
+        persist_account_revision(
+            write,
+            &state,
+            ControllerAccountRevisionSource::ArtifactPublication {
+                publication: publication.clone(),
+            },
+        )?;
     }
+    let charge = ControllerArtifactCharge {
+        account,
+        run: run.clone(),
+        reservation,
+        bytes,
+        outcome: outcome.into(),
+        account_revision,
+    };
     let bytes = json::encode(&charge, "controller artifact charge")?;
     let mut charges = write
         .open_table(CONTROLLER_ARTIFACT_CHARGES)
@@ -145,13 +214,6 @@ pub(crate) fn apply_controller_transaction(
         return Ok(());
     };
     transaction.validate()?;
-    let transition_record = ControllerTransitionRecord {
-        schema_version: CONTROLLER_TRANSITION_RECORD_SCHEMA_VERSION,
-        run: request.receipt().run().clone(),
-        command: request.receipt().command().clone(),
-        transaction: transaction.clone(),
-    };
-
     {
         let transitions = write
             .open_table(CONTROLLER_TRANSITIONS)
@@ -188,7 +250,13 @@ pub(crate) fn apply_controller_transaction(
         }
     }
 
-    for action in transaction.actions() {
+    let mut account_revisions = Vec::new();
+    for (action_index, action) in transaction.actions().iter().enumerate() {
+        let action_index = u32::try_from(action_index).map_err(|_| {
+            PersistenceError::InvalidDocument(
+                "controller transaction action index exceeds u32".to_owned(),
+            )
+        })?;
         match action {
             ControllerAccountAction::Establish {
                 declaration,
@@ -203,10 +271,22 @@ pub(crate) fn apply_controller_transaction(
                             identity: declaration.account().as_str().to_owned(),
                         });
                     }
-                    None => persist_account(
-                        write,
-                        &ControllerAccountState::establish(declaration.clone())?,
-                    )?,
+                    None => {
+                        let state = ControllerAccountState::establish(declaration.clone())?;
+                        persist_account_revision(
+                            write,
+                            &state,
+                            ControllerAccountRevisionSource::Transition {
+                                transition: transaction.transition().clone(),
+                                action_index,
+                            },
+                        )?;
+                        account_revisions.push(ControllerTransitionAccountRevision {
+                            account: declaration.account().clone(),
+                            revision: state.revision(),
+                            action_index,
+                        });
+                    }
                 }
                 bind_run_to_account(write, bind_run, declaration.account())?;
             }
@@ -253,7 +333,19 @@ pub(crate) fn apply_controller_transaction(
                     ));
                 }
                 if matches!(actual, ControllerAdmissionOutcome::Reserved { .. }) {
-                    persist_account(write, &state)?;
+                    persist_account_revision(
+                        write,
+                        &state,
+                        ControllerAccountRevisionSource::Transition {
+                            transition: transaction.transition().clone(),
+                            action_index,
+                        },
+                    )?;
+                    account_revisions.push(ControllerTransitionAccountRevision {
+                        account: account.clone(),
+                        revision: state.revision(),
+                        action_index,
+                    });
                 }
             }
             ControllerAccountAction::SettleTerminal {
@@ -268,11 +360,30 @@ pub(crate) fn apply_controller_transaction(
                     }
                 })?;
                 state.settle_terminal(reservation, usage.as_ref())?;
-                persist_account(write, &state)?;
+                persist_account_revision(
+                    write,
+                    &state,
+                    ControllerAccountRevisionSource::Transition {
+                        transition: transaction.transition().clone(),
+                        action_index,
+                    },
+                )?;
+                account_revisions.push(ControllerTransitionAccountRevision {
+                    account: account.clone(),
+                    revision: state.revision(),
+                    action_index,
+                });
             }
         }
     }
 
+    let transition_record = ControllerTransitionRecord {
+        schema_version: CONTROLLER_TRANSITION_RECORD_SCHEMA_VERSION,
+        run: request.receipt().run().clone(),
+        command: request.receipt().command().clone(),
+        transaction: transaction.clone(),
+        account_revisions,
+    };
     let mut transitions = write
         .open_table(CONTROLLER_TRANSITIONS)
         .map_err(error::redb)?;
@@ -745,6 +856,10 @@ pub(crate) fn account_in_transaction(
     };
     let state = decode_account(bytes.value())?;
     validate_account_key(account, &state)?;
+    let revisions = write
+        .open_table(CONTROLLER_ACCOUNT_REVISIONS)
+        .map_err(error::redb)?;
+    validate_account_revision_head(&revisions, &state)?;
     Ok(Some(state))
 }
 
@@ -760,7 +875,41 @@ fn validate_account_key(
     Ok(())
 }
 
-pub(crate) fn persist_account(
+pub(crate) fn validate_account_revision_head(
+    revisions: &impl redb::ReadableTable<&'static str, &'static [u8]>,
+    state: &ControllerAccountState,
+) -> Result<(), PersistenceError> {
+    let account = state.declaration().account();
+    let key = controller_account_revision_key(account, state.revision());
+    let bytes = revisions
+        .get(key.as_str())
+        .map_err(error::redb)?
+        .ok_or_else(|| error::corruption("controller account has no exact revision evidence"))?;
+    let revision = decode_account_revision_record(bytes.value())?;
+    if revision.account != *account
+        || revision.revision != state.revision()
+        || revision.state != *state
+    {
+        return Err(error::corruption(
+            "controller account differs from its exact revision evidence",
+        ));
+    }
+    if let Some(next) = state.revision().checked_add(1) {
+        let next_key = controller_account_revision_key(account, next);
+        if revisions
+            .get(next_key.as_str())
+            .map_err(error::redb)?
+            .is_some()
+        {
+            return Err(error::corruption(
+                "controller account state predates its durable revision evidence",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn persist_account(
     write: &WriteTransaction,
     state: &ControllerAccountState,
 ) -> Result<(), PersistenceError> {
@@ -771,6 +920,55 @@ pub(crate) fn persist_account(
         .insert(state.declaration().account().as_str(), bytes.as_slice())
         .map_err(error::redb)?;
     Ok(())
+}
+
+fn persist_account_revision(
+    write: &WriteTransaction,
+    state: &ControllerAccountState,
+    source: ControllerAccountRevisionSource,
+) -> Result<(), PersistenceError> {
+    state.validate()?;
+    let record = ControllerAccountRevisionRecord {
+        schema_version: CONTROLLER_ACCOUNT_REVISION_RECORD_SCHEMA_VERSION,
+        account: state.declaration().account().clone(),
+        revision: state.revision(),
+        state: state.clone(),
+        source,
+    };
+    let key = controller_account_revision_key(&record.account, record.revision);
+    let bytes = json::encode(&record, "controller account revision record")?;
+    let mut revisions = write
+        .open_table(CONTROLLER_ACCOUNT_REVISIONS)
+        .map_err(error::redb)?;
+    if revisions.get(key.as_str()).map_err(error::redb)?.is_some() {
+        return Err(error::corruption(
+            "controller account revision already exists before its account mutation",
+        ));
+    }
+    revisions
+        .insert(key.as_str(), bytes.as_slice())
+        .map_err(error::redb)?;
+    drop(revisions);
+    persist_account(write, state)
+}
+
+pub(crate) fn controller_account_revision_key(
+    account: &ControllerAccountId,
+    revision: u64,
+) -> String {
+    format!("{}:{revision:016x}", account.as_str())
+}
+
+pub(crate) fn parse_controller_account_revision_key(
+    key: &str,
+) -> Result<(ControllerAccountId, u64), PersistenceError> {
+    let (account, revision) = key.rsplit_once(':').ok_or_else(|| {
+        error::corruption("controller account revision key has no revision suffix")
+    })?;
+    let account = ControllerAccountId::new(account)?;
+    let revision = u64::from_str_radix(revision, 16)
+        .map_err(|_| error::corruption("controller account revision key is malformed"))?;
+    Ok((account, revision))
 }
 
 pub(crate) fn decode_account(bytes: &[u8]) -> Result<ControllerAccountState, PersistenceError> {
@@ -787,6 +985,26 @@ pub(crate) fn decode_artifact_charge(
     bytes: &[u8],
 ) -> Result<ControllerArtifactCharge, PersistenceError> {
     json::decode(bytes, "controller artifact charge")
+}
+
+pub(crate) fn decode_account_revision_record(
+    bytes: &[u8],
+) -> Result<ControllerAccountRevisionRecord, PersistenceError> {
+    let record: ControllerAccountRevisionRecord =
+        json::decode(bytes, "controller account revision record")?;
+    if record.schema_version != CONTROLLER_ACCOUNT_REVISION_RECORD_SCHEMA_VERSION {
+        return Err(PersistenceError::UnsupportedVersion {
+            document: "controller_account_revision_record",
+            found: record.schema_version,
+            supported: CONTROLLER_ACCOUNT_REVISION_RECORD_SCHEMA_VERSION,
+        });
+    }
+    record.state.validate().map_err(|cause| {
+        error::corruption(format!(
+            "stored controller account revision failed validation: {cause}"
+        ))
+    })?;
+    Ok(record)
 }
 
 fn encode_transition_record(

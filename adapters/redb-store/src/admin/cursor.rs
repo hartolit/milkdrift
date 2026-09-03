@@ -5,14 +5,15 @@ use super::{
     ARTIFACT_ACCOUNTING, ARTIFACT_DELETE_GUARDS, ARTIFACT_DIGEST_RESERVATIONS, ARTIFACT_MANIFEST,
     ARTIFACT_PATHS, ARTIFACT_PUBLICATIONS, ARTIFACT_PUBLICATIONS_BY_AGE, ARTIFACT_REFERENCES,
     ARTIFACT_RESERVATIONS, ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST,
-    Bound, BoundedDetail, COMMAND_RESULTS, CONTROLLER_ACCOUNTS, CONTROLLER_ARTIFACT_CHARGES,
-    CONTROLLER_RUN_BINDINGS, CONTROLLER_TRANSITIONS, IntegrityScanCursor, IntegrityScanFamily,
-    IntegrityScanRequest, IntegrityScanResult, LEASE_ENTRIES, LEASE_INDEX, METADATA,
-    NONTERMINAL_RUNS, PersistenceError, REVISIONS, REVISIONS_BY_DIGEST, ROOT_SCOPES,
-    RUN_ARTIFACT_OWNERSHIP, RUN_HEADS, RUN_SUMMARIES, RUNNABLE_ENTRIES, RUNNABLE_INDEX,
-    RUNNABLE_RUN_HEADS, RedbStore, SCHEMA_VERSION_KEY, SCOPES, SECURITY_AUDIT, SIGNAL_RECEIPTS,
-    SNAPSHOT_LATEST, SNAPSHOTS, StorageComponentHealth, StorageHealthStatus, TIMER_ENTRIES,
-    TIMER_INDEX, VALUES, WORKSPACE_BUDGETS, WORKSPACE_USAGE, WORKSPACE_VALUE_HEADS, error,
+    Bound, BoundedDetail, COMMAND_RESULTS, CONTROLLER_ACCOUNT_REVISIONS, CONTROLLER_ACCOUNTS,
+    CONTROLLER_ARTIFACT_CHARGES, CONTROLLER_RUN_BINDINGS, CONTROLLER_TRANSITIONS,
+    IntegrityScanCursor, IntegrityScanFamily, IntegrityScanRequest, IntegrityScanResult,
+    LEASE_ENTRIES, LEASE_INDEX, METADATA, NONTERMINAL_RUNS, PersistenceError, REVISIONS,
+    REVISIONS_BY_DIGEST, ROOT_SCOPES, RUN_ARTIFACT_OWNERSHIP, RUN_HEADS, RUN_SUMMARIES,
+    RUNNABLE_ENTRIES, RUNNABLE_INDEX, RUNNABLE_RUN_HEADS, RedbStore, SCHEMA_VERSION_KEY, SCOPES,
+    SECURITY_AUDIT, SIGNAL_RECEIPTS, SNAPSHOT_LATEST, SNAPSHOTS, StorageComponentHealth,
+    StorageHealthStatus, TIMER_ENTRIES, TIMER_INDEX, VALUES, WORKSPACE_BUDGETS, WORKSPACE_USAGE,
+    WORKSPACE_VALUE_HEADS, error,
 };
 const INTEGRITY_CURSOR_VERSION: u8 = 2;
 const INTEGRITY_CURSOR_PREFIX_BYTES: usize = 33;
@@ -189,7 +190,7 @@ pub(crate) fn index_cursor_position(
             "index integrity cursor has no phase".to_owned(),
         ));
     };
-    if phase > 45 || key.is_empty() {
+    if phase > 46 || key.is_empty() {
         return Err(PersistenceError::InvalidCursor(
             "index integrity cursor has an unknown phase or empty key".to_owned(),
         ));
@@ -1012,6 +1013,12 @@ pub(crate) fn index_integrity_cursor_exists(
             .map(|row| row.is_some()),
         45 => read
             .open_table(CONTROLLER_ARTIFACT_CHARGES)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        46 => read
+            .open_table(CONTROLLER_ACCOUNT_REVISIONS)
             .map_err(error::redb)?
             .get(string_key()?)
             .map_err(error::redb)

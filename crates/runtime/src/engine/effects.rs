@@ -433,6 +433,16 @@ impl RuntimeService {
                     "effect ticket lease is no longer active".to_owned(),
                 )
             })?;
+            if execution.cancellation().is_some()
+                || cancellation_reason_for_execution(
+                    &projection,
+                    execution.execution(),
+                    run_drain_reason(&projection),
+                )
+                .is_some()
+            {
+                return Ok(None);
+            }
             let exact_ticket_coordinates = [
                 attempt.state() == &AttemptState::Running,
                 attempt.execution() == dispatch.execution(),

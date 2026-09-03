@@ -160,10 +160,11 @@ cleanup defects remain inspectable.
 
 ## Interpretation and limitations
 
-On 2026-09-02 the complete post-change local Linux gate passed: formatting,
+On 2026-09-03 the complete post-change local Linux gate passed: formatting,
 all-target/all-feature check and tests, Clippy with warnings denied, rustdoc with warnings denied,
-`cargo deny check`, and `cargo machete`. The full release evidence lane also passed with 256 receipt
-operations and 256 peer executions/4,352 peer observations. It retained five hot and 251 cold
+`cargo deny check`, `cargo machete`, duplicate dependency inspection, and complete test listing. The
+most recent full release evidence lane, run on 2026-09-02, passed with 256 receipt operations and
+256 peer executions/4,352 peer observations. It retained five hot and 251 cold
 receipts, replayed the oldest cold receipt after reopen, and measured 1,589,248 physical store bytes
 both before and after the final bounded archival transaction. The daemon queue bound was one; 57
 requests were accepted and 199 received the stable overload result, accounting for all 256

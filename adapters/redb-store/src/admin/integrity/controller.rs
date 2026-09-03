@@ -1,18 +1,23 @@
 use milkdrift_persistence::{
-    ArtifactPublicationId, ControllerAccountAction, ControllerAccountId, ControllerArtifactOwner,
-    ControllerAssessmentBoundary, ControllerTransitionId, RunEventEnvelope, RunEventKind,
+    ArtifactPublicationId, ControllerAccountAction, ControllerAccountId, ControllerAccountState,
+    ControllerArtifactOwner, ControllerAssessmentBoundary, ControllerTransitionId,
+    RunEventEnvelope, RunEventKind,
 };
 use milkdrift_workspace::RunId;
 
 use super::super::{
-    COMMAND_RESULTS, CONTROLLER_ACCOUNTS, CONTROLLER_ARTIFACT_CHARGES, CONTROLLER_RUN_BINDINGS,
-    CONTROLLER_TRANSITIONS, PersistenceError, RUN_EVENTS, RUN_HEADS, codec, error,
+    COMMAND_RESULTS, CONTROLLER_ACCOUNT_REVISIONS, CONTROLLER_ACCOUNTS,
+    CONTROLLER_ARTIFACT_CHARGES, CONTROLLER_RUN_BINDINGS, CONTROLLER_TRANSITIONS, PersistenceError,
+    RUN_EVENTS, RUN_HEADS, codec, error,
 };
 use super::{ScanContext, phase};
 
 pub(super) fn scan(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceError> {
     let read = context.read;
     let accounts = read.open_table(CONTROLLER_ACCOUNTS).map_err(error::redb)?;
+    let account_revisions = read
+        .open_table(CONTROLLER_ACCOUNT_REVISIONS)
+        .map_err(error::redb)?;
     let bindings = read
         .open_table(CONTROLLER_RUN_BINDINGS)
         .map_err(error::redb)?;
@@ -38,6 +43,7 @@ pub(super) fn scan(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceE
                     "controller account key disagrees with its declaration",
                 ));
             }
+            crate::controller_account::validate_account_revision_head(&account_revisions, &state)?;
             let binding = bindings
                 .get(state.declaration().controller_run().as_str())
                 .map_err(error::redb)?
@@ -109,7 +115,13 @@ pub(super) fn scan(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceE
             let head = crate::journal::validated_run_head(&heads, &events, &record.run)?;
             crate::journal::validate_command_record_history(&command, head, &events)?;
             let command_events = command_events(&events, &command)?;
-            validate_transition_event_links(&record.transaction, &record.run, &command_events)
+            validate_transition_revision_links(&record, &account_revisions)?;
+            validate_transition_event_links(
+                &record.transaction,
+                &record.run,
+                &command_events,
+                &bindings,
+            )
         },
     )?;
     context.string_bytes(
@@ -135,8 +147,10 @@ pub(super) fn scan(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceE
             let run = crate::artifact::validate_controller_charge_publication(
                 read,
                 &publication,
+                &charge.run,
                 &owner,
                 charge.bytes,
+                charge.outcome,
             )?;
             let binding = bindings
                 .get(run.as_str())
@@ -149,9 +163,309 @@ pub(super) fn scan(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceE
                     "controller artifact charge disagrees with the publication run binding",
                 ));
             }
+            match charge.account_revision {
+                Some(revision) => {
+                    let key = crate::controller_account::controller_account_revision_key(
+                        &charge.account,
+                        revision,
+                    );
+                    let bytes = account_revisions
+                        .get(key.as_str())
+                        .map_err(error::redb)?
+                        .ok_or_else(|| {
+                            error::corruption(
+                                "controller artifact mutation has no account revision evidence",
+                            )
+                        })?;
+                    let record = crate::controller_account::decode_account_revision_record(
+                        bytes.value(),
+                    )?;
+                    if record.account != charge.account
+                        || record.revision != revision
+                        || record.source
+                        != (crate::controller_account::ControllerAccountRevisionSource::ArtifactPublication {
+                            publication: publication.clone(),
+                        })
+                    {
+                        return Err(error::corruption(
+                            "controller artifact mutation revision has the wrong source",
+                        ));
+                    }
+                }
+                None
+                    if charge.outcome
+                        == crate::controller_account::ControllerArtifactMutationOutcome::Charged =>
+                {
+                    return Err(error::corruption(
+                        "charged controller artifact has no account revision",
+                    ));
+                }
+                None => {}
+            }
             Ok(())
         },
+    )?;
+    context.string_bytes(
+        phase::CONTROLLER_ACCOUNT_REVISIONS,
+        &account_revisions,
+        "controller_account_revisions",
+        |key, bytes| validate_account_revision(read, key, bytes),
     )
+}
+
+fn validate_transition_revision_links(
+    record: &crate::controller_account::ControllerTransitionRecord,
+    revisions: &impl redb::ReadableTable<&'static str, &'static [u8]>,
+) -> Result<(), PersistenceError> {
+    for link in &record.account_revisions {
+        let action = record
+            .transaction
+            .actions()
+            .get(usize::try_from(link.action_index).map_err(|_| {
+                error::corruption("controller revision action index is not representable")
+            })?)
+            .ok_or_else(|| {
+                error::corruption("controller revision points outside its transition actions")
+            })?;
+        if !action_mutates_account(action, &link.account) {
+            return Err(error::corruption(
+                "controller transition revision points to a non-mutating action",
+            ));
+        }
+        let key = crate::controller_account::controller_account_revision_key(
+            &link.account,
+            link.revision,
+        );
+        let bytes = revisions
+            .get(key.as_str())
+            .map_err(error::redb)?
+            .ok_or_else(|| error::corruption("controller transition account revision is absent"))?;
+        let revision = crate::controller_account::decode_account_revision_record(bytes.value())?;
+        if revision.source
+            != (crate::controller_account::ControllerAccountRevisionSource::Transition {
+                transition: record.transaction.transition().clone(),
+                action_index: link.action_index,
+            })
+        {
+            return Err(error::corruption(
+                "controller transition account revision has the wrong source",
+            ));
+        }
+    }
+    for (index, action) in record.transaction.actions().iter().enumerate() {
+        let requires_revision = matches!(
+            action,
+            ControllerAccountAction::AdmitEntry {
+                expected_outcome: milkdrift_persistence::ControllerAdmissionOutcome::Reserved { .. },
+                ..
+            } | ControllerAccountAction::SettleTerminal { .. }
+        );
+        if requires_revision
+            && record
+                .account_revisions
+                .iter()
+                .filter(|link| usize::try_from(link.action_index).ok() == Some(index))
+                .count()
+                != 1
+        {
+            return Err(error::corruption(
+                "controller state-mutating transition action lacks one revision link",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn action_mutates_account(action: &ControllerAccountAction, account: &ControllerAccountId) -> bool {
+    match action {
+        ControllerAccountAction::Establish { declaration, .. } => declaration.account() == account,
+        ControllerAccountAction::AdmitEntry {
+            account: action_account,
+            expected_outcome: milkdrift_persistence::ControllerAdmissionOutcome::Reserved { .. },
+            ..
+        }
+        | ControllerAccountAction::SettleTerminal {
+            account: action_account,
+            ..
+        } => action_account == account,
+        ControllerAccountAction::BindRun { .. } | ControllerAccountAction::AdmitEntry { .. } => {
+            false
+        }
+    }
+}
+
+fn validate_account_revision(
+    read: &redb::ReadTransaction,
+    key: &str,
+    bytes: &[u8],
+) -> Result<(), PersistenceError> {
+    let (key_account, key_revision) =
+        crate::controller_account::parse_controller_account_revision_key(key)?;
+    let record = crate::controller_account::decode_account_revision_record(bytes)?;
+    if crate::controller_account::controller_account_revision_key(&key_account, key_revision) != key
+        || record.account != key_account
+        || record.revision != key_revision
+        || record.state.declaration().account() != &record.account
+        || record.state.revision() != record.revision
+    {
+        return Err(error::corruption(
+            "controller account revision key and state disagree",
+        ));
+    }
+    let accounts = read.open_table(CONTROLLER_ACCOUNTS).map_err(error::redb)?;
+    let current_bytes = accounts
+        .get(record.account.as_str())
+        .map_err(error::redb)?
+        .ok_or_else(|| error::corruption("controller account revision has no current account"))?;
+    let current = crate::controller_account::decode_account(current_bytes.value())?;
+    if current.revision() < record.revision {
+        return Err(error::corruption(
+            "controller account current state predates durable revision evidence",
+        ));
+    }
+
+    let mut expected = if record.revision == 0 {
+        None
+    } else {
+        let previous_key = crate::controller_account::controller_account_revision_key(
+            &record.account,
+            record.revision - 1,
+        );
+        let revisions = read
+            .open_table(CONTROLLER_ACCOUNT_REVISIONS)
+            .map_err(error::redb)?;
+        let previous = revisions
+            .get(previous_key.as_str())
+            .map_err(error::redb)?
+            .ok_or_else(|| error::corruption("controller account revision has no predecessor"))?;
+        Some(crate::controller_account::decode_account_revision_record(previous.value())?.state)
+    };
+
+    match &record.source {
+        crate::controller_account::ControllerAccountRevisionSource::Transition {
+            transition,
+            action_index,
+        } => {
+            let transitions = read
+                .open_table(CONTROLLER_TRANSITIONS)
+                .map_err(error::redb)?;
+            let bytes = transitions
+                .get(transition.as_str())
+                .map_err(error::redb)?
+                .ok_or_else(|| {
+                    error::corruption("controller account revision source transition is absent")
+                })?;
+            let transition = crate::controller_account::decode_transition_record(bytes.value())?;
+            let action = transition
+                .transaction
+                .actions()
+                .get(usize::try_from(*action_index).map_err(|_| {
+                    error::corruption("controller revision action index is not representable")
+                })?)
+                .ok_or_else(|| error::corruption("controller revision source action is absent"))?;
+            replay_transition_action(&record, expected.as_mut(), action)?;
+        }
+        crate::controller_account::ControllerAccountRevisionSource::ArtifactPublication {
+            publication,
+        } => {
+            let charges = read
+                .open_table(CONTROLLER_ARTIFACT_CHARGES)
+                .map_err(error::redb)?;
+            let bytes = charges
+                .get(publication.as_str())
+                .map_err(error::redb)?
+                .ok_or_else(|| {
+                    error::corruption("controller account revision artifact source is absent")
+                })?;
+            let charge = crate::controller_account::decode_artifact_charge(bytes.value())?;
+            if charge.account != record.account || charge.account_revision != Some(record.revision)
+            {
+                return Err(error::corruption(
+                    "controller account revision artifact source disagrees",
+                ));
+            }
+            let candidate = expected.as_mut().ok_or_else(|| {
+                error::corruption("controller artifact mutation cannot create an account")
+            })?;
+            let outcome = candidate.charge_artifact(charge.reservation.as_ref(), charge.bytes)?;
+            if crate::controller_account::ControllerArtifactMutationOutcome::from(outcome)
+                != charge.outcome
+            {
+                return Err(error::corruption(
+                    "controller artifact mutation outcome cannot be replayed",
+                ));
+            }
+        }
+    }
+    if record.revision == 0 {
+        return Ok(());
+    }
+    if expected.as_ref() != Some(&record.state) {
+        return Err(error::corruption(
+            "controller account revision differs from replayed durable evidence",
+        ));
+    }
+    Ok(())
+}
+
+fn replay_transition_action(
+    record: &crate::controller_account::ControllerAccountRevisionRecord,
+    previous: Option<&mut ControllerAccountState>,
+    action: &ControllerAccountAction,
+) -> Result<(), PersistenceError> {
+    match (previous, action) {
+        (None, ControllerAccountAction::Establish { declaration, .. })
+            if declaration.account() == &record.account =>
+        {
+            let established = ControllerAccountState::establish(declaration.clone())?;
+            if established != record.state {
+                return Err(error::corruption(
+                    "controller genesis revision differs from its establishment",
+                ));
+            }
+            Ok(())
+        }
+        (
+            Some(state),
+            ControllerAccountAction::AdmitEntry {
+                account,
+                reservation,
+                attempt,
+                category,
+                envelope,
+                expected_outcome,
+            },
+        ) if account == &record.account => {
+            let outcome = state.admit(
+                reservation.clone(),
+                attempt.clone(),
+                category.clone(),
+                envelope,
+            )?;
+            if &outcome != expected_outcome
+                || !matches!(
+                    outcome,
+                    milkdrift_persistence::ControllerAdmissionOutcome::Reserved { .. }
+                )
+            {
+                return Err(error::corruption(
+                    "controller admission revision cannot be replayed",
+                ));
+            }
+            Ok(())
+        }
+        (
+            Some(state),
+            ControllerAccountAction::SettleTerminal {
+                account,
+                reservation,
+                usage,
+            },
+        ) if account == &record.account => state.settle_terminal(reservation, usage.as_ref()),
+        _ => Err(error::corruption(
+            "controller account revision source is not a matching state mutation",
+        )),
+    }
 }
 
 fn command_events(
@@ -190,6 +504,7 @@ fn validate_transition_event_links(
     transaction: &milkdrift_persistence::ControllerAccountTransaction,
     run: &RunId,
     events: &[RunEventEnvelope],
+    run_bindings: &impl redb::ReadableTable<&'static str, &'static str>,
 ) -> Result<(), PersistenceError> {
     let corrupt = |message: &str| error::corruption(message);
     let mut admissions = Vec::new();
@@ -250,6 +565,19 @@ fn validate_transition_event_links(
         return Err(corrupt(
             "controller transition child bindings no longer match its command events",
         ));
+    }
+    for (account, bound_run) in bindings {
+        let stored = run_bindings
+            .get(bound_run.as_str())
+            .map_err(error::redb)?
+            .ok_or_else(|| {
+                corrupt("controller transition child binding is absent from the binding index")
+            })?;
+        if stored.value() != account.as_str() {
+            return Err(corrupt(
+                "controller transition child binding disagrees with the binding index",
+            ));
+        }
     }
 
     let controlled_entries = events

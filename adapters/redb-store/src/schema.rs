@@ -1,8 +1,8 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 10;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 11;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
-pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 13;
+pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 14;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
 pub(crate) const CLOCK_WATERMARK_UNIX_MS_KEY: &str = "boundary_clock_high_water_unix_ms";
 pub(crate) const LEASE_SET_REVISION_KEY: &str = "lease_set_revision";
@@ -43,6 +43,11 @@ pub(crate) const COMMAND_RESULTS: TableDefinition<'static, &'static [u8], &'stat
 // Exact-current continuous-controller accounts, immutable run bindings, and transition receipts.
 pub(crate) const CONTROLLER_ACCOUNTS: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v1.controllers.accounts");
+pub(crate) const CONTROLLER_ACCOUNT_REVISIONS: TableDefinition<
+    'static,
+    &'static str,
+    &'static [u8],
+> = TableDefinition::new("milkdrift.v1.controllers.account_revisions");
 pub(crate) const CONTROLLER_RUN_BINDINGS: TableDefinition<'static, &'static str, &'static str> =
     TableDefinition::new("milkdrift.v1.controllers.run_bindings");
 pub(crate) const CONTROLLER_TRANSITIONS: TableDefinition<'static, &'static str, &'static [u8]> =
