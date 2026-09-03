@@ -2,14 +2,19 @@
 
 use std::collections::BTreeMap;
 
-use milkdrift_authority::ActorRef;
+use milkdrift_authority::{
+    ActorRef, AuthorityBudget, AuthorityDecisionSnapshot, AuthorityExecutionProvenance,
+    AuthorityOperation, AuthorityRequest, BoundaryTimeMillis, DecisionId, DecisionReasonCode,
+    GrantDigest, GrantId, PolicyId, RequestedResourceFacts,
+};
 use milkdrift_blueprint::{NodeId, RevisionId};
-use milkdrift_capability::BoundedJson;
+use milkdrift_capability::{BoundedJson, SideEffectClass};
 use milkdrift_persistence::{
-    ControllerAccountDeclaration, ControllerAssessmentBoundary, ControllerAssessmentOutcome,
-    ControllerResourceBudget, CurrencyCode, EventId, NodeExecutionId, ReconciliationId,
-    ReconciliationPolicy, RunEventEnvelope, RunEventKind, RunOutcome, RunSequence,
-    SubworkflowResourceUsage, TimestampMillis,
+    AttemptId, ControllerAccountDeclaration, ControllerAdmissionOutcome,
+    ControllerAssessmentBoundary, ControllerAssessmentOutcome, ControllerResourceBudget,
+    CurrencyCode, EventId, NodeExecutionId, ReconciliationId, ReconciliationPolicy,
+    RunEventEnvelope, RunEventKind, RunOutcome, RunSequence, SubworkflowResourceUsage,
+    TimestampMillis,
 };
 use milkdrift_workspace::{RunId, SubworkflowId};
 use serde_json::json;
@@ -30,6 +35,29 @@ fn envelope(sequence: u64, kind: RunEventKind) -> TestResult<RunEventEnvelope> {
         RunSequence::new(sequence),
         TimestampMillis::new(1_700_000_000_000 + sequence),
         kind,
+    )?)
+}
+
+fn final_entry_decision() -> TestResult<AuthorityDecisionSnapshot> {
+    Ok(AuthorityDecisionSnapshot::from_evaluation(
+        PolicyId::new("policy:family-fixture")?,
+        1,
+        AuthorityRequest {
+            decision: DecisionId::new("decision:family-final-entry")?,
+            actor: ActorRef::new("ai:controller-family")?,
+            grant: GrantId::new("grant:family-fixture")?,
+            grant_revision: 1,
+            grant_digest: GrantDigest::new(format!("b3_{}", "0".repeat(64)))?,
+            revocation_generation: 0,
+            operation: AuthorityOperation::InvokeCapability,
+            resources: RequestedResourceFacts::empty(),
+            budget: AuthorityBudget::default(),
+            evaluated_at: BoundaryTimeMillis::new(1_700_000_000_020),
+            provenance: AuthorityExecutionProvenance::default(),
+        },
+        vec![DecisionReasonCode::Allowed],
+        AuthorityBudget::default(),
+        SideEffectClass::None,
     )?)
 }
 
@@ -104,7 +132,7 @@ fn schema_v2_fixtures() -> [(&'static str, &'static [u8]); 3] {
     ]
 }
 
-fn current_fixtures() -> TestResult<[(&'static str, RunEventEnvelope, &'static [u8]); 3]> {
+fn current_fixtures() -> TestResult<[(&'static str, RunEventEnvelope, &'static [u8]); 4]> {
     let currency = CurrencyCode::new("USD")?;
     let controller_execution = NodeExecutionId::new("controller-execution-family")?;
     let account_declaration = ControllerAccountDeclaration::new(
@@ -174,6 +202,18 @@ fn current_fixtures() -> TestResult<[(&'static str, RunEventEnvelope, &'static [
                 },
             )?,
             include_bytes!("fixtures/run-event-attributed-reconciliation-v3.json"),
+        ),
+        (
+            "final-entry-admission",
+            envelope(
+                20,
+                RunEventKind::CapabilityAdapterEntryDecisionRecorded {
+                    attempt: AttemptId::new("attempt-family-final-entry")?,
+                    authorization: final_entry_decision()?,
+                    controller_admission: ControllerAdmissionOutcome::NotControlled,
+                },
+            )?,
+            include_bytes!("fixtures/run-event-final-entry-admission-v3.json"),
         ),
     ])
 }

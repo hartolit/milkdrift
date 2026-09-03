@@ -2,7 +2,7 @@ use redb::TableDefinition;
 
 pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 10;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
-pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 12;
+pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 13;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
 pub(crate) const CLOCK_WATERMARK_UNIX_MS_KEY: &str = "boundary_clock_high_water_unix_ms";
 pub(crate) const LEASE_SET_REVISION_KEY: &str = "lease_set_revision";

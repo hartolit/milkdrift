@@ -2,18 +2,18 @@ use super::{
     ARTIFACT_METADATA, ARTIFACT_RESERVATIONS, ActorRef, ArtifactReference, AtomicRunCommitOutcome,
     AtomicRunCommitRequest, BTreeSet, COMMAND_RESULT_SCHEMA_VERSION_V1,
     COMMAND_RESULT_SCHEMA_VERSION_V2, COMMAND_RESULTS, CommandId, CommandReceipt,
-    CommandResultDocument, Deserialize, FaultPoint, IndexedRunState, IntegrityDigest, METADATA,
-    NONTERMINAL_RUNS, PersistenceError, RUN_EVENTS, RUN_HEADS, RUN_SUMMARIES, ReadableTable,
-    RedbStore, RunEventKind, RunId, RunJournal, RunSequence, RunSummaryIndex, SIGNAL_RECEIPTS,
-    Serialize, TimestampMillis, WORKSPACE_BUDGETS, WORKSPACE_USAGE, WorkspaceUsage, codec, error,
-    json, lease_set_revision_in_transaction,
+    CommandResultDocument, ControllerTransitionId, Deserialize, FaultPoint, IndexedRunState,
+    IntegrityDigest, METADATA, NONTERMINAL_RUNS, PersistenceError, RUN_EVENTS, RUN_HEADS,
+    RUN_SUMMARIES, ReadableTable, RedbStore, RunEventKind, RunId, RunJournal, RunSequence,
+    RunSummaryIndex, SIGNAL_RECEIPTS, Serialize, TimestampMillis, WORKSPACE_BUDGETS,
+    WORKSPACE_USAGE, WorkspaceUsage, codec, error, json, lease_set_revision_in_transaction,
 };
 use super::{
     discovery::{apply_indexes, record_artifact_references},
     queries::{decode_stored_event, validated_run_head},
     workspace::apply_workspace,
 };
-const COMMAND_RECORD_SCHEMA_VERSION: u32 = 2;
+const COMMAND_RECORD_SCHEMA_VERSION: u32 = 3;
 
 pub(crate) struct RunnableHeadState {
     pub(crate) previous_bytes: Option<Vec<u8>>,
@@ -31,6 +31,7 @@ struct StoredCommandRecord<'a> {
     canonical_document: &'a [u8],
     canonical_intent: &'a [u8],
     fingerprint: &'a IntegrityDigest,
+    controller_transition: Option<&'a ControllerTransitionId>,
     result: &'a CommandResultDocument,
 }
 
@@ -46,6 +47,7 @@ pub(crate) struct OwnedCommandRecord {
     pub(crate) canonical_document: Vec<u8>,
     pub(crate) canonical_intent: Vec<u8>,
     pub(crate) fingerprint: IntegrityDigest,
+    pub(crate) controller_transition: Option<ControllerTransitionId>,
     pub(crate) result: CommandResultDocument,
 }
 
@@ -248,6 +250,9 @@ pub(crate) fn encode_command_record(
             canonical_document: request.receipt().canonical_document(),
             canonical_intent: request.receipt().canonical_intent(),
             fingerprint: request.receipt().fingerprint(),
+            controller_transition: request
+                .controller_account_transaction()
+                .map(milkdrift_persistence::ControllerAccountTransaction::transition),
             result: request.result(),
         },
         "command record",

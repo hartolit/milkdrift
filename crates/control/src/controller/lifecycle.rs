@@ -6,9 +6,9 @@ use std::{
 use milkdrift_blueprint::{BlueprintRevision, Mutation, NodeKind, PinnedSubworkflow};
 use milkdrift_capability::BoundedJson;
 use milkdrift_persistence::{
-    ControllerAccountDeclaration, ControllerAccountState, ControllerAssessmentBoundary,
-    ControllerAssessmentOutcome, ControllerResourceBudget, CurrencyCode, NodeExecutionId,
-    RevisionStore,
+    ControllerAccountBlock, ControllerAccountDeclaration, ControllerAccountState,
+    ControllerAssessmentBoundary, ControllerAssessmentOutcome, ControllerResourceBudget,
+    CurrencyCode, NodeExecutionId, RevisionStore,
 };
 use milkdrift_runtime::{
     ControllerAssessment, ControllerAssessmentContext, ControllerLifecycle, RunProjection,
@@ -84,7 +84,20 @@ impl ControllerLifecycleOwner {
             .map(ControllerAccountState::committed_totals)
             .transpose()?
             .unwrap_or_default();
-        let account_blocked = account.and_then(ControllerAccountState::blocked).is_some();
+        let account_block = account.and_then(ControllerAccountState::blocked).cloned();
+        let (unknown_cost_observations, unknown_input_observations, unknown_output_observations) =
+            match account_block.as_ref() {
+                Some(ControllerAccountBlock::UnknownUsage { dimension, .. }) => (
+                    u32::from(dimension == "monetary_cost"),
+                    u32::from(dimension == "input_units"),
+                    u32::from(dimension == "output_units"),
+                ),
+                Some(
+                    ControllerAccountBlock::ContractViolation { .. }
+                    | ControllerAccountBlock::Integrity { .. },
+                )
+                | None => (0, 0, 0),
+            };
         let mut progress = ControllerProgress {
             invocations: checked_u32(usage.map_or(0, |value| value.completed_children()))?,
             elapsed_ms: observed_at_ms.saturating_sub(started_at.get()),
@@ -97,9 +110,10 @@ impl ControllerLifecycleOwner {
             failures: checked_u16(usage.map_or(0, |value| value.failed_children()))?,
             revisions: checked_u32(projection.run_actor_revision_requests())?,
             rejections: checked_u16(projection.run_actor_rejections())?,
-            unknown_cost_observations: u32::from(account_blocked),
-            unknown_input_observations: u32::from(account_blocked),
-            unknown_output_observations: u32::from(account_blocked),
+            unknown_cost_observations,
+            unknown_input_observations,
+            unknown_output_observations,
+            account_block,
             ..ControllerProgress::default()
         };
         if let Some(previous) = previous_assessment {
@@ -566,8 +580,15 @@ fn bound_outcome(
     bound: ControllerBound,
 ) -> ControllerAssessmentOutcome {
     let (current, limit, unknown_usage) = limits.bound_fact(progress, bound);
+    let bound = match progress.account_block.as_ref() {
+        Some(ControllerAccountBlock::ContractViolation { dimension, .. }) => {
+            format!("contract_violation.{dimension}")
+        }
+        Some(ControllerAccountBlock::Integrity { .. }) => "account_integrity".to_owned(),
+        Some(ControllerAccountBlock::UnknownUsage { .. }) | None => bound_name(bound).to_owned(),
+    };
     ControllerAssessmentOutcome::BoundReached {
-        bound: bound_name(bound).to_owned(),
+        bound,
         current,
         limit,
         unknown_usage,
@@ -592,6 +613,7 @@ const fn bound_name(bound: ControllerBound) -> &'static str {
         ControllerBound::RepeatDepth => "repeat_depth",
         ControllerBound::ChildDepth => "child_depth",
         ControllerBound::HumanCheckpoint => "human_checkpoint",
+        ControllerBound::AccountIntegrity => "account_integrity",
     }
 }
 
@@ -613,6 +635,10 @@ fn bound_from_name(value: &str) -> Option<ControllerBound> {
         "repeat_depth" => ControllerBound::RepeatDepth,
         "child_depth" => ControllerBound::ChildDepth,
         "human_checkpoint" => ControllerBound::HumanCheckpoint,
+        "account_integrity" => ControllerBound::AccountIntegrity,
+        value if value.starts_with("contract_violation.") => {
+            return bound_from_name(value.trim_start_matches("contract_violation."));
+        }
         _ => return None,
     })
 }

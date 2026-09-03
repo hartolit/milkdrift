@@ -7,6 +7,7 @@ use milkdrift_blueprint::{
 };
 use milkdrift_capability::{BoundedJson, ExtensionKey};
 use milkdrift_contracts::{JsonLimits, canonical_json_bytes};
+use milkdrift_persistence::ControllerAccountBlock;
 use milkdrift_runtime::CONTROLLER_POLICY_EXTENSION_KEY;
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +58,8 @@ pub enum ControllerBound {
     ChildDepth,
     /// Required human checkpoint interval.
     HumanCheckpoint,
+    /// Controller-account integrity rather than a configured resource ceiling stopped progress.
+    AccountIntegrity,
 }
 
 /// Why a bounded controller must stop or wait.
@@ -268,6 +271,11 @@ impl ControllerLimits {
     /// Deterministically checks durable/accounted progress against every bound.
     #[must_use]
     pub fn assess(&self, progress: &ControllerProgress) -> ControllerStop {
+        if let Some(block) = progress.account_block.as_ref() {
+            return ControllerStop::BoundReached {
+                bound: account_block_bound(block),
+            };
+        }
         let checks = [
             (
                 u64::from(progress.invocations) >= u64::from(self.max_invocations),
@@ -347,6 +355,26 @@ impl ControllerLimits {
     }
 
     pub(super) fn bound_fact(
+        &self,
+        progress: &ControllerProgress,
+        bound: ControllerBound,
+    ) -> (Option<u64>, u64, bool) {
+        if let Some(block) = progress.account_block.as_ref() {
+            return match block {
+                ControllerAccountBlock::UnknownUsage { .. } => {
+                    let (_, limit, _) = self.bound_fact_without_account_block(progress, bound);
+                    (None, limit, true)
+                }
+                ControllerAccountBlock::ContractViolation {
+                    observed, reserved, ..
+                } => (Some(*observed), *reserved, false),
+                ControllerAccountBlock::Integrity { .. } => (None, 1, false),
+            };
+        }
+        self.bound_fact_without_account_block(progress, bound)
+    }
+
+    fn bound_fact_without_account_block(
         &self,
         progress: &ControllerProgress,
         bound: ControllerBound,
@@ -432,7 +460,24 @@ impl ControllerLimits {
                 ),
                 false,
             ),
+            ControllerBound::AccountIntegrity => (None, 1, false),
         }
+    }
+}
+
+fn account_block_bound(block: &ControllerAccountBlock) -> ControllerBound {
+    match block {
+        ControllerAccountBlock::UnknownUsage { dimension, .. }
+        | ControllerAccountBlock::ContractViolation { dimension, .. } => match dimension.as_str() {
+            "input_units" => ControllerBound::InputUnits,
+            "output_units" => ControllerBound::OutputUnits,
+            "artifact_bytes" => ControllerBound::ArtifactBytes,
+            "monetary_cost" => ControllerBound::Cost,
+            // Stored account validation rejects other dimensions. Retain a fail-closed fallback
+            // here so an in-memory implementation cannot accidentally permit continuation.
+            _ => ControllerBound::AccountIntegrity,
+        },
+        ControllerAccountBlock::Integrity { .. } => ControllerBound::AccountIntegrity,
     }
 }
 
@@ -477,6 +522,9 @@ pub struct ControllerProgress {
     pub unknown_input_observations: u32,
     /// Model/process attempts whose output-unit observation is still unknown.
     pub unknown_output_observations: u32,
+    /// Exact durable controller-account block, including its reservation and evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_block: Option<ControllerAccountBlock>,
     /// Completed-cycle frontier already continued through an authorized checkpoint.
     pub checkpoint_approved_invocations: u32,
 }

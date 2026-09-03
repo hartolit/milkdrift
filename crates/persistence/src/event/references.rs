@@ -263,7 +263,11 @@ impl RunEventKind {
                     } => {
                         bounded_identity(bound)
                             && *limit > 0
-                            && (*unknown_usage == current.is_none())
+                            && if bound == "account_integrity" {
+                                current.is_none() && !unknown_usage
+                            } else {
+                                *unknown_usage == current.is_none()
+                            }
                     }
                 };
                 if !bounded_identity(controller_id)

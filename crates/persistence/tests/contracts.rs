@@ -59,6 +59,36 @@ fn legacy_schema_v1_remains_readable_and_current_writes_use_v3()
 }
 
 #[test]
+fn final_entry_controller_admission_has_exact_versioned_presence()
+-> Result<(), Box<dyn std::error::Error>> {
+    for version in [1, 2] {
+        let bytes = serde_json::to_vec(&json!({
+            "schema_version": version,
+            "kind": {
+                "type": "capability_adapter_entry_decision_recorded",
+                "controller_admission": {"type": "not_controlled"}
+            }
+        }))?;
+        assert!(matches!(
+            RunEventEnvelope::from_json(&bytes),
+            Err(PersistenceError::InvalidDocument(reason))
+                if reason.contains("cannot contain controller final-entry admission")
+        ));
+    }
+
+    let missing_current = serde_json::to_vec(&json!({
+        "schema_version": 3,
+        "kind": {"type": "capability_adapter_entry_decision_recorded"}
+    }))?;
+    assert!(matches!(
+        RunEventEnvelope::from_json(&missing_current),
+        Err(PersistenceError::InvalidDocument(reason))
+            if reason.contains("requires controller admission")
+    ));
+    Ok(())
+}
+
+#[test]
 fn future_and_malformed_versions_fail_before_interpretation()
 -> Result<(), Box<dyn std::error::Error>> {
     let bytes = sample_event(1)?.to_canonical_json()?;

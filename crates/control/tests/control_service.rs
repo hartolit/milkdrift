@@ -43,12 +43,13 @@ use milkdrift_control::{
     workflow_control_descriptor,
 };
 use milkdrift_persistence::{
-    ArtifactPublicationId, ArtifactStore, BeginArtifactPublication, ControllerAccountDeclaration,
-    ControllerAccountState, ControllerAccountStore, ControllerAdmissionDenial,
-    ControllerAdmissionOutcome, ControllerAssessmentBoundary, ControllerAssessmentOutcome,
-    ControllerReservationId, ControllerResourceBudget, CurrencyCode, IntegrityScanRequest,
-    PageSize, Reason, ReconciliationDecisionId, RepeatDecisionId, RevisionStore, RunEventKind,
-    RunOutcome, RunSequence, StorageAdmin, TimestampMillis, WorkerId, WorkspaceStore,
+    ArtifactPublicationId, ArtifactStore, AttemptUsage, BeginArtifactPublication,
+    ControllerAccountDeclaration, ControllerAccountState, ControllerAccountStore,
+    ControllerAdmissionDenial, ControllerAdmissionOutcome, ControllerAssessmentBoundary,
+    ControllerAssessmentOutcome, ControllerReservationId, ControllerResourceBudget, CurrencyCode,
+    IntegrityScanRequest, MonetaryUsage, PageSize, Reason, ReconciliationDecisionId,
+    RepeatDecisionId, RevisionStore, RunEventKind, RunOutcome, RunSequence, StorageAdmin,
+    TimestampMillis, WorkerId, WorkspaceStore,
 };
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{
@@ -867,8 +868,15 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
     assert_eq!(progress.revisions, 41);
     assert_eq!(progress.rejections, 43);
     assert_eq!(progress.unknown_input_observations, 1);
-    assert_eq!(progress.unknown_output_observations, 1);
-    assert_eq!(progress.unknown_cost_observations, 1);
+    assert_eq!(progress.unknown_output_observations, 0);
+    assert_eq!(progress.unknown_cost_observations, 0);
+    assert!(matches!(
+        progress.account_block.as_ref(),
+        Some(milkdrift_persistence::ControllerAccountBlock::UnknownUsage {
+            dimension,
+            reservation: blocked_reservation,
+        }) if dimension == "input_units" && blocked_reservation == &reservation
+    ));
 
     let controller_node = wrapper
         .semantic()
@@ -886,12 +894,104 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
         boundary: ControllerAssessmentBoundary::CycleEntry,
         next_cycle: Some(2),
     };
-    assert!(
-        service
-            .controller_lifecycle_owner()
-            .assess(&assessment_context(Some(&account)))?
-            .is_some()
-    );
+    let assessment = service
+        .controller_lifecycle_owner()
+        .assess(&assessment_context(Some(&account)))?
+        .ok_or("controller account block did not produce an assessment")?;
+    assert!(matches!(
+        assessment.outcome,
+        ControllerAssessmentOutcome::BoundReached {
+            ref bound,
+            current: None,
+            unknown_usage: true,
+            ..
+        } if bound == "input_units"
+    ));
+
+    let mut contract_account = ControllerAccountState::establish(account.declaration().clone())?;
+    let contract_attempt =
+        milkdrift_persistence::AttemptId::new("attempt-controller-progress-contract")?;
+    let contract_reservation = ControllerReservationId::for_attempt(
+        contract_account.declaration().account(),
+        &contract_attempt,
+    )?;
+    let _ = contract_account.admit(
+        contract_reservation.clone(),
+        contract_attempt,
+        CapabilityCategory::Process,
+        &InvocationAdmissionEnvelope::new(
+            AdmissionBound::Bounded(5),
+            AdmissionBound::NotApplicable,
+            AdmissionBound::NotApplicable,
+            AdmissionBound::NotApplicable,
+        ),
+    )?;
+    contract_account.settle_terminal(
+        &contract_reservation,
+        Some(&AttemptUsage {
+            input_units: Some(6),
+            output_units: None,
+            duration_ms: None,
+            cost: None,
+        }),
+    )?;
+    let contract_assessment = service
+        .controller_lifecycle_owner()
+        .assess(&assessment_context(Some(&contract_account)))?
+        .ok_or("controller contract violation did not produce an assessment")?;
+    assert!(matches!(
+        contract_assessment.outcome,
+        ControllerAssessmentOutcome::BoundReached {
+            ref bound,
+            current: Some(6),
+            limit: 5,
+            unknown_usage: false,
+        } if bound == "contract_violation.input_units"
+    ));
+
+    let mut integrity_account = ControllerAccountState::establish(account.declaration().clone())?;
+    let integrity_attempt =
+        milkdrift_persistence::AttemptId::new("attempt-controller-progress-integrity")?;
+    let integrity_reservation = ControllerReservationId::for_attempt(
+        integrity_account.declaration().account(),
+        &integrity_attempt,
+    )?;
+    let _ = integrity_account.admit(
+        integrity_reservation.clone(),
+        integrity_attempt,
+        CapabilityCategory::Model,
+        &InvocationAdmissionEnvelope::new(
+            AdmissionBound::NotApplicable,
+            AdmissionBound::NotApplicable,
+            AdmissionBound::NotApplicable,
+            AdmissionBound::Bounded(AdmissionMonetaryBound::new(5, "USD")?),
+        ),
+    )?;
+    integrity_account.settle_terminal(
+        &integrity_reservation,
+        Some(&AttemptUsage {
+            input_units: None,
+            output_units: None,
+            duration_ms: None,
+            cost: Some(MonetaryUsage {
+                micros: 3,
+                currency: CurrencyCode::new("EUR")?,
+            }),
+        }),
+    )?;
+    let integrity_assessment = service
+        .controller_lifecycle_owner()
+        .assess(&assessment_context(Some(&integrity_account)))?
+        .ok_or("controller integrity block did not produce an assessment")?;
+    assert!(matches!(
+        integrity_assessment.outcome,
+        ControllerAssessmentOutcome::BoundReached {
+            ref bound,
+            current: None,
+            limit: 1,
+            unknown_usage: false,
+        } if bound == "account_integrity"
+    ));
     let foreign = ControllerAccountState::establish(ControllerAccountDeclaration::new(
         run.clone(),
         milkdrift_persistence::NodeExecutionId::new("foreign-controller-execution")?,
@@ -948,7 +1048,7 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
             NOW + 47,
         ),
         Err(ControlError::Bounds { location, .. })
-            if location == "controller.proposal.invocations"
+            if location == "controller.proposal.input_units"
     ));
     Ok(())
 }

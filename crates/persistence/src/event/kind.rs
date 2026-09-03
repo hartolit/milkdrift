@@ -208,6 +208,8 @@ pub enum RunEventKind {
         /// Fresh allow or deny decision under current revocation/validity state.
         authorization: AuthorityDecisionSnapshot,
         /// Atomic controller-resource result at this same final-entry gate.
+        // The raw envelope validator permits this default only for exact v1/v2 reads and
+        // requires physical presence in v3 before serde interpretation.
         #[serde(default)]
         controller_admission: ControllerAdmissionOutcome,
     },

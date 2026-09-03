@@ -153,9 +153,9 @@ pub enum ControllerAssessmentOutcome {
     BoundReached {
         /// Stable snake-case controller dimension.
         bound: String,
-        /// Exact accounted value, absent only for fail-closed unknown usage.
+        /// Exact accounted value, absent for fail-closed unknown usage or account integrity.
         current: Option<u64>,
-        /// Immutable configured limit.
+        /// Exact enforced limit: the configured ceiling or the admitted reservation envelope.
         limit: u64,
         /// Whether missing authoritative usage caused the fail-closed result.
         unknown_usage: bool,

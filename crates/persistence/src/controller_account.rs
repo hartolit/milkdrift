@@ -381,10 +381,44 @@ pub struct ControllerReservation {
     reservation: ControllerReservationId,
     attempt: AttemptId,
     category: CapabilityCategory,
-    input_remaining: Option<u64>,
-    output_remaining: Option<u64>,
-    artifact_remaining: Option<u64>,
-    cost_remaining: Option<u64>,
+    input: ControllerReservationDimension,
+    output: ControllerReservationDimension,
+    artifact: ControllerReservationDimension,
+    cost: ControllerReservationDimension,
+}
+
+/// Exact lifecycle of one dimension inside an accepted reservation.
+///
+/// `NotApplicable` must remain distinguishable from an already-settled bound: the former is an
+/// enforceable assertion that positive use is impossible, while the latter deliberately ignores
+/// repeated terminal evidence for an obligation that was already settled.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(
+    rename_all = "snake_case",
+    tag = "state",
+    content = "remaining",
+    deny_unknown_fields
+)]
+enum ControllerReservationDimension {
+    NotApplicable,
+    Outstanding(u64),
+    Settled,
+}
+
+impl ControllerReservationDimension {
+    const fn from_admitted_value(value: Option<u64>) -> Self {
+        match value {
+            Some(value) => Self::Outstanding(value),
+            None => Self::NotApplicable,
+        }
+    }
+
+    const fn remaining(self) -> Option<u64> {
+        match self {
+            Self::Outstanding(remaining) => Some(remaining),
+            Self::NotApplicable | Self::Settled => None,
+        }
+    }
 }
 
 impl ControllerReservation {
@@ -406,7 +440,7 @@ impl ControllerReservation {
     /// Artifact allowance not yet published or released.
     #[must_use]
     pub const fn artifact_remaining(&self) -> Option<u64> {
-        self.artifact_remaining
+        self.artifact.remaining()
     }
 }
 
@@ -496,6 +530,7 @@ impl ControllerAccountState {
     /// Validates all redundant totals and the exact revision digest.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         self.declaration.validate()?;
+        validate_account_block(self.blocked.as_ref())?;
         let mut summed = ControllerResourceTotals::default();
         for (identity, reservation) in &self.reservations {
             if identity != reservation.reservation() {
@@ -514,18 +549,22 @@ impl ControllerAccountState {
                         .to_owned(),
                 ));
             }
-            summed.input_units =
-                checked_add(summed.input_units, reservation.input_remaining.unwrap_or(0))?;
+            summed.input_units = checked_add(
+                summed.input_units,
+                reservation.input.remaining().unwrap_or(0),
+            )?;
             summed.output_units = checked_add(
                 summed.output_units,
-                reservation.output_remaining.unwrap_or(0),
+                reservation.output.remaining().unwrap_or(0),
             )?;
             summed.artifact_bytes = checked_add(
                 summed.artifact_bytes,
-                reservation.artifact_remaining.unwrap_or(0),
+                reservation.artifact.remaining().unwrap_or(0),
             )?;
-            summed.cost_micros =
-                checked_add(summed.cost_micros, reservation.cost_remaining.unwrap_or(0))?;
+            summed.cost_micros = checked_add(
+                summed.cost_micros,
+                reservation.cost.remaining().unwrap_or(0),
+            )?;
         }
         if summed.cost_micros != self.outstanding.cost_micros
             || summed.input_units != self.outstanding.input_units
@@ -562,7 +601,7 @@ impl ControllerAccountState {
     fn calculate_digest(&self) -> Result<IntegrityDigest, PersistenceError> {
         Ok(IntegrityDigest::hash(&canonical_json_bytes(
             &StateDigestInput {
-                domain: "milkdrift.controller-account.state.v1",
+                domain: "milkdrift.controller-account.state.v2",
                 declaration: &self.declaration,
                 revision: self.revision,
                 settled: self.settled,
@@ -756,10 +795,10 @@ impl ControllerAccountState {
                 reservation: reservation.clone(),
                 attempt,
                 category,
-                input_remaining: input,
-                output_remaining: output,
-                artifact_remaining: artifact,
-                cost_remaining: cost,
+                input: ControllerReservationDimension::from_admitted_value(input),
+                output: ControllerReservationDimension::from_admitted_value(output),
+                artifact: ControllerReservationDimension::from_admitted_value(artifact),
+                cost: ControllerReservationDimension::from_admitted_value(cost),
             },
         );
         self.advance()?;
@@ -785,7 +824,7 @@ impl ControllerAccountState {
         settle_dimension(
             "input_units",
             reservation,
-            &mut record.input_remaining,
+            &mut record.input,
             usage.and_then(|value| value.input_units),
             &mut self.outstanding.input_units,
             &mut self.settled.input_units,
@@ -794,7 +833,7 @@ impl ControllerAccountState {
         settle_dimension(
             "output_units",
             reservation,
-            &mut record.output_remaining,
+            &mut record.output,
             usage.and_then(|value| value.output_units),
             &mut self.outstanding.output_units,
             &mut self.settled.output_units,
@@ -818,7 +857,7 @@ impl ControllerAccountState {
         settle_dimension(
             "monetary_cost",
             reservation,
-            &mut record.cost_remaining,
+            &mut record.cost,
             observed_cost,
             &mut self.outstanding.cost_micros,
             &mut self.settled.cost_micros,
@@ -826,7 +865,7 @@ impl ControllerAccountState {
         )?;
         // Artifact bytes settle only at publication. A known terminal proves that no later
         // adapter publication for this synchronous invocation can begin.
-        if let Some(remaining) = record.artifact_remaining.take() {
+        if let ControllerReservationDimension::Outstanding(remaining) = record.artifact {
             self.outstanding.artifact_bytes = self
                 .outstanding
                 .artifact_bytes
@@ -836,10 +875,11 @@ impl ControllerAccountState {
                         "controller artifact remainder underflow".to_owned(),
                     )
                 })?;
+            record.artifact = ControllerReservationDimension::Settled;
         }
-        if record.input_remaining.is_some()
-            || record.output_remaining.is_some()
-            || record.cost_remaining.is_some()
+        if record.input.remaining().is_some()
+            || record.output.remaining().is_some()
+            || record.cost.remaining().is_some()
         {
             self.reservations.insert(reservation.clone(), record);
         }
@@ -863,18 +903,39 @@ impl ControllerAccountState {
             });
         }
         if let Some(reservation) = reservation {
-            let record = self.reservations.get_mut(reservation).ok_or_else(|| {
-                PersistenceError::NotFound {
+            let artifact = self
+                .reservations
+                .get(reservation)
+                .ok_or_else(|| PersistenceError::NotFound {
                     entity: "controller reservation",
                     identity: reservation.as_str().to_owned(),
+                })?
+                .artifact;
+            let remaining = match artifact {
+                ControllerReservationDimension::Outstanding(remaining) => Some(remaining),
+                ControllerReservationDimension::NotApplicable
+                | ControllerReservationDimension::Settled
+                    if bytes == 0 =>
+                {
+                    None
                 }
-            })?;
-            let remaining = record.artifact_remaining.ok_or_else(|| {
-                PersistenceError::InvalidDocument(
-                    "controller invocation asserted artifacts not applicable".to_owned(),
-                )
-            })?;
-            if bytes > remaining {
+                ControllerReservationDimension::NotApplicable
+                | ControllerReservationDimension::Settled => {
+                    if self.blocked.is_none() {
+                        self.blocked = Some(ControllerAccountBlock::ContractViolation {
+                            dimension: "artifact_bytes".to_owned(),
+                            reservation: reservation.clone(),
+                            observed: bytes,
+                            reserved: 0,
+                        });
+                        self.advance()?;
+                    }
+                    return Ok(ControllerArtifactChargeOutcome::ContractViolation);
+                }
+            };
+            if let Some(remaining) = remaining
+                && bytes > remaining
+            {
                 if self.blocked.is_none() {
                     self.blocked = Some(ControllerAccountBlock::ContractViolation {
                         dimension: "artifact_bytes".to_owned(),
@@ -886,16 +947,24 @@ impl ControllerAccountState {
                 }
                 return Ok(ControllerArtifactChargeOutcome::ContractViolation);
             }
-            record.artifact_remaining = Some(remaining - bytes);
-            self.outstanding.artifact_bytes = self
-                .outstanding
-                .artifact_bytes
-                .checked_sub(bytes)
-                .ok_or_else(|| {
-                    PersistenceError::InvalidDocument(
-                        "controller artifact outstanding underflow".to_owned(),
-                    )
+            if let Some(remaining) = remaining {
+                let record = self.reservations.get_mut(reservation).ok_or_else(|| {
+                    PersistenceError::NotFound {
+                        entity: "controller reservation",
+                        identity: reservation.as_str().to_owned(),
+                    }
                 })?;
+                record.artifact = ControllerReservationDimension::Outstanding(remaining - bytes);
+                self.outstanding.artifact_bytes = self
+                    .outstanding
+                    .artifact_bytes
+                    .checked_sub(bytes)
+                    .ok_or_else(|| {
+                        PersistenceError::InvalidDocument(
+                            "controller artifact outstanding underflow".to_owned(),
+                        )
+                    })?;
+            }
         } else {
             let committed = self.committed_totals()?;
             if checked_add(committed.artifact_bytes, bytes)?
@@ -924,14 +993,28 @@ fn admission_value(bound: &AdmissionBound<u64>) -> Option<u64> {
 fn settle_dimension(
     dimension: &str,
     reservation: &ControllerReservationId,
-    remaining: &mut Option<u64>,
+    state: &mut ControllerReservationDimension,
     observed: Option<u64>,
     outstanding: &mut u64,
     settled: &mut u64,
     blocked: &mut Option<ControllerAccountBlock>,
 ) -> Result<(), PersistenceError> {
-    let Some(reserved) = *remaining else {
-        return Ok(());
+    let reserved = match *state {
+        ControllerReservationDimension::NotApplicable => {
+            if let Some(observed) = observed.filter(|observed| *observed > 0)
+                && blocked.is_none()
+            {
+                *blocked = Some(ControllerAccountBlock::ContractViolation {
+                    dimension: dimension.to_owned(),
+                    reservation: reservation.clone(),
+                    observed,
+                    reserved: 0,
+                });
+            }
+            return Ok(());
+        }
+        ControllerReservationDimension::Outstanding(reserved) => reserved,
+        ControllerReservationDimension::Settled => return Ok(()),
     };
     let Some(observed) = observed else {
         if blocked.is_none() {
@@ -947,7 +1030,7 @@ fn settle_dimension(
     })?;
     let charged = observed.min(reserved);
     *settled = checked_add(*settled, charged)?;
-    *remaining = None;
+    *state = ControllerReservationDimension::Settled;
     if observed > reserved && blocked.is_none() {
         *blocked = Some(ControllerAccountBlock::ContractViolation {
             dimension: dimension.to_owned(),
@@ -957,6 +1040,41 @@ fn settle_dimension(
         });
     }
     Ok(())
+}
+
+fn validate_account_block(block: Option<&ControllerAccountBlock>) -> Result<(), PersistenceError> {
+    match block {
+        Some(
+            ControllerAccountBlock::UnknownUsage { dimension, .. }
+            | ControllerAccountBlock::ContractViolation { dimension, .. },
+        ) if !matches!(
+            dimension.as_str(),
+            "input_units" | "output_units" | "artifact_bytes" | "monetary_cost"
+        ) =>
+        {
+            Err(PersistenceError::InvalidDocument(
+                "controller account block has an unknown resource dimension".to_owned(),
+            ))
+        }
+        Some(ControllerAccountBlock::ContractViolation {
+            observed, reserved, ..
+        }) if observed <= reserved => Err(PersistenceError::InvalidDocument(
+            "controller contract violation must exceed its admitted reservation".to_owned(),
+        )),
+        Some(ControllerAccountBlock::Integrity { reason })
+            if reason.is_empty() || reason.len() > 512 =>
+        {
+            Err(PersistenceError::InvalidDocument(
+                "controller integrity block reason must contain 1..=512 bytes".to_owned(),
+            ))
+        }
+        Some(
+            ControllerAccountBlock::UnknownUsage { .. }
+            | ControllerAccountBlock::ContractViolation { .. }
+            | ControllerAccountBlock::Integrity { .. },
+        )
+        | None => Ok(()),
+    }
 }
 
 /// Stable reason a controlled final entry was refused.
@@ -1134,6 +1252,20 @@ impl ControllerAccountTransaction {
             actions,
         })
     }
+    /// Recomputes every invariant and the canonical content fingerprint of an untrusted record.
+    pub fn validate(&self) -> Result<(), PersistenceError> {
+        let rebuilt = Self::new(
+            self.transition.clone(),
+            self.expected_account_revision.clone(),
+            self.actions.clone(),
+        )?;
+        if &rebuilt != self {
+            return Err(PersistenceError::InvalidDocument(
+                "controller account transaction is not canonical".to_owned(),
+            ));
+        }
+        Ok(())
+    }
     /// Stable idempotency identity.
     #[must_use]
     pub const fn transition(&self) -> &ControllerTransitionId {
@@ -1209,6 +1341,8 @@ mod tests {
 
     use super::*;
     use crate::{AttemptUsage, MonetaryUsage};
+
+    mod applicability;
 
     type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 

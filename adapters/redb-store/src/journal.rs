@@ -8,12 +8,13 @@ use milkdrift_capability::InvocationId;
 use milkdrift_persistence::{
     ActiveLeaseSnapshot, AtomicRunCommitOutcome, AtomicRunCommitRequest,
     COMMAND_RESULT_SCHEMA_VERSION_V1, COMMAND_RESULT_SCHEMA_VERSION_V2, CommandId, CommandReceipt,
-    CommandResultDocument, EventCursor, EventPage, EventPageQuery, IndexedRunState,
-    IntegrityDigest, LeaseIndexEntry, LeaseIndexMutation, MAX_VALUE_PROVENANCE_DEPTH, PageSize,
-    PersistenceError, RunDiscoveryIntegrityStore, RunEventEnvelope, RunEventKind, RunJournal,
-    RunQueryStore, RunSequence, RunSummaryIndex, RunSummaryPage, RunSummaryPageQuery,
-    RunnableCursor, RunnableIndexEntry, RunnableIndexMutation, RunnablePage, TimerIndexEntry,
-    TimerIndexMutation, TimestampMillis, WorkspaceMutation, WorkspaceStore,
+    CommandResultDocument, ControllerTransitionId, EventCursor, EventPage, EventPageQuery,
+    IndexedRunState, IntegrityDigest, LeaseIndexEntry, LeaseIndexMutation,
+    MAX_VALUE_PROVENANCE_DEPTH, PageSize, PersistenceError, RunDiscoveryIntegrityStore,
+    RunEventEnvelope, RunEventKind, RunJournal, RunQueryStore, RunSequence, RunSummaryIndex,
+    RunSummaryPage, RunSummaryPageQuery, RunnableCursor, RunnableIndexEntry, RunnableIndexMutation,
+    RunnablePage, TimerIndexEntry, TimerIndexMutation, TimestampMillis, WorkspaceMutation,
+    WorkspaceStore,
 };
 use milkdrift_workspace::{
     ArtifactReference, MAX_SCOPE_DEPTH, RunId, ScopeId, ScopeKind, ScopeReference, ValueKey,
@@ -41,8 +42,8 @@ mod queries;
 mod workspace;
 
 pub(crate) use append::{
-    advance_workspace_global_usage_in_transaction,
-    persist_workspace_value_usage_accounting_in_transaction,
+    OwnedCommandRecord, advance_workspace_global_usage_in_transaction, decode_command_record,
+    persist_workspace_value_usage_accounting_in_transaction, validate_command_record_history,
     validate_or_initialize_workspace_domain, validate_run_history_membership,
     validate_run_history_membership_in_transaction, validate_stored_command_record,
     validate_workspace_domain_in_transaction, workspace_domain_in_transaction,

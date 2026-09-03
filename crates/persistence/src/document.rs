@@ -150,7 +150,9 @@ impl RunEventEnvelope {
 
     /// Encodes deterministic recursively key-sorted compact JSON.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, PersistenceError> {
-        canonical_json_bytes(self, MAX_EVENT_DOCUMENT_BYTES)
+        let mut value = serde_json::to_value(self)?;
+        project_event_kind_shape(&mut value, self.schema_version)?;
+        canonical_json_bytes(&value, MAX_EVENT_DOCUMENT_BYTES)
     }
 
     /// Bounds-checks, duplicate-key-checks, version-checks, decodes, and verifies JSON.
@@ -249,14 +251,36 @@ fn calculate_event_checksum(
         occurred_at,
         kind,
     };
+    let mut input = serde_json::to_value(input)?;
+    project_event_kind_shape(&mut input, schema_version)?;
     let bytes = canonical_json_bytes(&input, MAX_EVENT_DOCUMENT_BYTES)?;
     Ok(IntegrityDigest::hash(&bytes))
 }
 
-fn validate_event_schema_shape(value: &Value, version: u32) -> Result<(), PersistenceError> {
-    if version != RUN_EVENT_SCHEMA_VERSION_V1 {
-        return Ok(());
+fn project_event_kind_shape(
+    envelope: &mut Value,
+    schema_version: u32,
+) -> Result<(), PersistenceError> {
+    let kind = envelope
+        .get_mut("kind")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| {
+            PersistenceError::InvalidDocument(
+                "event schema projection requires an object kind".to_owned(),
+            )
+        })?;
+    if matches!(
+        schema_version,
+        RUN_EVENT_SCHEMA_VERSION_V1 | RUN_EVENT_SCHEMA_VERSION_V2
+    ) && kind.get("type").and_then(Value::as_str)
+        == Some("capability_adapter_entry_decision_recorded")
+    {
+        kind.remove("controller_admission");
     }
+    Ok(())
+}
+
+fn validate_event_schema_shape(value: &Value, version: u32) -> Result<(), PersistenceError> {
     let kind = value
         .get("kind")
         .and_then(Value::as_object)
@@ -266,6 +290,26 @@ fn validate_event_schema_shape(value: &Value, version: u32) -> Result<(), Persis
     let event_type = kind.get("type").and_then(Value::as_str).ok_or_else(|| {
         PersistenceError::InvalidDocument("run event kind requires a string type".to_owned())
     })?;
+    if event_type == "capability_adapter_entry_decision_recorded" {
+        let has_controller_admission = kind.contains_key("controller_admission");
+        match (version, has_controller_admission) {
+            (RUN_EVENT_SCHEMA_VERSION_V1 | RUN_EVENT_SCHEMA_VERSION_V2, true) => {
+                return Err(PersistenceError::InvalidDocument(format!(
+                    "run-event schema v{version} cannot contain controller final-entry admission"
+                )));
+            }
+            (RUN_EVENT_SCHEMA_VERSION_V3, false) => {
+                return Err(PersistenceError::InvalidDocument(
+                    "run-event schema v3 final-entry decision requires controller admission"
+                        .to_owned(),
+                ));
+            }
+            _ => {}
+        }
+    }
+    if version != RUN_EVENT_SCHEMA_VERSION_V1 {
+        return Ok(());
+    }
     let contains_v2_field = match event_type {
         "controller_assessment_recorded" => true,
         "subworkflow_terminal" => kind.contains_key("usage"),
@@ -465,4 +509,55 @@ fn persistence_bound(violation: JsonBoundViolation) -> PersistenceError {
         ),
     };
     PersistenceError::Bounds { location, reason }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_final_entry_shape_round_trips_without_current_admission_field()
+    -> Result<(), PersistenceError> {
+        let current = include_bytes!("../tests/fixtures/run-event-final-entry-admission-v3.json");
+        let current: Value = serde_json::from_slice(current)?;
+        let kind: RunEventKind = serde_json::from_value(current["kind"].clone())?;
+        let event_id: EventId = serde_json::from_value(current["event_id"].clone())?;
+        let run_id: RunId = serde_json::from_value(current["run_id"].clone())?;
+        let sequence: RunSequence = serde_json::from_value(current["sequence"].clone())?;
+        let occurred_at: TimestampMillis = serde_json::from_value(current["occurred_at"].clone())?;
+
+        for version in [RUN_EVENT_SCHEMA_VERSION_V1, RUN_EVENT_SCHEMA_VERSION_V2] {
+            let mut legacy = current.clone();
+            legacy["schema_version"] = Value::from(version);
+            legacy["kind"]
+                .as_object_mut()
+                .ok_or_else(|| {
+                    PersistenceError::InvalidDocument("test event kind is not an object".to_owned())
+                })?
+                .remove("controller_admission");
+            legacy["checksum"] = Value::from(
+                calculate_event_checksum(
+                    version,
+                    &event_id,
+                    &run_id,
+                    sequence,
+                    occurred_at,
+                    &kind,
+                )?
+                .to_string(),
+            );
+            let bytes = canonical_json_bytes(&legacy, MAX_EVENT_DOCUMENT_BYTES)?;
+            let decoded = RunEventEnvelope::from_json(&bytes)?;
+            assert_eq!(decoded.schema_version(), version);
+            assert!(matches!(
+                decoded.kind(),
+                RunEventKind::CapabilityAdapterEntryDecisionRecorded {
+                    controller_admission: crate::ControllerAdmissionOutcome::NotControlled,
+                    ..
+                }
+            ));
+            assert_eq!(decoded.to_canonical_json()?, bytes);
+        }
+        Ok(())
+    }
 }

@@ -1,9 +1,9 @@
 use milkdrift_persistence::{
-    ArtifactPublicationId, AtomicRunCommitRequest, AttemptUsage, ControllerAccountAction,
-    ControllerAccountId, ControllerAccountState, ControllerAccountStore,
+    ArtifactPublicationId, AtomicRunCommitRequest, AttemptUsage, CommandId,
+    ControllerAccountAction, ControllerAccountId, ControllerAccountState, ControllerAccountStore,
     ControllerAccountTransaction, ControllerAdmissionOutcome, ControllerArtifactChargeOutcome,
     ControllerArtifactOwner, ControllerAssessmentBoundary, ControllerReservationId, CurrencyCode,
-    IntegrityDigest, PersistenceError, RunEventKind,
+    PersistenceError, RunEventEnvelope, RunEventKind,
 };
 use milkdrift_workspace::RunId;
 use redb::{ReadableTable as _, WriteTransaction};
@@ -21,6 +21,18 @@ pub(crate) struct ControllerArtifactCharge {
     pub(crate) account: ControllerAccountId,
     pub(crate) reservation: Option<ControllerReservationId>,
     pub(crate) bytes: u64,
+}
+
+const CONTROLLER_TRANSITION_RECORD_SCHEMA_VERSION: u32 = 1;
+
+/// Self-validating transition evidence retained beside the atomic command receipt.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ControllerTransitionRecord {
+    schema_version: u32,
+    pub(crate) run: RunId,
+    pub(crate) command: CommandId,
+    pub(crate) transaction: ControllerAccountTransaction,
 }
 
 impl ControllerAccountStore for RedbStore {
@@ -132,6 +144,13 @@ pub(crate) fn apply_controller_transaction(
     let Some(transaction) = transaction else {
         return Ok(());
     };
+    transaction.validate()?;
+    let transition_record = ControllerTransitionRecord {
+        schema_version: CONTROLLER_TRANSITION_RECORD_SCHEMA_VERSION,
+        run: request.receipt().run().clone(),
+        command: request.receipt().command().clone(),
+        transaction: transaction.clone(),
+    };
 
     {
         let transitions = write
@@ -141,10 +160,8 @@ pub(crate) fn apply_controller_transaction(
             .get(transaction.transition().as_str())
             .map_err(error::redb)?
         {
-            let stored = std::str::from_utf8(stored.value())
-                .map_err(|_| error::corruption("controller transition fingerprint is not UTF-8"))?;
-            let stored = IntegrityDigest::new(stored.to_owned())?;
-            if &stored == transaction.fingerprint() {
+            let stored = decode_transition_record(stored.value())?;
+            if stored.transaction.fingerprint() == transaction.fingerprint() {
                 return Err(error::corruption(
                     "controller transition exists without its atomic command receipt",
                 ));
@@ -259,10 +276,11 @@ pub(crate) fn apply_controller_transaction(
     let mut transitions = write
         .open_table(CONTROLLER_TRANSITIONS)
         .map_err(error::redb)?;
+    let transition_bytes = encode_transition_record(&transition_record)?;
     transitions
         .insert(
             transaction.transition().as_str(),
-            transaction.fingerprint().as_str().as_bytes(),
+            transition_bytes.as_slice(),
         )
         .map_err(error::redb)?;
     Ok(())
@@ -627,12 +645,19 @@ fn terminal_settlement(
     reservation: &ControllerReservationId,
     account: &ControllerAccountId,
 ) -> Result<Option<AttemptUsage>, PersistenceError> {
+    terminal_settlement_from_events(request.events(), reservation, account)
+}
+
+pub(crate) fn terminal_settlement_from_events(
+    events: &[RunEventEnvelope],
+    reservation: &ControllerReservationId,
+    account: &ControllerAccountId,
+) -> Result<Option<AttemptUsage>, PersistenceError> {
     let mut matched = None;
-    for event in request.events() {
+    for event in events {
         let candidate = match event.kind() {
             RunEventKind::NodeTerminal { attempt, .. } => {
-                let usage = request
-                    .events()
+                let usage = events
                     .iter()
                     .filter_map(|event| match event.kind() {
                         RunEventKind::AttemptUsageRecorded {
@@ -762,6 +787,31 @@ pub(crate) fn decode_artifact_charge(
     bytes: &[u8],
 ) -> Result<ControllerArtifactCharge, PersistenceError> {
     json::decode(bytes, "controller artifact charge")
+}
+
+fn encode_transition_record(
+    record: &ControllerTransitionRecord,
+) -> Result<Vec<u8>, PersistenceError> {
+    json::encode(record, "controller transition record")
+}
+
+pub(crate) fn decode_transition_record(
+    bytes: &[u8],
+) -> Result<ControllerTransitionRecord, PersistenceError> {
+    let record: ControllerTransitionRecord = json::decode(bytes, "controller transition record")?;
+    if record.schema_version != CONTROLLER_TRANSITION_RECORD_SCHEMA_VERSION {
+        return Err(PersistenceError::UnsupportedVersion {
+            document: "controller_transition_record",
+            found: record.schema_version,
+            supported: CONTROLLER_TRANSITION_RECORD_SCHEMA_VERSION,
+        });
+    }
+    record.transaction.validate().map_err(|cause| {
+        error::corruption(format!(
+            "stored controller transition failed validation: {cause}"
+        ))
+    })?;
+    Ok(record)
 }
 
 pub(crate) fn validate_event_link(

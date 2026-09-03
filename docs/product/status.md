@@ -52,7 +52,7 @@ snapshot. Git, CI, releases, and external audits own chronology.
   remote ordinary capability registrations, transactional acceptance/claim/entry, append-only
   observations, cancellation, restart recovery, tombstone replay, and ordinary core artifact
   transfer. It introduces no second workflow truth.
-- Redb physical schema 10 and internal document format 12 own transactional journal, history chain,
+- Redb physical schema 10 and internal document format 13 own transactional journal, history chain,
   indexes, snapshots, workspace accounting, artifacts, application receipts/layouts/proposals,
   security audit, and peer execution/retention. Application receipts move independently from hot
   to cold while preserving exact replay; peer terminal detail compacts independently to replay and
@@ -103,7 +103,7 @@ Current exact versions are:
 | Projection snapshot envelope / runtime payload | 2 / 4; old optional payloads replay from journal |
 | Administrative integrity cursor | 2 |
 | Peer hot record / compact tombstone | 3 / 1; hot v2 reads are upgraded on the next append |
-| Redb internal document format / physical schema | 12 / 10 |
+| Redb internal document format / physical schema | 13 / 10 |
 | Application command receipt / layout record | 1 / 1 |
 | Local-process profile / host materialization | 2 / 1; process v1 refused |
 | External control / authenticated cursor | 2.2 / 2; legacy forms refused |

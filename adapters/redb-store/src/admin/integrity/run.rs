@@ -1,7 +1,7 @@
 use super::super::{
-    COMMAND_RESULTS, IndexedRunState, METADATA, NONTERMINAL_RUNS, PersistenceError, RUN_EVENTS,
-    RUN_HEADS, RUN_SUMMARIES, RunId, SIGNAL_RECEIPTS, SignalId, WORKSPACE_BUDGETS, WORKSPACE_USAGE,
-    WorkspaceBudget, WorkspaceUsage, codec, error, json,
+    COMMAND_RESULTS, CONTROLLER_TRANSITIONS, IndexedRunState, METADATA, NONTERMINAL_RUNS,
+    PersistenceError, RUN_EVENTS, RUN_HEADS, RUN_SUMMARIES, RunId, SIGNAL_RECEIPTS, SignalId,
+    WORKSPACE_BUDGETS, WORKSPACE_USAGE, WorkspaceBudget, WorkspaceUsage, codec, error, json,
 };
 use super::{ScanContext, phase};
 
@@ -12,6 +12,9 @@ pub(super) fn scan_core(context: &mut ScanContext<'_, '_>) -> Result<(), Persist
     let summaries = read.open_table(RUN_SUMMARIES).map_err(error::redb)?;
     let nonterminal = read.open_table(NONTERMINAL_RUNS).map_err(error::redb)?;
     let commands = read.open_table(COMMAND_RESULTS).map_err(error::redb)?;
+    let controller_transitions = read
+        .open_table(CONTROLLER_TRANSITIONS)
+        .map_err(error::redb)?;
     let usage = read.open_table(WORKSPACE_USAGE).map_err(error::redb)?;
     let budgets = read.open_table(WORKSPACE_BUDGETS).map_err(error::redb)?;
 
@@ -108,7 +111,30 @@ pub(super) fn scan_core(context: &mut ScanContext<'_, '_>) -> Result<(), Persist
         phase::COMMANDS,
         &commands,
         "command_indexes",
-        |key, bytes| crate::journal::validate_stored_command_record(key, bytes, &heads, &events),
+        |key, bytes| {
+            crate::journal::validate_stored_command_record(key, bytes, &heads, &events)?;
+            let command = crate::journal::decode_command_record(bytes)?;
+            let Some(transition) = command.controller_transition.as_ref() else {
+                return Ok(());
+            };
+            let transition_bytes = controller_transitions
+                .get(transition.as_str())
+                .map_err(error::redb)?
+                .ok_or_else(|| {
+                    error::corruption("atomic command receipt has no controller transition")
+                })?;
+            let record =
+                crate::controller_account::decode_transition_record(transition_bytes.value())?;
+            if record.run != command.run
+                || record.command != command.command
+                || record.transaction.transition() != transition
+            {
+                return Err(error::corruption(
+                    "atomic command controller transition link is inconsistent",
+                ));
+            }
+            Ok(())
+        },
     )
 }
 

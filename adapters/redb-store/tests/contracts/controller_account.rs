@@ -6,6 +6,8 @@ const BINDINGS: TableDefinition<'static, &'static str, &'static str> =
     TableDefinition::new("milkdrift.v1.controllers.run_bindings");
 const ARTIFACT_CHARGES: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v1.controllers.artifact_charges");
+const TRANSITIONS: TableDefinition<'static, &'static str, &'static [u8]> =
+    TableDefinition::new("milkdrift.v1.controllers.transitions");
 const ARTIFACT_PUBLICATIONS: TableDefinition<'static, &'static str, &'static [u8]> =
     TableDefinition::new("milkdrift.v1.artifacts.publications");
 const RUN_EVENTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
@@ -467,6 +469,57 @@ fn account_reestablishment_and_transition_fingerprints_are_exact() -> TestResult
             ..
         })
     ));
+    Ok(())
+}
+
+#[test]
+fn transition_integrity_recomputes_fingerprints_and_requires_its_command_receipt() -> TestResult {
+    for mutation in ["fingerprint", "command", "missing-transition"] {
+        let directory = TempDir::new()?;
+        let run = RunId::new(format!("run-transition-integrity-{mutation}"))?;
+        {
+            let store = RedbStore::open(directory.path())?;
+            let _declaration = establish(&store, &run, mutation)?;
+            assert!(!has_integrity_failure(&store)?);
+        }
+
+        let transition = format!("transition-establish-{mutation}");
+        let database = Database::open(directory.path().join("milkdrift.redb"))?;
+        let write = database.begin_write()?;
+        {
+            let mut transitions = write.open_table(TRANSITIONS)?;
+            let stored = transitions
+                .get(transition.as_str())?
+                .ok_or("controller transition row is absent")?
+                .value()
+                .to_vec();
+            if mutation == "missing-transition" {
+                transitions.remove(transition.as_str())?;
+            } else {
+                let rewritten = if mutation == "fingerprint" {
+                    rewrite_internal_payload(
+                        &stored,
+                        "controller transition record",
+                        &format!("\"bind_run\":\"{run}\""),
+                        "\"bind_run\":\"run-transition-integrity-tampered\"",
+                    )?
+                } else {
+                    rewrite_internal_payload(
+                        &stored,
+                        "controller transition record",
+                        &format!("\"command\":\"command-establish-{mutation}\""),
+                        "\"command\":\"command-transition-integrity-missing\"",
+                    )?
+                };
+                transitions.insert(transition.as_str(), rewritten.as_slice())?;
+            }
+        }
+        write.commit()?;
+        drop(database);
+
+        let store = RedbStore::open(directory.path())?;
+        assert!(has_integrity_failure(&store)?);
+    }
     Ok(())
 }
 
