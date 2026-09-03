@@ -45,6 +45,23 @@ headless daemon proof uses a temporary repository and real byte-pinned local pro
 network or credential. It crosses proposal-created and revision-adopted restart boundaries, proves
 failure gating and causal reviewer context, and verifies exact-once attempts plus persistent files.
 
+Focused capability-adapter contract checks are:
+
+```sh
+cargo test -p milkdrift-capability-host --all-features --no-fail-fast
+cargo test -p milkdrift-local-process --all-features --test process_execution local_process_adapter_passes_shared_conformance -- --exact --nocapture
+cargo test -p milkdrift-model-provider --all-features --test mock_endpoints model_endpoint_adapter_passes_shared_conformance -- --exact --nocapture
+cargo test -p milkdrift-control --all-features --test control_service workflow_control_adapter_passes_shared_conformance -- --exact --nocapture
+cargo test -p milkdrift-peer-http --all-features --lib remote::tests::remote_capability_adapter_passes_shared_conformance -- --exact --nocapture
+```
+
+The feature-gated capability-host harness owns the shared lifecycle, exact reporting, reporter
+failure, cancellation, health, and canonical host-drain assertions. Each command supplies a fresh
+mechanism-specific production fixture and declares only its legitimate start replay, stateless
+health, and unknown-cancellation differences. Capability-host registry and effect-worker tests add
+failed-start cleanup, lifecycle/admission/execute/cancel panic containment, exact cancellation
+correlation, bounded concurrency, in-flight drain behavior, and registry-lock re-entry evidence.
+
 Focused application-persistence and cross-transaction recovery checks are:
 
 ```sh

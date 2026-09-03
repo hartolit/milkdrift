@@ -1,6 +1,8 @@
 use milkdrift_authority::CapabilityAuthorityScope;
 use milkdrift_capability::{CapabilityId, CapabilityObservation};
 
+use std::sync::Arc;
+
 use super::{
     CapabilityHost, CatalogGenerationView, GenerationKey, GenerationView, HostError, RegistryState,
     ShutdownReport,
@@ -127,10 +129,7 @@ impl CapabilityHost {
                 })
                 .collect::<Vec<_>>()
         };
-        for adapter in adapters {
-            lifecycle_call(|| adapter.begin_drain())?;
-        }
-        Ok(())
+        call_every_adapter(adapters, |adapter| adapter.begin_drain())
     }
 
     /// Gracefully shuts down only after every permit is released.
@@ -138,6 +137,9 @@ impl CapabilityHost {
         self.begin_shutdown()?;
         let adapters = {
             let mut state = self.lock_state()?;
+            if !state.starting.is_empty() {
+                return Err(HostError::RegistrationInProgress(state.starting.len()));
+            }
             let active = state
                 .generations
                 .values()
@@ -152,9 +154,7 @@ impl CapabilityHost {
                 .map(|generation| generation.adapter)
                 .collect::<Vec<_>>()
         };
-        for adapter in adapters {
-            lifecycle_call(|| adapter.shutdown())?;
-        }
+        call_every_adapter(adapters, |adapter| adapter.shutdown())?;
         Ok(ShutdownReport {
             unresolved_invocations: Vec::new(),
         })
@@ -168,6 +168,9 @@ impl CapabilityHost {
         self.begin_shutdown()?;
         let (adapters, unresolved_invocations) = {
             let mut state = self.lock_state()?;
+            if !state.starting.is_empty() {
+                return Err(HostError::RegistrationInProgress(state.starting.len()));
+            }
             let unresolved_invocations = state.in_flight.keys().cloned().collect::<Vec<_>>();
             state.in_flight.clear();
             state.current.clear();
@@ -177,9 +180,7 @@ impl CapabilityHost {
                 .collect::<Vec<_>>();
             (adapters, unresolved_invocations)
         };
-        for adapter in adapters {
-            lifecycle_call(|| adapter.shutdown())?;
-        }
+        call_every_adapter(adapters, |adapter| adapter.shutdown())?;
         Ok(ShutdownReport {
             unresolved_invocations,
         })
@@ -296,12 +297,15 @@ impl CapabilityHost {
         state: &RegistryState,
         key: &GenerationKey,
     ) -> Result<(), HostError> {
-        if state.generations.len() >= self.core.config.max_registrations {
+        if state.generations.len().saturating_add(state.starting.len())
+            >= self.core.config.max_registrations
+        {
             return Err(HostError::RegistryBound("total registrations"));
         }
         let generations = state
             .generations
             .keys()
+            .chain(state.starting.iter())
             .filter(|existing| existing.capability == key.capability)
             .count();
         if generations >= self.core.config.max_generations_per_capability {
@@ -316,4 +320,17 @@ impl CapabilityHost {
             .lock()
             .map_err(|_error| HostError::RegistryUnavailable)
     }
+}
+
+fn call_every_adapter(
+    adapters: Vec<Arc<dyn crate::CapabilityAdapter>>,
+    call: impl Fn(&Arc<dyn crate::CapabilityAdapter>) -> Result<(), crate::AdapterError>,
+) -> Result<(), HostError> {
+    let mut first_failure = None;
+    for adapter in adapters {
+        if let Err(error) = lifecycle_call(|| call(&adapter)) {
+            first_failure.get_or_insert(error);
+        }
+    }
+    first_failure.map_or(Ok(()), Err)
 }

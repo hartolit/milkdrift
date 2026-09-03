@@ -3,6 +3,7 @@ use std::{
     sync::Arc,
 };
 
+use milkdrift_authority::CapabilityExecutionRequirements;
 use milkdrift_capability::{
     AdmissionBound, AdmissionConstraints, ArtifactReference, BoundedJson,
     CancellationAcknowledgement, CancellationBehavior, CancellationRequest, CapabilityCategory,
@@ -143,6 +144,10 @@ impl WorkflowControlAdapter {
 }
 
 impl CapabilityAdapter for WorkflowControlAdapter {
+    fn authority_requirements(&self) -> CapabilityExecutionRequirements {
+        CapabilityExecutionRequirements::default()
+    }
+
     fn admission_envelope(
         &self,
         _invocation: &AdapterInvocation<'_>,
@@ -153,6 +158,12 @@ impl CapabilityAdapter for WorkflowControlAdapter {
             AdmissionBound::Bounded(MAX_CONTROL_RESULT_BYTES),
             AdmissionBound::NotApplicable,
         ))
+    }
+
+    fn start(&self) -> Result<(), AdapterError> {
+        // The in-process service and result sink are owned by the composition root. This adapter
+        // intentionally owns no live resource, so start replay is stateless and idempotent.
+        Ok(())
     }
 
     fn execute(
@@ -240,6 +251,16 @@ impl CapabilityAdapter for WorkflowControlAdapter {
             "workflow control service is available",
         )
         .map_err(|error| AdapterError::rejected(error.to_string()))
+    }
+
+    fn begin_drain(&self) -> Result<(), AdapterError> {
+        // Registration visibility is the sole admission gate for this stateless adapter.
+        Ok(())
+    }
+
+    fn shutdown(&self) -> Result<(), AdapterError> {
+        // The service and sink outlive this no-resource adapter and are shut down by their owners.
+        Ok(())
     }
 }
 

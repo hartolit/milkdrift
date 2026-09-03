@@ -65,6 +65,18 @@ Blueprint tasks carry capability requirements. Before a run starts or adopts a p
 
 Invocation requests, progress/output events, cancellation exchange, terminal outcome, usage, retryability, side-effect status, and uncertainty are versioned provider-neutral contracts. Values and artifacts use bounded references. Adapters translate and report; they never decide run state.
 
+`milkdrift-capability-host` owns the open `CapabilityAdapter` contract and the only live
+registration, exact-generation permit, drain, and panic-containment path. Every implementation
+declares immutable authority requirements and explicit start, drain, and shutdown behavior; there
+are no inherited lifecycle no-ops. Start completes before publication, health retains the
+caller-supplied observation boundary, cancellation acknowledgements retain exact invocation and
+request-sequence correlation, and no host registry lock is held across adapter code. The runtime's
+durable reporter remains the sole owner of accepted observation sequence, terminal uniqueness,
+heartbeat lease extension, missing-terminal uncertainty, and workflow transitions. Explicit
+capability-host test support provides one factory-driven conformance suite; local process, model
+endpoint, remote peer, and workflow-control adapters all run it while retaining their focused
+mechanism tests.
+
 ### Peer-as-capability boundary
 
 `milkdrift-peer-protocol` owns only v1.2 bounded transport-neutral session, catalog, invocation, originating execution provenance, observation, cancellation, delegation, archived-history disposition, and artifact-transfer messages. `milkdrift-peer-http` owns configured HTTPS/loopback transport, relationship authentication, the fixed dispatch-worker owner, resumable hot observations, archived terminal/uncertain replay, core artifact-transfer adaptation, and the ordinary remote `CapabilityAdapter`. Every invocation acceptance, lookup, observation page, and cancellation acknowledgement binds the exact request or URL identity a consuming client supplied. Narrow persistence ports own peer execution semantics and the redb adapter implements them; no HTTP/TLS type enters those contracts.

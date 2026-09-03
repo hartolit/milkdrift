@@ -4,6 +4,8 @@
 //! adapter handles, and secret resolution remain bounded live host state.
 
 mod adapter;
+#[cfg(any(test, feature = "test-support"))]
+pub mod conformance;
 mod materialization;
 mod registry;
 mod secret;

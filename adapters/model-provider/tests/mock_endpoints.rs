@@ -28,6 +28,10 @@ use milkdrift_capability_host::{
     AdapterError, AdapterExecutionContext, AdapterInvocation, AdapterReporter, CapabilityAdapter,
     InMemorySecretResolver, InvocationDataAccess, InvocationDataError, MaterializationLimits,
     MaterializedExecution, SecretResolver,
+    conformance::{
+        AdapterConformanceCase, AdapterConformanceExpectations, ConformanceScenario,
+        StartReplayExpectation, UnknownCancellationExpectation, run_adapter_conformance,
+    },
 };
 use milkdrift_model::{
     AuthorityFact, ContentPart, ContextManifest, ContextManifestDocument, ContextProducerFact,
@@ -442,6 +446,87 @@ fn execute_bound(
     );
     adapter.execute(&invocation, &reporter)?;
     Ok(reporter.0.into_inner().map_err(|_| "reporter lock")?)
+}
+
+fn model_conformance_case(scenario: ConformanceScenario) -> TestResult<AdapterConformanceCase> {
+    let (address, server) = if scenario.executes() {
+        let response = json!({
+            "id": "response-conformance",
+            "model": "mock-model",
+            "choices": [{"message": {"content": "complete"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+        })
+        .to_string();
+        let (address, server) = serve(response, "application/json")?;
+        (address, Some(server))
+    } else {
+        ("127.0.0.1:9".to_owned(), None)
+    };
+    let profile = profile(
+        &address,
+        "model-conformance",
+        ProviderProtocol::OpenAiCompatible {
+            path: "v1/chat/completions".to_owned(),
+        },
+        AuthMode::NoAuth,
+        BTreeSet::from([ModelFeature::SystemRole]),
+    )?;
+    let task = ModelTaskRequest::new(
+        vec![Message::new(
+            MessageRole::User,
+            vec![ContentPart::Text {
+                text: "adapter conformance".to_owned(),
+            }],
+            None,
+        )?],
+        Vec::new(),
+        None,
+        SessionSelection::Fresh,
+        None,
+        32,
+        false,
+        BTreeMap::new(),
+    )?;
+    let data = Arc::new(MockData::default());
+    let revision = revision()?;
+    let (manifest, context) = manifest(data.as_ref(), &revision)?;
+    let capability = CapabilityId::new("model-conformance")?;
+    let descriptor = descriptor_for_profile(capability.clone(), &profile)?;
+    let request = request(&capability, &profile, manifest, task, Vec::new())?;
+    let adapter = Arc::new(ModelEndpointAdapter::new(
+        capability,
+        profile,
+        Arc::new(InMemorySecretResolver::new()),
+        data,
+    )?);
+    let case = AdapterConformanceCase::new(
+        adapter,
+        descriptor,
+        request,
+        context,
+        AdapterConformanceExpectations {
+            start_replay: StartReplayExpectation::Idempotent,
+            available_while_draining: false,
+            available_after_shutdown: false,
+            unknown_cancellation: UnknownCancellationExpectation::NegativeAcknowledgement,
+        },
+    )?;
+    Ok(match server {
+        Some(server) => case.with_cleanup(move || {
+            server
+                .join()
+                .map_err(|_| "model conformance server panicked".to_owned())?
+                .map(|_request| ())
+                .map_err(|error| error.to_string())
+        }),
+        None => case,
+    })
+}
+
+#[test]
+fn model_endpoint_adapter_passes_shared_conformance() -> TestResult {
+    run_adapter_conformance(model_conformance_case)?;
+    Ok(())
 }
 
 #[test]

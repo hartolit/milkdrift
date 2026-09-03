@@ -157,6 +157,12 @@ pub enum HostError {
     /// Registration count or retained-generation bound was reached.
     #[error("capability registry bound reached: {0}")]
     RegistryBound(&'static str),
+    /// A lifecycle transition raced with adapter registration startup.
+    #[error("capability host has {0} adapter registration(s) still starting")]
+    RegistrationInProgress(usize),
+    /// Registration cannot begin after host shutdown admission closes.
+    #[error("capability registration is closed")]
+    RegistrationClosed,
     /// The same identity/revision was reused with different descriptor bytes.
     #[error("conflicting capability descriptor revision {capability}/{descriptor_revision}")]
     ConflictingRevision {
@@ -179,6 +185,9 @@ pub enum HostError {
     /// Observation time moved backwards.
     #[error("capability observation time moved backwards")]
     ObservationRegressed,
+    /// Adapter health replaced the host-supplied observation boundary.
+    #[error("capability health observation does not use the supplied boundary time")]
+    ObservationTimeMismatch,
     /// Generation still owns work and cannot be removed gracefully.
     #[error("capability generation still owns {0} in-flight invocation(s)")]
     InFlight(u32),
@@ -214,6 +223,7 @@ struct Generation {
 struct RegistryState {
     admission_open: bool,
     shutdown: bool,
+    starting: BTreeSet<GenerationKey>,
     generations: BTreeMap<GenerationKey, Generation>,
     current: BTreeMap<CapabilityId, u64>,
     in_flight: BTreeMap<InvocationId, GenerationKey>,

@@ -16,6 +16,15 @@ snapshot. Git, CI, releases, and external audits own chronology.
   observation through the incremental durable reporter; there is no synchronous report-batch
   compatibility path or second validation owner. Production capability-host execution and
   deterministic test executors use that same interface.
+- `milkdrift-capability-host` owns the common adapter contract and the sole live registration,
+  exact-generation permit, drain, cancellation-routing, and panic-containment path. Authority,
+  start, drain, and shutdown hooks are explicit for every implementation. Failed start cannot
+  publish a generation; health must preserve the supplied boundary time; cancellation
+  acknowledgements must preserve exact invocation/sequence correlation; and shutdown attempts
+  every registered adapter even when one fails. Its non-default `test-support` surface provides one
+  reusable factory-driven suite run by the local-process, model-endpoint, remote-peer, and
+  workflow-control adapters, with declared differences for start replay, stateless health, and
+  unknown cancellation.
 - One exact immutable grant basis governs run entry, local commands, information-bearing reads,
   pages, streams, artifacts, layouts, capability/provider views, controller actions, and peer
   operations. Humans, services, AIs, and peers use the same authority evaluator and command path.

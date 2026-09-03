@@ -40,7 +40,11 @@ identities and makes later dispatch fail with a typed unavailable-generation err
 Concrete process/model/peer adapters can remain narrow and provider-focused. Registry and
 generation counts are explicit configuration bounds. Pre-entry overload/unavailability is
 distinguished from post-entry uncertainty, and panic cannot leak a permit. Shutdown first closes
-admission, then drains, and refuses graceful completion while owners remain.
+admission, then drains, and refuses graceful completion while owners remain. Adapter startup is a
+bounded reserved registry phase: it is never selectable, concurrent duplicates cannot start a
+second generation, and shutdown reports the pending registration until that caller completes
+cleanup. Every adapter declares its own start, drain, and shutdown semantics and passes the shared
+capability-host conformance suite.
 
 ## Reconsideration triggers
 

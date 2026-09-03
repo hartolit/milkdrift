@@ -3,7 +3,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
     time::Instant,
 };
@@ -163,8 +163,7 @@ pub struct ModelEndpointAdapter {
     secrets: Arc<dyn SecretResolver>,
     data: Arc<dyn InvocationDataAccess>,
     active: Mutex<BTreeMap<milkdrift_capability::InvocationId, Arc<AtomicBool>>>,
-    started: AtomicBool,
-    draining: AtomicBool,
+    lifecycle: AtomicU8,
     authority_requirements: CapabilityExecutionRequirements,
 }
 
@@ -216,8 +215,7 @@ impl ModelEndpointAdapter {
             secrets,
             data,
             active: Mutex::new(BTreeMap::new()),
-            started: AtomicBool::new(false),
-            draining: AtomicBool::new(false),
+            lifecycle: AtomicU8::new(Lifecycle::Created as u8),
             authority_requirements,
         })
     }
@@ -227,9 +225,10 @@ impl ModelEndpointAdapter {
         invocation: &AdapterInvocation<'_>,
         reporter: &dyn AdapterReporter,
     ) -> Result<(), AdapterError> {
-        if self.draining.load(Ordering::SeqCst) {
+        let lifecycle = self.lifecycle.load(Ordering::SeqCst);
+        if lifecycle != Lifecycle::Started as u8 && lifecycle != Lifecycle::Draining as u8 {
             return Err(AdapterError::unavailable(
-                "model endpoint adapter is draining",
+                "model endpoint adapter is not accepting exact work",
             ));
         }
         let context = invocation.context().ok_or_else(|| {
@@ -968,19 +967,35 @@ impl CapabilityAdapter for ModelEndpointAdapter {
     }
 
     fn start(&self) -> Result<(), AdapterError> {
-        self.started.store(true, Ordering::SeqCst);
-        Ok(())
+        loop {
+            let prior = self.lifecycle.load(Ordering::SeqCst);
+            if prior == Lifecycle::Started as u8 {
+                return Ok(());
+            }
+            if prior != Lifecycle::Created as u8 {
+                return Err(AdapterError::rejected(
+                    "model endpoint adapter cannot restart after drain or shutdown",
+                ));
+            }
+            if self
+                .lifecycle
+                .compare_exchange(
+                    prior,
+                    Lifecycle::Started as u8,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
     }
     fn execute(
         &self,
         invocation: &AdapterInvocation<'_>,
         reporter: &dyn AdapterReporter,
     ) -> Result<(), AdapterError> {
-        if !self.started.load(Ordering::SeqCst) {
-            return Err(AdapterError::unavailable(
-                "model endpoint adapter is not started",
-            ));
-        }
         self.execute_inner(invocation, reporter)
     }
     fn cancel(
@@ -1022,19 +1037,40 @@ impl CapabilityAdapter for ModelEndpointAdapter {
         CapabilityObservation::new(
             self.capability.clone(),
             observed_at_unix_ms,
-            self.started.load(Ordering::SeqCst) && !self.draining.load(Ordering::SeqCst),
+            self.lifecycle.load(Ordering::SeqCst) == Lifecycle::Started as u8,
             load,
             "configured endpoint; no discovery request performed",
         )
         .map_err(|_| AdapterError::unavailable("invalid model health observation"))
     }
     fn begin_drain(&self) -> Result<(), AdapterError> {
-        self.draining.store(true, Ordering::SeqCst);
-        Ok(())
+        loop {
+            let prior = self.lifecycle.load(Ordering::SeqCst);
+            if prior == Lifecycle::Draining as u8 {
+                return Ok(());
+            }
+            if prior != Lifecycle::Started as u8 {
+                return Err(AdapterError::rejected(
+                    "model endpoint adapter must be started before drain",
+                ));
+            }
+            if self
+                .lifecycle
+                .compare_exchange(
+                    prior,
+                    Lifecycle::Draining as u8,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
     }
     fn shutdown(&self) -> Result<(), AdapterError> {
-        self.draining.store(true, Ordering::SeqCst);
-        self.started.store(false, Ordering::SeqCst);
+        self.lifecycle
+            .store(Lifecycle::Stopped as u8, Ordering::SeqCst);
         if let Ok(active) = self.active.lock() {
             for flag in active.values() {
                 flag.store(true, Ordering::SeqCst);
@@ -1042,6 +1078,14 @@ impl CapabilityAdapter for ModelEndpointAdapter {
         }
         Ok(())
     }
+}
+
+#[repr(u8)]
+enum Lifecycle {
+    Created = 0,
+    Started = 1,
+    Draining = 2,
+    Stopped = 3,
 }
 
 fn network_destination(endpoint: &url::Url) -> Result<String, AdapterError> {

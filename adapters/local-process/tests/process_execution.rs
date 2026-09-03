@@ -25,6 +25,10 @@ use milkdrift_capability_host::{
     CapabilityHost, CapabilitySelectionPolicy, HostConfig, InMemorySecretResolver,
     InputMaterialization, InvocationDataAccess, InvocationDataError, MaterializationLimits,
     MaterializedExecution,
+    conformance::{
+        AdapterConformanceCase, AdapterConformanceExpectations, ConformanceScenario,
+        StartReplayExpectation, UnknownCancellationExpectation, run_adapter_conformance,
+    },
 };
 use milkdrift_local_process::{
     LocalProcessAdapter, PlatformSupport, ProcessProfileDocument, ProcessProfileError,
@@ -387,6 +391,35 @@ fn context() -> TestResult<AdapterExecutionContext> {
         NodeExecutionId::new("execution-process")?,
         AttemptId::new("attempt-process")?,
     ))
+}
+
+fn process_conformance_case(_scenario: ConformanceScenario) -> TestResult<AdapterConformanceCase> {
+    let data = Arc::new(TestDataAccess::new()?);
+    let profile = parse_profile(&profile_value(&data.root, vec![json!("exit"), json!("0")])?)?;
+    let request = request(&profile, "invocation-process-conformance", Vec::new())?;
+    let adapter = Arc::new(LocalProcessAdapter::new(
+        profile,
+        data,
+        Arc::new(InMemorySecretResolver::new()),
+    )?);
+    Ok(AdapterConformanceCase::new(
+        adapter.clone(),
+        adapter.descriptor().clone(),
+        request,
+        context()?,
+        AdapterConformanceExpectations {
+            start_replay: StartReplayExpectation::Rejected,
+            available_while_draining: false,
+            available_after_shutdown: false,
+            unknown_cancellation: UnknownCancellationExpectation::NegativeAcknowledgement,
+        },
+    )?)
+}
+
+#[test]
+fn local_process_adapter_passes_shared_conformance() -> TestResult {
+    run_adapter_conformance(process_conformance_case)?;
+    Ok(())
 }
 
 fn setup(

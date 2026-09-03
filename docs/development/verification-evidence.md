@@ -55,6 +55,11 @@ slow SSE consumer, reconnects with its authenticated cursor, verifies a post-ove
 compares Linux `/proc/self/task` counts when available, and joins graceful shutdown. The separate
 effect-worker regression uses a blocking controlled adapter with one worker and a queue of one to
 prove fixed backpressure and truthful unresolved work on forced shutdown.
+The feature-gated adapter-conformance lane runs one common factory-driven contract against the
+local-process, model-endpoint, remote-peer, and workflow-control production implementations. Host
+adversarial tests separately inject lifecycle, admission, execution, cancellation, and shutdown
+failures while checking permit cleanup, exact correlation, drain behavior, and lock-free adapter
+callbacks.
 
 ## Local commands
 
@@ -160,11 +165,13 @@ cleanup defects remain inspectable.
 
 ## Interpretation and limitations
 
-On 2026-09-03 the final Pass 1 local Linux worktree passed formatting, the all-target/all-feature
+On 2026-09-03 the current local Linux worktree passed formatting, the all-target/all-feature
 check and complete test/doctest suite, Clippy with warnings denied, rustdoc with warnings denied,
 `cargo deny check`, `cargo machete`, duplicate dependency inspection, and complete test listing.
-Focused peer-service, local-process, authority-path, daemon-configuration, two-daemon, and
-external-evidence suites also passed. A Windows GNU cross-target check passed for the authority
+Focused capability-host, shared production-adapter conformance, complete adapter/daemon,
+peer-service, authority-path, daemon-configuration, two-daemon, and external-evidence suites also
+passed. The runtime, uncertainty, and peer mutation shards retained no unclassified survivor or
+timeout. A Windows GNU cross-target check passed for the authority
 crate and the local-process library; the complete workspace cross-target check could not build
 `aws-lc-sys` because this Linux host has no `x86_64-w64-mingw32-gcc`, so it is not Windows runtime
 evidence. The most recent full release evidence lane, run on 2026-09-02, passed with 256 receipt operations and

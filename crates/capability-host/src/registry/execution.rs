@@ -94,7 +94,16 @@ impl CapabilityHost {
                 .clone()
         };
         match catch_unwind(AssertUnwindSafe(|| adapter.cancel(request))) {
-            Ok(Ok(acknowledgement)) => Ok(acknowledgement),
+            Ok(Ok(acknowledgement)) => {
+                if acknowledgement.invocation() != request.invocation()
+                    || acknowledgement.request_sequence() != request.request_sequence()
+                {
+                    return Err(ExecutorError::InvalidReports(
+                        "cancellation acknowledgement does not match the exact request".to_owned(),
+                    ));
+                }
+                Ok(acknowledgement)
+            }
             Ok(Err(error)) => Err(executor_error_from_adapter(&error)),
             Err(_panic) => Err(ExecutorError::AdapterPanicked { after_entry: true }),
         }

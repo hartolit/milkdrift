@@ -28,6 +28,7 @@ impl CapabilityHost {
                 state: Mutex::new(RegistryState {
                     admission_open: true,
                     shutdown: false,
+                    starting: BTreeSet::new(),
                     generations: BTreeMap::new(),
                     current: BTreeMap::new(),
                     in_flight: BTreeMap::new(),
@@ -53,8 +54,15 @@ impl CapabilityHost {
             capability: descriptor.identity().clone(),
             revision: descriptor.descriptor_revision(),
         };
-        {
-            let state = self.lock_state()?;
+        let bytes = CapabilityDescriptorDocument::new(descriptor.clone())
+            .to_canonical_json()
+            .map_err(|error| HostError::Descriptor(error.to_string()))?;
+        let descriptor_digest = format!("b3_{}", blake3::hash(&bytes));
+        let mut reservation = {
+            let mut state = self.lock_state()?;
+            if !state.admission_open || state.shutdown {
+                return Err(HostError::RegistrationClosed);
+            }
             if let Some(existing) = state.generations.get(&key) {
                 return if existing.descriptor == descriptor {
                     Ok(RegistrationOutcome::Idempotent)
@@ -65,13 +73,15 @@ impl CapabilityHost {
                     })
                 };
             }
+            if state.starting.contains(&key) {
+                return Err(HostError::RegistrationInProgress(state.starting.len()));
+            }
             self.validate_registration_capacity(&state, &key)?;
-        }
-        let bytes = CapabilityDescriptorDocument::new(descriptor.clone())
-            .to_canonical_json()
-            .map_err(|error| HostError::Descriptor(error.to_string()))?;
-        let descriptor_digest = format!("b3_{}", blake3::hash(&bytes));
-        let authority_requirements = adapter.authority_requirements();
+            state.starting.insert(key.clone());
+            RegistrationReservation::new(self.core.clone(), key.clone())
+        };
+        let authority_requirements =
+            lifecycle_call(|| Ok::<_, crate::AdapterError>(adapter.authority_requirements()))?;
         let permit_limit = descriptor
             .admission()
             .max_concurrent()
@@ -87,22 +97,12 @@ impl CapabilityHost {
                 return Err(error);
             }
         };
-        if let Some(existing) = state.generations.get(&key) {
-            let _ = lifecycle_call(|| adapter.shutdown());
-            return if existing.descriptor == descriptor {
-                Ok(RegistrationOutcome::Idempotent)
-            } else {
-                Err(HostError::ConflictingRevision {
-                    capability: key.capability,
-                    descriptor_revision: key.revision,
-                })
-            };
-        }
-        if let Err(error) = self.validate_registration_capacity(&state, &key) {
+        if !state.admission_open || state.shutdown {
             drop(state);
             let _ = lifecycle_call(|| adapter.shutdown());
-            return Err(error);
+            return Err(HostError::RegistrationClosed);
         }
+        state.starting.remove(&key);
         state.generations.insert(
             key.clone(),
             Generation {
@@ -118,6 +118,7 @@ impl CapabilityHost {
             },
         );
         update_current(&mut state, &key.capability);
+        reservation.complete();
         Ok(RegistrationOutcome::Registered)
     }
 
@@ -176,6 +177,9 @@ impl CapabilityHost {
                 .clone()
         };
         let observation = lifecycle_call(|| adapter.health(observed_at_unix_ms))?;
+        if observation.observed_at_unix_ms() != observed_at_unix_ms {
+            return Err(HostError::ObservationTimeMismatch);
+        }
         self.update_observation(capability, descriptor_revision, observation)
     }
 
@@ -375,5 +379,36 @@ impl CapabilityHost {
         let snapshot =
             ResolvedCapabilitySnapshot::from_descriptor(&descriptor, requirement.operation())?;
         ResolvedCapability::new(descriptor, snapshot)
+    }
+}
+
+struct RegistrationReservation {
+    core: Arc<HostCore>,
+    key: GenerationKey,
+    active: bool,
+}
+
+impl RegistrationReservation {
+    fn new(core: Arc<HostCore>, key: GenerationKey) -> Self {
+        Self {
+            core,
+            key,
+            active: true,
+        }
+    }
+
+    fn complete(&mut self) {
+        self.active = false;
+    }
+}
+
+impl Drop for RegistrationReservation {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        if let Ok(mut state) = self.core.state.lock() {
+            state.starting.remove(&self.key);
+        }
     }
 }

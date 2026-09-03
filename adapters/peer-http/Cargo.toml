@@ -31,6 +31,7 @@ tower-http.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+milkdrift-capability-host = { workspace = true, features = ["test-support"] }
 milkdrift-redb-store = { workspace = true, features = ["test-admin"] }
 redb = "=2.6.3"
 tempfile.workspace = true

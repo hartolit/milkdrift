@@ -11,7 +11,8 @@ use std::{
 
 use milkdrift_authority::{
     ActorRef, AuthorityBudget, AuthorityDecisionSnapshot, AuthorityError, AuthorityEvaluator,
-    CapabilityAuthorityScope, DecisionReasonCode, GrantDigest, GrantId, PolicyId,
+    CapabilityAuthorityScope, CapabilityExecutionRequirements, DecisionReasonCode, GrantDigest,
+    GrantId, PolicyId,
 };
 use milkdrift_blueprint::{
     AuthorRef, BlueprintRevision, Edge, EdgeId, EdgeKind, Mutation, MutationBatch, Node, NodeId,
@@ -34,7 +35,7 @@ use milkdrift_persistence::{
 use milkdrift_redb_store::RedbStore;
 use milkdrift_runtime::{
     CommandAuthorityClaim, EffectAction, ManualClock, RetryPolicy, RunCommand, RunCommandDocument,
-    RuntimeConfig, RuntimeService, SchedulerLimits, SequentialIdGenerator,
+    RuntimeConfig, RuntimeService, SchedulerLimits, SequentialIdGenerator, TaskExecutor,
 };
 use milkdrift_workspace::{RunId, ScopeId, WorkspaceBudget, WorkspaceScope};
 
@@ -63,6 +64,7 @@ struct BlockingAdapter {
     preparation_gate: Option<Arc<(Mutex<usize>, Condvar)>>,
     entered: AtomicUsize,
     exact_authority_seen: std::sync::atomic::AtomicBool,
+    panic_admission: bool,
 }
 
 struct BlockingLifecycleAdapter {
@@ -75,6 +77,14 @@ impl CapabilityAdapter for BlockingLifecycleAdapter {
         _invocation: &AdapterInvocation<'_>,
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
         Ok(InvocationAdmissionEnvelope::not_applicable())
+    }
+
+    fn authority_requirements(&self) -> CapabilityExecutionRequirements {
+        CapabilityExecutionRequirements::default()
+    }
+
+    fn start(&self) -> Result<(), AdapterError> {
+        Ok(())
     }
 
     fn execute(
@@ -113,6 +123,10 @@ impl CapabilityAdapter for BlockingLifecycleAdapter {
         .map_err(|error| AdapterError::external_failure(error.to_string()))
     }
 
+    fn begin_drain(&self) -> Result<(), AdapterError> {
+        Ok(())
+    }
+
     fn shutdown(&self) -> Result<(), AdapterError> {
         let (lock, changed) = &*self.gate;
         let mut released = lock
@@ -134,6 +148,7 @@ impl BlockingAdapter {
             preparation_gate: None,
             entered: AtomicUsize::new(0),
             exact_authority_seen: std::sync::atomic::AtomicBool::new(false),
+            panic_admission: false,
         }
     }
 
@@ -146,6 +161,13 @@ impl BlockingAdapter {
             ..Self::new(gate)
         }
     }
+
+    fn with_admission_panic(gate: Arc<(Mutex<bool>, Condvar)>) -> Self {
+        Self {
+            panic_admission: true,
+            ..Self::new(gate)
+        }
+    }
 }
 
 impl CapabilityAdapter for BlockingAdapter {
@@ -153,6 +175,7 @@ impl CapabilityAdapter for BlockingAdapter {
         &self,
         _invocation: &AdapterInvocation<'_>,
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        assert!(!self.panic_admission, "planned admission panic");
         if let Some((lock, changed)) = self.preparation_gate.as_deref() {
             let mut prepared = lock
                 .lock()
@@ -175,6 +198,14 @@ impl CapabilityAdapter for BlockingAdapter {
             }
         }
         Ok(InvocationAdmissionEnvelope::not_applicable())
+    }
+
+    fn authority_requirements(&self) -> CapabilityExecutionRequirements {
+        CapabilityExecutionRequirements::default()
+    }
+
+    fn start(&self) -> Result<(), AdapterError> {
+        Ok(())
     }
 
     fn execute(
@@ -257,6 +288,10 @@ impl CapabilityAdapter for BlockingAdapter {
             "test adapter ready",
         )
         .map_err(|error| AdapterError::unavailable(error.to_string()))
+    }
+
+    fn begin_drain(&self) -> Result<(), AdapterError> {
+        Ok(())
     }
 
     fn shutdown(&self) -> Result<(), AdapterError> {
@@ -368,6 +403,78 @@ fn duplicate_effect_delivery_never_enters_twice_or_leaks_the_prepared_generation
         1_000,
     )?;
     assert_eq!(generations.len(), 1);
+    assert_eq!(generations[0].active_permits, 0);
+    Ok(())
+}
+
+#[test]
+fn admission_panic_is_contained_before_entry_and_releases_the_generation_permit() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let revision = revision()?;
+    store.put_revision(&revision)?;
+    let descriptor = CapabilityDescriptorDocument::from_json(include_bytes!(
+        "../../capability/tests/fixtures/descriptor-v1.json"
+    ))?
+    .body()
+    .clone();
+    let host = CapabilityHost::new(
+        HostConfig {
+            max_registrations: 1,
+            max_generations_per_capability: 1,
+            max_concurrent_per_generation: 1,
+            observation_stale_after_ms: 10_000,
+        },
+        CapabilitySelectionPolicy::priorities(BTreeMap::new()),
+    )?;
+    let adapter = Arc::new(BlockingAdapter::with_admission_panic(Arc::new((
+        Mutex::new(true),
+        Condvar::new(),
+    ))));
+    host.register(
+        descriptor.clone(),
+        adapter.clone(),
+        Some(CapabilityObservation::new(
+            descriptor.identity().clone(),
+            1_000,
+            true,
+            0,
+            "ready",
+        )?),
+    )?;
+    let runtime = RuntimeService::new_with_authority(
+        store.clone(),
+        Arc::new(host.clone()),
+        Arc::new(AllowAuthority),
+        Arc::new(ManualClock::new(1_000)),
+        Arc::new(SequentialIdGenerator::new("admission-panic", 1)?),
+        RuntimeConfig::new(
+            WorkerId::new("worker-admission-panic")?,
+            ActorRef::new("controller:admission-panic")?,
+            30_000,
+            32,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(1, vec![ErrorClass::Transport], 10, 100, 0)?,
+        )?,
+    )?;
+    create_and_start(&runtime, store.as_ref(), &revision, 88)?;
+    assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
+    let action = runtime
+        .claim_execution_effects(PageSize::new(1)?)?
+        .pop()
+        .ok_or("admission-panic action is absent")?;
+    let EffectAction::Execute(dispatch) = action else {
+        return Err("admission-panic fixture claimed cancellation".into());
+    };
+    assert!(matches!(
+        host.prepare_exact_entry(&dispatch),
+        Err(milkdrift_runtime::ExecutorError::AdapterPanicked { after_entry: false })
+    ));
+    assert_eq!(adapter.entered.load(Ordering::SeqCst), 0);
+    let generations = host.generations(
+        &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
+        1_000,
+    )?;
     assert_eq!(generations[0].active_permits, 0);
     Ok(())
 }

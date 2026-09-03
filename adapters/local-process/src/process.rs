@@ -230,7 +230,10 @@ impl LocalProcessAdapter {
     ) -> Result<(), AdapterError> {
         let request = invocation.request();
         let mut sequence = 1_u64;
-        if self.lifecycle.load(Ordering::SeqCst) != Lifecycle::Started as u8 {
+        if !matches!(
+            self.lifecycle.load(Ordering::SeqCst),
+            value if value == Lifecycle::Started as u8 || value == Lifecycle::Draining as u8
+        ) {
             return report_rejected(
                 reporter,
                 request.invocation(),
@@ -727,13 +730,29 @@ impl CapabilityAdapter for LocalProcessAdapter {
     }
 
     fn begin_drain(&self) -> Result<(), AdapterError> {
-        let prior = self
-            .lifecycle
-            .swap(Lifecycle::Draining as u8, Ordering::SeqCst);
-        if prior == Lifecycle::Stopped as u8 {
-            return Err(AdapterError::rejected("process adapter is already stopped"));
+        loop {
+            let prior = self.lifecycle.load(Ordering::SeqCst);
+            if prior == Lifecycle::Draining as u8 {
+                return Ok(());
+            }
+            if prior != Lifecycle::Started as u8 {
+                return Err(AdapterError::rejected(
+                    "process adapter must be started before drain",
+                ));
+            }
+            if self
+                .lifecycle
+                .compare_exchange(
+                    prior,
+                    Lifecycle::Draining as u8,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .is_ok()
+            {
+                return Ok(());
+            }
         }
-        Ok(())
     }
 
     fn shutdown(&self) -> Result<(), AdapterError> {

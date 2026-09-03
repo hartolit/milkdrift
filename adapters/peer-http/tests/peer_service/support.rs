@@ -279,6 +279,14 @@ impl CapabilityAdapter for ClockFailingAdapter {
         Ok(InvocationAdmissionEnvelope::not_applicable())
     }
 
+    fn authority_requirements(&self) -> CapabilityExecutionRequirements {
+        CapabilityExecutionRequirements::default()
+    }
+
+    fn start(&self) -> Result<(), AdapterError> {
+        Ok(())
+    }
+
     fn execute(
         &self,
         invocation: &AdapterInvocation<'_>,
@@ -344,6 +352,14 @@ impl CapabilityAdapter for ClockFailingAdapter {
         )
         .map_err(|error| AdapterError::external_failure(error.to_string()))
     }
+
+    fn begin_drain(&self) -> Result<(), AdapterError> {
+        Ok(())
+    }
+
+    fn shutdown(&self) -> Result<(), AdapterError> {
+        Ok(())
+    }
 }
 
 impl CapabilityAdapter for TerminalAdapter {
@@ -356,6 +372,10 @@ impl CapabilityAdapter for TerminalAdapter {
 
     fn authority_requirements(&self) -> CapabilityExecutionRequirements {
         self.requirements.clone()
+    }
+
+    fn start(&self) -> Result<(), AdapterError> {
+        Ok(())
     }
 
     fn execute(
@@ -411,6 +431,14 @@ impl CapabilityAdapter for TerminalAdapter {
             "healthy",
         )
         .map_err(|error| AdapterError::external_failure(error.to_string()))
+    }
+
+    fn begin_drain(&self) -> Result<(), AdapterError> {
+        Ok(())
+    }
+
+    fn shutdown(&self) -> Result<(), AdapterError> {
+        Ok(())
     }
 }
 

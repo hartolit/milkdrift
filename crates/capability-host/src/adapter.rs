@@ -275,6 +275,12 @@ impl<'a> AdapterInvocation<'a> {
 }
 
 /// Durable observation sink exposed without runtime state-mutation APIs.
+///
+/// The host supplies a sink scoped to exactly one invocation. Implementations must propagate
+/// every sink failure, must emit contiguous sequences beginning at the sink's current durable
+/// sequence, and must emit at most one terminal observation with nothing after it. A successful
+/// return from [`AdapterReporter::invocation`] means the observation crossed the owning durable
+/// boundary; it is not merely queued in adapter memory.
 pub trait AdapterReporter: Send + Sync {
     /// Submits one bounded sequenced invocation observation durably.
     fn invocation(&self, event: InvocationEvent) -> Result<(), AdapterError>;
@@ -283,7 +289,17 @@ pub trait AdapterReporter: Send + Sync {
     fn heartbeat(&self) -> Result<(), AdapterError>;
 }
 
-/// Object-safe boundary implemented by later process, model, peer, or human adapters.
+/// Object-safe boundary implemented by process, model, peer, or human adapters.
+///
+/// One implementation instance represents one immutable descriptor generation. The capability
+/// host calls adapter code without holding its registry lock, contains panics at every hook, and
+/// owns registration visibility and exact-generation permits. Implementations own only their
+/// external mechanism and live resources: they never re-resolve, fall back, mutate workflow state,
+/// or treat cancellation receipt as terminal evidence.
+///
+/// Lifecycle hooks deliberately have no defaults. Stateless implementations must spell out their
+/// idempotent no-resource behavior; resource-owning implementations must make replay, drain, and
+/// shutdown behavior explicit in their own state machine.
 pub trait CapabilityAdapter: Send + Sync {
     /// Derives enforceable bounds for this exact immutable request and generation.
     fn admission_envelope(
@@ -292,14 +308,16 @@ pub trait CapabilityAdapter: Send + Sync {
     ) -> Result<InvocationAdmissionEnvelope, AdapterError>;
 
     /// Returns immutable filesystem/network/secret and budget facts for canonical evaluation.
-    fn authority_requirements(&self) -> CapabilityExecutionRequirements {
-        CapabilityExecutionRequirements::default()
-    }
+    ///
+    /// The result must be deterministic for this generation and must not consult mutable ambient
+    /// authority. The host snapshots it before registration becomes visible.
+    fn authority_requirements(&self) -> CapabilityExecutionRequirements;
 
     /// Starts adapter-owned live resources before registration becomes visible.
-    fn start(&self) -> Result<(), AdapterError> {
-        Ok(())
-    }
+    ///
+    /// Repeated calls must either replay idempotently or return a stable typed lifecycle conflict.
+    /// A failed call must remain safe for one cleanup call to [`CapabilityAdapter::shutdown`].
+    fn start(&self) -> Result<(), AdapterError>;
 
     /// Executes exactly the supplied immutable selection with no fallback.
     fn execute(
@@ -317,13 +335,16 @@ pub trait CapabilityAdapter: Send + Sync {
     /// Returns one bounded observation at an explicitly supplied boundary time.
     fn health(&self, observed_at_unix_ms: u64) -> Result<CapabilityObservation, AdapterError>;
 
-    /// Stops accepting newly resolved work while owned work can finish.
-    fn begin_drain(&self) -> Result<(), AdapterError> {
-        Ok(())
-    }
+    /// Stops adapter-owned admission while already selected exact work and active work can finish.
+    ///
+    /// The host separately removes this generation from new resolution before invoking the hook.
+    /// Repeated drain calls must be idempotent.
+    fn begin_drain(&self) -> Result<(), AdapterError>;
 
     /// Releases adapter-owned live resources after admission and in-flight work close.
-    fn shutdown(&self) -> Result<(), AdapterError> {
-        Ok(())
-    }
+    ///
+    /// Repeated calls must be idempotent. Resource-owning implementations must join or release
+    /// everything they own, while stateless implementations explicitly return the no-resource
+    /// outcome.
+    fn shutdown(&self) -> Result<(), AdapterError>;
 }

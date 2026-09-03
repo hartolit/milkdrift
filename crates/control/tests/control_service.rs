@@ -11,8 +11,8 @@ use std::{
 };
 
 use milkdrift_authority::{
-    ActorRef, AuthorityBudget, CapabilityAuthorityScope, CapabilityAuthorityScopeBuilder, GrantId,
-    GrantSetEvaluator, PolicyId, WorkflowRunScope,
+    ActorRef, AuthorityBudget, CapabilityAuthorityScope, CapabilityAuthorityScopeBuilder,
+    CapabilityExecutionRequirements, GrantId, GrantSetEvaluator, PolicyId, WorkflowRunScope,
 };
 use milkdrift_blueprint::{
     AuthorRef, BlueprintMetadata, BlueprintRevision, Condition, DataPort, Edge, EdgeId, EdgeKind,
@@ -30,8 +30,12 @@ use milkdrift_capability::{
     SchemaId, SideEffectClass, TerminalStatus,
 };
 use milkdrift_capability_host::{
-    AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, CapabilityHost,
-    CapabilitySelectionPolicy, HostConfig,
+    AdapterError, AdapterExecutionContext, AdapterInvocation, AdapterReporter, CapabilityAdapter,
+    CapabilityHost, CapabilitySelectionPolicy, HostConfig,
+    conformance::{
+        AdapterConformanceCase, AdapterConformanceExpectations, ConformanceScenario,
+        StartReplayExpectation, UnknownCancellationExpectation, run_adapter_conformance,
+    },
 };
 use milkdrift_control::{
     ActorAuthorityContext, AuthorityPreset, ClaimedStopCondition, ControlCommand,
@@ -216,6 +220,14 @@ impl CapabilityAdapter for CountingProcessAdapter {
         Ok(InvocationAdmissionEnvelope::not_applicable())
     }
 
+    fn authority_requirements(&self) -> CapabilityExecutionRequirements {
+        CapabilityExecutionRequirements::default()
+    }
+
+    fn start(&self) -> Result<(), AdapterError> {
+        Ok(())
+    }
+
     fn execute(
         &self,
         invocation: &AdapterInvocation<'_>,
@@ -264,6 +276,14 @@ impl CapabilityAdapter for CountingProcessAdapter {
             "controller process fixture ready",
         )
         .map_err(|error| AdapterError::external_failure(error.to_string()))
+    }
+
+    fn begin_drain(&self) -> Result<(), AdapterError> {
+        Ok(())
+    }
+
+    fn shutdown(&self) -> Result<(), AdapterError> {
+        Ok(())
     }
 }
 
@@ -316,6 +336,71 @@ impl AdapterReporter for RecordingReporter {
     fn heartbeat(&self) -> Result<(), AdapterError> {
         Ok(())
     }
+}
+
+fn workflow_control_conformance_case(
+    _scenario: ConformanceScenario,
+) -> TestResult<AdapterConformanceCase> {
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let actor = ActorRef::new("ai:adapter-conformance")?;
+    let run = RunId::new("run-control-adapter-conformance")?;
+    let grant_id = GrantId::new("grant:control-adapter-conformance")?;
+    let (_runtime, service, _authority) = services(
+        store,
+        &actor,
+        &run,
+        &grant_id,
+        "control-adapter-conformance",
+    )?;
+    let descriptor = workflow_control_descriptor()?;
+    let operation = OperationId::new(WORKFLOW_PROPOSE_OPERATION)?;
+    let request = InvocationRequest::new(
+        InvocationId::new("invocation-control-adapter-conformance")?,
+        descriptor.identity().clone(),
+        operation,
+        descriptor.provider_profile().cloned(),
+        None,
+        vec![InputReference::new(
+            "milkdrift.control_request",
+            InvocationValueReference::Inline {
+                value: BoundedJson::new(serde_json::json!({
+                    "schema_version": 1,
+                    "invalid_conformance_probe": true
+                }))?,
+            },
+        )?],
+        BTreeMap::new(),
+    )?;
+    let context = AdapterExecutionContext::new(
+        run,
+        serde_json::from_value(serde_json::json!(format!("rev_{}", "0".repeat(64))))?,
+        NodeId::new("control-adapter-conformance")?,
+        milkdrift_persistence::NodeExecutionId::new("execution-control-adapter-conformance")?,
+        milkdrift_persistence::AttemptId::new("attempt-control-adapter-conformance")?,
+    );
+    Ok(AdapterConformanceCase::new(
+        Arc::new(WorkflowControlAdapter::new(
+            service,
+            Arc::new(UnusedResultSink),
+        )),
+        descriptor,
+        request,
+        context,
+        AdapterConformanceExpectations {
+            start_replay: StartReplayExpectation::Idempotent,
+            available_while_draining: true,
+            available_after_shutdown: true,
+            unknown_cancellation: UnknownCancellationExpectation::NegativeAcknowledgement,
+        },
+    )?
+    .with_keepalive(directory))
+}
+
+#[test]
+fn workflow_control_adapter_passes_shared_conformance() -> TestResult {
+    run_adapter_conformance(workflow_control_conformance_case)?;
+    Ok(())
 }
 
 fn task_node(identity: &str, operation: &str) -> TestResult<Node> {
