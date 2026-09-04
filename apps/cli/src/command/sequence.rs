@@ -116,11 +116,6 @@ async fn remediate(
 ) -> Result<(), CliError> {
     let sequence = session.read_prompt_sequence_document(arguments.sequence_file)?;
     let state = session.client().run(arguments.run).await?;
-    if state.lifecycle != "paused" {
-        return Err(CliError::Invalid(
-            "remediation proposal requires a run paused through 'run pause'".to_owned(),
-        ));
-    }
     let revision_read = session.client().revision(arguments.revision).await?;
     let revision_value = revision_read
         .document

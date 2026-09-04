@@ -121,9 +121,11 @@ machine-readable result. A missed mutant must be fixed by a test or recorded by 
 unreachable under a validated public contract, or a mutation-tool limitation; unclassified survivors
 fail the lane.
 
-The seven current-source shards enumerate 642 focused mutants. The complete campaign catches 606;
-35 are compiler-unviable, and the one surviving runtime reconciliation mutant has the exact
-`unreachable_by_valid_contract` classification. There are no unclassified survivors or timeouts.
+The seven current-source shards enumerate 649 focused mutants. The complete campaign catches 610;
+37 are compiler-unviable, and the two surviving defensive guards have exact
+`unreachable_by_valid_contract` classifications: one runtime reconciliation guard and one
+controller account-application guard that is preceded by immutable-declaration validation. There
+are no unclassified survivors or timeouts.
 Per-shard `mutants.out` directories retain source identities, logs, outcomes, and generated
 classification reports. The Rust runner validates its strict classification policy, rejects
 duplicate identities, and fails closed on timeouts or unclassified survivors. Checksum-correct
@@ -193,23 +195,23 @@ cleanup defects remain inspectable.
 
 ## Interpretation and limitations
 
-On 2026-09-03 the current local Linux worktree passed formatting, the all-target/all-feature
+On 2026-09-04 the current local Linux worktree passed formatting, the all-target/all-feature
 check and complete test/doctest suite, Clippy with warnings denied, rustdoc with warnings denied,
 `cargo deny check`, `cargo machete`, duplicate dependency inspection, and complete test listing.
 Focused capability-host, shared production-adapter conformance, complete adapter/daemon,
 peer-service, authority-path, daemon-configuration, two-daemon, and external-evidence suites also
-passed. The runtime, uncertainty, and peer mutation shards retained no unclassified survivor or
-timeout. A Windows GNU cross-target check passed for the authority
-crate and the local-process library; the complete workspace cross-target check could not build
-`aws-lc-sys` because this Linux host has no `x86_64-w64-mingw32-gcc`, so it is not Windows runtime
-evidence. The most recent full release evidence lane, run on 2026-09-02, passed with 256 receipt operations and
+passed. All seven current-source mutation shards retained no unclassified survivor or timeout. A
+Windows GNU cross-target check passed for the local-process library; it is not Windows runtime
+evidence. The most recent full local release evidence lane, run on 2026-09-04, passed with 256 receipt operations and
 256 peer executions/4,352 peer observations. It retained five hot and 251 cold
 receipts, replayed the oldest cold receipt after reopen, and measured 1,589,248 physical store bytes
 both before and after the final bounded archival transaction. The daemon queue bound was one; 57
-requests were accepted and 199 received the stable overload result, accounting for all 256
+requests were accepted and 199 received the stable overload result in the earlier retained
+measurement; the current dirty-tree run accepted 54 and overloaded 202, again accounting for all 256
 requests. Stream observation/reconnect, post-load recovery, and graceful shutdown succeeded, and
 the Linux task count remained 12. Exact latency distributions and logical byte breakdowns remain
-in `target/evidence/operational-evidence.json` because they are machine- and filesystem-specific.
+under the selected untracked `target/` evidence directory because they are machine- and
+filesystem-specific.
 
 The harness does not claim production traffic shape, universal throughput, a memory allocator
 profile, network/TLS performance, a real provider service-level objective, or sandbox strength for
@@ -224,9 +226,11 @@ their definitions and commands but cannot honestly substitute for those hosted r
 new workflows have run successfully on their declared runners, status must say that cross-platform
 and hosted evidence is configured and awaiting execution, not complete.
 
-The latest hosted results inspected for this pass target source commit `8b7b2e2`: the 2026-09-03
-Linux quality workflow passed all of its required steps, and the platform workflow passed on
-Ubuntu 24.04 and macOS 15. Its Windows 2025 job completed the all-target/all-feature check but failed
-thirteen local-process tests because canonical native Windows roots were refused by the old
-Unix-only `FilesystemScope` constructor. Those runs predate the local correction and therefore do
-not qualify it; a new hosted Windows run remains required.
+The latest hosted results inspected for this pass target source commit `8b24269`: the 2026-09-03
+Linux quality workflow passed all required steps, and the platform workflow passed on Ubuntu
+24.04 and macOS 15. Its Windows 2025 job completed the all-target/all-feature check but failed seven
+local-process execution tests because the non-Unix immediate-child-only path treated unavailable
+Unix-style process-group cleanup as a permanently live descendant group and therefore reported
+otherwise terminal outcomes as uncertain. The repaired local-process library and its Windows GNU
+cross-target check pass locally, but those hosted runs predate the repair and do not qualify it; a
+new hosted Windows runtime run remains required.

@@ -13,7 +13,7 @@ use milkdrift_capability_host::AdapterError;
 use crate::config::{OverflowAction, ProcessProfile};
 
 use super::{
-    platform::{ProcessControl, wait_for_group_absence},
+    platform::{ProcessControl, wait_for_owned_descendants_absence},
     reporting::TerminalReportContext,
     streams::{Stream, StreamMessage, progress_message},
 };
@@ -27,7 +27,7 @@ pub(super) struct ProcessObservation {
     pub(super) stderr: Vec<u8>,
     pub(super) stdout_overflow: bool,
     pub(super) stderr_overflow: bool,
-    pub(super) group_absent: bool,
+    pub(super) termination_confirmed: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -170,12 +170,12 @@ pub(super) fn monitor_process(
             AdapterError::external_failure(format!("final process wait failed: {:?}", error.kind()))
         })?;
     }
-    if termination.is_none() && status.is_some() && !control.group_absent() {
+    if termination.is_none() && status.is_some() && !control.owned_descendants_absent() {
         termination = Some(Termination::UnexpectedDescendants);
         control
             .request_graceful()
             .map_err(AdapterError::external_failure)?;
-        if !wait_for_group_absence(
+        if !wait_for_owned_descendants_absence(
             control,
             Duration::from_millis(profile.limits.graceful_termination_ms),
         ) {
@@ -184,13 +184,13 @@ pub(super) fn monitor_process(
                 .map_err(AdapterError::external_failure)?;
         }
     }
-    let group_absent = if termination.is_some() {
-        wait_for_group_absence(
+    let owned_descendants_absent = if termination.is_some() {
+        wait_for_owned_descendants_absence(
             control,
             Duration::from_millis(profile.limits.forced_termination_ms),
         )
     } else {
-        control.group_absent()
+        control.owned_descendants_absent()
     };
     Ok(ProcessObservation {
         status,
@@ -199,6 +199,6 @@ pub(super) fn monitor_process(
         stderr,
         stdout_overflow,
         stderr_overflow,
-        group_absent,
+        termination_confirmed: status.is_some() && owned_descendants_absent,
     })
 }

@@ -534,7 +534,7 @@ impl LocalProcessAdapter {
         drop(resolved_secrets);
 
         if let Some(termination) = observed.termination {
-            return reports.for_termination(termination, observed.group_absent);
+            return reports.for_termination(termination, observed.termination_confirmed);
         }
         let Some(status) = observed.status else {
             return reports.uncertain(

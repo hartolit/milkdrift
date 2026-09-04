@@ -981,6 +981,63 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
         }) if dimension == "input_units" && blocked_reservation == &reservation
     ));
 
+    let mut output_account = ControllerAccountState::establish(account.declaration().clone())?;
+    let output_attempt =
+        milkdrift_persistence::AttemptId::new("attempt-controller-progress-output")?;
+    let output_reservation = ControllerReservationId::for_attempt(
+        output_account.declaration().account(),
+        &output_attempt,
+    )?;
+    let _ = output_account.admit(
+        output_reservation.clone(),
+        output_attempt,
+        CapabilityCategory::Model,
+        &InvocationAdmissionEnvelope::new(
+            AdmissionBound::NotApplicable,
+            AdmissionBound::Bounded(13),
+            AdmissionBound::NotApplicable,
+            AdmissionBound::NotApplicable,
+        ),
+    )?;
+    output_account.settle_terminal(&output_reservation, None)?;
+    let output_progress = service.controller_lifecycle_owner().progress(
+        &document,
+        &projection,
+        &controller_execution,
+        Some(&output_account),
+        NOW + 47,
+    )?;
+    assert_eq!(output_progress.unknown_output_observations, 1);
+    assert_eq!(output_progress.unknown_input_observations, 0);
+    assert_eq!(output_progress.unknown_cost_observations, 0);
+
+    let mut cost_account = ControllerAccountState::establish(account.declaration().clone())?;
+    let cost_attempt = milkdrift_persistence::AttemptId::new("attempt-controller-progress-cost")?;
+    let cost_reservation =
+        ControllerReservationId::for_attempt(cost_account.declaration().account(), &cost_attempt)?;
+    let _ = cost_account.admit(
+        cost_reservation.clone(),
+        cost_attempt,
+        CapabilityCategory::Model,
+        &InvocationAdmissionEnvelope::new(
+            AdmissionBound::NotApplicable,
+            AdmissionBound::NotApplicable,
+            AdmissionBound::NotApplicable,
+            AdmissionBound::Bounded(AdmissionMonetaryBound::new(700, "USD")?),
+        ),
+    )?;
+    cost_account.settle_terminal(&cost_reservation, None)?;
+    let cost_progress = service.controller_lifecycle_owner().progress(
+        &document,
+        &projection,
+        &controller_execution,
+        Some(&cost_account),
+        NOW + 47,
+    )?;
+    assert_eq!(cost_progress.unknown_cost_observations, 1);
+    assert_eq!(cost_progress.unknown_input_observations, 0);
+    assert_eq!(cost_progress.unknown_output_observations, 0);
+
     let controller_node = wrapper
         .semantic()
         .nodes()

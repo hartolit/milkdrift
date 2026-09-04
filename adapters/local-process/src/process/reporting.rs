@@ -120,10 +120,10 @@ impl<'a> TerminalReportContext<'a> {
     pub(super) fn for_termination(
         &mut self,
         termination: Termination,
-        group_absent: bool,
+        termination_confirmed: bool,
     ) -> Result<(), AdapterError> {
         match termination {
-            Termination::Cancelled if group_absent => {
+            Termination::Cancelled if termination_confirmed => {
                 let terminal = InvocationTerminal::new(
                     TerminalStatus::Cancelled,
                     Vec::new(),
@@ -136,19 +136,19 @@ impl<'a> TerminalReportContext<'a> {
             }
             Termination::Cancelled => self.uncertain(
                 "process_descendants_unresolved",
-                "cancellation was requested but owned process-group disappearance was not proven",
+                "cancellation was requested but owned process termination or descendant cleanup was not proven",
             ),
-            Termination::TimedOut if group_absent => self.failure(
+            Termination::TimedOut if termination_confirmed => self.failure(
                 ErrorClass::Provider,
                 "process_timeout",
-                "process exceeded its wall timeout and the owned group was terminated",
+                "process exceeded its wall timeout and owned process termination was confirmed",
             ),
-            Termination::OutputOverflow if group_absent => self.failure(
+            Termination::OutputOverflow if termination_confirmed => self.failure(
                 ErrorClass::Adapter,
                 "process_output_overflow",
                 "process output exceeded a terminate-on-overflow bound",
             ),
-            Termination::UnexpectedDescendants if group_absent => self.failure(
+            Termination::UnexpectedDescendants if termination_confirmed => self.failure(
                 ErrorClass::Adapter,
                 "process_descendant_contract_violated",
                 "the immediate process exited while owned descendants remained; the group was terminated",

@@ -83,8 +83,8 @@ Focused application-persistence and cross-transaction recovery checks are:
 
 ```sh
 cargo test -p milkdrift-redb-store --features test-admin --test application_state -- --nocapture
-cargo test -p milkdrift-redb-store --features test-admin --test contracts runtime_acceptance_reconciles_external_receipt_without_competing_effect_authority -- --exact --nocapture
-cargo test -p milkdrift-redb-store --features test-admin --test contracts command_fault_boundaries_are_atomic_and_replayable -- --exact --nocapture
+cargo test -p milkdrift-redb-store --features test-admin --test contracts fault_reopen::runtime_acceptance_reconciles_external_receipt_without_competing_effect_authority -- --exact --nocapture
+cargo test -p milkdrift-redb-store --features test-admin --test contracts fault_reopen::command_fault_boundaries_are_atomic_and_replayable -- --exact --nocapture
 ```
 
 Focused peer protocol, durability, artifact, reconnect, and real two-daemon checks are:

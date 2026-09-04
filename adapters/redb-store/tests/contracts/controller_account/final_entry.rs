@@ -119,3 +119,100 @@ fn reserved_final_entry_must_match_both_binding_and_attempt_identity() -> TestRe
     assert!(has_integrity_failure(&store)?);
     Ok(())
 }
+
+#[test]
+fn reserved_final_entry_reservation_must_match_its_attempt_identity() -> TestResult {
+    let directory = TempDir::new()?;
+    let child = RunId::new("run-controller-reserved-attempt-link-child")?;
+    let recorded;
+    let origin;
+    let attempt = AttemptId::new("attempt-controller-reserved-attempt-link")?;
+    {
+        let store = RedbStore::open(directory.path())?;
+        let owner = RunId::new("run-controller-reserved-attempt-link-owner")?;
+        origin = establish(&store, &owner, "reserved-attempt-link-owner")?;
+        bind_child(&store, &child, &origin, "reserved-attempt-link-child")?;
+        let state = store
+            .controller_account(origin.account())?
+            .ok_or("reserved-attempt-link origin account is absent")?;
+        let reservation = ControllerReservationId::for_attempt(origin.account(), &attempt)?;
+        let mut candidate = state.clone();
+        let outcome = candidate.admit(
+            reservation.clone(),
+            attempt.clone(),
+            CapabilityCategory::Process,
+            &InvocationAdmissionEnvelope::not_applicable(),
+        )?;
+        let entry = request(
+            &child,
+            "command-reserved-attempt-link",
+            "event-reserved-attempt-link",
+            RunSequence::ZERO,
+            RunEventKind::CapabilityAdapterEntryDecisionRecorded {
+                attempt: attempt.clone(),
+                authorization: decision(true, "reserved-attempt-link")?,
+                controller_admission: outcome.clone(),
+            },
+        )?
+        .with_controller_account_transaction(transaction(
+            "transition-reserved-attempt-link",
+            Some((&state, &origin)),
+            vec![ControllerAccountAction::AdmitEntry {
+                account: origin.account().clone(),
+                reservation,
+                attempt: attempt.clone(),
+                category: CapabilityCategory::Process,
+                envelope: InvocationAdmissionEnvelope::not_applicable(),
+                expected_outcome: outcome,
+            }],
+        )?)?;
+        recorded = entry
+            .events()
+            .first()
+            .ok_or("reserved final-entry event is absent")?
+            .clone();
+        let _ = store.commit_command(&entry)?;
+        assert!(!has_integrity_failure(&store)?);
+    }
+
+    let RunEventKind::CapabilityAdapterEntryDecisionRecorded { authorization, .. } =
+        recorded.kind()
+    else {
+        return Err("recorded event is not a final-entry decision".into());
+    };
+    let forged_reservation = ControllerReservationId::for_attempt(
+        origin.account(),
+        &AttemptId::new("attempt-controller-reserved-attempt-link-forged")?,
+    )?;
+    let replacement = RunEventEnvelope::new(
+        recorded.event_id().clone(),
+        recorded.run_id().clone(),
+        recorded.sequence(),
+        recorded.occurred_at(),
+        RunEventKind::CapabilityAdapterEntryDecisionRecorded {
+            attempt,
+            authorization: authorization.clone(),
+            controller_admission: ControllerAdmissionOutcome::Reserved {
+                account: origin.account().clone(),
+                reservation: forged_reservation,
+            },
+        },
+    )?;
+    let bytes = replacement.to_canonical_json()?;
+    let database = Database::open(directory.path().join("milkdrift.redb"))?;
+    let write = database.begin_write()?;
+    write.open_table(RUN_EVENTS)?.insert(
+        stored_event_key(&child, recorded.sequence())?.as_slice(),
+        bytes.as_slice(),
+    )?;
+    write.commit()?;
+    drop(database);
+
+    let store = RedbStore::open(directory.path())?;
+    assert!(has_integrity_failure_matching(
+        &store,
+        "controller_accounts",
+        "controller final-entry reservation disagrees with its run binding or attempt",
+    )?);
+    Ok(())
+}

@@ -44,16 +44,6 @@ async fn resolve(session: &CliSession, arguments: &AttemptResolve) -> Result<(),
         ResolveChoice::ResolveSucceeded => ResolveAction::ResolveSucceeded,
         ResolveChoice::ResolveFailed => ResolveAction::ResolveFailed,
     };
-    if action == ResolveAction::Compensate && arguments.remediation_node.is_none() {
-        return Err(CliError::Invalid(
-            "compensation requires --remediation-node".to_owned(),
-        ));
-    }
-    if action != ResolveAction::Compensate && arguments.remediation_node.is_some() {
-        return Err(CliError::Invalid(
-            "--remediation-node is permitted only for compensation".to_owned(),
-        ));
-    }
     if matches!(
         action,
         ResolveAction::Retry

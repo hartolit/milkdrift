@@ -22,6 +22,7 @@ pub(super) enum IdentityFailure {
     PathResolutionChanged,
     PathOutsideAuthorizedRoot,
     NotRegularFile,
+    #[cfg(unix)]
     NotExecutable,
     ExecutableTooLarge,
     SizeMismatch,
@@ -38,6 +39,7 @@ impl IdentityFailure {
             Self::PathResolutionChanged => "tool_path_resolution_changed",
             Self::PathOutsideAuthorizedRoot => "tool_path_outside_authorized_root",
             Self::NotRegularFile => "tool_source_not_regular_file",
+            #[cfg(unix)]
             Self::NotExecutable => "tool_source_not_executable",
             Self::ExecutableTooLarge => "tool_source_too_large",
             Self::SizeMismatch => "tool_size_mismatch",

@@ -12,6 +12,11 @@
   },
   "classifications": [
     {
+      "mutant": "adapters/redb-store/src/controller_account.rs:267:39: replace match guard existing.declaration() == declaration with true in apply_controller_transaction",
+      "classification": "unreachable_by_valid_contract",
+      "explanation": "The transaction event contract compares every establishment declaration with the immutable existing account before application, so a different declaration for the same canonical account identity is refused before this defensive match guard is reached."
+    },
+    {
       "mutant": "crates/runtime/src/engine/reconciliation.rs:28:13: replace || with && in RuntimeService::plan_revision_adoption",
       "classification": "unreachable_by_valid_contract",
       "explanation": "A non-active projection without a termination record cannot produce a valid reconciliation history or plan; the ordinary command path rejects that invalid state after this defensive early guard as well."

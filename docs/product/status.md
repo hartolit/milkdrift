@@ -164,12 +164,15 @@ Current exact versions are:
   actual-daemon/CLI harnesses but are explicitly non-qualifying. Real closure requires a byte-pinned
   real agent, a real supported endpoint that returns response identity and usage, private credential
   sources, and a clean strict-mode run.
-- No hosted workflow has run this final Pass 1 worktree. At source commit `8b7b2e2`, the 2026-09-03
-  hosted Linux quality gate and the Ubuntu/macOS platform jobs passed, while the Windows platform
-  job failed thirteen local-process tests at the former Unix-only filesystem-authority constructor.
-  The local correction has not yet received hosted Windows evidence. Mutation, benchmark, and
-  operational workflow executions for this worktree are likewise not evidenced here; local Linux
-  or cross-target checks cannot substitute for those runs.
+- No hosted workflow has run this final independent-repair worktree. At source commit `8b24269`,
+  the 2026-09-03 hosted Linux quality gate and the Ubuntu/macOS platform jobs passed, while the
+  Windows platform job passed its all-target/all-feature check but failed seven local-process
+  execution tests. The non-Unix immediate-child-only path incorrectly treated unavailable
+  Unix-style process-group cleanup as a permanently live descendant group, turning otherwise
+  terminal observations into uncertainty. The local repair passes the complete process suite and
+  a Windows GNU cross-target library check, but has not yet received hosted Windows runtime
+  evidence. Hosted mutation, benchmark, and operational executions for this worktree are likewise
+  absent; local Linux or cross-target checks cannot substitute for those runs.
 - The local-process adapter provides mediation and ownership, not a sandbox. Trusted processes run
   with the daemon account's privileges. Network isolation, CPU/memory quotas, malicious descendant
   containment, atomic hashed-handle execution on every OS, directory artifacts, writable shared
@@ -209,13 +212,11 @@ Current exact versions are:
 - All five manual longevity lanes pass separately in release mode: 10,001 receipt commits across
   hot/cold turnover and restart, two-daemon peer retention/restart, controller checkpoint/restart,
   controller reservation/artifact turnover and restart, and the 2,049-occurrence runtime frontier.
-  The seven pinned current-source mutation shards enumerate 642 mutants after the controller shard
-  was extended across final-entry admission, account, and persistence owners. The complete current
-  campaign catches 606; 35 are compiler-unviable, and one pre-existing runtime reconciliation
-  mutant retains its exact reviewed unreachable-contract classification. There are no unclassified
-  survivors or timeouts. The current pass reran the relevant uncertainty, context, and runtime
-  shards: 67 mutants were caught, six were compiler-unviable, and that one exact classified runtime
-  mutant remained; none timed out or survived unclassified.
+  The seven pinned current-source mutation shards enumerate 649 mutants across authority,
+  retention, runtime, uncertainty, controller admission/accounting, context, and peer ownership.
+  The complete current campaign catches 610; 37 are compiler-unviable, and two exact defensive
+  guards retain reviewed unreachable-contract classifications after their earlier validators were
+  exercised directly. There are no unclassified survivors or timeouts.
 - The simplified all-feature `cargo-public-api` inventory is retained under `target/public-api` for
   per-package review. This boundary intentionally adds the narrow admission-envelope,
   prepared-entry, and durable controller-account contracts shared by their real owners. The daemon
@@ -240,11 +241,11 @@ Current exact versions are:
   requires an explicit loopback profile and never falls back; no such profile was supplied here.
 - `milkdrift-evidence` owns repeatable storage/projection/context/artifact/daemon measurements,
   the Cargo-native mutation shard/classification runner, and operational reports under
-  `target/evidence`. The current dirty-tree 256-operation run accounts for all requests under
-  overload, reopens bounded receipt and peer state, reconnects the stream, and shuts down without
-  task growth; it records Git commit/tree/dirty state plus `rustc -vV` and is not release
-  qualification. The hermetic external-evidence report remains explicitly non-qualifying for real
-  interoperability.
+  `target/`. The current dirty-tree 256-operation run accepted 54 requests and returned 202 stable
+  overload results, reopens five hot and 251 cold receipts plus 256 peer executions, reconnects the
+  stream, and shuts down with the Linux task count unchanged at 12. It records Git
+  commit/tree/dirty state plus `rustc -vV` and is not release qualification. The hermetic
+  external-evidence report remains explicitly non-qualifying for real interoperability.
 - Raw API inventories are generated under `target/public-api`; generated public-API reports and
   pass histories are not source documentation.
 - `cargo machete` reports no unused dependency. `cargo deny` accepts the maintained transitive

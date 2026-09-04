@@ -406,6 +406,31 @@ fn has_integrity_failure(store: &RedbStore) -> TestResult<bool> {
     Err("controller integrity scan did not exhaust".into())
 }
 
+fn has_integrity_failure_matching(
+    store: &RedbStore,
+    component: &str,
+    detail: &str,
+) -> TestResult<bool> {
+    let mut cursor = None;
+    for _ in 0..1_024 {
+        let page = store.scan_integrity(IntegrityScanRequest {
+            limit: PageSize::new(64)?,
+            verify_artifact_content: false,
+            cursor,
+        })?;
+        if page.failures.iter().any(|failure| {
+            failure.component.as_str() == component && failure.detail.as_str().contains(detail)
+        }) {
+            return Ok(true);
+        }
+        let Some(next) = page.next_cursor else {
+            return Ok(false);
+        };
+        cursor = Some(next);
+    }
+    Err("controller integrity scan did not exhaust".into())
+}
+
 #[test]
 fn account_reestablishment_and_transition_fingerprints_are_exact() -> TestResult {
     let directory = TempDir::new()?;
@@ -594,27 +619,57 @@ fn same_account_identity_with_an_altered_budget_is_not_idempotent() -> TestResul
     )?;
     assert_eq!(altered.account(), expected.account());
     assert_ne!(altered, expected);
-    let altered_state = ControllerAccountState::establish(altered)?;
-    let payload = serde_json::to_string(&altered_state)?;
-    let bytes = encode_internal_payload("controller account", &payload)?;
-    {
-        let _store = RedbStore::open(directory.path())?;
-    }
-    let database = Database::open(directory.path().join("milkdrift.redb"))?;
-    let write = database.begin_write()?;
-    write
-        .open_table(ACCOUNTS)?
-        .insert(expected.account().as_str(), bytes.as_slice())?;
-    write.commit()?;
-    drop(database);
-
     let store = RedbStore::open(directory.path())?;
+    let root = controller_root(&altered)?;
+    let establish_altered = request_many_with_workspace(
+        &owner,
+        "command-establish-altered-controller-budget",
+        "event-establish-altered-controller-budget",
+        RunSequence::ZERO,
+        vec![
+            RunEventKind::RunCreated {
+                workflow: WorkflowId::new("workflow-controller-redb-contract")?,
+                revision: revision_id()?,
+                revision_digest: revision_digest()?,
+                root_scope: root.clone(),
+                workspace_budget: workspace_budget()?,
+                inputs: Vec::new(),
+            },
+            activation(
+                &altered,
+                "establish-altered-controller-budget",
+                RunSequence::FIRST,
+            )?,
+        ],
+        vec![WorkspaceMutation::CreateScope { scope: root }],
+    )?
+    .with_controller_account_transaction(transaction(
+        "transition-establish-altered-controller-budget",
+        None,
+        vec![ControllerAccountAction::Establish {
+            declaration: altered,
+            bind_run: owner.clone(),
+        }],
+    )?)?;
+    assert!(matches!(
+        store.commit_command(&establish_altered)?,
+        AtomicRunCommitOutcome::Committed(_)
+    ));
+    let target_head = store
+        .run_summary(&owner)?
+        .ok_or("controller run summary is absent")?
+        .through_sequence;
     let request = request(
         &owner,
         "command-controller-same-account-altered-budget",
         "event-controller-same-account-altered-budget",
-        RunSequence::ZERO,
-        activation(&expected, "same-account-altered-budget", RunSequence::ZERO)?,
+        target_head,
+        assessment(
+            &expected,
+            "same-account-altered-budget",
+            target_head,
+            ControllerAssessmentBoundary::CycleEntry,
+        )?,
     )?
     .with_controller_account_transaction(transaction(
         "transition-controller-same-account-altered-budget",
@@ -624,146 +679,20 @@ fn same_account_identity_with_an_altered_budget_is_not_idempotent() -> TestResul
             bind_run: owner,
         }],
     )?)?;
-    assert_storage_corruption(store.commit_command(&request));
-    Ok(())
-}
-
-#[test]
-fn preexisting_artifact_charge_is_corruption_not_a_conflict() -> TestResult {
-    let directory = TempDir::new()?;
-    let run = RunId::new("run-controller-artifact-charge-row")?;
-    let first_publication = ArtifactPublicationId::new("publication-controller-charge-first")?;
-    let second_publication = ArtifactPublicationId::new("publication-controller-charge-second")?;
-    {
-        let store = RedbStore::open(directory.path())?;
-        let _declaration = establish(&store, &run, "artifact-charge-row")?;
-        let bytes = b"x";
-        let metadata = ArtifactMetadata::new(
-            milkdrift_workspace::ArtifactReference::new(
-                ArtifactId::new("artifact-controller-charge-first")?,
-                ContentDigest::for_bytes(bytes),
-                MediaType::new("application/octet-stream")?,
-                1,
-            ),
-            ArtifactSensitivity::Public,
-            ArtifactRetention::WhileReferenced,
-            ArtifactProvenance::new(
-                CausalReference::External {
-                    source: CausalId::new("controller-charge-test")?,
-                },
-                Vec::new(),
-            )?,
-        )?;
-        let publication = BeginArtifactPublication::new(
-            first_publication.clone(),
-            run.clone(),
-            metadata,
-            workspace_budget()?,
-            WorkspaceUsage::EMPTY,
-        )?;
-        let _ = store.begin_publication(&publication)?;
-        let _ = store.write_chunk(&first_publication, 0, bytes)?;
-        let _ = store.commit_publication(&first_publication)?;
-    }
-    let database = Database::open(directory.path().join("milkdrift.redb"))?;
-    let write = database.begin_write()?;
-    {
-        let mut charges = write.open_table(ARTIFACT_CHARGES)?;
-        let bytes = charges
-            .get(first_publication.as_str())?
-            .ok_or("first controller artifact charge is absent")?
-            .value()
-            .to_vec();
-        charges.insert(second_publication.as_str(), bytes.as_slice())?;
-    }
-    write.commit()?;
-    drop(database);
-
-    let store = RedbStore::open(directory.path())?;
-    let bytes = b"x";
-    let metadata = ArtifactMetadata::new(
-        milkdrift_workspace::ArtifactReference::new(
-            ArtifactId::new("artifact-controller-charge-second")?,
-            ContentDigest::for_bytes(bytes),
-            MediaType::new("application/octet-stream")?,
-            1,
-        ),
-        ArtifactSensitivity::Public,
-        ArtifactRetention::WhileReferenced,
-        ArtifactProvenance::new(
-            CausalReference::External {
-                source: CausalId::new("controller-charge-test")?,
-            },
-            Vec::new(),
-        )?,
-    )?;
-    let publication = BeginArtifactPublication::new(
-        second_publication.clone(),
-        run.clone(),
-        metadata,
-        workspace_budget()?,
-        store.workspace_usage(&run)?,
-    )?;
-    let _ = store.begin_publication(&publication)?;
-    let _ = store.write_chunk(&second_publication, 0, bytes)?;
-    assert_storage_corruption(store.commit_publication(&second_publication));
-    Ok(())
-}
-
-#[test]
-fn committed_bound_publication_requires_its_reverse_controller_charge_link() -> TestResult {
-    let directory = TempDir::new()?;
-    let run = RunId::new("run-controller-missing-artifact-charge")?;
-    let publication = ArtifactPublicationId::new("publication-controller-missing-charge")?;
-    {
-        let store = RedbStore::open(directory.path())?;
-        let _declaration = establish(&store, &run, "missing-artifact-charge")?;
-        let bytes = b"x";
-        let metadata = ArtifactMetadata::new(
-            milkdrift_workspace::ArtifactReference::new(
-                ArtifactId::new("artifact-controller-missing-charge")?,
-                ContentDigest::for_bytes(bytes),
-                MediaType::new("application/octet-stream")?,
-                1,
-            ),
-            ArtifactSensitivity::Public,
-            ArtifactRetention::WhileReferenced,
-            ArtifactProvenance::new(
-                CausalReference::External {
-                    source: CausalId::new("controller-missing-charge-test")?,
-                },
-                Vec::new(),
-            )?,
-        )?;
-        let request = BeginArtifactPublication::new(
-            publication.clone(),
-            run,
-            metadata,
-            workspace_budget()?,
-            WorkspaceUsage::EMPTY,
-        )?;
-        let _ = store.begin_publication(&request)?;
-        let _ = store.write_chunk(&publication, 0, bytes)?;
-        let _ = store.commit_publication(&publication)?;
-        assert!(!has_integrity_failure(&store)?);
-    }
-
-    let database = Database::open(directory.path().join("milkdrift.redb"))?;
-    let write = database.begin_write()?;
+    let result = store.commit_command(&request);
     assert!(
-        write
-            .open_table(ARTIFACT_CHARGES)?
-            .remove(publication.as_str())?
-            .is_some()
+        matches!(
+            &result,
+            Err(PersistenceError::InvalidDocument(reason))
+                if reason == "controller assessment differs from its immutable account declaration"
+        ),
+        "expected event-contract refusal before account application, got {result:?}"
     );
-    write.commit()?;
-    drop(database);
-
-    let store = RedbStore::open(directory.path())?;
-    assert!(has_integrity_failure(&store)?);
     Ok(())
 }
 
+#[path = "controller_account/artifact_charge.rs"]
+mod artifact_charge;
 #[test]
 fn unbound_publication_integrity_rejects_an_invocation_reservation_owner() -> TestResult {
     let directory = TempDir::new()?;

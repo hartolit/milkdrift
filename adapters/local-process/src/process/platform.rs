@@ -15,11 +15,11 @@ pub(super) struct ProcessControl {
 }
 
 impl ProcessControl {
-    pub(super) fn new(child: &Child) -> Self {
+    pub(super) fn new(_child: &Child) -> Self {
         Self {
             cancel_requested: AtomicBool::new(false),
             #[cfg(unix)]
-            process_group: rustix::process::Pid::from_child(child),
+            process_group: rustix::process::Pid::from_child(_child),
         }
     }
 
@@ -45,7 +45,7 @@ impl ProcessControl {
         }
     }
 
-    pub(super) fn group_absent(&self) -> bool {
+    pub(super) fn owned_descendants_absent(&self) -> bool {
         #[cfg(unix)]
         {
             match rustix::process::test_kill_process_group(self.process_group) {
@@ -55,7 +55,9 @@ impl ProcessControl {
         }
         #[cfg(not(unix))]
         {
-            false
+            // This adapter owns only the immediate child on non-Unix platforms. The caller
+            // separately requires an observed child exit before treating termination as proven.
+            true
         }
     }
 }
@@ -108,10 +110,13 @@ pub(super) fn terminate_child_immediately(child: &mut Child, control: &ProcessCo
     let _ = child.wait();
 }
 
-pub(super) fn wait_for_group_absence(control: &ProcessControl, maximum: Duration) -> bool {
+pub(super) fn wait_for_owned_descendants_absence(
+    control: &ProcessControl,
+    maximum: Duration,
+) -> bool {
     let deadline = Instant::now() + maximum;
     loop {
-        if control.group_absent() {
+        if control.owned_descendants_absent() {
             return true;
         }
         if Instant::now() >= deadline {
