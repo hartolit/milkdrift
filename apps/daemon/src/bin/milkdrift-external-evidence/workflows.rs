@@ -329,7 +329,7 @@ fn model_node(model_capability: &str, profile: &ModelProfileFacts) -> Result<Nod
             .provider_profile(
                 ProviderProfileRef::new(&profile.profile_id).map_err(|e| e.to_string())?,
             )
-            .maximum_side_effect(SideEffectClass::None);
+            .maximum_side_effect(SideEffectClass::Unknown);
     if profile.streaming {
         requirement = requirement.streaming(StreamingMode::OutputFragments);
     }

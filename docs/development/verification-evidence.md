@@ -22,6 +22,10 @@ are observations, not correctness thresholds, and are not used to conceal an unb
 - Headless CLI evidence builds and spawns the actual `milkdrift-daemon` and `milkdrift` binaries.
   Its temporary configuration registers the evidence executable itself as two byte-pinned process
   profiles, uses no shell or network service, and never supplies the database path to a CLI process.
+- Local-model evidence also uses the actual daemon/CLI plus canonical configuration and blueprint
+  builders. Deterministic mode enters the production OpenAI-compatible mapping through controlled
+  loopback success and post-entry-close endpoints. Real mode accepts only an explicit separately
+  managed loopback profile and never falls back.
 
 `milkdrift-evidence` is a development-only leaf package. Product crates do not depend on it. The
 model-provider `operational-evidence` feature only exposes a network-free driver around its
@@ -45,6 +49,7 @@ production mapping or policy.
 | Model provider | SSE plus provider state machines | 2,048 complete fixed responses | mock-endpoint tests |
 | Daemon | authenticated owner round trip | loopback health request | control-plane tests |
 | Headless CLI | actual-binary command/read/restart workflow | temporary loopback daemon and deterministic processes | CLI units, daemon control plane, and `headless-cli-evidence` |
+| Local model | actual-binary wait/restart/context/model/artifact/uncertainty workflow | controlled endpoint or explicit operator loopback profile | provider hostile endpoints, runtime uncertainty, daemon control plane, and `local-model-evidence` |
 
 The operational runner separately performs sustained receipt turnover and reopen recovery. It
 replays a 10,000-event projection to assert a bounded current frontier, verifies old cold receipt
@@ -80,6 +85,11 @@ target/debug/headless-cli-evidence \
 
 This is deterministic local control-path evidence, including abrupt restart and retained
 uncertainty. It makes no real model or provider interoperability claim.
+
+Run the separate model-only lane with `cargo local-model-evidence` after building its helper and
+applications. The exact deterministic and operator-real commands, safe profile, structural
+assertions, credential rules, and non-qualification boundary are maintained in the
+[local-model endpoint guide](../guides/local-model-endpoint.md).
 
 Install the mutation tool outside the workspace dependency graph:
 

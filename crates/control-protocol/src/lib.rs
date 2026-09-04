@@ -24,17 +24,17 @@ pub use command::{
 pub use layout::{LayoutDocument, LayoutPoint, LayoutViewport};
 pub use read::{
     ApplicationReceiptHealthRead, ArtifactMetadataRead, AttemptOutputRead, AttemptRead,
-    AttemptUsageRead, AuthorityDecisionRead, AuthorityRead, CapabilityProvenanceRead,
-    CapabilityRead, ContextManifestRead, DaemonState, ExecutionAuthorityRead, HealthRead, NodeRead,
-    Observation, ObservationEnvelope, PeerExecutionHealthRead, PeerRead, ProposalRead,
-    RevisionChange, RevisionDiffRead, RevisionRead, RevisionSummary, RunRead, TimelineCategory,
-    TimelineEntry,
+    AttemptUsageRead, AuthorityDecisionRead, AuthorityRead, CapabilityOperationRead,
+    CapabilityProvenanceRead, CapabilityRead, ContextManifestRead, DaemonState,
+    ExecutionAuthorityRead, HealthRead, NodeRead, Observation, ObservationEnvelope,
+    PeerExecutionHealthRead, PeerRead, ProposalRead, RevisionChange, RevisionDiffRead,
+    RevisionRead, RevisionSummary, RunRead, TimelineCategory, TimelineEntry,
 };
 
 /// Supported control protocol major version.
 pub const PROTOCOL_MAJOR: u16 = 2;
 /// Supported control protocol minor version.
-pub const PROTOCOL_MINOR: u16 = 2;
+pub const PROTOCOL_MINOR: u16 = 3;
 /// Independent presentation-layout document version.
 pub const LAYOUT_SCHEMA_VERSION: u32 = 1;
 /// Maximum JSON request or response envelope size.

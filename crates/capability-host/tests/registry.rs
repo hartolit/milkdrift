@@ -1525,8 +1525,15 @@ fn visible_generation_operations_are_filtered_by_the_exact_selector() -> TestRes
         .build();
     let views = host.generations(&allow_one, 150)?;
     assert_eq!(views.len(), 1);
-    assert_eq!(views[0].operations, BTreeSet::from([allowed]));
-    assert!(!views[0].operations.contains(&denied));
+    assert_eq!(
+        views[0]
+            .operation_contracts
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([allowed])
+    );
+    assert!(!views[0].operation_contracts.contains_key(&denied));
 
     let deny_every_operation = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
         .only_operations(BTreeSet::from([OperationId::new("model.missing")?]))?

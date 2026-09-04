@@ -14,7 +14,7 @@ use super::{LocatedAttempt, Owner};
 use crate::host::{
     PublicFailure, corruption, empty_attempt_read, invalid, not_found, public_attempt_usage,
     public_authority_decision, public_capability_provenance, public_execution_authority,
-    public_invocation_artifact, public_persistence, snake_debug,
+    public_invocation_artifact, public_operation_contract, public_persistence, snake_debug,
 };
 
 struct HistoricalAttemptState {
@@ -170,9 +170,22 @@ impl HistoricalAttemptState {
                     located.value.descriptor_revision = Some(snapshot.descriptor_revision());
                     located.value.capability_provenance =
                         Some(public_capability_provenance(snapshot));
+                    located.value.operation_contract = Some(public_operation_contract(
+                        snapshot.operation(),
+                        snapshot.operation_contract(),
+                    ));
                     located.value.provider_profile = snapshot
                         .provider_profile()
                         .map(|profile| profile.as_str().to_owned());
+                }
+            }
+            RunEventKind::SideEffectClassified {
+                attempt,
+                idempotency_key,
+                ..
+            } if attempt == &self.attempt => {
+                if let Some(located) = self.located.as_mut() {
+                    located.value.idempotency_key_present = idempotency_key.is_some();
                 }
             }
             RunEventKind::LeaseGranted { attempt, .. } if attempt == &self.attempt => {

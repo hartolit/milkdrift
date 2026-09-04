@@ -57,11 +57,13 @@ snapshot. Git, CI, releases, and external audits own chronology.
   control-result owners behind one exhaustive protocol route. Attempt inspection separately owns
   current projection lookup, bounded historical folding, authority filtering, and context/provenance
   attachment without changing the public attempt meaning.
-- External control protocol 2.2 provides bounded duplicate-safe DTOs, exact negotiation,
+- External control protocol 2.3 provides bounded duplicate-safe DTOs, exact negotiation,
   authenticated cursor schema 2, idempotent commands, revisions/diffs, runs/nodes/attempts,
   timelines, proposals, capabilities/providers, authority, peers, artifacts, layouts, health, and
-  resumable SSE. Protocol-1 clients are refused. Internal events, redb rows, snapshots, provider
-  payloads, process handles, and framework types are not wire contracts.
+  resumable SSE. Capability and attempt reads expose the exact operation contract and idempotency-key
+  presence; timelines expose only bounded safe classification detail. Protocol-1 clients are
+  refused. Internal events, redb rows, snapshots, provider payloads, process handles, and framework
+  types are not wire contracts.
 - The `milkdrift` CLI is the comprehensive storage-free operator projection of that current
   protocol. It exposes blueprint and prompt-sequence validation/import, exact canonical blueprint
   export, run/controller/proposal/peer/layout control, retained-work resolution, explicit envelope
@@ -93,7 +95,10 @@ snapshot. Git, CI, releases, and external audits own chronology.
 - Models remain external provider capabilities. Provider-neutral task/response and context
   contracts are separate from bounded OpenAI-compatible and native Anthropic mappings. Exact
   profile/model/usage metadata and committed artifacts are recorded without logging prompts,
-  responses, bearer values, or resolved secrets. One local-secret adapter resolves only configured
+  responses, bearer values, or resolved secrets. The current mappings advertise unknown side
+  effects, unsupported idempotency, and best-effort cancellation; post-entry response loss,
+  malformed/truncated responses, timeout, or cancellation retains uncertainty rather than a
+  successful partial artifact or automatic retry. One local-secret adapter resolves only configured
   bounded environment or restricted-file references for authentication, process/model adapters,
   and peer credentials. Local processes use byte-pinned safe-argv profile schema 2, explicit
   inputs/outputs, bounded streams, cancellation, and process ownership. Their native canonical
@@ -146,7 +151,7 @@ Current exact versions are:
 | Redb internal document format / physical schema | 14 / 11 |
 | Application command receipt / layout record | 1 / 1 |
 | Local-process profile / host materialization | 2 / 1; process v1 refused |
-| External control / authenticated cursor | 2.2 / 2; legacy forms refused |
+| External control / authenticated cursor | 2.3 / 2; legacy forms refused |
 | Peer protocol and catalog messages | 1.2; earlier minors refused |
 | Daemon configuration | 9 TOML; JSON and earlier versions refused |
 | Layout document / CLI JSON output | 1 / 1 |
@@ -154,10 +159,11 @@ Current exact versions are:
 ## Limitations now
 
 - External interoperability is not yet proven. This checkout has no operator-supplied real coding
-  agent profile and no reachable real supported model endpoint/profile with secret mapping. The
-  hermetic external-evidence mode validates the harness but is explicitly non-qualifying. Real
-  closure requires a byte-pinned real agent, a real supported endpoint that returns response
-  identity and usage, private credential sources, and a clean strict-mode run.
+  agent profile and no supplied reachable real supported local-model profile with any required
+  secret mapping. The deterministic local-model and hermetic external-evidence modes validate their
+  actual-daemon/CLI harnesses but are explicitly non-qualifying. Real closure requires a byte-pinned
+  real agent, a real supported endpoint that returns response identity and usage, private credential
+  sources, and a clean strict-mode run.
 - No hosted workflow has run this final Pass 1 worktree. At source commit `8b7b2e2`, the 2026-09-03
   hosted Linux quality gate and the Ubuntu/macOS platform jobs passed, while the Windows platform
   job failed thirteen local-process tests at the former Unix-only filesystem-authority constructor.
@@ -196,7 +202,7 @@ Current exact versions are:
 
 ## Current validation/evidence snapshot
 
-- Current local Linux worktree snapshot (2026-09-03): formatting, all-target/all-feature checking, the complete
+- Current local Linux worktree snapshot (2026-09-04): formatting, all-target/all-feature checking, the complete
   workspace test and doctest suite, Clippy with warnings denied, rustdoc with warnings denied,
   `cargo deny check`, `cargo machete`, duplicate dependency inspection, and test inventory all pass.
   Five explicitly manual longevity/storage-bound tests remain ignored in the ordinary suite.
@@ -207,7 +213,9 @@ Current exact versions are:
   was extended across final-entry admission, account, and persistence owners. The complete current
   campaign catches 606; 35 are compiler-unviable, and one pre-existing runtime reconciliation
   mutant retains its exact reviewed unreachable-contract classification. There are no unclassified
-  survivors or timeouts.
+  survivors or timeouts. The current pass reran the relevant uncertainty, context, and runtime
+  shards: 67 mutants were caught, six were compiler-unviable, and that one exact classified runtime
+  mutant remained; none timed out or survived unclassified.
 - The simplified all-feature `cargo-public-api` inventory is retained under `target/public-api` for
   per-package review. This boundary intentionally adds the narrow admission-envelope,
   prepared-entry, and durable controller-account contracts shared by their real owners. The daemon
@@ -224,6 +232,12 @@ Current exact versions are:
   guarded proposal adoption, verified artifact download, abrupt-restart uncertainty retention and
   resolution, durable restart reads, stable machine failures, and that no CLI invocation receives
   the database path. Its deterministic process fixtures are not real model interoperability.
+- The local-model evidence lane likewise spawns the actual daemon and CLI, derives canonical
+  blueprints/configuration from their owners, and uses the production OpenAI-compatible mapping.
+  Deterministic mode proves wait/restart/release, exact selected and omitted context, streaming,
+  usage/response/artifact provenance, one provider entry, restart nonduplication, post-entry close,
+  retained uncertainty, unsafe-retry refusal, and explicit retain. Operator real-endpoint mode
+  requires an explicit loopback profile and never falls back; no such profile was supplied here.
 - `milkdrift-evidence` owns repeatable storage/projection/context/artifact/daemon measurements,
   the Cargo-native mutation shard/classification runner, and operational reports under
   `target/evidence`. The current dirty-tree 256-operation run accounts for all requests under

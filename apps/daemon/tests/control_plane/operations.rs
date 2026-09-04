@@ -156,14 +156,19 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
     let (artifact_id, artifact_bytes) =
         publish_restricted_test_artifact(&directory.path().join("data"))?;
     let daemon = start(config.clone(), CONTROLLER_TOKEN).await?;
-    assert!(
-        daemon
-            .client
-            .capabilities()
-            .await?
-            .iter()
-            .any(|capability| capability.capability_id == "golden-local-process")
-    );
+    let capabilities = daemon.client.capabilities().await?;
+    let process_capability = capabilities
+        .iter()
+        .find(|capability| capability.capability_id == "golden-local-process")
+        .ok_or("configured process capability is absent")?;
+    let process_contract = process_capability
+        .operation_contracts
+        .iter()
+        .find(|contract| contract.operation == "process.execute")
+        .ok_or("configured process operation contract is absent")?;
+    assert_eq!(process_contract.side_effect, "none");
+    assert_eq!(process_contract.idempotency, "unsupported");
+    assert_eq!(process_contract.cancellation, "best_effort");
     let imported = daemon
         .client
         .submit(&request(
@@ -242,6 +247,34 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
         Some("golden-local-process")
     );
     assert_eq!(attempt.descriptor_revision, Some(2));
+    let operation_contract = attempt
+        .operation_contract
+        .as_ref()
+        .ok_or("process attempt omitted its frozen operation contract")?;
+    assert_eq!(operation_contract.operation, "process.execute");
+    assert_eq!(operation_contract.side_effect, "none");
+    assert_eq!(operation_contract.idempotency, "unsupported");
+    assert!(!attempt.idempotency_key_present);
+    assert!(
+        daemon
+            .client
+            .timeline(
+                "run-process",
+                &PageRequest {
+                    cursor: None,
+                    limit: 100,
+                },
+            )
+            .await?
+            .items
+            .iter()
+            .any(|entry| {
+                entry.summary == "external-effect contract frozen"
+                    && entry.detail["side_effect"] == "none"
+                    && entry.detail["idempotency"] == "unsupported"
+                    && entry.detail["idempotency_key_present"] == false
+            })
+    );
     let provenance = attempt
         .capability_provenance
         .as_ref()

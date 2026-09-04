@@ -334,7 +334,7 @@ fn canonical_version_statements_match_source_constants() -> TestResult {
     assert!(read(root()?.join("README.md"))?.contains(&control));
     assert!(
         read(root()?.join("docs/product/status.md"))?
-            .contains("External control / authenticated cursor | 2.2 / 2")
+            .contains("External control / authenticated cursor | 2.3 / 2")
     );
     Ok(())
 }

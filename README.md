@@ -128,6 +128,12 @@ prerequisites, qualification rules, costs, restart/failure scenario, report sche
 and cleanup guidance are in [the external-evidence guide](docs/guides/external-evidence.md). Fixture mode
 tests the harness but never qualifies as external interoperability proof.
 
+For a model-only daemon/CLI smoke against a separately managed loopback OpenAI-compatible server,
+use `cargo local-model-evidence` with the safe profile under
+[`examples/local-model`](examples/local-model/openai-compatible-loopback.example.json). The
+[local-model endpoint guide](docs/guides/local-model-endpoint.md) documents deterministic and
+explicit real-endpoint modes; both remain distinct from the qualifying process-plus-model gate.
+
 The daemon refuses non-loopback plaintext binds and permissive CORS is not enabled. Older configuration/storage schemas and legacy sidecar authority are not silently migrated, and broad/unbounded authority requires an explicit dangerous acknowledgement. Empty artifact, layout, peer, and workspace scopes deny access. See [the daemon operation guide](docs/operations/daemon.md), [the authority configuration guide](docs/operations/authority.md), and [the control API reference](docs/reference/control-api.md).
 
 A minimal revision is constructed through a validated mutation batch; see the crate-level example in `milkdrift-blueprint` and the integration tests under `crates/blueprint/tests`.
@@ -137,7 +143,7 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 - `crates/capability`: provider-neutral capability, exact resolution, and invocation contracts.
 - `crates/authority`: actor identity, scoped immutable grants, deterministic decisions, and opaque secret references.
 - `crates/control`: shared human/service/AI workflow proposals, risk policy, authority presets, the typed controller lifecycle/read model, and the in-process workflow-control capability adapter.
-- `crates/control-protocol`: pure protocol-2.2 commands, read models, envelopes, authenticated cursors, streams, and layout schema 1.
+- `crates/control-protocol`: pure protocol-2.3 commands, read models, envelopes, authenticated cursors, streams, and layout schema 1.
 - `crates/control-client`: authenticated typed HTTP queries, exact command submission, bounded artifact ranges, and resumable SSE.
 - `crates/prompt-sequence`: bounded JSON/Markdown implementation sequences, ordinary blueprint compilation, and prospective remediation proposal construction.
 - `crates/capability-host`: live adapter generations, resolution, admission, cancellation, health, drain, and shutdown.

@@ -34,7 +34,7 @@ package entry point. Consumers otherwise import the canonical owner directly.
 | `milkdrift-contracts` | Workspace adapter mechanics for bounded canonical JSON, validated strings, UTF-8-safe byte truncation, and canonical `b3_` lexical validation; it owns no semantic identifiers, digest domains, errors, or schema versions. |
 | `milkdrift-control` | Workspace application contracts plus durable proposal/controller documents used by daemon and evidence. |
 | `milkdrift-control-client` | External product contract for typed authenticated HTTP/SSE clients, including CLI and future clients. |
-| `milkdrift-control-protocol` | External product and durable wire contracts for protocol 2.2; transport/runtime/storage types are excluded. |
+| `milkdrift-control-protocol` | External product and durable wire contracts for protocol 2.3; transport/runtime/storage types are excluded. |
 | `milkdrift-model` | External product and durable-schema contracts for provider-neutral model requests, responses, and context manifests. |
 | `milkdrift-peer-protocol` | External product and durable wire contracts for peer protocol 1.2; HTTP/runtime/storage types are excluded, and `PeerId` retains its capability-owned import path. |
 | `milkdrift-persistence` | Workspace adapter ports and durable event/application/peer/snapshot schemas used by runtime and redb. Canonical identities are imported from their owners, not re-exported for compatibility. |

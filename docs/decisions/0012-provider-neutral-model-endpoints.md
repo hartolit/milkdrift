@@ -55,7 +55,17 @@ Milkdrift continuation remains a
 provider-neutral contract but both current endpoint mappings reject it, along with provider-managed
 sessions, until a protocol/profile maps it explicitly. Blocking HTTP cancellation
 is cooperative: acknowledgement never claims remote termination, and the configured conservative
-timeout closes a stalled read.
+timeout closes a stalled read. Because the current endpoint protocols provide neither a stable
+provider idempotency key nor a result-query contract, `model.generate` advertises unknown side
+effects, unsupported idempotency, and best-effort cancellation. A malformed/truncated or bounded
+response failure after entry, response loss, timeout, or cancellation therefore reports retained
+uncertainty and never commits a partial response as success. A complete response settles the local
+attempt but does not retroactively claim the provider had no other effect.
+
+Endpoint-profile schema 1 is unchanged: these facts are derived adapter operation semantics, not
+operator claims. Exact resolved snapshots already persisted before this correction retain their
+original bytes/digest. New registration against a conflicting current descriptor fails exact
+snapshot validation instead of silently reinterpreting historical work.
 
 ## Reconsideration triggers
 

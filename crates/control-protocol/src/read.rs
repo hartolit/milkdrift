@@ -220,6 +220,10 @@ pub struct AttemptRead {
     pub descriptor_revision: Option<u64>,
     /// Exact frozen capability-generation and safe implementation provenance.
     pub capability_provenance: Option<CapabilityProvenanceRead>,
+    /// Exact selected operation and its frozen external-effect contract.
+    pub operation_contract: Option<CapabilityOperationRead>,
+    /// Whether runtime propagated a stable provider idempotency key.
+    pub idempotency_key_present: bool,
     /// Frozen run-level actor, grant revision, policy, and accepted start decision.
     pub execution_authority: Option<ExecutionAuthorityRead>,
     /// Candidate-set authority decision made before capability resolution.
@@ -250,6 +254,22 @@ pub struct AttemptRead {
     pub terminal: Option<String>,
     /// Whether external outcome remains unresolved.
     pub uncertain: bool,
+}
+
+/// Redacted provider-neutral contract for one capability operation.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityOperationRead {
+    /// Exact namespaced operation identity.
+    pub operation: String,
+    /// Declared maximum external side-effect class.
+    pub side_effect: String,
+    /// Advertised provider idempotency behavior.
+    pub idempotency: String,
+    /// Advertised cancellation behavior.
+    pub cancellation: String,
+    /// Complete advertised streaming modes.
+    pub streaming: Vec<String>,
 }
 
 /// Safe provider-neutral usage facts exposed without arbitrary provider payloads.
@@ -460,6 +480,8 @@ pub struct CapabilityRead {
     pub category: String,
     /// Exact advertised operation identities.
     pub operations: Vec<String>,
+    /// Exact provider-neutral contract for every advertised operation.
+    pub operation_contracts: Vec<CapabilityOperationRead>,
     /// Optional provider/model profile identity.
     pub provider_profile: Option<String>,
     /// Stable execution-locality label.

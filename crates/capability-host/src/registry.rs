@@ -6,8 +6,8 @@ use std::{
 use milkdrift_authority::CapabilityExecutionRequirements;
 use milkdrift_capability::{
     CapabilityCategory, CapabilityDescriptor, CapabilityId, CapabilityObservation,
-    ExecutionTrustClass, InvocationId, Locality, OperationId, PeerId, ProviderProfileRef,
-    TrustZone,
+    ExecutionTrustClass, InvocationId, Locality, OperationContract, OperationId, PeerId,
+    ProviderProfileRef, TrustZone,
 };
 use thiserror::Error;
 
@@ -81,7 +81,7 @@ pub enum GenerationHealth {
 }
 
 /// Immutable bounded generation view for future daemon clients.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GenerationView {
     /// Capability identity.
     pub capability: CapabilityId,
@@ -91,8 +91,8 @@ pub struct GenerationView {
     pub descriptor_digest: String,
     /// Discovery category used during scoped selection.
     pub category: CapabilityCategory,
-    /// Exact advertised operation identities.
-    pub operations: BTreeSet<OperationId>,
+    /// Exact advertised operation contracts visible through the authority scope.
+    pub operation_contracts: BTreeMap<OperationId, OperationContract>,
     /// Optional provider/model profile identity.
     pub provider_profile: Option<ProviderProfileRef>,
     /// Local, peer, remote-provider, or unspecified placement.

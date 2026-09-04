@@ -1,4 +1,4 @@
-use milkdrift_control_protocol::{Command, Cursor};
+use milkdrift_control_protocol::Command;
 use serde_json::Value;
 
 use crate::{RunCommand, error::CliError, session::CliSession};
@@ -124,7 +124,10 @@ async fn timeline(
     let page = session.client().timeline(run, &request).await?;
     session.output("run.timeline", &page)?;
     if should_follow {
-        follow(session, run, page.observed_cursor.or(request.cursor)).await?;
+        // Timeline-page cursors are bound to `timeline:<run>` and cannot authorize the
+        // independently scoped `run:<run>` observation stream. Establishing the run stream
+        // without a cross-feed cursor yields its current bounded observation before updates.
+        follow(session, run).await?;
     }
     Ok(())
 }
@@ -134,12 +137,12 @@ async fn submit(session: &CliSession, kind: &str, command: Command) -> Result<()
     session.output(kind, &session.client().submit(&request).await?)
 }
 
-async fn follow(session: &CliSession, run: &str, cursor: Option<Cursor>) -> Result<(), CliError> {
+async fn follow(session: &CliSession, run: &str) -> Result<(), CliError> {
     crate::session::safe_identity(run)?;
     super::stream::follow(
         session,
         format!("v1/runs/{run}/stream"),
-        cursor,
+        None,
         "run.observation",
     )
     .await

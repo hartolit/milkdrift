@@ -1,4 +1,4 @@
-# Local control API 2.2
+# Local control API 2.3
 
 This document is the implemented external contract for `milkdrift-daemon`. It describes a local control plane, not a peer protocol or public internet service.
 
@@ -9,20 +9,22 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":2}}
+{"protocol":{"major":2,"minor":3}}
 ```
 
 Major 2 is required. Protocol 1 is deliberately unsupported because attempt inspection now carries
 the complete frozen authority basis and execution-boundary decisions. Minor 1 added redacted
-application-receipt lifecycle health. The current minor is 2 and adds durable attempt output,
+application-receipt lifecycle health. Minor 2 added durable attempt output,
 progress/stream-byte, provider usage, compacted latest-attempt identity, byte-pinned executable path
-digest, and redacted model profile/protocol/model/origin provenance reads. The
+digest, and redacted model profile/protocol/model/origin provenance reads. The current minor is 3
+and adds exact operation side-effect/idempotency/cancellation/streaming contracts to capability and
+attempt reads, idempotency-key presence, and bounded safe external-effect timeline detail. The
 authenticated `/v1/...` HTTP route namespace is stable and independent from the negotiated envelope
 version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 2},
+  "protocol": {"major": 2, "minor": 3},
   "request_id": "req-1",
   "value": {}
 }
@@ -36,7 +38,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 2},
+  "protocol": {"major": 2, "minor": 3},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -53,7 +55,7 @@ All mutations use `POST /v1/commands`. A command envelope has no actor field:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 2},
+  "protocol": {"major": 2, "minor": 3},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -117,11 +119,11 @@ Every route is authenticated and authority-filtered. List queries constrain or f
 | `GET /v1/runs?limit=&cursor=&state=&workflow=` | Stable bounded compact-run page. |
 | `GET /v1/runs/{run}` | Compact current run status and retained execution frontier. |
 | `GET /v1/runs/{run}/nodes/{execution}` | One retained node execution. |
-| `GET /v1/runs/{run}/attempts/{attempt}` | One exact current or historical attempt; journal paging supplies older attempts without retaining lifetime history in the compact run model. Includes capability/provider/peer linkage, frozen snapshot/trust/implementation provenance, and separately authorized context-manifest detail when present. |
-| `GET /v1/runs/{run}/timeline?limit=&cursor=` | Paged external timeline projection with exact durable sequence anchors. |
+| `GET /v1/runs/{run}/attempts/{attempt}` | One exact current or historical attempt; journal paging supplies older attempts without retaining lifetime history in the compact run model. Includes capability/provider/peer linkage, the frozen operation contract and idempotency-key presence, frozen snapshot/trust/implementation provenance, and separately authorized context-manifest detail when present. |
+| `GET /v1/runs/{run}/timeline?limit=&cursor=` | Paged external timeline projection with exact durable sequence anchors and bounded safe external-effect classification. |
 | `GET /v1/runs/{run}/proposals?limit=&cursor=` | Bounded proposal identities/statuses from the durable validated proposal projection; exact status remains owned by `milkdrift-control`. |
 | `GET /v1/runs/{run}/proposals/{proposal}?revision={revision}` | Exact status from `milkdrift-control`. |
-| `GET /v1/capabilities` | Only generations within capability scope, with descriptor category/operations/locality/peer/trust, provider profile where allowed, and scoped health/availability. |
+| `GET /v1/capabilities` | Only generations within capability scope, with descriptor category and exact operation contracts, locality/peer/trust, provider profile where allowed, and scoped health/availability. |
 | `GET /v1/peers` | Only configured peer identities within `inspect_peer` scope. |
 | `GET /v1/peers/{peer}` | One authorized configured peer status. |
 | `POST /v1/peers/{peer}/{connect|reload|disconnect|drain|revoke}` | Exact peer administration under `administer_peer`; the action is audit-recorded. |

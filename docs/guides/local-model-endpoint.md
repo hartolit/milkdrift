@@ -4,6 +4,12 @@ Milkdrift treats a local model server as a configured capability endpoint. It do
 weights, select a model architecture, manage inference memory, or start/stop the server. Run and
 secure the server separately.
 
+The maintained loopback profile is
+[`openai-compatible-loopback.example.json`](../../examples/local-model/openai-compatible-loopback.example.json).
+Copy it to an untracked operator directory and replace the exact model alias. Remove `streaming`
+unless that exact server/model supports chat-completions SSE. Add a bearer `SecretRef` only when
+the server requires one; keep the resolved token in a private file rather than the profile.
+
 For a llama.cpp server using its OpenAI-compatible chat endpoint, create endpoint-profile schema
 v1 with:
 
@@ -32,3 +38,79 @@ dereference arbitrary model-task references or unselected artifacts. Generic fil
 continuation artifacts, and provider-managed sessions currently have no OpenAI-compatible mapping.
 Cancellation signals cause the response reader to close at its next observable read boundary; the
 acknowledgement truthfully does not claim provider-side termination.
+
+The operation contract is deliberately conservative. `model.generate` advertises unknown side
+effects, unsupported idempotency, and best-effort cancellation. Request bytes may have entered a
+provider even when the response is lost, so a post-entry close, malformed/truncated response,
+timeout, or cancellation is retained as uncertain. Milkdrift neither automatically retries that
+work nor treats a successful response as proof that the provider had no external effects.
+
+## Run the maintained daemon/CLI lane
+
+Build the actual applications and the byte-pinned evidence producer:
+
+```sh
+cargo build -p milkdrift-daemon --bin milkdrift-daemon \
+  -p milkdrift-cli --bin milkdrift \
+  -p milkdrift-evidence --bin evidence-process-helper --bin local-model-evidence
+```
+
+First prove the harness with its controlled loopback parser. The selected output directory must be
+empty or absent and remains untracked:
+
+```sh
+target/debug/local-model-evidence \
+  --daemon target/debug/milkdrift-daemon \
+  --cli target/debug/milkdrift \
+  --process-helper target/debug/evidence-process-helper \
+  --mode deterministic \
+  --output target/local-model-evidence
+```
+
+For a separately running real loopback server, use the explicit real mode. It rejects a missing or
+non-loopback profile and never falls back to the controlled endpoint:
+
+```sh
+target/debug/local-model-evidence \
+  --daemon target/debug/milkdrift-daemon \
+  --cli target/debug/milkdrift \
+  --process-helper target/debug/evidence-process-helper \
+  --mode operator-real-endpoint \
+  --model-profile /operator/private/local-model-profile.json \
+  --model-capability local-model-loopback \
+  --output target/local-model-real
+```
+
+If the profile names `secret:model-token`, add
+`--secret-source secret:model-token=/absolute/private/model.token`. Unix secret files must be
+private regular files. The lane derives a schema-9 daemon configuration and canonical ordinary
+blueprints from their owning Rust contracts, then uses the actual CLI for these structural actions:
+
+```sh
+milkdrift daemon readiness
+milkdrift capability show local-model-loopback
+milkdrift --command-id local-model-validate-1 blueprint validate -
+milkdrift --command-id local-model-import-1 blueprint import MODEL_BLUEPRINT
+milkdrift --command-id local-model-start-1 run start \
+  run-local-model-dogfood local-model-dogfood REVISION_ID
+milkdrift run timeline run-local-model-dogfood --limit 100 --follow
+milkdrift --command-id local-model-signal-1 --expected-sequence SEQUENCE \
+  run signal run-local-model-dogfood --signal-id local-model-release-1 \
+  --signal-type evidence.model.release --payload '{"release":true}'
+milkdrift attempt inspect run-local-model-dogfood ATTEMPT_ID
+milkdrift artifact get ARTIFACT_ID --output /operator/private/model-response.json
+```
+
+The harness owns shutdown/restart and repeats run and attempt inspection against the same store. It
+also drives a controlled post-entry connection close and proves retained uncertainty, refusal of
+an unsafe retry, explicit retain through `attempt resolve`, and restart visibility. Its redacted
+`report.json` records only identities, counts, boolean structural facts, safe endpoint origin, and
+the reason `qualifying` is false. Session state includes prompts and generated artifacts, so treat
+the complete output directory as sensitive scratch data.
+
+Expected success is structural: exactly one attempt and endpoint entry, exact profile/model/context
+provenance, selected and omitted evidence identities, ordered bounded fragments when streaming,
+one accepted terminal, verified output artifact digests/linkage, and usage/response identity only
+when supplied by the server. This model-only smoke never qualifies the repository's strict
+external-evidence gate; that separate gate also requires a real byte-pinned coding agent and is
+documented in [`external-evidence.md`](external-evidence.md).

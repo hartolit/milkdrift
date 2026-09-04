@@ -108,8 +108,9 @@ use read_model::{
     empty_attempt_read, internal, invalid, map_resolve, not_found, parse_revision_id,
     parse_run_state, public_artifact_metadata, public_attempt_usage, public_authority_decision,
     public_capability_provenance, public_control, public_execution_authority,
-    public_invocation_artifact, public_persistence, public_protocol, public_revision_summary,
-    public_run, public_timeline, snake_debug, unauthorized, unauthorized_decision,
+    public_invocation_artifact, public_operation_contract, public_persistence, public_protocol,
+    public_revision_summary, public_run, public_timeline, snake_debug, unauthorized,
+    unauthorized_decision,
 };
 
 const OWNER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -1814,7 +1815,6 @@ mod tests {
         clock.set(120);
         assert_eq!(host.now().await.map_err(|error| error.message)?, 120);
         host.shutdown().await?;
-
         clock.set(119);
         assert!(
             DaemonHost::start_with_clock(clock_test_config(root.path(), &token)?, clock.clone(),)

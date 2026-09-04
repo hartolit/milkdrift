@@ -215,7 +215,7 @@ impl CapabilityHost {
                 descriptor_revision: key.revision,
                 descriptor_digest: generation.descriptor_digest.clone(),
                 category: generation.descriptor.category().clone(),
-                operations: generation
+                operation_contracts: generation
                     .descriptor
                     .operations()
                     .iter()
@@ -227,7 +227,7 @@ impl CapabilityHost {
                             operation.side_effect(),
                         )
                     })
-                    .map(|(identity, _operation)| identity.clone())
+                    .map(|(identity, operation)| (identity.clone(), operation.clone()))
                     .collect(),
                 provider_profile: generation.descriptor.provider_profile().cloned(),
                 locality: generation.descriptor.locality(),

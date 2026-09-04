@@ -27,8 +27,8 @@ use serde_json::Value;
 mod harness;
 
 use harness::{
-    CliRunner, assert_error, reserve_endpoint, start_daemon, stop_daemon, wait_for_failed_exit,
-    wait_for_readiness, wait_for_run, write_config, write_process_profile,
+    CliRunner, EvidenceConfig, assert_error, reserve_endpoint, start_daemon, stop_daemon,
+    wait_for_failed_exit, wait_for_readiness, wait_for_run, write_config, write_process_profile,
 };
 
 type EvidenceResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -83,7 +83,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
         WRONG_TOKEN.as_bytes(),
     )?;
     let artifact_profile = write_process_profile(
-        &directory,
+        directory.path(),
         &executable,
         "headless-artifact-profile",
         "headless-artifact-capability",
@@ -92,7 +92,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
         Some("stdout"),
     )?;
     let wait_profile = write_process_profile(
-        &directory,
+        directory.path(),
         &executable,
         "headless-wait-profile",
         "headless-wait-capability",
@@ -101,10 +101,16 @@ fn run(arguments: Arguments) -> EvidenceResult {
         None,
     )?;
     let config_path = write_config(
-        &directory,
+        directory.path(),
         endpoint,
         &token_file,
-        vec![artifact_profile, wait_profile],
+        EvidenceConfig {
+            process_profiles: vec![artifact_profile, wait_profile],
+            model_profiles: Vec::new(),
+            secret_sources: Default::default(),
+            lease_duration_ms: 100,
+            authority: milkdrift_daemon::ActorGrantConfig::dangerous_administrator(),
+        },
     )?;
     let runner = CliRunner {
         executable: arguments.cli,

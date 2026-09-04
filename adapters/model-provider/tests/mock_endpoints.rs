@@ -19,10 +19,10 @@ use milkdrift_blueprint::{
     TaskContextPolicy, TerminalOutcome, WorkflowId,
 };
 use milkdrift_capability::{
-    AdmissionBound, ArtifactReference, BoundedJson, CancellationRequest, CapabilityId,
-    InputReference, InvocationEvent, InvocationEventKind, InvocationId, InvocationRequest,
-    InvocationValueReference, OperationId, ProviderProfileRef, ResolvedCapabilitySnapshot,
-    TerminalStatus,
+    AdmissionBound, ArtifactReference, BoundedJson, CancellationBehavior, CancellationRequest,
+    CapabilityId, IdempotencyBehavior, InputReference, InvocationEvent, InvocationEventKind,
+    InvocationId, InvocationRequest, InvocationValueReference, OperationId, ProviderProfileRef,
+    ResolvedCapabilitySnapshot, SideEffectClass, TerminalStatus,
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterExecutionContext, AdapterInvocation, AdapterReporter, CapabilityAdapter,
@@ -215,6 +215,17 @@ fn profile(
     auth: AuthMode,
     features: BTreeSet<ModelFeature>,
 ) -> TestResult<EndpointProfile> {
+    profile_with_limits(address, identity, protocol, auth, features, limits())
+}
+
+fn profile_with_limits(
+    address: &str,
+    identity: &str,
+    protocol: ProviderProtocol,
+    auth: AuthMode,
+    features: BTreeSet<ModelFeature>,
+    limits: EndpointLimits,
+) -> TestResult<EndpointProfile> {
     Ok(EndpointProfile::new(
         ProviderProfileRef::new(identity)?,
         1,
@@ -222,7 +233,7 @@ fn profile(
         format!("http://{address}"),
         "mock-model",
         auth,
-        limits(),
+        limits,
         RedirectPolicy::Deny,
         TlsPolicy::WebPkiRoots,
         ProxyPolicy::Disabled,
@@ -233,6 +244,35 @@ fn profile(
         BTreeSet::from(["local-test".to_owned()]),
         BTreeMap::new(),
     )?)
+}
+
+fn serve_stalled_body() -> TestResult<(String, thread::JoinHandle<std::io::Result<()>>)> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept()?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        let _request = read_request(&mut stream)?;
+        stream.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\nConnection: close\r\n\r\n",
+        )?;
+        stream.flush()?;
+        thread::sleep(Duration::from_millis(250));
+        Ok(())
+    });
+    Ok((address, handle))
+}
+
+fn serve_drop_after_request() -> TestResult<(String, thread::JoinHandle<std::io::Result<()>>)> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept()?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        let _request = read_request(&mut stream)?;
+        Ok(())
+    });
+    Ok((address, handle))
 }
 
 fn revision() -> TestResult<BlueprintRevision> {
@@ -420,7 +460,10 @@ fn execute_bound(
         &OperationId::new("model.generate")?,
     )?;
     let request = request(&capability, &profile, manifest, task, context_inputs)?;
-    let expected_artifact_bytes = limits().max_response_bytes.saturating_mul(4);
+    let expected_artifact_bytes = serde_json::to_value(&profile)?["limits"]["max_response_bytes"]
+        .as_u64()
+        .ok_or("profile omitted its response byte bound")?
+        .saturating_mul(4);
     let adapter = ModelEndpointAdapter::new(capability, profile, secrets, data)?;
     adapter.start()?;
     let reporter = Reporter::default();
@@ -1026,6 +1069,13 @@ fn endpoint_policy_rejects_remote_plaintext_and_cross_origin_redirects_by_defaul
         AuthMode::NoAuth,
         BTreeSet::from([ModelFeature::SystemRole]),
     )?;
+    let descriptor = descriptor_for_profile(CapabilityId::new("canonical-model")?, &canonical)?;
+    let contract = descriptor
+        .operation(&OperationId::new("model.generate")?)
+        .ok_or("model descriptor omitted model.generate")?;
+    assert_eq!(contract.side_effect(), SideEffectClass::Unknown);
+    assert_eq!(contract.idempotency(), IdempotencyBehavior::Unsupported);
+    assert_eq!(contract.cancellation(), CancellationBehavior::BestEffort);
     let bytes = canonical.to_canonical_json()?;
     assert_eq!(EndpointProfile::from_json(&bytes)?, canonical);
     let mut hostile: Value = serde_json::from_slice(&bytes)?;
@@ -1247,7 +1297,173 @@ fn streaming_cancellation_is_cooperative_and_does_not_claim_remote_termination()
             .last()
             .and_then(|event| event.kind().terminal())
             .map(|terminal| terminal.status()),
-        Some(TerminalStatus::Cancelled)
+        Some(TerminalStatus::Uncertain)
     );
+    let terminal = events
+        .last()
+        .and_then(|event| event.kind().terminal())
+        .ok_or("cancellation omitted its uncertain terminal")?;
+    assert_eq!(terminal.side_effect(), SideEffectClass::Unknown);
+    assert_eq!(
+        terminal.failure().map(|failure| failure.code()),
+        Some("model_cancellation_unconfirmed")
+    );
+    Ok(())
+}
+
+fn ordinary_task(streaming: bool) -> TestResult<ModelTaskRequest> {
+    Ok(ModelTaskRequest::new(
+        vec![Message::new(
+            MessageRole::User,
+            vec![ContentPart::Text {
+                text: "bounded hostile endpoint".to_owned(),
+            }],
+            None,
+        )?],
+        Vec::new(),
+        None,
+        SessionSelection::Fresh,
+        None,
+        64,
+        streaming,
+        BTreeMap::new(),
+    )?)
+}
+
+fn assert_uncertain_without_outputs(events: &[InvocationEvent], data: &MockData) -> TestResult {
+    let terminal = events
+        .last()
+        .and_then(|event| event.kind().terminal())
+        .ok_or("hostile response omitted terminal evidence")?;
+    assert_eq!(terminal.status(), TerminalStatus::Uncertain);
+    assert_eq!(terminal.side_effect(), SideEffectClass::Unknown);
+    assert!(events.iter().all(|event| event.kind().output().is_none()));
+    assert!(
+        data.published
+            .lock()
+            .map_err(|_| "published lock")?
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn malformed_and_truncated_provider_responses_remain_uncertain_without_partial_artifacts()
+-> TestResult {
+    let cases = [
+        ("malformed-json", "application/json", "{".to_owned(), false),
+        (
+            "truncated-sse",
+            "text/event-stream",
+            format!(
+                "data: {}\n\ndata: {{\"choices\"",
+                json!({"choices":[{"delta":{"content":"partial"},"finish_reason":null}]})
+            ),
+            true,
+        ),
+    ];
+    for (identity, media_type, body, streaming) in cases {
+        let (address, server) = serve(body, media_type)?;
+        let profile = profile(
+            &address,
+            identity,
+            ProviderProtocol::OpenAiCompatible {
+                path: "v1/chat/completions".to_owned(),
+            },
+            AuthMode::NoAuth,
+            BTreeSet::from([ModelFeature::Streaming, ModelFeature::SystemRole]),
+        )?;
+        let data = Arc::new(MockData::default());
+        let events = execute(
+            profile,
+            ordinary_task(streaming)?,
+            data.clone(),
+            Arc::new(InMemorySecretResolver::new()),
+        )?;
+        server.join().map_err(|_| "server panicked")??;
+        assert_uncertain_without_outputs(&events, data.as_ref())?;
+        if streaming {
+            assert!(events.iter().any(|event| event.kind().progress().is_some()));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn response_bounds_and_idle_timeout_remain_uncertain() -> TestResult {
+    let (address, oversized_server) = serve("x".repeat(2_048), "application/json")?;
+    let mut bounded_limits = limits();
+    bounded_limits.max_response_bytes = 1_024;
+    let bounded_profile = profile_with_limits(
+        &address,
+        "oversized-response",
+        ProviderProtocol::OpenAiCompatible {
+            path: "v1/chat/completions".to_owned(),
+        },
+        AuthMode::NoAuth,
+        BTreeSet::from([ModelFeature::SystemRole]),
+        bounded_limits,
+    )?;
+    let bounded_data = Arc::new(MockData::default());
+    let bounded_events = execute(
+        bounded_profile,
+        ordinary_task(false)?,
+        bounded_data.clone(),
+        Arc::new(InMemorySecretResolver::new()),
+    )?;
+    oversized_server.join().map_err(|_| "server panicked")??;
+    assert_uncertain_without_outputs(&bounded_events, bounded_data.as_ref())?;
+
+    let (address, stalled_server) = serve_stalled_body()?;
+    let mut timeout_limits = limits();
+    timeout_limits.connect_timeout_ms = 50;
+    timeout_limits.request_timeout_ms = 100;
+    timeout_limits.idle_timeout_ms = 50;
+    let stalled_profile = profile_with_limits(
+        &address,
+        "stalled-response",
+        ProviderProtocol::OpenAiCompatible {
+            path: "v1/chat/completions".to_owned(),
+        },
+        AuthMode::NoAuth,
+        BTreeSet::from([ModelFeature::SystemRole]),
+        timeout_limits,
+    )?;
+    let stalled_data = Arc::new(MockData::default());
+    let stalled_events = execute(
+        stalled_profile,
+        ordinary_task(false)?,
+        stalled_data.clone(),
+        Arc::new(InMemorySecretResolver::new()),
+    )?;
+    stalled_server.join().map_err(|_| "server panicked")??;
+    assert_uncertain_without_outputs(&stalled_events, stalled_data.as_ref())?;
+    Ok(())
+}
+
+#[test]
+fn connection_close_after_request_entry_is_a_bounded_external_failure() -> TestResult {
+    let (address, server) = serve_drop_after_request()?;
+    let profile = profile(
+        &address,
+        "post-entry-close",
+        ProviderProtocol::OpenAiCompatible {
+            path: "v1/chat/completions".to_owned(),
+        },
+        AuthMode::NoAuth,
+        BTreeSet::from([ModelFeature::SystemRole]),
+    )?;
+    let error = execute(
+        profile,
+        ordinary_task(false)?,
+        Arc::new(MockData::default()),
+        Arc::new(InMemorySecretResolver::new()),
+    )
+    .err()
+    .ok_or("closed provider connection unexpectedly completed")?;
+    server.join().map_err(|_| "server panicked")??;
+    let message = error.to_string();
+    assert!(message.contains("transport failed after request entry"));
+    assert!(!message.contains("HTTP/1.1"));
     Ok(())
 }

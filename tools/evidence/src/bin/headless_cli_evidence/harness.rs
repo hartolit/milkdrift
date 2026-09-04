@@ -12,15 +12,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+use super::{ACTOR, EvidenceResult, ensure};
 use milkdrift_daemon::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, DaemonConfig, PeerHostConfig, RuntimeHostConfig, SecretSourceConfig,
-    ShutdownConfig, ShutdownEffectPolicy,
+    AuthorityPresetConfig, DaemonConfig, ModelProfileConfig, PeerHostConfig, RuntimeHostConfig,
+    SecretSourceConfig, ShutdownConfig, ShutdownEffectPolicy,
 };
 use serde_json::{Value, json};
-use tempfile::TempDir;
-
-use super::{ACTOR, EvidenceResult, ensure};
 
 pub(super) struct CliRunner {
     pub(super) executable: PathBuf,
@@ -33,6 +31,14 @@ pub(super) struct CliOutput {
     pub(super) status: ExitStatus,
     pub(super) stdout: String,
     pub(super) stderr: String,
+}
+
+pub(super) struct EvidenceConfig {
+    pub(super) process_profiles: Vec<PathBuf>,
+    pub(super) model_profiles: Vec<ModelProfileConfig>,
+    pub(super) secret_sources: BTreeMap<String, SecretSourceConfig>,
+    pub(super) lease_duration_ms: u64,
+    pub(super) authority: ActorGrantConfig,
 }
 
 impl CliRunner {
@@ -237,21 +243,23 @@ pub(super) fn reserve_endpoint() -> EvidenceResult<SocketAddr> {
 }
 
 pub(super) fn write_config(
-    directory: &TempDir,
+    directory: &Path,
     bind: SocketAddr,
     token_file: &Path,
-    process_profiles: Vec<PathBuf>,
+    inputs: EvidenceConfig,
 ) -> EvidenceResult<PathBuf> {
+    let mut secret_sources = inputs.secret_sources;
+    secret_sources.insert(
+        "credential:headless-cli".to_owned(),
+        SecretSourceConfig::File {
+            path: token_file.to_owned(),
+        },
+    );
     let config = DaemonConfig {
         schema_version: milkdrift_daemon::DAEMON_CONFIG_SCHEMA_VERSION,
-        data_root: directory.path().join("data"),
+        data_root: directory.join("data"),
         bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), bind.port()),
-        secret_sources: BTreeMap::from([(
-            "credential:headless-cli".to_owned(),
-            SecretSourceConfig::File {
-                path: token_file.to_owned(),
-            },
-        )]),
+        secret_sources,
         actors: vec![ActorBindingConfig {
             credential_ref: "credential:headless-cli".to_owned(),
             actor: ACTOR.to_owned(),
@@ -259,21 +267,21 @@ pub(super) fn write_config(
             grant_revision: 1,
             revocation_generation: 0,
             preset: AuthorityPresetConfig::Controller,
-            authority: ActorGrantConfig::dangerous_administrator(),
+            authority: inputs.authority,
             enabled: true,
         }],
         runtime: RuntimeHostConfig {
             request_queue: 8,
             maintenance_interval_ms: 10,
-            lease_duration_ms: 100,
+            lease_duration_ms: inputs.lease_duration_ms,
             effect_threads: 1,
             effect_queue: 8,
             cancellation_queue: 8,
             ..RuntimeHostConfig::default()
         },
         adapters: AdapterConfig {
-            process_profiles,
-            ..AdapterConfig::default()
+            process_profiles: inputs.process_profiles,
+            model_profiles: inputs.model_profiles,
         },
         peers: PeerHostConfig::default(),
         shutdown: ShutdownConfig {
@@ -286,13 +294,13 @@ pub(super) fn write_config(
         },
         security_audit_record_bound: 1_000,
     };
-    let path = directory.path().join("daemon.toml");
+    let path = directory.join("daemon.toml");
     fs::write(&path, toml::to_string_pretty(&config)?)?;
     Ok(path)
 }
 
 pub(super) fn write_process_profile(
-    directory: &TempDir,
+    directory: &Path,
     executable: &Path,
     profile_id: &str,
     capability: &str,
@@ -329,7 +337,7 @@ pub(super) fn write_process_profile(
             "working_directory": {"type": "isolated_root"},
             "filesystem_roots": [
                 {"path": executable_root, "access": "execute"},
-                {"path": directory.path(), "access": "read_write"}
+                {"path": directory, "access": "read_write"}
             ],
             "inputs": [],
             "environment": {
@@ -376,7 +384,7 @@ pub(super) fn write_process_profile(
             "extensions": {}
         }
     });
-    let path = directory.path().join(format!("{profile_id}.json"));
+    let path = directory.join(format!("{profile_id}.json"));
     fs::write(&path, serde_json::to_vec(&profile)?)?;
     Ok(path)
 }

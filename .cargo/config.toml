@@ -1,3 +1,4 @@
 [alias]
 external-evidence = "run --package milkdrift-daemon --bin milkdrift-external-evidence --"
+local-model-evidence = "run --package milkdrift-evidence --bin local-model-evidence --"
 mutation-evidence = "run --package milkdrift-evidence --bin mutation-evidence --"

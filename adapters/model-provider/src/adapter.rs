@@ -14,9 +14,9 @@ use milkdrift_capability::{
     CancellationBehavior, CancellationRequest, CapabilityCategory, CapabilityDescriptor,
     CapabilityId, CapabilityObservation, DescriptorBuilder, ErrorClass, FeatureContract, FeatureId,
     IdempotencyBehavior, InvocationAdmissionEnvelope, InvocationEvent, InvocationEventKind,
-    InvocationFailure, InvocationRequest, InvocationTerminal, InvocationValueReference, Locality,
-    OperationContract, OperationId, SchemaContract, SchemaId, SideEffectClass, StreamingMode,
-    TerminalStatus, TrustZone, UsageObservation,
+    InvocationRequest, InvocationTerminal, InvocationValueReference, Locality, OperationContract,
+    OperationId, SchemaContract, SchemaId, SideEffectClass, StreamingMode, TerminalStatus,
+    TrustZone, UsageObservation,
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, InvocationDataAccess,
@@ -37,6 +37,10 @@ use crate::{
     openai_compatible,
     profile::AuthMode,
 };
+
+mod report;
+
+use report::{ProviderFailure, report_failure, report_uncertain};
 
 const CONTEXT_MEDIA: &str = "application/vnd.milkdrift.context-manifest.v2+json";
 const RESPONSE_MEDIA: &str = "application/vnd.milkdrift.model-response.v1+json";
@@ -145,14 +149,6 @@ struct PreparedOutput {
     name: &'static str,
     media_type: &'static str,
     bytes: Vec<u8>,
-}
-
-/// Provider-neutral failure facts after adapter-specific status/error mapping.
-struct ProviderFailure<'a> {
-    class: ErrorClass,
-    retryable: bool,
-    code: &'a str,
-    message: &'a str,
 }
 
 /// One synchronous host adapter for an exact endpoint-profile revision.
@@ -409,7 +405,18 @@ impl ModelEndpointAdapter {
             Ok(response) => response,
             Err(_) => {
                 if cancelled.load(Ordering::SeqCst) {
-                    return self.report_cancelled(request, reporter, 1, started);
+                    return report_uncertain(
+                        request,
+                        reporter,
+                        1,
+                        ProviderFailure {
+                            class: ErrorClass::Unknown,
+                            retryable: false,
+                            code: "model_cancellation_unconfirmed",
+                            message: "model cancellation was requested without provider-side terminal evidence",
+                        },
+                        started,
+                    );
                 }
                 return Err(AdapterError::external_failure(
                     "model endpoint transport failed after request entry",
@@ -418,7 +425,7 @@ impl ModelEndpointAdapter {
         };
         if !response.status().is_success() {
             let mapped = http::status_error(response.status());
-            return self.report_failure(
+            return report_failure(
                 request,
                 reporter,
                 1,
@@ -478,10 +485,21 @@ impl ModelEndpointAdapter {
         let response = match parsed {
             Ok(value) => value,
             Err(HttpError::Cancelled) => {
-                return self.report_cancelled(request, reporter, sequence, started);
+                return report_uncertain(
+                    request,
+                    reporter,
+                    sequence,
+                    ProviderFailure {
+                        class: ErrorClass::Unknown,
+                        retryable: false,
+                        code: "model_cancellation_unconfirmed",
+                        message: "model cancellation was requested without provider-side terminal evidence",
+                    },
+                    started,
+                );
             }
             Err(error) => {
-                return self.report_failure(
+                return report_uncertain(
                     request,
                     reporter,
                     sequence,
@@ -489,7 +507,7 @@ impl ModelEndpointAdapter {
                         class: error.class(),
                         retryable: false,
                         code: error.code(),
-                        message: "model response was rejected by bounded protocol validation",
+                        message: "model response ended without trustworthy terminal evidence",
                     },
                     started,
                 );
@@ -653,7 +671,7 @@ impl ModelEndpointAdapter {
             .try_for_each(|output| output_ledger.record(output.bytes.len()))
             .is_err()
         {
-            return self.report_failure(
+            return report_failure(
                 request,
                 reporter,
                 sequence,
@@ -678,7 +696,7 @@ impl ModelEndpointAdapter {
             ) {
                 Ok(value) => value,
                 Err(_) => {
-                    return self.report_failure(
+                    return report_failure(
                         request,
                         reporter,
                         sequence,
@@ -730,7 +748,7 @@ impl ModelEndpointAdapter {
             output_refs,
             None,
             Some(observed),
-            SideEffectClass::None,
+            SideEffectClass::Unknown,
         )
         .map_err(|_| AdapterError::external_failure("invalid model terminal event"))?;
         reporter.invocation(
@@ -740,71 +758,6 @@ impl ModelEndpointAdapter {
                 InvocationEventKind::Terminal { terminal },
             )
             .map_err(|_| AdapterError::external_failure("invalid model terminal event"))?,
-        )
-    }
-
-    fn report_failure(
-        &self,
-        request: &InvocationRequest,
-        reporter: &dyn AdapterReporter,
-        sequence: u64,
-        failure: ProviderFailure<'_>,
-        started: Instant,
-    ) -> Result<(), AdapterError> {
-        let failure = InvocationFailure::new(
-            failure.class,
-            failure.retryable,
-            failure.code,
-            failure.message,
-            None,
-        )
-        .map_err(|_| AdapterError::external_failure("invalid model failure event"))?;
-        let duration = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let usage = UsageObservation::new(None, None, Some(duration), None, None, BTreeMap::new())
-            .map_err(|_| AdapterError::external_failure("invalid failure usage"))?;
-        let terminal = InvocationTerminal::new(
-            TerminalStatus::Failure,
-            Vec::new(),
-            Some(failure),
-            Some(usage),
-            SideEffectClass::None,
-        )
-        .map_err(|_| AdapterError::external_failure("invalid model failure terminal"))?;
-        reporter.invocation(
-            InvocationEvent::new(
-                request.invocation().clone(),
-                sequence,
-                InvocationEventKind::Terminal { terminal },
-            )
-            .map_err(|_| AdapterError::external_failure("invalid model failure event"))?,
-        )
-    }
-
-    fn report_cancelled(
-        &self,
-        request: &InvocationRequest,
-        reporter: &dyn AdapterReporter,
-        sequence: u64,
-        started: Instant,
-    ) -> Result<(), AdapterError> {
-        let duration = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let usage = UsageObservation::new(None, None, Some(duration), None, None, BTreeMap::new())
-            .map_err(|_| AdapterError::external_failure("invalid cancellation usage"))?;
-        let terminal = InvocationTerminal::new(
-            TerminalStatus::Cancelled,
-            Vec::new(),
-            None,
-            Some(usage),
-            SideEffectClass::None,
-        )
-        .map_err(|_| AdapterError::external_failure("invalid cancelled terminal"))?;
-        reporter.invocation(
-            InvocationEvent::new(
-                request.invocation().clone(),
-                sequence,
-                InvocationEventKind::Terminal { terminal },
-            )
-            .map_err(|_| AdapterError::external_failure("invalid cancellation event"))?,
         )
     }
 
@@ -1162,8 +1115,8 @@ pub fn descriptor_for_profile(
         output,
         streaming,
         CancellationBehavior::BestEffort,
-        IdempotencyBehavior::ProviderProfileScoped,
-        SideEffectClass::None,
+        IdempotencyBehavior::Unsupported,
+        SideEffectClass::Unknown,
         features,
     )?;
     let locality = if profile.local_development() {

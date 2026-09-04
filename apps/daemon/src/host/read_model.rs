@@ -5,6 +5,7 @@ use super::{
     ResolveAction, RevisionChange, RevisionId, RunRead, TimelineCategory, TimelineEntry, Value,
     json,
 };
+use milkdrift_control_protocol::CapabilityOperationRead;
 
 pub(super) fn accepted_sequence(
     request: &CommandRequest,
@@ -107,6 +108,8 @@ pub(super) fn empty_attempt_read(attempt: &str, state: &str) -> AttemptRead {
         capability_id: None,
         descriptor_revision: None,
         capability_provenance: None,
+        operation_contract: None,
+        idempotency_key_present: false,
         execution_authority: None,
         resolution_authorization: None,
         claim_authorization: None,
@@ -152,6 +155,14 @@ pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> Att
         .as_ref()
         .map(milkdrift_capability::ResolvedCapabilitySnapshot::descriptor_revision);
     let capability_provenance = value.capability.as_ref().map(public_capability_provenance);
+    let operation_contract = value.capability.as_ref().map(|capability| {
+        public_operation_contract(capability.operation(), capability.operation_contract())
+    });
+    let idempotency_key_present = value
+        .side_effect
+        .as_ref()
+        .and_then(milkdrift_runtime::SideEffectClassification::idempotency_key)
+        .is_some();
     let provider_profile = value.capability.as_ref().and_then(|capability| {
         capability
             .provider_profile()
@@ -180,6 +191,8 @@ pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> Att
         capability_id,
         descriptor_revision,
         capability_provenance,
+        operation_contract,
+        idempotency_key_present,
         execution_authority: value
             .execution_authority
             .as_ref()
@@ -211,6 +224,19 @@ pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> Att
         outputs,
         terminal: value.terminal.as_ref().map(snake_debug),
         uncertain: value.external_outcome.is_some(),
+    }
+}
+
+pub(super) fn public_operation_contract(
+    operation: &milkdrift_capability::OperationId,
+    contract: &milkdrift_capability::OperationContract,
+) -> CapabilityOperationRead {
+    CapabilityOperationRead {
+        operation: operation.as_str().to_owned(),
+        side_effect: snake_debug(&contract.side_effect()),
+        idempotency: snake_debug(&contract.idempotency()),
+        cancellation: snake_debug(&contract.cancellation()),
+        streaming: contract.streaming().iter().map(snake_debug).collect(),
     }
 }
 
@@ -352,6 +378,26 @@ pub(super) fn public_timeline(event: &milkdrift_persistence::RunEventEnvelope) -
     let node_id = string_field(&kind, &["node", "node_id"]);
     let attempt_id = string_field(&kind, &["attempt", "attempt_id"]);
     let revision_id = string_field(&kind, &["revision", "to_revision", "from_revision"]);
+    let (summary, detail) = match event.kind() {
+        milkdrift_persistence::RunEventKind::SideEffectClassified {
+            side_effect,
+            idempotency,
+            idempotency_key,
+            ..
+        } => (
+            "external-effect contract frozen".to_owned(),
+            json!({
+                "event_id": event.event_id().as_str(),
+                "side_effect": snake_debug(side_effect),
+                "idempotency": snake_debug(idempotency),
+                "idempotency_key_present": idempotency_key.is_some(),
+            }),
+        ),
+        _ => (
+            timeline_summary(category),
+            json!({"event_id": event.event_id().as_str()}),
+        ),
+    };
     TimelineEntry {
         sequence: event.sequence().get(),
         timestamp_ms: event.occurred_at().get(),
@@ -361,8 +407,8 @@ pub(super) fn public_timeline(event: &milkdrift_persistence::RunEventEnvelope) -
         node_id,
         attempt_id,
         revision_id,
-        summary: timeline_summary(category),
-        detail: json!({"event_id": event.event_id().as_str()}),
+        summary,
+        detail,
     }
 }
 
@@ -382,7 +428,11 @@ pub(super) fn timeline_category(kind: &str) -> TimelineCategory {
         TimelineCategory::Coordination
     } else if kind.contains("decision") || kind.contains("authority") {
         TimelineCategory::Authority
-    } else if kind.contains("node") || kind.contains("lease") || kind.contains("attempt") {
+    } else if kind.contains("node")
+        || kind.contains("lease")
+        || kind.contains("attempt")
+        || kind.contains("side_effect")
+    {
         TimelineCategory::Execution
     } else if kind.contains("progress") || kind.contains("usage") {
         TimelineCategory::Progress
