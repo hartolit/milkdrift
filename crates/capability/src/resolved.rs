@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     BoundedJson, CapabilityCategory, CapabilityDescriptor, CapabilityId, ContractError,
-    ExecutionTrustClass, ExtensionKey, OperationContract, OperationId, ProviderProfileRef,
-    SCHEMA_VERSION_V1, document::canonical_json_bytes,
+    ExecutionTrustClass, ExtensionKey, IdempotencyBehavior, InvocationRequest, OperationContract,
+    OperationId, ProviderProfileRef, SCHEMA_VERSION_V1, SideEffectClass,
+    document::canonical_json_bytes,
 };
 
 const DIGEST_DOMAIN_V1: &[u8] = b"milkdrift.resolved-capability-snapshot.v1\0";
@@ -208,6 +209,36 @@ impl ResolvedCapabilitySnapshot {
             return Err(ContractError::InvalidContract(
                 "resolved capability snapshot does not match the exact descriptor revision"
                     .to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Verifies that an invocation request names this exact resolved selection and obeys its
+    /// idempotency contract.
+    pub fn validate_request(&self, request: &InvocationRequest) -> Result<(), ContractError> {
+        self.validate()?;
+        if request.capability() != self.capability()
+            || request.operation() != self.operation()
+            || request.provider_profile() != self.provider_profile()
+        {
+            return Err(ContractError::InvalidContract(
+                "invocation selection does not equal the resolved capability snapshot".to_owned(),
+            ));
+        }
+        if self.operation_contract.idempotency() == IdempotencyBehavior::Unsupported
+            && request.idempotency_key().is_some()
+        {
+            return Err(ContractError::InvalidContract(
+                "an operation advertising unsupported idempotency cannot receive a key".to_owned(),
+            ));
+        }
+        if self.operation_contract.side_effect() == SideEffectClass::IdempotentWrite
+            && (self.operation_contract.idempotency() == IdempotencyBehavior::Unsupported
+                || request.idempotency_key().is_none())
+        {
+            return Err(ContractError::InvalidContract(
+                "an idempotent write requires advertised idempotency and a stable key".to_owned(),
             ));
         }
         Ok(())

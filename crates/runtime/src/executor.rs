@@ -15,8 +15,8 @@ use milkdrift_authority::{
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_capability::{
     CancellationAcknowledgement, CancellationRequest, CapabilityDescriptor, CapabilityRequirement,
-    ContractError, IdempotencyBehavior, InvocationAdmissionEnvelope, InvocationEvent,
-    InvocationRequest, OperationId, ResolvedCapabilitySnapshot, SideEffectClass,
+    ContractError, InvocationAdmissionEnvelope, InvocationEvent, InvocationRequest, OperationId,
+    ResolvedCapabilitySnapshot,
 };
 #[cfg(any(test, feature = "test-support"))]
 use milkdrift_capability::{
@@ -315,30 +315,9 @@ impl ExecutionDispatch {
         request: InvocationRequest,
     ) -> Result<Self, ExecutorError> {
         let snapshot = &resolution;
-        if request.capability() != snapshot.capability()
-            || request.operation() != snapshot.operation()
-            || request.provider_profile() != snapshot.provider_profile()
-        {
-            return Err(ExecutorError::InvalidDispatch(
-                "invocation selection does not equal the resolved capability snapshot".to_owned(),
-            ));
-        }
-        let contract = snapshot.operation_contract();
-        if contract.idempotency() == IdempotencyBehavior::Unsupported
-            && request.idempotency_key().is_some()
-        {
-            return Err(ExecutorError::InvalidDispatch(
-                "an operation advertising unsupported idempotency cannot receive a key".to_owned(),
-            ));
-        }
-        if contract.side_effect() == SideEffectClass::IdempotentWrite
-            && (contract.idempotency() == IdempotencyBehavior::Unsupported
-                || request.idempotency_key().is_none())
-        {
-            return Err(ExecutorError::InvalidDispatch(
-                "an idempotent write requires advertised idempotency and a stable key".to_owned(),
-            ));
-        }
+        snapshot
+            .validate_request(&request)
+            .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))?;
         Ok(Self {
             run,
             revision,

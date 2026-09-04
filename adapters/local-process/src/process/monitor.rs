@@ -120,20 +120,26 @@ pub(super) fn monitor_process(
         if control.cancel_requested.load(Ordering::SeqCst) && termination.is_none() {
             termination = Some(Termination::Cancelled);
         }
-        if now >= wall_deadline && termination.is_none() && status.is_none() {
+        let owned_descendants_absent = status.is_some() && control.owned_descendants_absent();
+        if status.is_some() && !owned_descendants_absent && termination.is_none() {
+            termination = Some(Termination::UnexpectedDescendants);
+        }
+        if now >= wall_deadline && termination.is_none() {
             termination = Some(Termination::TimedOut);
         }
-        if termination.is_some() && status.is_none() && graceful_at.is_none() {
+        if termination.is_some() && !owned_descendants_absent && graceful_at.is_none() {
             control
                 .request_graceful()
                 .map_err(AdapterError::external_failure)?;
             #[cfg(not(unix))]
-            child
-                .kill()
-                .map_err(|error| AdapterError::external_failure(error.to_string()))?;
+            if status.is_none() {
+                child
+                    .kill()
+                    .map_err(|error| AdapterError::external_failure(error.to_string()))?;
+            }
             graceful_at = Some(now);
         }
-        if status.is_none()
+        if !owned_descendants_absent
             && graceful_at.is_some_and(|at| {
                 now.duration_since(at)
                     >= Duration::from_millis(profile.limits.graceful_termination_ms)
@@ -143,12 +149,14 @@ pub(super) fn monitor_process(
             control
                 .request_force()
                 .map_err(AdapterError::external_failure)?;
-            child
-                .kill()
-                .map_err(|error| AdapterError::external_failure(error.to_string()))?;
+            if status.is_none() {
+                child
+                    .kill()
+                    .map_err(|error| AdapterError::external_failure(error.to_string()))?;
+            }
             forced_at = Some(now);
         }
-        if status.is_none()
+        if !owned_descendants_absent
             && forced_at.is_some_and(|at| {
                 now.duration_since(at)
                     >= Duration::from_millis(profile.limits.forced_termination_ms)
@@ -157,11 +165,11 @@ pub(super) fn monitor_process(
             termination = Some(Termination::Unresolved);
             break;
         }
-        if now >= next_heartbeat && status.is_none() {
+        if now >= next_heartbeat {
             reports.heartbeat()?;
             next_heartbeat = now + Duration::from_millis(profile.limits.heartbeat_interval_ms);
         }
-        if status.is_some() && stdout_closed && stderr_closed {
+        if status.is_some() && owned_descendants_absent && stdout_closed && stderr_closed {
             break;
         }
     }
@@ -169,20 +177,6 @@ pub(super) fn monitor_process(
         status = child.try_wait().map_err(|error| {
             AdapterError::external_failure(format!("final process wait failed: {:?}", error.kind()))
         })?;
-    }
-    if termination.is_none() && status.is_some() && !control.owned_descendants_absent() {
-        termination = Some(Termination::UnexpectedDescendants);
-        control
-            .request_graceful()
-            .map_err(AdapterError::external_failure)?;
-        if !wait_for_owned_descendants_absence(
-            control,
-            Duration::from_millis(profile.limits.graceful_termination_ms),
-        ) {
-            control
-                .request_force()
-                .map_err(AdapterError::external_failure)?;
-        }
     }
     let owned_descendants_absent = if termination.is_some() {
         wait_for_owned_descendants_absence(

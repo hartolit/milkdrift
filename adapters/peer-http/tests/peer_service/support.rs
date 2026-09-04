@@ -168,6 +168,10 @@ impl FailOnce {
             remaining: AtomicUsize::new(1),
         }
     }
+
+    pub(super) fn triggered(&self) -> bool {
+        self.remaining.load(Ordering::SeqCst) == 0
+    }
 }
 
 impl FaultInjector for FailOnce {

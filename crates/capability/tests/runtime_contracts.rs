@@ -100,6 +100,24 @@ fn invocation_request() -> Result<InvocationRequest, ContractError> {
     )
 }
 
+fn selection_request(
+    identity: &str,
+    capability: &str,
+    operation: &str,
+    provider_profile: Option<&str>,
+    idempotency_key: Option<&str>,
+) -> Result<InvocationRequest, ContractError> {
+    InvocationRequest::new(
+        InvocationId::new(identity)?,
+        CapabilityId::new(capability)?,
+        OperationId::new(operation)?,
+        provider_profile.map(ProviderProfileRef::new).transpose()?,
+        idempotency_key.map(IdempotencyKey::new).transpose()?,
+        Vec::new(),
+        BTreeMap::new(),
+    )
+}
+
 fn terminal() -> Result<InvocationTerminal, ContractError> {
     InvocationTerminal::new(
         TerminalStatus::Uncertain,
@@ -231,6 +249,39 @@ fn resolved_snapshot_is_exact_digest_bound_and_golden() -> Result<(), Box<dyn st
     );
     assert_eq!(snapshot.digest().len(), 64);
     assert_eq!(snapshot.descriptor_extensions(), descriptor.extensions());
+    snapshot.validate_request(&invocation_request()?)?;
+    for mismatched in [
+        selection_request(
+            "invocation-wrong-capability",
+            "publisher-secondary",
+            "tool.publish",
+            Some("publisher-prod"),
+            Some("stable-key"),
+        )?,
+        selection_request(
+            "invocation-wrong-operation",
+            "publisher-primary",
+            "tool.inspect",
+            Some("publisher-prod"),
+            Some("stable-key"),
+        )?,
+        selection_request(
+            "invocation-wrong-profile",
+            "publisher-primary",
+            "tool.publish",
+            Some("publisher-staging"),
+            Some("stable-key"),
+        )?,
+        selection_request(
+            "invocation-missing-idempotency",
+            "publisher-primary",
+            "tool.publish",
+            Some("publisher-prod"),
+            None,
+        )?,
+    ] {
+        assert!(snapshot.validate_request(&mismatched).is_err());
+    }
 
     let document = ResolvedCapabilitySnapshotDocument::new(snapshot.clone());
     assert_golden(

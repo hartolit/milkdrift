@@ -1171,6 +1171,39 @@ fn cancellation_terminates_child_and_grandchild_in_owned_group() -> TestResult {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn child_exit_tears_down_a_descendant_that_keeps_inherited_pipes_open() -> TestResult {
+    let data = Arc::new(TestDataAccess::new()?);
+    let pid_owner = tempfile::NamedTempFile::new()?;
+    let pid_path = pid_owner.path().to_string_lossy().to_string();
+    let profile = parse_profile(&profile_value(
+        &data.root,
+        vec![
+            json!("exit-with-pipe-holder"),
+            json!(pid_path),
+            json!("2000"),
+        ],
+    )?)?;
+    let request = request(&profile, "invocation-pipe-holder", Vec::new())?;
+    let (host, snapshot) = setup(profile, data, Arc::new(InMemorySecretResolver::new()))?;
+    let reporter = TestReporter::default();
+    host.execute_exact_with_context(&snapshot, &request, &context()?, &reporter)?;
+    let events = reporter.events()?;
+    assert_eq!(terminal_status(&events), Some(TerminalStatus::Failure));
+    assert_eq!(
+        terminal_failure_code(&events),
+        Some("process_descendant_contract_violated")
+    );
+    let pid: i32 = fs::read_to_string(pid_owner.path())?.trim().parse()?;
+    let pid = rustix::process::Pid::from_raw(pid).ok_or("invalid fixture pid")?;
+    assert_eq!(
+        rustix::process::test_kill_process(pid).err(),
+        Some(rustix::io::Errno::SRCH)
+    );
+    Ok(())
+}
+
 #[test]
 fn configuration_rejects_unknown_placeholders_traversal_and_missing_secrets() -> TestResult {
     let data = Arc::new(TestDataAccess::new()?);

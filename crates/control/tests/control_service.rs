@@ -24,8 +24,8 @@ use milkdrift_capability::{
     AdmissionBound, AdmissionConstraints, AdmissionMonetaryBound, ArtifactReference, BoundedJson,
     CancellationAcknowledgement, CancellationRequest, CapabilityCategory, CapabilityDescriptor,
     CapabilityDescriptorDocument, CapabilityId, CapabilityObservation, CapabilityRequirement,
-    DescriptorBuilder, ErrorClass, InputReference, InvocationAdmissionEnvelope, InvocationEvent,
-    InvocationEventKind, InvocationId, InvocationRequest, InvocationTerminal,
+    DescriptorBuilder, ErrorClass, IdempotencyKey, InputReference, InvocationAdmissionEnvelope,
+    InvocationEvent, InvocationEventKind, InvocationId, InvocationRequest, InvocationTerminal,
     InvocationValueReference, OperationId, ProviderProfileRef, ResolvedCapabilitySnapshot,
     SchemaId, SideEffectClass, TerminalStatus,
 };
@@ -360,7 +360,7 @@ fn workflow_control_conformance_case(
         descriptor.identity().clone(),
         operation,
         descriptor.provider_profile().cloned(),
-        None,
+        Some(IdempotencyKey::new("control-adapter-conformance")?),
         vec![InputReference::new(
             "milkdrift.control_request",
             InvocationValueReference::Inline {

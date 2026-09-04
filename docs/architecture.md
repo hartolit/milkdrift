@@ -70,7 +70,10 @@ registration, exact-generation permit, drain, and panic-containment path. Every 
 declares immutable authority requirements and explicit start, drain, and shutdown behavior; there
 are no inherited lifecycle no-ops. Start completes before publication, health retains the
 caller-supplied observation boundary, cancellation acknowledgements retain exact invocation and
-request-sequence correlation, and no host registry lock is held across adapter code. The runtime's
+request-sequence correlation, and no host registry lock is held across adapter code. One
+capability-owned validator binds invocation capability, operation, provider profile, and
+idempotency facts to the resolved snapshot at both runtime dispatch construction and host permit
+acquisition. The runtime's
 durable reporter remains the sole owner of accepted observation sequence, terminal uniqueness,
 heartbeat lease extension, missing-terminal uncertainty, and workflow transitions. Explicit
 capability-host test support provides one factory-driven conformance suite; local process, model
@@ -84,6 +87,10 @@ mechanism tests.
 The serving daemon derives an expiring authority-filtered catalog from its live capability host. The consuming daemon remaps each exact remote identity/generation into a collision-resistant local identity with `Locality::Peer`, a typed peer identity, trust zone, and exact peer/catalog provenance, then registers it through `milkdrift-capability-host`. The catalog is live observation only. A run still records one exact local `ResolvedCapabilitySnapshot`; neither peer reads the other's database or shares mutable workflow state.
 
 Remote acceptance is durably recorded before it is reported. Reusing an idempotency key with identical canonical facts returns the same remote execution from either the hot record or compact tombstone; different facts conflict permanently within the store generation. Active and reconnect-horizon records retain contiguous observation rows and a rolling digest. Eligible terminal/uncertain rows move oldest-first in one transaction to a compact tombstone that preserves identity, acceptance/provenance/authority/cancellation/accounting, observation count/digest, and the final terminal or uncertainty disposition while deleting detailed observation rows and peer observation-artifact links. Core artifacts remain under independent artifact retention. Connection closure proves neither cancellation nor terminal outcome. After accepted adapter-entry intent, missing restart evidence becomes explicit uncertainty instead of replacement execution. External side effects are never advertised as globally exactly once.
+
+Pre-entry cancellation workers retain acknowledgement completion as an explicit recovery
+transition, so a terminal observation committed immediately before a storage or clock failure is
+replayed into the same durable acknowledgement rather than reclassified as a late cancellation.
 
 Connectivity is operator supplied through a reachable HTTPS path or an explicitly enabled loopback development route. Milkdrift does not discover peers, traverse NAT, create certificates, run a hosted coordinator, provide an overlay/VPN, synchronize models/tensors, share databases, or implement consensus.
 
@@ -265,6 +272,10 @@ Credentials and secret values never appear in blueprints, descriptors, requireme
 Every capability descriptor has an exact execution trust class. The current local-process adapter is `TrustedHostProcess`: the child runs with daemon-account host privileges, and mediation of argv, environment, materialization, import paths, and output bounds is not an isolation boundary around arbitrary executable behavior. `SandboxedProcess` is reserved for a separate adapter that actually enforces a complete container, namespace, VM, or equivalent boundary. Exact requirements and authority scopes may constrain the class, so sandbox-required work cannot resolve to the host-process adapter.
 
 Local-process profile schema v2 binds one immutable generation to the operator-declared BLAKE3 executable digest and size, optional package/deployment revision, safe configured/canonical path digests, regular-file/platform observations, full profile digest, execution-policy digest, trust class, and process-ownership facts. Registration uses bounded streaming verification before constructing the descriptor. Health and the immediately-pre-spawn boundary re-resolve the path and reverify the same bytes, root, metadata, and identity; a mismatch makes that adapter generation sticky-unavailable and requires explicit registration of a new revision. The frozen resolution snapshot retains bounded descriptor-extension provenance, which the authorized attempt inspector exposes without host paths. Portable safe Rust still leaves a minimized race between final verification and OS entry; no atomic open-handle execution guarantee is claimed.
+
+On Unix, observing immediate-child exit while its owned process group remains live initiates the
+same bounded graceful/forced group teardown as cancellation; inherited output pipes do not postpone
+that descendant-ownership decision.
 
 ## 15. Disk/wire schemas and compatibility
 

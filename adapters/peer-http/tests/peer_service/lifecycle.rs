@@ -470,6 +470,96 @@ fn cancellation_before_entry_prevents_adapter_invocation_and_survives_claim_reco
 }
 
 #[test]
+fn cancellation_terminal_commit_fault_recovers_and_replays_the_exact_acknowledgement() -> TestResult
+{
+    let root = tempfile::tempdir()?;
+    let fault = Arc::new(FailOnce::new(FaultPoint::AfterPeerObservationCommit));
+    let store = Arc::new(RedbStore::open_with_config(
+        RedbStoreConfig::new(root.path()).with_fault_injector(fault.clone()),
+    )?);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (host, descriptor) = host_with_adapter(Arc::new(TerminalAdapter {
+        capability: CapabilityId::new("test-capability")?,
+        delay: Duration::ZERO,
+        active: Arc::new(AtomicUsize::new(0)),
+        maximum: Arc::new(AtomicUsize::new(0)),
+        calls: calls.clone(),
+        requirements: CapabilityExecutionRequirements::default(),
+    }))?;
+    let peer = PeerId::new("peer-cancellation-commit-fault")?;
+    let target = PeerId::new("peer-cancellation-commit-target")?;
+    let service = PeerService::new(
+        server_config(peer.clone(), target.clone(), 1, 1)?,
+        host,
+        store.clone(),
+        system_peer_clock(),
+    )?;
+    let catalog_expiry = now().saturating_add(60_000);
+    let catalog = milkdrift_peer_protocol::CatalogSnapshot::new(1, 1, catalog_expiry, Vec::new())?;
+    store.set_peer_admission_open(true)?;
+    store.publish_peer_catalog(&PeerCatalogState {
+        peer: peer.clone(),
+        relationship_generation: 1,
+        generation: catalog.generation,
+        digest: catalog.digest.as_str().to_owned(),
+        expires_at_unix_ms: catalog_expiry,
+    })?;
+    let invocation = request(
+        &peer,
+        &target,
+        &descriptor,
+        catalog.generation,
+        catalog.digest,
+        "request-cancellation-commit-fault",
+        "invocation-cancellation-commit-fault",
+    )?;
+    let execution = PeerExecutionId::new("execution-cancellation-commit-fault")?;
+    admit(&store, &peer, &invocation, &execution, 1)?;
+    let cancellation = PeerCancellationRequest {
+        request_id: PeerRequestId::new("cancel-cancellation-commit-fault")?,
+        execution: execution.clone(),
+        sequence: 1,
+        reason: "operator cancellation".to_owned(),
+    };
+    store.request_peer_cancellation(&peer, &cancellation, now())?;
+
+    service.recover(1_024)?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let acknowledgement = loop {
+        let snapshot = store
+            .peer_execution(&peer, &execution)?
+            .ok_or("cancelled execution disappeared")?;
+        let PeerExecutionSnapshot::Hot(record) = snapshot else {
+            return Err("cancelled execution archived before acknowledgement recovery".into());
+        };
+        if let Some(acknowledgement) = record.cancellation.and_then(|value| value.acknowledgement) {
+            break acknowledgement;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("cancellation acknowledgement recovery timed out".into());
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(
+        acknowledgement.disposition,
+        CancellationDisposition::Accepted
+    );
+    assert!(acknowledgement.terminal_boundary);
+    assert!(
+        acknowledgement
+            .terminal_evidence
+            .as_ref()
+            .and_then(|observation| observation.event.kind().terminal())
+            .is_some_and(|terminal| terminal.status() == TerminalStatus::Cancelled)
+    );
+    assert_eq!(service.cancel(&peer, &cancellation)?, acknowledgement);
+    assert!(fault.triggered());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(service.shutdown_workers(Duration::from_secs(2)).clean);
+    Ok(())
+}
+
+#[test]
 fn recovery_reports_a_remaining_claim_frontier_after_a_bounded_page() -> TestResult {
     let root = tempfile::tempdir()?;
     let store = RedbStore::open(root.path())?;

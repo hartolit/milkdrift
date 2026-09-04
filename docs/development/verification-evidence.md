@@ -68,7 +68,9 @@ The feature-gated adapter-conformance lane runs one common factory-driven contra
 local-process, model-endpoint, remote-peer, and workflow-control production implementations. Host
 adversarial tests separately inject lifecycle, admission, execution, cancellation, and shutdown
 failures while checking permit cleanup, exact correlation, drain behavior, and lock-free adapter
-callbacks.
+callbacks. Focused regressions also refuse mismatched snapshot/request selections before adapter
+entry, recover a pre-entry cancellation acknowledgement across an after-observation-commit fault,
+and terminate an exited child's still-live Unix descendant that retains inherited output pipes.
 
 ## Local commands
 

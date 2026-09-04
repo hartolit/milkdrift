@@ -124,6 +124,25 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
             thread::sleep(Duration::from_millis(millis));
             Ok(0)
         }
+        "exit-with-pipe-holder" => {
+            let pid_file = arguments.next().ok_or("missing pid file")?;
+            let millis = arguments.next().ok_or("missing pipe-holder duration")?;
+            let executable = env::current_exe()?;
+            let child = Command::new(executable)
+                .arg("pipe-holder")
+                .arg(&millis)
+                .spawn()?;
+            append_pid_value(&pid_file, child.id())?;
+            Ok(0)
+        }
+        "pipe-holder" => {
+            let millis: u64 = arguments
+                .next()
+                .ok_or("missing pipe-holder duration")?
+                .parse()?;
+            thread::sleep(Duration::from_millis(millis));
+            Ok(0)
+        }
         _ => Err("unknown fixture command".into()),
     }
 }
@@ -140,7 +159,11 @@ fn write_repeated(mut writer: impl Write, byte: u8, bytes: usize) -> Result<(), 
 }
 
 fn append_pid(path: &str) -> Result<(), std::io::Error> {
+    append_pid_value(path, std::process::id())
+}
+
+fn append_pid_value(path: &str, pid: u32) -> Result<(), std::io::Error> {
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    writeln!(file, "{}", std::process::id())?;
+    writeln!(file, "{pid}")?;
     file.flush()
 }

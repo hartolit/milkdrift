@@ -615,6 +615,16 @@ impl PeerService {
             resources,
             AuthorityBudget::default(),
         )?;
+        let existing_cancellation = match &before {
+            PeerExecutionSnapshot::Hot(record) => record.cancellation.as_ref(),
+            PeerExecutionSnapshot::Archived(tombstone) => tombstone.cancellation.as_ref(),
+        };
+        if let Some(existing) = existing_cancellation
+            && existing.request == *request
+            && let Some(acknowledgement) = &existing.acknowledgement
+        {
+            return Ok(acknowledgement.clone());
+        }
         if let PeerExecutionSnapshot::Archived(tombstone) = &before {
             let acknowledgement = match &tombstone.disposition {
                 PeerArchivedDisposition::Terminal { observation } => {

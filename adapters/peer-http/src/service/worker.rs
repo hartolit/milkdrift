@@ -67,6 +67,7 @@ impl PeerUncertainty {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PeerRecoveryTransition {
     InspectClaim { post_entry: PeerUncertainty },
+    CompletePreEntryCancellation,
     ReleasePreEntryClaim,
     MarkPostEntryUncertain(PeerUncertainty),
 }
@@ -153,30 +154,10 @@ impl PeerService {
             &record.phase,
             PeerExecutionPhase::CancellationRequested { evidence: None, .. }
         ) {
-            let terminal = self.append_cancelled_before_entry(record)?;
-            if record
-                .cancellation
-                .as_ref()
-                .is_some_and(|value| value.acknowledgement.is_none())
-            {
-                let cancellation = record.cancellation.as_ref().ok_or_else(|| {
-                    PeerHttpError::Persistence("cancellation facts disappeared".to_owned())
+            self.complete_pre_entry_cancellation(record)
+                .map_err(|_error| {
+                    ClaimedRunFailure::Exact(PeerRecoveryTransition::CompletePreEntryCancellation)
                 })?;
-                self.executions
-                    .acknowledge_peer_cancellation(
-                        &record.owner_peer,
-                        &PeerCancellationAcknowledgement {
-                            request_id: cancellation.request.request_id.clone(),
-                            execution: record.execution.clone(),
-                            disposition: CancellationDisposition::Accepted,
-                            terminal_boundary: true,
-                            terminal_evidence: Some(terminal),
-                            detail: Some("durable cancellation prevented adapter entry".to_owned()),
-                        },
-                        self.now()?,
-                    )
-                    .map_err(map_execution_persistence)?;
-            }
             return Ok(());
         }
         if self.now()? > record.request.deadline_unix_ms {
@@ -338,6 +319,12 @@ impl PeerService {
         let PeerExecutionSnapshot::Hot(current) = current else {
             return Ok(());
         };
+        if matches!(
+            recovery.transition,
+            PeerRecoveryTransition::CompletePreEntryCancellation
+        ) {
+            return self.complete_pre_entry_cancellation(&current);
+        }
         let Some(claim) = current.phase.claim() else {
             return Ok(());
         };
@@ -353,6 +340,9 @@ impl PeerService {
         }
         match &recovery.transition {
             PeerRecoveryTransition::InspectClaim { .. } => unreachable!("recovery is resolved"),
+            PeerRecoveryTransition::CompletePreEntryCancellation => {
+                unreachable!("pre-entry cancellation recovery returned above")
+            }
             PeerRecoveryTransition::ReleasePreEntryClaim => {
                 if current.phase.entry_evidence().is_some() {
                     return Err(PeerHttpError::Persistence(
@@ -388,6 +378,44 @@ impl PeerService {
                     .map_err(map_execution_persistence)?;
             }
         }
+        Ok(())
+    }
+
+    fn complete_pre_entry_cancellation(
+        &self,
+        record: &PeerExecutionRecord,
+    ) -> Result<(), PeerHttpError> {
+        let terminal = self.append_cancelled_before_entry(record)?;
+        let cancellation = record.cancellation.as_ref().ok_or_else(|| {
+            PeerHttpError::Persistence("cancellation facts disappeared".to_owned())
+        })?;
+        if cancellation.acknowledgement.is_some() {
+            return Ok(());
+        }
+        let terminal_fact = terminal.event.kind().terminal().ok_or_else(|| {
+            PeerHttpError::Persistence("pre-entry cancellation evidence is not terminal".to_owned())
+        })?;
+        if terminal_fact.status() != TerminalStatus::Cancelled
+            || terminal_fact.side_effect() != milkdrift_capability::SideEffectClass::None
+        {
+            return Err(PeerHttpError::Persistence(
+                "pre-entry cancellation evidence has incompatible terminal semantics".to_owned(),
+            ));
+        }
+        self.executions
+            .acknowledge_peer_cancellation(
+                &record.owner_peer,
+                &PeerCancellationAcknowledgement {
+                    request_id: cancellation.request.request_id.clone(),
+                    execution: record.execution.clone(),
+                    disposition: CancellationDisposition::Accepted,
+                    terminal_boundary: true,
+                    terminal_evidence: Some(terminal),
+                    detail: Some("durable cancellation prevented adapter entry".to_owned()),
+                },
+                self.now()?,
+            )
+            .map_err(map_execution_persistence)?;
         Ok(())
     }
 

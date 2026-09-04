@@ -1300,6 +1300,71 @@ fn descriptor_generations_are_immutable_drained_and_never_fallback() -> TestResu
 }
 
 #[test]
+fn exact_execution_refuses_every_mismatched_request_selection_before_adapter_entry() -> TestResult {
+    let host = host(BTreeMap::new(), 1)?;
+    let descriptor = descriptor("cap-exact-request", 1, "profile-exact-request", 1)?;
+    let adapter = Arc::new(FakeAdapter::new(descriptor.identity().clone()));
+    host.register(
+        descriptor.clone(),
+        adapter.clone(),
+        Some(observation(&descriptor, 100, true)?),
+    )?;
+    let snapshot = host
+        .resolve_at(
+            &CapabilityRequirement::new(OperationId::new("model.generate")?)
+                .exact(descriptor.identity().clone()),
+            150,
+        )?
+        .snapshot()
+        .clone();
+    let requests = [
+        InvocationRequest::new(
+            InvocationId::new("invocation-wrong-capability")?,
+            CapabilityId::new("cap-other")?,
+            snapshot.operation().clone(),
+            snapshot.provider_profile().cloned(),
+            None,
+            Vec::new(),
+            BTreeMap::new(),
+        )?,
+        InvocationRequest::new(
+            InvocationId::new("invocation-wrong-operation")?,
+            snapshot.capability().clone(),
+            OperationId::new("model.embed")?,
+            snapshot.provider_profile().cloned(),
+            None,
+            Vec::new(),
+            BTreeMap::new(),
+        )?,
+        InvocationRequest::new(
+            InvocationId::new("invocation-wrong-profile")?,
+            snapshot.capability().clone(),
+            snapshot.operation().clone(),
+            Some(ProviderProfileRef::new("profile-other")?),
+            None,
+            Vec::new(),
+            BTreeMap::new(),
+        )?,
+    ];
+    for request in requests {
+        assert!(matches!(
+            host.execute_exact(&snapshot, &request, &CountingReporter::default()),
+            Err(ExecutorError::InvalidDispatch(_))
+        ));
+    }
+    assert_eq!(adapter.execute_count.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        host.generations(
+            &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
+            150,
+        )?[0]
+            .active_permits,
+        0
+    );
+    Ok(())
+}
+
+#[test]
 fn permits_cancel_exact_owner_and_release_after_panic_and_completion() -> TestResult {
     let host = host(BTreeMap::new(), 2)?;
     let descriptor = descriptor("cap-admission", 1, "profile-admission", 1)?;

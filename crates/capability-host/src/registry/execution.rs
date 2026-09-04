@@ -114,6 +114,9 @@ impl CapabilityHost {
         snapshot: &ResolvedCapabilitySnapshot,
         request: &InvocationRequest,
     ) -> Result<(Arc<dyn CapabilityAdapter>, Permit), ExecutorError> {
+        snapshot
+            .validate_request(request)
+            .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))?;
         let key = GenerationKey {
             capability: snapshot.capability().clone(),
             revision: snapshot.descriptor_revision(),
