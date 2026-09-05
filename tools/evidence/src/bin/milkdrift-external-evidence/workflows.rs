@@ -69,20 +69,21 @@ pub fn initialize_repository(repository: &Path) -> Result<(String, String), Stri
 }
 
 pub fn git(repository: &Path, arguments: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(arguments)
-        .current_dir(repository)
-        .output()
-        .map_err(|error| error.to_string())?;
+    let output = milkdrift_evidence::application::run_command(
+        Command::new("git").args(arguments).current_dir(repository),
+        None,
+        std::time::Duration::from_secs(10),
+    )
+    .map_err(|error| error.to_string())?;
     if !output.status.success() {
         return Err(format!(
             "git {} exited {}: {}",
             arguments.join(" "),
             output.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&output.stderr).trim()
+            output.stderr.trim()
         ));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    Ok(output.stdout.trim().to_owned())
 }
 
 pub fn process_sequence(

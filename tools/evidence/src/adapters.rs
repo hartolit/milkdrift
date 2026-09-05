@@ -7,13 +7,14 @@ use std::{
 
 use milkdrift_blueprint::NodeId;
 use milkdrift_capability::{
-    ArtifactReference, CapabilityObservation, InvocationEvent, InvocationId, InvocationRequest,
+    ArtifactReference, CapabilityObservation, InvocationId, InvocationRequest,
     ResolvedCapabilitySnapshot, TerminalStatus,
 };
+use milkdrift_capability_host::conformance::RecordingReporter;
 use milkdrift_capability_host::{
-    AdapterError, AdapterExecutionContext, AdapterReporter, CapabilityHost,
-    CapabilitySelectionPolicy, HostConfig, InMemorySecretResolver, InputMaterialization,
-    InvocationDataAccess, InvocationDataError, MaterializationLimits, MaterializedExecution,
+    AdapterExecutionContext, CapabilityHost, CapabilitySelectionPolicy, HostConfig,
+    InMemorySecretResolver, InputMaterialization, InvocationDataAccess, InvocationDataError,
+    MaterializationLimits, MaterializedExecution,
 };
 use milkdrift_local_process::{LocalProcessAdapter, PlatformSupport, ProcessProfileDocument};
 use milkdrift_persistence::{AttemptId, NodeExecutionId};
@@ -49,7 +50,7 @@ pub fn local_process_stream_drain() -> EvidenceResult<ScenarioMeasurement> {
             )
         })?;
     let executable = executable.canonicalize()?;
-    let executable_bytes = fs::read(&executable)?;
+    let (content_digest, size_bytes) = crate::application::hash_file(&executable)?;
     let data = Arc::new(EvidenceDataAccess::new()?);
     let executable_root = executable
         .parent()
@@ -69,8 +70,8 @@ pub fn local_process_stream_drain() -> EvidenceResult<ScenarioMeasurement> {
             "trust_class": "trusted_host_process",
             "executable": executable,
             "implementation": {
-                "content_digest": format!("b3_{}", blake3::hash(&executable_bytes)),
-                "size_bytes": executable_bytes.len(),
+                "content_digest": content_digest,
+                "size_bytes": size_bytes,
                 "package_revision": "operational-evidence-helper-v1",
                 "documentation_reference": "urn:milkdrift:operational-evidence-helper-v1"
             },
@@ -165,7 +166,7 @@ pub fn local_process_stream_drain() -> EvidenceResult<ScenarioMeasurement> {
         Vec::new(),
         BTreeMap::new(),
     )?;
-    let reporter = EvidenceReporter::default();
+    let reporter = RecordingReporter::default();
     let context = AdapterExecutionContext::new(
         RunId::new("run-operational-evidence")?,
         serde_json::from_value(serde_json::json!(format!("rev_{}", "0".repeat(64))))?,
@@ -211,35 +212,6 @@ pub(crate) fn peer_storage_turnover(
     executions: u32,
 ) -> EvidenceResult<crate::peer::PeerTurnoverEvidence> {
     crate::peer::peer_storage_turnover(executions)
-}
-
-#[derive(Default)]
-struct EvidenceReporter {
-    events: Mutex<Vec<InvocationEvent>>,
-}
-
-impl EvidenceReporter {
-    fn events(&self) -> EvidenceResult<Vec<InvocationEvent>> {
-        Ok(self
-            .events
-            .lock()
-            .map_err(|_| std::io::Error::other("reporter lock poisoned"))?
-            .clone())
-    }
-}
-
-impl AdapterReporter for EvidenceReporter {
-    fn invocation(&self, event: InvocationEvent) -> Result<(), AdapterError> {
-        self.events
-            .lock()
-            .map_err(|_| AdapterError::external_failure("reporter lock poisoned"))?
-            .push(event);
-        Ok(())
-    }
-
-    fn heartbeat(&self) -> Result<(), AdapterError> {
-        Ok(())
-    }
 }
 
 struct EvidenceWorkspace {

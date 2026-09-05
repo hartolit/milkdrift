@@ -1,14 +1,11 @@
 use std::{
     collections::BTreeSet,
     fs,
-    io::{BufReader, Read as _},
     path::{Path, PathBuf},
     process::Command,
 };
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
-
+use milkdrift_evidence::application::hash_file;
 use milkdrift_local_process::{PlatformSupport, ProcessProfileDocument};
 use serde_json::{Value, json};
 
@@ -83,25 +80,8 @@ pub fn prepare_agent_profile(
     let canonical_executable = executable
         .canonicalize()
         .map_err(|error| format!("agent executable canonicalization: {error}"))?;
-    let executable_size = fs::metadata(&canonical_executable)
-        .map_err(|error| format!("agent executable metadata: {error}"))?
-        .len();
-    let mut executable = BufReader::new(
-        fs::File::open(&canonical_executable)
-            .map_err(|error| format!("agent executable read: {error}"))?,
-    );
-    let mut hasher = blake3::Hasher::new();
-    let mut buffer = [0_u8; 1_048_576];
-    loop {
-        let read = executable
-            .read(&mut buffer)
-            .map_err(|error| format!("agent executable read: {error}"))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    let observed_digest = format!("b3_{}", hasher.finalize());
+    let (observed_digest, executable_size) =
+        hash_file(&canonical_executable).map_err(|error| error.to_string())?;
     let declared = profile
         .get("implementation")
         .and_then(Value::as_object)
@@ -155,18 +135,21 @@ fn executable_version_output(
     } else {
         command.args(version_arguments);
     }
-    let output = command
-        .output()
-        .map_err(|error| format!("agent version command: {error}"))?;
+    let output = milkdrift_evidence::application::run_command(
+        &mut command,
+        None,
+        std::time::Duration::from_secs(10),
+    )
+    .map_err(|error| format!("agent version command: {error}"))?;
     if !output.status.success() {
         return Err(format!(
             "agent version command exited {}",
             output.status.code().unwrap_or(-1)
         ));
     }
-    let mut version_output = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let mut version_output = output.stdout.trim().to_owned();
     if version_output.is_empty() {
-        version_output = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        version_output = output.stderr.trim().to_owned();
     }
     let boundary = milkdrift_contracts::truncate_utf8(&version_output, 1_024).len();
     version_output.truncate(boundary);
@@ -273,12 +256,12 @@ pub fn generated_profiles(
 
 fn fixture_agent_value(repository: &Path, session_root: &Path) -> Result<Value, String> {
     let python = Path::new("/usr/bin/python3");
-    let bytes = fs::read(python).map_err(|error| error.to_string())?;
+    let identity = hash_file(python).map_err(|error| error.to_string())?;
     Ok(base_profile(
         repository,
         session_root,
         python,
-        &bytes,
+        identity,
         "fixture-coding-agent",
         "fixture-coding-agent",
         vec!["-c".to_owned(), fixture_agent_code().to_owned()],
@@ -307,7 +290,7 @@ fn write_profile(
     side_effect: &str,
     fixture: bool,
 ) -> Result<PathBuf, String> {
-    let bytes = fs::read(executable).map_err(|error| error.to_string())?;
+    let identity = hash_file(executable).map_err(|error| error.to_string())?;
     let mut arguments = vec!["-c".to_owned(), code.to_owned()];
     arguments.extend(extra_args);
     arguments.push("{{execution_root}}".to_owned());
@@ -315,7 +298,7 @@ fn write_profile(
         repository,
         session_root,
         executable,
-        &bytes,
+        identity,
         profile_id,
         capability,
         arguments,
@@ -344,40 +327,30 @@ fn write_profile(
 }
 
 #[allow(clippy::too_many_arguments)] // This is the single schema-shaped fixture constructor for independently bounded fields.
-fn base_profile<I, O>(
+fn base_profile(
     repository: &Path,
     session_root: &Path,
     executable: &Path,
-    bytes: &[u8],
+    (content_digest, size_bytes): (String, u64),
     profile_id: &str,
     capability: &str,
     arguments: Vec<String>,
     substitutions: Value,
-    inputs: I,
+    inputs: Vec<(&str, &str)>,
     stdin: Value,
     stdout: Option<&str>,
     stderr: Option<&str>,
-    outputs: O,
+    outputs: Vec<(&str, &str, &str, bool)>,
     side_effect: &str,
     fixture: bool,
-) -> Value
-where
-    I: IntoIterator,
-    I::Item: AsInputTuple,
-    O: IntoIterator,
-    O::Item: AsOutputTuple,
-{
+) -> Value {
     let inputs = inputs
         .into_iter()
-        .map(|item| {
-            let (input, relative_path) = item.as_input_tuple();
-            json!({"input":input,"relative_path":relative_path})
-        })
+        .map(|(input, relative_path)| json!({"input":input,"relative_path":relative_path}))
         .collect::<Vec<_>>();
     let outputs = outputs
         .into_iter()
-        .map(|item| {
-            let (name, relative_path, media_type, required) = item.as_output_tuple();
+        .map(|(name, relative_path, media_type, required)| {
             json!({"name":name,"relative_path":relative_path,"media_type":media_type,"required":required})
         })
         .collect::<Vec<_>>();
@@ -396,8 +369,8 @@ where
             "trust_class": "trusted_host_process",
             "executable": executable,
             "implementation": {
-                "content_digest": format!("b3_{}", blake3::hash(bytes)),
-                "size_bytes": bytes.len(),
+                "content_digest": content_digest,
+                "size_bytes": size_bytes,
                 "package_revision": if fixture {"milkdrift-evidence-fixture-v1"} else {"milkdrift-evidence-helper-v1"},
                 "documentation_reference": "urn:milkdrift:external-evidence-helper:v1"
             },
@@ -428,26 +401,6 @@ where
             "extensions":{"org.milkdrift/evidence-fixture":{"deterministic":fixture}}
         }
     })
-}
-
-trait AsInputTuple {
-    fn as_input_tuple(&self) -> (&str, &str);
-}
-
-impl<A: AsRef<str>, B: AsRef<str>> AsInputTuple for (A, B) {
-    fn as_input_tuple(&self) -> (&str, &str) {
-        (self.0.as_ref(), self.1.as_ref())
-    }
-}
-
-trait AsOutputTuple {
-    fn as_output_tuple(&self) -> (&str, &str, &str, bool);
-}
-
-impl<A: AsRef<str>, B: AsRef<str>, C: AsRef<str>> AsOutputTuple for (A, B, C, bool) {
-    fn as_output_tuple(&self) -> (&str, &str, &str, bool) {
-        (self.0.as_ref(), self.1.as_ref(), self.2.as_ref(), self.3)
-    }
 }
 
 fn process_output_names(profile: &serde_json::Map<String, Value>) -> Result<Vec<String>, String> {
@@ -586,14 +539,6 @@ payload=json.loads((root/'inputs/payload.json').read_text())
 "#
 }
 
-pub fn secure_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    fs::write(path, bytes).map_err(|error| error.to_string())?;
-    #[cfg(unix)]
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-        .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
 fn find_executable(names: &[&str]) -> Result<PathBuf, String> {
     let paths = std::env::var_os("PATH").ok_or_else(|| "PATH is unavailable".to_owned())?;
     for directory in std::env::split_paths(&paths) {
@@ -621,6 +566,8 @@ fn find_executable(names: &[&str]) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
 
     #[test]
     fn committed_external_evidence_templates_are_schema_valid()

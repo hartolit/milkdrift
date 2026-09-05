@@ -18,12 +18,10 @@ milkdrift-capability.workspace = true
 milkdrift-capability-host.workspace = true
 milkdrift-contracts.workspace = true
 milkdrift-control.workspace = true
-milkdrift-control-client.workspace = true
 milkdrift-control-protocol.workspace = true
 milkdrift-local-process.workspace = true
 milkdrift-local-secret.workspace = true
 milkdrift-model-provider.workspace = true
-milkdrift-model.workspace = true
 milkdrift-peer-http.workspace = true
 milkdrift-peer-protocol.workspace = true
 milkdrift-persistence.workspace = true
@@ -44,6 +42,7 @@ tracing-subscriber.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+milkdrift-control-client.workspace = true
 reqwest.workspace = true
 tempfile.workspace = true
 url.workspace = true

@@ -1,7 +1,7 @@
 # External process and model interoperability evidence
 
 The operator-driven evidence harness runs a real coding-agent executable and a real supported model
-endpoint through the ordinary Milkdrift daemon. It creates a disposable Git repository, explicit
+endpoint through the actual `milkdrift-daemon` executable. It creates a disposable Git repository, explicit
 scoped grants, process/model profiles, prompt-sequence remediation, artifacts, causal context, and
 controlled restart boundaries. It does not benchmark model quality.
 
@@ -51,6 +51,8 @@ Use an empty external directory or a new directory beneath `target/`. Tracked so
 parent traversal are refused.
 
 ```sh
+cargo build -p milkdrift-daemon --bin milkdrift-daemon
+
 export MILKDRIFT_AGENT_TOKEN='replace-in-operator-environment'
 export MILKDRIFT_MODEL_TOKEN='replace-in-operator-environment'
 
@@ -63,6 +65,10 @@ cargo external-evidence \
   --secret-source secret:model-token=env:MILKDRIFT_MODEL_TOKEN \
   --output target/milkdrift-external-evidence
 ```
+
+The unpublished `milkdrift-evidence` package owns the executable and shared bounded child harness.
+The alias selects the built sibling daemon; `--daemon PATH` selects an explicit binary. Restarts
+terminate and reap that child, then reopen its durable state through a fresh daemon process.
 
 For a private credential file, use
 `--secret-source secret:model-token=file:/absolute/private/model.token`; Unix file sources must be

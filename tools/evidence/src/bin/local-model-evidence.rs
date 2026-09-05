@@ -6,7 +6,7 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Component, Path, PathBuf},
-    process::{Child, Command as ProcessCommand, Stdio},
+    process::{Command as ProcessCommand, Stdio},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -37,17 +37,12 @@ use milkdrift_model::{
 use milkdrift_model_provider::EndpointProfile;
 use serde_json::{Value, json};
 
-#[path = "headless_cli_evidence/harness.rs"]
-#[allow(dead_code)]
-// This binary reuses only the actual-process subset of the shared evidence harness.
-mod harness;
-
-use harness::{
-    CliRunner, EvidenceConfig, reserve_endpoint, start_daemon, stop_daemon, wait_for_readiness,
-    wait_for_run, write_config,
+use milkdrift_evidence::application::{
+    CliRunner, EvidenceConfig, ensure, hash_file, path_text, required_text, required_u64,
+    reserve_endpoint, start_daemon, wait_for_readiness, wait_for_run, write_config, write_private,
 };
 
-type EvidenceResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+use milkdrift_evidence::EvidenceResult;
 
 const ACTOR: &str = "human:local-model-evidence";
 const TOKEN: &str = "local-model-evidence-control-token";
@@ -280,6 +275,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
         &session,
         bind,
         &token_file,
+        ACTOR,
         EvidenceConfig {
             process_profiles: vec![selected_profile, omitted_profile],
             model_profiles: vec![
@@ -355,7 +351,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
         node(run, "model-release").is_some() && node(run, "model").is_none()
     })?;
     let waiting_sequence = required_u64(&waiting, &["value", "sequence"])?;
-    stop_daemon(&mut daemon)?;
+    daemon.terminate()?;
     daemon = start_daemon(&arguments.daemon, &config)?;
     wait_for_readiness(&runner, &mut daemon)?;
     let reopened_wait = runner.success(&["run", "show", SUCCESS_RUN])?;
@@ -432,7 +428,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
         None => false,
     };
 
-    stop_daemon(&mut daemon)?;
+    daemon.terminate()?;
     daemon = start_daemon(&arguments.daemon, &config)?;
     wait_for_readiness(&runner, &mut daemon)?;
     let reopened = runner.success(&["run", "show", SUCCESS_RUN])?;
@@ -462,7 +458,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
         failure_endpoint.requests.load(Ordering::SeqCst) == 1,
         "unsupported-idempotency model work was automatically retried",
     )?;
-    stop_daemon(&mut daemon)?;
+    daemon.terminate()?;
     daemon = start_daemon(&arguments.daemon, &config)?;
     wait_for_readiness(&runner, &mut daemon)?;
     let retained = runner.success(&["attempt", "inspect", FAILURE_RUN, &uncertainty.attempt_id])?;
@@ -470,7 +466,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
         retained["value"]["uncertain"] == true,
         "retained uncertainty disappeared after restart",
     )?;
-    stop_daemon(&mut daemon)?;
+    daemon.terminate()?;
 
     let report = json!({
         "schema_version": 1,
@@ -540,7 +536,7 @@ struct UncertaintyObservation {
 }
 
 struct TimelineFollower {
-    child: Child,
+    child: milkdrift_evidence::application::OwnedChild,
     lines: mpsc::Receiver<String>,
     reader: Option<thread::JoinHandle<std::io::Result<()>>>,
     observed: Vec<String>,
@@ -583,225 +579,6 @@ fn prepare_output(path: &Path) -> EvidenceResult<PathBuf> {
         "selected evidence output directory must be empty",
     )?;
     Ok(absolute)
-}
-
-fn parse_secret_source(value: &str) -> Result<(String, PathBuf), String> {
-    let (reference, path) = value
-        .split_once('=')
-        .ok_or_else(|| "secret source must be REFERENCE=FILE".to_owned())?;
-    if reference.is_empty() || path.is_empty() {
-        return Err("secret source must contain a nonempty reference and file".to_owned());
-    }
-    Ok((reference.to_owned(), PathBuf::from(path)))
-}
-
-fn write_text_evidence_profile(
-    directory: &Path,
-    executable: &Path,
-    profile_id: &str,
-    capability: &str,
-    fixture_argument: &str,
-) -> EvidenceResult<PathBuf> {
-    let (content_digest, executable_size) = hash_file(executable)?;
-    let executable_root = executable
-        .parent()
-        .ok_or("evidence executable has no parent")?;
-    let value = json!({
-        "schema_version": 2,
-        "profile": {
-            "profile_id": profile_id,
-            "revision": 1,
-            "capability": capability,
-            "descriptor_revision": 1,
-            "provider_profile": null,
-            "operation": "process.execute",
-            "side_effect": "read_only",
-            "idempotency": "unsupported",
-            "cancellation": "best_effort",
-            "trust_class": "trusted_host_process",
-            "executable": executable,
-            "implementation": {
-                "content_digest": content_digest,
-                "size_bytes": executable_size,
-                "package_revision": "local-model-evidence-v1",
-                "documentation_reference": "urn:milkdrift:local-model-evidence"
-            },
-            "arguments": [fixture_argument],
-            "substitutions": {},
-            "working_directory": {"type":"isolated_root"},
-            "filesystem_roots": [
-                {"path": executable_root, "access":"execute"},
-                {"path": directory, "access":"read_write"}
-            ],
-            "inputs": [],
-            "environment": {"allowed_non_secret":[],"secrets":{},"max_value_bytes":4096},
-            "stdin": {"type":"disabled"},
-            "stdout": {"max_capture_bytes":4096,"stream_progress":false,"max_progress_events":0,"overflow_action":"terminate","artifact_name":null},
-            "stderr": {"max_capture_bytes":4096,"stream_progress":false,"max_progress_events":0,"overflow_action":"terminate","artifact_name":null},
-            "outputs": [{"name":"evidence","relative_path":"evidence.txt","media_type":"text/plain","required":true}],
-            "limits": {
-                "max_argv_entries":8,"max_argv_bytes":4096,"max_children_observed":4,
-                "max_files":8,"max_file_bytes":1048576,"max_total_materialized_bytes":2097152,
-                "max_path_bytes":4096,"max_directory_depth":16,"artifact_chunk_bytes":65536,
-                "max_output_files":4,"max_total_output_bytes":2097152,"wall_timeout_ms":10000,
-                "graceful_termination_ms":100,"forced_termination_ms":100,"heartbeat_interval_ms":100
-            },
-            "restart":"retain_uncertain",
-            "platform": PlatformSupport::current(),
-            "max_concurrent":1,
-            "extensions":{"org.milkdrift/local-model-fixture":{"deterministic":true}}
-        }
-    });
-    let document = ProcessProfileDocument::from_json(&serde_json::to_vec(&value)?)?;
-    let path = directory.join(format!("{profile_id}.json"));
-    fs::write(&path, document.to_canonical_json()?)?;
-    Ok(path)
-}
-
-fn hash_file(path: &Path) -> EvidenceResult<(String, u64)> {
-    let mut file = fs::File::open(path)?;
-    let metadata = file.metadata()?;
-    ensure(
-        metadata.is_file(),
-        "evidence executable is not a regular file",
-    )?;
-    let mut hasher = blake3::Hasher::new();
-    let mut size = 0_u64;
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-        size = size.saturating_add(u64::try_from(read)?);
-    }
-    ensure(
-        size == metadata.len(),
-        "evidence executable changed while hashed",
-    )?;
-    Ok((format!("b3_{}", hasher.finalize()), size))
-}
-
-fn write_model_profile(
-    directory: &Path,
-    identity: &str,
-    endpoint: SocketAddr,
-    model: &str,
-) -> EvidenceResult<PathBuf> {
-    let value = json!({
-        "schema_version": 1,
-        "identity": identity,
-        "revision": 1,
-        "protocol": {"type":"open_ai_compatible","path":"v1/chat/completions"},
-        "base_url": format!("http://{endpoint}"),
-        "model": model,
-        "auth": {"type":"no_auth"},
-        "limits": {
-            "connect_timeout_ms": 2000,
-            "request_timeout_ms": 10000,
-            "idle_timeout_ms": 5000,
-            "max_headers": 64,
-            "max_header_bytes": 16384,
-            "max_request_bytes": 1048576,
-            "max_response_bytes": 1048576,
-            "max_stream_line_bytes": 65536,
-            "max_stream_event_bytes": 131072,
-            "max_fragment_bytes": 4096
-        },
-        "redirect": "deny",
-        "tls": "web_pki_roots",
-        "proxy": "disabled",
-        "features": ["streaming", "system_role"],
-        "max_concurrent": 1,
-        "local_development": true,
-        "allowed_hosts": ["127.0.0.1"],
-        "trust_zones": ["local-model-evidence"],
-        "provider_options": {}
-    });
-    let bytes = serde_json::to_vec(&value)?;
-    EndpointProfile::from_json(&bytes)?;
-    let path = directory.join(format!("{identity}.model-profile.json"));
-    fs::write(&path, bytes)?;
-    Ok(path)
-}
-
-fn inspect_profile(path: &Path) -> EvidenceResult<ModelFacts> {
-    let bytes = fs::read(path)?;
-    let profile = EndpointProfile::from_json(&bytes)?;
-    let value: Value = serde_json::from_slice(&bytes)?;
-    let base_url = required_text(&value, &["base_url"])?;
-    let url = url::Url::parse(&base_url)?;
-    let host = match url.host() {
-        Some(url::Host::Ipv6(address)) => format!("[{address}]"),
-        Some(url::Host::Ipv4(address)) => address.to_string(),
-        Some(url::Host::Domain(name)) => name.to_owned(),
-        None => return Err("model profile endpoint has no host".into()),
-    };
-    let port = url
-        .port()
-        .map(|value| format!(":{value}"))
-        .unwrap_or_default();
-    let features = value["features"]
-        .as_array()
-        .ok_or("model profile features are absent")?;
-    let secret_refs = value["auth"]
-        .get("secret")
-        .and_then(Value::as_str)
-        .map(|reference| BTreeSet::from([reference.to_owned()]))
-        .unwrap_or_default();
-    Ok(ModelFacts {
-        profile_id: profile.identity().as_str().to_owned(),
-        revision: value["revision"]
-            .as_u64()
-            .ok_or("model profile revision is absent")?,
-        protocol: required_text(&value, &["protocol", "type"])?,
-        model_alias: required_text(&value, &["model"])?,
-        endpoint_origin: format!("{}://{host}{port}", url.scheme()),
-        streaming: features
-            .iter()
-            .any(|feature| feature.as_str() == Some("streaming")),
-        secret_refs,
-    })
-}
-
-fn validate_real_profile(mode: Mode, path: &Path, facts: &ModelFacts) -> EvidenceResult {
-    ensure(
-        facts.protocol == "open_ai_compatible",
-        "local-model lane reuses only the OpenAI-compatible chat-completions mapping",
-    )?;
-    if mode == Mode::Deterministic {
-        return Ok(());
-    }
-    let value: Value = serde_json::from_slice(&fs::read(path)?)?;
-    let url = url::Url::parse(&required_text(&value, &["base_url"])?)?;
-    let loopback = url.host().is_some_and(|host| match host {
-        url::Host::Ipv4(address) => address.is_loopback(),
-        url::Host::Ipv6(address) => address.is_loopback(),
-        url::Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
-    });
-    ensure(
-        url.scheme() == "http"
-            && loopback
-            && value["local_development"] == true
-            && value["redirect"] == "deny"
-            && value["proxy"] == "disabled",
-        "real local-model profile must use explicit loopback HTTP development policy with redirects and ambient proxies disabled",
-    )
-}
-
-fn profile_destination(origin: &str) -> EvidenceResult<String> {
-    let url = url::Url::parse(origin)?;
-    let host = match url.host() {
-        Some(url::Host::Ipv6(address)) => format!("[{address}]"),
-        Some(url::Host::Ipv4(address)) => address.to_string(),
-        Some(url::Host::Domain(name)) => name.to_owned(),
-        None => return Err("model endpoint origin has no host".into()),
-    };
-    let port = url
-        .port_or_known_default()
-        .ok_or("model endpoint origin has no port")?;
-    Ok(format!("{host}:{port}"))
 }
 
 fn model_revision(
@@ -1217,48 +994,66 @@ fn run_uncertainty_scenario(
 }
 
 fn spawn_timeline_follow(runner: &CliRunner, run: &str) -> EvidenceResult<TimelineFollower> {
-    let mut child = ProcessCommand::new(&runner.executable)
-        .arg("--endpoint")
-        .arg(&runner.endpoint)
-        .arg("--token-file")
-        .arg(&runner.token_file)
-        .arg("--json")
-        .args(["run", "timeline", run, "--limit", "100", "--follow"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()?;
+    let mut child = milkdrift_evidence::application::OwnedChild::spawn(
+        ProcessCommand::new(&runner.executable)
+            .arg("--endpoint")
+            .arg(&runner.endpoint)
+            .arg("--token-file")
+            .arg(&runner.token_file)
+            .arg("--json")
+            .args(["run", "timeline", run, "--limit", "100", "--follow"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null()),
+    )?;
     let stdout = child
-        .stdout
-        .take()
+        .take_stdout()
         .ok_or("timeline stdout pipe is absent")?;
     let (send, lines) = mpsc::sync_channel(64);
     let reader = thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            if send.send(line?).is_err() {
+        let mut input = BufReader::new(stdout);
+        loop {
+            let mut line = String::new();
+            let read = input.by_ref().take(131_073).read_line(&mut line)?;
+            if read == 0 {
                 break;
+            }
+            if read > 131_072 {
+                return Err(std::io::Error::other("timeline line exceeds bound"));
+            }
+            match send.try_send(line) {
+                Ok(()) => {}
+                Err(mpsc::TrySendError::Disconnected(_)) => break,
+                Err(mpsc::TrySendError::Full(_)) => {
+                    return Err(std::io::Error::other("timeline observation queue overflow"));
+                }
             }
         }
         Ok(())
     });
-    let initial = lines.recv_timeout(Duration::from_secs(10))?;
+    let mut follower = TimelineFollower {
+        child,
+        lines,
+        reader: Some(reader),
+        observed: Vec::new(),
+    };
+    let initial = follower.lines.recv_timeout(Duration::from_secs(10))?;
     ensure(
         initial.contains("run.timeline"),
         "timeline follower did not establish its bounded initial page",
     )?;
-    Ok(TimelineFollower {
-        child,
-        lines,
-        reader: Some(reader),
-        observed: vec![initial],
-    })
+    follower.observed.push(initial);
+    Ok(follower)
+}
+
+impl Drop for TimelineFollower {
+    fn drop(&mut self) {
+        let _ = stop_follower(self);
+    }
 }
 
 fn stop_follower(follower: &mut TimelineFollower) -> EvidenceResult<String> {
-    if follower.child.try_wait()?.is_none() {
-        follower.child.kill()?;
-    }
-    let _ = follower.child.wait()?;
+    follower.child.terminate()?;
     if let Some(reader) = follower.reader.take() {
         reader.join().map_err(|_| "timeline reader panicked")??;
     }
@@ -1273,51 +1068,12 @@ fn node<'a>(run: &'a Value, identity: &str) -> Option<&'a Value> {
         .find(|node| node["node_id"] == identity)
 }
 
-fn read_request(stream: &mut TcpStream) -> std::io::Result<String> {
-    let mut bytes = Vec::new();
-    let mut buffer = [0_u8; 4096];
-    loop {
-        let read = stream.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        bytes.extend_from_slice(&buffer[..read]);
-        if let Some(header_end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-            let headers = std::str::from_utf8(&bytes[..header_end + 4])
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-            let content_length = headers
-                .lines()
-                .find_map(|line| {
-                    line.to_ascii_lowercase()
-                        .strip_prefix("content-length: ")
-                        .and_then(|value| value.parse::<usize>().ok())
-                })
-                .unwrap_or(0);
-            if bytes.len() >= header_end + 4 + content_length {
-                break;
-            }
-        }
-    }
-    String::from_utf8(bytes)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
-}
-
 fn write_response(stream: &mut TcpStream, media_type: &str, body: &str) -> std::io::Result<()> {
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: {media_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     stream.write_all(response.as_bytes())
-}
-
-fn write_private(path: &Path, bytes: &[u8]) -> EvidenceResult<PathBuf> {
-    fs::write(path, bytes)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(path.to_owned())
 }
 
 fn require_file(path: &Path, label: &str) -> EvidenceResult {
@@ -1327,36 +1083,12 @@ fn require_file(path: &Path, label: &str) -> EvidenceResult {
     )
 }
 
-fn required_text(value: &Value, path: &[&str]) -> EvidenceResult<String> {
-    let mut current = value;
-    for segment in path {
-        current = current.get(*segment).ok_or("JSON field is absent")?;
-    }
-    current
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| "JSON field is not text".into())
-}
+use milkdrift_evidence::http_fixture::read_request;
 
-fn required_u64(value: &Value, path: &[&str]) -> EvidenceResult<u64> {
-    let mut current = value;
-    for segment in path {
-        current = current.get(*segment).ok_or("JSON field is absent")?;
-    }
-    current
-        .as_u64()
-        .ok_or_else(|| "JSON field is not an unsigned integer".into())
-}
+#[path = "local-model-evidence/profiles.rs"]
+mod profiles;
 
-fn path_text(path: &Path) -> EvidenceResult<&str> {
-    path.to_str()
-        .ok_or_else(|| "fixture path is not UTF-8".into())
-}
-
-fn ensure(condition: bool, message: &str) -> EvidenceResult {
-    if condition {
-        Ok(())
-    } else {
-        Err(message.to_owned().into())
-    }
-}
+use profiles::{
+    inspect_profile, parse_secret_source, profile_destination, validate_real_profile,
+    write_model_profile, write_text_evidence_profile,
+};

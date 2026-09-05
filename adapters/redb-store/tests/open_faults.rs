@@ -1,46 +1,17 @@
 //! Process-style schema initialization and exact-current-format refusal tests.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::Arc;
 
 use milkdrift_persistence::{
     PersistenceError, StorageAdmin, StorageFailureClass, StorageSchemaCompatibility,
 };
-use milkdrift_redb_store::{
-    FaultInjector, FaultPoint, RedbStore, RedbStoreConfig, injected_failure,
-};
+use milkdrift_redb_store::{FaultPoint, RedbStore, RedbStoreConfig};
 use redb::{Database, MultimapTableDefinition, TableDefinition};
 use tempfile::TempDir;
 
 const DATABASE_FILENAME: &str = "milkdrift.redb";
 const METADATA: TableDefinition<'static, &'static str, u64> =
     TableDefinition::new("milkdrift.v1.metadata");
-
-struct FailOnce {
-    point: FaultPoint,
-    remaining: AtomicUsize,
-}
-
-impl FailOnce {
-    fn new(point: FaultPoint) -> Self {
-        Self {
-            point,
-            remaining: AtomicUsize::new(1),
-        }
-    }
-}
-
-impl FaultInjector for FailOnce {
-    fn check(&self, point: FaultPoint) -> Result<(), PersistenceError> {
-        if point == self.point && self.remaining.swap(0, Ordering::SeqCst) == 1 {
-            Err(injected_failure(point))
-        } else {
-            Ok(())
-        }
-    }
-}
 
 fn assert_corruption<T: std::fmt::Debug>(result: Result<T, PersistenceError>) {
     assert!(
@@ -140,3 +111,7 @@ fn older_and_future_internal_document_formats_are_refused_without_migration()
     }
     Ok(())
 }
+
+#[path = "support/fault.rs"]
+mod fault;
+use fault::FailOnce;

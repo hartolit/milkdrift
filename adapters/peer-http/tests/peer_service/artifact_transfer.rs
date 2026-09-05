@@ -216,3 +216,5 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
     assert!(!root.path().join("peer-executions-v1").exists());
     Ok(())
 }
+
+use super::faults::ControlledPeerClock;

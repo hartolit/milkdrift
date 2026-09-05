@@ -1,22 +1,20 @@
 use std::{
     collections::BTreeMap,
-    fs,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    path::Path,
     time::{Duration, Instant},
 };
 
+use crate::application::{
+    DaemonLaunch, OwnedChild, application_binary, reserve_endpoint, write_private,
+};
 use futures_util::StreamExt as _;
-use milkdrift_control_client::{BearerCredential, ClientConfig, ClientError, ControlClient};
+use milkdrift_control_client::{ClientError, ControlClient};
 use milkdrift_control_protocol::ErrorCode;
 use milkdrift_daemon::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, DaemonConfig, DaemonHost, DaemonPlan, PeerHostConfig, RuntimeHostConfig,
-    SecretSourceConfig, ShutdownConfig, serve,
+    AuthorityPresetConfig, DaemonConfig, PeerHostConfig, RuntimeHostConfig, SecretSourceConfig,
+    ShutdownConfig,
 };
 use serde::Serialize;
-use tokio::{sync::oneshot, task::JoinHandle};
-use url::Url;
 
 use crate::{EvidenceResult, LatencySummary, ScenarioMeasurement};
 
@@ -49,8 +47,7 @@ pub struct DaemonEvidence {
 
 struct RunningDaemon {
     client: ControlClient,
-    stop: oneshot::Sender<()>,
-    task: JoinHandle<Result<(), milkdrift_daemon::HostError>>,
+    process: OwnedChild,
 }
 
 /// Exercises one authenticated daemon owner request over loopback.
@@ -104,7 +101,7 @@ pub fn measure_daemon_saturation(operations: u32) -> EvidenceResult<DaemonEviden
         let resume_cursor = first_observation.map(|observation| observation.cursor);
         tokio::time::sleep(Duration::from_millis(750)).await;
 
-        let tasks_before = process_task_count()?;
+        let tasks_before = process_task_count(running.process.id())?;
         let mut joins = tokio::task::JoinSet::new();
         for _ in 0..operations {
             let client = running.client.clone();
@@ -139,7 +136,7 @@ pub fn measure_daemon_saturation(operations: u32) -> EvidenceResult<DaemonEviden
             tokio::time::timeout(Duration::from_secs(3), resumed.next()).await
         });
         let recovered = running.client.health().await?.ready;
-        let tasks_after = process_task_count()?;
+        let tasks_after = process_task_count(running.process.id())?;
         if let (Some(before), Some(after)) = (tasks_before, tasks_after)
             && after > before.saturating_add(8)
         {
@@ -147,17 +144,14 @@ pub fn measure_daemon_saturation(operations: u32) -> EvidenceResult<DaemonEviden
         }
         let latency = LatencySummary::from_durations(latencies)?;
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let RunningDaemon { stop, task, .. } = running;
-        let _ = stop.send(());
+        let RunningDaemon { mut process, .. } = running;
+        let graceful_shutdown = process.shutdown().is_ok();
         let stream_reconnected = reconnect_task
             .await
             .ok()
             .and_then(Result::ok)
             .flatten()
             .is_some();
-        let graceful_shutdown = tokio::time::timeout(Duration::from_secs(10), task)
-            .await
-            .is_ok_and(|joined| joined.is_ok_and(|result| result.is_ok()));
         if !graceful_shutdown || !recovered || !slow_consumer_observed || !stream_reconnected {
             return Err(std::io::Error::other(format!(
                 "daemon evidence failed: recovered={recovered}, slow_consumer={slow_consumer_observed}, reconnected={stream_reconnected}, shutdown={graceful_shutdown}"
@@ -186,39 +180,25 @@ fn runtime() -> EvidenceResult<tokio::runtime::Runtime> {
         .build()?)
 }
 
-async fn start(config: DaemonPlan) -> EvidenceResult<RunningDaemon> {
-    let host = DaemonHost::start(config)?;
-    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-    let address = listener.local_addr()?;
-    let endpoint = Url::parse(&format!("http://{address}/"))?;
-    let (stop, stopped) = oneshot::channel();
-    let task = tokio::spawn(serve(listener, host, async move {
-        let _ = stopped.await;
-    }));
-    let mut client_config = ClientConfig::new(endpoint);
-    client_config.safe_query_retries = 0;
-    client_config.retry_delay = Duration::from_millis(25);
-    client_config.request_timeout = Duration::from_secs(10);
-    let client = ControlClient::new(client_config, BearerCredential::new(TOKEN)?)?;
-    if !client.readiness().await?.ready {
-        return Err(std::io::Error::other("daemon did not become ready").into());
-    }
-    Ok(RunningDaemon { client, stop, task })
+async fn start(config: DaemonLaunch) -> EvidenceResult<RunningDaemon> {
+    let (process, client) = config.start(TOKEN).await?;
+    Ok(RunningDaemon { client, process })
 }
 
-async fn stop(running: RunningDaemon) -> EvidenceResult {
-    let _ = running.stop.send(());
-    tokio::time::timeout(Duration::from_secs(10), running.task).await???;
-    Ok(())
+async fn stop(mut running: RunningDaemon) -> EvidenceResult {
+    running.process.shutdown()
 }
 
-fn configuration(directory: &tempfile::TempDir, request_queue: u32) -> EvidenceResult<DaemonPlan> {
+fn configuration(
+    directory: &tempfile::TempDir,
+    request_queue: u32,
+) -> EvidenceResult<DaemonLaunch> {
     let token_path = directory.path().join("controller.token");
-    write_secret(&token_path, TOKEN)?;
+    write_private(&token_path, TOKEN.as_bytes())?;
     let config = DaemonConfig {
         schema_version: milkdrift_daemon::DAEMON_CONFIG_SCHEMA_VERSION,
         data_root: directory.path().join("data"),
-        bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        bind: reserve_endpoint()?,
         secret_sources: BTreeMap::from([(
             "credential:evidence".to_owned(),
             SecretSourceConfig::File { path: token_path },
@@ -247,28 +227,23 @@ fn configuration(directory: &tempfile::TempDir, request_queue: u32) -> EvidenceR
         },
         security_audit_record_bound: 256,
     };
-    Ok(config.validate(directory.path())?)
+    DaemonLaunch::write(
+        application_binary("milkdrift-daemon")?,
+        directory.path(),
+        &config,
+    )
 }
 
-fn write_secret(path: &Path, value: &str) -> EvidenceResult {
-    fs::write(path, value)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
-}
-
-fn process_task_count() -> EvidenceResult<Option<u64>> {
+fn process_task_count(process_id: u32) -> EvidenceResult<Option<u64>> {
     #[cfg(target_os = "linux")]
     {
         Ok(Some(u64::try_from(
-            fs::read_dir("/proc/self/task")?.count(),
+            std::fs::read_dir(format!("/proc/{process_id}/task"))?.count(),
         )?))
     }
     #[cfg(not(target_os = "linux"))]
     {
+        let _ = process_id;
         Ok(None)
     }
 }

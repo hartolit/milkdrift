@@ -7,8 +7,12 @@
 //! depends on this harness, and its reports live under `target/evidence`.
 
 mod adapters;
+/// Bounded actual-binary application qualification harness.
+pub mod application;
 mod context;
 mod daemon;
+/// Controlled loopback endpoint framing for development evidence.
+pub mod http_fixture;
 mod peer;
 mod persistence;
 mod report;

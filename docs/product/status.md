@@ -32,7 +32,8 @@ snapshot. Git, CI, releases, and external audits own chronology.
   every registered adapter even when one fails. Its non-default `test-support` surface provides one
   reusable factory-driven suite run by the local-process, model-endpoint, remote-peer, and
   workflow-control adapters, with declared differences for start replay, stateless health, and
-  unknown cancellation.
+  unknown cancellation. The same bounded arrival-order recorder supports adapter-specific and
+  operational assertions through that feature; ordinary tests expose no new default product API.
 - One exact immutable grant basis governs run entry, local commands, information-bearing reads,
   pages, streams, artifacts, layouts, capability/provider views, controller actions, and peer
   operations. Humans, services, AIs, and peers use the same authority evaluator and command path.
@@ -221,19 +222,17 @@ Current exact versions are:
   reject each missing or mistyped member of the 63-table schema, plus unexpected tables/multimaps.
 - The full workspace suite is not green on this host. Redb's existing non-Unix directory-open
   path fails with OS error 5 during durability syncing, including on the unmodified baseline.
-  Unix executable fixtures, Windows path assertions and an external-evidence fixture stack overflow
-  also prevent native qualification; the path assertion and stack overflow reproduce on the baseline. Storage-backed
+  Unix executable fixtures and Windows path assertions also prevent native qualification.
+  External evidence uses bounded streaming hashes to remove its baseline fixture stack overflow. Storage-backed
   daemon queue, recovery, shutdown and transport evidence therefore remains unqualified here.
   Repository ownership/cohesion checks pass; its Unix process-profile fixture does not.
-- Retention, controller, peer and authority mutation campaigns refuse their failing unmutated
-  baselines before testing mutants. Operational and actual-binary headless evidence also stop at
-  storage startup. Release longevity lanes require a working Unix filesystem runtime; current
-  source has no passing longevity or mutation qualification from this host.
-- Default and all-feature public-API inventories under `target/public-api` remove the unused
-  controller-total addition method and two unused daemon failure variants. Redb's public item
-  count is unchanged. The daemon still exposes an opaque compiled configuration plan. All nine
-  persistence/redb/daemon cohesion exceptions are removed; no production file in that scope
-  exceeds 1,000 lines.
+- Mutation campaigns cannot qualify failing unmutated baselines. Operational and actual-binary
+  application evidence remains unqualified on this host. Storage-backed longevity requires a
+  working filesystem durability path; projection-only scale tests remain separate proof.
+- Default and all-feature public-API inventories stay under `target/public-api`. The bounded
+  conformance recorder is a non-default test-support export; the application process harness is
+  confined to the unpublished evidence package. No schema or protocol version changes accompany
+  the test/evidence contraction. The daemon still exposes an opaque compiled configuration plan.
 - The maintained evidence suites cover immutable/schema readers, validating constructors, hostile
   bounds, exact idempotency/conflict, crash/reopen and deterministic fault boundaries, projection
   replay, reconciliation, causal context, process/model adapters, controller lifecycle, application
@@ -252,7 +251,9 @@ Current exact versions are:
   retained uncertainty, unsafe-retry refusal, and explicit retain. Operator real-endpoint mode
   requires an explicit loopback profile and never falls back; no such profile was supplied here.
 - `milkdrift-evidence` owns repeatable storage/projection/context/artifact/daemon measurements,
-  the Cargo-native mutation shard/classification runner, and operational reports under `target/`.
+  the Cargo-native mutation shard/classification runner, the external-evidence executable, and
+  operational reports under `target/`. External, headless, local-model, and daemon measurements
+  share one child lifecycle owner and use the product daemon binary for application composition.
   Reports bind Git commit/tree/dirty state and `rustc -vV`; previous measurements do not qualify
   the current source. The hermetic external-evidence report remains non-qualifying for real
   interoperability.

@@ -118,13 +118,7 @@ impl ContextProofExecutor {
 }
 
 impl TaskExecutor for ContextProofExecutor {
-    fn resolve(
-        &self,
-        requirement: &CapabilityRequirement,
-        observed_at_unix_ms: u64,
-    ) -> Result<ResolvedCapability, ExecutorError> {
-        self.resolver.resolve(requirement, observed_at_unix_ms)
-    }
+    delegate_resolve!(resolver);
 
     fn prepare_exact_entry<'a>(
         &'a self,
@@ -166,12 +160,7 @@ impl TaskExecutor for ContextProofExecutor {
         }))
     }
 
-    fn cancel(
-        &self,
-        request: &CancellationRequest,
-    ) -> Result<CancellationAcknowledgement, ExecutorError> {
-        self.resolver.cancel(request)
-    }
+    delegate_cancel!(resolver);
 }
 
 #[test]

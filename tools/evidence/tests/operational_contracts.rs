@@ -9,6 +9,34 @@ use milkdrift_evidence::{
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[test]
+fn actual_child_capture_deadline_and_cleanup_are_bounded() -> TestResult {
+    use milkdrift_evidence::application::{OwnedChild, run_command};
+    use std::{process::Command, time::Duration};
+
+    let helper = env!("CARGO_BIN_EXE_evidence-process-helper");
+    let output = run_command(&mut Command::new(helper), None, Duration::from_secs(10))?;
+    assert!(output.status.success());
+    assert_eq!(output.stdout.as_bytes(), &[b'o'; 256 * 1024]);
+    assert_eq!(output.stderr.as_bytes(), &[b'e'; 256 * 1024]);
+    let result = run_command(
+        Command::new(helper).arg("--deadline-fixture"),
+        None,
+        Duration::from_millis(50),
+    );
+    assert!(matches!(result, Err(error) if error.to_string().contains("deadline")));
+    let result = run_command(
+        Command::new(helper).arg("--overflow-fixture"),
+        None,
+        Duration::from_secs(5),
+    );
+    assert!(matches!(result, Err(error) if error.to_string().contains("output exceeds")));
+    let mut child = OwnedChild::spawn(Command::new(helper).arg("--deadline-fixture"))?;
+    child.terminate()?;
+    assert!(child.try_wait()?.is_some());
+    Ok(())
+}
+
+#[test]
 fn persistence_replay_retention_and_recovery_contracts() -> TestResult {
     assert_eq!(journal_append_one()?.operations, 1);
     assert_eq!(journal_append_batch()?.operations, 64);

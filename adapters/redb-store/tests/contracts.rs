@@ -15,10 +15,7 @@ mod fault_reopen;
 #[path = "contracts/journal_workspace.rs"]
 mod journal_workspace;
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::Arc;
 
 use milkdrift_authority::{
     ActorRef, AuthorityBudget, AuthorityDecisionSnapshot, AuthorityExecutionProvenance,
@@ -55,9 +52,7 @@ use milkdrift_persistence::{
     TimestampMillis, WorkerId, WorkspaceAccounting, WorkspaceMutation, WorkspaceStore,
     history_digest,
 };
-use milkdrift_redb_store::{
-    ArtifactClock, FaultInjector, FaultPoint, RedbStore, RedbStoreConfig, injected_failure,
-};
+use milkdrift_redb_store::{ArtifactClock, FaultPoint, RedbStore, RedbStoreConfig};
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactRetention, ArtifactSensitivity,
     BranchId, CausalId, CausalReference, ContentDigest, MediaType, RunId, ScopeId, SubworkflowId,
@@ -533,30 +528,6 @@ fn accepted_request_with_discovery_index(
     Ok(rebuild_request_with_indexes(&request, indexes)?)
 }
 
-struct FailOnce {
-    point: FaultPoint,
-    remaining: AtomicUsize,
-}
-
-impl FailOnce {
-    fn new(point: FaultPoint) -> Self {
-        Self {
-            point,
-            remaining: AtomicUsize::new(1),
-        }
-    }
-}
-
-impl FaultInjector for FailOnce {
-    fn check(&self, point: FaultPoint) -> Result<(), PersistenceError> {
-        if point == self.point && self.remaining.swap(0, Ordering::SeqCst) == 1 {
-            Err(injected_failure(point))
-        } else {
-            Ok(())
-        }
-    }
-}
-
 fn artifact_metadata(
     id: &str,
     bytes: &[u8],
@@ -580,3 +551,7 @@ fn artifact_metadata(
         )?,
     )?)
 }
+
+#[path = "support/fault.rs"]
+mod fault;
+use fault::FailOnce;

@@ -22,7 +22,7 @@ jobs:
         with:
           toolchain: 1.95.0
       - name: Build pinned process fixture and evidence runner
-        run: cargo build --release -p milkdrift-evidence --bin evidence-process-helper --bin operational-evidence
+        run: cargo build --release -p milkdrift-evidence --bin evidence-process-helper --bin operational-evidence -p milkdrift-daemon --bin milkdrift-daemon
       - name: Smoke every benchmark once
         env:
           MILKDRIFT_EVIDENCE_PROCESS_HELPER: ${{ github.workspace }}/target/release/evidence-process-helper

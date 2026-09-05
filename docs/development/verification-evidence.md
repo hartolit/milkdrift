@@ -16,9 +16,8 @@ are observations, not correctness thresholds, and are not used to conceal an unb
   shell, network, credential, clock, or random input.
 - Model-stream measurements use fixed OpenAI-compatible and Anthropic SSE documents through the
   production bounded SSE and provider state machines. No provider endpoint is contacted.
-- Daemon measurements use temporary redb/artifact roots, private temporary bearer files, an
-  ephemeral loopback listener, and controlled local concurrency. No fixed port or external
-  service is required.
+- Daemon measurements spawn the built product daemon with temporary redb/artifact roots, private
+  temporary bearer files, an ephemeral loopback listener, and controlled local concurrency.
 - Headless CLI evidence builds and spawns the actual `milkdrift-daemon` and `milkdrift` binaries.
   Its temporary configuration registers the evidence executable itself as two byte-pinned process
   profiles, uses no shell or network service, and never supplies the database path to a CLI process.
@@ -28,7 +27,11 @@ are observations, not correctness thresholds, and are not used to conceal an unb
   managed loopback profile and never falls back.
 
 `milkdrift-evidence` is a development-only leaf package. Product crates do not depend on it. The
-model-provider `operational-evidence` feature only exposes a network-free driver around its
+external-evidence executable also lives in this package. Its shared application harness owns child
+deadlines, captured-output limits, readiness, abrupt restart, CLI JSON decoding, and cleanup;
+configuration validation and runtime composition remain with the actual daemon. Build the daemon
+before running evidence package tests or application measurements in isolation.
+The model-provider `operational-evidence` feature only exposes a network-free driver around its
 existing private parser state machines; the feature is disabled by default and changes no
 production mapping or policy.
 
@@ -61,7 +64,8 @@ are distinct from the report's physical redb-directory bytes. The daemon scenari
 sequential low/medium phases, a concurrent
 saturated phase against an owner queue of one, checks the stable overload classification, keeps a
 slow SSE consumer, reconnects with its authenticated cursor, verifies a post-overload request,
-compares Linux `/proc/self/task` counts when available, and joins graceful shutdown. The separate
+compares the daemon child's Linux `/proc/<pid>/task` counts when available, and joins graceful
+shutdown through its public Ctrl-C boundary. That signal lane requires Unix. The separate
 effect-worker regression uses a blocking controlled adapter with one worker and a queue of one to
 prove fixed backpressure and truthful unresolved work on forced shutdown.
 The feature-gated adapter-conformance lane runs one common factory-driven contract against the
@@ -152,7 +156,8 @@ Build and smoke every benchmark once:
 
 ```sh
 cargo build --release -p milkdrift-evidence \
-  --bin evidence-process-helper --bin operational-evidence
+  --bin evidence-process-helper --bin operational-evidence \
+  -p milkdrift-daemon --bin milkdrift-daemon
 MILKDRIFT_EVIDENCE_PROCESS_HELPER="$PWD/target/release/evidence-process-helper" \
   cargo bench -p milkdrift-evidence --bench core_paths -- --test
 ```
@@ -205,12 +210,13 @@ It does not exercise filesystem directory durability.
 
 Full workspace and storage-backed focused suites are not qualified on this host: the existing
 non-Unix directory-open path returns OS error 5 before startup completes, also reproduced from
-the unmodified baseline. Unix executable fixtures add native Windows path failures; the Windows
-path assertion and external-evidence fixture stack overflow also reproduce on the baseline. Repository
-ownership/cohesion checks pass, but its Unix process-profile fixture fails. The retention,
-controller, peer and authority mutation campaigns stop on failing unmutated baselines; no mutant
-outcome is inferred from that refusal. Operational and actual-binary headless lanes likewise stop
-at storage startup. The five release longevity lanes require a working Unix filesystem runtime.
+the unmodified baseline. Unix executable fixtures add native Windows path failures. External
+evidence now hashes executables through a shared 64 KiB streaming buffer; its baseline stack
+overflow is removed. Repository ownership/cohesion checks pass, but its Unix process-profile
+fixture fails. Mutation campaigns cannot qualify a tree whose unmutated baseline fails; no mutant
+outcome is inferred from that refusal. Operational and actual-binary application lanes likewise
+remain unqualified here. The five storage-backed release longevity lanes require a working
+filesystem durability path; the six projection-only scale lanes are separate commands.
 A green current-source Unix gate and durability/lifecycle evidence remain necessary; prior
 measurements cannot substitute for them. Raw logs, timings and API inventories stay under `target/`.
 
@@ -218,8 +224,8 @@ The harness does not claim production traffic shape, universal throughput, a mem
 profile, network/TLS performance, a real provider service-level objective, or sandbox strength for
 trusted local processes. Divan isolates repeatable code paths but cannot replace end-to-end tests.
 Store byte counts include redb allocation behavior and are useful for trend inspection, not a
-portable quota. `/proc/self/task` is Linux-only; Windows/macOS still exercise lifecycle cleanup
-through tests and CI logs.
+portable quota. Child task counts are Linux-only; platform lifecycle evidence remains owned by
+tests and CI logs.
 
 Literal pre-UI closure additionally requires successful hosted runs of the Windows and macOS
 matrix and the scheduled/manual mutation and benchmark workflows. A local Linux run can validate

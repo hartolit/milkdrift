@@ -8,3 +8,6 @@ mod lifecycle;
 mod storage;
 #[path = "peer_service/support.rs"]
 mod support;
+
+#[path = "peer_service/faults.rs"]
+mod faults;

@@ -171,7 +171,8 @@ cross-platform matrix, local commands, and interpretation limits are owned by
 ```sh
 cargo test -p milkdrift-evidence --test operational_contracts --all-features
 cargo build --release -p milkdrift-evidence \
-  --bin evidence-process-helper --bin operational-evidence
+  --bin evidence-process-helper --bin operational-evidence \
+  -p milkdrift-daemon --bin milkdrift-daemon
 MILKDRIFT_EVIDENCE_PROCESS_HELPER="$PWD/target/release/evidence-process-helper" \
   cargo bench -p milkdrift-evidence --bench core_paths -- --test
 MILKDRIFT_EVIDENCE_PROCESS_HELPER="$PWD/target/release/evidence-process-helper" \

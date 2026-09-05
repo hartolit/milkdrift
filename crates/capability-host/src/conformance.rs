@@ -445,12 +445,21 @@ fn assert_health(
     )
 }
 
+/// Bounded observation capture shared by adapter conformance and mechanism tests.
 #[derive(Default)]
-struct RecordingReporter {
+pub struct RecordingReporter {
     events: Mutex<Vec<InvocationEvent>>,
 }
 
 impl RecordingReporter {
+    /// Returns the exact observations in arrival order for independent assertions.
+    pub fn events(&self) -> Result<Vec<InvocationEvent>, AdapterError> {
+        self.events
+            .lock()
+            .map(|events| events.clone())
+            .map_err(|_| AdapterError::external_failure("recording reporter lock poisoned"))
+    }
+
     fn assert_complete(
         &self,
         invocation: &milkdrift_capability::InvocationId,
@@ -487,10 +496,16 @@ impl RecordingReporter {
 
 impl AdapterReporter for RecordingReporter {
     fn invocation(&self, event: InvocationEvent) -> Result<(), AdapterError> {
-        self.events
+        let mut events = self
+            .events
             .lock()
-            .map_err(|_| AdapterError::external_failure("recording reporter lock poisoned"))?
-            .push(event);
+            .map_err(|_| AdapterError::external_failure("recording reporter lock poisoned"))?;
+        if events.len() == 4096 {
+            return Err(AdapterError::external_failure(
+                "conformance observation bound exceeded",
+            ));
+        }
+        events.push(event);
         Ok(())
     }
 

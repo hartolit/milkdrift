@@ -5,11 +5,12 @@ This document owns ordered unfinished product slices. Completed core work belong
 
 1. **Close the independent pre-UI blockers** — Obtain the still-missing hosted and real external
    evidence after the independent review's schema, authority, lifecycle, peer, persistence, and
-   adapter corrections. The local gate, mutation, longevity, and operational lanes pass. No UI is
-   currently authorized as the next slice.
+   adapter corrections. Qualify the current source through the complete local, mutation,
+   longevity, and operational lanes; native Windows filesystem and fixture failures remain open.
+   No UI is currently authorized as the next slice.
 2. **Activate qualified production controller admission** — The independent hostile concurrency,
    crash/reopen, artifact, compaction, longevity, operational, mutation, and local-gate evidence for
-   the final-entry durable account boundary passes. Keep continuous controller activation refused
+   the final-entry durable account boundary must qualify the current source. Keep continuous controller activation refused
    by the production daemon until a current qualifying real external-evidence run permits
    installation through the normal composition root.
 3. **Real external interoperability evidence** — With operator-supplied resources, run the strict

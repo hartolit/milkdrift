@@ -21,17 +21,14 @@ use milkdrift_control::{
 };
 use milkdrift_persistence::RunSequence;
 use milkdrift_workspace::RunId;
-use serde_json::Value;
 
-#[path = "headless_cli_evidence/harness.rs"]
-mod harness;
-
-use harness::{
-    CliRunner, EvidenceConfig, assert_error, reserve_endpoint, start_daemon, stop_daemon,
-    wait_for_failed_exit, wait_for_readiness, wait_for_run, write_config, write_process_profile,
+use milkdrift_evidence::application::{
+    CliRunner, EvidenceConfig, assert_error, ensure, path_text, required_text, required_u64,
+    reserve_endpoint, start_daemon, wait_for_failed_exit, wait_for_readiness, wait_for_run,
+    write_config, write_private, write_process_profile,
 };
 
-type EvidenceResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+use milkdrift_evidence::EvidenceResult;
 
 const TOKEN: &str = "headless-cli-evidence-token";
 const WRONG_TOKEN: &str = "headless-cli-evidence-wrong-token";
@@ -104,6 +101,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
         directory.path(),
         endpoint,
         &token_file,
+        ACTOR,
         EvidenceConfig {
             process_profiles: vec![artifact_profile, wait_profile],
             model_profiles: Vec::new(),
@@ -436,7 +434,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
         "artifact download did not preserve size and digest",
     )?;
 
-    stop_daemon(&mut daemon)?;
+    daemon.terminate()?;
     daemon = start_daemon(&arguments.daemon, &config_path)?;
     wait_for_readiness(&runner, &mut daemon)?;
     runner.success(&["blueprint", "show", &revision])?;
@@ -479,7 +477,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
         .and_then(|node| node["latest_attempt_id"].as_str())
         .ok_or("uncertain run omitted its attempt identity")?
         .to_owned();
-    stop_daemon(&mut daemon)?;
+    daemon.terminate()?;
     thread::sleep(Duration::from_millis(200));
     daemon = start_daemon(&arguments.daemon, &config_path)?;
     wait_for_readiness(&runner, &mut daemon)?;
@@ -539,7 +537,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
     ])?;
     wait_for_failed_exit(&runner, "run-headless-failed")?;
 
-    stop_daemon(&mut daemon)?;
+    daemon.terminate()?;
     let unavailable = runner.run(&["daemon", "health"], None)?;
     assert_error(&unavailable, 5, "unavailable", None)?;
     println!(
@@ -674,50 +672,6 @@ fn proposal_document(
     Ok(WorkflowProposalDocument::new(proposal))
 }
 
-fn write_private(path: &Path, bytes: &[u8]) -> EvidenceResult<PathBuf> {
-    fs::write(path, bytes)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(path.to_owned())
-}
-
 fn require_executable(path: &Path) -> EvidenceResult {
     ensure(path.is_file(), "required binary path is not a file")
-}
-
-fn required_text(value: &Value, path: &[&str]) -> EvidenceResult<String> {
-    let mut current = value;
-    for segment in path {
-        current = current.get(*segment).ok_or("JSON field is absent")?;
-    }
-    current
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| "JSON field is not text".into())
-}
-
-fn required_u64(value: &Value, path: &[&str]) -> EvidenceResult<u64> {
-    let mut current = value;
-    for segment in path {
-        current = current.get(*segment).ok_or("JSON field is absent")?;
-    }
-    current
-        .as_u64()
-        .ok_or_else(|| "JSON field is not an unsigned integer".into())
-}
-
-fn path_text(path: &Path) -> EvidenceResult<&str> {
-    path.to_str()
-        .ok_or_else(|| "fixture path is not UTF-8".into())
-}
-
-fn ensure(condition: bool, message: &str) -> EvidenceResult {
-    if condition {
-        Ok(())
-    } else {
-        Err(message.to_owned().into())
-    }
 }

@@ -30,7 +30,7 @@ package entry point. Consumers otherwise import the canonical owner directly.
 | `milkdrift-authority` | External product and durable-schema contracts used by control, runtime, persistence, adapters, protocols, and daemon policy. Capability-owned identities such as `PeerId` are consumed directly, not re-exported. |
 | `milkdrift-blueprint` | External product and durable-schema contracts for immutable definitions, validation, documents, and revisions. |
 | `milkdrift-capability` | External product and durable-schema contracts shared by hosts, runtime, adapters, peers, and applications. It is the canonical owner/import path for `PeerId`, `SchemaId`, `ExtensionKey`, `BoundedJson`, and `TrustZone`. |
-| `milkdrift-capability-host` | Workspace adapter ports and the daemon/runtime execution bridge; no durable storage ownership. `InMemorySecretResolver` and the reusable production-adapter conformance harness are test-only exposures available through the non-default `test-support` feature. |
+| `milkdrift-capability-host` | Workspace adapter ports and the daemon/runtime execution bridge; no durable storage ownership. `InMemorySecretResolver`, the reusable production-adapter conformance harness, and its bounded `RecordingReporter` are test-only exposures available through the non-default `test-support` feature. |
 | `milkdrift-contracts` | Workspace adapter mechanics for bounded canonical JSON, validated strings, UTF-8-safe byte truncation, canonical `b3_` lexical validation, and private-wire-to-validating-conversion glue; consuming domains retain their wire shapes, semantic identifiers, validation, digest domains, errors, and schema versions. |
 | `milkdrift-control` | Workspace application contracts plus durable proposal/controller documents used by daemon and evidence. |
 | `milkdrift-control-client` | External product contract for typed authenticated HTTP/SSE clients, including CLI and future clients. |
@@ -48,7 +48,7 @@ package entry point. Consumers otherwise import the canonical owner directly.
 | `milkdrift-local-secret` | Workspace adapter contract for explicitly configured environment/restricted-file secret references; locations, values, and environment enumeration are not exposed. |
 | `milkdrift-daemon` | Workspace application boundary used by its executable, integration tests, and evidence. Its HTTP router and read projections are internal. |
 | `milkdrift-cli` | No library surface. Its command behavior, schema-1 success/failure JSON, and schema-1 JSON Lines stream wrappers are external application contracts. |
-| `milkdrift-evidence` | Unpublished development/test-only contract. Reports belong under `target/evidence`. |
+| `milkdrift-evidence` | Unpublished development/test-only contract, including the shared actual-binary application harness and fixture request reader. Reports belong under `target/evidence`. |
 
 ## Review method
 

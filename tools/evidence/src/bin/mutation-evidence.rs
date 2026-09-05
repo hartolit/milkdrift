@@ -101,13 +101,18 @@ impl MutationShard {
                     "milkdrift-authority",
                     "milkdrift-peer-http",
                     "milkdrift-evidence",
+                    "milkdrift-daemon",
                 ],
                 cargo_test_arguments: &[],
             },
             Self::Retention => ShardSpecification {
                 files: &["adapters/redb-store/src/application.rs"],
                 pattern: "(commit_application_command|archive_application_command_receipts|archive_oldest_hot_receipts|receipt_accounting_values|ReceiptLocation::status)",
-                test_packages: &["milkdrift-redb-store", "milkdrift-evidence"],
+                test_packages: &[
+                    "milkdrift-redb-store",
+                    "milkdrift-evidence",
+                    "milkdrift-daemon",
+                ],
                 cargo_test_arguments: &[],
             },
             Self::Runtime => ShardSpecification {
@@ -177,7 +182,11 @@ impl MutationShard {
                     "adapters/redb-store/src/peer/validation.rs",
                 ],
                 pattern: "(admit_peer_execution|claim_dispatch|mark_entered|release_claim|mark_uncertain|append_peer_observation|request_peer_cancellation|acknowledge_peer_cancellation|recover_claims|archive_peer_executions|release_active_accounting|validate_record|validate_tombstone)",
-                test_packages: &["milkdrift-peer-http", "milkdrift-evidence"],
+                test_packages: &[
+                    "milkdrift-peer-http",
+                    "milkdrift-evidence",
+                    "milkdrift-daemon",
+                ],
                 cargo_test_arguments: &[],
             },
         }

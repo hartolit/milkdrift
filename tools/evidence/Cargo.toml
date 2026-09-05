@@ -19,6 +19,7 @@ milkdrift-authority.workspace = true
 milkdrift-blueprint.workspace = true
 milkdrift-capability.workspace = true
 milkdrift-capability-host = { workspace = true, features = ["test-support"] }
+milkdrift-contracts.workspace = true
 milkdrift-control.workspace = true
 milkdrift-control-client.workspace = true
 milkdrift-control-protocol.workspace = true
@@ -28,6 +29,7 @@ milkdrift-model.workspace = true
 milkdrift-model-provider = { workspace = true, features = ["operational-evidence"] }
 milkdrift-peer-protocol.workspace = true
 milkdrift-persistence.workspace = true
+milkdrift-prompt-sequence.workspace = true
 milkdrift-redb-store.workspace = true
 milkdrift-runtime.workspace = true
 milkdrift-workspace.workspace = true

@@ -5,18 +5,21 @@ use std::{
     path::Path,
     process::Command,
     sync::{Mutex, MutexGuard},
+    time::Duration,
 };
 
+use milkdrift_evidence::application::run_command;
 use serde_json::Value;
 
-type TestResult = Result<(), Box<dyn std::error::Error>>;
+type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 static HARNESS_PROCESS: Mutex<()> = Mutex::new(());
 
-fn serialize_harness_process() -> Result<MutexGuard<'static, ()>, Box<dyn std::error::Error>> {
+fn serialize_harness_process() -> MutexGuard<'static, ()> {
+    // Only serializes independent child owners; a failed scenario leaves no shared fixture state.
     HARNESS_PROCESS
         .lock()
-        .map_err(|_| "external-evidence test harness lock is poisoned".into())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn evidence_command(output: &Path) -> Command {
@@ -25,7 +28,7 @@ fn evidence_command(output: &Path) -> Command {
     command
 }
 
-fn read_report(output: &Path) -> Result<(String, Value), Box<dyn std::error::Error>> {
+fn read_report(output: &Path) -> Result<(String, Value), Box<dyn std::error::Error + Send + Sync>> {
     let text = fs::read_to_string(output.join("report.json"))?;
     let value = serde_json::from_str(&text)?;
     Ok((text, value))
@@ -33,21 +36,20 @@ fn read_report(output: &Path) -> Result<(String, Value), Box<dyn std::error::Err
 
 #[test]
 fn fixture_proves_the_harness_without_claiming_external_qualification() -> TestResult {
-    let _harness = serialize_harness_process()?;
+    let _harness = serialize_harness_process();
     let root = tempfile::tempdir()?;
     let output = root.path().join("fixture-evidence");
     let secret = "external-evidence-test-secret-9f8f623a";
-    let result = evidence_command(&output)
-        .args(["--fixture", "--allow-fixture"])
-        .arg("--secret-source")
-        .arg("secret:test-only=env:MILKDRIFT_EVIDENCE_TEST_SECRET")
-        .env("MILKDRIFT_EVIDENCE_TEST_SECRET", secret)
-        .output()?;
-    assert!(
-        result.status.success(),
-        "fixture failed: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
+    let result = run_command(
+        evidence_command(&output)
+            .args(["--fixture", "--allow-fixture"])
+            .arg("--secret-source")
+            .arg("secret:test-only=env:MILKDRIFT_EVIDENCE_TEST_SECRET")
+            .env("MILKDRIFT_EVIDENCE_TEST_SECRET", secret),
+        None,
+        Duration::from_secs(90),
+    )?;
+    assert!(result.status.success(), "fixture failed: {}", result.stderr);
 
     let (text, report) = read_report(&output)?;
     assert_eq!(report["schema_version"], 1);
@@ -101,10 +103,14 @@ fn fixture_proves_the_harness_without_claiming_external_qualification() -> TestR
 
 #[test]
 fn missing_real_resources_are_non_qualifying_and_fail_closed() -> TestResult {
-    let _harness = serialize_harness_process()?;
+    let _harness = serialize_harness_process();
     let root = tempfile::tempdir()?;
     let output = root.path().join("missing-resources");
-    let result = evidence_command(&output).output()?;
+    let result = run_command(
+        &mut evidence_command(&output),
+        None,
+        Duration::from_secs(90),
+    )?;
     assert!(!result.status.success());
     let (_, report) = read_report(&output)?;
     assert_eq!(report["qualifying"], false);
@@ -121,13 +127,20 @@ fn missing_real_resources_are_non_qualifying_and_fail_closed() -> TestResult {
 
 #[test]
 fn fixture_process_and_model_scenario_failures_exit_nonzero() -> TestResult {
-    let _harness = serialize_harness_process()?;
+    let _harness = serialize_harness_process();
     let root = tempfile::tempdir()?;
     for fault in ["process", "model"] {
         let output = root.path().join(format!("{fault}-failure"));
-        let result = evidence_command(&output)
-            .args(["--fixture", "--allow-fixture", "--fixture-failure", fault])
-            .output()?;
+        let result = run_command(
+            evidence_command(&output).args([
+                "--fixture",
+                "--allow-fixture",
+                "--fixture-failure",
+                fault,
+            ]),
+            None,
+            Duration::from_secs(90),
+        )?;
         assert!(!result.status.success());
         let (_, report) = read_report(&output)?;
         assert_eq!(report["qualifying"], false);
@@ -146,25 +159,29 @@ fn fixture_process_and_model_scenario_failures_exit_nonzero() -> TestResult {
 
 #[test]
 fn fixture_requires_acknowledgement_and_tracked_outputs_are_refused() -> TestResult {
-    let _harness = serialize_harness_process()?;
+    let _harness = serialize_harness_process();
     let root = tempfile::tempdir()?;
     let unacknowledged = root.path().join("unacknowledged");
-    let result = evidence_command(&unacknowledged)
-        .arg("--fixture")
-        .output()?;
+    let result = run_command(
+        evidence_command(&unacknowledged).arg("--fixture"),
+        None,
+        Duration::from_secs(90),
+    )?;
     assert!(!result.status.success());
-    assert!(String::from_utf8_lossy(&result.stderr).contains("--fixture requires --allow-fixture"));
+    assert!(result.stderr.contains("--fixture requires --allow-fixture"));
     assert!(!unacknowledged.exists());
 
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()?;
     let tracked = repository.join("docs/external-evidence-test-output");
-    let result = evidence_command(&tracked)
-        .args(["--fixture", "--allow-fixture"])
-        .output()?;
+    let result = run_command(
+        evidence_command(&tracked).args(["--fixture", "--allow-fixture"]),
+        None,
+        Duration::from_secs(90),
+    )?;
     assert!(!result.status.success());
-    assert!(String::from_utf8_lossy(&result.stderr).contains("tracked source paths"));
+    assert!(result.stderr.contains("tracked source paths"));
     assert!(!tracked.exists());
     Ok(())
 }
