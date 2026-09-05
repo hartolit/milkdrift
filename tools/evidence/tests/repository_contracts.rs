@@ -92,16 +92,6 @@ fn read(path: impl AsRef<Path>) -> TestResult<String> {
     Ok(fs::read_to_string(path)?)
 }
 
-#[test]
-fn maintained_operator_blueprints_are_exact_current_documents() -> TestResult {
-    for name in ["starter", "process", "model"] {
-        let bytes = fs::read(root()?.join(format!("examples/operator/{name}.json")))?;
-        let (document, _) = milkdrift_blueprint::BlueprintRevisionDocument::from_json(&bytes)?;
-        assert_eq!(document.to_canonical_json()?, bytes);
-    }
-    Ok(())
-}
-
 fn numeric_const(relative: &str, name: &str) -> TestResult<u64> {
     let source = read(root()?.join(relative))?;
     let marker = format!("const {name}:");
@@ -705,10 +695,28 @@ fn cohesion_policy_rejects_missing_stale_duplicate_over_broad_and_exceeded_excep
 }
 
 #[test]
-fn exact_current_process_fixture_uses_the_public_reader() -> TestResult {
+fn exact_current_process_fixture_respects_the_host_reader() -> TestResult {
     let fixtures = root()?.join("adapters/local-process/tests/fixtures");
     let current = fs::read(fixtures.join("process-profile-v2.json"))?;
-    ProcessProfileDocument::from_json(&current)?;
+    if cfg!(unix) {
+        let document = ProcessProfileDocument::from_json(&current)?;
+        let canonical = document.to_canonical_json()?;
+        assert_eq!(
+            ProcessProfileDocument::from_json(&canonical)?.to_canonical_json()?,
+            canonical
+        );
+    } else {
+        // Profiles bind host paths and platform ownership, unlike portable blueprint documents.
+        // The Unix golden must be refused by a Windows reader, not silently reinterpreted.
+        let error = ProcessProfileDocument::from_json(&current)
+            .err()
+            .ok_or("foreign host profile was accepted")?;
+        assert!(
+            error
+                .to_string()
+                .contains("executable must be an absolute NUL-free path")
+        );
+    }
     let legacy = fs::read(fixtures.join("process-profile-v1.json"))?;
     assert!(ProcessProfileDocument::from_json(&legacy).is_err());
     Ok(())

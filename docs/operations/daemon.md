@@ -15,7 +15,7 @@ Startup is deliberately fail-closed and ordered:
 
 1. Validate daemon configuration, normalized paths, credential references, grants, and bounds before opening storage.
 2. Refuse a data root containing legacy `control-state-v1.json`, `peer-executions-v1`, or `peer-artifacts-v1`. This release neither imports nor ignores old sidecar/prototype idempotency and artifact authority; move to a fresh data root or perform an explicitly reviewed offline conversion.
-3. Open exact-current redb physical schema 11/internal document format 14, verify the durable clock high-water and replayable controller-account boundaries, and open the immutable artifact root.
+3. Open the [exact-current redb formats](../product/status.md), verify the durable clock high-water and replayable controller-account boundaries, and open the immutable artifact root.
 4. Open runtime admission closed and construct the shared control service. The production daemon
    deliberately leaves the experimental controller lifecycle uninstalled, so marked continuous
    controllers fail closed during recovery or activation.
@@ -26,23 +26,12 @@ Startup is deliberately fail-closed and ordered:
 
 Until the final step, readiness returns unavailable and no external command is admitted. Axum owns sockets and streaming only; redb, runtime, control, layout, proposal, and artifact work crosses the bounded owner queue. Queue saturation returns overload instead of blocking an async reactor task or allocating an unbounded backlog.
 
-## Bounded controller contracts
+## Controller activation
 
-A controller is an ordinary immutable revision containing the validated
-`org.milkdrift/controller-policy` schema-1 extension and an explicit pinned `Repeat`. The control
-and runtime libraries expose one `ControllerLifecycleOwner` for focused integration and recovery
-tests, and never add a separate controller scheduler. The production daemon does not install that
-owner because a current qualifying real external-evidence run is not available. The implemented
-final-entry account boundary passes the local independent hostile, mutation, longevity, and
-operational lanes. A marked controller therefore fails closed rather than treating incomplete
-qualification as production support.
-
-The controller read/command DTOs remain available for inspecting any durable lifecycle history
-created by an explicit embedding. `milkdrift-cli controller continue` cannot make the production
-daemon install or bypass the withheld owner. The entry-adjacent ledger now owns reservation,
-accounting, retry, cancellation, artifact, uncertainty, and restart behavior for every hard
-resource dimension, but merely enabling the existing hook before the remaining evidence passes is
-unsupported.
+Continuous controller activation is refused by this daemon. Neither a CLI command nor a
+configuration change bypasses the [qualification gate](../product/status.md#limitations-now).
+[Architecture](../architecture.md#controller-resource-accounting) defines the implemented library
+accounting boundary.
 
 ## Application receipts and retention
 
@@ -62,7 +51,7 @@ Shutdown means owner completion, not merely stopping the HTTP listener. The daem
 
 ## Backup, compatibility, and repair
 
-Stop the daemon cleanly before copying its data root. Artifact bytes remain in the content-addressed filesystem store; application, peer execution, runtime metadata, controller accounts, and the boundary-clock high-water fact remain in redb. This pre-release build implements no storage migration: physical schemas other than 11 and internal document formats other than 14 are refused. The advance refuses persisted schema-1 authority decisions rather than reinterpreting legacy capability envelopes. Do not edit rows or schema markers by hand.
+Stop the daemon cleanly before copying its data root. Artifact bytes remain in the content-addressed filesystem store; application, peer execution, runtime metadata, controller accounts, and the boundary-clock high-water fact remain in redb. This pre-release build accepts only the [current storage formats](../product/status.md), with no migration. Do not edit rows or schema markers by hand.
 
 Exact command replay is preserved only within one store generation. To create a new generation, stop the daemon, make and independently verify a complete backup/export of the old data root, configure an empty new data root, and retain the old generation read-only for forensic/replay needs. There is no automatic rotation and no implemented cold-archive export/delete command. Command IDs must not be reused across generations unless every caller also rotates an explicit namespaced client epoch; otherwise a delayed request from the old generation is indistinguishable from new intent.
 

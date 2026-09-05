@@ -7,95 +7,10 @@ configured paths. It is not a sandbox.
 
 ## Profile schema 2
 
-The essential shape for a coding-agent CLI is:
-
-```json
-{
-  "schema_version": 2,
-  "profile": {
-    "profile_id": "coding-agent-local",
-    "revision": 2,
-    "capability": "coding-agent-local",
-    "descriptor_revision": 2,
-    "provider_profile": "coding-agent-default",
-    "operation": "process.execute",
-    "side_effect": "non_idempotent_write",
-    "idempotency": "unsupported",
-    "cancellation": "best_effort",
-    "trust_class": "trusted_host_process",
-    "executable": "/opt/coding-agent/bin/agent",
-    "implementation": {
-      "content_digest": "b3_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-      "size_bytes": 12345678,
-      "package_revision": "agent-package-2026.08.29",
-      "documentation_reference": "https://docs.example.invalid/agent/2026.08.29"
-    },
-    "arguments": ["run", "--workspace", "{{workspace}}", "--prompt-file", "{{prompt}}"],
-    "substitutions": {
-      "workspace": { "type": "execution_root" },
-      "prompt": { "type": "input_path", "input": "prompt" }
-    },
-    "working_directory": { "type": "isolated_root" },
-    "filesystem_roots": [
-      { "path": "/opt/coding-agent/bin", "access": "execute" },
-      { "path": "/var/lib/milkdrift/process-work", "access": "read_write" }
-    ],
-    "inputs": [
-      { "input": "prompt", "relative_path": "inputs/prompt.txt" },
-      { "input": "repository", "relative_path": "repository.bundle" }
-    ],
-    "environment": {
-      "allowed_non_secret": ["LANG"],
-      "secrets": { "AGENT_TOKEN": "secret:coding-agent-token" },
-      "max_value_bytes": 8192
-    },
-    "stdin": { "type": "disabled" },
-    "stdout": {
-      "max_capture_bytes": 1048576,
-      "stream_progress": false,
-      "max_progress_events": 0,
-      "overflow_action": "terminate",
-      "artifact_name": "stdout"
-    },
-    "stderr": {
-      "max_capture_bytes": 1048576,
-      "stream_progress": false,
-      "max_progress_events": 0,
-      "overflow_action": "terminate",
-      "artifact_name": "stderr"
-    },
-    "outputs": [
-      { "name": "patch", "relative_path": "outputs/change.patch", "media_type": "text/x-diff", "required": true }
-    ],
-    "limits": {
-      "max_argv_entries": 32,
-      "max_argv_bytes": 65536,
-      "max_children_observed": 64,
-      "max_files": 32,
-      "max_file_bytes": 16777216,
-      "max_total_materialized_bytes": 67108864,
-      "max_path_bytes": 4096,
-      "max_directory_depth": 32,
-      "artifact_chunk_bytes": 1048576,
-      "max_output_files": 8,
-      "max_total_output_bytes": 33554432,
-      "wall_timeout_ms": 900000,
-      "graceful_termination_ms": 5000,
-      "forced_termination_ms": 5000,
-      "heartbeat_interval_ms": 5000
-    },
-    "restart": "retain_uncertain",
-    "platform": {
-      "owned_process_group": true,
-      "descendant_escape_prevention": false,
-      "terminal_group_observation": true
-    },
-    "max_concurrent": 2,
-    "extensions": {}
-  }
-}
-```
-
+For ordinary setup use the [operator process example](../../examples/operator/README.md#one-byte-pinned-local-process).
+The complete [coding-agent profile template](../../examples/external-evidence/coding-agent-profile.example.json)
+is validated by the production reader. Copy it outside the repository and supply the actual
+executable digest, size, paths, arguments, and declared resources before registration.
 `revision` and `descriptor_revision` must be the same nonzero value. `content_digest` is `b3_`
 followed by the lowercase 64-hex BLAKE3 digest, and `size_bytes` is the exact nonzero file size.
 The executable is streamed through a bounded 64-KiB buffer and may be at most 1 GiB. The optional
@@ -117,6 +32,10 @@ The resolved capability snapshot retains those bounded descriptor facts in durab
 provenance. The attempt inspector returns the snapshot, implementation, content, profile, and
 execution-policy digests plus optional safe package/documentation references; it never returns an
 executable path.
+
+Capability selection checks the profile's full resource ceilings, even for a smaller task. The
+grant's `artifact_bytes` must cover `max_total_materialized_bytes + max_total_output_bytes`;
+duration, invocation, and concurrency grants must also cover the declared requirements.
 
 ### Persistent authorized repository working directory
 
@@ -180,14 +99,11 @@ operator identity decision. Regenerate v1 profiles as schema v2 under operator c
 
 ## Execution and trust boundaries
 
-The first repository example is an immutable selected input inside a fresh execution directory;
-the agent mutates only that copy and exports an explicit patch. The explicit
-`authorized_host_path` mode above instead permits persistent in-place operator-owned repository
-progress. A CLI accepting prompt stdin can use
-`{"type":"input","input":"prompt","max_bytes":...}` instead of `--prompt-file`. Each
-invocation starts a fresh process; a recorded PID is never restart identity. The shown platform
-facts are the Unix values and must exactly equal the support facts of the build loading the
-document.
+An isolated workflow may materialize a selected repository input into its fresh execution
+directory and export a declared patch. The coding-agent template instead uses the explicit
+`authorized_host_path` mode for persistent operator-owned repository progress and bounded prompt
+stdin. Each invocation starts a fresh process; a recorded PID is never restart identity. Template
+platform facts are the Unix values and must equal the support facts of the build loading the document.
 
 Secret-bearing profiles must keep process-text progress streaming disabled. Captures remain
 bounded artifacts and exact secret bytes are redacted before publication. Configure

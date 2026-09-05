@@ -6,48 +6,38 @@ controller operations only for workflow `operator-starter`, finite budgets, no f
 access, and no artifact access. No adapter is enabled. Its terminal-only starter proves setup
 without external work or broad authority.
 
-## Fresh directory (PowerShell)
+## Startup and restart
 
-Build the product binaries from the checkout, then use their absolute paths:
+Run the [fresh-directory quick start](../../README.md#fresh-directory-quick-start). Configuration
+paths resolve against its directory; keep the generated environment credential for later CLI calls.
 
-```powershell
-cargo build -p milkdrift-daemon --bin milkdrift-daemon -p milkdrift-cli --bin milkdrift
-$daemon = (Resolve-Path target/debug/milkdrift-daemon.exe).Path
-$cli = (Resolve-Path target/debug/milkdrift.exe).Path
-$examples = (Resolve-Path examples/operator).Path
-New-Item -ItemType Directory -Path C:/Milkdrift
-Copy-Item "$examples/daemon.toml", "$examples/starter.json" C:/Milkdrift/
-Set-Location C:/Milkdrift
-$env:MILKDRIFT_TOKEN = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
-& $daemon --config daemon.toml --check-config
-$daemonProcess = Start-Process $daemon -ArgumentList '--config', 'C:/Milkdrift/daemon.toml' -PassThru -WindowStyle Hidden
-& $cli --timeout-secs 10 daemon readiness
-$import = & $cli --json --command-id starter-import blueprint import starter.json | ConvertFrom-Json
-$revision = $import.value.value.revision_id
-& $cli --json --command-id starter-start run start run-starter operator-starter $revision
-& $cli --json --timeout-secs 10 run wait run-starter --terminal succeeded
-& $cli --json run timeline run-starter --limit 100
-```
+For Unix, build the same binaries and add this checkout's absolute `target/debug` directory to
+`PATH`. Copy `daemon.toml` and `starter.json` into a private directory,
+generate `MILKDRIFT_TOKEN` with `export MILKDRIFT_TOKEN="$(openssl rand -hex 32)"`, and launch the
+daemon in the foreground with `milkdrift-daemon --config daemon.toml`. Use the README's CLI command
+arguments in another authenticated shell; extract the imported revision with
+`jq -r '.value.value.revision_id'` instead of PowerShell's `ConvertFrom-Json`.
 
-The token is generated into the environment, inherited by the daemon, and never placed in argv
-or a source file. Keep that session for later CLI calls. File references are also supported; use
-an OS-private regular file and the daemon's `secret_sources` and CLI `--token-file` settings.
-Relative storage, profile and secret paths resolve against the configuration directory. Artifact
-content belongs under `data/artifacts`; the CLI never opens that directory.
+Stop a foreground daemon with Ctrl-C and wait for its exit before restarting the same configuration.
+On Windows the README's hidden child has no interactive Ctrl-C console. After the terminal-only
+starter finishes, `Stop-Process -Id $daemonProcess.Id` followed by `$daemonProcess.WaitForExit()`
+is an abrupt stop. Then run `& $daemon --config daemon.toml` in the foreground, supplying the same
+environment credential, and use another shell for the client. Subsequent Ctrl-C shutdown follows
+[the daemon's bounded shutdown policy](../../docs/operations/daemon.md#shutdown).
+An abrupt stop with entered external work may leave uncertainty; it is not clean shutdown.
 
-On Unix, copy the same files, generate the token with
-`export MILKDRIFT_TOKEN="$(openssl rand -hex 32)"`, and launch
-`milkdrift-daemon --config daemon.toml &`. Use the same CLI commands; extract the revision from
-JSON with `jq -r '.value.value.revision_id'`. Stop a foreground daemon with Ctrl-C before restart.
-An abrupt kill deliberately exercises uncertainty and is not clean shutdown.
+After restart, inspect `run show run-starter` and `run timeline run-starter --limit 100` and repeat
+`blueprint import starter.json` with command ID `starter-import`. Exact replay returns the original
+result. [The control API](../../docs/reference/control-api.md#commands) owns replay/conflict rules.
 
 ## One byte-pinned local process
 
 Copy `process.json` and `process-profile.example.json`. Review and edit the profile:
 
 - Use the exact absolute path to a trusted executable. The Unix example uses `printf` and one
-  literal argument. On Windows, `C:/Windows/System32/hostname.exe` with an empty argument array
-  is a small alternative. The executable runs with the daemon account's privileges.
+  literal argument. On Windows, use `C:/Windows/System32/whoami.exe` with arguments
+  `["/user", "/fo", "csv", "/nh"]`. The reader requires a nonempty argument vector. The executable
+  runs with the daemon account's privileges.
 - Compute its BLAKE3 with `b3sum EXECUTABLE`, put `b3_` followed by the 64 hex digits in
   `implementation.content_digest`, and put its exact file length in `size_bytes`.
   A changed executable requires a newly reviewed profile revision. BLAKE3 CLI tooling is external
@@ -60,10 +50,19 @@ Copy `process.json` and `process-profile.example.json`. Review and edit the prof
   `retain_uncertain` restart policy. On Windows set all three `platform` fields to false:
   Unix process-group ownership and terminal group observation are not available.
 
+Keep profile ceilings within the [process authority requirements](../../docs/guides/local-process.md#profile-schema-2).
+The maintained template fits the starter's finite artifact grant.
+Retain its `Any` locality and peer selectors: [revision admission](../../docs/operations/authority.md)
+cannot narrow dimensions absent from task requirements. The workflow still names one exact
+capability and trust zone, and this configuration registers only the reviewed local adapter.
+
 Save as `process-profile.json`. In `daemon.toml` set
 `adapters.process_profiles = ["process-profile.json"]`. Add exact corresponding authority
 filesystem roots with `access = ["read", "write"]` or `["execute"]`. Authority roots use
-`C:/...` on Windows and `/...` on Unix, with no traversal. Permit the initial workspace scope:
+canonical host paths in `C:/...` form on Windows and `/...` on Unix, with no traversal.
+Redirected directories or aliases must resolve to the same exact path as the adapter;
+[the authority path rules](../../docs/operations/authority.md) define that comparison.
+Permit the initial workspace scope:
 
 ```toml
 [actors.authority.resources.workspace]
@@ -87,7 +86,8 @@ scope. Review that scope and set `dangerous_allow_broad_authority = true` visibl
 `[actors.authority]`; this acknowledgement does not grant any additional resource by itself.
 Validate with `--check-config`, restart, inspect `capability show operator-process`, import
 `process.json`, and start `run-process operator-starter REVISION`. Use fresh explicit command
-IDs. Wait with `--timeout-secs 20 run wait run-process`.
+IDs. Follow the [grant revision rule](../../docs/operations/authority.md#changing-authority) whenever
+editing authority. Wait with `--timeout-secs 20 run wait run-process`.
 
 ## One separately managed loopback model
 
@@ -108,7 +108,7 @@ profile = "model-profile.json"
 
 Update the existing capability authority selectors to identities `["operator-model"]`,
 operations `["model.generate"]`, provider profiles `["local-model-loopback"]`,
-trust zones `["operator-configured-local-model"]`, locality `["local"]`, and
+trust zones `["operator-configured-local-model"]`, and
 maximum side effect `"unknown"`. Keep the finite 4,000,000-unit grant ceiling: current generation-level resolution checks the model contract maximum even though this task requests only 64 output units. Retain the explicit dangerous acknowledgement: external model
 effects and cancellation cannot be proven absent. Use the workspace and artifact scopes above.
 Add exactly this network scope (adjust both fields when the endpoint/profile changes):
@@ -156,7 +156,7 @@ Pause, build/submit a prospective remediation proposal with `sequence remediate`
 proposal digest, revision, sequence and decision IDs. These operations remain on ordinary authority
 and reconciliation paths. Continuous controller activation remains gated.
 
-[The CLI contract](../../docs/reference/control-api.md#cli-behavior) owns JSON schema 2, exits,
+[The CLI contract](../../docs/reference/control-api.md#cli-automation-contract) owns JSON schema 2, exits,
 deadlines, command parity and bounded follow. A timeout or client cancellation does not prove a
 submitted mutation was cancelled. Retry a lost mutation response only with the same explicit
 command ID and identical request.

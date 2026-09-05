@@ -12,6 +12,10 @@ mod input;
 mod output;
 mod session;
 
+#[cfg(test)]
+#[path = "tests/documentation.rs"]
+mod documentation;
+
 use error::{CliError, emit_error, exit_code};
 
 #[derive(Parser)]

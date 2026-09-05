@@ -1,265 +1,119 @@
 # Status
 
-This document owns current implementation facts, current limitations, and the latest evidence
-snapshot. Git, CI, releases, and external audits own chronology.
+This document owns current implementation, limitations, exact versions, and qualified evidence.
+[Architecture](../architecture.md) owns semantics and source ownership; Git and CI retain chronology.
 
 ## Implemented now
 
-- Milkdrift is a Rust 1.95.0, edition-2024 workspace of twenty-two safe-Rust packages. Immutable
-  blueprints, append-only execution facts, scoped authority, prospective reconciliation, bounded
-  operations, and external capabilities are separate owners.
-- The semantic core implements immutable revisions and mutation batches; typed task, branch,
-  fork/join, reducer, repeat, wait/signal/timer, subworkflow, and terminal definitions; deterministic
-  validation and fingerprints; scoped workspace values/artifacts/budgets; durable run commands and
-  event projection; scheduling, execution, recovery, reconciliation, and structured concurrency.
-- The runtime executor port has one external-work operation path. Caller-owned workers report each
-  observation through the incremental durable reporter; there is no synchronous report-batch
-  compatibility path or second validation owner. Production capability-host execution and
-  deterministic test executors use that same interface.
-- Runtime command handling has one exhaustive dispatcher with private admission, commit, and
-  worker-report owners. One operation-scoped transition owner performs checked event sequencing,
-  projection, and workspace accumulation for structured progress. Final adapter-entry
-  revalidation/authority/controller admission and incremental observation ingestion are separate
-  private owners on the same canonical effect path; a durable terminal observation takes
-  precedence over a later worker boundary failure. Node projections are grouped by execution,
-  attempt/evidence, and lease/timer/retry invariants, while one closed reconciliation matrix owns
-  classification and the allowable action set.
-- `milkdrift-capability-host` owns the common adapter contract and the sole live registration,
-  exact-generation permit, drain, cancellation-routing, and panic-containment path. Authority,
-  start, drain, and shutdown hooks are explicit for every implementation. Failed start cannot
-  publish a generation; health must preserve the supplied boundary time; cancellation
-  acknowledgements must preserve exact invocation/sequence correlation; and shutdown attempts
-  every registered adapter even when one fails. Its non-default `test-support` surface provides one
-  reusable factory-driven suite run by the local-process, model-endpoint, remote-peer, and
-  workflow-control adapters, with declared differences for start replay, stateless health, and
-  unknown cancellation. The same bounded arrival-order recorder supports adapter-specific and
-  operational assertions through that feature; ordinary tests expose no new default product API.
-- One exact immutable grant basis governs run entry, local commands, information-bearing reads,
-  pages, streams, artifacts, layouts, capability/provider views, controller actions, and peer
-  operations. Humans, services, AIs, and peers use the same authority evaluator and command path.
-  Capability and artifact selectors are explicit `Any`, bounded nonempty `Only`, or whole-scope
-  `DenyAll`; layout authority is deny-all or shared revisions only. Empty collections never mean
-  wildcard, and private actor-owned layouts are not advertised as executable daemon state.
-- `milkdrift-daemon` compiles bounded duplicate-safe TOML schema 9 into immutable storage,
-  authentication, runtime, adapter, peer, and shutdown plans; the superseded JSON/global-document
-  path is refused. It is the single bounded synchronous owner of redb, runtime, control, adapters,
-  peers, receipts, layouts, and proposal discovery. A dedicated owner thread sits behind a bounded
-  channel. Typed one-shot closure messages remove the former parallel operation/result enums and
-  make mismatched HTTP response variants unrepresentable; an owned queue guard and one coherent
-  versioned health projection make overload, startup recovery, readiness, periodic maintenance,
-  health streaming, and ordered shutdown explicit. The peer service consumes its existing narrow
-  execution and artifact ports through daemon-private owner adapters: owner-thread lifecycle work
-  executes inline, while durable calls originating in peer HTTP and fixed workers enter that same
-  bounded queue and retain typed overload. Weak service-facing store handles prevent router
-  lifetimes from extending redb ownership. Peer HTTP admits only a bounded number of synchronous
-  service calls off Tokio reactor tasks, and shutdown keeps the owner servicing final peer writes
-  while fixed peer workers join. One daemon-owned fallible clock feeds runtime, peer, control,
-  artifact, and stream boundaries through the owner queue and redb physical-schema-9 durable
-  high-water evidence. Failure or rollback refuses operations and is visible in health/logs. The
-  peer execution service owns a closed post-entry classification for adapter failure, missing
-  terminal evidence, adapter panic, and interrupted service work; fixed workers retain and retry
-  only the exact release-or-uncertainty transition. Clock/store failure, shutdown, replay, and
-  restart do not re-enter the adapter. The owner continues serving final worker clock/persistence
-  calls while peer and effect workers drain, preventing shutdown from waiting on work that only the
-  owner can complete. The CLI is a storage-free client of `milkdrift-control-client`.
-  Daemon command adaptation is partitioned into private definition, run, controller, proposal, and
-  control-result owners behind one exhaustive protocol route. Attempt inspection separately owns
-  current projection lookup, bounded historical folding, authority filtering, and context/provenance
-  attachment without changing the public attempt meaning.
-- External control protocol 2.3 provides bounded duplicate-safe DTOs, exact negotiation,
-  authenticated cursor schema 2, idempotent commands, revisions/diffs, runs/nodes/attempts,
-  timelines, proposals, capabilities/providers, authority, peers, artifacts, layouts, health, and
-  resumable SSE. Capability and attempt reads expose the exact operation contract and idempotency-key
-  presence; timelines expose only bounded safe classification detail. Protocol-1 clients are
-  refused. Internal events, redb rows, snapshots, provider payloads, process handles, and framework
-  types are not wire contracts.
-- The `milkdrift` CLI is the comprehensive storage-free operator projection of that current
-  protocol. It exposes blueprint and prompt-sequence validation/import, exact canonical blueprint
-  export, run/controller/proposal/peer/layout control, retained-work resolution, explicit envelope
-  guards and evidence, bounded pages/files/stdin, verified create-new artifact downloads, and all
-  three resumable observation feeds. Schema-2 stdout envelopes cover success, failure, reconnects,
-  and final stream outcomes. Explicit wait/follow deadlines, bounded polling/reconnection, and
-  stable exits support automation. Direct internal dependencies are only control-client,
-  control-protocol, and prompt-sequence. Maintained `examples/operator` files provide a safe
-  fresh-directory starter and ordinary process/model paths. Prompt-sequence stage association
-  is derived by `milkdrift-prompt-sequence` from canonical revision documents rather than CLI node
-  naming inference; command legality, authority, transitions, uncertainty, proposal policy, and
-  persistence remain in their existing owners.
-- Peer protocol 1.2 is transport-neutral. The HTTP adapter owns relationship authorization,
-  rotating bearer authentication, fixed endpoints, bounded quotas/workers, catalog generations,
-  remote ordinary capability registrations, transactional acceptance/claim/entry, append-only
-  observations, cancellation, restart recovery, tombstone replay, and ordinary core artifact
-  transfer. It introduces no second workflow truth.
-- Redb physical schema 11 and internal document format 14 own transactional journal, history chain,
-  indexes, snapshots, workspace accounting, artifacts, application receipts/layouts/proposals,
-  security audit, and peer execution/retention. Application receipts move independently from hot
-  to cold while preserving exact replay; peer terminal detail compacts independently to replay and
-  conflict tombstones. Older/future stores are refused because no migration is claimed.
-  Administrative integrity scanning uses one private typed phase driver, one read transaction, and
-  one cursor/refusal policy across revision, event, artifact, and index checks.
-- Causal context is discovered from a bounded durable tail plus compact projection anchors at the
-  frozen journal head. Historical revisions, branch/join/subworkflow visibility, sensitivity,
-  authority, selection budgets, omissions, and exact provenance are explicit. Only selected
-  content is materialized. Required denied, missing, corrupt, unsupported, or over-budget evidence
-  fails before dispatch; retries rebind the prior frozen selection.
-  Private discovery state owns projection, journal, explicit-source, and exposure phases; private
-  selection state owns final deterministic ordering, omissions, authority, sensitivity, and budgets.
-- Models remain external provider capabilities. Provider-neutral task/response and context
-  contracts are separate from bounded OpenAI-compatible and native Anthropic mappings. Exact
-  profile/model/usage metadata and committed artifacts are recorded without logging prompts,
-  responses, bearer values, or resolved secrets. The current mappings advertise unknown side
-  effects, unsupported idempotency, and best-effort cancellation; post-entry response loss,
-  malformed/truncated responses, timeout, or cancellation retains uncertainty rather than a
-  successful partial artifact or automatic retry. One local-secret adapter resolves only configured
-  bounded environment or restricted-file references for authentication, process/model adapters,
-  and peer credentials. Local processes use byte-pinned safe-argv profile schema 2, explicit
-  inputs/outputs, bounded streams, cancellation, and process ownership. Their native canonical
-  roots convert to one pure authority representation supporting Unix absolute roots and ordinary
-  Windows drive-absolute roots with exact component containment; ambiguous Windows path families
-  fail closed.
-- Prompt-sequence schema 2 imports bounded JSON or Markdown, compiles to ordinary blueprints, and
-  uses the normal daemon/control/CLI path for validation, execution, verification, review,
-  approval, prospective remediation, restart recovery, and historical inspection. Its headless
-  dogfood fixture uses fresh byte-pinned processes and a persistent temporary Git repository.
-- The control/runtime libraries implement a bounded controller lifecycle using ordinary repeat,
-  proposal, reconciliation, authority, and event contracts. One durable account owns controller
-  cost, unit, artifact, process-entry, and model-entry ceilings across the controller run and its
-  descendants. The final adapter-entry event and account admission commit atomically after one
-  exact generation is prepared but before adapter code; artifact metadata and its logical-byte
-  charge also commit atomically. Immutable per-account revision evidence replays every total and
-  reservation change from its predecessor and exact transition or publication source. Unknown
-  bounds, missing terminal usage, uncertainty, currency mismatch, and adapter-contract violations
-  fail closed. The production daemon still leaves this lifecycle uninstalled because no current
-  qualifying real external-evidence run is available.
-- The public Rust surface follows the current policy in
-  [`../reference/public-api-policy.md`](../reference/public-api-policy.md). Canonical identities come
-  from their semantic owner; deterministic runtime/secret implementations require non-default
-  `test-support` features; storage fault hooks require redb `test-admin`; daemon routing and read
-  projections remain internal. Runtime scheduling and caller-owned effect execution are separate
-  canonical operations with no blocking compatibility driver. Cross-domain UTF-8 truncation and
-  canonical `b3_` lexical validation have one implementation in `milkdrift-contracts`, while
-  ordinary private-wire-to-validating-conversion glue is shared there as well; wire shapes,
-  validation, semantic digest types, and errors remain domain-owned. There are no UI packages or UI
-  dependencies.
-  Repository contracts require exact reviewed exceptions with rationales and bounded ceilings when
-  production Rust sources cross 1,000 lines; all Rust sources remain below the 2,000-line backstop,
-  and test/evidence sources cannot weaken the production policy.
+- The headless Rust workspace provides immutable blueprints/mutations; task, branch, fork/join,
+  reducer, bounded repeat, wait/signal/timer, pinned subworkflow, and terminal definitions; durable
+  commands, scheduling, recovery, prospective reconciliation, and scoped workspace/artifact state.
+- The daemon compiles strict TOML into owner-specific plans, recovers with admission closed, and
+  serves authenticated commands, reads, artifacts, and resumable feeds through one bounded owner.
+  Process/model/control/peer adapters use exact generations, final authority checks, fixed workers,
+  and incremental durable reporting. Boundary-clock rollback fails closed across restart.
+- The CLI covers blueprint/sequence authoring, run/proposal/controller/peer/layout control,
+  retained-work resolution, bounded inspection, verified create-new downloads, wait/follow deadlines,
+  and stable machine output. [Production examples](../../examples/operator/README.md) provide
+  fresh-directory setup and ordinary process/model workflows.
+- Causal context uses bounded historical discovery, explicit branch/join/subworkflow visibility,
+  exact provenance, authority/sensitivity checks, deterministic budgets and omissions, and
+  selected-only materialization. Retries retain the frozen selection.
+- Redb implements journal/index/workspace/account transactions, optional verified snapshots,
+  content-addressed artifacts, application receipts/layouts/proposals/audit, peer records and
+  tombstones, bounded retention, and resumable administrative integrity scans.
+- Local processes support byte-pinned argv profiles, isolated materialization, explicit inputs and
+  outputs, bounded streams, cancellation, and platform ownership. Model adapters implement
+  OpenAI-compatible chat and native Anthropic mappings through bounded HTTP/SSE.
+- Prompt sequences compile trusted-process coding, verification, review, and remediation stages
+  into ordinary revisions on the same daemon/control path.
+- Controller libraries implement durable policy assessment and cumulative accounts across runs and
+  descendants. Final-entry reservations and entry intent commit atomically; artifact publication
+  and logical-byte charges also commit atomically. Account revisions retain replayable predecessor
+  evidence. **The production daemon leaves the controller lifecycle uninstalled** pending a current
+  qualifying real external-evidence run.
 
-Current exact versions are:
+Current exact versions follow. Owning constants, strict readers, and golden tests determine these
+values; repository contracts check the version cells against source.
 
-| Contract or durable family | Version and read behavior |
-| --- | --- |
-| Capability descriptor/events/cancellation / resolved snapshot | 1 / 2; legacy snapshot v1 reads retain their original digest and conservative missing-category meaning |
-| Invocation request | 2; context-free v1 reads migrate unambiguously |
-| Blueprint revision and mutation | 2; v1 refused |
-| Context manifest | 2; v1 refused |
-| Provider-neutral model task/response and endpoint profile | 1 |
-| Proposal, workflow-control command/risk policy, and controller policy | 1 |
-| Prompt-sequence import | 2; v1 refused |
-| Run command / run event | 1 / 3; exact legacy event v1/v2 remains readable |
-| Authority grant / authorization decision | 4 / 2; earlier grant forms refused |
-| Authorized-command wrapper / command result | 1 / 2; result v1 reads only closed internal records |
-| Projection snapshot envelope / runtime payload | 2 / 4; old optional payloads replay from journal |
-| Administrative integrity cursor | 2 |
-| Peer hot record / compact tombstone | 3 / 1; hot v2 reads are upgraded on the next append |
-| Redb internal document format / physical schema | 14 / 11 |
-| Application command receipt / layout record | 1 / 1 |
-| Local-process profile / host materialization | 2 / 1; process v1 refused |
-| External control / authenticated cursor | 2.3 / 2; legacy forms refused |
-| Peer protocol and catalog messages | 1.2; earlier minors refused |
-| Daemon configuration | 9 TOML; JSON and earlier versions refused |
-| Layout document / CLI JSON output | 1 / 2 |
+| Contract or durable family | Current version | Read behavior |
+| --- | --- | --- |
+| Capability descriptor/events/cancellation / resolved snapshot | 1 / 2 | Snapshot v1 retains its original digest and conservative missing-category meaning. |
+| Invocation request | 2 | Context-free v1 migrates unambiguously. |
+| Blueprint revision and mutation | 2 | v1 refused. |
+| Context manifest | 2 | v1 refused; model envelope remains independent. |
+| Model document / task / response / endpoint profile | 1 / 1 / 1 / 1 | Exact supported contracts. |
+| Proposal / workflow-control command / risk policy / controller policy | 1 / 1 / 1 / 1 | Exact supported contracts. |
+| Prompt-sequence import | 2 | v1 refused. |
+| Run command / run event | 1 / 3 | Exact event v1/v2 remains readable. |
+| Authority grant / authorization decision | 4 / 2 | Earlier grants refused. |
+| Authorized-command wrapper / command result | 1 / 2 | Result v1 reads only closed internal records. |
+| Projection snapshot envelope / runtime payload | 2 / 4 | Old/invalid optional checkpoints replay from journal. |
+| Administrative integrity cursor | 2 | Exact supported cursor. |
+| Peer hot record / compact tombstone | 3 / 1 | Hot v2 upgraded on next append. |
+| Redb internal document format / physical schema | 14 / 11 | Older/future stores refused; no migration. |
+| Application command receipt / layout record | 1 / 1 | Exact supported contracts. |
+| Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
+| External control / authenticated cursor | 2.3 / 2 | Earlier major/cursor forms refused. |
+| Peer protocol and catalog messages | 1.2 | Earlier minors refused. |
+| Daemon configuration | 9 | TOML; JSON and earlier versions refused. |
+| Layout document / CLI JSON output | 1 / 2 | CLI schema 1 refused. |
 
 ## Limitations now
 
-- External interoperability is not yet proven. This checkout has no operator-supplied real coding
-  agent profile and no supplied reachable real supported local-model profile with any required
-  secret mapping. The deterministic local-model and hermetic external-evidence modes validate their
-  actual-daemon/CLI harnesses but are explicitly non-qualifying. Real closure requires a byte-pinned
-  real agent, a real supported endpoint that returns response identity and usage, private credential
-  sources, and a clean strict-mode run.
-- No hosted workflow has run this final independent-repair worktree. At source commit `8b24269`,
-  the 2026-09-03 hosted Linux quality gate and the Ubuntu/macOS platform jobs passed, while the
-  Windows platform job passed its all-target/all-feature check but failed seven local-process
-  execution tests. The non-Unix immediate-child-only path incorrectly treated unavailable
-  Unix-style process-group cleanup as a permanently live descendant group, turning otherwise
-  terminal observations into uncertainty. The local repair passes the complete process suite and
-  a Windows GNU cross-target library check, but has not yet received hosted Windows runtime
-  evidence. Hosted mutation, benchmark, and operational executions for this worktree are likewise
-  absent; local Linux or cross-target checks cannot substitute for those runs.
-- The local-process adapter provides mediation and ownership, not a sandbox. Trusted processes run
-  with the daemon account's privileges. Network isolation, CPU/memory quotas, malicious descendant
-  containment, atomic hashed-handle execution on every OS, directory artifacts, writable shared
-  mounts, and complete non-Unix process-tree cancellation are not claimed.
-- Peer support has no discovery, NAT traversal, coordinator, automatic CA, internal mTLS mapper,
-  consensus, shared database/workflow truth, model synchronization, or automatic transfer of every
-  runtime artifact. The daemon listener is loopback-only; nonlocal deployment needs operator-owned
-  private connectivity or HTTPS termination. Relationship/grant/profile changes generally require
-  validated restart.
-- There is no dynamic local adapter/profile/grant reload, public local artifact upload API, global
-  event firehose, public configuration/audit/shutdown route, generalized plugin framework,
-  optimized lifetime attempt index, or context search service. Historical attempt reads trade
-  bounded memory for journal scan time.
-- Continuous controllers are not production-supported by the daemon until an operator-supplied,
-  current qualifying real external-evidence run closes the activation gate. The final-entry ledger
-  has passed the local hostile, mutation, longevity, and independent-review lanes. The library
-  lifecycle's only stop behavior remains immutable fail-at-bound. Multiple active
-  controller occurrences deliberately prevent ambiguous proposer attribution. Prompt sequences
-  currently use trusted-host process stages; model-backed sequence stages, checkpoint
-  capabilities, and automatic distributed dogfood are not implemented.
-- The provider adapter does not implement provider discovery, tokenization, pricing, generic file
-  parts, managed sessions, or the separate OpenAI Responses API. Cancellation cannot prove remote
-  termination, and malformed/truncated streams do not produce a successful partial artifact.
-- Active projection memory is bounded by legitimate live state, not a universal constant. Cold
-  application receipts and peer tombstones preserve replay for one store generation and grow until
-  explicit offline rotation. No storage migration, online destructive rotation, export/delete
-  operation, automatic proposal-index rebuild, whole-database authenticity, or rollback protection
-  is claimed.
-- No browser client, desktop application, or other UI is implemented or currently authorized.
+- Real external interoperability remains unqualified. It requires an operator-supplied byte-pinned
+  real coding agent, a reachable supported model profile returning response identity and usage,
+  private credentials where required, and a clean strict-mode report. Deterministic helpers and
+  mock endpoints do not qualify. Continuous controllers therefore remain unavailable in production;
+  library stop behavior is fail-at-bound, and ambiguous multiple proposer occurrences are refused.
+- Trusted processes have daemon-account privileges. No sandbox, network isolation, CPU/memory
+  quotas, malicious-descendant containment, universal atomic hashed-handle execution, directory
+  artifacts, writable shared mounts, or complete non-Unix process-tree cancellation is claimed.
+- Peers require operator connectivity; the daemon listener is loopback-only. There is no discovery,
+  NAT traversal, coordinator, automatic CA/internal mTLS mapper, consensus, shared database,
+  model synchronization, or automatic transfer of every artifact. Grants/profiles/relationships
+  generally require validated restart; no dynamic local reload exists.
+- Models have no provider discovery, tokenizer/pricing service, generic file parts, managed
+  sessions, or OpenAI Responses mapping. Cancellation cannot prove remote termination. Post-entry
+  timeout, response loss, and malformed/truncated streams preserve uncertainty rather than successful
+  partial artifacts or automatic unsafe retry. Sequence stages are process-only; checkpoint
+  capabilities and automatic distributed dogfood are absent.
+- There is no public local artifact upload, global event firehose, configuration/audit/shutdown
+  route, general plugin framework, context search service, or optimized lifetime attempt index.
+  Historical attempt reads use bounded memory but may scan substantial journal history.
+- Task requirements cannot express locality or peer selectors. Revision admission consequently
+  refuses grants narrowed in those dimensions; the [authority guide](../operations/authority.md)
+  explains supported exact capability/profile/trust-zone constraints.
+- Active state grows with legitimate live obligations, not just elapsed history. Cold receipts and
+  peer tombstones grow for the store generation. No storage migration, online destructive rotation,
+  export/delete operation, automatic proposal-index rebuild, whole-database authenticity, rollback
+  protection, or filesystem power-loss qualification is claimed.
+- No UI is implemented or authorized. Hosted quality/platform/mutation/benchmark/stress evidence
+  has not qualified the current source; a native Windows full suite includes Unix-only fixtures.
 
 ## Current validation/evidence snapshot
 
-- Current Windows/MSVC validation (2026-09-05) includes the CLI automation contracts, hermetic
-  process/model adapters, runtime restart/replay/uncertainty, and artifact fault/integrity suites.
-  The combined actual-daemon/CLI operator scenario and deterministic local-model application
-  scenario pass. They are deterministic product evidence, not real-model interoperability.
-- Windows directory handles now request directory access and write permission for flushing;
-  artifact publication also flushes writable handles. Storage-backed startup, artifact publication,
-  and recovery execute on this host. This does not establish power-loss durability qualification.
-- The full workspace suite remains unqualified: Unix executable fixtures fail on native Windows,
-  and a current full gate on a compatible Unix runner is still required.
-  Hosted Unix/platform gates and real external qualification remain required. No separately
-  managed real model endpoint profile was supplied for this validation.
-- Default and all-feature public-API inventories and raw verification output stay under
-  `target/readiness`. CLI JSON is schema 2 with no schema-1 switch; control protocol 2.3 and all
-  durable document versions remain unchanged. Local sequence compilation and remediation take
-  canonical bytes at the prompt-sequence boundary; the CLI has no direct storage/runtime dependencies.
-- The maintained evidence suites cover immutable/schema readers, validating constructors, hostile
-  bounds, exact idempotency/conflict, crash/reopen and deterministic fault boundaries, projection
-  replay, reconciliation, causal context, process/model adapters, controller lifecycle, application
-  and peer retention, artifact integrity/ranges, authentication/cursor revocation, daemon overload,
-  shutdown, and a loopback two-daemon remote execution.
-- The shell-free headless CLI evidence scenario spawns the actual daemon and CLI executables over
-  ephemeral loopback HTTP with temporary redb/artifact roots and private bearer files. It proves
-  validate/import, explicit replay/conflict, run and evidence inspection, pause/signal/resume,
-  guarded proposal adoption, verified artifact download, abrupt-restart uncertainty retention and
-  resolution, durable restart reads, stable machine failures, and that no CLI invocation receives
-  the database path. Its deterministic process fixtures are not real model interoperability.
-- The local-model evidence lane likewise spawns the actual daemon and CLI, derives canonical
-  blueprints/configuration from their owners, and uses the production OpenAI-compatible mapping.
-  Deterministic mode proves wait/restart/release, exact selected and omitted context, streaming,
-  usage/response/artifact provenance, one provider entry, restart nonduplication, post-entry close,
-  retained uncertainty, unsafe-retry refusal, and explicit retain. Operator real-endpoint mode
-  requires an explicit loopback profile and never falls back; no such profile was supplied here.
-- `milkdrift-evidence` owns repeatable storage/projection/context/artifact/daemon measurements,
-  the Cargo-native mutation shard/classification runner, the external-evidence executable, and
-  operational reports under `target/`. External, headless, local-model, and daemon measurements
-  share one child lifecycle owner and use the product daemon binary for application composition.
-  Reports bind Git commit/tree/dirty state and `rustc -vV`; previous measurements do not qualify
-  the current source. The hermetic external-evidence report remains non-qualifying for real
-  interoperability.
-- Raw API inventories are generated under `target/public-api`; generated public-API reports and
-  pass histories are not source documentation.
-- `cargo machete` reports no unused dependency. `cargo deny` accepts the maintained transitive
-  `syn` 2/3 split; duplicate-tree inspection also reports the maintained transitive `getrandom`
-  0.3/0.4 split. No duplicate Milkdrift package or second HTTP/TLS/async stack is present.
+Local Windows/MSVC formatting, all-target/all-feature checking, Clippy, warning-denying rustdoc,
+dependency audits, test discovery, and 21 repository contracts pass. CLI examples parse, and actual
+executables validate bare/relative/absolute configuration paths. The fresh-directory starter,
+ordinary byte-pinned Windows process, verified artifact download, settled restart/replay, and
+ordinary model example against a controlled loopback endpoint pass, as does the headless daemon/CLI
+scenario. Adapter, authority, runtime, context, artifact, and recovery
+contracts provide additional software evidence, not real-provider or power-loss qualification.
+
+The full workspace test run has 660 passes, six failures, and five ignored cases. Failures are in
+`control_plane`, `two_daemon_peer`, and `external_evidence`, whose fixtures require Unix paths such
+as `/bin/echo`, `/usr/bin/tee`, `/bin/cp`, and `/usr/bin/python3`. A full Unix gate is required.
+
+The separate deterministic local-model lane is **unqualified** on this host: its serial run
+published model-response and text artifacts but exceeded the harness's 10-second state wait
+before terminal evidence. That observation does not establish whether a runtime fault or host
+latency caused the timeout. The successful headless scenario does not replace this lane.
+
+Hosted platform/lifecycle evidence and separately managed real-model/coding-agent profiles were
+not supplied. Previous mutation, longevity, benchmark, and hosted results do not qualify this tree.
+
+[Verification evidence](../development/verification-evidence.md) owns commands, pinned workflows,
+report meaning, and classification rules. Configured workflows are not executed evidence. Raw
+outputs, source commit/tree/dirty identity, runtime observations, structural metrics, and API
+inventories belong under ignored `target/` paths or CI artifacts, not active documentation.

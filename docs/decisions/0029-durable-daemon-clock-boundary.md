@@ -1,5 +1,7 @@
 # 0029 — One daemon clock with durable rollback evidence
 
+Status: accepted.
+
 ## Context
 
 Peer authentication, relationship/catalog/transfer expiry, runtime scheduling, control receipts,

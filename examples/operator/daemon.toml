@@ -56,8 +56,7 @@ values = ["local-process"]
 type = "any"
 
 [actors.authority.resources.capability.localities]
-type = "only"
-values = ["local"]
+type = "any"
 
 [actors.authority.resources.capability.peers]
 type = "any"

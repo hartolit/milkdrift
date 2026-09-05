@@ -1,167 +1,73 @@
 # Milkdrift
 
-Milkdrift is a local-first foundation for durable, live-editable workflows whose tasks can be satisfied by explicitly constrained capabilities: hosted AI providers, local servers, coding agents, tools, humans, or peer machines. Its semantic core keeps workflow meaning independent of any executor, UI, database, network, or provider.
+Milkdrift is a local-first, durable workflow runtime for work performed by AI endpoints, coding
+agents, tools, humans, and peer machines. It lets an operator inspect execution, pause it, and
+revise future work while retaining the history and evidence needed to understand each decision.
+Models and tools run outside the core.
 
-Milkdrift currently has a headless Rust execution center. It stores immutable workflow revisions, authorizes versioned idempotent run commands against exact scoped grant revisions, freezes the accepted actor/grant/policy basis into each started run, and records canonical decisions at capability resolution, exact-generation claim, and final adapter entry. It rebuilds pure projections, schedules bounded work through exact authorized capability snapshots, keeps branch-local workspace values, publishes content-addressed artifacts, recovers local runs after restart, and applies compatible revision changes prospectively through persisted reconciliation plans. Its workflow-control application layer accepts bounded digest-bound proposals from humans, services, processes, or models; creates immutable prospective revisions; classifies risk; and uses the same authorized runtime reconciliation path for approval and apply. Typed controller-policy, durable-assessment, and checkpoint contracts exist for focused library validation, but the production daemon deliberately does not admit continuous controllers until their cumulative resource ceilings are enforced at the final external-entry boundary.
+The product is a pre-1.0 headless daemon and CLI. There is no UI or storage migration. Local
+processes run with the daemon account's privileges; they are not sandboxed. Controller final-entry
+resource accounting exists in the libraries, but continuous controller activation remains refused
+pending qualification. Real external interoperability and hosted portability evidence remain
+incomplete; [status](docs/product/status.md) owns the exact versions, limitations, and evidence.
 
-The production local backend uses redb plus a filesystem artifact directory. `milkdrift-daemon` is the single durable owner: it validates versioned host configuration, authenticates local clients and configured peers, recovers the runtime with admission closed, registers the generation-safe process/model/workflow-control/remote-peer capability host, runs bounded effect workers, and serves separate versioned control and peer authentication realms. A dedicated bounded owner thread keeps synchronous redb/runtime work off the async HTTP reactor. `milkdrift-cli` and the reusable control client use only that API; they never open storage or resolve adapter secrets. The desktop UI is not implemented.
+## Fresh-directory quick start
 
-```sh
-cargo test --workspace
-```
+From this checkout, use the pinned Rust toolchain to build both applications. This PowerShell
+scenario copies [production examples](examples/operator/README.md) into a new operator directory,
+generates a credential in the current process environment, and runs a terminal-only workflow.
+The starter has finite authority for one workflow and enables no external adapters.
 
-Repeatable mutation, benchmark, storage-growth, daemon-saturation, and cross-platform evidence is
-documented in [verification and operational evidence](docs/development/verification-evidence.md). These lanes
-produce reviewable artifacts without treating benchmark values as correctness gates.
-
-## Two-daemon peer example
-
-Peer support is disabled unless `peers.mode = "enabled"` supplies one local identity and explicit
-relationships. For a local test, daemon B can point at daemon A with this TOML fragment:
-
-```toml
-[peers]
-mode = "enabled"
-local_peer_id = "peer-b"
-
-[peers.serving]
-worker_threads = 4
-maximum_global_active = 256
-maximum_dispatch_queue = 256
-maximum_hot_terminal_records = 10000
-archive_batch_size = 256
-observation_hot_retention_ms = 86400000
-recovery_page = 128
-poll_interval_ms = 100
-
-[[peers.relationships]]
-peer_id = "peer-a"
-endpoint = "http://127.0.0.1:9734/"
-credential_ref = "credential:peer-a"
-insecure_loopback_development = true
-actions = ["read_catalog", "invoke", "cancel"]
-capability_allow = ["my-process-capability"]
-capability_deny = []
-operation_allow = ["process.execute"]
-maximum_side_effect = "read_only"
-execution_filesystem = [{ root = "/opt/milkdrift-tools/my-process", access = ["execute"] }]
-execution_network_profiles = []
-execution_network_destinations = []
-execution_secrets = []
-maximum_concurrent = 2
-maximum_requests_per_minute = 600
-maximum_artifact_bytes = 1048576
-artifact_sensitivities = []
-maximum_duration_ms = 30000
-maximum_observations = 128
-trust_zone = "operator-wireguard"
-delegation_ref = "delegation:peer-a-b"
-expires_at_unix_ms = 1798761600000
-```
-
-The peer credential remains in `secret_sources`, is resolved at each request, and is never printed. Capability/operation allowlists do not grant host resources: `execution_filesystem`, network, and secret scopes must explicitly contain the selected adapter's declared requirements. Configure the inverse relationship on daemon A, start both daemons, then run:
-
-Filesystem authority uses canonical durable roots: `/opt/...` on Unix or an uppercase drive form
-such as `C:/tools/...` on Windows. Windows configuration still uses `/` in this authority field;
-native adapter paths are canonicalized before conversion. UNC/device, drive-relative, mixed
-separator, traversal, and alternate-data-stream forms are refused.
-
-```sh
-milkdrift peer list
-milkdrift --yes peer connect peer-a
-milkdrift capability list
-milkdrift peer show peer-a
-```
-
-The insecure mode refuses non-loopback URLs. Use ordinary HTTPS directly or terminate TLS in an operator-controlled reverse proxy; WireGuard and Tailscale are possible connectivity choices, not Milkdrift dependencies. See `docs/operations/peers.md` and `docs/reference/peer-protocol.md`.
-
-## Local daemon quick start
-
-Build the applications and follow the maintained [operator setup](examples/operator/README.md).
-It starts in a fresh private directory with a scoped loopback configuration and complete starter,
-then shows ordinary byte-pinned process and separately managed local-model workflows. No test
-fixture or evidence-only binary is needed for product setup.
-
-```sh
+```powershell
 cargo build -p milkdrift-daemon --bin milkdrift-daemon -p milkdrift-cli --bin milkdrift
-milkdrift-daemon --config /private/operator/daemon.toml --check-config
-milkdrift-daemon --config /private/operator/daemon.toml
-milkdrift --json --timeout-secs 10 daemon readiness
-milkdrift --json --command-id starter-import blueprint import /private/operator/starter.json
-milkdrift --json --command-id starter-start run start run-starter operator-starter REVISION_ID
-milkdrift --json --timeout-secs 10 run wait run-starter --terminal succeeded
+if ($LASTEXITCODE -ne 0) { throw 'Application build failed' }
+$daemon = (Resolve-Path target/debug/milkdrift-daemon.exe).Path
+$cli = (Resolve-Path target/debug/milkdrift.exe).Path
+$examples = (Resolve-Path examples/operator).Path
+$operatorDirectory = Join-Path $env:USERPROFILE ('Milkdrift/operator-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $operatorDirectory | Out-Null
+Copy-Item "$examples/daemon.toml", "$examples/starter.json" $operatorDirectory
+Set-Location -LiteralPath $operatorDirectory
+$env:MILKDRIFT_TOKEN = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+& $daemon --config daemon.toml --check-config
+if ($LASTEXITCODE -ne 0) { throw 'Invalid daemon configuration' }
+$daemonProcess = Start-Process $daemon -ArgumentList '--config', 'daemon.toml' -WorkingDirectory $operatorDirectory -PassThru -WindowStyle Hidden
+$readyBy = [DateTime]::UtcNow.AddSeconds(10)
+do {
+    & $cli --json --timeout-secs 1 daemon readiness
+    if ($LASTEXITCODE -eq 0) { break }
+    Start-Sleep -Milliseconds 100
+} while ([DateTime]::UtcNow -lt $readyBy -and !$daemonProcess.HasExited)
+if ($LASTEXITCODE -ne 0) { throw 'Daemon did not become ready' }
+$import = & $cli --json --command-id starter-import blueprint import starter.json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw 'Blueprint import failed' }
+$revision = $import.value.value.revision_id
+& $cli --json --command-id starter-start run start run-starter operator-starter $revision
+if ($LASTEXITCODE -ne 0) { throw 'Run start failed' }
+& $cli --json --timeout-secs 10 run wait run-starter --terminal succeeded
+if ($LASTEXITCODE -ne 0) { throw 'Starter did not succeed' }
+& $cli --json run timeline run-starter --limit 100
 ```
 
-The guide generates credentials into the environment or references private files; secret values
-never belong in source or argv. Paths resolve against the chosen configuration directory.
+Keep this shell for subsequent authenticated CLI calls. Secrets belong in process environment or
+private referenced files, never argv or source. Paths in configuration resolve against its
+directory. The listener uses loopback; if the default port is occupied, change `bind` and set
+`MILKDRIFT_ENDPOINT` to the same address. For a Unix shell and foreground shutdown/restart, use the
+[operator guide](examples/operator/README.md#startup-and-restart).
 
-With exact coding, verification, and reviewer capability profiles registered and included in the
-actor's scoped grant, the same headless client can import and run an ordered Markdown implementation
-sequence:
+Next run [one byte-pinned local process](examples/operator/README.md#one-byte-pinned-local-process)
+or [one separately managed model](examples/operator/README.md#one-separately-managed-loopback-model).
+[Prompt sequences](docs/guides/headless-dogfood.md) compose coding, verification, review, and
+prospective remediation. [Daemon operations](docs/operations/daemon.md) covers retention and backup.
 
-```sh
-cargo run -p milkdrift-cli -- --command-id quickstart-sequence-validate-v1 \
-  sequence validate examples/headless-dogfood-sequence.md
-cargo run -p milkdrift-cli -- --command-id quickstart-sequence-import-v1 \
-  sequence import examples/headless-dogfood-sequence.md
-cargo run -p milkdrift-cli -- --command-id quickstart-run-start-v1 \
-  --expected-revision REVISION_ID \
-  run start RUN_ID milkdrift-core-convergence REVISION_ID
-cargo run -p milkdrift-cli -- --timeout-secs 60 run timeline RUN_ID --follow
-```
+## Read the repository
 
-Successful verification advances to the next fresh coding-agent process while one explicitly
-authorized repository remains persistent. Failure routes to independent review and a durable
-shared-control approval hold; remediation is a normal prospective revision. See [the headless
-dogfood guide](docs/guides/headless-dogfood.md), [schema-2 reference](docs/reference/prompt-sequence-v2.md),
-and [complete example](examples/headless-dogfood-sequence.md).
+- [Vision](docs/product/vision.md): intended experience and success criteria.
+- [Architecture](docs/architecture.md): terminology, invariants, dependency direction, and package owners.
+- [Learning the implementation](docs/README.md#learning-the-implementation): six source traces with
+  black-box commands and independent tests.
+- [Development workflow](docs/development/workflow.md): the full gate and focused suites.
+- [Documentation index](docs/README.md): operator, wire, schema, evidence, and decision references.
 
-To generate redacted operator evidence against one real coding-agent executable and one real model
-endpoint, run `cargo external-evidence` with the safe templates under
-[`examples/external-evidence`](examples/external-evidence/README.md). The exact
-prerequisites, qualification rules, costs, restart/failure scenario, report schema, fixture mode,
-and cleanup guidance are in [the external-evidence guide](docs/guides/external-evidence.md). Fixture mode
-tests the harness but never qualifies as external interoperability proof.
-
-For a model-only daemon/CLI smoke against a separately managed loopback OpenAI-compatible server,
-use the ordinary [operator commands](examples/operator/README.md#one-separately-managed-loopback-model). Optional structural qualification uses `cargo local-model-evidence` with the safe profile under
-[`examples/local-model`](examples/local-model/openai-compatible-loopback.example.json). The
-[local-model endpoint guide](docs/guides/local-model-endpoint.md) documents deterministic and
-explicit real-endpoint modes; both remain distinct from the qualifying process-plus-model gate.
-
-The daemon refuses non-loopback plaintext binds and permissive CORS is not enabled. Older configuration/storage schemas and legacy sidecar authority are not silently migrated, and broad/unbounded authority requires an explicit dangerous acknowledgement. Empty artifact, layout, peer, and workspace scopes deny access. See [the daemon operation guide](docs/operations/daemon.md), [the authority configuration guide](docs/operations/authority.md), and [the control API reference](docs/reference/control-api.md).
-
-A minimal revision is constructed through a validated mutation batch; see the crate-level example in `milkdrift-blueprint` and the integration tests under `crates/blueprint/tests`.
-
-## Repository map
-
-- `crates/capability`: provider-neutral capability, exact resolution, and invocation contracts.
-- `crates/authority`: actor identity, scoped immutable grants, deterministic decisions, and opaque secret references.
-- `crates/control`: shared human/service/AI workflow proposals, risk policy, authority presets, the typed controller lifecycle/read model, and the in-process workflow-control capability adapter.
-- `crates/control-protocol`: pure protocol-2.3 commands, read models, envelopes, authenticated cursors, streams, and layout schema 1.
-- `crates/control-client`: authenticated typed HTTP queries, exact command submission, bounded artifact ranges, and resumable SSE.
-- `crates/prompt-sequence`: bounded JSON/Markdown implementation sequences, ordinary blueprint compilation, and prospective remediation proposal construction.
-- `crates/capability-host`: live adapter generations, resolution, admission, cancellation, health, drain, and shutdown.
-- `crates/blueprint`: immutable workflow definitions, fingerprints, and revision transactions.
-- `crates/model`: provider-neutral model task/response and exact schema-v2 causal-context manifest contracts.
-- `crates/peer-protocol`: bounded transport-neutral peer session, catalog, execution, cancellation, observation, and artifact-transfer contracts.
-- `crates/workspace`: scoped immutable values, branch lineage, artifact metadata, and budgets.
-- `crates/persistence`: versioned events and narrow journal/revision/snapshot/workspace/artifact ports.
-- `crates/runtime`: commands, pure projections, scheduling, execution ownership, recovery, reconciliation, and authoritative causal-context discovery/materialization.
-- `adapters/redb-store`: transactional local redb storage and content-addressed artifact bytes.
-- `adapters/local-process`: byte-pinned schema-v2 safe-argv profiles and the trusted-host process adapter; it is not a sandbox.
-- `adapters/model-provider`: bounded HTTP endpoint profiles plus OpenAI-compatible and native Anthropic mappings.
-- `adapters/peer-http`: authenticated HTTP peer transport, durable serving/reconnect, and remote capabilities mapped into the ordinary capability host.
-- `adapters/local-secret`: explicit opaque-secret-reference resolution from bounded environment or restricted-file sources.
-- `apps/daemon`: authoritative local host, bounded runtime owner, authentication, HTTP/SSE API, recovery, and shutdown.
-- `apps/cli`: comprehensive storage-free operator client with human output, stable schema-v2
-  success/failure JSON, and resumable JSON Lines streams.
-- `tools/evidence`: development-only Divan and operational fixtures for critical bounded paths.
-- `.github/workflows`: pinned Linux quality/stress/evidence lanes plus Linux, Windows, and macOS contract validation.
-- `docs`: product, architecture, development, operator, reference, and durable decision documentation.
-- `.github/workflows/quality.yml`: the primary format/check/test/lint/documentation workflow.
-- `.github/workflows/stress.yml`: weekly and manually triggered long-run storage/projection boundary evidence.
-
-Start with [AGENTS.md](AGENTS.md). The [documentation index](docs/README.md) links the canonical detailed documents, including the [product vision](docs/product/vision.md), [architecture constitution](docs/architecture.md), [current status](docs/product/status.md), [roadmap](docs/product/roadmap.md), [development workflow](docs/development/workflow.md), [public API policy](docs/reference/public-api-policy.md), and [ADR index](docs/decisions/README.md).
-
-Milkdrift is licensed under either the [MIT license](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE), at your option.
+Contributors start with [AGENTS.md](AGENTS.md). Milkdrift is licensed under either
+[MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE), at your option.

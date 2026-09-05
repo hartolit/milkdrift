@@ -1,85 +1,12 @@
 # Verification and operational evidence
 
-This document defines the repeatable pre-UI evidence lanes. Correctness remains owned by the
-ordinary test, lint, documentation, dependency, and focused regression gates. Benchmark numbers
-are observations, not correctness thresholds, and are not used to conceal an unbounded design.
+This document owns evidence commands, interpretation, and qualification limits. The ordinary
+[full gate](workflow.md#full-local-gate) establishes correctness; benchmarks measure behavior.
+[Status](../product/status.md#current-validationevidence-snapshot) owns the latest executed state.
 
-## Pinned tools and fixtures
+## Actual-binary scenarios
 
-- Rust is pinned to 1.95.0 by `rust-toolchain.toml`.
-- Targeted mutation testing uses `cargo-mutants` 27.1.0 from `.cargo/mutants.toml` and the
-  Cargo-native `mutation-evidence` binary owned by `milkdrift-evidence`.
-- Microbenchmarks use Divan 0.1.21 as an exact development dependency of
-  `milkdrift-evidence`.
-- The local-process measurement executes the separately built, byte-pinned
-  `evidence-process-helper`. It emits exactly 256 KiB on stdout and 256 KiB on stderr without a
-  shell, network, credential, clock, or random input.
-- Model-stream measurements use fixed OpenAI-compatible and Anthropic SSE documents through the
-  production bounded SSE and provider state machines. No provider endpoint is contacted.
-- Daemon measurements spawn the built product daemon with temporary redb/artifact roots, private
-  temporary bearer files, an ephemeral loopback listener, and controlled local concurrency.
-- Headless CLI evidence builds and spawns the actual `milkdrift-daemon` and `milkdrift` binaries.
-  It validates the maintained operator starter with its scoped authority, then registers two
-  byte-pinned helper profiles and a deterministic loopback model through accepted configuration.
-  It never supplies the database path to a CLI process or composes daemon internals.
-- Local-model evidence also uses the actual daemon/CLI plus canonical configuration and blueprint
-  builders. Deterministic mode enters the production OpenAI-compatible mapping through controlled
-  loopback success and post-entry-close endpoints. Real mode accepts only an explicit separately
-  managed loopback profile and never falls back.
-
-`milkdrift-evidence` is a development-only leaf package. Product crates do not depend on it. The
-external-evidence executable also lives in this package. Its shared application harness owns child
-deadlines, captured-output limits, readiness, abrupt restart, CLI JSON decoding, and cleanup;
-configuration validation and runtime composition remain with the actual daemon. Build the daemon
-before running evidence package tests or application measurements in isolation.
-The model-provider `operational-evidence` feature only exposes a network-free driver around its
-existing private parser state machines; the feature is disabled by default and changes no
-production mapping or policy.
-
-## Measurement inventory
-
-| Area | Measured operation | Representative fixture | Correctness owner |
-| --- | --- | --- | --- |
-| Persistence | one accepted journal transaction | one command and event | redb journal contract tests |
-| Persistence | bounded journal batch | 64 events in one transaction | atomic/fault-boundary tests |
-| Runtime | full projection rebuild | 4,096 durable events | projection and structured-runtime tests |
-| Runtime | checkpoint plus tail | serialized projection plus 128 events | recovery/reconciliation tests |
-| Application state | hot/cold lookup, replay, turnover | hot bound 8, archive batch 3 | application-state tests |
-| Peer state | active/hot lookup, page/resume, compact replay | four executions, 68 observations, four tombstones | peer/redb fault tests |
-| Context | metadata discovery and bounded selection | 2,048 candidates to 128 selections | causal-context tests |
-| Context | selected-only materialization | 64 exact node-execution sources | materialization tests |
-| Artifact | publication and range read | 1 MiB object, 256 KiB range | artifact contract tests |
-| Local process | stdout/stderr streaming and publication | fixed 512 KiB combined output | local-process tests |
-| Model provider | SSE plus provider state machines | 2,048 complete fixed responses | mock-endpoint tests |
-| Daemon | authenticated owner round trip | loopback health request | control-plane tests |
-| Headless CLI | actual-binary command/read/restart workflow | temporary loopback daemon and deterministic processes | CLI units, daemon control plane, and `headless-cli-evidence` |
-| Local model | actual-binary wait/restart/context/model/artifact/uncertainty workflow | controlled endpoint or explicit operator loopback profile | provider hostile endpoints, runtime uncertainty, daemon control plane, and `local-model-evidence` |
-
-The operational runner separately performs sustained receipt turnover and reopen recovery. It
-replays a 10,000-event projection to assert a bounded current frontier, verifies old cold receipt
-replay after reopen, records durable store bytes before and after final archival, and reports
-primary/hot/cold receipt document counts and logical bytes. Its peer lane scales to the configured
-operation count and reports final/peak active and hot counts, tombstones, observations, and logical
-bytes observed for active, hot, compact, and observation documents. These logical document sizes
-are distinct from the report's physical redb-directory bytes. The daemon scenario performs
-sequential low/medium phases, a concurrent
-saturated phase against an owner queue of one, checks the stable overload classification, keeps a
-slow SSE consumer, reconnects with its authenticated cursor, verifies a post-overload request,
-compares the daemon child's Linux `/proc/<pid>/task` counts when available, and joins graceful
-shutdown through its public Ctrl-C boundary. That signal lane requires Unix. The separate
-effect-worker regression uses a blocking controlled adapter with one worker and a queue of one to
-prove fixed backpressure and truthful unresolved work on forced shutdown.
-The feature-gated adapter-conformance lane runs one common factory-driven contract against the
-local-process, model-endpoint, remote-peer, and workflow-control production implementations. Host
-adversarial tests separately inject lifecycle, admission, execution, cancellation, and shutdown
-failures while checking permit cleanup, exact correlation, drain behavior, and lock-free adapter
-callbacks. Focused regressions also refuse mismatched snapshot/request selections before adapter
-entry, recover a pre-entry cancellation acknowledgement across an after-observation-commit fault,
-and terminate an exited child's still-live Unix descendant that retains inherited output pipes.
-
-## Local commands
-
-Run the actual-binary headless product scenario:
+Build and run the headless operator scenario:
 
 ```sh
 cargo build -p milkdrift-daemon --bin milkdrift-daemon \
@@ -87,26 +14,38 @@ cargo build -p milkdrift-daemon --bin milkdrift-daemon \
   -p milkdrift-evidence --bin headless-cli-evidence
 target/debug/headless-cli-evidence \
   --daemon target/debug/milkdrift-daemon \
-  --cli target/debug/milkdrift
+  --cli target/debug/milkdrift --examples examples/operator
 ```
 
-This is deterministic local control-path evidence, including abrupt restart and retained
-uncertainty. It makes no real model or provider interoperability claim.
+On Windows append `.exe` to executable paths. The scenario uses maintained operator files,
+temporary redb/artifact roots, private bearer files, ephemeral loopback HTTP, deterministic
+byte-pinned processes, and a controlled model endpoint. It checks starter setup, import,
+replay/conflict, inspection, pause/signal/resume, guarded proposal adoption, artifact download,
+abrupt-restart uncertainty resolution, durable reads, stable failure exits, and model provenance.
+Every CLI action is a real process; no CLI receives the database path.
 
-Run the separate model-only lane with `cargo local-model-evidence` after building its helper and
-applications. The exact deterministic and operator-real commands, safe profile, structural
-assertions, credential rules, and non-qualification boundary are maintained in the
-[local-model endpoint guide](../guides/local-model-endpoint.md).
+The separate [local-model lane](../guides/local-model-endpoint.md#run-the-maintained-daemoncli-lane)
+checks wait/restart/release, selected/omitted context, streaming/usage/artifact provenance,
+nonduplication, post-entry response loss, unsafe-retry refusal, and explicit retain. Its deterministic
+mode is non-qualifying. Real mode requires an explicit separately managed loopback profile and
+never falls back to a mock.
 
-Install the mutation tool outside the workspace dependency graph:
+[Strict external evidence](../guides/external-evidence.md) requires both a real byte-pinned coding
+agent and a supported real model endpoint with operator-owned resources. Only its complete
+validated report can qualify that interoperability boundary. Hermetic external mode tests the
+harness. It cannot authorize production controller activation.
+
+The development-only evidence package shares one child lifecycle owner for deadlines, bounded
+captured output, readiness, restart, CLI JSON decoding, and cleanup. Production configuration and
+composition remain in the actual daemon. Build the daemon before isolated evidence-package tests.
+
+## Mutation
+
+The Cargo runner and [.cargo/mutants.toml](../../.cargo/mutants.toml) pin mutation tooling. Install
+the tool outside workspace dependencies, then list or run a semantic shard:
 
 ```sh
 cargo install cargo-mutants --version 27.1.0 --locked
-```
-
-List or execute one focused shard:
-
-```sh
 cargo mutation-evidence authority --list
 cargo mutation-evidence authority
 cargo mutation-evidence retention
@@ -117,45 +56,27 @@ cargo mutation-evidence context
 cargo mutation-evidence peer
 ```
 
-The committed mutation scope is semantic: authority selector, validity, revocation, resource,
-side-effect, and budget conjunctions; application and peer idempotency/accounting/archival;
-optimistic runtime replay, recovery uncertainty, reconciliation, and controller bounds; context
-selection/budgeting; and peer admission, claim, entry, cancellation, uncertainty, observation, and
-archival transitions. It does not mutate generated fixtures or expand
-to unrelated constructors merely to inflate a mutation count. `mutants.out/outcomes.json` is the
-machine-readable result. A missed mutant must be fixed by a test or recorded by exact identity in
-`.cargo/mutation-classifications.json`. The only accepted classifications are equivalent behavior,
-unreachable under a validated public contract, or a mutation-tool limitation; unclassified survivors
-fail the lane.
+Scope covers authority conjunctions, application/peer idempotency and retention, runtime optimistic
+replay/recovery/reconciliation, controller accounting, context budgets, and peer lifecycle. It
+excludes generated fixtures and unrelated constructors. A failing unmutated baseline cannot
+qualify a campaign.
 
-The seven current-source shards enumerate 625 focused mutants. The complete campaign catches 586;
-37 are compiler-unviable, and the two surviving defensive guards have exact
-`unreachable_by_valid_contract` classifications: one runtime reconciliation guard and one
-controller account-application guard that is preceded by immutable-declaration validation. There
-are no unclassified survivors or timeouts.
-Per-shard `mutants.out` directories retain source identities, logs, outcomes, and generated
-classification reports. The Rust runner validates its strict classification policy, rejects
-duplicate identities, and fails closed on timeouts or unclassified survivors. Checksum-correct
-raw-row corruption tests exercise peer primary-record, request-index, and tombstone validators
-instead of classifying their individual guards.
+Retain each `mutants.out` directory with exact source identity, logs, and `outcomes.json`.
+Unclassified survivors and timeouts fail. Fix missing assertions or record an exact reviewed entry
+in [.cargo/mutation-classifications.json](../../.cargo/mutation-classifications.json). Accepted
+classifications are only equivalent behavior, unreachable under a validated public contract, or
+mutation-tool limitation. The runner rejects duplicate identities and validates its classification
+policy. A healthy benchmark cannot justify a survivor. Historical counts do not qualify new source.
 
-The controller admission release lane turns over exact final-entry reservations and logical
-artifact charges across checkpoints and a redb reopen, then proves the terminal account has no
-outstanding reservation. It complements the lifecycle-only controller checkpoint/restart lane;
-both are explicit `--ignored --exact` release tests in `stress.yml`, not ordinary pull-request
-tests. The hermetic external-evidence fixture remains an integration regression check and is
-explicitly non-qualifying for real provider interoperability.
+## Benchmarks and operations
 
-Deterministic clock boundary tests inject unavailability and rollback at inbound authority, remote
-catalog registration, artifact transfer, post-entry worker recovery, daemon owner/health, and
-restart boundaries. Redb tests independently prove that artifact acceptance and watermark
-advancement commit or roll back together and that a reopened store refuses time behind durable
-high-water evidence. These tests establish fail-closed software behavior; elapsed time while the
-daemon is absent still relies on the operating-system clock trust stated in ADR 0029.
-
-Build and smoke every benchmark once:
+Divan is pinned in the evidence [manifest](../../tools/evidence/Cargo.toml). The process fixture
+emits 256 KiB to each of stdout and stderr with no shell, network, credentials, time, or randomness.
+Model measurements feed fixed OpenAI-compatible and Anthropic SSE through production parsers.
+The non-default provider `operational-evidence` feature exposes only that network-free driver.
 
 ```sh
+cargo test -p milkdrift-evidence --test operational_contracts --all-features
 cargo build --release -p milkdrift-evidence \
   --bin evidence-process-helper --bin operational-evidence \
   -p milkdrift-daemon --bin milkdrift-daemon
@@ -163,7 +84,7 @@ MILKDRIFT_EVIDENCE_PROCESS_HELPER="$PWD/target/release/evidence-process-helper" 
   cargo bench -p milkdrift-evidence --bench core_paths -- --test
 ```
 
-Capture distributions and machine-readable operational evidence:
+Capture distributions and operational reports on Unix:
 
 ```sh
 mkdir -p target/evidence
@@ -176,64 +97,42 @@ cargo test --release -p milkdrift-capability-host --test effect_worker \
   -- --exact --nocapture
 ```
 
-The runner writes `operational-evidence.json` and `scenario-summary.csv`. Reports include scenario
-identities, operation/byte counts, stable result checksums, storage/reopen facts, daemon accepted
-and overload counts, latency distribution, stream/recovery/shutdown outcomes, platform identity,
-Git commit/tree/dirty state queried from the checkout, and `rustc -vV` output. Raw credentials,
-prompts, provider payloads, artifact content, environment values, and database internals are never
-reported. Scenario identities explicitly distinguish synthetic candidate selection and in-memory
-projection serialization from production durable discovery and snapshot-envelope recovery.
+Benchmarks cover journal transactions/batches, projection rebuild/checkpoint tail, receipt turnover,
+peer hot/compact replay, context discovery/selection/materialization, artifact publication/ranges,
+process/model streams, and authenticated daemon round trips. Their fixtures and dimensions live in
+[core_paths.rs](../../tools/evidence/benches/core_paths.rs); this guide is not a generated inventory.
 
-## Continuous integration evidence
+The operational runner asserts a bounded frontier over 10,000 events, cold-receipt replay after
+reopen, and sustained receipt/peer turnover. It distinguishes logical document bytes from physical
+redb-directory allocation. Daemon phases measure sequential/concurrent load, bounded-queue overload,
+slow SSE consumption, authenticated reconnect, post-overload recovery, and public Ctrl-C shutdown.
+The signal lane requires Unix; child thread counts use Linux `/proc` when available. A separate
+blocking-adapter regression checks fixed worker backpressure and unresolved forced-shutdown truth.
 
-- `quality.yml` is the required Linux formatting/check/test/Clippy/rustdoc/deny/machete gate.
-- `platform.yml` checks all workspace targets and runs pure/domain/protocol/client/local-process
-  contracts on pinned Ubuntu 24.04, Windows 2025, and macOS 15 runners.
-- `mutation.yml` runs the seven focused weekly/manual shards with pinned cargo-mutants and uploads
-  every complete `mutants.out` directory, including logs and JSON outcomes.
-- `benchmarks.yml` runs the Divan smoke/full lanes, operational runner, and fixed effect-worker
-  saturation regression, then uploads the text, JSON, and CSV evidence.
-- `stress.yml` retains the receipt, peer, controller lifecycle, controller admission, and runtime
-  bounded-frontier cases that are intentionally inappropriate for every pull request.
+Reports are `operational-evidence.json` and `scenario-summary.csv`, with scenario identity,
+operation/byte counts, checksums, storage/reopen facts, latency, overload, stream/shutdown outcomes,
+platform, Git commit/tree/dirty state, and `rustc -vV`. Synthetic selection and in-memory projection
+serialization are distinguished from durable discovery and snapshot recovery. Credentials,
+prompts, provider payloads, artifact bytes, and environment values are excluded.
 
-Checkout, Rust installation, and artifact upload actions use immutable commit SHAs. Jobs have
-explicit timeouts, least-privilege read permissions, and workflow-level concurrency policy. The
-platform logs are uploaded even on failure so OS-specific path, process, encoding, permission, or
-cleanup defects remain inspectable.
+## CI and qualification
 
-## Interpretation and limitations
+| Workflow | Configured evidence |
+| --- | --- |
+| [quality](../../.github/workflows/quality.yml) | Linux full gate, real operator scenario, deterministic local model. |
+| [platform](../../.github/workflows/platform.yml) | Pinned Ubuntu, Windows, macOS checks and selected domain/protocol/client/process tests. |
+| [mutation](../../.github/workflows/mutation.yml) | Seven weekly/manual shards and complete mutation artifacts. |
+| [benchmarks](../../.github/workflows/benchmarks.yml) | Smoke/full distributions, operational reports, worker saturation. |
+| [stress](../../.github/workflows/stress.yml) | Receipt, peer, controller lifecycle/admission, and runtime frontier longevity. |
 
-The current Windows/MSVC source executes storage-backed startup, artifact publication, and
-recovery after directory and artifact flushing were corrected to use writable handles. The
-combined actual-binary operator lane and deterministic local-model lane pass, including bounded
-waiting, exact replay, restart, proposal adoption, artifact/context inspection, and retained
-uncertainty. Neither lane qualifies a real model server or filesystem power-loss durability.
+Actions use immutable SHAs, jobs have timeouts/read permissions/concurrency limits, and platform
+logs remain available on failure. Workflow definitions establish configured lanes, not successful
+execution. Closure requires successful runs on their declared hosts for the source being qualified;
+a local or cross-target check cannot substitute.
 
-The full workspace suite still fails native Unix executable fixtures. The repaired symmetric
-discovery-index corruption fixture now removes the current schema tables and passes. A current
-Unix gate and hosted platform lifecycle/durability evidence remain necessary. Mutation campaigns
-cannot qualify failing unmutated baselines. Raw gate output, timings, structural measurements,
-and default/all-feature public-API inventories stay under `target/readiness`. Real-model execution
-requires an explicitly supplied separately managed endpoint profile; no profile was supplied.
-
-The harness does not claim production traffic shape, universal throughput, a memory allocator
-profile, network/TLS performance, a real provider service-level objective, or sandbox strength for
-trusted local processes. Divan isolates repeatable code paths but cannot replace end-to-end tests.
-Store byte counts include redb allocation behavior and are useful for trend inspection, not a
-portable quota. Child task counts are Linux-only; platform lifecycle evidence remains owned by
-tests and CI logs.
-
-Literal pre-UI closure additionally requires successful hosted runs of the Windows and macOS
-matrix and the scheduled/manual mutation and benchmark workflows. A local Linux run can validate
-their definitions and commands but cannot honestly substitute for those hosted results. Until the
-new workflows have run successfully on their declared runners, status must say that cross-platform
-and hosted evidence is configured and awaiting execution, not complete.
-
-The latest hosted results inspected for this pass target source commit `8b24269`: the 2026-09-03
-Linux quality workflow passed all required steps, and the platform workflow passed on Ubuntu
-24.04 and macOS 15. Its Windows 2025 job completed the all-target/all-feature check but failed seven
-local-process execution tests because the non-Unix immediate-child-only path treated unavailable
-Unix-style process-group cleanup as a permanently live descendant group and therefore reported
-otherwise terminal outcomes as uncertain. The repaired local-process library and its Windows GNU
-cross-target check pass locally, but those hosted runs predate the repair and do not qualify it; a
-new hosted Windows runtime run remains required.
+Deterministic fault/reopen, clock rollback, reservation/artifact, conformance, and corruption tests
+prove software invariants, not filesystem power-loss behavior, sandbox strength, provider service
+levels, or production traffic capacity. OS time remains trusted during daemon downtime. Physical
+store size is a trend observation rather than a portable quota; benchmarks are neither universal
+throughput guarantees nor allocator/network/TLS profiles. Keep raw reports, API inventories, and
+timings outside source control. Report unavailable credentials, profiles, tools, or runners explicitly.

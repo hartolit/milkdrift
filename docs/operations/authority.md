@@ -7,39 +7,10 @@ validity interval, grant identity/revision, and revocation generation are indepe
 immutable schema-4 grant. Authentication selects that exact actor and grant but grants nothing by
 itself.
 
-The checked [schema-9 fixture](../../apps/daemon/tests/fixtures/daemon-config-v9.toml) is the complete
-safe pattern for one actor, one workflow lineage, and one local process capability. Its central
-selection reads as ordinary TOML:
-
-```toml
-[[actors]]
-credential_ref = "credential:operator"
-actor = "human:operator"
-grant_id = "grant:operator"
-grant_revision = 1
-preset = "controller"
-enabled = true
-
-[actors.authority.resources.workflow_run]
-type = "workflow"
-workflow = "example-workflow"
-
-[actors.authority.resources.capability]
-type = "allow"
-maximum_side_effect = "read_only"
-
-[actors.authority.resources.capability.identities]
-type = "only"
-values = ["local-example"]
-
-[actors.authority.resources.capability.operations]
-type = "only"
-values = ["process.execute"]
-```
-
-Adjust every value and every remaining selector in the complete fixture to the actual immutable
-capability profile and workflow you intend to run.
-
+Start with the maintained [operator configuration](../../examples/operator/daemon.toml) and
+[process/model setup](../../examples/operator/README.md). Its authority table is complete;
+select the exact workflow, capability, operation, profile, trust, and resource facts required by
+the intended operation. Test fixtures are compatibility evidence, not operator configuration.
 Capability authority is either `{ "type": "deny_all" }` or an explicit conjunctive allow scope.
 Every allow dimension is `{ "type": "any" }` or `{ "type": "only", "values": [...] }`.
 `Only` requires 1..=128 ordered unique values; an empty array is invalid and never means wildcard.
@@ -57,10 +28,11 @@ named Windows drive root such as `C:/`; `/` is not a cross-platform wildcard. Ne
 are credential-free `host:port` values and network profiles are named immutable transport profiles.
 Secret references are opaque names; secret values never belong in the document.
 
-This path correction does not advance authority-grant schema 4 or daemon configuration schema 9.
-The field shape and canonical meaning remain an absolute normalized root, existing Unix canonical
-bytes and digests are unchanged, and older readers refuse rather than misinterpret newly valid
-Windows drive roots.
+Revision admission checks the complete capability requirement envelope. Unspecified requirement
+dimensions mean `Any`, so a narrower grant refuses the revision even when an exact capability is
+named. Requirements currently cannot express locality or peer selectors; ordinary task grants
+therefore need `Any` for those dimensions. Use exact capability, profile, and trust-zone constraints
+and explicit adapter registration; do not describe that configuration as a locality-restricted grant.
 
 Artifact authority is either `{ "type": "deny_all" }` or an allow scope containing an explicit
 `Any`/nonempty `Only` identity selector and a nonempty sensitivity set; there is no implicit empty
@@ -97,7 +69,12 @@ access is intended, choose finite limits,
 and explicitly configure each peer relationship's `artifact_sensitivities`. Run
 `milkdrift-daemon --config PATH --check-config`, then inspect
 `--print-effective-config` before starting the daemon. The effective output is normalized TOML,
-redacts secret-source details, and is independent of source comments and formatting. When narrowing or revoking, advance the grant
-revision/revocation generation or disable the actor and restart. Existing page and reconnect
+redacts secret-source details, and is independent of source comments and formatting.
+
+## Changing authority
+
+Advance `grant_revision` whenever changing a grant's content; an identity/revision pair binds one
+immutable grant. For revocation, advance the revocation generation or disable the actor and restart.
+Existing page and reconnect
 cursors then fail closed; open streams stop future disclosure on their next bounded check;
 already-entered external work keeps its truthful terminal history.

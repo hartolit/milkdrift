@@ -23,32 +23,17 @@ Workspace use can justify visibility without making a type a stable third-party 
 re-exports exist only when the root is the semantic owner or the re-export is the intentional
 package entry point. Consumers otherwise import the canonical owner directly.
 
-## Current package surfaces
+## Surface ownership
 
-| Package | Intentional categories and consumers |
-| --- | --- |
-| `milkdrift-authority` | External product and durable-schema contracts used by control, runtime, persistence, adapters, protocols, and daemon policy. Capability-owned identities such as `PeerId` are consumed directly, not re-exported. |
-| `milkdrift-blueprint` | External product and durable-schema contracts for immutable definitions, validation, documents, and revisions. |
-| `milkdrift-capability` | External product and durable-schema contracts shared by hosts, runtime, adapters, peers, and applications. It is the canonical owner/import path for `PeerId`, `SchemaId`, `ExtensionKey`, `BoundedJson`, and `TrustZone`. |
-| `milkdrift-capability-host` | Workspace adapter ports and the daemon/runtime execution bridge; no durable storage ownership. `InMemorySecretResolver`, the reusable production-adapter conformance harness, and its bounded `RecordingReporter` are test-only exposures available through the non-default `test-support` feature. |
-| `milkdrift-contracts` | Workspace adapter mechanics for bounded canonical JSON, validated strings, UTF-8-safe byte truncation, canonical `b3_` lexical validation, and private-wire-to-validating-conversion glue; consuming domains retain their wire shapes, semantic identifiers, validation, digest domains, errors, and schema versions. |
-| `milkdrift-control` | Workspace application contracts plus durable proposal/controller documents used by daemon and evidence. |
-| `milkdrift-control-client` | External product contract for typed authenticated HTTP/SSE clients, including CLI and future clients. |
-| `milkdrift-control-protocol` | External product and durable wire contracts for protocol 2.3; transport/runtime/storage types are excluded. |
-| `milkdrift-model` | External product and durable-schema contracts for provider-neutral model requests, responses, and context manifests. |
-| `milkdrift-peer-protocol` | External product and durable wire contracts for peer protocol 1.2; HTTP/runtime/storage types are excluded, and `PeerId` retains its capability-owned import path. |
-| `milkdrift-persistence` | Workspace adapter ports and durable event/application/peer/snapshot schemas used by runtime and redb. Canonical identities are imported from their owners, not re-exported for compatibility. |
-| `milkdrift-prompt-sequence` | External product and durable-schema contracts for schema-2 imports, compilation, inspection, and remediation. |
-| `milkdrift-runtime` | Workspace adapter contracts for commands, projection, scheduling, execution, recovery, reconciliation, and context discovery. `ManualClock` and `DeterministicExecutor` are available only through the non-default `test-support` feature. |
-| `milkdrift-workspace` | External product and durable semantic contracts for scopes, values, artifacts, provenance, and budgets. Capability-owned `BoundedJson` is consumed through its canonical import path rather than re-exported. |
-| `milkdrift-local-process` | Workspace adapter contract and durable schema-2 profile reader; OS/process internals stay private. |
-| `milkdrift-model-provider` | Workspace adapter contract and versioned endpoint profiles; provider wire payloads stay private. `operational-evidence` is evidence-only. |
-| `milkdrift-peer-http` | Workspace adapter contract used by the daemon; transport, worker, and storage projections stay with private modules. |
-| `milkdrift-redb-store` | Workspace adapter implementations and configuration. Fault injection and mutation inspection are test-only under `test-admin`. |
-| `milkdrift-local-secret` | Workspace adapter contract for explicitly configured environment/restricted-file secret references; locations, values, and environment enumeration are not exposed. |
-| `milkdrift-daemon` | Workspace application boundary used by its executable, integration tests, and evidence. Its HTTP router and read projections are internal. |
-| `milkdrift-cli` | No library surface. Its command behavior, schema-2 success/failure JSON, and schema-2 JSON Lines stream wrappers are external application contracts. |
-| `milkdrift-evidence` | Unpublished development/test-only contract, including the shared actual-binary application harness and fixture request reader. Reports belong under `target/evidence`. |
+The [architecture package map](../architecture.md#owners-and-dependency-direction) identifies each
+production consumer boundary. Public semantic documents, adapter ports, and application entry
+points must meet the classification above; private provider payloads, storage rows, daemon routes,
+and projections do not need exports merely for tests.
+
+Runtime `ManualClock`/`DeterministicExecutor` and capability-host secret/conformance helpers require
+non-default `test-support`. Redb fault hooks require `test-admin`; the provider parser measurement
+driver requires `operational-evidence`. Review these separately from default product surfaces.
+The evidence package is unpublished and must remain a development leaf. The CLI has no library API.
 
 ## Review method
 

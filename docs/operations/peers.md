@@ -37,8 +37,7 @@ startup recovery rather than guessing an outcome.
 
 Detailed health reports active, dispatch, hot-terminal, and tombstone counts; configured active/queue/hot/batch bounds; archive generation/time; and a redacted degraded reason. Readiness remains deliberately coarse. A nonzero degraded state means admission stays closed after restart verification; inspect storage and restore a known-good generation rather than editing redb rows.
 
-This pre-release store format refuses physical schema versions other than 11 and internal document formats other than 14. Physical schema 9 introduced the boundary-clock high-water fact, schema 10 added controller accounts and their binding/transition/charge links, and schema 11 adds immutable controller-account revision evidence; format 14 makes each account mutation replayable from its predecessor and exact source. Startup also refuses obsolete `peer-executions-v1` or `peer-artifacts-v1` directories instead of silently ignoring or partially importing prototype authority.
-
-Run the ordinary two-daemon turnover/restart check with `cargo test -p milkdrift-daemon --test two_daemon_peer`. For a longer manual lane, use `cargo test --release -p milkdrift-daemon --test two_daemon_peer peer_execution_retention_longevity_survives_turnover_and_restart -- --ignored --exact`. It crosses the tiny hot bound repeatedly, restarts both daemons, verifies tombstone accounting, and proves that a new remote invocation still completes.
+Storage compatibility and legacy-directory refusal follow the [daemon startup and backup rules](daemon.md).
+[Development workflow](../development/workflow.md) owns the ordinary and release peer tests.
 
 Never put workflow/model-controlled URLs into relationship configuration, expose a permissive browser CORS realm, forward secret/config artifacts, or mount a peer's database/filesystem as local state. NAT traversal, overlay routing, shared databases, mesh discovery, hosted coordination, consensus, model synchronization, and tensor transfer remain external/non-goals.

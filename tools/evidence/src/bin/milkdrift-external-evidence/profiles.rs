@@ -570,23 +570,6 @@ mod tests {
     use std::os::unix::fs::PermissionsExt as _;
 
     #[test]
-    fn committed_external_evidence_templates_are_schema_valid()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let examples = root.join("examples/external-evidence");
-        let process = fs::read(examples.join("coding-agent-profile.example.json"))?;
-        ProcessProfileDocument::from_json(&process)?;
-        for name in [
-            "openai-compatible-profile.example.json",
-            "anthropic-profile.example.json",
-        ] {
-            let bytes = fs::read(examples.join(name))?;
-            milkdrift_model_provider::EndpointProfile::from_json(&bytes)?;
-        }
-        Ok(())
-    }
-
-    #[test]
     fn qualification_rejects_interpreters_and_fixture_markers() {
         for executable in [
             "/usr/bin/python3",

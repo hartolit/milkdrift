@@ -37,6 +37,7 @@ const PROTOCOL_MAJOR: u16 = 2;
 const PROTOCOL_MINOR: u16 = 3;
 /// Independent presentation-layout document version.
 const LAYOUT_SCHEMA_VERSION: u32 = 1;
+const AUTHENTICATED_CURSOR_SCHEMA_VERSION: u8 = 2;
 /// Maximum JSON request or response envelope size.
 pub const MAX_DOCUMENT_BYTES: usize = 1_310_720;
 /// Maximum returned items in a single page.
@@ -318,7 +319,7 @@ impl Cursor {
         validate_cursor_digest("cursor decision", decision_digest)?;
         let mac = cursor_mac(feed, &position, &binding, decision_digest, key)?;
         let bytes = serde_json::to_vec(&BoundCursorWire {
-            version: 2,
+            version: AUTHENTICATED_CURSOR_SCHEMA_VERSION,
             feed: feed.to_owned(),
             position,
             binding,
@@ -387,7 +388,7 @@ impl Cursor {
             &wire.decision_digest,
             key,
         )?;
-        if wire.version != 2
+        if wire.version != AUTHENTICATED_CURSOR_SCHEMA_VERSION
             || wire.feed != expected_feed
             || &wire.binding != expected_binding
             || wire.mac != expected_mac
@@ -434,7 +435,7 @@ impl Cursor {
                 }
                 wire.position
             }
-            Some(2) => {
+            Some(version) if version == u64::from(AUTHENTICATED_CURSOR_SCHEMA_VERSION) => {
                 let wire: BoundCursorWire = serde_json::from_value(value)
                     .map_err(|_| ProtocolError::InvalidCursor("malformed fields".to_owned()))?;
                 if wire.feed != expected_feed {
@@ -494,7 +495,7 @@ impl Cursor {
                 }
                 wire.position
             }
-            Some(2) => {
+            Some(version) if version == u64::from(AUTHENTICATED_CURSOR_SCHEMA_VERSION) => {
                 let wire: BoundCursorWire = serde_json::from_value(value)
                     .map_err(|_| ProtocolError::InvalidCursor("malformed fields".to_owned()))?;
                 if wire.feed != expected_feed {
@@ -555,7 +556,7 @@ fn cursor_mac(
     key: &[u8; 32],
 ) -> Result<String, ProtocolError> {
     let bytes = serde_json::to_vec(&CursorMacDocument {
-        version: 2,
+        version: AUTHENTICATED_CURSOR_SCHEMA_VERSION,
         feed,
         position,
         binding,

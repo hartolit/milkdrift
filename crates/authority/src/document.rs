@@ -4,6 +4,7 @@ use crate::AuthorityError;
 
 /// Current grant contract with explicit artifact and shared-layout selectors.
 pub(crate) const AUTHORITY_GRANT_SCHEMA_VERSION_V4: u32 = 4;
+pub(crate) const AUTHORITY_DECISION_SCHEMA_VERSION_V2: u32 = 2;
 /// Maximum canonical bytes in a grant or decision document.
 pub(crate) const MAX_AUTHORITY_DOCUMENT_BYTES: usize = 262_144;
 

@@ -30,11 +30,11 @@ impl DaemonConfig {
             std::str::from_utf8(&bytes).map_err(|error| ConfigError::Toml(error.to_string()))?;
         let config: Self =
             toml::from_str(source).map_err(|error| ConfigError::Toml(error.to_string()))?;
-        let parent = path.parent().unwrap_or_else(|| Path::new("."));
-        let parent = parent
-            .canonicalize()
-            .map_err(|error| ConfigError::Read(error.kind().to_string()))?;
-        config.validate(&parent)
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        config.validate(parent)
     }
 
     /// Deterministically validates and normalizes a programmatically built config.

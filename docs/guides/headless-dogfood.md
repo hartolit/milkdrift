@@ -66,32 +66,10 @@ and execute operations plus starting-state, diff, and verification evidence poli
 
 ## CLI connection and output contract
 
-Point the client at one daemon and reference a restricted credential file. Bearer values are never
-command arguments:
-
-```sh
-export MILKDRIFT_ENDPOINT=http://127.0.0.1:9734/
-export MILKDRIFT_TOKEN_FILE=/absolute/operator-owned/milkdrift.token
-milkdrift --json daemon readiness
-milkdrift --json daemon authority
-```
-
-Every `--json` success is one compact schema-1 document. A followed run, capability, or health
-feed emits one complete JSON document per line and reconnects from the last authenticated cursor;
-a retryable reconnect is a typed `stream_status` line. Failures emit one bounded schema-1 `error`
-document on stderr. Scripts must check the exit status and retain explicit page or stream cursors.
-
-All command-envelope options are global: `--command-id`, `--expected-sequence`,
-`--expected-revision`, bounded `--reason`, and repeatable `--evidence KIND=ID`. Accepted evidence
-kinds are `authority_decision`, `worker_observation`, `external_receipt`, `artifact`, and
-`recovery_observation`. Use a stable command identity for every noninteractive submission; replay
-the exact complete argument and document set under that same identity. Reusing it with changed
-content is a conflict.
-
-Canonical blueprint, sequence, proposal, and layout inputs accept a regular file or `-` for one
-bounded stdin document. One command may not consume stdin twice. Duplicate JSON keys, excess
-size/depth/count, malformed versions, and noncanonical owner documents fail before submission or at
-the authoritative daemon validation boundary.
+Use the [operator setup](../../examples/operator/README.md#startup-and-restart) for endpoint and
+private credential configuration. The [CLI automation contract](../reference/control-api.md#cli-automation-contract)
+owns success/failure JSON, stdout, exits, deadlines, bounded files/stdin, and reconnect behavior.
+Use explicit command IDs and repeat exactly the same arguments and bytes after a lost response.
 
 ## Import and run
 
@@ -105,7 +83,7 @@ milkdrift --command-id sequence-plan-import-v1 \
 milkdrift sequence show REVISION_ID
 milkdrift --command-id run-plan-start-v1 --expected-revision REVISION_ID \
   run start RUN_ID WORKFLOW_ID REVISION_ID
-milkdrift --json run timeline RUN_ID --limit 100 --follow
+milkdrift --json --timeout-secs 60 run timeline RUN_ID --limit 100 --follow
 ```
 
 The import result reports schema version, sequence/workflow/revision identity, semantic and import
@@ -225,31 +203,7 @@ code and deterministic tests do not know that Codex exists.
 
 ## Deterministic proof
 
-The daemon integration test uses byte-pinned `tee` and `cp` process profiles, a temporary persistent
-repository, real daemon/control-client HTTP, redb, authority evaluation, context publication,
-ordinary workers, proposals, reconciliation, and restarts. It proves successful stage progression,
-a deliberately missing verification-success fact, causal reviewer context, durable proposal and
-adoption boundaries, fresh remediation, no duplicate task attempts, and persistent repository
-content without network access or provider credentials.
-
-The separate shell-free actual-binary scenario builds and spawns `milkdrift-daemon` and
-`milkdrift`, never calls daemon internals from the client, and gives no CLI process the redb path.
-It uses temporary storage/artifact roots, private bearer files, an ephemeral loopback port, and
-byte-pinned deterministic process profiles. Run it from the repository root:
-
-```sh
-cargo build -p milkdrift-daemon --bin milkdrift-daemon \
-  -p milkdrift-cli --bin milkdrift \
-  -p milkdrift-evidence --bin headless-cli-evidence
-target/debug/headless-cli-evidence \
-  --daemon target/debug/milkdrift-daemon \
-  --cli target/debug/milkdrift
-```
-
-The scenario covers validation without storage, import/start replay and changed-payload conflict,
-reads and pagination boundaries, pause/signal/resume, proposal approve/apply guards, artifact
-integrity, abrupt-restart uncertainty retention, explicit resolution, durable reads after restart,
-and machine failures for invalid input, authorization, conflict, not found, unavailability, and a
-failed terminal run. The focused daemon overload test and CLI failure-classification unit test
-cover the shared retryable overload exit category. None of this is real model interoperability
-evidence.
+The [source-learning route](../README.md#learning-the-implementation) links the independent
+sequence/remediation/restart proof. Run the [actual-binary scenario](../development/verification-evidence.md#actual-binary-scenarios)
+for CLI/daemon composition. These tests use deterministic processes and are not real-model
+interoperability qualification.

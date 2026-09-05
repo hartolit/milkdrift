@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ActorRef, AuthorityError, DecisionId, GrantDigest, GrantId, NetworkProfileRef, PolicyId,
-    SecretRef, document::canonical_json,
+    SecretRef,
+    document::{AUTHORITY_DECISION_SCHEMA_VERSION_V2, canonical_json},
 };
 
 use super::{
@@ -354,7 +355,7 @@ impl AuthorityDecisionSnapshot {
             DecisionOutcome::Deny
         };
         let mut value = Self {
-            schema_version: 2,
+            schema_version: AUTHORITY_DECISION_SCHEMA_VERSION_V2,
             policy,
             policy_version,
             request,
@@ -418,7 +419,7 @@ impl AuthorityDecisionSnapshot {
     }
     fn validate(&self) -> Result<(), AuthorityError> {
         self.request.validate()?;
-        if self.schema_version != 2
+        if self.schema_version != AUTHORITY_DECISION_SCHEMA_VERSION_V2
             || self.policy_version == 0
             || self.reason_codes.is_empty()
             || self.reason_codes.len() > MAX_DIAGNOSTIC_CODES

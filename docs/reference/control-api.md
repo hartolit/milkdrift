@@ -12,15 +12,9 @@ Clients negotiate with `POST /v1/version`:
 {"protocol":{"major":2,"minor":3}}
 ```
 
-Major 2 is required. Protocol 1 is deliberately unsupported because attempt inspection now carries
-the complete frozen authority basis and execution-boundary decisions. Minor 1 added redacted
-application-receipt lifecycle health. Minor 2 added durable attempt output,
-progress/stream-byte, provider usage, compacted latest-attempt identity, byte-pinned executable path
-digest, and redacted model profile/protocol/model/origin provenance reads. The current minor is 3
-and adds exact operation side-effect/idempotency/cancellation/streaming contracts to capability and
-attempt reads, idempotency-key presence, and bounded safe external-effect timeline detail. The
-authenticated `/v1/...` HTTP route namespace is stable and independent from the negotiated envelope
-version. JSON success bodies use:
+Major 2 is required; protocol 1 is refused. Attempt and capability read fields are specified
+under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
+the negotiated envelope version. JSON success bodies use:
 
 ```json
 {

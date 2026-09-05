@@ -98,7 +98,7 @@ milkdrift --command-id local-model-validate-1 blueprint validate -
 milkdrift --command-id local-model-import-1 blueprint import MODEL_BLUEPRINT
 milkdrift --command-id local-model-start-1 run start \
   run-local-model-dogfood local-model-dogfood REVISION_ID
-milkdrift run timeline run-local-model-dogfood --limit 100 --follow
+milkdrift --timeout-secs 180 run timeline run-local-model-dogfood --limit 100 --follow
 milkdrift --command-id local-model-signal-1 --expected-sequence SEQUENCE \
   run signal run-local-model-dogfood --signal-id local-model-release-1 \
   --signal-type evidence.model.release --payload '{"release":true}'

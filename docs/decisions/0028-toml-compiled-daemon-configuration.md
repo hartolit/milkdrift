@@ -1,5 +1,7 @@
 # 0028 — TOML daemon configuration compiles into narrow plans
 
+Status: accepted.
+
 ## Context
 
 Daemon configuration was a schema-8 JSON document that became the validated runtime object by
