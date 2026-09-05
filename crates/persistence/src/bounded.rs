@@ -1,6 +1,6 @@
 use std::fmt;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::{EvidenceId, PersistenceError};
 
@@ -73,14 +73,7 @@ impl Serialize for Reason {
     }
 }
 
-impl<'de> Deserialize<'de> for Reason {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(Reason, String, |value| Self::new(value));
 
 /// Bounded, redacted detail suitable for durable diagnostics and progress.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -110,14 +103,7 @@ impl Serialize for BoundedDetail {
     }
 }
 
-impl<'de> Deserialize<'de> for BoundedDetail {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(BoundedDetail, String, |value| Self::new(value));
 
 /// Three-letter uppercase currency code paired with cost observations.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -152,14 +138,7 @@ impl Serialize for CurrencyCode {
     }
 }
 
-impl<'de> Deserialize<'de> for CurrencyCode {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(CurrencyCode, String, |value| Self::new(value));
 
 /// Relationship between an evidence reference and the fact carrying it.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
@@ -211,11 +190,4 @@ impl PageSize {
     }
 }
 
-impl<'de> Deserialize<'de> for PageSize {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::new(u32::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(PageSize, u32, |value| Self::new(value));

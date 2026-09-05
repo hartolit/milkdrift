@@ -1,6 +1,6 @@
 use std::{fmt, str::FromStr};
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::Serialize;
 
 use crate::WorkspaceError;
 
@@ -149,14 +149,7 @@ impl ValueVersion {
     }
 }
 
-impl<'de> Deserialize<'de> for ValueVersion {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::new(u64::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(ValueVersion, u64, |value| Self::new(value));
 
 impl fmt::Display for ValueVersion {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {

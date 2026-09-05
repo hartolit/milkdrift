@@ -3,7 +3,7 @@ use std::{collections::BTreeSet, path::Path};
 use milkdrift_blueprint::{RevisionId, WorkflowId};
 use milkdrift_capability::PeerId;
 use milkdrift_workspace::{ArtifactId, ArtifactSensitivity, RunId, ScopeId};
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::{ActorRef, AuthorityError, NetworkProfileRef, SecretRef, Selection};
 
@@ -475,15 +475,9 @@ impl Serialize for FilesystemScope {
     }
 }
 
-impl<'de> Deserialize<'de> for FilesystemScope {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let document = FilesystemScopeDocument::deserialize(deserializer)?;
-        Self::new(document.root, document.access).map_err(D::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(FilesystemScope, FilesystemScopeDocument, |document| {
+    Self::new(document.root, document.access)
+});
 
 /// Credential-free network profile and destination allowlist.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]

@@ -141,15 +141,9 @@ struct SchemaContractWire {
     schema: BoundedJson,
 }
 
-impl<'de> Deserialize<'de> for SchemaContract {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = SchemaContractWire::deserialize(deserializer)?;
-        Self::new(wire.id, wire.version, wire.schema).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(SchemaContract, SchemaContractWire, |wire| {
+    Self::new(wire.id, wire.version, wire.schema)
+});
 
 impl SchemaContract {
     /// Constructs a nonzero schema version with a bounded schema value.
@@ -257,24 +251,17 @@ struct OperationContractWire {
     features: BTreeMap<FeatureId, FeatureContract>,
 }
 
-impl<'de> Deserialize<'de> for OperationContract {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = OperationContractWire::deserialize(deserializer)?;
-        Self::new(
-            wire.input,
-            wire.output,
-            wire.streaming,
-            wire.cancellation,
-            wire.idempotency,
-            wire.side_effect,
-            wire.features,
-        )
-        .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(OperationContract, OperationContractWire, |wire| {
+    Self::new(
+        wire.input,
+        wire.output,
+        wire.streaming,
+        wire.cancellation,
+        wire.idempotency,
+        wire.side_effect,
+        wire.features,
+    )
+});
 
 impl OperationContract {
     /// Constructs and validates an operation contract.
@@ -412,15 +399,9 @@ struct AdmissionConstraintsWire {
     max_queued: u32,
 }
 
-impl<'de> Deserialize<'de> for AdmissionConstraints {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = AdmissionConstraintsWire::deserialize(deserializer)?;
-        Self::new(wire.max_concurrent, wire.max_queued).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(AdmissionConstraints, AdmissionConstraintsWire, |wire| {
+    Self::new(wire.max_concurrent, wire.max_queued)
+});
 
 impl AdmissionConstraints {
     /// Constructs limits; concurrency must be nonzero.
@@ -469,20 +450,13 @@ struct ResourceObservationsWire {
     currency: Option<String>,
 }
 
-impl<'de> Deserialize<'de> for ResourceObservations {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = ResourceObservationsWire::deserialize(deserializer)?;
-        Self::new(
-            wire.estimated_cost_micros,
-            wire.estimated_duration_ms,
-            wire.currency,
-        )
-        .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(ResourceObservations, ResourceObservationsWire, |wire| {
+    Self::new(
+        wire.estimated_cost_micros,
+        wire.estimated_duration_ms,
+        wire.currency,
+    )
+});
 
 impl ResourceObservations {
     /// Constructs validated optional resource estimates.
@@ -575,31 +549,24 @@ struct DescriptorWire {
     extensions: BTreeMap<ExtensionKey, BoundedJson>,
 }
 
-impl<'de> Deserialize<'de> for CapabilityDescriptor {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = DescriptorWire::deserialize(deserializer)?;
-        DescriptorBuilder::new(
-            wire.identity,
-            wire.descriptor_revision,
-            wire.category,
-            wire.admission,
-            wire.locality,
-        )
-        .provider_profile(wire.provider_profile)
-        .operations(wire.operations)
-        .peer(wire.peer)
-        .trust_zones(wire.trust_zones)
-        .execution_trust(wire.execution_trust)
-        .resource_observations(wire.resource_observations)
-        .labels(wire.labels)
-        .extensions(wire.extensions)
-        .build()
-        .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(CapabilityDescriptor, DescriptorWire, |wire| {
+    DescriptorBuilder::new(
+        wire.identity,
+        wire.descriptor_revision,
+        wire.category,
+        wire.admission,
+        wire.locality,
+    )
+    .provider_profile(wire.provider_profile)
+    .operations(wire.operations)
+    .peer(wire.peer)
+    .trust_zones(wire.trust_zones)
+    .execution_trust(wire.execution_trust)
+    .resource_observations(wire.resource_observations)
+    .labels(wire.labels)
+    .extensions(wire.extensions)
+    .build()
+});
 
 impl CapabilityDescriptor {
     /// Stable capability identity.
@@ -920,28 +887,21 @@ struct CapabilityRequirementWire {
     execution_trust: Option<ExecutionTrustClass>,
 }
 
-impl<'de> Deserialize<'de> for CapabilityRequirement {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = CapabilityRequirementWire::deserialize(deserializer)?;
-        let requirement = Self {
-            exact_capability: wire.exact_capability,
-            provider_profile: wire.provider_profile,
-            categories: wire.categories,
-            operation: wire.operation,
-            required_features: wire.required_features,
-            streaming: wire.streaming,
-            cancellation_required: wire.cancellation_required,
-            maximum_side_effect: wire.maximum_side_effect,
-            trust_zones: wire.trust_zones,
-            execution_trust: wire.execution_trust,
-        };
-        requirement.validate().map_err(serde::de::Error::custom)?;
-        Ok(requirement)
-    }
-}
+milkdrift_contracts::deserialize_via!(CapabilityRequirement, CapabilityRequirementWire, |wire| {
+    let requirement = Self {
+        exact_capability: wire.exact_capability,
+        provider_profile: wire.provider_profile,
+        categories: wire.categories,
+        operation: wire.operation,
+        required_features: wire.required_features,
+        streaming: wire.streaming,
+        cancellation_required: wire.cancellation_required,
+        maximum_side_effect: wire.maximum_side_effect,
+        trust_zones: wire.trust_zones,
+        execution_trust: wire.execution_trust,
+    };
+    requirement.validate().map(|()| requirement)
+});
 
 impl CapabilityRequirement {
     /// Constructs a constraint expression around one exact operation.
@@ -1139,22 +1099,15 @@ struct CapabilityObservationWire {
     health_summary: String,
 }
 
-impl<'de> Deserialize<'de> for CapabilityObservation {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = CapabilityObservationWire::deserialize(deserializer)?;
-        Self::new(
-            wire.capability,
-            wire.observed_at_unix_ms,
-            wire.available,
-            wire.current_load,
-            wire.health_summary,
-        )
-        .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(CapabilityObservation, CapabilityObservationWire, |wire| {
+    Self::new(
+        wire.capability,
+        wire.observed_at_unix_ms,
+        wire.available,
+        wire.current_load,
+        wire.health_summary,
+    )
+});
 
 impl CapabilityObservation {
     /// Creates a bounded live observation.

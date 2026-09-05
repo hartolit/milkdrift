@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use thiserror::Error;
 
@@ -11,7 +11,7 @@ use crate::ExtensionKey;
 /// Largest accepted serialized public contract document.
 pub const MAX_DOCUMENT_BYTES: usize = 1_048_576;
 /// Largest accepted JSON container nesting depth.
-pub const MAX_JSON_DEPTH: usize = 48;
+const MAX_JSON_DEPTH: usize = 48;
 pub(crate) const MAX_EXTENSION_ENTRIES: usize = 64;
 pub(crate) const MAX_EXTENSION_BYTES: usize = 65_536;
 const MAX_STRING_BYTES: usize = 32_768;
@@ -85,15 +85,7 @@ impl BoundedJson {
     }
 }
 
-impl<'de> Deserialize<'de> for BoundedJson {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = Value::deserialize(deserializer)?;
-        Self::new(value).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(BoundedJson, Value, |value| Self::new(value));
 
 pub(crate) fn validate_extensions(
     extensions: &BTreeMap<ExtensionKey, BoundedJson>,

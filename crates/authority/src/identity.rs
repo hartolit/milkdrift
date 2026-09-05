@@ -1,6 +1,6 @@
 use std::{fmt, str::FromStr};
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Serialize, Serializer};
 use thiserror::Error;
 
 const MAX_ID_BYTES: usize = 192;
@@ -139,14 +139,7 @@ impl Serialize for GrantDigest {
     }
 }
 
-impl<'de> Deserialize<'de> for GrantDigest {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(GrantDigest, String, |value| Self::new(value));
 
 /// Opaque reference to secret material owned by a later resolver boundary.
 ///
@@ -192,11 +185,4 @@ impl Serialize for SecretRef {
     }
 }
 
-impl<'de> Deserialize<'de> for SecretRef {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(SecretRef, String, |value| Self::new(value));

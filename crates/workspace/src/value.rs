@@ -1,5 +1,5 @@
 use milkdrift_capability::BoundedJson;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::{ArtifactReference, ScopeReference, ValueKey, ValueVersion, WorkspaceError};
 
@@ -128,15 +128,9 @@ struct WorkspaceValueEntryWire {
     origin: ValueOrigin,
 }
 
-impl<'de> Deserialize<'de> for WorkspaceValueEntry {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let wire = WorkspaceValueEntryWire::deserialize(deserializer)?;
-        Self::new(wire.reference, wire.value, wire.origin).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(WorkspaceValueEntry, WorkspaceValueEntryWire, |wire| {
+    Self::new(wire.reference, wire.value, wire.origin)
+});
 
 impl WorkspaceValueEntry {
     /// Creates version one of a new scope-local value stream.

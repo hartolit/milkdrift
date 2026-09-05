@@ -1,6 +1,6 @@
 use std::{fmt, str::FromStr};
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Serialize, Serializer};
 
 use crate::ControlError;
 
@@ -51,14 +51,7 @@ macro_rules! identity_type {
             }
         }
 
-        impl<'de> Deserialize<'de> for $name {
-            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-            }
-        }
+        milkdrift_contracts::deserialize_via!($name, String, |value| Self::new(value));
 
         impl fmt::Display for $name {
             fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -127,14 +120,7 @@ impl Serialize for ProposalDigest {
     }
 }
 
-impl<'de> Deserialize<'de> for ProposalDigest {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::parse(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(ProposalDigest, String, |value| Self::parse(value));
 
 /// Domain-separated deterministic digest of every executable controller-policy field.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -190,11 +176,4 @@ impl Serialize for ControllerPolicyDigest {
     }
 }
 
-impl<'de> Deserialize<'de> for ControllerPolicyDigest {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::parse(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(ControllerPolicyDigest, String, |value| Self::parse(value));

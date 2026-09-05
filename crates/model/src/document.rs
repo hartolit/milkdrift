@@ -7,7 +7,7 @@ use milkdrift_contracts::{CanonicalJsonError, JsonBoundKind, JsonLimits, canonic
 use crate::{ContextManifest, ModelResponse, ModelTaskRequest};
 
 /// Current provider-neutral model contract schema.
-pub const MODEL_CONTRACT_SCHEMA_VERSION_V1: u32 = 1;
+const MODEL_CONTRACT_SCHEMA_VERSION_V1: u32 = 1;
 const MAX_DOCUMENT_BYTES: usize = 2_097_152;
 const LIMITS: JsonLimits = JsonLimits {
     maximum_depth: 48,

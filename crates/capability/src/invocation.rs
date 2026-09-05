@@ -41,16 +41,9 @@ struct ArtifactReferenceWire {
     size_bytes: Option<u64>,
 }
 
-impl<'de> Deserialize<'de> for ArtifactReference {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = ArtifactReferenceWire::deserialize(deserializer)?;
-        Self::new(wire.identity, wire.digest, wire.media_type, wire.size_bytes)
-            .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(ArtifactReference, ArtifactReferenceWire, |wire| {
+    Self::new(wire.identity, wire.digest, wire.media_type, wire.size_bytes)
+});
 
 impl ArtifactReference {
     /// Constructs a bounded artifact reference with a lowercase BLAKE3 hex digest.
@@ -162,22 +155,20 @@ enum InvocationValueReferenceWire {
     Inline { value: BoundedJson },
 }
 
-impl<'de> Deserialize<'de> for InvocationValueReference {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = match InvocationValueReferenceWire::deserialize(deserializer)? {
+milkdrift_contracts::deserialize_via!(
+    InvocationValueReference,
+    InvocationValueReferenceWire,
+    |wire| {
+        let value = match wire {
             InvocationValueReferenceWire::Artifact { reference } => Self::Artifact { reference },
             InvocationValueReferenceWire::WorkspaceValue { identity, version } => {
                 Self::WorkspaceValue { identity, version }
             }
             InvocationValueReferenceWire::Inline { value } => Self::Inline { value },
         };
-        value.validate().map_err(serde::de::Error::custom)?;
-        Ok(value)
+        value.validate().map(|()| value)
     }
-}
+);
 
 impl InvocationValueReference {
     /// Returns the artifact reference when this value points to an artifact.
@@ -243,15 +234,9 @@ struct InputReferenceWire {
     value: InvocationValueReference,
 }
 
-impl<'de> Deserialize<'de> for InputReference {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = InputReferenceWire::deserialize(deserializer)?;
-        Self::new(wire.name, wire.value).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(InputReference, InputReferenceWire, |wire| {
+    Self::new(wire.name, wire.value)
+});
 
 impl InputReference {
     /// Constructs a bounded named input.
@@ -549,22 +534,15 @@ struct InvocationFailureWire {
     retry_after_ms: Option<u64>,
 }
 
-impl<'de> Deserialize<'de> for InvocationFailure {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = InvocationFailureWire::deserialize(deserializer)?;
-        Self::new(
-            wire.class,
-            wire.retryable,
-            wire.code,
-            wire.message,
-            wire.retry_after_ms,
-        )
-        .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(InvocationFailure, InvocationFailureWire, |wire| {
+    Self::new(
+        wire.class,
+        wire.retryable,
+        wire.code,
+        wire.message,
+        wire.retry_after_ms,
+    )
+});
 
 impl InvocationFailure {
     /// Constructs bounded, structured failure details.
@@ -656,23 +634,16 @@ struct UsageObservationWire {
     extensions: BTreeMap<ExtensionKey, BoundedJson>,
 }
 
-impl<'de> Deserialize<'de> for UsageObservation {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = UsageObservationWire::deserialize(deserializer)?;
-        Self::new(
-            wire.input_units,
-            wire.output_units,
-            wire.duration_ms,
-            wire.cost_micros,
-            wire.currency,
-            wire.extensions,
-        )
-        .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(UsageObservation, UsageObservationWire, |wire| {
+    Self::new(
+        wire.input_units,
+        wire.output_units,
+        wire.duration_ms,
+        wire.cost_micros,
+        wire.currency,
+        wire.extensions,
+    )
+});
 
 impl UsageObservation {
     /// Constructs validated adapter-reported usage measurements.
@@ -791,22 +762,15 @@ struct InvocationTerminalWire {
     side_effect: SideEffectClass,
 }
 
-impl<'de> Deserialize<'de> for InvocationTerminal {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = InvocationTerminalWire::deserialize(deserializer)?;
-        Self::new(
-            wire.status,
-            wire.outputs,
-            wire.failure,
-            wire.usage,
-            wire.side_effect,
-        )
-        .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(InvocationTerminal, InvocationTerminalWire, |wire| {
+    Self::new(
+        wire.status,
+        wire.outputs,
+        wire.failure,
+        wire.usage,
+        wire.side_effect,
+    )
+});
 
 impl InvocationTerminal {
     /// Constructs a validated terminal invocation outcome.
@@ -941,28 +905,22 @@ enum InvocationEventKindWire {
     },
 }
 
-impl<'de> Deserialize<'de> for InvocationEventKind {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let kind = match InvocationEventKindWire::deserialize(deserializer)? {
-            InvocationEventKindWire::Progress {
-                message,
-                completed_units,
-                total_units,
-            } => Self::Progress {
-                message,
-                completed_units,
-                total_units,
-            },
-            InvocationEventKindWire::Output { name, reference } => Self::Output { name, reference },
-            InvocationEventKindWire::Terminal { terminal } => Self::Terminal { terminal },
-        };
-        kind.validate().map_err(serde::de::Error::custom)?;
-        Ok(kind)
-    }
-}
+milkdrift_contracts::deserialize_via!(InvocationEventKind, InvocationEventKindWire, |wire| {
+    let kind = match wire {
+        InvocationEventKindWire::Progress {
+            message,
+            completed_units,
+            total_units,
+        } => Self::Progress {
+            message,
+            completed_units,
+            total_units,
+        },
+        InvocationEventKindWire::Output { name, reference } => Self::Output { name, reference },
+        InvocationEventKindWire::Terminal { terminal } => Self::Terminal { terminal },
+    };
+    kind.validate().map(|()| kind)
+});
 
 impl InvocationEventKind {
     /// Returns progress facts when this is a progress event.
@@ -1049,15 +1007,9 @@ struct InvocationEventWire {
     kind: InvocationEventKind,
 }
 
-impl<'de> Deserialize<'de> for InvocationEvent {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = InvocationEventWire::deserialize(deserializer)?;
-        Self::new(wire.invocation, wire.sequence, wire.kind).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(InvocationEvent, InvocationEventWire, |wire| {
+    Self::new(wire.invocation, wire.sequence, wire.kind)
+});
 
 impl InvocationEvent {
     /// Constructs a validated event; sequence starts at one.
@@ -1163,16 +1115,9 @@ struct CancellationRequestWire {
     reason: String,
 }
 
-impl<'de> Deserialize<'de> for CancellationRequest {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = CancellationRequestWire::deserialize(deserializer)?;
-        Self::new(wire.invocation, wire.request_sequence, wire.reason)
-            .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(CancellationRequest, CancellationRequestWire, |wire| {
+    Self::new(wire.invocation, wire.request_sequence, wire.reason)
+});
 
 /// Executor acknowledgement of a cancellation request.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -1266,19 +1211,14 @@ struct CancellationAcknowledgementWire {
     detail: Option<String>,
 }
 
-impl<'de> Deserialize<'de> for CancellationAcknowledgement {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = CancellationAcknowledgementWire::deserialize(deserializer)?;
-        Self::new(
-            wire.invocation,
-            wire.request_sequence,
-            wire.accepted,
-            wire.terminal_boundary,
-            wire.detail,
-        )
-        .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(
+    CancellationAcknowledgement,
+    CancellationAcknowledgementWire,
+    |wire| Self::new(
+        wire.invocation,
+        wire.request_sequence,
+        wire.accepted,
+        wire.terminal_boundary,
+        wire.detail,
+    )
+);

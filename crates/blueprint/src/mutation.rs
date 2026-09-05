@@ -93,21 +93,16 @@ struct MutationBatchWire {
     operations: Vec<Mutation>,
 }
 
-impl<'de> Deserialize<'de> for MutationBatch {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = MutationBatchWire::deserialize(deserializer)?;
-        if wire.schema_version != BLUEPRINT_SCHEMA_VERSION_V2 {
-            return Err(serde::de::Error::custom(format!(
-                "unsupported mutation schema version {}; supported version is {}",
-                wire.schema_version, BLUEPRINT_SCHEMA_VERSION_V2
-            )));
-        }
-        Self::from_parts(wire.id, wire.operations).map_err(serde::de::Error::custom)
+milkdrift_contracts::deserialize_via!(MutationBatch, MutationBatchWire, |wire| {
+    if wire.schema_version != BLUEPRINT_SCHEMA_VERSION_V2 {
+        Err(format!(
+            "unsupported mutation schema version {}; supported version is {}",
+            wire.schema_version, BLUEPRINT_SCHEMA_VERSION_V2
+        ))
+    } else {
+        Self::from_parts(wire.id, wire.operations).map_err(|error| error.to_string())
     }
-}
+});
 
 impl MutationBatch {
     /// Creates a deterministic batch identity from its canonical operation content.

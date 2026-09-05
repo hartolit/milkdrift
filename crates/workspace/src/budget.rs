@@ -1,4 +1,4 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::{ArtifactMetadata, ArtifactReference, WorkspaceError, WorkspaceValue};
 
@@ -30,23 +30,14 @@ struct WorkspaceBudgetWire {
     max_total_artifact_bytes: u64,
 }
 
-impl<'de> Deserialize<'de> for WorkspaceBudget {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let wire = WorkspaceBudgetWire::deserialize(deserializer)?;
-        Self::new(
-            wire.max_value_versions,
-            wire.max_inline_bytes_per_value,
-            wire.max_total_inline_bytes,
-            wire.max_artifacts,
-            wire.max_bytes_per_artifact,
-            wire.max_total_artifact_bytes,
-        )
-        .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(WorkspaceBudget, WorkspaceBudgetWire, |wire| Self::new(
+    wire.max_value_versions,
+    wire.max_inline_bytes_per_value,
+    wire.max_total_inline_bytes,
+    wire.max_artifacts,
+    wire.max_bytes_per_artifact,
+    wire.max_total_artifact_bytes,
+));
 
 impl WorkspaceBudget {
     /// Constructs a consistent set of workspace limits.

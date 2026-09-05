@@ -129,22 +129,17 @@ struct ContextArtifactSelectorWire {
     provenance: BTreeSet<ContextProvenanceClass>,
 }
 
-impl<'de> Deserialize<'de> for ContextArtifactSelector {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = ContextArtifactSelectorWire::deserialize(deserializer)?;
-        Self::new(
-            wire.names,
-            wire.media_types,
-            wire.sensitivities,
-            wire.retentions,
-            wire.provenance,
-        )
-        .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(
+    ContextArtifactSelector,
+    ContextArtifactSelectorWire,
+    |wire| Self::new(
+        wire.names,
+        wire.media_types,
+        wire.sensitivities,
+        wire.retentions,
+        wire.provenance,
+    )
+);
 
 impl ContextArtifactSelector {
     /// Creates and bounds an artifact metadata selector.
@@ -269,27 +264,20 @@ struct ContextBudgetWire {
     max_manifest_bytes: u64,
 }
 
-impl<'de> Deserialize<'de> for ContextBudget {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = ContextBudgetWire::deserialize(deserializer)?;
-        let budget = Self {
-            max_items: wire.max_items,
-            max_bytes: wire.max_bytes,
-            max_artifact_bytes: wire.max_artifact_bytes,
-            max_model_input_units: wire.max_model_input_units,
-            max_candidate_records: wire.max_candidate_records,
-            max_artifacts: wire.max_artifacts,
-            max_per_item_bytes: wire.max_per_item_bytes,
-            max_event_summaries: wire.max_event_summaries,
-            max_manifest_bytes: wire.max_manifest_bytes,
-        };
-        budget.validate().map_err(serde::de::Error::custom)?;
-        Ok(budget)
-    }
-}
+milkdrift_contracts::deserialize_via!(ContextBudget, ContextBudgetWire, |wire| {
+    let budget = Self {
+        max_items: wire.max_items,
+        max_bytes: wire.max_bytes,
+        max_artifact_bytes: wire.max_artifact_bytes,
+        max_model_input_units: wire.max_model_input_units,
+        max_candidate_records: wire.max_candidate_records,
+        max_artifacts: wire.max_artifacts,
+        max_per_item_bytes: wire.max_per_item_bytes,
+        max_event_summaries: wire.max_event_summaries,
+        max_manifest_bytes: wire.max_manifest_bytes,
+    };
+    budget.validate().map(|()| budget)
+});
 
 impl ContextBudget {
     /// Creates nonzero, defensively bounded budgets.
@@ -504,35 +492,28 @@ struct TaskContextPolicyWire {
     fail_closed: bool,
 }
 
-impl<'de> Deserialize<'de> for TaskContextPolicy {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = TaskContextPolicyWire::deserialize(deserializer)?;
-        let policy = Self {
-            include_direct_inputs: wire.include_direct_inputs,
-            ancestor_depth: wire.ancestor_depth,
-            selected_nodes: wire.selected_nodes,
-            exact_sources: Box::new(ExactContextSources {
-                selected_executions: wire.selected_executions,
-                selected_workspace_values: wire.selected_workspace_values,
-                explicit_evidence: wire.explicit_evidence,
-            }),
-            selected_roles: wire.selected_roles,
-            include_categories: wire.include_categories,
-            exclude_categories: wire.exclude_categories,
-            artifact_selector: wire.artifact_selector,
-            budget: wire.budget,
-            ordering: wire.ordering,
-            truncation: wire.truncation,
-            session: wire.session,
-            fail_closed: wire.fail_closed,
-        };
-        policy.validate().map_err(serde::de::Error::custom)?;
-        Ok(policy)
-    }
-}
+milkdrift_contracts::deserialize_via!(TaskContextPolicy, TaskContextPolicyWire, |wire| {
+    let policy = Self {
+        include_direct_inputs: wire.include_direct_inputs,
+        ancestor_depth: wire.ancestor_depth,
+        selected_nodes: wire.selected_nodes,
+        exact_sources: Box::new(ExactContextSources {
+            selected_executions: wire.selected_executions,
+            selected_workspace_values: wire.selected_workspace_values,
+            explicit_evidence: wire.explicit_evidence,
+        }),
+        selected_roles: wire.selected_roles,
+        include_categories: wire.include_categories,
+        exclude_categories: wire.exclude_categories,
+        artifact_selector: wire.artifact_selector,
+        budget: wire.budget,
+        ordering: wire.ordering,
+        truncation: wire.truncation,
+        session: wire.session,
+        fail_closed: wire.fail_closed,
+    };
+    policy.validate().map(|()| policy)
+});
 
 impl Default for TaskContextPolicy {
     fn default() -> Self {

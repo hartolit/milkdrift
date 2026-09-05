@@ -9,8 +9,7 @@ mod process;
 pub use config::{
     CapturePolicy, EnvironmentPolicy, ExecutableIdentityDeclaration, FilesystemAccessMode,
     FilesystemRoot, InputFileRule, MAX_EXECUTABLE_BYTES, MAX_PROCESS_PROFILE_BYTES, OutputRule,
-    OverflowAction, PROCESS_PROFILE_SCHEMA_VERSION_V2, PlatformSupport, ProcessLimits,
-    ProcessProfile, ProcessProfileDocument, ProcessProfileError, RestartPolicy, StdinMode,
-    SubstitutionSource, WorkingDirectoryMode,
+    OverflowAction, PlatformSupport, ProcessLimits, ProcessProfile, ProcessProfileDocument,
+    ProcessProfileError, RestartPolicy, StdinMode, SubstitutionSource, WorkingDirectoryMode,
 };
 pub use process::LocalProcessAdapter;

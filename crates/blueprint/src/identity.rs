@@ -1,6 +1,6 @@
 use std::fmt;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::Serialize;
 use thiserror::Error;
 
 /// Error returned by a blueprint identity constructor.
@@ -113,14 +113,7 @@ impl RevisionId {
     }
 }
 
-impl<'de> Deserialize<'de> for RevisionId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::parse(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(RevisionId, String, |value| Self::parse(value));
 
 impl fmt::Display for RevisionId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -155,14 +148,7 @@ impl ContentDigest {
     }
 }
 
-impl<'de> Deserialize<'de> for ContentDigest {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::parse(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(ContentDigest, String, |value| Self::parse(value));
 
 impl fmt::Display for ContentDigest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -192,14 +178,7 @@ impl NodeFingerprint {
     }
 }
 
-impl<'de> Deserialize<'de> for NodeFingerprint {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::parse(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(NodeFingerprint, String, |value| Self::parse(value));
 
 impl fmt::Display for NodeFingerprint {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {

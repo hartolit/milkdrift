@@ -1,4 +1,4 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::ContractError;
 
@@ -51,15 +51,9 @@ struct AdmissionMonetaryBoundWire {
     currency: String,
 }
 
-impl<'de> Deserialize<'de> for AdmissionMonetaryBound {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let wire = AdmissionMonetaryBoundWire::deserialize(deserializer)?;
-        Self::new(wire.maximum_micros, wire.currency).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(AdmissionMonetaryBound, AdmissionMonetaryBoundWire, |wire| {
+    Self::new(wire.maximum_micros, wire.currency)
+},);
 
 impl AdmissionMonetaryBound {
     /// Constructs an exact-currency inclusive cost maximum.

@@ -5,14 +5,14 @@ use serde::{Deserialize, Serialize};
 use crate::{
     BoundedJson, CapabilityCategory, CapabilityDescriptor, CapabilityId, ContractError,
     ExecutionTrustClass, ExtensionKey, IdempotencyBehavior, InvocationRequest, OperationContract,
-    OperationId, ProviderProfileRef, SCHEMA_VERSION_V1, SideEffectClass,
-    document::canonical_json_bytes,
+    OperationId, ProviderProfileRef, SideEffectClass,
+    document::{
+        RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2, SCHEMA_VERSION_V1, canonical_json_bytes,
+    },
 };
 
 const DIGEST_DOMAIN_V1: &[u8] = b"milkdrift.resolved-capability-snapshot.v1\0";
 const DIGEST_DOMAIN_V2: &[u8] = b"milkdrift.resolved-capability-snapshot.v2\0";
-const RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2: u32 = 2;
-
 /// Immutable exact capability resolution supplied to an executor before dispatch.
 ///
 /// The digest covers every selection fact using a versioned canonical payload and
@@ -72,12 +72,10 @@ const fn execution_trust_unspecified(value: &ExecutionTrustClass) -> bool {
     matches!(value, ExecutionTrustClass::Unspecified)
 }
 
-impl<'de> Deserialize<'de> for ResolvedCapabilitySnapshot {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = ResolvedCapabilitySnapshotWire::deserialize(deserializer)?;
+milkdrift_contracts::deserialize_via!(
+    ResolvedCapabilitySnapshot,
+    ResolvedCapabilitySnapshotWire,
+    |wire| {
         let snapshot = Self {
             capability: wire.capability,
             descriptor_revision: wire.descriptor_revision,
@@ -89,10 +87,9 @@ impl<'de> Deserialize<'de> for ResolvedCapabilitySnapshot {
             descriptor_extensions: wire.descriptor_extensions,
             digest: wire.digest,
         };
-        snapshot.validate().map_err(serde::de::Error::custom)?;
-        Ok(snapshot)
+        snapshot.validate().map(|()| snapshot)
     }
-}
+);
 
 impl ResolvedCapabilitySnapshot {
     /// Resolves and clones one exact operation from an immutable descriptor.

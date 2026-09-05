@@ -8,16 +8,13 @@ mod document;
 mod task;
 
 pub use context::{
-    AuthorityFact, CONTEXT_MANIFEST_SCHEMA_VERSION_V2, ContextEvidenceReference,
-    ContextInclusionReason, ContextManifest, ContextManifestDigest, ContextManifestEntry,
-    ContextManifestReference, ContextOmission, ContextOmissionReason, ContextProducerFact,
-    ContextSemanticKind, ContextSource, ContextTotals,
+    AuthorityFact, ContextEvidenceReference, ContextInclusionReason, ContextManifest,
+    ContextManifestDigest, ContextManifestEntry, ContextManifestReference, ContextOmission,
+    ContextOmissionReason, ContextProducerFact, ContextSemanticKind, ContextSource, ContextTotals,
 };
 pub use document::{
-    ContextManifestDocument, MODEL_CONTRACT_SCHEMA_VERSION_V1, ModelContractError,
-    ModelResponseDocument, ModelTaskRequestDocument,
+    ContextManifestDocument, ModelContractError, ModelResponseDocument, ModelTaskRequestDocument,
 };
-pub use milkdrift_capability::{CONTEXT_ITEM_INPUT_PREFIX, CONTEXT_MANIFEST_INPUT_NAME};
 pub use task::{
     ContentPart, FinishReason, MAX_MODEL_OUTPUT_UNITS, Message, MessageRole, ModelResponse,
     ModelStreamEvent, ModelTaskRequest, ReasoningControl, ReasoningEffort, SessionSelection,

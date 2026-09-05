@@ -429,15 +429,9 @@ impl WorkflowProposal {
     }
 }
 
-impl<'de> Deserialize<'de> for WorkflowProposal {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        WorkflowProposal::from_wire(WorkflowProposalWire::deserialize(deserializer)?)
-            .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(WorkflowProposal, WorkflowProposalWire, |wire| {
+    WorkflowProposal::from_wire(wire)
+});
 
 /// Canonical versioned envelope for one untrusted workflow proposal.
 #[derive(Clone, Debug, PartialEq, Serialize)]

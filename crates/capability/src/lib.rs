@@ -13,7 +13,7 @@ mod invocation;
 mod resolved;
 
 pub use admission::{AdmissionBound, AdmissionMonetaryBound, InvocationAdmissionEnvelope};
-pub use bounded::{BoundedJson, ContractError, MAX_DOCUMENT_BYTES, MAX_JSON_DEPTH};
+pub use bounded::{BoundedJson, ContractError, MAX_DOCUMENT_BYTES};
 pub use descriptor::{
     AdmissionConstraints, CancellationBehavior, CapabilityCategory, CapabilityDescriptor,
     CapabilityObservation, CapabilityRequirement, DescriptorBuilder, ExecutionTrustClass,
@@ -22,9 +22,7 @@ pub use descriptor::{
 };
 pub use document::{
     CancellationAcknowledgementDocument, CancellationRequestDocument, CapabilityDescriptorDocument,
-    INVOCATION_REQUEST_SCHEMA_VERSION_V2, InvocationEventDocument, InvocationRequestDocument,
-    RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2, ResolvedCapabilitySnapshotDocument,
-    SCHEMA_VERSION_V1,
+    InvocationEventDocument, InvocationRequestDocument, ResolvedCapabilitySnapshotDocument,
 };
 pub use identity::{
     CapabilityId, ExtensionKey, FeatureId, IdempotencyKey, InvocationId, OperationId, PeerId,

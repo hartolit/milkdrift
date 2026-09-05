@@ -126,7 +126,9 @@ snapshot. Git, CI, releases, and external audits own chronology.
   projections remain internal. Runtime scheduling and caller-owned effect execution are separate
   canonical operations with no blocking compatibility driver. Cross-domain UTF-8 truncation and
   canonical `b3_` lexical validation have one implementation in `milkdrift-contracts`, while
-  semantic digest types and errors remain domain-owned. There are no UI packages or UI dependencies.
+  ordinary private-wire-to-validating-conversion glue is shared there as well; wire shapes,
+  validation, semantic digest types, and errors remain domain-owned. There are no UI packages or UI
+  dependencies.
   Repository contracts require exact reviewed exceptions with rationales and bounded ceilings when
   production Rust sources cross 1,000 lines; all Rust sources remain below the 2,000-line backstop,
   and test/evidence sources cannot weaken the production policy.

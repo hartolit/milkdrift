@@ -26,15 +26,10 @@ struct SchemaRefWire {
     version: u32,
 }
 
-impl<'de> Deserialize<'de> for SchemaRef {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = SchemaRefWire::deserialize(deserializer)?;
-        Self::new(wire.id, wire.version).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(SchemaRef, SchemaRefWire, |wire| Self::new(
+    wire.id,
+    wire.version
+));
 
 impl SchemaRef {
     /// Creates a reference to a nonzero schema version.
@@ -116,15 +111,10 @@ struct WorkflowInterfaceWire {
     outputs: BTreeMap<FieldId, InterfaceField>,
 }
 
-impl<'de> Deserialize<'de> for WorkflowInterface {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = WorkflowInterfaceWire::deserialize(deserializer)?;
-        Self::new(wire.inputs, wire.outputs).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(WorkflowInterface, WorkflowInterfaceWire, |wire| Self::new(
+    wire.inputs,
+    wire.outputs
+));
 
 impl WorkflowInterface {
     /// Constructs a bounded workflow interface.
@@ -196,16 +186,12 @@ struct BlueprintMetadataWire {
     extensions: BTreeMap<ExtensionKey, BoundedJson>,
 }
 
-impl<'de> Deserialize<'de> for BlueprintMetadata {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = BlueprintMetadataWire::deserialize(deserializer)?;
-        Self::new(wire.name, wire.description, wire.labels, wire.extensions)
-            .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(BlueprintMetadata, BlueprintMetadataWire, |wire| Self::new(
+    wire.name,
+    wire.description,
+    wire.labels,
+    wire.extensions
+));
 
 impl BlueprintMetadata {
     /// Creates bounded package metadata.
@@ -368,25 +354,18 @@ struct DataPortWire {
     direction: PortDirection,
 }
 
-impl<'de> Deserialize<'de> for DataPort {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = DataPortWire::deserialize(deserializer)?;
-        match wire.direction {
-            PortDirection::Input => Self::input(wire.schema, wire.required, wire.binding),
-            PortDirection::Output if !wire.required && wire.binding.is_none() => {
-                Ok(Self::output(wire.schema))
-            }
-            PortDirection::Output => Err(ModelError::new(
-                "port.direction",
-                "an output cannot be required or carry an input binding",
-            )),
+milkdrift_contracts::deserialize_via!(DataPort, DataPortWire, |wire| {
+    match wire.direction {
+        PortDirection::Input => Self::input(wire.schema, wire.required, wire.binding),
+        PortDirection::Output if !wire.required && wire.binding.is_none() => {
+            Ok(Self::output(wire.schema))
         }
-        .map_err(serde::de::Error::custom)
+        PortDirection::Output => Err(ModelError::new(
+            "port.direction",
+            "an output cannot be required or carry an input binding",
+        )),
     }
-}
+});
 
 impl DataPort {
     /// Creates an input port with an optional explicit binding.

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use milkdrift_capability::BoundedJson;
@@ -56,14 +56,9 @@ impl PathSelector {
     }
 }
 
-impl<'de> Deserialize<'de> for PathSelector {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::new(Vec::<PathSegment>::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(PathSelector, Vec<PathSegment>, |segments| Self::new(
+    segments
+));
 
 /// Safe comparison operators supported by branch and repeat conditions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]

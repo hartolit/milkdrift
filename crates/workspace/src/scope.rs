@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     BranchId, IterationId, RunId, ScopeId, SubworkflowId, WorkspaceError, WorkspaceValueReference,
@@ -89,15 +89,11 @@ struct WorkspaceScopeWire {
     parent: Option<ScopeReference>,
 }
 
-impl<'de> Deserialize<'de> for WorkspaceScope {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let wire = WorkspaceScopeWire::deserialize(deserializer)?;
-        Self::new(wire.reference, wire.kind, wire.parent).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(WorkspaceScope, WorkspaceScopeWire, |wire| Self::new(
+    wire.reference,
+    wire.kind,
+    wire.parent
+));
 
 impl WorkspaceScope {
     /// Creates the only parentless scope kind for a run.
@@ -216,15 +212,9 @@ struct ScopeLineageWire {
     scopes: Vec<WorkspaceScope>,
 }
 
-impl<'de> Deserialize<'de> for ScopeLineage {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::new(ScopeLineageWire::deserialize(deserializer)?.scopes)
-            .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(ScopeLineage, ScopeLineageWire, |wire| Self::new(
+    wire.scopes
+));
 
 impl ScopeLineage {
     /// Validates a complete root-to-leaf scope chain.

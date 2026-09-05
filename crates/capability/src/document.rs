@@ -10,11 +10,11 @@ use crate::{
 };
 
 /// Schema version implemented by the first capability contract format.
-pub const SCHEMA_VERSION_V1: u32 = 1;
+pub(crate) const SCHEMA_VERSION_V1: u32 = 1;
 /// Invocation request schema adding an explicit frozen context-manifest reference.
-pub const INVOCATION_REQUEST_SCHEMA_VERSION_V2: u32 = 2;
+const INVOCATION_REQUEST_SCHEMA_VERSION_V2: u32 = 2;
 /// Current resolved-capability snapshot envelope with category-bound digest semantics.
-pub const RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2: u32 = 2;
+pub(crate) const RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2: u32 = 2;
 
 pub(crate) fn canonical_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, ContractError> {
     let bytes =

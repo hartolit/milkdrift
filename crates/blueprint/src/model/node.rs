@@ -44,17 +44,11 @@ struct TaskConfigWire {
     output_context_roles: BTreeSet<ContextSemanticRole>,
 }
 
-impl<'de> Deserialize<'de> for TaskConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = TaskConfigWire::deserialize(deserializer)?;
-        Self::new(wire.requirement, wire.context_policy)
-            .and_then(|config| config.with_output_context_roles(wire.output_context_roles))
-            .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(TaskConfig, TaskConfigWire, |wire| Self::new(
+    wire.requirement,
+    wire.context_policy
+)
+.and_then(|config| config.with_output_context_roles(wire.output_context_roles)));
 
 impl TaskConfig {
     /// Constructs a task from one capability requirement and immutable context policy.
@@ -113,7 +107,7 @@ impl TaskConfig {
 }
 
 /// Complete semantic behavior of one definition-time node.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum NodeKind {
     /// Invoke an operation through capability selection.
@@ -187,42 +181,6 @@ impl NodeKind {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
-enum NodeKindWire {
-    Task { config: TaskConfig },
-    Branch { config: BranchConfig },
-    Fork { config: ForkConfig },
-    Join { config: JoinConfig },
-    Reducer { config: ReducerConfig },
-    Repeat { config: RepeatConfig },
-    Wait { duration_ms: u64 },
-    SignalWait { signal: OperationId },
-    Subworkflow { reference: PinnedSubworkflow },
-    Terminal { outcome: TerminalOutcome },
-}
-
-impl<'de> Deserialize<'de> for NodeKind {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = NodeKindWire::deserialize(deserializer)?;
-        match wire {
-            NodeKindWire::Task { config } => Ok(Self::Task { config }),
-            NodeKindWire::Branch { config } => Ok(Self::Branch { config }),
-            NodeKindWire::Fork { config } => Ok(Self::Fork { config }),
-            NodeKindWire::Join { config } => Ok(Self::Join { config }),
-            NodeKindWire::Reducer { config } => Ok(Self::Reducer { config }),
-            NodeKindWire::Repeat { config } => Ok(Self::Repeat { config }),
-            NodeKindWire::Wait { duration_ms } => Ok(Self::Wait { duration_ms }),
-            NodeKindWire::SignalWait { signal } => Ok(Self::SignalWait { signal }),
-            NodeKindWire::Subworkflow { reference } => Ok(Self::Subworkflow { reference }),
-            NodeKindWire::Terminal { outcome } => Ok(Self::Terminal { outcome }),
-        }
-    }
-}
-
 /// Definition-time node with declared control/data ports and immutable configuration.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Node {
@@ -245,24 +203,17 @@ struct NodeWire {
     data_outputs: BTreeMap<PortId, DataPort>,
 }
 
-impl<'de> Deserialize<'de> for Node {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = NodeWire::deserialize(deserializer)?;
-        let node = Self {
-            id: wire.id,
-            kind: wire.kind,
-            control_inputs: wire.control_inputs,
-            control_outputs: wire.control_outputs,
-            data_inputs: wire.data_inputs,
-            data_outputs: wire.data_outputs,
-        };
-        node.validate_local().map_err(serde::de::Error::custom)?;
-        Ok(node)
-    }
-}
+milkdrift_contracts::deserialize_via!(Node, NodeWire, |wire| {
+    let node = Self {
+        id: wire.id,
+        kind: wire.kind,
+        control_inputs: wire.control_inputs,
+        control_outputs: wire.control_outputs,
+        data_inputs: wire.data_inputs,
+        data_outputs: wire.data_outputs,
+    };
+    node.validate_local().map(|()| node)
+});
 
 impl Node {
     /// Constructs a node before declaring its ports.

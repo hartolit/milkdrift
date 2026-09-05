@@ -75,6 +75,27 @@ macro_rules! validated_string_type {
     };
 }
 
+/// Implements `Deserialize` by decoding one private wire representation and passing it
+/// through the owning domain's validating conversion.
+///
+/// The wire type continues to own strict Serde shape policy, while the supplied expression
+/// continues to own domain validation and error vocabulary. This macro only removes the
+/// repeated mechanical adapter between those two boundaries.
+#[macro_export]
+macro_rules! deserialize_via {
+    ($target:ty, $wire:ty, |$value:ident| $conversion:expr $(,)?) => {
+        impl<'de> ::serde::Deserialize<'de> for $target {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: ::serde::Deserializer<'de>,
+            {
+                let $value = <$wire as ::serde::Deserialize>::deserialize(deserializer)?;
+                ($conversion).map_err(::serde::de::Error::custom)
+            }
+        }
+    };
+}
+
 /// Structural JSON bounds whose meanings are shared across contract domains.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct JsonLimits {
@@ -460,6 +481,21 @@ mod tests {
         maximum_container_items: 2,
     };
 
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PositiveWire {
+        value: u32,
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct Positive(u32);
+
+    crate::deserialize_via!(Positive, PositiveWire, |wire| {
+        (wire.value > 0)
+            .then_some(Positive(wire.value))
+            .ok_or("value must be positive")
+    });
+
     #[test]
     fn canonical_ordering_and_duplicate_rejection_are_recursive() {
         let value = json!({"z": [{"b": 2, "a": 1}], "a": true});
@@ -500,5 +536,15 @@ mod tests {
             assert_eq!(string.kind(), JsonBoundKind::String);
         }
         assert!(preflight_json_structure(br#"{"a":[1,2]}"#, LIMITS).is_ok());
+    }
+
+    #[test]
+    fn validated_deserialize_uses_wire_shape_and_owner_conversion() {
+        assert_eq!(
+            serde_json::from_str::<Positive>(r#"{"value":1}"#).ok(),
+            Some(Positive(1))
+        );
+        assert!(serde_json::from_str::<Positive>(r#"{"value":0}"#).is_err());
+        assert!(serde_json::from_str::<Positive>(r#"{"value":1,"extra":true}"#).is_err());
     }
 }

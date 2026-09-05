@@ -50,24 +50,17 @@ struct AuthorityGrantWire {
     extensions: BTreeMap<String, BoundedJson>,
 }
 
-impl<'de> Deserialize<'de> for AuthorityGrant {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = AuthorityGrantWire::deserialize(deserializer)?;
-        AuthorityGrantBuilder::new(wire.identity, wire.revision, wire.actor)
-            .operations(wire.operations)
-            .resources(wire.resources)
-            .budget(wire.budget)
-            .validity(wire.valid_from, wire.valid_until)
-            .revocation_generation(wire.revocation_generation)
-            .extensions(wire.extensions)
-            .schema_version(wire.schema_version)
-            .build()
-            .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(AuthorityGrant, AuthorityGrantWire, |wire| {
+    AuthorityGrantBuilder::new(wire.identity, wire.revision, wire.actor)
+        .operations(wire.operations)
+        .resources(wire.resources)
+        .budget(wire.budget)
+        .validity(wire.valid_from, wire.valid_until)
+        .revocation_generation(wire.revocation_generation)
+        .extensions(wire.extensions)
+        .schema_version(wire.schema_version)
+        .build()
+});
 
 impl AuthorityGrant {
     /// Explicit contract schema.
@@ -130,7 +123,7 @@ impl AuthorityGrant {
     }
     /// Strictly decodes and validates one schema-v4 grant.
     pub fn from_json(bytes: &[u8]) -> Result<Self, AuthorityError> {
-        if bytes.len() > crate::MAX_AUTHORITY_DOCUMENT_BYTES {
+        if bytes.len() > crate::document::MAX_AUTHORITY_DOCUMENT_BYTES {
             return Err(AuthorityError::Bounds {
                 location: "grant.document",
                 reason: "document too large".to_owned(),

@@ -135,22 +135,19 @@ impl Message {
     }
 }
 
-impl<'de> Deserialize<'de> for Message {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Wire {
-            role: MessageRole,
-            parts: Vec<ContentPart>,
-            tool_call_id: Option<String>,
-        }
-        let wire = Wire::deserialize(deserializer)?;
-        Self::new(wire.role, wire.parts, wire.tool_call_id).map_err(serde::de::Error::custom)
-    }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MessageWire {
+    role: MessageRole,
+    parts: Vec<ContentPart>,
+    tool_call_id: Option<String>,
 }
+
+milkdrift_contracts::deserialize_via!(Message, MessageWire, |wire| Self::new(
+    wire.role,
+    wire.parts,
+    wire.tool_call_id
+));
 
 /// Tool definition whose JSON schema remains data rather than executable code.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -203,22 +200,19 @@ impl ToolDefinition {
     }
 }
 
-impl<'de> Deserialize<'de> for ToolDefinition {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Wire {
-            name: String,
-            description: String,
-            input_schema: BoundedJson,
-        }
-        let wire = Wire::deserialize(deserializer)?;
-        Self::new(wire.name, wire.description, wire.input_schema).map_err(serde::de::Error::custom)
-    }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ToolDefinitionWire {
+    name: String,
+    description: String,
+    input_schema: BoundedJson,
 }
+
+milkdrift_contracts::deserialize_via!(ToolDefinition, ToolDefinitionWire, |wire| Self::new(
+    wire.name,
+    wire.description,
+    wire.input_schema
+));
 
 /// Requested structured result shape.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -265,22 +259,19 @@ impl StructuredOutput {
     }
 }
 
-impl<'de> Deserialize<'de> for StructuredOutput {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Wire {
-            name: String,
-            schema: BoundedJson,
-            strict: bool,
-        }
-        let wire = Wire::deserialize(deserializer)?;
-        Self::new(wire.name, wire.schema, wire.strict).map_err(serde::de::Error::custom)
-    }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StructuredOutputWire {
+    name: String,
+    schema: BoundedJson,
+    strict: bool,
 }
+
+milkdrift_contracts::deserialize_via!(StructuredOutput, StructuredOutputWire, |wire| Self::new(
+    wire.name,
+    wire.schema,
+    wire.strict
+));
 
 /// Reproducible provider-session selection.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -462,37 +453,29 @@ impl ModelTaskRequest {
     }
 }
 
-impl<'de> Deserialize<'de> for ModelTaskRequest {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Wire {
-            messages: Vec<Message>,
-            tools: Vec<ToolDefinition>,
-            structured_output: Option<StructuredOutput>,
-            session: SessionSelection,
-            reasoning: Option<ReasoningControl>,
-            maximum_output_units: u64,
-            streaming: bool,
-            extensions: BTreeMap<ExtensionKey, BoundedJson>,
-        }
-        let w = Wire::deserialize(deserializer)?;
-        Self::new(
-            w.messages,
-            w.tools,
-            w.structured_output,
-            w.session,
-            w.reasoning,
-            w.maximum_output_units,
-            w.streaming,
-            w.extensions,
-        )
-        .map_err(serde::de::Error::custom)
-    }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelTaskRequestWire {
+    messages: Vec<Message>,
+    tools: Vec<ToolDefinition>,
+    structured_output: Option<StructuredOutput>,
+    session: SessionSelection,
+    reasoning: Option<ReasoningControl>,
+    maximum_output_units: u64,
+    streaming: bool,
+    extensions: BTreeMap<ExtensionKey, BoundedJson>,
 }
+
+milkdrift_contracts::deserialize_via!(ModelTaskRequest, ModelTaskRequestWire, |w| Self::new(
+    w.messages,
+    w.tools,
+    w.structured_output,
+    w.session,
+    w.reasoning,
+    w.maximum_output_units,
+    w.streaming,
+    w.extensions,
+));
 
 /// Structured tool-call request returned as data only.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -539,22 +522,19 @@ impl ToolCall {
     }
 }
 
-impl<'de> Deserialize<'de> for ToolCall {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Wire {
-            id: String,
-            name: String,
-            arguments: BoundedJson,
-        }
-        let w = Wire::deserialize(deserializer)?;
-        Self::new(w.id, w.name, w.arguments).map_err(serde::de::Error::custom)
-    }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ToolCallWire {
+    id: String,
+    name: String,
+    arguments: BoundedJson,
 }
+
+milkdrift_contracts::deserialize_via!(ToolCall, ToolCallWire, |wire| Self::new(
+    wire.id,
+    wire.name,
+    wire.arguments
+));
 
 /// Stable provider-neutral stop classification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -671,33 +651,25 @@ impl ModelResponse {
     }
 }
 
-impl<'de> Deserialize<'de> for ModelResponse {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Wire {
-            text: String,
-            structured: Option<BoundedJson>,
-            tool_calls: Vec<ToolCall>,
-            finish_reason: FinishReason,
-            usage: Usage,
-            provider_metadata: BTreeMap<ExtensionKey, BoundedJson>,
-        }
-        let w = Wire::deserialize(deserializer)?;
-        Self::new(
-            w.text,
-            w.structured,
-            w.tool_calls,
-            w.finish_reason,
-            w.usage,
-            w.provider_metadata,
-        )
-        .map_err(serde::de::Error::custom)
-    }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelResponseWire {
+    text: String,
+    structured: Option<BoundedJson>,
+    tool_calls: Vec<ToolCall>,
+    finish_reason: FinishReason,
+    usage: Usage,
+    provider_metadata: BTreeMap<ExtensionKey, BoundedJson>,
 }
+
+milkdrift_contracts::deserialize_via!(ModelResponse, ModelResponseWire, |w| Self::new(
+    w.text,
+    w.structured,
+    w.tool_calls,
+    w.finish_reason,
+    w.usage,
+    w.provider_metadata,
+));
 
 /// Bounded streaming observation; the canonical complete result remains an artifact.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

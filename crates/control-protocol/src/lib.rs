@@ -32,11 +32,11 @@ pub use read::{
 };
 
 /// Supported control protocol major version.
-pub const PROTOCOL_MAJOR: u16 = 2;
+const PROTOCOL_MAJOR: u16 = 2;
 /// Supported control protocol minor version.
-pub const PROTOCOL_MINOR: u16 = 3;
+const PROTOCOL_MINOR: u16 = 3;
 /// Independent presentation-layout document version.
-pub const LAYOUT_SCHEMA_VERSION: u32 = 1;
+const LAYOUT_SCHEMA_VERSION: u32 = 1;
 /// Maximum JSON request or response envelope size.
 pub const MAX_DOCUMENT_BYTES: usize = 1_310_720;
 /// Maximum returned items in a single page.

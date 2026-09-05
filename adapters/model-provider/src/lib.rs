@@ -15,8 +15,8 @@ mod operational_evidence;
 
 pub use adapter::{ModelEndpointAdapter, descriptor_for_profile};
 pub use profile::{
-    AuthMode, EndpointLimits, EndpointProfile, MODEL_ENDPOINT_PROFILE_SCHEMA_VERSION_V1,
-    ModelFeature, ProfileError, ProviderProtocol, ProxyPolicy, RedirectPolicy, TlsPolicy,
+    AuthMode, EndpointLimits, EndpointProfile, ModelFeature, ProfileError, ProviderProtocol,
+    ProxyPolicy, RedirectPolicy, TlsPolicy,
 };
 
 #[cfg(feature = "operational-evidence")]

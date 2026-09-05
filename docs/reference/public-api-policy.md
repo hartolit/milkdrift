@@ -31,7 +31,7 @@ package entry point. Consumers otherwise import the canonical owner directly.
 | `milkdrift-blueprint` | External product and durable-schema contracts for immutable definitions, validation, documents, and revisions. |
 | `milkdrift-capability` | External product and durable-schema contracts shared by hosts, runtime, adapters, peers, and applications. It is the canonical owner/import path for `PeerId`, `SchemaId`, `ExtensionKey`, `BoundedJson`, and `TrustZone`. |
 | `milkdrift-capability-host` | Workspace adapter ports and the daemon/runtime execution bridge; no durable storage ownership. `InMemorySecretResolver` and the reusable production-adapter conformance harness are test-only exposures available through the non-default `test-support` feature. |
-| `milkdrift-contracts` | Workspace adapter mechanics for bounded canonical JSON, validated strings, UTF-8-safe byte truncation, and canonical `b3_` lexical validation; it owns no semantic identifiers, digest domains, errors, or schema versions. |
+| `milkdrift-contracts` | Workspace adapter mechanics for bounded canonical JSON, validated strings, UTF-8-safe byte truncation, canonical `b3_` lexical validation, and private-wire-to-validating-conversion glue; consuming domains retain their wire shapes, semantic identifiers, validation, digest domains, errors, and schema versions. |
 | `milkdrift-control` | Workspace application contracts plus durable proposal/controller documents used by daemon and evidence. |
 | `milkdrift-control-client` | External product contract for typed authenticated HTTP/SSE clients, including CLI and future clients. |
 | `milkdrift-control-protocol` | External product and durable wire contracts for protocol 2.3; transport/runtime/storage types are excluded. |

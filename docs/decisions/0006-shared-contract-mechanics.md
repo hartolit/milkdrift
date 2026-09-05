@@ -7,18 +7,20 @@
 
 Capability, blueprint, persistence, workspace, and runtime documents independently
 implemented the same recursive JSON ordering, duplicate-key rejection, structural
-bounds traversal, and validated string-newtype boilerplate. The copies already had
-multiple production consumers and protect canonical bytes and hostile-input
-boundaries. Continuing to copy them risks subtle divergence, while placing domain
-identities or schema policy in a generic utility crate would erase semantic ownership.
+bounds traversal, validated string-newtype boilerplate, and mechanical adapters from
+private Serde wire shapes into validating domain constructors. The copies already had
+multiple production consumers and protect canonical bytes and hostile-input boundaries.
+Continuing to copy them risks subtle divergence, while placing domain identities or
+schema policy in a generic utility crate would erase semantic ownership.
 
 ## Decision
 
 An inward `milkdrift-contracts` crate owns only proven cross-domain mechanics:
 recursive canonical JSON ordering, duplicate-key-safe JSON parsing, configurable
-structural bounds validation, and the common implementation of validated string
-newtypes. Its APIs accept limits and validators from consumers and return structural
-violations rather than domain policy.
+structural bounds validation, the common implementation of validated string newtypes,
+and the small adapter that delegates private-wire deserialization to an owning domain's
+existing validated conversion. Its APIs accept limits, validators, wire shapes, and
+conversions from consumers and return structural violations rather than domain policy.
 
 Each consuming crate continues to define and own its public identities, validation
 rules, limits, error mapping, schemas, digest domains, and durable meaning. The shared
@@ -36,11 +38,11 @@ constants merely because their implementations look similar.
 
 ## Consequences
 
-Canonical JSON and validated-newtype behavior have one implementation and focused
-tests, while domain APIs and error vocabulary remain unchanged. The workspace gains
-one small stable inward dependency. A change to shared mechanics now requires running
-every consuming crate's compatibility fixtures, because unchanged canonical bytes are
-part of the decision.
+Canonical JSON, validated-newtype behavior, and wire-to-constructor glue have one
+implementation and focused tests, while private wire shapes, domain APIs, validation,
+and error vocabulary remain unchanged. The workspace gains one small stable inward
+dependency. A change to shared mechanics now requires running every consuming crate's
+compatibility fixtures, because unchanged canonical bytes are part of the decision.
 
 ## Reconsideration triggers
 

@@ -14,7 +14,7 @@ use crate::{
 };
 
 /// Current prompt-sequence import schema.
-pub const PROMPT_SEQUENCE_SCHEMA_VERSION_V2: u32 = 2;
+const PROMPT_SEQUENCE_SCHEMA_VERSION_V2: u32 = 2;
 const MAX_DOCUMENT_DEPTH: usize = 48;
 const MAX_CONTAINER_ITEMS: usize = 4_096;
 const MAX_EXTENSIONS: usize = 32;

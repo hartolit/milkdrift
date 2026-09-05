@@ -7,7 +7,7 @@ use thiserror::Error;
 use url::Url;
 
 /// Current non-secret model endpoint profile schema.
-pub const MODEL_ENDPOINT_PROFILE_SCHEMA_VERSION_V1: u32 = 1;
+const MODEL_ENDPOINT_PROFILE_SCHEMA_VERSION_V1: u32 = 1;
 const MAX_PROFILE_BYTES: usize = 262_144;
 const PROFILE_JSON_LIMITS: milkdrift_contracts::JsonLimits = milkdrift_contracts::JsonLimits {
     maximum_depth: 24,

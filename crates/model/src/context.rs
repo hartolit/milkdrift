@@ -11,7 +11,7 @@ use milkdrift_workspace::{
 use crate::{ModelContractError, document::encode};
 
 /// Current context-manifest schema with materialization digests and exact producer provenance.
-pub const CONTEXT_MANIFEST_SCHEMA_VERSION_V2: u32 = 2;
+const CONTEXT_MANIFEST_SCHEMA_VERSION_V2: u32 = 2;
 const MAX_ENTRIES: usize = 4_096;
 const MAX_OMISSIONS: usize = 4_096;
 const MAX_EVIDENCE: usize = 256;
@@ -120,56 +120,51 @@ pub enum ContextSource {
     },
 }
 
-impl<'de> Deserialize<'de> for ContextSource {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
-        enum Wire {
-            DirectInput {
-                name: String,
-                reference: InvocationValueReference,
-            },
-            NodeExecution {
-                node: NodeId,
-                execution: NodeExecutionId,
-                attempt: Option<AttemptId>,
-                event_sequence: Option<RunSequence>,
-            },
-            Event {
-                event: EventId,
-                sequence: RunSequence,
-            },
-            WorkspaceValue {
-                reference: WorkspaceValueReference,
-            },
-            Artifact {
-                reference: ArtifactReference,
-            },
-        }
-        let source = match Wire::deserialize(deserializer)? {
-            Wire::DirectInput { name, reference } => Self::DirectInput { name, reference },
-            Wire::NodeExecution {
-                node,
-                execution,
-                attempt,
-                event_sequence,
-            } => Self::NodeExecution {
-                node,
-                execution,
-                attempt,
-                event_sequence,
-            },
-            Wire::Event { event, sequence } => Self::Event { event, sequence },
-            Wire::WorkspaceValue { reference } => Self::WorkspaceValue { reference },
-            Wire::Artifact { reference } => Self::Artifact { reference },
-        };
-        source.validate().map_err(serde::de::Error::custom)?;
-        Ok(source)
-    }
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+enum ContextSourceWire {
+    DirectInput {
+        name: String,
+        reference: InvocationValueReference,
+    },
+    NodeExecution {
+        node: NodeId,
+        execution: NodeExecutionId,
+        attempt: Option<AttemptId>,
+        event_sequence: Option<RunSequence>,
+    },
+    Event {
+        event: EventId,
+        sequence: RunSequence,
+    },
+    WorkspaceValue {
+        reference: WorkspaceValueReference,
+    },
+    Artifact {
+        reference: ArtifactReference,
+    },
 }
+
+milkdrift_contracts::deserialize_via!(ContextSource, ContextSourceWire, |wire| {
+    let source = match wire {
+        ContextSourceWire::DirectInput { name, reference } => Self::DirectInput { name, reference },
+        ContextSourceWire::NodeExecution {
+            node,
+            execution,
+            attempt,
+            event_sequence,
+        } => Self::NodeExecution {
+            node,
+            execution,
+            attempt,
+            event_sequence,
+        },
+        ContextSourceWire::Event { event, sequence } => Self::Event { event, sequence },
+        ContextSourceWire::WorkspaceValue { reference } => Self::WorkspaceValue { reference },
+        ContextSourceWire::Artifact { reference } => Self::Artifact { reference },
+    };
+    source.validate().map(|()| source)
+});
 
 impl ContextSource {
     fn validate(&self) -> Result<(), ModelContractError> {
@@ -550,63 +545,57 @@ impl ContextManifestEntry {
     }
 }
 
-impl<'de> Deserialize<'de> for ContextManifestEntry {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Wire {
-            ordinal: u32,
-            kind: ContextSemanticKind,
-            semantic_roles: std::collections::BTreeSet<ContextSemanticRole>,
-            source: ContextSource,
-            content_digest: ContentDigest,
-            source_revision: RevisionId,
-            source_execution: Option<NodeExecutionId>,
-            source_attempt: Option<AttemptId>,
-            source_scope: Option<ScopeReference>,
-            causal_distance: Option<u16>,
-            source_sequence: Option<RunSequence>,
-            occurred_at_ms: Option<u64>,
-            producer: ContextProducerFact,
-            causal_parents: Vec<ContextEvidenceReference>,
-            selected_artifact: bool,
-            selected_bytes: u64,
-            selected_artifact_bytes: u64,
-            estimated_model_input_units: Option<u64>,
-            sensitivity: ArtifactSensitivity,
-            authority: AuthorityFact,
-            reason: ContextInclusionReason,
-        }
-        let w = Wire::deserialize(deserializer)?;
-        Self::new(
-            w.ordinal,
-            w.kind,
-            w.semantic_roles,
-            w.source,
-            w.content_digest,
-            w.source_revision,
-            w.source_execution,
-            w.source_attempt,
-            w.source_scope,
-            w.causal_distance,
-            w.source_sequence,
-            w.occurred_at_ms,
-            w.producer,
-            w.causal_parents,
-            w.selected_artifact,
-            w.selected_bytes,
-            w.selected_artifact_bytes,
-            w.estimated_model_input_units,
-            w.sensitivity,
-            w.authority,
-            w.reason,
-        )
-        .map_err(serde::de::Error::custom)
-    }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextManifestEntryWire {
+    ordinal: u32,
+    kind: ContextSemanticKind,
+    semantic_roles: std::collections::BTreeSet<ContextSemanticRole>,
+    source: ContextSource,
+    content_digest: ContentDigest,
+    source_revision: RevisionId,
+    source_execution: Option<NodeExecutionId>,
+    source_attempt: Option<AttemptId>,
+    source_scope: Option<ScopeReference>,
+    causal_distance: Option<u16>,
+    source_sequence: Option<RunSequence>,
+    occurred_at_ms: Option<u64>,
+    producer: ContextProducerFact,
+    causal_parents: Vec<ContextEvidenceReference>,
+    selected_artifact: bool,
+    selected_bytes: u64,
+    selected_artifact_bytes: u64,
+    estimated_model_input_units: Option<u64>,
+    sensitivity: ArtifactSensitivity,
+    authority: AuthorityFact,
+    reason: ContextInclusionReason,
 }
+
+milkdrift_contracts::deserialize_via!(ContextManifestEntry, ContextManifestEntryWire, |w| {
+    Self::new(
+        w.ordinal,
+        w.kind,
+        w.semantic_roles,
+        w.source,
+        w.content_digest,
+        w.source_revision,
+        w.source_execution,
+        w.source_attempt,
+        w.source_scope,
+        w.causal_distance,
+        w.source_sequence,
+        w.occurred_at_ms,
+        w.producer,
+        w.causal_parents,
+        w.selected_artifact,
+        w.selected_bytes,
+        w.selected_artifact_bytes,
+        w.estimated_model_input_units,
+        w.sensitivity,
+        w.authority,
+        w.reason,
+    )
+});
 
 /// One non-selected candidate summary, kept bounded and deterministic.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

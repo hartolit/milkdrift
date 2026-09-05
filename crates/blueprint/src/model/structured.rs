@@ -25,15 +25,10 @@ struct BranchConfigWire {
     fallback: Option<PortId>,
 }
 
-impl<'de> Deserialize<'de> for BranchConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = BranchConfigWire::deserialize(deserializer)?;
-        Self::new(wire.arms, wire.fallback).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(BranchConfig, BranchConfigWire, |wire| Self::new(
+    wire.arms,
+    wire.fallback
+));
 
 impl BranchConfig {
     /// Constructs a branch with one or more condition arms and an optional fallback.
@@ -92,15 +87,7 @@ struct ForkConfigWire {
     branches: BTreeSet<PortId>,
 }
 
-impl<'de> Deserialize<'de> for ForkConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = ForkConfigWire::deserialize(deserializer)?;
-        Self::new(wire.branches).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(ForkConfig, ForkConfigWire, |wire| Self::new(wire.branches));
 
 impl ForkConfig {
     /// Constructs a fork with at least two isolated branches.
@@ -204,21 +191,12 @@ struct ReducerConfigWire {
     strategy: ReducerStrategy,
 }
 
-impl<'de> Deserialize<'de> for ReducerConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = ReducerConfigWire::deserialize(deserializer)?;
-        Self::new(
-            wire.input_port,
-            wire.item_schema,
-            wire.minimum_items,
-            wire.strategy,
-        )
-        .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(ReducerConfig, ReducerConfigWire, |wire| Self::new(
+    wire.input_port,
+    wire.item_schema,
+    wire.minimum_items,
+    wire.strategy,
+));
 
 impl ReducerConfig {
     /// Constructs a reducer requiring at least one input item.
@@ -340,14 +318,7 @@ impl Serialize for CostCurrencyCode {
     }
 }
 
-impl<'de> Deserialize<'de> for CostCurrencyCode {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(CostCurrencyCode, String, |value| Self::new(value));
 
 /// Additional hard limits for a bounded repeat.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -371,21 +342,14 @@ struct RepeatBudgetWire {
     max_cost_currency: Option<CostCurrencyCode>,
 }
 
-impl<'de> Deserialize<'de> for RepeatBudget {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = RepeatBudgetWire::deserialize(deserializer)?;
-        let budget = Self {
-            max_duration_ms: wire.max_duration_ms,
-            max_cost_micros: wire.max_cost_micros,
-            max_cost_currency: wire.max_cost_currency,
-        };
-        budget.validate().map_err(serde::de::Error::custom)?;
-        Ok(budget)
-    }
-}
+milkdrift_contracts::deserialize_via!(RepeatBudget, RepeatBudgetWire, |wire| {
+    let budget = Self {
+        max_duration_ms: wire.max_duration_ms,
+        max_cost_micros: wire.max_cost_micros,
+        max_cost_currency: wire.max_cost_currency,
+    };
+    budget.validate().map(|()| budget)
+});
 
 impl RepeatBudget {
     fn validate(&self) -> Result<(), ModelError> {
@@ -435,22 +399,13 @@ struct RepeatConfigWire {
     termination: RepeatTermination,
 }
 
-impl<'de> Deserialize<'de> for RepeatConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = RepeatConfigWire::deserialize(deserializer)?;
-        Self::new(
-            wire.body,
-            wire.condition,
-            wire.maximum_iterations,
-            wire.budget,
-            wire.termination,
-        )
-        .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(RepeatConfig, RepeatConfigWire, |wire| Self::new(
+    wire.body,
+    wire.condition,
+    wire.maximum_iterations,
+    wire.budget,
+    wire.termination,
+));
 
 impl RepeatConfig {
     /// Constructs a repeat with a hard iteration limit and optional tighter budgets.

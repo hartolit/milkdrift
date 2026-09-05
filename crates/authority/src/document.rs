@@ -2,12 +2,10 @@ use serde::Serialize;
 
 use crate::AuthorityError;
 
-/// Legacy grant contract whose artifact/layout scopes used empty wildcard collections.
-pub const AUTHORITY_GRANT_SCHEMA_VERSION_V3: u32 = 3;
 /// Current grant contract with explicit artifact and shared-layout selectors.
-pub const AUTHORITY_GRANT_SCHEMA_VERSION_V4: u32 = 4;
+pub(crate) const AUTHORITY_GRANT_SCHEMA_VERSION_V4: u32 = 4;
 /// Maximum canonical bytes in a grant or decision document.
-pub const MAX_AUTHORITY_DOCUMENT_BYTES: usize = 262_144;
+pub(crate) const MAX_AUTHORITY_DOCUMENT_BYTES: usize = 262_144;
 
 const LIMITS: milkdrift_contracts::JsonLimits = milkdrift_contracts::JsonLimits {
     maximum_depth: 48,

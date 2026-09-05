@@ -601,7 +601,7 @@ impl ModelEndpointAdapter {
             input
                 .name()
                 .starts_with(milkdrift_capability::CONTEXT_ITEM_INPUT_PREFIX)
-                && input.name() != milkdrift_model::CONTEXT_MANIFEST_INPUT_NAME
+                && input.name() != milkdrift_capability::CONTEXT_MANIFEST_INPUT_NAME
                 && !expected.contains(input.name())
         }) {
             return Err(AdapterError::rejected(

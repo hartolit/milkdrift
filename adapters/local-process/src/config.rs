@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 /// Exact current byte-pinned trusted-host process-profile document schema.
-pub const PROCESS_PROFILE_SCHEMA_VERSION_V2: u32 = 2;
+const PROCESS_PROFILE_SCHEMA_VERSION_V2: u32 = 2;
 /// Maximum encoded profile document size.
 pub const MAX_PROCESS_PROFILE_BYTES: usize = 1_048_576;
 /// Maximum executable size accepted for bounded streaming identity verification.
@@ -486,45 +486,38 @@ struct ProcessProfileWire {
     extensions: BTreeMap<String, Value>,
 }
 
-impl<'de> Deserialize<'de> for ProcessProfile {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let wire = ProcessProfileWire::deserialize(deserializer)?;
-        let profile = Self {
-            profile_id: wire.profile_id,
-            revision: wire.revision,
-            capability: wire.capability,
-            descriptor_revision: wire.descriptor_revision,
-            provider_profile: wire.provider_profile,
-            operation: wire.operation,
-            side_effect: wire.side_effect,
-            idempotency: wire.idempotency,
-            cancellation: wire.cancellation,
-            trust_class: wire.trust_class,
-            executable: wire.executable,
-            implementation: wire.implementation,
-            arguments: wire.arguments,
-            substitutions: wire.substitutions,
-            working_directory: wire.working_directory,
-            filesystem_roots: wire.filesystem_roots,
-            inputs: wire.inputs,
-            environment: wire.environment,
-            stdin: wire.stdin,
-            stdout: wire.stdout,
-            stderr: wire.stderr,
-            outputs: wire.outputs,
-            limits: wire.limits,
-            restart: wire.restart,
-            platform: wire.platform,
-            max_concurrent: wire.max_concurrent,
-            extensions: wire.extensions,
-        };
-        profile.validate().map_err(serde::de::Error::custom)?;
-        Ok(profile)
-    }
-}
+milkdrift_contracts::deserialize_via!(ProcessProfile, ProcessProfileWire, |wire| {
+    let profile = Self {
+        profile_id: wire.profile_id,
+        revision: wire.revision,
+        capability: wire.capability,
+        descriptor_revision: wire.descriptor_revision,
+        provider_profile: wire.provider_profile,
+        operation: wire.operation,
+        side_effect: wire.side_effect,
+        idempotency: wire.idempotency,
+        cancellation: wire.cancellation,
+        trust_class: wire.trust_class,
+        executable: wire.executable,
+        implementation: wire.implementation,
+        arguments: wire.arguments,
+        substitutions: wire.substitutions,
+        working_directory: wire.working_directory,
+        filesystem_roots: wire.filesystem_roots,
+        inputs: wire.inputs,
+        environment: wire.environment,
+        stdin: wire.stdin,
+        stdout: wire.stdout,
+        stderr: wire.stderr,
+        outputs: wire.outputs,
+        limits: wire.limits,
+        restart: wire.restart,
+        platform: wire.platform,
+        max_concurrent: wire.max_concurrent,
+        extensions: wire.extensions,
+    };
+    profile.validate().map(|()| profile)
+});
 
 impl ProcessProfile {
     /// Stable configured profile identity.

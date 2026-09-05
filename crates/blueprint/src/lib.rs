@@ -74,4 +74,4 @@ pub use revision::BlueprintRevision;
 pub use validation::{Diagnostic, DiagnosticCode, ValidationError};
 
 /// Portable blueprint document schema with explicit task context policy.
-pub const BLUEPRINT_SCHEMA_VERSION_V2: u32 = 2;
+pub(crate) const BLUEPRINT_SCHEMA_VERSION_V2: u32 = 2;

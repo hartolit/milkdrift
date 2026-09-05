@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, fmt, str::FromStr};
 
 use milkdrift_capability::InvocationId;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::{ArtifactId, CausalId, RunId, ValueKey, WorkspaceError, WorkspaceValueReference};
 
@@ -93,14 +93,7 @@ impl Serialize for ContentDigest {
     }
 }
 
-impl<'de> Deserialize<'de> for ContentDigest {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::from_hex(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(ContentDigest, String, |value| Self::from_hex(&value));
 
 /// Validated canonical artifact media type, without parameters.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -189,14 +182,7 @@ impl Serialize for MediaType {
     }
 }
 
-impl<'de> Deserialize<'de> for MediaType {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(MediaType, String, |value| Self::new(value));
 
 /// Immutable reference to separately stored content-addressed artifact bytes.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
@@ -280,14 +266,9 @@ impl RetentionDeadline {
     }
 }
 
-impl<'de> Deserialize<'de> for RetentionDeadline {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::from_unix_millis(u64::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(RetentionDeadline, u64, |value| Self::from_unix_millis(
+    value
+));
 
 /// Sensitivity classification controlling default artifact export.
 #[derive(
@@ -384,15 +365,11 @@ struct ArtifactProvenanceWire {
     causes: Vec<CausalReference>,
 }
 
-impl<'de> Deserialize<'de> for ArtifactProvenance {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let wire = ArtifactProvenanceWire::deserialize(deserializer)?;
-        Self::new(wire.producer, wire.causes).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(
+    ArtifactProvenance,
+    ArtifactProvenanceWire,
+    |wire| Self::new(wire.producer, wire.causes)
+);
 
 impl ArtifactProvenance {
     /// Constructs bounded provenance and rejects duplicate causal references.
@@ -447,21 +424,12 @@ struct ArtifactMetadataWire {
     provenance: ArtifactProvenance,
 }
 
-impl<'de> Deserialize<'de> for ArtifactMetadata {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let wire = ArtifactMetadataWire::deserialize(deserializer)?;
-        Self::new(
-            wire.reference,
-            wire.sensitivity,
-            wire.retention,
-            wire.provenance,
-        )
-        .map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(ArtifactMetadata, ArtifactMetadataWire, |wire| Self::new(
+    wire.reference,
+    wire.sensitivity,
+    wire.retention,
+    wire.provenance,
+));
 
 impl ArtifactMetadata {
     /// Constructs complete metadata and rejects direct self-referential provenance.

@@ -1,6 +1,6 @@
 use std::{fmt, str::FromStr};
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::PersistenceError;
 
@@ -90,7 +90,9 @@ identity_type!(/// Stable reference to supporting evidence.
     EvidenceId);
 
 /// The sole per-run aggregate sequence authority. Zero means an empty journal.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(
+    Clone, Copy, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+)]
 #[serde(transparent)]
 pub struct RunSequence(u64);
 
@@ -121,15 +123,6 @@ impl RunSequence {
     }
 }
 
-impl<'de> Deserialize<'de> for RunSequence {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(Self(u64::deserialize(deserializer)?))
-    }
-}
-
 impl fmt::Display for RunSequence {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
@@ -140,7 +133,7 @@ impl fmt::Display for RunSequence {
 ///
 /// A timestamp is supplied by a boundary clock and merely recorded by persistence;
 /// no persistence operation reads the wall clock.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct TimestampMillis(u64);
 
@@ -155,15 +148,6 @@ impl TimestampMillis {
     #[must_use]
     pub const fn get(self) -> u64 {
         self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for TimestampMillis {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(Self(u64::deserialize(deserializer)?))
     }
 }
 
@@ -217,11 +201,4 @@ impl Serialize for IntegrityDigest {
     }
 }
 
-impl<'de> Deserialize<'de> for IntegrityDigest {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+milkdrift_contracts::deserialize_via!(IntegrityDigest, String, |value| Self::new(value));

@@ -385,6 +385,56 @@ fn status_is_current_fact_not_a_pass_diary() -> TestResult {
 }
 
 #[test]
+fn prompt_packages_and_pass_history_stay_out_of_canonical_docs() -> TestResult {
+    let repository = root()?;
+    let docs = repository.join("docs");
+    let mut documents = Vec::new();
+    collect_files(&docs, &mut documents, &|_| true)?;
+    collect_files(&repository.join(".github"), &mut documents, &|_| true)?;
+    documents.extend(
+        ["AGENTS.md", "CONTRIBUTING.md", "README.md"]
+            .into_iter()
+            .map(|relative| repository.join(relative)),
+    );
+
+    for document in documents {
+        let relative = document.strip_prefix(&repository)?;
+        for component in relative.components() {
+            let name = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+            assert!(
+                !name.contains("phase-prompt")
+                    && !name.contains("pass-history")
+                    && !name.contains("cleanup-diary")
+                    && name != "codebase-audit.md",
+                "obsolete process-history path returned: {}",
+                relative.display()
+            );
+        }
+
+        if document
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("md")
+            && !document.starts_with(repository.join(".github"))
+        {
+            continue;
+        }
+        let contents = read(&document)?;
+        for obsolete in [
+            "docs/development/phase-prompts/",
+            "docs/development/codebase-audit.md",
+        ] {
+            assert!(
+                !contents.contains(obsolete),
+                "stale process-history reference `{obsolete}` in {}",
+                relative.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn repository_evidence_tasks_have_one_cargo_owned_rust_path() -> TestResult {
     let repository = root()?;
     let aliases = read(repository.join(".cargo/config.toml"))?;
@@ -667,6 +717,34 @@ fn shared_text_mechanics_and_canonical_import_paths_do_not_diverge() -> TestResu
             .contains("pub use milkdrift_capability::BoundedJson"),
         "BoundedJson regained an alternate workspace import"
     );
+    assert!(
+        !read(repository.join("crates/model/src/lib.rs"))?.contains("pub use milkdrift_capability"),
+        "capability-owned context constants regained an alternate model import"
+    );
+
+    for consumer in [
+        "crates/blueprint/src/model/contract.rs",
+        "crates/capability/src/descriptor.rs",
+    ] {
+        assert!(
+            read(repository.join(consumer))?.contains("milkdrift_contracts::deserialize_via!"),
+            "shared validated-deserialization mechanics lost production consumer {consumer}"
+        );
+    }
+
+    let capability_document = read(repository.join("crates/capability/src/document.rs"))?;
+    let capability_snapshot = read(repository.join("crates/capability/src/resolved.rs"))?;
+    assert_eq!(
+        capability_document
+            .match_indices("const RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2")
+            .count(),
+        1,
+        "resolved-capability schema version must have one implementation owner"
+    );
+    assert!(
+        !capability_snapshot.contains("const RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2"),
+        "resolved-capability schema version regained a secondary owner"
+    );
     Ok(())
 }
 
@@ -737,6 +815,43 @@ fn narrowed_exports_and_validating_constructors_remain_narrow() -> TestResult {
     assert!(!runtime_executor.contains("fn execute_streaming("));
     assert!(!runtime_executor.contains("ExecutionReportBatch"));
     assert!(!runtime_executor.contains("bounded synchronous executors"));
+
+    for (package_root, accidental_export) in [
+        (
+            "crates/authority/src/lib.rs",
+            "AUTHORITY_GRANT_SCHEMA_VERSION",
+        ),
+        (
+            "crates/blueprint/src/lib.rs",
+            "pub const BLUEPRINT_SCHEMA_VERSION",
+        ),
+        ("crates/capability/src/lib.rs", "SCHEMA_VERSION"),
+        ("crates/capability/src/lib.rs", "MAX_JSON_DEPTH"),
+        ("crates/control-protocol/src/lib.rs", "pub const PROTOCOL_"),
+        (
+            "crates/control-protocol/src/lib.rs",
+            "pub const LAYOUT_SCHEMA_VERSION",
+        ),
+        ("crates/model/src/lib.rs", "MODEL_CONTRACT_SCHEMA_VERSION"),
+        ("crates/model/src/lib.rs", "CONTEXT_MANIFEST_SCHEMA_VERSION"),
+        (
+            "crates/prompt-sequence/src/lib.rs",
+            "PROMPT_SEQUENCE_SCHEMA_VERSION",
+        ),
+        (
+            "adapters/local-process/src/lib.rs",
+            "PROCESS_PROFILE_SCHEMA_VERSION",
+        ),
+        (
+            "adapters/model-provider/src/lib.rs",
+            "MODEL_ENDPOINT_PROFILE_SCHEMA_VERSION",
+        ),
+    ] {
+        assert!(
+            !read(repository.join(package_root))?.contains(accidental_export),
+            "unconsumed implementation constant regained a root export in {package_root}: {accidental_export}"
+        );
+    }
 
     assert!(Selection::<OperationId>::only(BTreeSet::new()).is_err());
     Ok(())
