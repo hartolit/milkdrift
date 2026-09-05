@@ -147,6 +147,7 @@ impl MutationShard {
                     "adapters/redb-store/src/artifact.rs",
                     "adapters/redb-store/src/artifact/publication.rs",
                     "crates/runtime/src/engine/effects.rs",
+                    "crates/runtime/src/engine/effects/entry.rs",
                     "crates/capability-host/src/lib.rs",
                 ],
                 pattern: "(ControllerPolicy::assess|ControllerLifecycleOwner.*(progress|assess)|bound_outcome|ControllerAccountState::(admit|settle_terminal|charge_artifact)|apply_controller_transaction|charge_artifact_publication|validate_(account_key|event_link|event_transaction_contract|lineage_transaction_contract|publication_controller_charge)|terminal_(settlement|usage)|commit_artifact|execute_invocation_effect|prepare_exact_entry)",

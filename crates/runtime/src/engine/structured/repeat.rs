@@ -4,33 +4,29 @@ use super::super::RuntimeService;
 use super::super::support::{
     RepeatBudgetStatus, cancellation_reason_for_execution, run_drain_reason,
 };
+use super::super::transition::PlanTransition;
 use crate::projection::{IterationState, RunProjection, SubworkflowState};
-use crate::{
-    CONTROLLER_POLICY_EXTENSION_KEY, ControllerAssessmentContext, RuntimeError, evaluate_condition,
-};
-use milkdrift_blueprint::{Node, RepeatTermination};
+use crate::scheduler::evaluate_condition;
+use crate::{CONTROLLER_POLICY_EXTENSION_KEY, ControllerAssessmentContext, RuntimeError};
+use milkdrift_blueprint::{Node, NodeKind, RepeatTermination};
 use milkdrift_persistence::{
     BoundedDetail, ControllerAssessmentBoundary, ControllerAssessmentOutcome, CurrencyCode,
     MAX_REPEAT_CONTINUATION_DECISIONS, NodeExecutionId, NodeOutcome, Reason,
-    RepeatContinuationCause, RepeatTerminationReason, RunEventEnvelope, RunEventKind, RunOutcome,
-    TimestampMillis, WorkspaceMutation,
+    RepeatContinuationCause, RepeatTerminationReason, RunEventKind, RunOutcome, TimestampMillis,
+    WorkspaceMutation,
 };
-use milkdrift_workspace::{IterationId, RunId, ScopeReference, WorkspaceScope};
+use milkdrift_workspace::{IterationId, ScopeReference, WorkspaceScope};
 
-impl RuntimeService {
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
-    pub(super) fn drive_repeat_intent(
-        &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
-        node: &Node,
-        execution: &NodeExecutionId,
-        scope_reference: &ScopeReference,
-        config: &milkdrift_blueprint::RepeatConfig,
-    ) -> Result<(), RuntimeError> {
+type RepeatIterationFrontier = (IterationId, u32, IterationState);
+
+struct RepeatFrontier {
+    latest: Option<RepeatIterationFrontier>,
+    latest_child_state: Option<SubworkflowState>,
+    has_active_child: bool,
+}
+
+impl RepeatFrontier {
+    fn discover(projection: &RunProjection, execution: &NodeExecutionId) -> Self {
         let latest = projection
             .iterations()
             .values()
@@ -43,12 +39,6 @@ impl RuntimeService {
                     iteration.state(),
                 )
             });
-        let children: Vec<_> = projection
-            .subworkflows()
-            .values()
-            .filter(|child| child.parent_execution() == execution)
-            .map(|child| child.state())
-            .collect();
         let latest_child_state = latest.as_ref().and_then(|(iteration, _, _)| {
             let iteration_scope = projection.iterations().get(iteration)?.scope().reference();
             projection
@@ -60,49 +50,74 @@ impl RuntimeService {
                 })
                 .map(|child| child.state())
         });
-        let structurally_cancelling =
-            cancellation_reason_for_execution(projection, execution, run_drain_reason(projection))
-                .is_some();
-        if structurally_cancelling {
-            if children.iter().any(|state| {
-                matches!(
-                    state,
+        let has_active_child = projection.subworkflows().values().any(|child| {
+            child.parent_execution() == execution
+                && matches!(
+                    child.state(),
                     SubworkflowState::Active | SubworkflowState::Cancelling
                 )
-            }) {
+        });
+        Self {
+            latest,
+            latest_child_state,
+            has_active_child,
+        }
+    }
+
+    const fn latest(&self) -> &Option<RepeatIterationFrontier> {
+        &self.latest
+    }
+
+    const fn latest_child_state(&self) -> Option<SubworkflowState> {
+        self.latest_child_state
+    }
+
+    const fn has_active_child(&self) -> bool {
+        self.has_active_child
+    }
+}
+
+impl RuntimeService {
+    pub(super) fn drive_repeat_intent(
+        &self,
+        transition: &mut PlanTransition<'_>,
+        node: &Node,
+        execution: &NodeExecutionId,
+        scope_reference: &ScopeReference,
+        config: &milkdrift_blueprint::RepeatConfig,
+    ) -> Result<(), RuntimeError> {
+        let frontier = RepeatFrontier::discover(transition.projection(), execution);
+        let latest = frontier.latest();
+        let structurally_cancelling = cancellation_reason_for_execution(
+            transition.projection(),
+            execution,
+            run_drain_reason(transition.projection()),
+        )
+        .is_some();
+        if structurally_cancelling {
+            if frontier.has_active_child() {
                 return Ok(());
             }
             if let Some((iteration, _, IterationState::Active)) = latest.as_ref() {
-                self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    RunEventKind::RepeatConditionRecorded {
-                        iteration: iteration.clone(),
-                        result: false,
-                    },
-                )?;
+                transition.push_event(RunEventKind::RepeatConditionRecorded {
+                    iteration: iteration.clone(),
+                    result: false,
+                })?;
             }
             let last_iteration = latest.as_ref().map(|(iteration, _, _)| iteration.clone());
-            if !projection.repeat_terminations().contains_key(execution) {
-                self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    RunEventKind::RepeatTerminated {
-                        repeat_execution: execution.clone(),
-                        termination: RepeatTerminationReason::Cancelled,
-                        last_iteration,
-                    },
-                )?;
+            if !transition
+                .projection()
+                .repeat_terminations()
+                .contains_key(execution)
+            {
+                transition.push_event(RunEventKind::RepeatTerminated {
+                    repeat_execution: execution.clone(),
+                    termination: RepeatTerminationReason::Cancelled,
+                    last_iteration,
+                })?;
             }
             return self.complete_deterministic_with_outcome(
-                run,
-                occurred_at,
-                projection,
-                events,
+                transition,
                 node,
                 execution,
                 NodeOutcome::Cancelled,
@@ -111,7 +126,10 @@ impl RuntimeService {
         }
         if let Some((iteration, _, IterationState::ConditionRecorded(true))) = latest.as_ref()
             && config.termination() == RepeatTermination::AwaitApproval
-            && let Some(continuation) = projection.repeat_continuations().get(execution)
+            && let Some(continuation) = transition
+                .projection()
+                .repeat_continuations()
+                .get(execution)
         {
             if continuation.is_rejected() {
                 let termination = continuation.requests().last().map_or(
@@ -129,22 +147,13 @@ impl RuntimeService {
                         }
                     },
                 );
-                self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    RunEventKind::RepeatTerminated {
-                        repeat_execution: execution.clone(),
-                        termination,
-                        last_iteration: Some(iteration.clone()),
-                    },
-                )?;
+                transition.push_event(RunEventKind::RepeatTerminated {
+                    repeat_execution: execution.clone(),
+                    termination,
+                    last_iteration: Some(iteration.clone()),
+                })?;
                 return self.complete_deterministic_with_outcome(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
+                    transition,
                     node,
                     execution,
                     NodeOutcome::Failed,
@@ -158,7 +167,8 @@ impl RuntimeService {
             }
         }
         let authority_budget_override = latest.as_ref().is_some_and(|(_, number, state)| {
-            projection
+            transition
+                .projection()
                 .repeat_continuations()
                 .get(execution)
                 .is_some_and(|continuation| {
@@ -178,21 +188,20 @@ impl RuntimeService {
         let budget_status = if authority_budget_override {
             RepeatBudgetStatus::Within
         } else {
-            self.repeat_budget_exhaustion(config, projection, execution, occurred_at)?
+            self.repeat_budget_exhaustion(
+                config,
+                transition.projection(),
+                execution,
+                transition.occurred_at(),
+            )?
         };
         if budget_status != RepeatBudgetStatus::Within {
             return self.drive_exhausted_repeat_budget(
-                run,
-                occurred_at,
-                projection,
-                events,
-                workspace,
+                transition,
                 node,
                 execution,
                 scope_reference,
-                config,
-                &latest,
-                latest_child_state,
+                &frontier,
                 budget_status,
             );
         }
@@ -201,21 +210,18 @@ impl RuntimeService {
             && let Some((iteration, iteration_number, IterationState::ConditionRecorded(true))) =
                 latest.as_ref()
         {
-            let effective_limit = projection.repeat_continuations().get(execution).map_or(
-                config.maximum_iterations(),
-                |continuation| {
+            let effective_limit = transition
+                .projection()
+                .repeat_continuations()
+                .get(execution)
+                .map_or(config.maximum_iterations(), |continuation| {
                     continuation
                         .budget_override_iteration_limit()
                         .unwrap_or(continuation.effective_iteration_limit())
-                },
-            );
+                });
             if *iteration_number < effective_limit {
                 return self.create_repeat_iteration(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    workspace,
+                    transition,
                     node,
                     execution,
                     scope_reference,
@@ -225,7 +231,8 @@ impl RuntimeService {
                     })?,
                 );
             }
-            let cause = projection
+            let cause = transition
+                .projection()
                 .repeat_continuations()
                 .get(execution)
                 .and_then(|continuation| {
@@ -238,50 +245,31 @@ impl RuntimeService {
                     request.cause().clone()
                 });
             return self.request_repeat_continuation(
-                run,
-                occurred_at,
-                projection,
-                events,
-                node,
-                execution,
-                iteration,
-                config,
-                cause,
+                transition, node, execution, iteration, config, cause,
             );
         }
-        self.drive_completed_repeat_body(
-            run,
-            occurred_at,
-            projection,
-            events,
-            workspace,
-            node,
-            execution,
-            scope_reference,
-            config,
-            latest,
-            latest_child_state,
-        )
+        self.drive_completed_repeat_body(transition, node, execution, scope_reference, frontier)
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_exhausted_repeat_budget(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
+        transition: &mut PlanTransition<'_>,
         node: &Node,
         execution: &NodeExecutionId,
         scope_reference: &ScopeReference,
-        config: &milkdrift_blueprint::RepeatConfig,
-        latest: &Option<(IterationId, u32, IterationState)>,
-        latest_child_state: Option<SubworkflowState>,
+        frontier: &RepeatFrontier,
         budget_status: RepeatBudgetStatus,
     ) -> Result<(), RuntimeError> {
+        let NodeKind::Repeat { config } = node.kind() else {
+            return Err(RuntimeError::InvalidHistory(
+                "repeat budget driver received a non-repeat node".to_owned(),
+            ));
+        };
+        let latest = frontier.latest();
+        let latest_child_state = frontier.latest_child_state();
         let accounting_overflow = budget_status == RepeatBudgetStatus::AccountingOverflow;
-        let active_children: Vec<_> = projection
+        let active_children: Vec<_> = transition
+            .projection()
             .subworkflows()
             .values()
             .filter(|child| {
@@ -301,34 +289,22 @@ impl RuntimeService {
             .collect();
         for (subworkflow, child_run, state) in &active_children {
             if *state == SubworkflowState::Active {
-                self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    RunEventKind::SubworkflowCancellationRequested {
-                        subworkflow: subworkflow.clone(),
-                        child_run: child_run.clone(),
-                        reason: Reason::new("repeat budget was exhausted")?,
-                    },
-                )?;
+                transition.push_event(RunEventKind::SubworkflowCancellationRequested {
+                    subworkflow: subworkflow.clone(),
+                    child_run: child_run.clone(),
+                    reason: Reason::new("repeat budget was exhausted")?,
+                })?;
             }
         }
         if !active_children.is_empty() {
             return Ok(());
         }
         if let Some((iteration, _, IterationState::Active)) = latest.as_ref() {
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::RepeatConditionRecorded {
-                    iteration: iteration.clone(),
-                    result: config.termination() == RepeatTermination::AwaitApproval
-                        && !accounting_overflow,
-                },
-            )?;
+            transition.push_event(RunEventKind::RepeatConditionRecorded {
+                iteration: iteration.clone(),
+                result: config.termination() == RepeatTermination::AwaitApproval
+                    && !accounting_overflow,
+            })?;
         }
         if config.termination() == RepeatTermination::AwaitApproval
             && !accounting_overflow
@@ -340,29 +316,15 @@ impl RuntimeService {
                 ));
             };
             return self.request_repeat_continuation(
-                run,
-                occurred_at,
-                projection,
-                events,
-                node,
-                execution,
-                iteration,
-                config,
-                cause,
+                transition, node, execution, iteration, config, cause,
             );
         }
         let last_iteration = latest.as_ref().map(|(iteration, _, _)| iteration.clone());
-        self.push_projected_event(
-            run,
-            occurred_at,
-            projection,
-            events,
-            RunEventKind::RepeatTerminated {
-                repeat_execution: execution.clone(),
-                termination: RepeatTerminationReason::BudgetExhausted,
-                last_iteration,
-            },
-        )?;
+        transition.push_event(RunEventKind::RepeatTerminated {
+            repeat_execution: execution.clone(),
+            termination: RepeatTerminationReason::BudgetExhausted,
+            last_iteration,
+        })?;
         let has_success =
             latest_child_state == Some(SubworkflowState::Terminal(RunOutcome::Succeeded));
         let outcome = match (accounting_overflow, config.termination()) {
@@ -380,22 +342,10 @@ impl RuntimeService {
         if outcome == NodeOutcome::Succeeded
             && let Some(iteration) = latest.as_ref().map(|(iteration, _, _)| iteration)
         {
-            self.publish_repeat_latest_outputs(
-                run,
-                occurred_at,
-                projection,
-                events,
-                workspace,
-                execution,
-                scope_reference,
-                iteration,
-            )?;
+            self.publish_repeat_latest_outputs(transition, execution, scope_reference, iteration)?;
         }
         self.complete_deterministic_with_outcome(
-            run,
-            occurred_at,
-            projection,
-            events,
+            transition,
             node,
             execution,
             outcome,
@@ -411,28 +361,22 @@ impl RuntimeService {
         )
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_completed_repeat_body(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
+        transition: &mut PlanTransition<'_>,
         node: &Node,
         execution: &NodeExecutionId,
         scope_reference: &ScopeReference,
-        config: &milkdrift_blueprint::RepeatConfig,
-        latest: Option<(IterationId, u32, IterationState)>,
-        latest_child_state: Option<SubworkflowState>,
+        frontier: RepeatFrontier,
     ) -> Result<(), RuntimeError> {
-        let Some((iteration, iteration_number, state)) = latest else {
+        let NodeKind::Repeat { config } = node.kind() else {
+            return Err(RuntimeError::InvalidHistory(
+                "repeat body driver received a non-repeat node".to_owned(),
+            ));
+        };
+        let Some((iteration, iteration_number, state)) = frontier.latest else {
             return self.create_repeat_iteration(
-                run,
-                occurred_at,
-                projection,
-                events,
-                workspace,
+                transition,
                 node,
                 execution,
                 scope_reference,
@@ -441,8 +385,8 @@ impl RuntimeService {
             );
         };
         if state != IterationState::Active
-            || latest_child_state.is_none()
-            || latest_child_state.is_some_and(|state| {
+            || frontier.latest_child_state.is_none()
+            || frontier.latest_child_state.is_some_and(|state| {
                 matches!(
                     state,
                     SubworkflowState::Active | SubworkflowState::Cancelling
@@ -452,38 +396,23 @@ impl RuntimeService {
             return Ok(());
         }
         let body_failed = matches!(
-            latest_child_state,
+            frontier.latest_child_state,
             Some(SubworkflowState::Terminal(
                 RunOutcome::Failed | RunOutcome::Cancelled
             ))
         );
         if body_failed {
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::RepeatConditionRecorded {
-                    iteration: iteration.clone(),
-                    result: false,
-                },
-            )?;
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::RepeatTerminated {
-                    repeat_execution: execution.clone(),
-                    termination: RepeatTerminationReason::BodyFailure,
-                    last_iteration: Some(iteration.clone()),
-                },
-            )?;
+            transition.push_event(RunEventKind::RepeatConditionRecorded {
+                iteration: iteration.clone(),
+                result: false,
+            })?;
+            transition.push_event(RunEventKind::RepeatTerminated {
+                repeat_execution: execution.clone(),
+                termination: RepeatTerminationReason::BodyFailure,
+                last_iteration: Some(iteration.clone()),
+            })?;
             return self.complete_deterministic_with_outcome(
-                run,
-                occurred_at,
-                projection,
-                events,
+                transition,
                 node,
                 execution,
                 NodeOutcome::Failed,
@@ -491,25 +420,21 @@ impl RuntimeService {
             );
         }
 
-        let context = match self.evaluation_context(node, projection, scope_reference, workspace) {
+        let context = match self.evaluation_context(
+            node,
+            transition.projection(),
+            scope_reference,
+            transition.workspace(),
+        ) {
             Ok(context) => context,
             Err(RuntimeError::Scheduling(_)) => {
-                self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    RunEventKind::RepeatTerminated {
-                        repeat_execution: execution.clone(),
-                        termination: RepeatTerminationReason::ConditionEvaluationFailed,
-                        last_iteration: Some(iteration.clone()),
-                    },
-                )?;
+                transition.push_event(RunEventKind::RepeatTerminated {
+                    repeat_execution: execution.clone(),
+                    termination: RepeatTerminationReason::ConditionEvaluationFailed,
+                    last_iteration: Some(iteration.clone()),
+                })?;
                 return self.complete_deterministic_with_outcome(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
+                    transition,
                     node,
                     execution,
                     NodeOutcome::Failed,
@@ -523,22 +448,13 @@ impl RuntimeService {
         let result = match evaluate_condition(config.condition(), &context) {
             Ok(result) => result,
             Err(RuntimeError::Scheduling(_)) => {
-                self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    RunEventKind::RepeatTerminated {
-                        repeat_execution: execution.clone(),
-                        termination: RepeatTerminationReason::ConditionEvaluationFailed,
-                        last_iteration: Some(iteration.clone()),
-                    },
-                )?;
+                transition.push_event(RunEventKind::RepeatTerminated {
+                    repeat_execution: execution.clone(),
+                    termination: RepeatTerminationReason::ConditionEvaluationFailed,
+                    last_iteration: Some(iteration.clone()),
+                })?;
                 return self.complete_deterministic_with_outcome(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
+                    transition,
                     node,
                     execution,
                     NodeOutcome::Failed,
@@ -549,58 +465,32 @@ impl RuntimeService {
             }
             Err(error) => return Err(error),
         };
-        self.push_projected_event(
-            run,
-            occurred_at,
-            projection,
-            events,
-            RunEventKind::RepeatConditionRecorded {
-                iteration: iteration.clone(),
-                result,
-            },
-        )?;
+        transition.push_event(RunEventKind::RepeatConditionRecorded {
+            iteration: iteration.clone(),
+            result,
+        })?;
         if !result {
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::RepeatTerminated {
-                    repeat_execution: execution.clone(),
-                    termination: RepeatTerminationReason::ConditionFalse,
-                    last_iteration: Some(iteration.clone()),
-                },
-            )?;
-            self.publish_repeat_latest_outputs(
-                run,
-                occurred_at,
-                projection,
-                events,
-                workspace,
-                execution,
-                scope_reference,
-                &iteration,
-            )?;
-            return self.complete_deterministic(
-                run,
-                occurred_at,
-                projection,
-                events,
-                node,
-                execution,
-            );
+            transition.push_event(RunEventKind::RepeatTerminated {
+                repeat_execution: execution.clone(),
+                termination: RepeatTerminationReason::ConditionFalse,
+                last_iteration: Some(iteration.clone()),
+            })?;
+            self.publish_repeat_latest_outputs(transition, execution, scope_reference, &iteration)?;
+            return self.complete_deterministic(transition, node, execution);
         }
-        let effective_limit = projection.repeat_continuations().get(execution).map_or(
-            config.maximum_iterations(),
-            |continuation| {
+        let effective_limit = transition
+            .projection()
+            .repeat_continuations()
+            .get(execution)
+            .map_or(config.maximum_iterations(), |continuation| {
                 continuation
                     .budget_override_iteration_limit()
                     .unwrap_or(continuation.effective_iteration_limit())
-            },
-        );
+            });
         if iteration_number >= effective_limit {
             if config.termination() == RepeatTermination::AwaitApproval {
-                let cause = projection
+                let cause = transition
+                    .projection()
                     .repeat_continuations()
                     .get(execution)
                     .and_then(|continuation| {
@@ -613,28 +503,14 @@ impl RuntimeService {
                         request.cause().clone()
                     });
                 return self.request_repeat_continuation(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    node,
-                    execution,
-                    &iteration,
-                    config,
-                    cause,
+                    transition, node, execution, &iteration, config, cause,
                 );
             }
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::RepeatTerminated {
-                    repeat_execution: execution.clone(),
-                    termination: RepeatTerminationReason::MaximumIterations,
-                    last_iteration: Some(iteration.clone()),
-                },
-            )?;
+            transition.push_event(RunEventKind::RepeatTerminated {
+                repeat_execution: execution.clone(),
+                termination: RepeatTerminationReason::MaximumIterations,
+                last_iteration: Some(iteration.clone()),
+            })?;
             let (outcome, detail) = match config.termination() {
                 RepeatTermination::SucceedWithLatest => (NodeOutcome::Succeeded, None),
                 RepeatTermination::Fail => (
@@ -651,33 +527,17 @@ impl RuntimeService {
             };
             if outcome == NodeOutcome::Succeeded {
                 self.publish_repeat_latest_outputs(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    workspace,
+                    transition,
                     execution,
                     scope_reference,
                     &iteration,
                 )?;
             }
-            return self.complete_deterministic_with_outcome(
-                run,
-                occurred_at,
-                projection,
-                events,
-                node,
-                execution,
-                outcome,
-                detail,
-            );
+            return self
+                .complete_deterministic_with_outcome(transition, node, execution, outcome, detail);
         }
         self.create_repeat_iteration(
-            run,
-            occurred_at,
-            projection,
-            events,
-            workspace,
+            transition,
             node,
             execution,
             scope_reference,
@@ -688,20 +548,19 @@ impl RuntimeService {
         )
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn request_repeat_continuation(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
+        transition: &mut PlanTransition<'_>,
         node: &Node,
         execution: &NodeExecutionId,
         frontier_iteration: &IterationId,
         config: &milkdrift_blueprint::RepeatConfig,
         cause: RepeatContinuationCause,
     ) -> Result<(), RuntimeError> {
-        let continuation = projection.repeat_continuations().get(execution);
+        let continuation = transition
+            .projection()
+            .repeat_continuations()
+            .get(execution);
         if continuation.is_some_and(|value| value.is_pending_approval()) {
             return Ok(());
         }
@@ -729,22 +588,13 @@ impl RuntimeService {
                     RepeatTerminationReason::MaximumIterations
                 }
             };
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::RepeatTerminated {
-                    repeat_execution: execution.clone(),
-                    termination,
-                    last_iteration: Some(frontier_iteration.clone()),
-                },
-            )?;
+            transition.push_event(RunEventKind::RepeatTerminated {
+                repeat_execution: execution.clone(),
+                termination,
+                last_iteration: Some(frontier_iteration.clone()),
+            })?;
             return self.complete_deterministic_with_outcome(
-                run,
-                occurred_at,
-                projection,
-                events,
+                transition,
                 node,
                 execution,
                 NodeOutcome::Failed,
@@ -753,29 +603,18 @@ impl RuntimeService {
                 )?),
             );
         }
-        self.push_projected_event(
-            run,
-            occurred_at,
-            projection,
-            events,
-            RunEventKind::RepeatContinuationRequested {
-                repeat_execution: execution.clone(),
-                frontier_iteration: frontier_iteration.clone(),
-                initial_iteration_limit,
-                effective_iteration_limit,
-                cause,
-            },
-        )
+        transition.push_event(RunEventKind::RepeatContinuationRequested {
+            repeat_execution: execution.clone(),
+            frontier_iteration: frontier_iteration.clone(),
+            initial_iteration_limit,
+            effective_iteration_limit,
+            cause,
+        })
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn create_repeat_iteration(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
+        transition: &mut PlanTransition<'_>,
         node: &Node,
         execution: &NodeExecutionId,
         scope_reference: &ScopeReference,
@@ -783,16 +622,15 @@ impl RuntimeService {
         iteration_number: u32,
     ) -> Result<(), RuntimeError> {
         let cycle = ControllerCycleRequest {
-            run,
-            occurred_at,
             node,
             execution,
             iteration_number,
         };
-        match self.assess_controller_cycle(&cycle, projection, events)? {
+        match self.assess_controller_cycle(&cycle, transition)? {
             ControllerCycleGate::Continue => {}
             ControllerCycleGate::HumanCheckpoint { checkpoint_id } => {
-                let frontier = projection
+                let frontier = transition
+                    .projection()
                     .iterations()
                     .values()
                     .filter(|iteration| iteration.repeat_execution() == execution)
@@ -809,10 +647,7 @@ impl RuntimeService {
                     .iteration()
                     .clone();
                 return self.request_repeat_continuation(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
+                    transition,
                     node,
                     execution,
                     &frontier,
@@ -824,28 +659,20 @@ impl RuntimeService {
                 );
             }
             ControllerCycleGate::BoundReached { bound } => {
-                let last_iteration = projection
+                let last_iteration = transition
+                    .projection()
                     .iterations()
                     .values()
                     .filter(|iteration| iteration.repeat_execution() == execution)
                     .max_by_key(|iteration| iteration.iteration_number())
                     .map(|iteration| iteration.iteration().clone());
-                self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    RunEventKind::RepeatTerminated {
-                        repeat_execution: execution.clone(),
-                        termination: RepeatTerminationReason::BudgetExhausted,
-                        last_iteration,
-                    },
-                )?;
+                transition.push_event(RunEventKind::RepeatTerminated {
+                    repeat_execution: execution.clone(),
+                    termination: RepeatTerminationReason::BudgetExhausted,
+                    last_iteration,
+                })?;
                 return self.complete_deterministic_with_outcome(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
+                    transition,
                     node,
                     execution,
                     NodeOutcome::Failed,
@@ -855,32 +682,26 @@ impl RuntimeService {
                 );
             }
         }
-        let parent = projection.scopes().get(scope_reference).ok_or_else(|| {
-            RuntimeError::InvalidHistory("repeat execution scope is absent".to_owned())
-        })?;
+        let parent = transition
+            .projection()
+            .scopes()
+            .get(scope_reference)
+            .ok_or_else(|| {
+                RuntimeError::InvalidHistory("repeat execution scope is absent".to_owned())
+            })?;
         let iteration = self.next_iteration_id()?;
         let scope = WorkspaceScope::iteration(self.next_scope_id()?, parent, iteration.clone())
             .map_err(|error| RuntimeError::InvalidTransition(error.to_string()))?;
         let iteration_scope = scope.reference().clone();
-        self.push_projected_event(
-            run,
-            occurred_at,
-            projection,
-            events,
-            RunEventKind::RepeatIterationCreated {
-                repeat_execution: execution.clone(),
-                iteration,
-                iteration_number,
-                scope: scope.clone(),
-            },
-        )?;
-        workspace.push(WorkspaceMutation::CreateScope { scope });
+        transition.push_event(RunEventKind::RepeatIterationCreated {
+            repeat_execution: execution.clone(),
+            iteration,
+            iteration_number,
+            scope: scope.clone(),
+        })?;
+        transition.push_workspace(WorkspaceMutation::CreateScope { scope })?;
         self.create_subworkflow_intent(
-            run,
-            occurred_at,
-            projection,
-            events,
-            workspace,
+            transition,
             node,
             execution,
             scope_reference,
@@ -892,10 +713,9 @@ impl RuntimeService {
     fn assess_controller_cycle(
         &self,
         request: &ControllerCycleRequest<'_>,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
+        transition: &mut PlanTransition<'_>,
     ) -> Result<ControllerCycleGate, RuntimeError> {
-        let revision = self.revision_for_execution(projection, request.execution)?;
+        let revision = self.revision_for_execution(transition.projection(), request.execution)?;
         let marked = revision
             .semantic()
             .metadata()
@@ -912,7 +732,8 @@ impl RuntimeService {
             ));
         };
         let boundary = if request.iteration_number == 1
-            && projection
+            && transition
+                .projection()
                 .controller_assessment(request.execution)
                 .is_none()
         {
@@ -920,16 +741,16 @@ impl RuntimeService {
         } else {
             ControllerAssessmentBoundary::CycleEntry
         };
-        let account = self.controller_account_for_run(request.run)?;
+        let account = self.controller_account_for_run(transition.run())?;
         let assessment = {
             let context = ControllerAssessmentContext {
-                run: request.run,
+                run: transition.run(),
                 revision: &revision,
                 node: request.node,
                 execution: request.execution,
-                projection,
+                projection: transition.projection(),
                 account: account.as_ref(),
-                observed_at: request.occurred_at,
+                observed_at: transition.occurred_at(),
                 boundary,
                 next_cycle: Some(request.iteration_number),
             };
@@ -946,7 +767,7 @@ impl RuntimeService {
             }
             return Ok(ControllerCycleGate::Continue);
         };
-        self.push_projected_event(request.run, request.occurred_at, projection, events, event)?;
+        transition.push_event(event)?;
         Ok(match outcome {
             ControllerAssessmentOutcome::Continue => ControllerCycleGate::Continue,
             ControllerAssessmentOutcome::HumanCheckpoint { checkpoint_id } => {
@@ -1011,26 +832,23 @@ impl RuntimeService {
         }
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn publish_repeat_latest_outputs(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
+        transition: &mut PlanTransition<'_>,
         execution: &NodeExecutionId,
         execution_scope: &ScopeReference,
         iteration: &IterationId,
     ) -> Result<(), RuntimeError> {
-        let iteration_scope = projection
+        let iteration_scope = transition
+            .projection()
             .iterations()
             .get(iteration)
             .ok_or_else(|| RuntimeError::InvalidHistory("repeat iteration is absent".to_owned()))?
             .scope()
             .reference()
             .clone();
-        let imports: Vec<_> = projection
+        let imports: Vec<_> = transition
+            .projection()
             .subworkflows()
             .values()
             .find(|child| {
@@ -1047,27 +865,25 @@ impl RuntimeService {
             })
             .unwrap_or_default();
         for imported in imports {
-            let source = self.projected_workspace_value(projection, &imported, workspace)?;
+            let source = self.projected_workspace_value(
+                transition.projection(),
+                &imported,
+                transition.workspace(),
+            )?;
             let output = self.projected_output_entry(
-                projection,
+                transition.projection(),
                 execution_scope,
                 source.reference().key().clone(),
                 source.value().clone(),
-                workspace,
+                transition.workspace(),
             )?;
             let reference = output.reference().clone();
-            workspace.push(WorkspaceMutation::PutValue { entry: output });
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::DeterministicOutputPublished {
-                    execution: execution.clone(),
-                    value: reference,
-                    artifact: None,
-                },
-            )?;
+            transition.push_workspace(WorkspaceMutation::PutValue { entry: output })?;
+            transition.push_event(RunEventKind::DeterministicOutputPublished {
+                execution: execution.clone(),
+                value: reference,
+                artifact: None,
+            })?;
         }
         Ok(())
     }
@@ -1080,8 +896,6 @@ enum ControllerCycleGate {
 }
 
 struct ControllerCycleRequest<'a> {
-    run: &'a RunId,
-    occurred_at: TimestampMillis,
     node: &'a Node,
     execution: &'a NodeExecutionId,
     iteration_number: u32,

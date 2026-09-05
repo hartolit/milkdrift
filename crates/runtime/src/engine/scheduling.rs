@@ -5,7 +5,8 @@ use super::support::{
 };
 use super::{RuntimeService, SchedulerTickResult};
 use crate::projection::{BranchState, NodeExecutionState};
-use crate::{RunCommand, RunCommandDocument, RuntimeError, SystemTransition, select_fair_runnable};
+use crate::scheduler::select_fair_runnable;
+use crate::{RunCommand, RunCommandDocument, RuntimeError, SystemTransition};
 use milkdrift_persistence::{
     NodeOutcome, PageSize, Reason, RunEventKind, RunSummaryCursor, RunSummaryIndex, RunnableCursor,
     RunnableIndexEntry, TimestampMillis,

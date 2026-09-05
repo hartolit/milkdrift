@@ -79,6 +79,75 @@ fn claimed_effect_execution_reports_durable_entry_transition() -> TestResult {
 }
 
 #[test]
+fn terminal_observation_precedes_a_later_worker_boundary_failure() -> TestResult {
+    let directory = TempDir::new()?;
+    let executor = Arc::new(TerminalThenFailingExecutor::new(test_descriptor()?));
+    executor.set_script(
+        OperationId::new("model.generate")?,
+        vec![InvocationEventKind::Terminal {
+            terminal: successful_terminal()?,
+        }],
+    )?;
+    let (store, _clock, runtime) = runtime_with_executor_at(
+        directory.path(),
+        "terminal-before-worker-failure",
+        "terminal-before-worker-failure",
+        NOW,
+        8,
+        executor.clone(),
+    )?;
+    let revision = task_revision("workflow-terminal-before-worker-failure")?;
+    let run = RunId::new("run-terminal-before-worker-failure")?;
+    store.put_revision(&revision)?;
+    submit_command(
+        &runtime,
+        store.as_ref(),
+        &run,
+        RunCommand::CreateRun {
+            workflow: revision.semantic().workflow().clone(),
+            revision: revision.id().clone(),
+            root_scope: WorkspaceScope::run_root(
+                run.clone(),
+                ScopeId::new("scope-terminal-before-worker-failure")?,
+            ),
+            workspace_budget: generous_budget()?,
+            inputs: Vec::new(),
+        },
+    )?;
+    submit_command(&runtime, store.as_ref(), &run, RunCommand::StartRun)?;
+
+    assert_eq!(runtime.scheduler_tick()?.dispatched, 1);
+    let action = runtime
+        .claim_effects(PageSize::new(1)?)?
+        .into_iter()
+        .next()
+        .ok_or("terminal precedence effect was not claimable")?;
+    assert!(matches!(
+        runtime.execute_effect(action)?,
+        EffectExecutionResult::Completed { observations: 1 }
+    ));
+    assert_eq!(executor.dispatches(), 1);
+    assert_eq!(
+        runtime.projection(&run)?.lifecycle(),
+        RunLifecycle::Terminal(RunOutcome::Succeeded)
+    );
+    let history = runtime.history(&run)?;
+    assert_eq!(
+        history
+            .iter()
+            .filter(|event| matches!(event.kind(), RunEventKind::NodeTerminal { .. }))
+            .count(),
+        1
+    );
+    assert!(
+        !history
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::ExternalOutcomeUncertain { .. }))
+    );
+    Ok(())
+}
+
+#[test]
 fn denied_capability_entry_is_recorded_and_terminates_without_dispatch() -> TestResult {
     let harness = Harness::with_entry_denied("effect-entry-denied")?;
     let revision = task_revision("workflow-effect-entry-denied")?;

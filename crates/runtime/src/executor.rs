@@ -299,7 +299,7 @@ pub struct ExecutionDispatch {
 }
 
 impl ExecutionDispatch {
-    #[allow(clippy::too_many_arguments)] // One validated runtime boundary keeps its complete semantic fact set explicit.
+    #[allow(clippy::too_many_arguments)] // Run/revision/node/execution/attempt/lease coordinates, three authority snapshots, resolution, and request are independently immutable dispatch facts.
     pub(crate) fn from_snapshot(
         run: RunId,
         revision: RevisionId,

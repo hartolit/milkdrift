@@ -123,7 +123,7 @@ machine-readable result. A missed mutant must be fixed by a test or recorded by 
 unreachable under a validated public contract, or a mutation-tool limitation; unclassified survivors
 fail the lane.
 
-The seven current-source shards enumerate 649 focused mutants. The complete campaign catches 610;
+The seven current-source shards enumerate 625 focused mutants. The complete campaign catches 586;
 37 are compiler-unviable, and the two surviving defensive guards have exact
 `unreachable_by_valid_contract` classifications: one runtime reconciliation guard and one
 controller account-application guard that is preceded by immutable-declaration validation. There
@@ -197,7 +197,7 @@ cleanup defects remain inspectable.
 
 ## Interpretation and limitations
 
-On 2026-09-04 the current local Linux worktree passed formatting, the all-target/all-feature
+On 2026-09-05 the current local Linux worktree passed formatting, the all-target/all-feature
 check and complete test/doctest suite, Clippy with warnings denied, rustdoc with warnings denied,
 `cargo deny check`, `cargo machete`, duplicate dependency inspection, and complete test listing.
 Focused capability-host, shared production-adapter conformance, complete adapter/daemon,

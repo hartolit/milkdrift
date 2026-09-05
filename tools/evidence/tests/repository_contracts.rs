@@ -104,46 +104,6 @@ const PRODUCTION_COHESION_EXCEPTIONS: &[CohesionException] = &[
         ceiling: 1_966,
         rationale: "one persistence contract owns controller-account ledger types and transition invariants",
     },
-    CohesionException {
-        path: "crates/runtime/src/engine/command_planning.rs",
-        ceiling: 1_645,
-        rationale: "one planner exhaustively maps closed run commands into durable event batches",
-    },
-    CohesionException {
-        path: "crates/runtime/src/engine/completion.rs",
-        ceiling: 1_198,
-        rationale: "one completion pass owns terminal classification and its ordered durable consequences",
-    },
-    CohesionException {
-        path: "crates/runtime/src/engine/effects.rs",
-        ceiling: 1_221,
-        rationale: "one effect pass owns dispatch eligibility and uncertain-outcome persistence ordering",
-    },
-    CohesionException {
-        path: "crates/runtime/src/engine/structured/repeat.rs",
-        ceiling: 1_088,
-        rationale: "one structured-repeat owner preserves iteration identity and expansion invariants",
-    },
-    CohesionException {
-        path: "crates/runtime/src/engine/support.rs",
-        ceiling: 1_086,
-        rationale: "one engine support owner centralizes private event construction shared by passes",
-    },
-    CohesionException {
-        path: "crates/runtime/src/projection/node.rs",
-        ceiling: 1_296,
-        rationale: "one node projection reducer owns exhaustive event-to-node-state interpretation",
-    },
-    CohesionException {
-        path: "crates/runtime/src/query.rs",
-        ceiling: 1_175,
-        rationale: "one query owner constructs bounded read models from authoritative projections",
-    },
-    CohesionException {
-        path: "crates/runtime/src/reconciliation.rs",
-        ceiling: 1_390,
-        rationale: "one reconciliation owner classifies uncertain effects without rewriting execution history",
-    },
 ];
 
 fn root() -> TestResult<PathBuf> {

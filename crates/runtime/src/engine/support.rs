@@ -1,9 +1,18 @@
 //! Shared bounded plan types and pure orchestration helpers.
 
+mod names;
+mod scans;
+
+pub(super) use names::{command_kind_name, event_kind_name};
+pub(super) use scans::{
+    bounded_projection_map_keys, bounded_projection_set, bounded_projection_sweep_set,
+};
+
+use crate::RuntimeError;
 use crate::projection::{
     BranchState, CurrentNodeExecution, NodeExecutionState, RunLifecycle, RunProjection,
 };
-use crate::{HistoricalExecutionState, NodeHistory, RunCommand, RuntimeError};
+use crate::reconciliation::{HistoricalExecutionState, NodeHistory};
 use milkdrift_blueprint::{
     BlueprintRevision, EdgeKind, Node, NodeId, NodeKind, PathSegment, ReducerStrategy,
 };
@@ -21,8 +30,6 @@ use milkdrift_workspace::{
     WorkspaceValue, WorkspaceValueReference,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::ops::Bound::{Excluded, Unbounded};
-use std::sync::Mutex;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum DispatchOutcome {
@@ -133,142 +140,6 @@ pub(super) const fn node_execution_mode(node: &Node) -> NodeExecutionMode {
         | NodeKind::Subworkflow { .. }
         | NodeKind::Terminal { .. } => NodeExecutionMode::Runtime,
     }
-}
-
-pub(super) fn bounded_projection_set<K: Clone + Ord>(
-    run: &RunId,
-    values: &BTreeSet<K>,
-    cursor: &Mutex<BTreeMap<RunId, K>>,
-    remaining: &mut usize,
-    label: &'static str,
-) -> Result<Vec<K>, RuntimeError> {
-    let limit = (*remaining).min(values.len());
-    if limit == 0 {
-        return Ok(Vec::new());
-    }
-    let mut cursors = cursor.lock().map_err(|_error| {
-        RuntimeError::Scheduling(format!("{label} coordination lock is poisoned"))
-    })?;
-    let previous = cursors.get(run).cloned();
-    let mut selected = Vec::with_capacity(limit);
-    if let Some(previous) = previous {
-        selected.extend(
-            values
-                .range((Excluded(previous.clone()), Unbounded))
-                .take(limit)
-                .cloned(),
-        );
-        if selected.len() < limit {
-            selected.extend(
-                values
-                    .range(..=previous)
-                    .take(limit.saturating_sub(selected.len()))
-                    .cloned(),
-            );
-        }
-    } else {
-        selected.extend(values.iter().take(limit).cloned());
-    }
-    if let Some(last) = selected.last() {
-        cursors.insert(run.clone(), last.clone());
-    }
-    *remaining = remaining.saturating_sub(selected.len());
-    Ok(selected)
-}
-
-/// Selects one finite, non-wrapping page from a per-run ordered set.
-///
-/// Unlike the round-robin scan helpers used by continuously driven scheduler
-/// maintenance, a recovery sweep must expose when it reached the current end of
-/// the set. The cursor is removed at that boundary so startup recovery can prove
-/// that every currently visible attempt was examined and terminate.
-pub(super) fn bounded_projection_sweep_set<K: Clone + Ord>(
-    run: &RunId,
-    values: &BTreeSet<K>,
-    cursor: &Mutex<BTreeMap<RunId, K>>,
-    remaining: &mut usize,
-    label: &'static str,
-) -> Result<Vec<K>, RuntimeError> {
-    let mut cursors = cursor.lock().map_err(|_error| {
-        RuntimeError::Scheduling(format!("{label} coordination lock is poisoned"))
-    })?;
-    if values.is_empty() {
-        cursors.remove(run);
-        return Ok(Vec::new());
-    }
-    let limit = (*remaining).min(values.len());
-    if limit == 0 {
-        return Ok(Vec::new());
-    }
-
-    let previous = cursors.get(run).cloned();
-    let mut selected: Vec<K> = match previous {
-        Some(previous) => values
-            .range((Excluded(previous), Unbounded))
-            .take(limit)
-            .cloned()
-            .collect(),
-        None => values.iter().take(limit).cloned().collect(),
-    };
-    // A cursor may become stale when recovery changed the active frontier. Start
-    // a new sweep immediately instead of retaining an unreachable resume point.
-    if selected.is_empty() && cursors.contains_key(run) {
-        cursors.remove(run);
-        selected.extend(values.iter().take(limit).cloned());
-    }
-
-    let reached_end = selected
-        .last()
-        .zip(values.last())
-        .is_some_and(|(selected, final_value)| selected == final_value);
-    if reached_end {
-        cursors.remove(run);
-    } else if let Some(last) = selected.last() {
-        cursors.insert(run.clone(), last.clone());
-    }
-    *remaining = remaining.saturating_sub(selected.len());
-    Ok(selected)
-}
-
-pub(super) fn bounded_projection_map_keys<K: Clone + Ord, V>(
-    run: &RunId,
-    values: &BTreeMap<K, V>,
-    cursor: &Mutex<BTreeMap<RunId, K>>,
-    remaining: &mut usize,
-    label: &'static str,
-) -> Result<Vec<K>, RuntimeError> {
-    let limit = (*remaining).min(values.len());
-    if limit == 0 {
-        return Ok(Vec::new());
-    }
-    let mut cursors = cursor.lock().map_err(|_error| {
-        RuntimeError::Scheduling(format!("{label} coordination lock is poisoned"))
-    })?;
-    let previous = cursors.get(run).cloned();
-    let mut selected = Vec::with_capacity(limit);
-    if let Some(previous) = previous {
-        selected.extend(
-            values
-                .range((Excluded(previous.clone()), Unbounded))
-                .take(limit)
-                .map(|(key, _)| key.clone()),
-        );
-        if selected.len() < limit {
-            selected.extend(
-                values
-                    .range(..=previous)
-                    .take(limit.saturating_sub(selected.len()))
-                    .map(|(key, _)| key.clone()),
-            );
-        }
-    } else {
-        selected.extend(values.keys().take(limit).cloned());
-    }
-    if let Some(last) = selected.last() {
-        cursors.insert(run.clone(), last.clone());
-    }
-    *remaining = remaining.saturating_sub(selected.len());
-    Ok(selected)
 }
 
 pub(super) fn entry_nodes(revision: &BlueprintRevision) -> Vec<&NodeId> {
@@ -759,125 +630,6 @@ pub(super) fn collect_required_artifacts(
     Ok(required)
 }
 
-pub(super) fn command_kind_name(command: &RunCommand) -> &'static str {
-    match command {
-        RunCommand::CreateRun { .. } => "create_run",
-        RunCommand::StartRun => "start_run",
-        RunCommand::PauseRun => "pause_run",
-        RunCommand::ResumeRun => "resume_run",
-        RunCommand::RequestCancellation => "request_cancellation",
-        RunCommand::DeliverSignal { .. } => "deliver_signal",
-        RunCommand::FireTimer { .. } => "fire_timer",
-        RunCommand::RequestRevisionAdoption { .. } => "request_revision_adoption",
-        RunCommand::DecideReconciliation { .. } => "decide_reconciliation",
-        RunCommand::ApplyReconciliation { .. } => "apply_reconciliation",
-        RunCommand::DecideRepeatContinuation { .. } => "decide_repeat_continuation",
-        RunCommand::ResolveExternalWork { .. } => "resolve_external_work",
-        RunCommand::SystemTransition { transition } => transition.label(),
-        RunCommand::WorkerReport { .. } => "worker_report",
-    }
-}
-
-pub(super) fn event_kind_name(event: &RunEventKind) -> &'static str {
-    match event {
-        RunEventKind::RunCreated { .. } => "run_created",
-        RunEventKind::ExecutionAuthorityEstablished { .. } => "execution_authority_established",
-        RunEventKind::RevisionPinned { .. } => "revision_pinned",
-        RunEventKind::RunStarted => "run_started",
-        RunEventKind::RunPaused { .. } => "run_paused",
-        RunEventKind::RunResumed { .. } => "run_resumed",
-        RunEventKind::RunCancellationRequested { .. } => "run_cancellation_requested",
-        RunEventKind::RunTerminationRequested { .. } => "run_termination_requested",
-        RunEventKind::RunTerminal { .. } => "run_terminal",
-        RunEventKind::NodeBecameEligible { .. } => "node_became_eligible",
-        RunEventKind::NodeExecutionCancelledBeforeDispatch { .. } => {
-            "node_execution_cancelled_before_dispatch"
-        }
-        RunEventKind::NodeExecutionCancellationRequested { .. } => {
-            "node_execution_cancellation_requested"
-        }
-        RunEventKind::NodeScheduled { .. } => "node_scheduled",
-        RunEventKind::CapabilityResolved { .. } => "capability_resolved",
-        RunEventKind::CapabilityResolutionDecisionRecorded { .. } => {
-            "capability_resolution_decision_recorded"
-        }
-        RunEventKind::SideEffectClassified { .. } => "side_effect_classified",
-        RunEventKind::LeaseGranted { .. } => "lease_granted",
-        RunEventKind::CapabilityEntryDecisionRecorded { .. } => {
-            "capability_entry_decision_recorded"
-        }
-        RunEventKind::CapabilityAdapterEntryDecisionRecorded { .. } => {
-            "capability_adapter_entry_decision_recorded"
-        }
-        RunEventKind::LeaseHeartbeatRecorded { .. } => "lease_heartbeat_recorded",
-        RunEventKind::LeaseExpired { .. } => "lease_expired",
-        RunEventKind::NodeReLeased { .. } => "node_re_leased",
-        RunEventKind::NodeStarted { .. } => "node_started",
-        RunEventKind::NodeProgressRecorded { .. } => "node_progress_recorded",
-        RunEventKind::AttemptUsageRecorded { .. } => "attempt_usage_recorded",
-        RunEventKind::InvocationCancellationAcknowledged { .. } => {
-            "invocation_cancellation_acknowledged"
-        }
-        RunEventKind::NodeOutputPublished { .. } => "node_output_published",
-        RunEventKind::DeterministicOutputPublished { .. } => "deterministic_output_published",
-        RunEventKind::DeterministicNodeTerminal { .. } => "deterministic_node_terminal",
-        RunEventKind::NodePreDispatchFailed { .. } => "node_pre_dispatch_failed",
-        RunEventKind::CapabilityResolutionDenied { .. } => "capability_resolution_denied",
-        RunEventKind::StructuredSuccessorScanCompleted { .. } => {
-            "structured_successor_scan_completed"
-        }
-        RunEventKind::NodeTerminal { .. } => "node_terminal",
-        RunEventKind::NodeRetryScheduled { .. } => "node_retry_scheduled",
-        RunEventKind::ExternalOutcomeUncertain { .. } => "external_outcome_uncertain",
-        RunEventKind::LateTerminalEvidenceRecorded { .. } => "late_terminal_evidence_recorded",
-        RunEventKind::ExternalOutcomeRetained { .. } => "external_outcome_retained",
-        RunEventKind::ArtifactPublished { .. } => "artifact_published",
-        RunEventKind::BranchScopeCreated { .. } => "branch_scope_created",
-        RunEventKind::BranchRouteSelected { .. } => "branch_route_selected",
-        RunEventKind::BranchChildAdded { .. } => "branch_child_added",
-        RunEventKind::BranchCancellationRequested { .. } => "branch_cancellation_requested",
-        RunEventKind::BranchTerminal { .. } => "branch_terminal",
-        RunEventKind::JoinSatisfied { .. } => "join_satisfied",
-        RunEventKind::ControllerAssessmentRecorded { .. } => "controller_assessment_recorded",
-        RunEventKind::RepeatIterationCreated { .. } => "repeat_iteration_created",
-        RunEventKind::RepeatConditionRecorded { .. } => "repeat_condition_recorded",
-        RunEventKind::RepeatContinuationRequested { .. } => "repeat_continuation_requested",
-        RunEventKind::RepeatContinuationDecided { .. } => "repeat_continuation_decided",
-        RunEventKind::RepeatTerminated { .. } => "repeat_terminated",
-        RunEventKind::TimerRegistered { .. } => "timer_registered",
-        RunEventKind::TimerFired { .. } => "timer_fired",
-        RunEventKind::TimerCancelled { .. } => "timer_cancelled",
-        RunEventKind::WaitRegistered { .. } => "wait_registered",
-        RunEventKind::WaitSatisfied { .. } => "wait_satisfied",
-        RunEventKind::WaitCancelled { .. } => "wait_cancelled",
-        RunEventKind::SignalReceived { .. } => "signal_received",
-        RunEventKind::SignalBroadcastScanAdvanced { .. } => "signal_broadcast_scan_advanced",
-        RunEventKind::SignalDeduplicated { .. } => "signal_deduplicated",
-        RunEventKind::SignalConsumed { .. } => "signal_consumed",
-        RunEventKind::SubworkflowCreated { .. } => "subworkflow_created",
-        RunEventKind::SubworkflowTerminal { .. } => "subworkflow_terminal",
-        RunEventKind::SubworkflowOutputImported { .. } => "subworkflow_output_imported",
-        RunEventKind::SubworkflowCancellationRequested { .. } => {
-            "subworkflow_cancellation_requested"
-        }
-        RunEventKind::RevisionAdoptionRequested { .. } => "revision_adoption_requested",
-        RunEventKind::ReconciliationPlanRecorded { .. } => "reconciliation_plan_recorded",
-        RunEventKind::ReconciliationDecisionRecorded { .. } => "reconciliation_decision_recorded",
-        RunEventKind::ReconciliationApplied { .. } => "reconciliation_applied",
-        RunEventKind::ReconciliationExecutionRemoved { .. } => "reconciliation_execution_removed",
-        RunEventKind::ReconciliationCancellationRequested { .. } => {
-            "reconciliation_cancellation_requested"
-        }
-        RunEventKind::ReconciliationRemediationCreated { .. } => {
-            "reconciliation_remediation_created"
-        }
-        RunEventKind::RecoveryStarted { .. } => "recovery_started",
-        RunEventKind::RecoveryClassified { .. } => "recovery_classified",
-        RunEventKind::RecoveryDecisionRecorded { .. } => "recovery_decision_recorded",
-        RunEventKind::RemediationWorkCreated { .. } => "remediation_work_created",
-    }
-}
-
 pub(super) fn stable_idempotency_key(
     run: &RunId,
     execution: &NodeExecutionId,
@@ -970,117 +722,4 @@ pub(super) fn checked_increment<K: Ord>(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
-    use std::sync::Mutex;
-
-    use milkdrift_persistence::NodeExecutionId;
-    use milkdrift_workspace::RunId;
-
-    use super::{bounded_projection_sweep_set, stable_idempotency_key};
-
-    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
-
-    #[test]
-    fn finite_projection_sweep_clears_its_cursor_at_the_current_end() -> TestResult {
-        let run = RunId::new("run-finite-projection-sweep")?;
-        let values = BTreeSet::from([1_u8, 2, 3, 4, 5]);
-        let cursors = Mutex::new(BTreeMap::new());
-
-        let mut remaining = 2;
-        assert_eq!(
-            bounded_projection_sweep_set(
-                &run,
-                &values,
-                &cursors,
-                &mut remaining,
-                "test finite sweep",
-            )?,
-            vec![1, 2]
-        );
-        assert_eq!(remaining, 0);
-        assert_eq!(
-            cursors
-                .lock()
-                .map_err(|_| "finite sweep cursor lock poisoned")?
-                .get(&run)
-                .copied(),
-            Some(2)
-        );
-
-        let mut remaining = 2;
-        assert_eq!(
-            bounded_projection_sweep_set(
-                &run,
-                &values,
-                &cursors,
-                &mut remaining,
-                "test finite sweep",
-            )?,
-            vec![3, 4]
-        );
-        assert_eq!(
-            cursors
-                .lock()
-                .map_err(|_| "finite sweep cursor lock poisoned")?
-                .get(&run)
-                .copied(),
-            Some(4)
-        );
-
-        let mut remaining = 2;
-        assert_eq!(
-            bounded_projection_sweep_set(
-                &run,
-                &values,
-                &cursors,
-                &mut remaining,
-                "test finite sweep",
-            )?,
-            vec![5]
-        );
-        assert!(
-            !cursors
-                .lock()
-                .map_err(|_| "finite sweep cursor lock poisoned")?
-                .contains_key(&run)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn finite_projection_sweep_removes_a_cursor_for_an_empty_frontier() -> TestResult {
-        let run = RunId::new("run-empty-projection-sweep")?;
-        let cursors = Mutex::new(BTreeMap::from([(run.clone(), 9_u8)]));
-        let mut remaining = 1;
-        assert!(
-            bounded_projection_sweep_set(
-                &run,
-                &BTreeSet::new(),
-                &cursors,
-                &mut remaining,
-                "test empty sweep",
-            )?
-            .is_empty()
-        );
-        assert!(
-            !cursors
-                .lock()
-                .map_err(|_| "empty sweep cursor lock poisoned")?
-                .contains_key(&run)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn maximum_length_durable_identities_have_a_fixed_length_idempotency_key() -> TestResult {
-        let run = RunId::new("r".repeat(128))?;
-        let execution = NodeExecutionId::new("e".repeat(192))?;
-        let other = NodeExecutionId::new("f".repeat(192))?;
-        let key = stable_idempotency_key(&run, &execution)?;
-        assert!(key.as_str().len() <= 192);
-        assert_eq!(key, stable_idempotency_key(&run, &execution)?);
-        assert_ne!(key, stable_idempotency_key(&run, &other)?);
-        Ok(())
-    }
-}
+mod tests;

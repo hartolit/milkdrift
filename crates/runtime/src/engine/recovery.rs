@@ -10,7 +10,8 @@ use super::{RecoveryResult, RuntimeService, STRUCTURED_EVENT_SOFT_LIMIT};
 use crate::projection::{
     AttemptState, BranchState, NodeExecutionState, RunProjection, SubworkflowState,
 };
-use crate::{AdmissionUsage, RuntimeError, SystemTransition};
+use crate::scheduler::AdmissionUsage;
+use crate::{RuntimeError, SystemTransition};
 use milkdrift_capability::{ErrorClass, InvocationValueReference, SideEffectClass};
 use milkdrift_persistence::{
     IndexedRunState, IntegrityDigest, PageSize, PersistenceError, Reason, RecoveryClassification,

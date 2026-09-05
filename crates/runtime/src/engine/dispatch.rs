@@ -8,9 +8,10 @@ use super::{CommandExecution, MAX_DURABLE_INVOCATION_REQUEST_BYTES, RuntimeServi
 use crate::projection::{
     AttemptState, BranchState, NodeExecutionState, RunLifecycle, RunProjection,
 };
+use crate::scheduler::AdmissionRequest;
 use crate::{
-    AdmissionRequest, CapabilityResolutionContext, ContextCandidateSource, ExecutorError,
-    RunCommand, RunCommandDocument, RuntimeError, SystemTransition,
+    CapabilityResolutionContext, ContextCandidateSource, ExecutorError, RunCommand,
+    RunCommandDocument, RuntimeError, SystemTransition,
 };
 use milkdrift_blueprint::{BlueprintRevision, Node, NodeKind, ReducerStrategy};
 use milkdrift_capability::{
@@ -371,7 +372,7 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
+    #[allow(clippy::too_many_arguments)] // Revision/projection/node/scope coordinates and immutable invocation, capability, idempotency, context, and time facts are independently validated request inputs.
     fn invocation_request(
         &self,
         revision: &BlueprintRevision,

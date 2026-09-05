@@ -8,11 +8,13 @@ use super::support::{
     checked_timestamp_add, entry_nodes, execution_branch_state, node_execution_mode,
     node_occurrence_exists_for_current_pin, node_outcome, run_drain_reason, wait_signal_matches,
 };
+use super::transition::PlanTransition;
 use super::{RuntimeService, STRUCTURED_EVENT_SOFT_LIMIT};
+use crate::RuntimeError;
 use crate::projection::{
     BranchState, NodeExecutionState, RunLifecycle, RunProjection, SubworkflowState, TimerPurpose,
 };
-use crate::{RuntimeError, evaluate_condition};
+use crate::scheduler::evaluate_condition;
 use milkdrift_blueprint::{
     BlueprintRevision, BranchConfig, EdgeKind, ForkConfig, JoinConfig, Node, NodeId, NodeKind,
     TerminalOutcome,
@@ -24,14 +26,6 @@ use milkdrift_persistence::{
     WorkspaceMutation,
 };
 use milkdrift_workspace::{RunId, ScopeReference, ValueKey, WorkspaceScope, WorkspaceValue};
-
-struct StructuredPlanContext<'a> {
-    run: &'a RunId,
-    occurred_at: TimestampMillis,
-    projection: &'a mut RunProjection,
-    events: &'a mut Vec<RunEventEnvelope>,
-    workspace: &'a mut Vec<WorkspaceMutation>,
-}
 
 impl RuntimeService {
     pub(super) fn extend_structured_progress(
@@ -51,45 +45,19 @@ impl RuntimeService {
         if projection.lifecycle() == RunLifecycle::Paused {
             return Ok(());
         }
-        let mut context = StructuredPlanContext {
-            run,
-            occurred_at,
-            projection,
-            events,
-            workspace,
-        };
-        self.prepare_structured_frontier(revision, &mut context, &mut branch_scan_remaining)?;
+        let mut transition =
+            PlanTransition::new(self, run, occurred_at, projection, events, workspace);
+        self.prepare_structured_frontier(revision, &mut transition, &mut branch_scan_remaining)?;
         for _ in 0..MAX_DRIVER_PASSES {
-            if context.events.len() >= STRUCTURED_EVENT_SOFT_LIMIT {
+            if transition.event_count() >= STRUCTURED_EVENT_SOFT_LIMIT {
                 return Ok(());
             }
-            let before = context.events.len();
-            self.drive_eligible_frontier(&mut context, &mut eligible_scan_remaining)?;
-            self.close_finished_branches(
-                context.run,
-                context.occurred_at,
-                revision,
-                context.projection,
-                context.events,
-                &mut branch_scan_remaining,
-            )?;
-            self.add_ready_successors(
-                context.run,
-                context.occurred_at,
-                revision,
-                context.projection,
-                context.events,
-                &mut successor_scan_remaining,
-            )?;
-            self.try_finalize_run(
-                context.run,
-                context.occurred_at,
-                revision,
-                context.projection,
-                context.events,
-                context.workspace,
-            )?;
-            if context.events.len() == before || context.projection.is_completed() {
+            let before = transition.event_count();
+            self.drive_eligible_frontier(&mut transition, &mut eligible_scan_remaining)?;
+            self.close_finished_branches(revision, &mut transition, &mut branch_scan_remaining)?;
+            self.add_ready_successors(revision, &mut transition, &mut successor_scan_remaining)?;
+            self.try_finalize_run(revision, &mut transition)?;
+            if transition.event_count() == before || transition.projection().is_completed() {
                 return Ok(());
             }
         }
@@ -101,82 +69,72 @@ impl RuntimeService {
     fn prepare_structured_frontier(
         &self,
         revision: &BlueprintRevision,
-        context: &mut StructuredPlanContext<'_>,
+        transition: &mut PlanTransition<'_>,
         branch_scan_remaining: &mut usize,
     ) -> Result<(), RuntimeError> {
-        let received_signal_in_current_commit = context
-            .events
+        let received_signal_in_current_commit = transition
+            .events()
             .iter()
             .any(|event| matches!(event.kind(), RunEventKind::SignalReceived { .. }));
-        if !received_signal_in_current_commit && run_drain_reason(context.projection).is_none() {
-            self.drain_broadcast_signals(
-                context.run,
-                context.occurred_at,
-                context.projection,
-                context.events,
-                context.workspace,
-            )?;
-        }
-        if context.projection.lifecycle() == RunLifecycle::Running
-            && context.projection.termination().is_none()
+        if !received_signal_in_current_commit && run_drain_reason(transition.projection()).is_none()
         {
-            let root_scope = context
-                .projection
+            self.drain_broadcast_signals(transition)?;
+        }
+        if transition.projection().lifecycle() == RunLifecycle::Running
+            && transition.projection().termination().is_none()
+        {
+            let root_scope = transition
+                .projection()
                 .root_scope()
                 .ok_or_else(|| RuntimeError::InvalidHistory("run root scope is absent".to_owned()))?
                 .reference()
                 .clone();
             for node_id in entry_nodes(revision) {
-                if context.events.len() >= STRUCTURED_EVENT_SOFT_LIMIT {
+                if transition.event_count() >= STRUCTURED_EVENT_SOFT_LIMIT {
                     return Ok(());
                 }
-                if node_occurrence_exists_for_current_pin(context.projection, node_id, &root_scope)
-                {
+                if node_occurrence_exists_for_current_pin(
+                    transition.projection(),
+                    node_id,
+                    &root_scope,
+                ) {
                     continue;
                 }
                 let node = revision.semantic().nodes().get(node_id).ok_or_else(|| {
                     RuntimeError::InvalidHistory("current revision entry node is absent".to_owned())
                 })?;
-                self.push_projected_event(
-                    context.run,
-                    context.occurred_at,
-                    context.projection,
-                    context.events,
-                    RunEventKind::NodeBecameEligible {
-                        node: node_id.clone(),
-                        execution: self.next_execution_id()?,
-                        scope: root_scope.clone(),
-                        mode: node_execution_mode(node),
-                    },
-                )?;
+                transition.push_event(RunEventKind::NodeBecameEligible {
+                    node: node_id.clone(),
+                    execution: self.next_execution_id()?,
+                    scope: root_scope.clone(),
+                    mode: node_execution_mode(node),
+                })?;
             }
         }
-        if let Some(reason) = run_drain_reason(context.projection).cloned() {
+        if let Some(reason) = run_drain_reason(transition.projection()).cloned() {
             let active_branches: Vec<_> = self
-                .scan_branch_ids(context.run, context.projection, branch_scan_remaining)?
+                .scan_branch_ids(
+                    transition.run(),
+                    transition.projection(),
+                    branch_scan_remaining,
+                )?
                 .into_iter()
                 .filter(|branch| {
-                    context
-                        .projection
+                    transition
+                        .projection()
                         .branches()
                         .get(branch)
                         .is_some_and(|branch| branch.state() == BranchState::Active)
                 })
                 .collect();
             for branch in active_branches {
-                if context.events.len() >= STRUCTURED_EVENT_SOFT_LIMIT {
+                if transition.event_count() >= STRUCTURED_EVENT_SOFT_LIMIT {
                     return Ok(());
                 }
-                self.push_projected_event(
-                    context.run,
-                    context.occurred_at,
-                    context.projection,
-                    context.events,
-                    RunEventKind::BranchCancellationRequested {
-                        branch,
-                        reason: reason.clone(),
-                    },
-                )?;
+                transition.push_event(RunEventKind::BranchCancellationRequested {
+                    branch,
+                    reason: reason.clone(),
+                })?;
             }
         }
         Ok(())
@@ -184,18 +142,22 @@ impl RuntimeService {
 
     fn drive_eligible_frontier(
         &self,
-        context: &mut StructuredPlanContext<'_>,
+        transition: &mut PlanTransition<'_>,
         eligible_scan_remaining: &mut usize,
     ) -> Result<(), RuntimeError> {
         let eligible: Vec<_> = self
-            .scan_eligible_execution_ids(context.run, context.projection, eligible_scan_remaining)?
+            .scan_eligible_execution_ids(
+                transition.run(),
+                transition.projection(),
+                eligible_scan_remaining,
+            )?
             .into_iter()
             .filter_map(|execution| {
-                let execution = context.projection.node_executions().get(&execution)?;
+                let execution = transition.projection().node_executions().get(&execution)?;
                 (execution.state() == &NodeExecutionState::Eligible
                     && (execution.mode() == NodeExecutionMode::Runtime
-                        || run_drain_reason(context.projection).is_some()
-                        || execution_branch_state(context.projection, execution.execution())
+                        || run_drain_reason(transition.projection()).is_some()
+                        || execution_branch_state(transition.projection(), execution.execution())
                             == Some(BranchState::Cancelling)))
                 .then(|| {
                     (
@@ -207,22 +169,23 @@ impl RuntimeService {
             })
             .collect();
         for (execution, node, scope) in eligible {
-            if context.events.len() >= STRUCTURED_EVENT_SOFT_LIMIT {
+            if transition.event_count() >= STRUCTURED_EVENT_SOFT_LIMIT {
                 return Ok(());
             }
-            self.drive_eligible_execution(context, execution, node, scope)?;
+            self.drive_eligible_execution(transition, execution, node, scope)?;
         }
         Ok(())
     }
 
     fn drive_eligible_execution(
         &self,
-        context: &mut StructuredPlanContext<'_>,
+        transition: &mut PlanTransition<'_>,
         execution: NodeExecutionId,
         node_id: NodeId,
         scope_reference: ScopeReference,
     ) -> Result<(), RuntimeError> {
-        let execution_revision = self.revision_for_execution(context.projection, &execution)?;
+        let execution_revision =
+            self.revision_for_execution(transition.projection(), &execution)?;
         let node = execution_revision
             .semantic()
             .nodes()
@@ -233,8 +196,8 @@ impl RuntimeService {
                     execution_revision.id()
                 ))
             })?;
-        let structurally_cancelling = run_drain_reason(context.projection).is_some()
-            || execution_branch_state(context.projection, &execution)
+        let structurally_cancelling = run_drain_reason(transition.projection()).is_some()
+            || execution_branch_state(transition.projection(), &execution)
                 == Some(BranchState::Cancelling);
         if structurally_cancelling
             && !matches!(
@@ -242,8 +205,8 @@ impl RuntimeService {
                 NodeKind::Repeat { .. } | NodeKind::Subworkflow { .. }
             )
         {
-            let timers: Vec<_> = context
-                .projection
+            let timers: Vec<_> = transition
+                .projection()
                 .timers()
                 .values()
                 .filter(|timer| {
@@ -257,163 +220,86 @@ impl RuntimeService {
                 .map(|timer| timer.timer().clone())
                 .collect();
             for timer in timers {
-                self.push_projected_event(
-                    context.run,
-                    context.occurred_at,
-                    context.projection,
-                    context.events,
-                    RunEventKind::TimerCancelled {
-                        timer,
-                        reason: Reason::new("structured cancellation released a pending timer")?,
-                    },
-                )?;
+                transition.push_event(RunEventKind::TimerCancelled {
+                    timer,
+                    reason: Reason::new("structured cancellation released a pending timer")?,
+                })?;
             }
-            if context
-                .projection
+            if transition
+                .projection()
                 .waits()
                 .get(&execution)
                 .is_some_and(|wait| wait.is_pending())
             {
-                self.push_projected_event(
-                    context.run,
-                    context.occurred_at,
-                    context.projection,
-                    context.events,
-                    RunEventKind::WaitCancelled {
-                        execution: execution.clone(),
-                        reason: Reason::new("structured cancellation released a pending wait")?,
-                    },
-                )?;
-            }
-            self.push_projected_event(
-                context.run,
-                context.occurred_at,
-                context.projection,
-                context.events,
-                RunEventKind::NodeExecutionCancelledBeforeDispatch {
+                transition.push_event(RunEventKind::WaitCancelled {
                     execution: execution.clone(),
-                    reason: Reason::new(
-                        "execution was cancelled before an external dispatch boundary",
-                    )?,
-                },
-            )?;
+                    reason: Reason::new("structured cancellation released a pending wait")?,
+                })?;
+            }
+            transition.push_event(RunEventKind::NodeExecutionCancelledBeforeDispatch {
+                execution: execution.clone(),
+                reason: Reason::new(
+                    "execution was cancelled before an external dispatch boundary",
+                )?,
+            })?;
             return Ok(());
         }
         match node.kind() {
             NodeKind::Task { .. } => {}
             NodeKind::Terminal { outcome } => self.drive_terminal_node(
-                context.run,
-                context.occurred_at,
+                transition,
                 &execution_revision,
-                context.projection,
-                context.events,
-                context.workspace,
                 node,
                 execution,
                 scope_reference,
                 outcome,
             )?,
-            NodeKind::Wait { duration_ms } => self.drive_timer_wait_node(
-                context.run,
-                context.occurred_at,
-                context.projection,
-                context.events,
-                node,
-                execution,
-                *duration_ms,
-            )?,
-            NodeKind::SignalWait { signal } => self.drive_signal_wait_node(
-                context.run,
-                context.occurred_at,
-                context.projection,
-                context.events,
-                context.workspace,
-                node,
-                execution,
-                scope_reference,
-                signal,
-            )?,
-            NodeKind::Branch { config } => self.drive_branch_node(
-                context.run,
-                context.occurred_at,
-                context.projection,
-                context.events,
-                context.workspace,
-                node,
-                execution,
-                scope_reference,
-                config,
-            )?,
+            NodeKind::Wait { duration_ms } => {
+                self.drive_timer_wait_node(transition, node, execution, *duration_ms)?
+            }
+            NodeKind::SignalWait { signal } => {
+                self.drive_signal_wait_node(transition, node, execution, scope_reference, signal)?
+            }
+            NodeKind::Branch { config } => {
+                self.drive_branch_node(transition, node, execution, scope_reference, config)?
+            }
             NodeKind::Fork { config } => self.drive_fork_node(
-                context.run,
-                context.occurred_at,
+                transition,
                 &execution_revision,
-                context.projection,
-                context.events,
-                context.workspace,
                 node,
                 execution,
-                node_id,
                 scope_reference,
                 config,
             )?,
             NodeKind::Reducer { config } => self.drive_reducer(
-                context.run,
-                context.occurred_at,
-                context.projection,
-                context.events,
-                context.workspace,
+                transition,
                 node,
                 &execution,
                 &scope_reference,
                 config,
                 &execution_revision,
             )?,
-            NodeKind::Repeat { config } => self.drive_repeat_intent(
-                context.run,
-                context.occurred_at,
-                context.projection,
-                context.events,
-                context.workspace,
-                node,
-                &execution,
-                &scope_reference,
-                config,
-            )?,
+            NodeKind::Repeat { config } => {
+                self.drive_repeat_intent(transition, node, &execution, &scope_reference, config)?
+            }
             NodeKind::Subworkflow { reference } => self.drive_subworkflow_node(
-                context.run,
-                context.occurred_at,
-                context.projection,
-                context.events,
-                context.workspace,
+                transition,
                 node,
                 execution,
                 scope_reference,
                 reference,
             )?,
-            NodeKind::Join { config } => self.drive_join_node(
-                context.run,
-                context.occurred_at,
-                &execution_revision,
-                context.projection,
-                context.events,
-                node,
-                execution,
-                config,
-            )?,
+            NodeKind::Join { config } => {
+                self.drive_join_node(transition, &execution_revision, node, execution, config)?
+            }
         }
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_terminal_node(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
+        transition: &mut PlanTransition<'_>,
         execution_revision: &BlueprintRevision,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
         node: &Node,
         execution: NodeExecutionId,
         scope_reference: ScopeReference,
@@ -422,31 +308,17 @@ impl RuntimeService {
         match outcome {
             TerminalOutcome::Success => {
                 match self.materialize_success_terminal_outputs(
-                    run,
-                    occurred_at,
+                    transition,
                     execution_revision,
-                    projection,
-                    events,
-                    workspace,
                     node,
                     &execution,
                     &scope_reference,
                 ) {
-                    Ok(true) => self.complete_deterministic(
-                        run,
-                        occurred_at,
-                        projection,
-                        events,
-                        node,
-                        &execution,
-                    )?,
+                    Ok(true) => self.complete_deterministic(transition, node, &execution)?,
                     Ok(false) => {}
                     Err(RuntimeError::Scheduling(_)) => {
                         self.complete_deterministic_with_outcome(
-                            run,
-                            occurred_at,
-                            projection,
-                            events,
+                            transition,
                             node,
                             &execution,
                             NodeOutcome::Failed,
@@ -460,10 +332,7 @@ impl RuntimeService {
             }
             TerminalOutcome::Failure => {
                 self.complete_deterministic_with_outcome(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
+                    transition,
                     node,
                     &execution,
                     NodeOutcome::Failed,
@@ -471,26 +340,19 @@ impl RuntimeService {
                         "the explicit workflow terminal selected failure",
                     )?),
                 )?;
-                if execution_branch_state(projection, &execution).is_none()
-                    && projection.cancellation().is_none()
-                    && projection.termination().is_none()
+                if execution_branch_state(transition.projection(), &execution).is_none()
+                    && transition.projection().cancellation().is_none()
+                    && transition.projection().termination().is_none()
                 {
-                    self.push_projected_event(
-                        run,
-                        occurred_at,
-                        projection,
-                        events,
-                        RunEventKind::RunTerminationRequested {
-                            outcome: RunOutcome::Failed,
-                            reason: Reason::new(
-                                "explicit failure terminal is draining owned work",
-                            )?,
-                        },
-                    )?;
+                    transition.push_event(RunEventKind::RunTerminationRequested {
+                        outcome: RunOutcome::Failed,
+                        reason: Reason::new("explicit failure terminal is draining owned work")?,
+                    })?;
                 }
             }
             TerminalOutcome::Cancelled => {
-                let branch = projection
+                let branch = transition
+                    .projection()
                     .branches()
                     .values()
                     .find(|branch| {
@@ -499,37 +361,18 @@ impl RuntimeService {
                     })
                     .map(|branch| branch.branch().clone());
                 if let Some(branch) = branch {
-                    self.push_projected_event(
-                        run,
-                        occurred_at,
-                        projection,
-                        events,
-                        RunEventKind::BranchCancellationRequested {
-                            branch,
-                            reason: Reason::new(
-                                "explicit cancelled terminal ended its fork branch",
-                            )?,
-                        },
-                    )?;
-                } else if projection.cancellation().is_none() {
-                    self.push_projected_event(
-                        run,
-                        occurred_at,
-                        projection,
-                        events,
-                        RunEventKind::RunCancellationRequested {
-                            reason: Reason::new(
-                                "explicit cancelled terminal is draining owned work",
-                            )?,
-                            evidence: Vec::new(),
-                        },
-                    )?;
+                    transition.push_event(RunEventKind::BranchCancellationRequested {
+                        branch,
+                        reason: Reason::new("explicit cancelled terminal ended its fork branch")?,
+                    })?;
+                } else if transition.projection().cancellation().is_none() {
+                    transition.push_event(RunEventKind::RunCancellationRequested {
+                        reason: Reason::new("explicit cancelled terminal is draining owned work")?,
+                        evidence: Vec::new(),
+                    })?;
                 }
                 self.complete_deterministic_with_outcome(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
+                    transition,
                     node,
                     &execution,
                     NodeOutcome::Cancelled,
@@ -540,48 +383,34 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_timer_wait_node(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
+        transition: &mut PlanTransition<'_>,
         node: &Node,
         execution: NodeExecutionId,
         duration_ms: u64,
     ) -> Result<(), RuntimeError> {
-        if !projection.waits().contains_key(&execution) {
+        if !transition.projection().waits().contains_key(&execution) {
             let timer = self.next_timer_id()?;
-            let fire_at = checked_timestamp_add(occurred_at, duration_ms)?;
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::TimerRegistered {
-                    timer: timer.clone(),
-                    execution: Some(execution.clone()),
-                    fire_at,
-                },
-            )?;
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::WaitRegistered {
-                    execution: execution.clone(),
-                    condition: WaitCondition::Timer { timer },
-                },
-            )?;
-        } else if let Some(timer) = projection
+            let fire_at = checked_timestamp_add(transition.occurred_at(), duration_ms)?;
+            transition.push_event(RunEventKind::TimerRegistered {
+                timer: timer.clone(),
+                execution: Some(execution.clone()),
+                fire_at,
+            })?;
+            transition.push_event(RunEventKind::WaitRegistered {
+                execution: execution.clone(),
+                condition: WaitCondition::Timer { timer },
+            })?;
+        } else if let Some(timer) = transition
+            .projection()
             .waits()
             .get(&execution)
             .filter(|wait| wait.is_pending())
             .and_then(|wait| match wait.condition() {
                 WaitCondition::Timer { timer } | WaitCondition::SignalOrTimer { timer, .. }
-                    if projection
+                    if transition
+                        .projection()
                         .timers()
                         .get(timer)
                         .is_some_and(|timer| timer.is_completed()) =>
@@ -593,62 +422,48 @@ impl RuntimeService {
                 | WaitCondition::SignalOrTimer { .. } => None,
             })
         {
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::WaitSatisfied {
-                    execution: execution.clone(),
-                    cause: WaitSatisfaction::Timer { timer },
-                },
-            )?;
-        } else if projection
+            transition.push_event(RunEventKind::WaitSatisfied {
+                execution: execution.clone(),
+                cause: WaitSatisfaction::Timer { timer },
+            })?;
+        } else if transition
+            .projection()
             .waits()
             .get(&execution)
             .is_some_and(|wait| wait.is_completed())
         {
-            self.complete_deterministic(run, occurred_at, projection, events, node, &execution)?;
+            self.complete_deterministic(transition, node, &execution)?;
         }
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_signal_wait_node(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
+        transition: &mut PlanTransition<'_>,
         node: &Node,
         execution: NodeExecutionId,
         scope_reference: ScopeReference,
         signal: &OperationId,
     ) -> Result<(), RuntimeError> {
-        if !projection.waits().contains_key(&execution) {
+        if !transition.projection().waits().contains_key(&execution) {
             let signal_type = milkdrift_persistence::SignalTypeId::new(signal.as_str().to_owned())?;
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::WaitRegistered {
-                    execution: execution.clone(),
-                    condition: WaitCondition::Signal {
-                        signal_type,
-                        correlation: None,
-                    },
+            transition.push_event(RunEventKind::WaitRegistered {
+                execution: execution.clone(),
+                condition: WaitCondition::Signal {
+                    signal_type,
+                    correlation: None,
                 },
-            )?;
+            })?;
         }
-        if let Some(registered_condition) = projection
+        if let Some(registered_condition) = transition
+            .projection()
             .waits()
             .get(&execution)
             .filter(|wait| wait.is_pending())
             .map(|wait| wait.condition().clone())
         {
-            let queued = projection
+            let queued = transition
+                .projection()
                 .signals()
                 .values()
                 .filter(|candidate| {
@@ -663,99 +478,82 @@ impl RuntimeService {
                 .min_by_key(|candidate| candidate.received_sequence())
                 .map(|candidate| (candidate.signal().clone(), candidate.payload().clone()));
             if let Some((queued_signal, payload)) = queued {
-                self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    RunEventKind::SignalConsumed {
-                        signal: queued_signal.clone(),
-                        execution: execution.clone(),
-                    },
-                )?;
+                transition.push_event(RunEventKind::SignalConsumed {
+                    signal: queued_signal.clone(),
+                    execution: execution.clone(),
+                })?;
                 for port in node.data_outputs().keys() {
                     let key = ValueKey::new(port.as_str().to_owned())
                         .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
                     let entry = self.projected_output_entry(
-                        projection,
+                        transition.projection(),
                         &scope_reference,
                         key,
                         WorkspaceValue::Json(payload.clone()),
-                        workspace,
+                        transition.workspace(),
                     )?;
                     let value = entry.reference().clone();
-                    workspace.push(WorkspaceMutation::PutValue { entry });
-                    self.push_projected_event(
-                        run,
-                        occurred_at,
-                        projection,
-                        events,
-                        RunEventKind::DeterministicOutputPublished {
-                            execution: execution.clone(),
-                            value,
-                            artifact: None,
-                        },
-                    )?;
-                }
-                self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    RunEventKind::WaitSatisfied {
+                    transition.push_workspace(WorkspaceMutation::PutValue { entry })?;
+                    transition.push_event(RunEventKind::DeterministicOutputPublished {
                         execution: execution.clone(),
-                        cause: WaitSatisfaction::Signal {
-                            signal: queued_signal,
-                        },
+                        value,
+                        artifact: None,
+                    })?;
+                }
+                transition.push_event(RunEventKind::WaitSatisfied {
+                    execution: execution.clone(),
+                    cause: WaitSatisfaction::Signal {
+                        signal: queued_signal,
                     },
-                )?;
+                })?;
             }
         }
-        if projection
+        if transition
+            .projection()
             .waits()
             .get(&execution)
             .is_some_and(|wait| wait.is_completed())
         {
-            self.complete_deterministic(run, occurred_at, projection, events, node, &execution)?;
+            self.complete_deterministic(transition, node, &execution)?;
         }
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_branch_node(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &[WorkspaceMutation],
+        transition: &mut PlanTransition<'_>,
         node: &Node,
         execution: NodeExecutionId,
         scope_reference: ScopeReference,
         config: &BranchConfig,
     ) -> Result<(), RuntimeError> {
-        if !projection.branch_routes().contains_key(&execution) {
+        if !transition
+            .projection()
+            .branch_routes()
+            .contains_key(&execution)
+        {
             let mut selected = None;
-            let context =
-                match self.evaluation_context(node, projection, &scope_reference, workspace) {
-                    Ok(context) => context,
-                    Err(RuntimeError::Scheduling(_)) => {
-                        self.complete_deterministic_with_outcome(
-                            run,
-                            occurred_at,
-                            projection,
-                            events,
-                            node,
-                            &execution,
-                            NodeOutcome::Failed,
-                            Some(BoundedDetail::new(
-                                "branch inputs could not be evaluated deterministically",
-                            )?),
-                        )?;
-                        return Ok(());
-                    }
-                    Err(error) => return Err(error),
-                };
+            let context = match self.evaluation_context(
+                node,
+                transition.projection(),
+                &scope_reference,
+                transition.workspace(),
+            ) {
+                Ok(context) => context,
+                Err(RuntimeError::Scheduling(_)) => {
+                    self.complete_deterministic_with_outcome(
+                        transition,
+                        node,
+                        &execution,
+                        NodeOutcome::Failed,
+                        Some(BoundedDetail::new(
+                            "branch inputs could not be evaluated deterministically",
+                        )?),
+                    )?;
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
             let mut evaluation_failed = false;
             for (port, condition) in config.arms() {
                 match evaluate_condition(condition, &context) {
@@ -773,10 +571,7 @@ impl RuntimeService {
             }
             if evaluation_failed {
                 self.complete_deterministic_with_outcome(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
+                    transition,
                     node,
                     &execution,
                     NodeOutcome::Failed,
@@ -788,10 +583,7 @@ impl RuntimeService {
             }
             let Some(selected) = selected.or_else(|| config.fallback().cloned()) else {
                 self.complete_deterministic_with_outcome(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
+                    transition,
                     node,
                     &execution,
                     NodeOutcome::Failed,
@@ -801,37 +593,26 @@ impl RuntimeService {
                 )?;
                 return Ok(());
             };
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::BranchRouteSelected {
-                    execution: execution.clone(),
-                    selected_port: selected,
-                },
-            )?;
-            self.complete_deterministic(run, occurred_at, projection, events, node, &execution)?;
+            transition.push_event(RunEventKind::BranchRouteSelected {
+                execution: execution.clone(),
+                selected_port: selected,
+            })?;
+            self.complete_deterministic(transition, node, &execution)?;
         }
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_fork_node(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
+        transition: &mut PlanTransition<'_>,
         execution_revision: &BlueprintRevision,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
         node: &Node,
         execution: NodeExecutionId,
-        node_id: NodeId,
         scope_reference: ScopeReference,
         config: &ForkConfig,
     ) -> Result<(), RuntimeError> {
-        let parent = projection
+        let parent = transition
+            .projection()
             .scopes()
             .get(&scope_reference)
             .ok_or_else(|| {
@@ -839,12 +620,16 @@ impl RuntimeService {
             })?
             .clone();
         for port in config.branches() {
-            if projection.branch_for_fork_port(&execution, port).is_some() {
+            if transition
+                .projection()
+                .branch_for_fork_port(&execution, port)
+                .is_some()
+            {
                 continue;
             }
             // BranchScopeCreated, NodeBecameEligible, and
             // BranchChildAdded are one atomic expansion unit.
-            if events.len().saturating_add(3) > STRUCTURED_EVENT_SOFT_LIMIT {
+            if !transition.has_event_capacity(3, STRUCTURED_EVENT_SOFT_LIMIT) {
                 return Ok(());
             }
             let branch = self.next_branch_id()?;
@@ -856,7 +641,7 @@ impl RuntimeService {
                 .values()
                 .find(|edge| {
                     edge.kind() == EdgeKind::Control
-                        && edge.source_node() == &node_id
+                        && edge.source_node() == node.id()
                         && edge.source_port() == port
                 })
                 .map(|edge| edge.target_node().clone())
@@ -865,89 +650,64 @@ impl RuntimeService {
                         "fork branch has no exact control target".to_owned(),
                     )
                 })?;
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::BranchScopeCreated {
-                    fork_execution: execution.clone(),
-                    port: port.clone(),
-                    branch: branch.clone(),
-                    scope: scope.clone(),
-                },
-            )?;
-            workspace.push(WorkspaceMutation::CreateScope {
+            transition.push_event(RunEventKind::BranchScopeCreated {
+                fork_execution: execution.clone(),
+                port: port.clone(),
+                branch: branch.clone(),
                 scope: scope.clone(),
-            });
+            })?;
+            transition.push_workspace(WorkspaceMutation::CreateScope {
+                scope: scope.clone(),
+            })?;
             let child_execution = self.next_execution_id()?;
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::NodeBecameEligible {
-                    mode: node_execution_mode(
-                        execution_revision
-                            .semantic()
-                            .nodes()
-                            .get(&target)
-                            .ok_or_else(|| {
-                                RuntimeError::InvalidHistory(
-                                    "branch target node is absent".to_owned(),
-                                )
-                            })?,
-                    ),
-                    node: target,
-                    execution: child_execution.clone(),
-                    scope: scope.reference().clone(),
-                },
-            )?;
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::BranchChildAdded {
-                    branch,
-                    execution: child_execution,
-                },
-            )?;
+            transition.push_event(RunEventKind::NodeBecameEligible {
+                mode: node_execution_mode(
+                    execution_revision
+                        .semantic()
+                        .nodes()
+                        .get(&target)
+                        .ok_or_else(|| {
+                            RuntimeError::InvalidHistory("branch target node is absent".to_owned())
+                        })?,
+                ),
+                node: target,
+                execution: child_execution.clone(),
+                scope: scope.reference().clone(),
+            })?;
+            transition.push_event(RunEventKind::BranchChildAdded {
+                branch,
+                execution: child_execution,
+            })?;
         }
-        let expansion_complete = config
-            .branches()
-            .iter()
-            .all(|port| projection.branch_for_fork_port(&execution, port).is_some());
+        let expansion_complete = config.branches().iter().all(|port| {
+            transition
+                .projection()
+                .branch_for_fork_port(&execution, port)
+                .is_some()
+        });
         if expansion_complete {
-            self.complete_deterministic(run, occurred_at, projection, events, node, &execution)?;
+            self.complete_deterministic(transition, node, &execution)?;
         }
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_subworkflow_node(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
+        transition: &mut PlanTransition<'_>,
         node: &Node,
         execution: NodeExecutionId,
         scope_reference: ScopeReference,
         reference: &milkdrift_blueprint::PinnedSubworkflow,
     ) -> Result<(), RuntimeError> {
-        let child = projection
+        let child = transition
+            .projection()
             .subworkflows()
             .values()
             .find(|child| child.parent_execution() == &execution);
         if let Some(child) = child {
             if let SubworkflowState::Terminal(outcome) = child.state() {
                 self.complete_deterministic_with_outcome(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
+                    transition,
                     node,
                     &execution,
                     node_outcome(outcome),
@@ -956,11 +716,7 @@ impl RuntimeService {
             }
         } else {
             self.create_subworkflow_intent(
-                run,
-                occurred_at,
-                projection,
-                events,
-                workspace,
+                transition,
                 node,
                 &execution,
                 &scope_reference,
@@ -971,29 +727,16 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     fn drive_join_node(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
+        transition: &mut PlanTransition<'_>,
         execution_revision: &BlueprintRevision,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
         node: &Node,
         execution: NodeExecutionId,
         config: &JoinConfig,
     ) -> Result<(), RuntimeError> {
-        if !projection.joins().contains_key(&execution) {
-            self.try_satisfy_join(
-                run,
-                occurred_at,
-                execution_revision,
-                projection,
-                events,
-                node,
-                &execution,
-                config,
-            )?;
+        if !transition.projection().joins().contains_key(&execution) {
+            self.try_satisfy_join(transition, execution_revision, node, &execution, config)?;
         }
         Ok(())
     }

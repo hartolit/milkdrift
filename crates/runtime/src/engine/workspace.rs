@@ -8,12 +8,10 @@ use super::support::{
 use crate::RuntimeError;
 use crate::projection::{NodeExecutionState, RunProjection};
 use milkdrift_blueprint::{BindingSource, BlueprintRevision, EdgeKind, Node, NodeId, PortId};
-use milkdrift_persistence::{
-    NodeOutcome, RunEventEnvelope, RunEventKind, TimestampMillis, WorkspaceMutation,
-};
+use milkdrift_persistence::{NodeOutcome, WorkspaceMutation};
 use milkdrift_workspace::{
-    ArtifactReference, RunId, ScopeReference, ValueKey, ValueVersion, WorkspaceScope,
-    WorkspaceValue, WorkspaceValueEntry, WorkspaceValueReference,
+    ArtifactReference, ScopeReference, ValueKey, ValueVersion, WorkspaceScope, WorkspaceValue,
+    WorkspaceValueEntry, WorkspaceValueReference,
 };
 use std::collections::BTreeSet;
 
@@ -612,30 +610,5 @@ impl RuntimeService {
             "workspace input aliases a sibling or unrelated scope; scope isolation forbids the read"
                 .to_owned(),
         ))
-    }
-
-    pub(super) fn push_projected_event(
-        &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        kind: RunEventKind,
-    ) -> Result<(), RuntimeError> {
-        if events.len() >= milkdrift_persistence::MAX_EVENTS_PER_COMMIT {
-            return Err(RuntimeError::Scheduling(
-                "event commit bound reached while driving structured work".to_owned(),
-            ));
-        }
-        let event = RunEventEnvelope::new(
-            self.next_event_id()?,
-            run.clone(),
-            projection.sequence().next()?,
-            occurred_at,
-            kind,
-        )?;
-        projection.apply_replayed(&event)?;
-        events.push(event);
-        Ok(())
     }
 }

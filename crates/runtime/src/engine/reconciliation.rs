@@ -6,7 +6,8 @@ use super::support::{
 };
 use crate::projection::RunProjection;
 use crate::query::fold_history_from;
-use crate::{ExternalWorkAction, RunCommandDocument, RuntimeError, plan_reconciliation};
+use crate::reconciliation::plan_reconciliation;
+use crate::{ExternalWorkAction, RunCommandDocument, RuntimeError};
 use milkdrift_authority::ActorRef;
 use milkdrift_blueprint::{NodeId, RevisionId};
 use milkdrift_persistence::{

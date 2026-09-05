@@ -2,13 +2,14 @@
 
 use super::super::RuntimeService;
 use super::super::support::{CommandPlan, bounded_projection_set};
+use super::super::transition::PlanTransition;
 use crate::projection::{RunLifecycle, RunProjection, SubworkflowState};
 use crate::{RunCommand, RunCommandDocument, RuntimeError, SystemTransition};
 use milkdrift_blueprint::{Node, NodeKind, PortId, RevisionId};
 use milkdrift_persistence::{
     BoundedDetail, CommandDisposition, NodeExecutionId, NodeOutcome, PageSize, Reason,
-    RunEventEnvelope, RunEventKind, RunSequence, SubworkflowOwnership, SubworkflowResourceUsage,
-    TimestampMillis, WorkspaceMutation,
+    RunEventKind, RunSequence, SubworkflowOwnership, SubworkflowResourceUsage, TimestampMillis,
+    WorkspaceMutation,
 };
 use milkdrift_workspace::{
     RunId, ScopeId, ScopeReference, SubworkflowId, ValueKey, WorkspaceScope, WorkspaceValueEntry,
@@ -337,14 +338,9 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     pub(super) fn create_subworkflow_intent(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
+        transition: &mut PlanTransition<'_>,
         node: &Node,
         parent_execution: &NodeExecutionId,
         occurrence_scope: &ScopeReference,
@@ -353,7 +349,8 @@ impl RuntimeService {
     ) -> Result<(), RuntimeError> {
         let child_revision =
             self.load_validated_revision(reference.revision(), Some(reference.workflow()))?;
-        let parent_revision = self.revision_for_execution(projection, parent_execution)?;
+        let parent_revision =
+            self.revision_for_execution(transition.projection(), parent_execution)?;
         let mut resolved_inputs = Vec::new();
         for (field, interface_field) in child_revision.semantic().interface().inputs() {
             let port = PortId::new(field.as_str().to_owned())
@@ -361,10 +358,7 @@ impl RuntimeService {
             let Some(parent_declaration) = node.data_inputs().get(&port) else {
                 if interface_field.is_required() {
                     return self.complete_deterministic_with_outcome(
-                        run,
-                        occurred_at,
-                        projection,
-                        events,
+                        transition,
                         node,
                         parent_execution,
                         NodeOutcome::Failed,
@@ -377,19 +371,16 @@ impl RuntimeService {
             };
             let resolved = match self.resolve_node_port_inputs(
                 &parent_revision,
-                projection,
+                transition.projection(),
                 node,
                 &port,
                 occurrence_scope,
-                workspace,
+                transition.workspace(),
             ) {
                 Ok(resolved) => resolved,
                 Err(RuntimeError::Scheduling(_)) => {
                     return self.complete_deterministic_with_outcome(
-                        run,
-                        occurred_at,
-                        projection,
-                        events,
+                        transition,
                         node,
                         parent_execution,
                         NodeOutcome::Failed,
@@ -403,10 +394,7 @@ impl RuntimeService {
             if resolved.is_empty() {
                 if interface_field.is_required() || parent_declaration.is_required() {
                     return self.complete_deterministic_with_outcome(
-                        run,
-                        occurred_at,
-                        projection,
-                        events,
+                        transition,
                         node,
                         parent_execution,
                         NodeOutcome::Failed,
@@ -419,10 +407,7 @@ impl RuntimeService {
             }
             if resolved.len() != 1 {
                 return self.complete_deterministic_with_outcome(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
+                    transition,
                     node,
                     parent_execution,
                     NodeOutcome::Failed,
@@ -438,44 +423,42 @@ impl RuntimeService {
             })?;
             resolved_inputs.push((key, resolved_value));
         }
-        let parent = projection.scopes().get(parent_scope).ok_or_else(|| {
-            RuntimeError::InvalidHistory("subworkflow parent scope is absent".to_owned())
-        })?;
+        let parent = transition
+            .projection()
+            .scopes()
+            .get(parent_scope)
+            .ok_or_else(|| {
+                RuntimeError::InvalidHistory("subworkflow parent scope is absent".to_owned())
+            })?;
         let subworkflow = self.next_subworkflow_id()?;
         let scope = WorkspaceScope::subworkflow(self.next_scope_id()?, parent, subworkflow.clone())
             .map_err(|error| RuntimeError::InvalidTransition(error.to_string()))?;
         let scope_reference = scope.reference().clone();
-        workspace.push(WorkspaceMutation::CreateScope {
+        transition.push_workspace(WorkspaceMutation::CreateScope {
             scope: scope.clone(),
-        });
+        })?;
         let mut inputs = Vec::new();
         for (key, resolved_value) in resolved_inputs {
             let entry = self.materialize_subworkflow_input(
-                projection,
-                workspace,
+                transition.projection(),
+                transition.workspace(),
                 &scope_reference,
                 parent_scope,
                 key,
                 resolved_value,
             )?;
             inputs.push(entry.reference().clone());
-            workspace.push(WorkspaceMutation::PutValue { entry });
+            transition.push_workspace(WorkspaceMutation::PutValue { entry })?;
         }
-        self.push_projected_event(
-            run,
-            occurred_at,
-            projection,
-            events,
-            RunEventKind::SubworkflowCreated {
-                subworkflow,
-                parent_execution: parent_execution.clone(),
-                child_run: self.next_run_id()?,
-                child_revision: reference.revision().clone(),
-                scope: scope.clone(),
-                ownership: SubworkflowOwnership::Attached,
-                inputs,
-            },
-        )?;
+        transition.push_event(RunEventKind::SubworkflowCreated {
+            subworkflow,
+            parent_execution: parent_execution.clone(),
+            child_run: self.next_run_id()?,
+            child_revision: reference.revision().clone(),
+            scope: scope.clone(),
+            ownership: SubworkflowOwnership::Attached,
+            inputs,
+        })?;
         Ok(())
     }
 }

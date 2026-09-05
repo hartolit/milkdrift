@@ -87,7 +87,7 @@ impl SchedulerLimits {
 
     /// Returns whether the exact usage snapshot may admit one dispatch.
     #[must_use]
-    pub fn allows(&self, request: &AdmissionRequest, usage: &AdmissionUsage) -> bool {
+    pub(crate) fn allows(&self, request: &AdmissionRequest, usage: &AdmissionUsage) -> bool {
         let run_count = usage.runs.get(&request.run).copied().unwrap_or(0);
         let branch_count = request
             .branch
@@ -144,7 +144,7 @@ impl SchedulerLimits {
 
 /// Exact admission subject for one proposed dispatch.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AdmissionRequest {
+pub(crate) struct AdmissionRequest {
     /// Owning run.
     pub run: RunId,
     /// Structured branch, when branch-local.
@@ -155,7 +155,7 @@ pub struct AdmissionRequest {
 
 /// Counts derived from active durable leases, never caller-maintained truth.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct AdmissionUsage {
+pub(crate) struct AdmissionUsage {
     /// Total active durable leases.
     pub global: u32,
     /// Active leases by run.
@@ -169,7 +169,7 @@ pub struct AdmissionUsage {
 /// Deterministically interleaves runnable entries by run so one run cannot monopolize a page.
 /// Within a run, older eligibility wins; priority breaks ties at the same boundary.
 #[must_use]
-pub fn select_fair_runnable(
+pub(crate) fn select_fair_runnable(
     entries: impl IntoIterator<Item = RunnableIndexEntry>,
     maximum: usize,
 ) -> Vec<RunnableIndexEntry> {
@@ -351,13 +351,13 @@ impl RetryPolicy {
 
 /// Immutable set of exact durable values used for one branch/repeat condition decision.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct EvaluationContext {
+pub(crate) struct EvaluationContext {
     values: BTreeMap<String, BoundedJson>,
 }
 
 impl EvaluationContext {
     /// Inserts one exact binding value under its canonical binding identity.
-    pub fn insert(
+    pub(crate) fn insert(
         &mut self,
         source: &BindingSource,
         value: BoundedJson,
@@ -382,7 +382,7 @@ impl EvaluationContext {
     }
 
     /// Resolves one binding and applies its safe node-output path selector.
-    pub fn resolve(&self, source: &BindingSource) -> Result<Option<Value>, RuntimeError> {
+    pub(crate) fn resolve(&self, source: &BindingSource) -> Result<Option<Value>, RuntimeError> {
         if let BindingSource::Literal { value } = source {
             return Ok(Some(value.value().clone()));
         }
@@ -400,7 +400,7 @@ impl EvaluationContext {
 }
 
 /// Evaluates the safe Pass 1 condition AST against one exact durable context.
-pub fn evaluate_condition(
+pub(crate) fn evaluate_condition(
     condition: &Condition,
     context: &EvaluationContext,
 ) -> Result<bool, RuntimeError> {

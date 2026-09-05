@@ -16,6 +16,14 @@ snapshot. Git, CI, releases, and external audits own chronology.
   observation through the incremental durable reporter; there is no synchronous report-batch
   compatibility path or second validation owner. Production capability-host execution and
   deterministic test executors use that same interface.
+- Runtime command handling has one exhaustive dispatcher with private admission, commit, and
+  worker-report owners. One operation-scoped transition owner performs checked event sequencing,
+  projection, and workspace accumulation for structured progress. Final adapter-entry
+  revalidation/authority/controller admission and incremental observation ingestion are separate
+  private owners on the same canonical effect path; a durable terminal observation takes
+  precedence over a later worker boundary failure. Node projections are grouped by execution,
+  attempt/evidence, and lease/timer/retry invariants, while one closed reconciliation matrix owns
+  classification and the allowable action set.
 - `milkdrift-capability-host` owns the common adapter contract and the sole live registration,
   exact-generation permit, drain, cancellation-routing, and panic-containment path. Authority,
   start, drain, and shutdown hooks are explicit for every implementation. Failed start cannot
@@ -207,16 +215,16 @@ Current exact versions are:
 
 ## Current validation/evidence snapshot
 
-- Current local Linux worktree snapshot (2026-09-04): formatting, all-target/all-feature checking, the complete
+- Current local Linux worktree snapshot (2026-09-05): formatting, all-target/all-feature checking, the complete
   workspace test and doctest suite, Clippy with warnings denied, rustdoc with warnings denied,
   `cargo deny check`, `cargo machete`, duplicate dependency inspection, and test inventory all pass.
   Five explicitly manual longevity/storage-bound tests remain ignored in the ordinary suite.
 - All five manual longevity lanes pass separately in release mode: 10,001 receipt commits across
   hot/cold turnover and restart, two-daemon peer retention/restart, controller checkpoint/restart,
   controller reservation/artifact turnover and restart, and the 2,049-occurrence runtime frontier.
-  The seven pinned current-source mutation shards enumerate 649 mutants across authority,
+  The seven pinned current-source mutation shards enumerate 625 mutants across authority,
   retention, runtime, uncertainty, controller admission/accounting, context, and peer ownership.
-  The complete current campaign catches 610; 37 are compiler-unviable, and two exact defensive
+  The complete current campaign catches 586; 37 are compiler-unviable, and two exact defensive
   guards retain reviewed unreachable-contract classifications after their earlier validators were
   exercised directly. There are no unclassified survivors or timeouts.
 - The simplified all-feature `cargo-public-api` inventory is retained under `target/public-api` for

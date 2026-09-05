@@ -258,6 +258,7 @@ mod scheduling;
 mod state;
 mod structured;
 mod support;
+mod transition;
 mod workspace;
 
 pub use effects::EffectExecutionResult;

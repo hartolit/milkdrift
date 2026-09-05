@@ -1,25 +1,19 @@
 //! Deterministic structured-node execution, reducers, repeats, and subworkflow intent creation.
 
 use super::super::RuntimeService;
+use super::super::transition::PlanTransition;
 use crate::RuntimeError;
-use crate::projection::RunProjection;
 use milkdrift_blueprint::{BlueprintRevision, Node, ReducerStrategy};
 use milkdrift_capability::BoundedJson;
 use milkdrift_persistence::{
-    BoundedDetail, NodeExecutionId, NodeOutcome, RunEventEnvelope, RunEventKind, TimestampMillis,
-    WorkspaceMutation,
+    BoundedDetail, NodeExecutionId, NodeOutcome, RunEventKind, WorkspaceMutation,
 };
-use milkdrift_workspace::{RunId, ScopeReference, ValueKey, WorkspaceValue};
+use milkdrift_workspace::{ScopeReference, ValueKey, WorkspaceValue};
 
 impl RuntimeService {
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     pub(super) fn drive_reducer(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
+        transition: &mut PlanTransition<'_>,
         node: &Node,
         execution: &NodeExecutionId,
         scope_reference: &ScopeReference,
@@ -29,27 +23,21 @@ impl RuntimeService {
         if matches!(config.strategy(), ReducerStrategy::Capability(_)) {
             return Ok(());
         }
-        if !projection
+        if !transition
+            .projection()
             .node_executions()
             .get(execution)
             .is_some_and(|value| value.outputs().is_empty())
         {
-            return self.complete_deterministic(
-                run,
-                occurred_at,
-                projection,
-                events,
-                node,
-                execution,
-            );
+            return self.complete_deterministic(transition, node, execution);
         }
         let values = self.ordered_reducer_references(
             revision,
-            projection,
+            transition.projection(),
             node,
             config.input_port(),
             scope_reference,
-            workspace,
+            transition.workspace(),
         )?;
         if values.len() < usize::from(config.minimum_items()) {
             return Ok(());
@@ -63,10 +51,7 @@ impl RuntimeService {
             ReducerStrategy::Collect => {
                 let Ok(json_value) = serde_json::to_value(&values) else {
                     return self.complete_deterministic_with_outcome(
-                        run,
-                        occurred_at,
-                        projection,
-                        events,
+                        transition,
                         node,
                         execution,
                         NodeOutcome::Failed,
@@ -77,10 +62,7 @@ impl RuntimeService {
                 };
                 let Ok(collected) = BoundedJson::new(json_value) else {
                     return self.complete_deterministic_with_outcome(
-                        run,
-                        occurred_at,
-                        projection,
-                        events,
+                        transition,
                         node,
                         execution,
                         NodeOutcome::Failed,
@@ -95,27 +77,30 @@ impl RuntimeService {
                 let reference = values.first().ok_or_else(|| {
                     RuntimeError::Scheduling("first reducer has no input".to_owned())
                 })?;
-                let entry = self.projected_workspace_value(projection, reference, workspace)?;
+                let entry = self.projected_workspace_value(
+                    transition.projection(),
+                    reference,
+                    transition.workspace(),
+                )?;
                 let artifact = entry.value().as_artifact().cloned();
                 (entry.value().clone(), artifact)
             }
             ReducerStrategy::Capability(_) => return Ok(()),
         };
-        let entry =
-            self.projected_output_entry(projection, scope_reference, key, value, workspace)?;
-        let reference = entry.reference().clone();
-        workspace.push(WorkspaceMutation::PutValue { entry });
-        self.push_projected_event(
-            run,
-            occurred_at,
-            projection,
-            events,
-            RunEventKind::DeterministicOutputPublished {
-                execution: execution.clone(),
-                value: reference,
-                artifact,
-            },
+        let entry = self.projected_output_entry(
+            transition.projection(),
+            scope_reference,
+            key,
+            value,
+            transition.workspace(),
         )?;
-        self.complete_deterministic(run, occurred_at, projection, events, node, execution)
+        let reference = entry.reference().clone();
+        transition.push_workspace(WorkspaceMutation::PutValue { entry })?;
+        transition.push_event(RunEventKind::DeterministicOutputPublished {
+            execution: execution.clone(),
+            value: reference,
+            artifact,
+        })?;
+        self.complete_deterministic(transition, node, execution)
     }
 }

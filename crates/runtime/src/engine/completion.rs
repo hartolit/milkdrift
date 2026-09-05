@@ -1,25 +1,28 @@
 //! Structured completion, branch/join closure, successor materialization, and signal draining.
 
+mod signals;
+
 use super::support::{
     ResolvedInputValue, artifact_reference_as_bounded, control_nodes_before_join,
     execution_branch_state, node_execution_mode, node_occurrence_exists_for_current_pin,
     predecessors_ready, run_drain_reason, scope_has_inactive_branch,
-    source_execution_is_valid_for_occurrence, wait_signal_matches, workspace_value_as_bounded,
+    source_execution_is_valid_for_occurrence, workspace_value_as_bounded,
 };
+use super::transition::PlanTransition;
 use super::{RuntimeService, STRUCTURED_EVENT_SOFT_LIMIT};
+use crate::RuntimeError;
 use crate::projection::{BranchState, NodeExecutionState, RunLifecycle, RunProjection};
-use crate::{EvaluationContext, RuntimeError};
+use crate::scheduler::EvaluationContext;
 use milkdrift_blueprint::{
     BindingSource, BlueprintRevision, EdgeKind, JoinPolicy, Node, NodeKind, PortId, TerminalOutcome,
 };
-use milkdrift_capability::{BoundedJson, ErrorClass};
+use milkdrift_capability::ErrorClass;
 use milkdrift_persistence::{
-    BoundedDetail, BranchResultReference, JoinRule, MAX_WORKSPACE_MUTATIONS_PER_COMMIT,
-    NodeExecutionId, NodeOutcome, Reason, RunEventEnvelope, RunEventKind, RunOutcome,
-    TimestampMillis, WaitSatisfaction, WorkspaceMutation,
+    BoundedDetail, BranchResultReference, JoinRule, NodeExecutionId, NodeOutcome, Reason,
+    RunEventKind, RunOutcome, WorkspaceMutation,
 };
 use milkdrift_workspace::{
-    RunId, ScopeKind, ScopeReference, ValueKey, WorkspaceValue, WorkspaceValueEntry,
+    ScopeKind, ScopeReference, ValueKey, WorkspaceValue, WorkspaceValueEntry,
     WorkspaceValueReference,
 };
 use std::collections::BTreeSet;
@@ -27,18 +30,12 @@ use std::collections::BTreeSet;
 impl RuntimeService {
     pub(super) fn complete_deterministic(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
+        transition: &mut PlanTransition<'_>,
         node: &Node,
         execution: &NodeExecutionId,
     ) -> Result<(), RuntimeError> {
         self.complete_deterministic_with_outcome(
-            run,
-            occurred_at,
-            projection,
-            events,
+            transition,
             node,
             execution,
             NodeOutcome::Succeeded,
@@ -46,73 +43,48 @@ impl RuntimeService {
         )
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     pub(super) fn complete_deterministic_with_outcome(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
+        transition: &mut PlanTransition<'_>,
         node: &Node,
         execution: &NodeExecutionId,
         outcome: NodeOutcome,
         detail: Option<BoundedDetail>,
     ) -> Result<(), RuntimeError> {
         if outcome == NodeOutcome::Cancelled {
-            return self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::NodeExecutionCancelledBeforeDispatch {
-                    execution: execution.clone(),
-                    reason: Reason::new(
-                        "deterministic execution was cancelled by its structured owner",
-                    )?,
-                },
-            );
-        }
-        self.push_projected_event(
-            run,
-            occurred_at,
-            projection,
-            events,
-            RunEventKind::DeterministicNodeTerminal {
+            return transition.push_event(RunEventKind::NodeExecutionCancelledBeforeDispatch {
                 execution: execution.clone(),
-                outcome,
-                error_class: matches!(outcome, NodeOutcome::Failed | NodeOutcome::Rejected)
-                    .then_some(ErrorClass::Unknown),
-                detail,
-            },
-        )?;
+                reason: Reason::new(
+                    "deterministic execution was cancelled by its structured owner",
+                )?,
+            });
+        }
+        transition.push_event(RunEventKind::DeterministicNodeTerminal {
+            execution: execution.clone(),
+            outcome,
+            error_class: matches!(outcome, NodeOutcome::Failed | NodeOutcome::Rejected)
+                .then_some(ErrorClass::Unknown),
+            detail,
+        })?;
         if outcome == NodeOutcome::Succeeded
             && matches!(
                 node.kind(),
                 NodeKind::Fork { .. } | NodeKind::Terminal { .. }
             )
         {
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::StructuredSuccessorScanCompleted {
-                    execution: execution.clone(),
-                },
-            )?;
+            transition.push_event(RunEventKind::StructuredSuccessorScanCompleted {
+                execution: execution.clone(),
+            })?;
         }
         Ok(())
     }
 
     pub(super) fn try_finalize_run(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
         revision: &BlueprintRevision,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &[WorkspaceMutation],
+        transition: &mut PlanTransition<'_>,
     ) -> Result<(), RuntimeError> {
+        let projection = transition.projection();
         if projection.is_completed()
             || !projection.pending_successor_execution_ids().is_empty()
             || projection.has_active_owned_work()
@@ -201,7 +173,11 @@ impl RuntimeService {
                 match resolved {
                     Some(reference) => {
                         if let Some(artifact) = self
-                            .projected_workspace_value(projection, &reference, workspace)?
+                            .projected_workspace_value(
+                                projection,
+                                &reference,
+                                transition.workspace(),
+                            )?
                             .value()
                             .as_artifact()
                             .cloned()
@@ -220,36 +196,26 @@ impl RuntimeService {
                 }
             }
         }
-        self.push_projected_event(
-            run,
-            occurred_at,
-            projection,
-            events,
-            RunEventKind::RunTerminal {
-                outcome,
-                outputs: outputs.into_iter().collect(),
-                artifacts: artifacts.into_iter().collect(),
-                reason: projection
-                    .cancellation()
-                    .map(|cancellation| cancellation.reason().clone())
-                    .or_else(|| {
-                        projection
-                            .termination()
-                            .map(|termination| termination.reason().clone())
-                    }),
-            },
-        )
+        let reason = projection
+            .cancellation()
+            .map(|cancellation| cancellation.reason().clone())
+            .or_else(|| {
+                projection
+                    .termination()
+                    .map(|termination| termination.reason().clone())
+            });
+        transition.push_event(RunEventKind::RunTerminal {
+            outcome,
+            outputs: outputs.into_iter().collect(),
+            artifacts: artifacts.into_iter().collect(),
+            reason,
+        })
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     pub(super) fn materialize_success_terminal_outputs(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
+        transition: &mut PlanTransition<'_>,
         revision: &BlueprintRevision,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
         terminal_node: &Node,
         execution: &NodeExecutionId,
         scope: &ScopeReference,
@@ -257,7 +223,8 @@ impl RuntimeService {
         for (field, declaration) in revision.semantic().interface().outputs() {
             let port = PortId::new(field.as_str().to_owned())
                 .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
-            if projection
+            if transition
+                .projection()
                 .node_executions()
                 .get(execution)
                 .is_some_and(|view| {
@@ -278,11 +245,11 @@ impl RuntimeService {
             };
             let mut resolved = self.resolve_node_port_inputs(
                 revision,
-                projection,
+                transition.projection(),
                 terminal_node,
                 &port,
                 scope,
-                workspace,
+                transition.workspace(),
             )?;
             if resolved.is_empty() {
                 if declaration.is_required() {
@@ -297,7 +264,7 @@ impl RuntimeService {
                     "terminal workflow output {field} resolved to more than one exact value"
                 )));
             }
-            if events.len().saturating_add(2) >= STRUCTURED_EVENT_SOFT_LIMIT {
+            if !transition.has_event_capacity(2, STRUCTURED_EVENT_SOFT_LIMIT - 1) {
                 return Ok(false);
             }
             let resolved = resolved.pop().ok_or_else(|| {
@@ -310,15 +277,21 @@ impl RuntimeService {
             let value = match resolved {
                 ResolvedInputValue::Inline { value, .. } => WorkspaceValue::Json(value),
                 ResolvedInputValue::Workspace(reference) => {
-                    let entry =
-                        self.projected_workspace_value(projection, &reference, workspace)?;
+                    let entry = self.projected_workspace_value(
+                        transition.projection(),
+                        &reference,
+                        transition.workspace(),
+                    )?;
                     entry.value().clone()
                 }
                 ResolvedInputValue::Artifact(reference) => WorkspaceValue::Artifact(reference),
             };
             let artifact = value.as_artifact().cloned();
             if let Some(artifact) = &artifact
-                && !projection.artifacts().contains_key(artifact.artifact())
+                && !transition
+                    .projection()
+                    .artifacts()
+                    .contains_key(artifact.artifact())
             {
                 let metadata = self.store.metadata(artifact.artifact())?.ok_or_else(|| {
                     RuntimeError::InvalidHistory(
@@ -330,43 +303,37 @@ impl RuntimeService {
                         "terminal output artifact metadata contradicts its binding".to_owned(),
                     ));
                 }
-                self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    RunEventKind::ArtifactPublished { metadata },
-                )?;
+                transition.push_event(RunEventKind::ArtifactPublished { metadata })?;
             }
-            let entry = self.projected_output_entry(projection, scope, key, value, workspace)?;
-            let reference = entry.reference().clone();
-            workspace.push(WorkspaceMutation::PutValue { entry });
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::DeterministicOutputPublished {
-                    execution: execution.clone(),
-                    value: reference,
-                    artifact,
-                },
+            let entry = self.projected_output_entry(
+                transition.projection(),
+                scope,
+                key,
+                value,
+                transition.workspace(),
             )?;
+            let reference = entry.reference().clone();
+            transition.push_workspace(WorkspaceMutation::PutValue { entry })?;
+            transition.push_event(RunEventKind::DeterministicOutputPublished {
+                execution: execution.clone(),
+                value: reference,
+                artifact,
+            })?;
         }
         Ok(true)
     }
 
     pub(super) fn close_finished_branches(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
         revision: &BlueprintRevision,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
+        transition: &mut PlanTransition<'_>,
         scan_remaining: &mut usize,
     ) -> Result<(), RuntimeError> {
         let mut terminal = Vec::new();
-        for branch_id in self.scan_branch_ids(run, projection, scan_remaining)? {
+        for branch_id in
+            self.scan_branch_ids(transition.run(), transition.projection(), scan_remaining)?
+        {
+            let projection = transition.projection();
             let branch = projection.branches().get(&branch_id).ok_or_else(|| {
                 RuntimeError::InvalidHistory("scanned branch identity is absent".to_owned())
             })?;
@@ -526,6 +493,7 @@ impl RuntimeService {
             terminal.push((branch.branch().clone(), outcome, outputs, join));
         }
         for (branch, outcome, outputs, join) in terminal {
+            let projection = transition.projection();
             let join_needs_materialization = join.as_ref().is_some_and(|(node, scope)| {
                 !node_occurrence_exists_for_current_pin(projection, node.id(), scope)
             });
@@ -539,57 +507,45 @@ impl RuntimeService {
             let required_events = 1_usize
                 .saturating_add(usize::from(join_needs_materialization))
                 .saturating_add(usize::from(join_needs_membership));
-            if events.len().saturating_add(required_events) > STRUCTURED_EVENT_SOFT_LIMIT {
+            if !transition.has_event_capacity(required_events, STRUCTURED_EVENT_SOFT_LIMIT) {
                 return Ok(());
             }
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::BranchTerminal {
-                    branch,
-                    outcome,
-                    outputs: outputs.into_iter().collect(),
-                },
-            )?;
+            transition.push_event(RunEventKind::BranchTerminal {
+                branch,
+                outcome,
+                outputs: outputs.into_iter().collect(),
+            })?;
             if join_needs_materialization {
                 let (join, scope) = join.ok_or_else(|| {
                     RuntimeError::InvalidHistory(
                         "branch join materialization candidate disappeared".to_owned(),
                     )
                 })?;
-                if !scope_has_inactive_branch(projection, &scope)
-                    && predecessors_ready(revision, projection, &join, &scope)
+                if !scope_has_inactive_branch(transition.projection(), &scope)
+                    && predecessors_ready(revision, transition.projection(), &join, &scope)
                 {
                     let execution = self.next_execution_id()?;
-                    let owning_branch = projection.scopes().get(&scope).and_then(|scope| {
-                        if let ScopeKind::Branch { branch } = scope.kind() {
-                            Some(branch.clone())
-                        } else {
-                            None
-                        }
-                    });
-                    self.push_projected_event(
-                        run,
-                        occurred_at,
-                        projection,
-                        events,
-                        RunEventKind::NodeBecameEligible {
-                            node: join.id().clone(),
-                            execution: execution.clone(),
-                            scope,
-                            mode: node_execution_mode(&join),
-                        },
-                    )?;
+                    let owning_branch =
+                        transition
+                            .projection()
+                            .scopes()
+                            .get(&scope)
+                            .and_then(|scope| {
+                                if let ScopeKind::Branch { branch } = scope.kind() {
+                                    Some(branch.clone())
+                                } else {
+                                    None
+                                }
+                            });
+                    transition.push_event(RunEventKind::NodeBecameEligible {
+                        node: join.id().clone(),
+                        execution: execution.clone(),
+                        scope,
+                        mode: node_execution_mode(&join),
+                    })?;
                     if let Some(branch) = owning_branch {
-                        self.push_projected_event(
-                            run,
-                            occurred_at,
-                            projection,
-                            events,
-                            RunEventKind::BranchChildAdded { branch, execution },
-                        )?;
+                        transition
+                            .push_event(RunEventKind::BranchChildAdded { branch, execution })?;
                     }
                 }
             }
@@ -597,56 +553,56 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)] // One atomic runtime transition owns these borrowed state views and durable outputs.
     pub(super) fn try_satisfy_join(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
+        transition: &mut PlanTransition<'_>,
         _revision: &BlueprintRevision,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
         node: &Node,
         execution: &NodeExecutionId,
         config: &milkdrift_blueprint::JoinConfig,
     ) -> Result<(), RuntimeError> {
-        let join_scope = projection
-            .node_executions()
-            .get(execution)
-            .ok_or_else(|| RuntimeError::InvalidHistory("join execution is absent".to_owned()))?
-            .scope()
-            .clone();
-        let fork_execution = projection
-            .executions_for_node(config.fork())
-            .filter(|value| {
-                value.scope() == &join_scope
-                    && source_execution_is_valid_for_occurrence(
-                        projection,
-                        *value,
-                        node.id(),
-                        &join_scope,
-                    )
-            })
-            .last()
-            .map(|value| value.execution().clone());
-        let Some(fork_execution) = fork_execution else {
-            return Ok(());
-        };
-        let mut completed = Vec::new();
-        let mut active = Vec::new();
-        for branch in projection.branches_for_fork(&fork_execution) {
-            match branch.state() {
-                BranchState::Completed(outcome) => completed.push(BranchResultReference {
-                    branch: branch.branch().clone(),
-                    scope: branch.scope().reference().clone(),
-                    outcome,
-                    outputs: branch.outputs().to_vec(),
-                }),
-                BranchState::Active | BranchState::Cancelling => {
-                    active.push(branch.branch().clone());
+        let (mut completed, mut active) = {
+            let projection = transition.projection();
+            let join_scope = projection
+                .node_executions()
+                .get(execution)
+                .ok_or_else(|| RuntimeError::InvalidHistory("join execution is absent".to_owned()))?
+                .scope()
+                .clone();
+            let fork_execution = projection
+                .executions_for_node(config.fork())
+                .filter(|value| {
+                    value.scope() == &join_scope
+                        && source_execution_is_valid_for_occurrence(
+                            projection,
+                            *value,
+                            node.id(),
+                            &join_scope,
+                        )
+                })
+                .last()
+                .map(|value| value.execution().clone());
+            let Some(fork_execution) = fork_execution else {
+                return Ok(());
+            };
+            let mut completed = Vec::new();
+            let mut active = Vec::new();
+            for branch in projection.branches_for_fork(&fork_execution) {
+                match branch.state() {
+                    BranchState::Completed(outcome) => completed.push(BranchResultReference {
+                        branch: branch.branch().clone(),
+                        scope: branch.scope().reference().clone(),
+                        outcome,
+                        outputs: branch.outputs().to_vec(),
+                    }),
+                    BranchState::Active | BranchState::Cancelling => {
+                        active.push(branch.branch().clone());
+                    }
+                    BranchState::Retained => {}
                 }
-                BranchState::Retained => {}
             }
-        }
+            (completed, active)
+        };
         completed.sort_by(|left, right| left.branch.cmp(&right.branch));
         active.sort();
         let (rule, selected, retained) = match config.policy() {
@@ -655,23 +611,18 @@ impl RuntimeService {
             }
             JoinPolicy::Any if !completed.is_empty() => {
                 for branch in &active {
-                    if projection
+                    if transition
+                        .projection()
                         .branches()
                         .get(branch)
                         .is_some_and(|branch| branch.state() == BranchState::Active)
                     {
-                        self.push_projected_event(
-                            run,
-                            occurred_at,
-                            projection,
-                            events,
-                            RunEventKind::BranchCancellationRequested {
-                                branch: branch.clone(),
-                                reason: Reason::new(
-                                    "any-completion join cancelled an unfinished losing branch",
-                                )?,
-                            },
-                        )?;
+                        transition.push_event(RunEventKind::BranchCancellationRequested {
+                            branch: branch.clone(),
+                            reason: Reason::new(
+                                "any-completion join cancelled an unfinished losing branch",
+                            )?,
+                        })?;
                     }
                 }
                 (JoinRule::AnyCompletion, completed, Vec::new())
@@ -682,10 +633,7 @@ impl RuntimeService {
                     .any(|result| result.outcome == RunOutcome::Succeeded);
                 if !has_success && active.is_empty() {
                     return self.complete_deterministic_with_outcome(
-                        run,
-                        occurred_at,
-                        projection,
-                        events,
+                        transition,
                         node,
                         execution,
                         NodeOutcome::Failed,
@@ -698,23 +646,18 @@ impl RuntimeService {
                     return Ok(());
                 }
                 for branch in &active {
-                    let state = projection
+                    let state = transition
+                        .projection()
                         .branches()
                         .get(branch)
                         .map(|branch| branch.state());
                     if state == Some(BranchState::Active) {
-                        self.push_projected_event(
-                            run,
-                            occurred_at,
-                            projection,
-                            events,
-                            RunEventKind::BranchCancellationRequested {
-                                branch: branch.clone(),
-                                reason: Reason::new(
-                                    "first-success join cancelled an unfinished losing branch",
-                                )?,
-                            },
-                        )?;
+                        transition.push_event(RunEventKind::BranchCancellationRequested {
+                            branch: branch.clone(),
+                            reason: Reason::new(
+                                "first-success join cancelled an unfinished losing branch",
+                            )?,
+                        })?;
                     }
                 }
                 (JoinRule::FirstSuccess, completed, Vec::new())
@@ -727,10 +670,7 @@ impl RuntimeService {
                     .count();
                 if successes < required_usize && active.is_empty() {
                     return self.complete_deterministic_with_outcome(
-                        run,
-                        occurred_at,
-                        projection,
-                        events,
+                        transition,
                         node,
                         execution,
                         NodeOutcome::Failed,
@@ -743,23 +683,18 @@ impl RuntimeService {
                     return Ok(());
                 }
                 for branch in &active {
-                    let state = projection
+                    let state = transition
+                        .projection()
                         .branches()
                         .get(branch)
                         .map(|branch| branch.state());
                     if state == Some(BranchState::Active) {
-                        self.push_projected_event(
-                            run,
-                            occurred_at,
-                            projection,
-                            events,
-                            RunEventKind::BranchCancellationRequested {
-                                branch: branch.clone(),
-                                reason: Reason::new(
-                                    "quorum join cancelled an unfinished losing branch",
-                                )?,
-                            },
-                        )?;
+                        transition.push_event(RunEventKind::BranchCancellationRequested {
+                            branch: branch.clone(),
+                            reason: Reason::new(
+                                "quorum join cancelled an unfinished losing branch",
+                            )?,
+                        })?;
                     }
                 }
                 (
@@ -772,30 +707,22 @@ impl RuntimeService {
             }
             JoinPolicy::All | JoinPolicy::Any => return Ok(()),
         };
-        self.push_projected_event(
-            run,
-            occurred_at,
-            projection,
-            events,
-            RunEventKind::JoinSatisfied {
-                execution: execution.clone(),
-                rule,
-                branches: selected,
-                retained_branches: retained,
-            },
-        )?;
-        self.complete_deterministic(run, occurred_at, projection, events, node, execution)
+        transition.push_event(RunEventKind::JoinSatisfied {
+            execution: execution.clone(),
+            rule,
+            branches: selected,
+            retained_branches: retained,
+        })?;
+        self.complete_deterministic(transition, node, execution)
     }
 
     pub(super) fn add_ready_successors(
         &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
         revision: &BlueprintRevision,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
+        transition: &mut PlanTransition<'_>,
         scan_remaining: &mut usize,
     ) -> Result<(), RuntimeError> {
+        let projection = transition.projection();
         if run_drain_reason(projection).is_some() {
             return Ok(());
         }
@@ -881,9 +808,10 @@ impl RuntimeService {
         }
 
         for (target, scope) in candidates {
-            if events.len() >= STRUCTURED_EVENT_SOFT_LIMIT {
+            if transition.event_count() >= STRUCTURED_EVENT_SOFT_LIMIT {
                 return Ok(());
             }
+            let projection = transition.projection();
             let target_node = revision.semantic().nodes().get(&target).ok_or_else(|| {
                 RuntimeError::InvalidHistory("control edge target is absent".to_owned())
             })?;
@@ -904,39 +832,21 @@ impl RuntimeService {
                     None
                 }
             });
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::NodeBecameEligible {
-                    node: target,
-                    execution: execution.clone(),
-                    scope,
-                    mode: node_execution_mode(target_node),
-                },
-            )?;
+            transition.push_event(RunEventKind::NodeBecameEligible {
+                node: target,
+                execution: execution.clone(),
+                scope,
+                mode: node_execution_mode(target_node),
+            })?;
             if let Some(branch) = owning_branch {
-                self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    RunEventKind::BranchChildAdded { branch, execution },
-                )?;
+                transition.push_event(RunEventKind::BranchChildAdded { branch, execution })?;
             }
         }
         for execution in processed_sources {
-            if events.len() >= STRUCTURED_EVENT_SOFT_LIMIT {
+            if transition.event_count() >= STRUCTURED_EVENT_SOFT_LIMIT {
                 return Ok(());
             }
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::StructuredSuccessorScanCompleted { execution },
-            )?;
+            transition.push_event(RunEventKind::StructuredSuccessorScanCompleted { execution })?;
         }
         Ok(())
     }
@@ -1013,186 +923,5 @@ impl RuntimeService {
             None => WorkspaceValueEntry::imported(scope.clone(), key, source, value)
                 .map_err(|error| RuntimeError::InvalidTransition(error.to_string())),
         }
-    }
-
-    pub(super) fn signal_payload_entries(
-        &self,
-        projection: &RunProjection,
-        execution: &NodeExecutionId,
-        payload: &BoundedJson,
-        pending_workspace: &[WorkspaceMutation],
-    ) -> Result<Vec<WorkspaceValueEntry>, RuntimeError> {
-        let execution_view = projection.node_executions().get(execution).ok_or_else(|| {
-            RuntimeError::InvalidHistory("signal wait execution is absent".to_owned())
-        })?;
-        let revision = self.revision_for_execution(projection, execution)?;
-        let node = revision
-            .semantic()
-            .nodes()
-            .get(execution_view.node())
-            .ok_or_else(|| RuntimeError::InvalidHistory("signal wait node is absent".to_owned()))?;
-        let mut entries = Vec::with_capacity(node.data_outputs().len());
-        for port in node.data_outputs().keys() {
-            let key = ValueKey::new(port.as_str().to_owned())
-                .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
-            let entry = self.projected_output_entry(
-                projection,
-                execution_view.scope(),
-                key,
-                WorkspaceValue::Json(payload.clone()),
-                pending_workspace,
-            )?;
-            entries.push(entry);
-        }
-        Ok(entries)
-    }
-
-    pub(super) fn drain_broadcast_signals(
-        &self,
-        run: &RunId,
-        occurred_at: TimestampMillis,
-        projection: &mut RunProjection,
-        events: &mut Vec<RunEventEnvelope>,
-        workspace: &mut Vec<WorkspaceMutation>,
-    ) -> Result<(), RuntimeError> {
-        if events.len().saturating_add(1) > STRUCTURED_EVENT_SOFT_LIMIT {
-            return Ok(());
-        }
-        let Some((_, signal)) = projection
-            .pending_broadcast_signals()
-            .iter()
-            .next()
-            .cloned()
-        else {
-            return Ok(());
-        };
-        let signal_view = projection.signals().get(&signal).ok_or_else(|| {
-            RuntimeError::InvalidHistory(
-                "pending broadcast scan references an absent signal".to_owned(),
-            )
-        })?;
-        let signal_type = signal_view.signal_type().clone();
-        let correlation = signal_view.correlation().cloned();
-        let received_sequence = signal_view.received_sequence();
-        let payload = signal_view.payload().clone();
-        let original_cursor = signal_view.broadcast_scan_through().cloned();
-        let mut through = original_cursor.clone();
-        let mut exhausted = false;
-        let scan_limit = usize::from(self.config.maximum_tick_items);
-        let mut scanned = 0_usize;
-
-        while scanned < scan_limit {
-            let lower = through
-                .as_ref()
-                .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
-            let next_wait = projection
-                .waits()
-                .range((lower, std::ops::Bound::Unbounded))
-                .next()
-                .map(|(_, wait)| {
-                    (
-                        wait.execution().clone(),
-                        wait.registered_sequence(),
-                        wait.condition().clone(),
-                        wait.is_pending(),
-                    )
-                });
-            let Some((execution, registered_sequence, condition, pending)) = next_wait else {
-                exhausted = true;
-                break;
-            };
-            let consumed = projection
-                .signals()
-                .get(&signal)
-                .is_some_and(|received| received.consumed_by().contains(&execution));
-            let eligible = pending
-                && registered_sequence < received_sequence
-                && !consumed
-                && wait_signal_matches(&condition, &signal_type, correlation.as_ref());
-            if eligible {
-                let entries =
-                    self.signal_payload_entries(projection, &execution, &payload, workspace)?;
-                let event_cost = entries.len().checked_add(2).ok_or_else(|| {
-                    RuntimeError::Scheduling("broadcast signal event cost overflow".to_owned())
-                })?;
-                if event_cost.saturating_add(1) > STRUCTURED_EVENT_SOFT_LIMIT
-                    || entries.len() > MAX_WORKSPACE_MUTATIONS_PER_COMMIT
-                {
-                    return Err(RuntimeError::InvalidHistory(
-                        "one broadcast signal consumer exceeds atomic runtime bounds".to_owned(),
-                    ));
-                }
-                if events.len().saturating_add(event_cost).saturating_add(1)
-                    > STRUCTURED_EVENT_SOFT_LIMIT
-                    || workspace.len().saturating_add(entries.len())
-                        > MAX_WORKSPACE_MUTATIONS_PER_COMMIT
-                {
-                    break;
-                }
-                self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    RunEventKind::SignalConsumed {
-                        signal: signal.clone(),
-                        execution: execution.clone(),
-                    },
-                )?;
-                for entry in entries {
-                    let value = entry.reference().clone();
-                    workspace.push(WorkspaceMutation::PutValue { entry });
-                    self.push_projected_event(
-                        run,
-                        occurred_at,
-                        projection,
-                        events,
-                        RunEventKind::DeterministicOutputPublished {
-                            execution: execution.clone(),
-                            value,
-                            artifact: None,
-                        },
-                    )?;
-                }
-                self.push_projected_event(
-                    run,
-                    occurred_at,
-                    projection,
-                    events,
-                    RunEventKind::WaitSatisfied {
-                        execution: execution.clone(),
-                        cause: WaitSatisfaction::Signal {
-                            signal: signal.clone(),
-                        },
-                    },
-                )?;
-            }
-            through = Some(execution);
-            scanned = scanned.saturating_add(1);
-        }
-        if !exhausted && scanned == scan_limit {
-            let lower = through
-                .as_ref()
-                .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
-            exhausted = projection
-                .waits()
-                .range((lower, std::ops::Bound::Unbounded))
-                .next()
-                .is_none();
-        }
-        if through != original_cursor || exhausted {
-            self.push_projected_event(
-                run,
-                occurred_at,
-                projection,
-                events,
-                RunEventKind::SignalBroadcastScanAdvanced {
-                    signal,
-                    through_execution: through,
-                    complete: exhausted,
-                },
-            )?;
-        }
-        Ok(())
     }
 }

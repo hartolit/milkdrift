@@ -228,6 +228,68 @@ struct InvalidReportsCountingExecutor {
     dispatches: AtomicUsize,
 }
 
+struct TerminalThenFailingExecutor {
+    resolver: DeterministicExecutor,
+    dispatches: AtomicUsize,
+}
+
+impl TerminalThenFailingExecutor {
+    fn new(descriptor: CapabilityDescriptor) -> Self {
+        Self {
+            resolver: DeterministicExecutor::new(descriptor),
+            dispatches: AtomicUsize::new(0),
+        }
+    }
+
+    fn set_script(
+        &self,
+        operation: OperationId,
+        events: Vec<InvocationEventKind>,
+    ) -> Result<(), ExecutorError> {
+        self.resolver.set_script(operation, events)
+    }
+
+    fn dispatches(&self) -> usize {
+        self.dispatches.load(Ordering::SeqCst)
+    }
+}
+
+impl TaskExecutor for TerminalThenFailingExecutor {
+    fn resolve(
+        &self,
+        requirement: &CapabilityRequirement,
+        observed_at_unix_ms: u64,
+    ) -> Result<ResolvedCapability, ExecutorError> {
+        self.resolver.resolve(requirement, observed_at_unix_ms)
+    }
+
+    fn prepare_exact_entry<'a>(
+        &'a self,
+        dispatch: &ExecutionDispatch,
+    ) -> Result<PreparedExecution<'a>, ExecutorError> {
+        let prepared = self.resolver.prepare_exact_entry(dispatch)?;
+        let envelope = prepared.admission_envelope().clone();
+        Ok(PreparedExecution::new(
+            dispatch,
+            envelope,
+            move |dispatch, reporter| {
+                self.dispatches.fetch_add(1, Ordering::SeqCst);
+                prepared.enter(dispatch, reporter)?;
+                Err(ExecutorError::BoundaryAfterEntry(
+                    "worker failed after the terminal observation was committed".to_owned(),
+                ))
+            },
+        ))
+    }
+
+    fn cancel(
+        &self,
+        request: &CancellationRequest,
+    ) -> Result<CancellationAcknowledgement, ExecutorError> {
+        self.resolver.cancel(request)
+    }
+}
+
 impl InvalidReportsCountingExecutor {
     fn new(descriptor: CapabilityDescriptor) -> Self {
         Self {
