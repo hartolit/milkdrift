@@ -327,7 +327,7 @@ pub(crate) fn ensure_temp_inventory_ready(
                     "pending temporary artifact path contains nonempty bytes",
                 ));
             }
-            open_regular_for_read(&path)?
+            open_regular_no_follow(&path, true)?
                 .sync_all()
                 .map_err(error::io)?;
             sync_directory(&store.temp_root)?;

@@ -77,9 +77,12 @@ snapshot. Git, CI, releases, and external audits own chronology.
   protocol. It exposes blueprint and prompt-sequence validation/import, exact canonical blueprint
   export, run/controller/proposal/peer/layout control, retained-work resolution, explicit envelope
   guards and evidence, bounded pages/files/stdin, verified create-new artifact downloads, and all
-  three resumable observation feeds. Schema-1 JSON success, JSON Lines streams, bounded structured
-  failures, and exit classifications are automation contracts. Prompt-sequence stage association
-  is derived by `milkdrift-prompt-sequence` from owned typed revision metadata rather than CLI node
+  three resumable observation feeds. Schema-2 stdout envelopes cover success, failure, reconnects,
+  and final stream outcomes. Explicit wait/follow deadlines, bounded polling/reconnection, and
+  stable exits support automation. Direct internal dependencies are only control-client,
+  control-protocol, and prompt-sequence. Maintained `examples/operator` files provide a safe
+  fresh-directory starter and ordinary process/model paths. Prompt-sequence stage association
+  is derived by `milkdrift-prompt-sequence` from canonical revision documents rather than CLI node
   naming inference; command legality, authority, transitions, uncertainty, proposal policy, and
   persistence remain in their existing owners.
 - Peer protocol 1.2 is transport-neutral. The HTTP adapter owns relationship authorization,
@@ -165,7 +168,7 @@ Current exact versions are:
 | External control / authenticated cursor | 2.3 / 2; legacy forms refused |
 | Peer protocol and catalog messages | 1.2; earlier minors refused |
 | Daemon configuration | 9 TOML; JSON and earlier versions refused |
-| Layout document / CLI JSON output | 1 / 1 |
+| Layout document / CLI JSON output | 1 / 2 |
 
 ## Limitations now
 
@@ -216,23 +219,21 @@ Current exact versions are:
 
 ## Current validation/evidence snapshot
 
-- Current local Windows/MSVC snapshot (2026-09-05): formatting, all-target/all-feature checking,
-  Clippy and rustdoc with warnings denied, dependency policy checks, and release binary builds
-  pass. The persistence contract suites and exact event fixtures pass. Direct redb schema tests
-  reject each missing or mistyped member of the 63-table schema, plus unexpected tables/multimaps.
-- The full workspace suite is not green on this host. Redb's existing non-Unix directory-open
-  path fails with OS error 5 during durability syncing, including on the unmodified baseline.
-  Unix executable fixtures and Windows path assertions also prevent native qualification.
-  External evidence uses bounded streaming hashes to remove its baseline fixture stack overflow. Storage-backed
-  daemon queue, recovery, shutdown and transport evidence therefore remains unqualified here.
-  Repository ownership/cohesion checks pass; its Unix process-profile fixture does not.
-- Mutation campaigns cannot qualify failing unmutated baselines. Operational and actual-binary
-  application evidence remains unqualified on this host. Storage-backed longevity requires a
-  working filesystem durability path; projection-only scale tests remain separate proof.
-- Default and all-feature public-API inventories stay under `target/public-api`. The bounded
-  conformance recorder is a non-default test-support export; the application process harness is
-  confined to the unpublished evidence package. No schema or protocol version changes accompany
-  the test/evidence contraction. The daemon still exposes an opaque compiled configuration plan.
+- Current Windows/MSVC validation (2026-09-05) includes the CLI automation contracts, hermetic
+  process/model adapters, runtime restart/replay/uncertainty, and artifact fault/integrity suites.
+  The combined actual-daemon/CLI operator scenario and deterministic local-model application
+  scenario pass. They are deterministic product evidence, not real-model interoperability.
+- Windows directory handles now request directory access and write permission for flushing;
+  artifact publication also flushes writable handles. Storage-backed startup, artifact publication,
+  and recovery execute on this host. This does not establish power-loss durability qualification.
+- The full workspace suite remains unqualified: Unix executable fixtures fail on native Windows,
+  and a current full gate on a compatible Unix runner is still required.
+  Hosted Unix/platform gates and real external qualification remain required. No separately
+  managed real model endpoint profile was supplied for this validation.
+- Default and all-feature public-API inventories and raw verification output stay under
+  `target/readiness`. CLI JSON is schema 2 with no schema-1 switch; control protocol 2.3 and all
+  durable document versions remain unchanged. Local sequence compilation and remediation take
+  canonical bytes at the prompt-sequence boundary; the CLI has no direct storage/runtime dependencies.
 - The maintained evidence suites cover immutable/schema readers, validating constructors, hostile
   bounds, exact idempotency/conflict, crash/reopen and deterministic fault boundaries, projection
   replay, reconciliation, causal context, process/model adapters, controller lifecycle, application

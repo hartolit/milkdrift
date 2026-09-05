@@ -15,21 +15,23 @@ pub(super) async fn execute(session: &CliSession, command: &PeerCommand) -> Resu
             &session.client().peer_action(peer, "reload").await?,
         ),
         PeerCommand::Disconnect { peer } => {
-            session.confirm("disconnect and drain this peer")?;
+            session.confirm("disconnect and drain this peer").await?;
             session.output(
                 "peer.disconnect",
                 &session.client().peer_action(peer, "disconnect").await?,
             )
         }
         PeerCommand::Drain { peer } => {
-            session.confirm("drain this peer")?;
+            session.confirm("drain this peer").await?;
             session.output(
                 "peer.drain",
                 &session.client().peer_action(peer, "drain").await?,
             )
         }
         PeerCommand::Revoke { peer } => {
-            session.confirm("revoke this live peer relationship")?;
+            session
+                .confirm("revoke this live peer relationship")
+                .await?;
             session.output(
                 "peer.revoke",
                 &session.client().peer_action(peer, "revoke").await?,

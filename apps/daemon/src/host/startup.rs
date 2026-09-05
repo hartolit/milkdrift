@@ -2,8 +2,8 @@
 use super::{
     DaemonHost, HostError, LEGACY_SIDECAR_FILE, Owner, OwnerRequest, PeerRuntime,
     build_peer_runtime, capabilities, clock::ArtifactClockAdapter, clock::DaemonClockSource,
-    clock::DurableClock, clock::SystemDaemonClock, default_workspace_budget, health::Lifecycle,
-    health::SharedHealth, queue::OwnerQueue,
+    clock::DurableClock, clock::SystemDaemonClock, health::Lifecycle, health::SharedHealth,
+    queue::OwnerQueue,
 };
 use crate::{
     auth::AuthRegistry, config::AdapterConfig, config::DaemonPlan, config::DaemonPlanParts,
@@ -266,7 +266,6 @@ impl Owner {
                     evidence: EvidenceId::new("daemon-materialization")
                         .map_err(|error| error.to_string())?,
                 },
-                default_workspace_budget().map_err(|error| error.to_string())?,
             )
             .map_err(|error| error.to_string())?,
         );

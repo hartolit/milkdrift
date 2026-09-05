@@ -12,19 +12,23 @@ pub(super) async fn follow(
     output_kind: &str,
 ) -> Result<(), CliError> {
     let mut observations = session.client().subscribe(path, cursor);
+    let mut reconnects = 0_u16;
     loop {
-        tokio::select! {
-            signal = tokio::signal::ctrl_c() => {
-                signal.map_err(|error| CliError::Internal(error.to_string()))?;
-                return Ok(());
-            }
-            item = observations.next() => match item {
-                Some(Ok(observation)) => session.output(output_kind, &observation)?,
-                Some(Err(error)) if error.retryable() => {
-                    session.stream_status(true, &error)?;
+        match observations.next().await {
+            Some(Ok(observation)) => session.output(output_kind, &observation)?,
+            Some(Err(error)) if error.retryable() => {
+                if reconnects >= session.cli().max_reconnects {
+                    return Err(CliError::Deadline);
                 }
-                Some(Err(error)) => return Err(error.into()),
-                None => return Ok(()),
+                reconnects += 1;
+                session.stream_status(true, &error)?;
+            }
+            Some(Err(error)) => return Err(error.into()),
+            None => {
+                return Err(milkdrift_control_client::ClientError::Stream(
+                    "observation feed ended".to_owned(),
+                )
+                .into());
             }
         }
     }

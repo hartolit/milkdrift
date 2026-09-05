@@ -1,6 +1,5 @@
-use std::{fs, io::Write as _, path::Path};
+use std::{io::Write as _, path::Path};
 
-use milkdrift_workspace::ContentDigest;
 use serde_json::json;
 
 use crate::{ArtifactCommand, error::CliError, session::CliSession};
@@ -27,10 +26,10 @@ async fn download(
     destination: &Path,
 ) -> Result<(), CliError> {
     let metadata = session.client().artifact_metadata(artifact).await?;
-    let expected_digest = ContentDigest::from_hex(&metadata.digest).map_err(|_| {
+    let expected_digest = blake3::Hash::from_hex(&metadata.digest).map_err(|_| {
         CliError::Internal("artifact metadata has an invalid content digest".to_owned())
     })?;
-    let mut file = crate::session::create_new_destination(destination, "artifact")?;
+    let mut file = crate::output::PendingFile::create(destination)?;
     let result = async {
         let mut offset = 0_u64;
         let mut digest = blake3::Hasher::new();
@@ -67,16 +66,12 @@ async fn download(
                 "downloaded artifact size or digest did not match metadata".to_owned(),
             ));
         }
-        file.sync_all().map_err(|error| {
+        file.commit().map_err(|error| {
             CliError::Internal(format!("artifact flush failed: {:?}", error.kind()))
         })?;
         Ok::<(), CliError>(())
     }
     .await;
-    if result.is_err() {
-        drop(file);
-        let _ = fs::remove_file(destination);
-    }
     result?;
     session.output(
         "artifact.get",

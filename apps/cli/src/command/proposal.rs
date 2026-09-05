@@ -1,4 +1,3 @@
-use milkdrift_control::WorkflowProposalDocument;
 use milkdrift_control_protocol::{Command, ProposalDecision};
 
 use crate::{ProposalCommand, ProposalDecisionArgs, error::CliError, session::CliSession};
@@ -9,19 +8,14 @@ pub(super) async fn execute(
 ) -> Result<(), CliError> {
     match command {
         ProposalCommand::Submit { file } => {
-            let document = session.read_json(
-                file,
-                milkdrift_control::MAX_PROPOSAL_DOCUMENT_BYTES,
-                "proposal document",
-            )?;
-            let bytes = serde_json::to_vec(&document)
-                .map_err(|error| CliError::Internal(error.to_string()))?;
-            let proposal = WorkflowProposalDocument::from_json(&bytes)
-                .map_err(|error| CliError::Invalid(error.to_string()))?;
-            let request = session.command_request_with_revision(
-                Command::SubmitProposal { document },
-                proposal.proposal().base_revision().as_str(),
-            )?;
+            let document = session
+                .read_json(
+                    file,
+                    milkdrift_control_protocol::MAX_DOCUMENT_BYTES,
+                    "proposal document",
+                )
+                .await?;
+            let request = session.command_request(Command::SubmitProposal { document })?;
             session.output("proposal.submit", &session.client().submit(&request).await?)
         }
         ProposalCommand::List { run, limit, cursor } => {
@@ -40,15 +34,21 @@ pub(super) async fn execute(
             &session.client().proposal(run, proposal, revision).await?,
         ),
         ProposalCommand::Approve(arguments) => {
-            session.confirm("approve this exact workflow proposal")?;
+            session
+                .confirm("approve this exact workflow proposal")
+                .await?;
             decide(session, arguments, ProposalDecision::Approve).await
         }
         ProposalCommand::Reject(arguments) => {
-            session.confirm("reject this exact workflow proposal")?;
+            session
+                .confirm("reject this exact workflow proposal")
+                .await?;
             decide(session, arguments, ProposalDecision::Reject).await
         }
         ProposalCommand::Apply(arguments) => {
-            session.confirm("apply this exact workflow proposal")?;
+            session
+                .confirm("apply this exact workflow proposal")
+                .await?;
             let request = session.command_request_with_revision(
                 Command::ApplyProposal {
                     run_id: arguments.run.clone(),

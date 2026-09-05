@@ -19,8 +19,9 @@ are observations, not correctness thresholds, and are not used to conceal an unb
 - Daemon measurements spawn the built product daemon with temporary redb/artifact roots, private
   temporary bearer files, an ephemeral loopback listener, and controlled local concurrency.
 - Headless CLI evidence builds and spawns the actual `milkdrift-daemon` and `milkdrift` binaries.
-  Its temporary configuration registers the evidence executable itself as two byte-pinned process
-  profiles, uses no shell or network service, and never supplies the database path to a CLI process.
+  It validates the maintained operator starter with its scoped authority, then registers two
+  byte-pinned helper profiles and a deterministic loopback model through accepted configuration.
+  It never supplies the database path to a CLI process or composes daemon internals.
 - Local-model evidence also uses the actual daemon/CLI plus canonical configuration and blueprint
   builders. Deterministic mode enters the production OpenAI-compatible mapping through controlled
   loopback success and post-entry-close endpoints. Real mode accepts only an explicit separately
@@ -202,23 +203,18 @@ cleanup defects remain inspectable.
 
 ## Interpretation and limitations
 
-The current Windows/MSVC source has passing formatting, all-target/all-feature checking,
-Clippy/rustdoc with warnings denied, dependency checks, release binary builds, persistence
-contracts and canonical event fixtures. The direct schema lane uses real redb transactions to
-independently remove or mistype all 63 initialized tables and reject unexpected tables/multimaps.
-It does not exercise filesystem directory durability.
+The current Windows/MSVC source executes storage-backed startup, artifact publication, and
+recovery after directory and artifact flushing were corrected to use writable handles. The
+combined actual-binary operator lane and deterministic local-model lane pass, including bounded
+waiting, exact replay, restart, proposal adoption, artifact/context inspection, and retained
+uncertainty. Neither lane qualifies a real model server or filesystem power-loss durability.
 
-Full workspace and storage-backed focused suites are not qualified on this host: the existing
-non-Unix directory-open path returns OS error 5 before startup completes, also reproduced from
-the unmodified baseline. Unix executable fixtures add native Windows path failures. External
-evidence now hashes executables through a shared 64 KiB streaming buffer; its baseline stack
-overflow is removed. Repository ownership/cohesion checks pass, but its Unix process-profile
-fixture fails. Mutation campaigns cannot qualify a tree whose unmutated baseline fails; no mutant
-outcome is inferred from that refusal. Operational and actual-binary application lanes likewise
-remain unqualified here. The five storage-backed release longevity lanes require a working
-filesystem durability path; the six projection-only scale lanes are separate commands.
-A green current-source Unix gate and durability/lifecycle evidence remain necessary; prior
-measurements cannot substitute for them. Raw logs, timings and API inventories stay under `target/`.
+The full workspace suite still fails native Unix executable fixtures. The repaired symmetric
+discovery-index corruption fixture now removes the current schema tables and passes. A current
+Unix gate and hosted platform lifecycle/durability evidence remain necessary. Mutation campaigns
+cannot qualify failing unmutated baselines. Raw gate output, timings, structural measurements,
+and default/all-feature public-API inventories stay under `target/readiness`. Real-model execution
+requires an explicitly supplied separately managed endpoint profile; no profile was supplied.
 
 The harness does not claim production traffic shape, universal throughput, a memory allocator
 profile, network/TLS performance, a real provider service-level objective, or sandbox strength for

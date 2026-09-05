@@ -176,16 +176,15 @@ async fn headless_dogfood_failure_remediation_and_restart_are_durable() -> TestR
             .as_ref()
             .ok_or("base revision document is absent")?,
     )?;
-    let (_base_document, base) = BlueprintRevisionDocument::from_json(&base_bytes)?;
     let good_verification = sequence.sequence().stages[0].verification.clone();
     let proposal = build_remediation_proposal(
         &sequence,
-        &base,
+        &base_bytes,
         RemediationProposalSpec {
-            run: RunId::new("run-headless-dogfood")?,
-            observed_sequence: milkdrift_persistence::RunSequence::new(paused.sequence),
-            proposal: ProposalId::new("proposal-headless-remediation-1")?,
-            proposer: ActorRef::new("human:integration-controller")?,
+            run: "run-headless-dogfood".to_owned(),
+            observed_sequence: paused.sequence,
+            proposal: "proposal-headless-remediation-1".to_owned(),
+            proposer: "human:integration-controller".to_owned(),
             stage_id: "two".to_owned(),
             generation: 1,
             prompt: PromptSource::InlineMarkdown {

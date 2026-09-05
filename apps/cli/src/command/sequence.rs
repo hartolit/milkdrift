@@ -11,8 +11,11 @@ pub(super) async fn execute(
     command: &SequenceCommand,
 ) -> Result<(), CliError> {
     match command {
+        SequenceCommand::Compile { .. } => Err(CliError::Internal(
+            "local compilation must precede connection".to_owned(),
+        )),
         SequenceCommand::Validate { file } => {
-            let document = session.read_prompt_sequence(file)?;
+            let document = session.read_prompt_sequence(file).await?;
             let request = session.command_request(Command::ValidatePromptSequence { document })?;
             session.output(
                 "sequence.validate",
@@ -20,15 +23,18 @@ pub(super) async fn execute(
             )
         }
         SequenceCommand::Import { file } => {
-            let document = session.read_prompt_sequence(file)?;
+            let document = session.read_prompt_sequence(file).await?;
             let request = session.command_request(Command::ImportPromptSequence { document })?;
             session.output("sequence.import", &session.client().submit(&request).await?)
         }
         SequenceCommand::Show { revision } => {
-            session.output("sequence.show", &session.client().revision(revision).await?)
+            let mut read = session.client().revision(revision).await?;
+            read.document = None;
+            session.output("sequence.show", &read)
         }
         SequenceCommand::Status { run, revision } => {
-            let revision = session.client().revision(revision).await?;
+            let mut revision = session.client().revision(revision).await?;
+            revision.document = None;
             let run = session.client().run(run).await?;
             session.output(
                 "sequence.status",
@@ -68,7 +74,6 @@ pub(super) async fn execute(
 }
 
 async fn show_stage(session: &CliSession, run: &str, stage: &str) -> Result<(), CliError> {
-    crate::session::safe_identity(stage)?;
     let state = session.client().run(run).await?;
     let revision_id = state
         .revision_id
@@ -80,9 +85,7 @@ async fn show_stage(session: &CliSession, run: &str, stage: &str) -> Result<(), 
         .ok_or_else(|| CliError::Internal("revision document is unavailable".to_owned()))?;
     let bytes =
         serde_json::to_vec(&document).map_err(|error| CliError::Internal(error.to_string()))?;
-    let (_document, revision) = milkdrift_blueprint::BlueprintRevisionDocument::from_json(&bytes)
-        .map_err(|error| CliError::Internal(error.to_string()))?;
-    let node_ids = milkdrift_prompt_sequence::stage_node_ids(&revision, stage)
+    let node_ids = milkdrift_prompt_sequence::stage_node_ids(&bytes, stage)
         .map_err(|error| CliError::Invalid(error.to_string()))?;
     let nodes = state
         .nodes
@@ -114,7 +117,9 @@ async fn remediate(
     session: &CliSession,
     arguments: RemediationArguments<'_>,
 ) -> Result<(), CliError> {
-    let sequence = session.read_prompt_sequence_document(arguments.sequence_file)?;
+    let sequence = session
+        .read_prompt_sequence_document(arguments.sequence_file)
+        .await?;
     let state = session.client().run(arguments.run).await?;
     let revision_read = session.client().revision(arguments.revision).await?;
     let revision_value = revision_read
@@ -122,22 +127,16 @@ async fn remediate(
         .ok_or_else(|| CliError::Internal("revision document is unavailable".to_owned()))?;
     let revision_bytes = serde_json::to_vec(&revision_value)
         .map_err(|error| CliError::Internal(error.to_string()))?;
-    let (_document, base) =
-        milkdrift_blueprint::BlueprintRevisionDocument::from_json(&revision_bytes)
-            .map_err(|error| CliError::Invalid(error.to_string()))?;
-    let prompt = session.read_remediation_prompt(arguments.prompt)?;
+    let prompt = session.read_remediation_prompt(arguments.prompt).await?;
     let authority = session.client().authority().await?;
     let proposal_document = build_remediation_proposal(
         &sequence,
-        &base,
+        &revision_bytes,
         RemediationProposalSpec {
-            run: milkdrift_workspace::RunId::new(arguments.run.to_owned())
-                .map_err(|error| CliError::Invalid(error.to_string()))?,
-            observed_sequence: milkdrift_persistence::RunSequence::new(state.sequence),
-            proposal: milkdrift_control::ProposalId::new(arguments.proposal.to_owned())
-                .map_err(|error| CliError::Invalid(error.to_string()))?,
-            proposer: milkdrift_authority::ActorRef::new(authority.actor)
-                .map_err(|error| CliError::Invalid(error.to_string()))?,
+            run: arguments.run.to_owned(),
+            observed_sequence: state.sequence,
+            proposal: arguments.proposal.to_owned(),
+            proposer: authority.actor,
             stage_id: arguments.stage.to_owned(),
             generation: arguments.generation,
             prompt: PromptSource::InlineMarkdown { content: prompt },
@@ -155,7 +154,7 @@ async fn remediate(
         Command::SubmitProposal {
             document: proposal_value,
         },
-        base.id().as_str(),
+        arguments.revision,
     )?;
     session.output(
         "sequence.remediate",

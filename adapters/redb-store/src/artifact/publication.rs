@@ -493,7 +493,7 @@ impl ArtifactStore for RedbStore {
                 record.metadata.reference(),
                 self.max_artifact_bytes,
             )?;
-            open_regular_for_read(&temp_path)?
+            super::path::open_regular_no_follow(&temp_path, true)?
                 .sync_all()
                 .map_err(error::io)?;
             self.faults.check(FaultPoint::BeforeArtifactRename)?;

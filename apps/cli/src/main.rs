@@ -1,6 +1,6 @@
 //! Thin operator CLI over `milkdrift-control-client`.
 
-use std::{env, path::PathBuf, process::ExitCode};
+use std::{env, io::IsTerminal as _, path::PathBuf, process::ExitCode, time::Duration};
 
 use clap::{Args, Parser, Subcommand, ValueEnum, error::ErrorKind};
 use milkdrift_control_protocol::EvidenceRef;
@@ -8,6 +8,8 @@ use url::Url;
 
 mod command;
 mod error;
+mod input;
+mod output;
 mod session;
 
 use error::{CliError, emit_error, exit_code};
@@ -35,6 +37,13 @@ struct Cli {
     /// Emit stable compact JSON without colors or control sequences.
     #[arg(long, global = true)]
     json: bool,
+    /// Hard wall-clock bound including connection, input, retries and observations (default 60).
+    /// Required explicitly for run wait and noninteractive follow; maximum 86400 seconds.
+    #[arg(long, global = true, value_parser = clap::value_parser!(u64).range(1..=86_400))]
+    timeout_secs: Option<u64>,
+    /// Maximum reconnects across an observation command.
+    #[arg(long, global = true, default_value_t = 5, value_parser = clap::value_parser!(u16).range(0..=100))]
+    max_reconnects: u16,
     /// Confirm high-risk operations and permit noninteractive execution.
     #[arg(long, global = true)]
     yes: bool,
@@ -106,6 +115,11 @@ enum TopCommand {
         #[command(subcommand)]
         command: CapabilityCommand,
     },
+    /// Provider profiles projected from authorized capability generations.
+    Provider {
+        #[command(subcommand)]
+        command: ProviderCommand,
+    },
     /// Authenticated remote peer lifecycle and catalog status.
     Peer {
         #[command(subcommand)]
@@ -137,6 +151,14 @@ enum DaemonCommand {
 enum SequenceCommand {
     /// Parse and compile a JSON or Markdown sequence without storing it.
     Validate { file: PathBuf },
+    /// Compile locally to an ordinary inspectable blueprint document in a new file.
+    Compile {
+        file: PathBuf,
+        #[arg(long)]
+        author: String,
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Parse, compile, and store an ordinary immutable blueprint revision.
     Import { file: PathBuf },
     /// Inspect the exact generated ordinary blueprint revision.
@@ -177,11 +199,17 @@ enum BlueprintCommand {
     Show {
         revision: String,
         /// Emit the exact canonical stored document to stdout without a presentation wrapper.
-        #[arg(long, conflicts_with = "output")]
+        #[arg(long, conflicts_with_all = ["output", "json"])]
         document: bool,
         /// Write the exact canonical stored document to a new file.
         #[arg(long, value_name = "FILE")]
         output: Option<PathBuf>,
+    },
+    /// Export the exact canonical stored blueprint into a new explicit file.
+    Export {
+        revision: String,
+        #[arg(long)]
+        output: PathBuf,
     },
     /// List one bounded stable revision page.
     List(PageArgs),
@@ -227,6 +255,16 @@ enum RunCommand {
     List(PageArgs),
     /// Inspect compact current state.
     Show { run: String },
+    /// Wait for a terminal outcome with an explicit global --timeout-secs deadline.
+    Wait {
+        run: String,
+        #[arg(long, value_enum, default_value_t = TerminalFilter::Any)]
+        terminal: TerminalFilter,
+        #[arg(long, default_value_t = 250, value_parser = clap::value_parser!(u64).range(10..=60_000))]
+        poll_ms: u64,
+        #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..=100_000))]
+        max_polls: u32,
+    },
     /// Pause new work.
     Pause { run: String },
     /// Resume paused work.
@@ -258,6 +296,25 @@ enum RunCommand {
         #[arg(long)]
         follow: bool,
     },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum TerminalFilter {
+    Any,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+impl TerminalFilter {
+    fn matches(self, terminal: &str) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Succeeded => terminal == "succeeded",
+            Self::Failed => terminal == "failed",
+            Self::Cancelled => terminal == "cancelled",
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -383,6 +440,14 @@ enum CapabilityCommand {
 }
 
 #[derive(Subcommand)]
+enum ProviderCommand {
+    /// List authorized profile identities and their exact registered generations.
+    List,
+    /// Show generations bound to one exact provider profile.
+    Show { profile: String },
+}
+
+#[derive(Subcommand)]
 enum PeerCommand {
     /// List configured peer health and catalog expiry.
     List,
@@ -420,10 +485,24 @@ enum LayoutCommand {
     Put { file: PathBuf },
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(_) => return ExitCode::from(9),
+    };
+    let exit = runtime.block_on(run());
+    // A timed-out stdin read can still be blocked in the OS. It owns no product state;
+    // bounded runtime shutdown lets the CLI process release it on exit.
+    runtime.shutdown_timeout(Duration::from_millis(50));
+    exit
+}
+
+async fn run() -> ExitCode {
     let json_requested = env::args_os().any(|argument| argument.to_str() == Some("--json"));
-    let cli = match Cli::try_parse() {
+    let mut cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error)
             if matches!(
@@ -431,9 +510,30 @@ async fn main() -> ExitCode {
                 ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
             ) =>
         {
-            let code = error.exit_code();
-            let _ = error.print();
-            return ExitCode::from(u8::try_from(code).unwrap_or(0));
+            if json_requested {
+                let kind = if error.kind() == ErrorKind::DisplayVersion {
+                    "version"
+                } else {
+                    "help"
+                };
+                match output::encode(
+                    kind,
+                    None,
+                    "success",
+                    serde_json::json!({"text": error.to_string()}),
+                    serde_json::Value::Null,
+                    true,
+                ) {
+                    Ok(encoded) => println!("{encoded}"),
+                    Err(failure) => {
+                        emit_error(true, kind, None, &failure);
+                        return ExitCode::from(exit_code(&failure));
+                    }
+                }
+            } else {
+                let _ = error.print();
+            }
+            return ExitCode::SUCCESS;
         }
         Err(error) => {
             if json_requested {
@@ -441,7 +541,7 @@ async fn main() -> ExitCode {
                     "command-line arguments are invalid; use --help for the accepted syntax"
                         .to_owned(),
                 );
-                emit_error(true, &failure);
+                emit_error(true, "arguments", None, &failure);
                 return ExitCode::from(exit_code(&failure));
             }
             let code = error.exit_code();
@@ -450,10 +550,40 @@ async fn main() -> ExitCode {
         }
     };
     let json = cli.json;
-    match command::execute(cli).await {
+    let operation = cli.operation();
+    let command_id = cli
+        .command_id
+        .get_or_insert_with(session::generated_command_id)
+        .clone();
+    if (cli.is_wait() || (cli.is_follow() && !std::io::stdout().is_terminal()))
+        && cli.timeout_secs.is_none()
+    {
+        let error = CliError::Invalid(
+            "run wait and noninteractive follow require explicit --timeout-secs".to_owned(),
+        );
+        emit_error(json, operation, Some(&command_id), &error);
+        return ExitCode::from(2);
+    }
+    let deadline = cli
+        .timeout_secs
+        .or_else(|| (!cli.is_follow()).then_some(60));
+    let work = command::execute(cli);
+    tokio::pin!(work);
+    let result = tokio::select! {
+        result = &mut work => result,
+        () = async {
+            if let Some(seconds) = deadline { tokio::time::sleep(Duration::from_secs(seconds)).await; }
+            else { std::future::pending::<()>().await; }
+        } => Err(CliError::Deadline),
+        signal = tokio::signal::ctrl_c() => match signal {
+            Ok(()) => Err(CliError::Cancelled),
+            Err(error) => Err(CliError::Internal(error.to_string())),
+        },
+    };
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            emit_error(json, &error);
+            emit_error(json, operation, Some(&command_id), &error);
             ExitCode::from(exit_code(&error))
         }
     }

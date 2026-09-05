@@ -57,6 +57,12 @@ pub struct CompiledPromptSequence {
 }
 
 impl CompiledPromptSequence {
+    /// Encodes the generated ordinary blueprint for independent inspection or import.
+    pub fn to_canonical_json(&self) -> Result<Vec<u8>, PromptSequenceError> {
+        milkdrift_blueprint::BlueprintRevisionDocument::new(&self.revision)
+            .to_canonical_json()
+            .map_err(|error| compilation(error.to_string()))
+    }
     /// Generated ordinary immutable blueprint revision.
     #[must_use]
     pub const fn revision(&self) -> &BlueprintRevision {
@@ -87,9 +93,12 @@ impl CompiledPromptSequence {
 /// The import layer owns this association, including remediation generations. Consumers must not
 /// infer it from generated node-name prefixes.
 pub fn stage_node_ids(
-    revision: &BlueprintRevision,
+    revision_document: &[u8],
     stage_id: &str,
 ) -> Result<Vec<String>, PromptSequenceError> {
+    let (_, revision) =
+        milkdrift_blueprint::BlueprintRevisionDocument::from_json(revision_document)
+            .map_err(|error| compilation(error.to_string()))?;
     let key = ExtensionKey::new("org.milkdrift/prompt-sequence")
         .map_err(|error| compilation(error.to_string()))?;
     let provenance = revision

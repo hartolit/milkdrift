@@ -94,7 +94,10 @@ fn json_import_compiles_to_only_ordinary_blueprint_primitives() -> TestResult {
     let revision = compiled.revision();
     assert_eq!(compiled.stages().len(), 2);
     assert_eq!(
-        stage_node_ids(revision, "one")?,
+        stage_node_ids(
+            &BlueprintRevisionDocument::new(revision).to_canonical_json()?,
+            "one"
+        )?,
         vec![
             "stage-one-approval",
             "stage-one-coding",
@@ -104,7 +107,13 @@ fn json_import_compiles_to_only_ordinary_blueprint_primitives() -> TestResult {
             "stage-one-verification",
         ]
     );
-    assert!(stage_node_ids(revision, "on").is_err());
+    assert!(
+        stage_node_ids(
+            &BlueprintRevisionDocument::new(revision).to_canonical_json()?,
+            "on"
+        )
+        .is_err()
+    );
     assert_eq!(revision.semantic().nodes().len(), 13);
     assert_eq!(revision.semantic().edges().len(), 14);
     assert_eq!(
@@ -305,12 +314,12 @@ fn remediation_is_a_digest_bound_prospective_ordinary_revision() -> TestResult {
     let compiled = compile(&document, AuthorRef::new("human:sequence-test")?)?;
     let proposal = build_remediation_proposal(
         &document,
-        compiled.revision(),
+        &BlueprintRevisionDocument::new(compiled.revision()).to_canonical_json()?,
         RemediationProposalSpec {
-            run: milkdrift_workspace::RunId::new("run-remediation")?,
-            observed_sequence: milkdrift_persistence::RunSequence::new(42),
-            proposal: milkdrift_control::ProposalId::new("proposal-remediation-1")?,
-            proposer: milkdrift_authority::ActorRef::new("human:sequence-test")?,
+            run: "run-remediation".to_owned(),
+            observed_sequence: 42,
+            proposal: "proposal-remediation-1".to_owned(),
+            proposer: "human:sequence-test".to_owned(),
             stage_id: "two".to_owned(),
             generation: 1,
             prompt: PromptSource::InlineMarkdown {
@@ -367,7 +376,10 @@ fn remediation_is_a_digest_bound_prospective_ordinary_revision() -> TestResult {
             .nodes()
             .contains_key(&milkdrift_blueprint::NodeId::new("stage-two-failed")?)
     );
-    let stage_nodes = stage_node_ids(&prospective, "two")?;
+    let stage_nodes = stage_node_ids(
+        &BlueprintRevisionDocument::new(&prospective).to_canonical_json()?,
+        "two",
+    )?;
     assert!(stage_nodes.iter().any(|node| node == "stage-two-coding"));
     assert!(
         stage_nodes
@@ -394,12 +406,12 @@ fn remediation_is_a_digest_bound_prospective_ordinary_revision() -> TestResult {
     assert!(
         build_remediation_proposal(
             &altered,
-            compiled.revision(),
+            &BlueprintRevisionDocument::new(compiled.revision()).to_canonical_json()?,
             RemediationProposalSpec {
-                run: milkdrift_workspace::RunId::new("run-remediation")?,
-                observed_sequence: milkdrift_persistence::RunSequence::new(42),
-                proposal: milkdrift_control::ProposalId::new("proposal-remediation-substituted")?,
-                proposer: milkdrift_authority::ActorRef::new("human:sequence-test")?,
+                run: "run-remediation".to_owned(),
+                observed_sequence: 42,
+                proposal: "proposal-remediation-substituted".to_owned(),
+                proposer: "human:sequence-test".to_owned(),
                 stage_id: "two".to_owned(),
                 generation: 1,
                 prompt: PromptSource::InlineMarkdown {

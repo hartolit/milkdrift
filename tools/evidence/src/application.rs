@@ -281,7 +281,12 @@ impl CliRunner {
     pub fn success_with_input(&self, arguments: &[&str], stdin: &[u8]) -> EvidenceResult<Value> {
         let output = self.run(arguments, (!stdin.is_empty()).then_some(stdin))?;
         if !output.status.success() {
-            return Err(format!("CLI command failed with exit {:?}", output.status.code()).into());
+            return Err(format!(
+                "CLI command failed with exit {:?}: {}",
+                output.status.code(),
+                output.stdout
+            )
+            .into());
         }
         one_json_line(&output.stdout)
     }
@@ -326,24 +331,30 @@ pub fn assert_error(
 ) -> EvidenceResult {
     ensure(
         output.status.code() == Some(exit),
-        "CLI exit code was not stable",
+        &format!(
+            "CLI exit code was not stable: expected {exit}, observed {:?}: {}",
+            output.status.code(),
+            output.stdout
+        ),
     )?;
     ensure(
-        output.stdout.is_empty(),
-        "failed CLI command emitted success output",
+        output.stderr.is_empty(),
+        "JSON failure leaked diagnostics to stderr",
     )?;
-    let document = one_json_line(&output.stderr)?;
+    let document = one_json_line(&output.stdout)?;
     ensure(
-        document["type"] == "error",
+        document["status"] == "failure"
+            && document["schema_version"] == 2
+            && document["final"] == true,
         "failure was not a typed JSON error",
     )?;
     ensure(
-        document["value"]["classification"] == classification,
+        document["error"]["classification"] == classification,
         "failure classification changed",
     )?;
     match daemon_code {
         Some(code) => ensure(
-            document["value"]["daemon_code"] == code,
+            document["error"]["daemon_code"] == code,
             "daemon error code changed",
         ),
         None => Ok(()),
@@ -394,7 +405,11 @@ where
             }
         }
         if Instant::now() >= deadline {
-            return Err(format!("run {run} did not reach its bounded expected state").into());
+            return Err(format!(
+                "run {run} did not reach its bounded expected state: {}",
+                output.stdout
+            )
+            .into());
         }
         thread::sleep(Duration::from_millis(25));
     }
@@ -402,19 +417,9 @@ where
 
 /// Requires the CLI failed-terminal exit within a hard deadline.
 pub fn wait_for_failed_exit(runner: &CliRunner, run: &str) -> EvidenceResult {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let output = runner.run(&["run", "show", run], None)?;
-        if output.status.code() == Some(8) {
-            return assert_error(&output, 8, "failed_terminal", None);
-        }
-        if Instant::now() >= deadline {
-            return Err("failed run did not reach the stable failed-terminal exit".into());
-        }
-        thread::sleep(Duration::from_millis(25));
-    }
+    let output = runner.run(&["--timeout-secs", "5", "run", "wait", run], None)?;
+    assert_error(&output, 8, "failed_terminal", None)
 }
-
 /// Starts the product daemon with private diagnostics and owned cleanup.
 pub fn start_daemon(executable: &Path, config: &Path) -> EvidenceResult<OwnedChild> {
     OwnedChild::spawn(

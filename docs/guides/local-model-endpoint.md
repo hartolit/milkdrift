@@ -4,6 +4,11 @@ Milkdrift treats a local model server as a configured capability endpoint. It do
 weights, select a model architecture, manage inference memory, or start/stop the server. Run and
 secure the server separately.
 
+For ordinary setup and execution, use the maintained
+[headless operator path](../../examples/operator/README.md#one-separately-managed-loopback-model).
+It registers a profile, imports `model.json`, starts and waits through the CLI, and inspects exact
+attempt/context/output evidence. The evidence commands below add structural qualification.
+
 The maintained loopback profile is
 [`openai-compatible-loopback.example.json`](../../examples/local-model/openai-compatible-loopback.example.json).
 Copy it to an untracked operator directory and replace the exact model alias. Remove `streaming`

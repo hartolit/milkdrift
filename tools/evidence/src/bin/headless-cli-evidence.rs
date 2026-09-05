@@ -23,12 +23,15 @@ use milkdrift_persistence::RunSequence;
 use milkdrift_workspace::RunId;
 
 use milkdrift_evidence::application::{
-    CliRunner, EvidenceConfig, assert_error, ensure, path_text, required_text, required_u64,
-    reserve_endpoint, start_daemon, wait_for_failed_exit, wait_for_readiness, wait_for_run,
-    write_config, write_private, write_process_profile,
+    CliRunner, assert_error, ensure, path_text, required_text, required_u64, reserve_endpoint,
+    start_daemon, wait_for_failed_exit, wait_for_readiness, wait_for_run, write_private,
+    write_process_profile,
 };
 
 use milkdrift_evidence::EvidenceResult;
+
+#[path = "headless-cli-evidence/setup.rs"]
+mod setup;
 
 const TOKEN: &str = "headless-cli-evidence-token";
 const WRONG_TOKEN: &str = "headless-cli-evidence-wrong-token";
@@ -43,6 +46,9 @@ struct Arguments {
     /// Built `milkdrift` executable.
     #[arg(long)]
     cli: PathBuf,
+    /// Maintained operator example directory shipped with the source/package.
+    #[arg(long, default_value_os_t = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/operator"))]
+    examples: PathBuf,
 }
 
 fn main() {
@@ -71,6 +77,7 @@ fn main() {
 fn run(arguments: Arguments) -> EvidenceResult {
     require_executable(&arguments.daemon)?;
     require_executable(&arguments.cli)?;
+    setup::exercise_starter(&arguments.examples, &arguments.daemon, &arguments.cli)?;
     let directory = tempfile::tempdir()?;
     let endpoint = reserve_endpoint()?;
     let executable = std::env::current_exe()?;
@@ -97,18 +104,14 @@ fn run(arguments: Arguments) -> EvidenceResult {
         "unknown",
         None,
     )?;
-    let config_path = write_config(
+    let mut model = setup::MockModel::start()?;
+    let config_path = setup::configure(
+        &arguments.examples,
         directory.path(),
         endpoint,
-        &token_file,
-        ACTOR,
-        EvidenceConfig {
-            process_profiles: vec![artifact_profile, wait_profile],
-            model_profiles: Vec::new(),
-            secret_sources: Default::default(),
-            lease_duration_ms: 100,
-            authority: milkdrift_daemon::ActorGrantConfig::dangerous_administrator(),
-        },
+        &arguments.daemon,
+        vec![artifact_profile, wait_profile],
+        &model,
     )?;
     let runner = CliRunner {
         executable: arguments.cli,
@@ -118,6 +121,10 @@ fn run(arguments: Arguments) -> EvidenceResult {
     };
     let mut daemon = start_daemon(&arguments.daemon, &config_path)?;
     wait_for_readiness(&runner, &mut daemon)?;
+    if let Err(error) = setup::exercise_model(&runner, &arguments.examples, directory.path()) {
+        model.finish()?;
+        return Err(error);
+    }
 
     runner.success(&["daemon", "readiness"])?;
     runner.success(&["daemon", "authority"])?;
@@ -217,11 +224,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
     assert_error(&conflict, 4, "conflict", Some("conflict"))?;
 
     let exact = runner.run(&["blueprint", "show", &revision, "--document"], None)?;
-    ensure(exact.status.success(), "canonical blueprint stdout failed")?;
-    ensure(
-        exact.stdout.as_bytes() == primary_bytes,
-        "canonical stdout bytes changed",
-    )?;
+    assert_error(&exact, 2, "invalid_input", None)?;
     let exported_path = directory.path().join("exported-blueprint.json");
     runner.success(&[
         "blueprint",
@@ -467,7 +470,8 @@ fn run(arguments: Arguments) -> EvidenceResult {
     let entered = wait_for_run(&runner, "run-headless-uncertain", |run| {
         run["value"]["nodes"].as_array().is_some_and(|nodes| {
             nodes.iter().any(|node| {
-                node["node_id"] == "process" && node["latest_attempt"]["invocation_id"].is_string()
+                node["node_id"] == "process"
+                    && node["latest_attempt"]["entry_authorization"]["allowed"] == true
             })
         })
     })?;
@@ -478,7 +482,9 @@ fn run(arguments: Arguments) -> EvidenceResult {
         .ok_or("uncertain run omitted its attempt identity")?
         .to_owned();
     daemon.terminate()?;
-    thread::sleep(Duration::from_millis(200));
+    // Reopen after the configured five-second lease expires. Recovery must retain the
+    // unconfirmed external obligation rather than infer a result from an old lease.
+    thread::sleep(Duration::from_millis(5_200));
     daemon = start_daemon(&arguments.daemon, &config_path)?;
     wait_for_readiness(&runner, &mut daemon)?;
     let uncertain = wait_for_run(&runner, "run-headless-uncertain", |run| {
@@ -537,9 +543,24 @@ fn run(arguments: Arguments) -> EvidenceResult {
     ])?;
     wait_for_failed_exit(&runner, "run-headless-failed")?;
 
+    runner.success(&[
+        "--timeout-secs",
+        "5",
+        "run",
+        "wait",
+        "run-operator-model",
+        "--terminal",
+        "succeeded",
+    ])?;
+    ensure(
+        model.invocations.load(std::sync::atomic::Ordering::SeqCst) == 1,
+        "model was entered more than once across restart",
+    )?;
+
     daemon.terminate()?;
     let unavailable = runner.run(&["daemon", "health"], None)?;
     assert_error(&unavailable, 5, "unavailable", None)?;
+    model.finish()?;
     println!(
         "headless CLI evidence passed: actual daemon/CLI, restart, replay/conflict, proposal, artifact, and uncertainty paths"
     );

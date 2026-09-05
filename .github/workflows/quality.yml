@@ -31,3 +31,11 @@ jobs:
       - run: RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps
       - run: cargo deny check
       - run: cargo machete
+      - run: cargo tree --workspace --duplicates
+      - run: cargo test --workspace --all-features -- --list
+      - name: Build real headless applications
+        run: cargo build -p milkdrift-daemon --bin milkdrift-daemon -p milkdrift-cli --bin milkdrift -p milkdrift-evidence --bin headless-cli-evidence --bin local-model-evidence --bin evidence-process-helper
+      - name: Fresh-directory operator scenario
+        run: target/debug/headless-cli-evidence --daemon target/debug/milkdrift-daemon --cli target/debug/milkdrift --examples examples/operator
+      - name: Deterministic local-model application evidence
+        run: target/debug/local-model-evidence --daemon target/debug/milkdrift-daemon --cli target/debug/milkdrift --process-helper target/debug/evidence-process-helper

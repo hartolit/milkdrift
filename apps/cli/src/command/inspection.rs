@@ -51,19 +51,21 @@ async fn resolve(session: &CliSession, arguments: &AttemptResolve) -> Result<(),
             | ResolveAction::ResolveSucceeded
             | ResolveAction::ResolveFailed
     ) {
-        session.confirm(match action {
-            ResolveAction::Retry => {
-                "request retry under the daemon's durable idempotency and side-effect policy"
-            }
-            ResolveAction::Compensate => "create explicit compensation work",
-            ResolveAction::ResolveSucceeded => {
-                "resolve this uncertain attempt as succeeded from durable evidence"
-            }
-            ResolveAction::ResolveFailed => {
-                "resolve this uncertain attempt as failed from durable evidence"
-            }
-            ResolveAction::Query | ResolveAction::Retain => "resolve retained external work",
-        })?;
+        session
+            .confirm(match action {
+                ResolveAction::Retry => {
+                    "request retry under the daemon's durable idempotency and side-effect policy"
+                }
+                ResolveAction::Compensate => "create explicit compensation work",
+                ResolveAction::ResolveSucceeded => {
+                    "resolve this uncertain attempt as succeeded from durable evidence"
+                }
+                ResolveAction::ResolveFailed => {
+                    "resolve this uncertain attempt as failed from durable evidence"
+                }
+                ResolveAction::Query | ResolveAction::Retain => "resolve retained external work",
+            })
+            .await?;
     }
     let request = session.command_request(Command::ResolveWork {
         run_id: arguments.run.clone(),

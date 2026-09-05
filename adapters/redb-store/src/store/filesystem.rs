@@ -49,7 +49,22 @@ pub(crate) fn open_directory_no_follow(path: &Path) -> Result<File, PersistenceE
     })
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub(crate) fn open_directory_no_follow(path: &Path) -> Result<File, PersistenceError> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    // CreateFile requires BACKUP_SEMANTICS for directories; FlushFileBuffers
+    // requires write access. OPEN_REPARSE_POINT keeps the final component unfollowed.
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(error::io)
+}
+
+#[cfg(not(any(unix, windows)))]
 pub(crate) fn open_directory_no_follow(path: &Path) -> Result<File, PersistenceError> {
     File::open(path).map_err(error::io)
 }
@@ -109,5 +124,24 @@ pub(crate) fn ensure_regular_file_or_absent(
         ))),
         Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(cause) => Err(error::io(cause)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owned_directory_can_be_created_reopened_and_synced() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("owned");
+        prepare_owned_directory(&path, "fixture")?;
+        sync_owned_directory(&path)?;
+        prepare_owned_directory(&path, "fixture")?;
+        let file = root.path().join("regular");
+        fs::write(&file, b"fixture")?;
+        assert!(sync_owned_directory(&file).is_err());
+        Ok(())
     }
 }

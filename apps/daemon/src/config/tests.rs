@@ -9,6 +9,30 @@ fn fixture_document() -> Result<DaemonConfig, Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn maintained_operator_configuration_uses_the_production_reader()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/operator/daemon.toml");
+    let plan = DaemonConfig::load(&path)?;
+    let document: DaemonConfig = toml::from_str(&fs::read_to_string(&path)?)?;
+    assert!(plan.bind().ip().is_loopback());
+    assert!(!document.actors[0].authority.dangerous_allow_broad_authority);
+    assert_eq!(document.runtime, RuntimeHostConfig::default());
+    assert_eq!(document.shutdown, ShutdownConfig::default());
+    assert_eq!(
+        document.application_receipts,
+        ApplicationReceiptConfig::default()
+    );
+    assert!(document.adapters.process_profiles.is_empty());
+    assert!(document.adapters.model_profiles.is_empty());
+    assert_eq!(
+        plan.storage.data_root,
+        path.parent().ok_or("parent")?.canonicalize()?.join("data")
+    );
+    Ok(())
+}
+
+#[test]
 fn schema_v9_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     let plan = DaemonConfig::load(&fixture_path())?;
     let document = fixture_document()?;
@@ -49,6 +73,7 @@ fn schema_v9_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn st
         fixture_path()
             .parent()
             .ok_or("fixture parent absent")?
+            .canonicalize()?
             .join("test-data")
     );
     assert!(plan.normalized_digest().starts_with("b3_"));

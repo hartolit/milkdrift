@@ -1,10 +1,9 @@
 use super::{
-    AgentProfile, Arc, ArtifactEvidence, AtomicUsize, BTreeSet, BlueprintRevisionDocument,
-    CapabilityId, Command, CommandRequest, ControlClient, DaemonLaunch, Duration, HarnessResult,
-    MODEL_RUN, MODEL_WORKFLOW, ModelResponseDocument, Mutex, Ordering, PROCESS_RUN,
-    PROCESS_WORKFLOW, Path, PromptSource, ProtocolVersion, RemediationProposalSpec,
-    RestartEvidence, ScenarioEvidence, Value, build_remediation_proposal, client_error,
-    decode_json, json, workflows,
+    AgentProfile, Arc, ArtifactEvidence, AtomicUsize, BTreeSet, CapabilityId, Command,
+    CommandRequest, ControlClient, DaemonLaunch, Duration, HarnessResult, MODEL_RUN,
+    MODEL_WORKFLOW, ModelResponseDocument, Mutex, Ordering, PROCESS_RUN, PROCESS_WORKFLOW, Path,
+    PromptSource, ProtocolVersion, RemediationProposalSpec, RestartEvidence, ScenarioEvidence,
+    Value, build_remediation_proposal, client_error, decode_json, json, workflows,
 };
 
 pub(super) async fn run_process_scenario(
@@ -105,23 +104,17 @@ pub(super) async fn run_process_scenario(
         .document
         .as_ref()
         .ok_or_else(|| "process base revision document is absent".to_owned())?;
-    let (_, base) = BlueprintRevisionDocument::from_json(
-        &serde_json::to_vec(base_value).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
     let mut good_verification = sequence.sequence().stages[0].verification.clone();
     good_verification.profile.capability =
         CapabilityId::new("evidence-verifier-good").map_err(|error| error.to_string())?;
     let proposal = build_remediation_proposal(
         &sequence,
-        &base,
+        &serde_json::to_vec(base_value).map_err(|error| error.to_string())?,
         RemediationProposalSpec {
-            run: milkdrift_workspace::RunId::new(PROCESS_RUN).map_err(|error| error.to_string())?,
-            observed_sequence: milkdrift_persistence::RunSequence::new(paused.sequence),
-            proposal: milkdrift_control::ProposalId::new("proposal-external-remediation-1")
-                .map_err(|error| error.to_string())?,
-            proposer: milkdrift_authority::ActorRef::new("human:external-process")
-                .map_err(|error| error.to_string())?,
+            run: PROCESS_RUN.to_owned(),
+            observed_sequence: paused.sequence,
+            proposal: "proposal-external-remediation-1".to_owned(),
+            proposer: "human:external-process".to_owned(),
             stage_id: "repair".to_owned(),
             generation: 1,
             prompt: PromptSource::InlineMarkdown {

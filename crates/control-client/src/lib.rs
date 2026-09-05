@@ -86,6 +86,10 @@ impl ClientConfig {
             ));
         }
         if self.endpoint.cannot_be_a_base()
+            || !self.endpoint.username().is_empty()
+            || self.endpoint.password().is_some()
+            || self.endpoint.query().is_some()
+            || self.endpoint.fragment().is_some()
             || self.request_timeout.is_zero()
             || self.max_artifact_range_bytes == 0
             || self.max_artifact_range_bytes > 256 * 1024 * 1024
@@ -454,12 +458,11 @@ impl ControlClient {
             .and_then(|value| value.rsplit('/').next())
             .and_then(|value| value.parse().ok())
             .unwrap_or(u64::try_from(requested).unwrap_or(u64::MAX));
-        let bytes = response.bytes().await.map_err(redacted_transport)?.to_vec();
-        if bytes.len() > requested || bytes.len() > self.config.max_artifact_range_bytes {
-            return Err(ClientError::Protocol(ProtocolError::Bounds(
-                "artifact response exceeded requested range".to_owned(),
-            )));
-        }
+        let bytes = bounded_body(
+            response,
+            requested.min(self.config.max_artifact_range_bytes),
+        )
+        .await?;
         let returned_end =
             start.saturating_add(u64::try_from(bytes.len()).unwrap_or(0).saturating_sub(1));
         Ok(ArtifactRange {
@@ -497,6 +500,10 @@ impl ControlClient {
         let client = self.clone();
         let feed_path = feed_path.into();
         Box::pin(async_stream::stream! {
+            if let Err(error) = validate_feed_path(&feed_path) {
+                yield Err(error);
+                return;
+            }
             let mut resume = cursor;
             loop {
                 let mut path = feed_path.clone();
@@ -536,11 +543,11 @@ impl ControlClient {
                             break;
                         }
                     };
-                    buffer.extend_from_slice(&chunk);
-                    if buffer.len() > milkdrift_control_protocol::MAX_DOCUMENT_BYTES * 2 {
+                    if buffer.len().saturating_add(chunk.len()) > milkdrift_control_protocol::MAX_DOCUMENT_BYTES * 2 {
                         yield Err(ClientError::Stream("SSE frame exceeds client bound".to_owned()));
                         return;
                     }
+                    buffer.extend_from_slice(&chunk);
                     while let Some(boundary) = find_sse_boundary(&buffer) {
                         let frame = buffer.drain(..boundary).collect::<Vec<_>>();
                         drain_sse_boundary(&mut buffer);
@@ -557,8 +564,12 @@ impl ControlClient {
                         }
                     }
                 }
-                if !reconnect && buffer.is_empty() {
-                    yield Err(ClientError::Stream("server closed the observation stream".to_owned()));
+                if !reconnect {
+                    if !buffer.is_empty() {
+                        yield Err(ClientError::Stream("server truncated an observation frame".to_owned()));
+                        return;
+                    }
+                    yield Err(ClientError::Transport("server closed the observation stream".to_owned()));
                 }
                 tokio::time::sleep(client.config.retry_delay).await;
             }
@@ -635,7 +646,7 @@ async fn decode_response<T: DeserializeOwned>(
     if !response.status().is_success() {
         return Err(read_error(response).await);
     }
-    let bytes = response.bytes().await.map_err(redacted_transport)?;
+    let bytes = bounded_body(response, milkdrift_control_protocol::MAX_DOCUMENT_BYTES).await?;
     let envelope: ResponseEnvelope<T> = decode_json(&bytes)?;
     envelope.protocol.negotiate()?;
     Ok(envelope.value)
@@ -643,7 +654,7 @@ async fn decode_response<T: DeserializeOwned>(
 
 async fn read_error(response: reqwest::Response) -> ClientError {
     let status = response.status();
-    match response.bytes().await {
+    match bounded_body(response, milkdrift_control_protocol::MAX_DOCUMENT_BYTES).await {
         Ok(bytes) => match decode_json::<ErrorEnvelope>(&bytes) {
             Ok(error) => ClientError::Api(error),
             Err(_) => ClientError::Transport(format!(
@@ -656,6 +667,30 @@ async fn read_error(response: reqwest::Response) -> ClientError {
             status.as_u16()
         )),
     }
+}
+
+async fn bounded_body(response: reqwest::Response, maximum: usize) -> Result<Vec<u8>, ClientError> {
+    let oversized = || {
+        ClientError::Protocol(ProtocolError::Bounds(
+            "response exceeds client byte bound".to_owned(),
+        ))
+    };
+    if response
+        .content_length()
+        .is_some_and(|size| size > maximum as u64)
+    {
+        return Err(oversized());
+    }
+    let mut chunks = response.bytes_stream();
+    let mut body = Vec::new();
+    while let Some(chunk) = chunks.next().await {
+        let chunk = chunk.map_err(redacted_transport)?;
+        if body.len().saturating_add(chunk.len()) > maximum {
+            return Err(oversized());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 fn redacted_transport(error: reqwest::Error) -> ClientError {
@@ -687,6 +722,22 @@ fn path_segment(value: &str) -> Result<String, ClientError> {
         ));
     }
     Ok(value.to_owned())
+}
+
+fn validate_feed_path(path: &str) -> Result<(), ClientError> {
+    if matches!(path, "v1/stream/health" | "v1/stream/capabilities") {
+        return Ok(());
+    }
+    if let Some(run) = path
+        .strip_prefix("v1/runs/")
+        .and_then(|path| path.strip_suffix("/stream"))
+    {
+        path_segment(run)?;
+        return Ok(());
+    }
+    Err(ClientError::Configuration(
+        "unsupported observation feed".to_owned(),
+    ))
 }
 
 fn push_query(path: &mut String, name: &str, value: Option<&str>) -> Result<(), ClientError> {

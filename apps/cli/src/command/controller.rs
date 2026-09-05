@@ -25,7 +25,9 @@ pub(super) async fn execute(
             controller_execution,
             decision_id,
         } => {
-            session.confirm("continue this exact controller checkpoint")?;
+            session
+                .confirm("continue this exact controller checkpoint")
+                .await?;
             let request = session.command_request(Command::ContinueController {
                 run_id: run.clone(),
                 controller_execution: controller_execution.clone(),

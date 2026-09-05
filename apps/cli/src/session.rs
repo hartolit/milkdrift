@@ -3,7 +3,7 @@
 use std::{
     cell::Cell,
     env, fs,
-    io::{self, Read as _, Write as _},
+    io::{self, BufRead as _, IsTerminal as _, Read as _, Write as _},
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -21,8 +21,6 @@ use serde_json::{Value, json};
 
 use crate::{Cli, error::CliError};
 
-const JSON_OUTPUT_SCHEMA_VERSION: u32 = 1;
-
 pub(crate) struct CliSession {
     cli: Cli,
     client: ControlClient,
@@ -31,7 +29,12 @@ pub(crate) struct CliSession {
 
 impl CliSession {
     pub(crate) async fn connect(cli: Cli) -> Result<Self, CliError> {
-        let credential = load_credential(&cli)?;
+        let token_file = cli.token_file.clone();
+        let token_env = cli.token_env.clone();
+        let credential =
+            tokio::task::spawn_blocking(move || load_credential(token_file.as_deref(), &token_env))
+                .await
+                .map_err(|_| CliError::Internal("credential reader failed".to_owned()))??;
         let client = ControlClient::new(ClientConfig::new(cli.endpoint.clone()), credential)?;
         let _ = client.negotiate().await?;
         Ok(Self {
@@ -80,37 +83,43 @@ impl CliSession {
             .map_err(|error| CliError::Invalid(error.to_string()))
     }
 
-    pub(crate) fn read_json(
+    pub(crate) async fn read_json(
         &self,
         path: &Path,
         maximum: usize,
         kind: &str,
     ) -> Result<Value, CliError> {
-        let bytes = self.read_bounded(path, maximum.min(MAX_DOCUMENT_BYTES), kind)?;
+        let bytes = self
+            .read_bounded(path, maximum.min(MAX_DOCUMENT_BYTES), kind)
+            .await?;
         milkdrift_control_protocol::decode_json(&bytes)
             .map_err(|error| CliError::Invalid(error.to_string()))
     }
 
-    pub(crate) fn read_prompt_sequence(&self, path: &Path) -> Result<Value, CliError> {
-        serde_json::to_value(self.read_prompt_sequence_document(path)?)
+    pub(crate) async fn read_prompt_sequence(&self, path: &Path) -> Result<Value, CliError> {
+        serde_json::to_value(self.read_prompt_sequence_document(path).await?)
             .map_err(|error| CliError::Internal(error.to_string()))
     }
 
-    pub(crate) fn read_prompt_sequence_document(
+    pub(crate) async fn read_prompt_sequence_document(
         &self,
         path: &Path,
     ) -> Result<PromptSequenceDocument, CliError> {
-        let bytes = self.read_bounded(
-            path,
-            MAX_PROMPT_SEQUENCE_DOCUMENT_BYTES.min(MAX_DOCUMENT_BYTES),
-            "prompt-sequence document",
-        )?;
+        let bytes = self
+            .read_bounded(
+                path,
+                MAX_PROMPT_SEQUENCE_DOCUMENT_BYTES.min(MAX_DOCUMENT_BYTES),
+                "prompt-sequence document",
+            )
+            .await?;
         PromptSequenceDocument::from_bytes(&bytes)
             .map_err(|error| CliError::Invalid(error.to_string()))
     }
 
-    pub(crate) fn read_remediation_prompt(&self, path: &Path) -> Result<String, CliError> {
-        let bytes = self.read_bounded(path, MAX_INLINE_PROMPT_BYTES, "remediation prompt")?;
+    pub(crate) async fn read_remediation_prompt(&self, path: &Path) -> Result<String, CliError> {
+        let bytes = self
+            .read_bounded(path, MAX_INLINE_PROMPT_BYTES, "remediation prompt")
+            .await?;
         if bytes.is_empty() || bytes.len() > MAX_INLINE_PROMPT_BYTES {
             return Err(CliError::Invalid(format!(
                 "remediation prompt must contain 1..={MAX_INLINE_PROMPT_BYTES} bytes"
@@ -120,8 +129,10 @@ impl CliSession {
             .map_err(|_| CliError::Invalid("remediation prompt is not UTF-8".to_owned()))
     }
 
-    pub(crate) fn read_layout(&self, path: &Path) -> Result<LayoutDocument, CliError> {
-        let bytes = self.read_bounded(path, MAX_LAYOUT_BYTES, "layout document")?;
+    pub(crate) async fn read_layout(&self, path: &Path) -> Result<LayoutDocument, CliError> {
+        let bytes = self
+            .read_bounded(path, MAX_LAYOUT_BYTES, "layout document")
+            .await?;
         milkdrift_control_protocol::decode_json(&bytes)
             .map_err(|error| CliError::Invalid(error.to_string()))
     }
@@ -137,15 +148,15 @@ impl CliSession {
                     "use --document, not --output -, to emit a document to stdout".to_owned(),
                 ));
             }
-            let mut file = create_new_destination(destination, "document")?;
-            if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
-                drop(file);
-                let _ = fs::remove_file(destination);
-                return Err(CliError::Internal(format!(
-                    "canonical document write failed: {:?}",
-                    error.kind()
-                )));
-            }
+            let mut file = crate::output::PendingFile::create(destination)?;
+            file.write_all(bytes)
+                .and_then(|()| file.commit())
+                .map_err(|error| {
+                    CliError::Internal(format!(
+                        "canonical document write failed: {:?}",
+                        error.kind()
+                    ))
+                })?;
             return Ok(());
         }
         let mut stdout = io::stdout().lock();
@@ -160,112 +171,52 @@ impl CliSession {
             })
     }
 
-    pub(crate) fn confirm(&self, operation: &str) -> Result<(), CliError> {
-        confirm(&self.cli, operation)
+    pub(crate) async fn confirm(&self, operation: &str) -> Result<(), CliError> {
+        confirm(&self.cli, operation).await
     }
 
     pub(crate) fn output<T: Serialize>(&self, kind: &str, value: &T) -> Result<(), CliError> {
-        println!("{}", encode_output(&self.cli, kind, value)?);
-        Ok(())
+        crate::output::success(&self.cli, kind, value)
     }
 
     pub(crate) fn stream_status(
         &self,
         retryable: bool,
-        error: &impl std::fmt::Display,
+        _error: &impl std::fmt::Display,
     ) -> Result<(), CliError> {
         if self.cli.json {
             println!(
                 "{}",
-                serde_json::to_string(&json!({
-                "schema_version": JSON_OUTPUT_SCHEMA_VERSION,
-                "type": "stream_status",
-                "status": "reconnecting",
-                "retryable": retryable
-                }))
-                .map_err(|encode| CliError::Internal(encode.to_string()))?
+                crate::output::encode(
+                    self.cli.operation(),
+                    self.cli.command_id.as_deref(),
+                    "reconnecting",
+                    Value::Null,
+                    json!({"classification":"unavailable", "code":"unavailable",
+                        "daemon_code":null, "detail":"observation transport interrupted",
+                        "retryable": retryable}),
+                    false
+                )?
             );
         } else {
-            eprintln!("observation stream: {error}; reconnecting when permitted");
+            eprintln!("observation stream reconnecting within configured bounds");
         }
         Ok(())
     }
-
-    fn read_bounded(&self, path: &Path, maximum: usize, kind: &str) -> Result<Vec<u8>, CliError> {
-        let mut bytes = Vec::new();
-        if path == Path::new("-") {
-            if self.stdin_consumed.replace(true) {
-                return Err(CliError::Invalid(
-                    "stdin may supply only one bounded document".to_owned(),
-                ));
-            }
-            let limit = u64::try_from(maximum).unwrap_or(u64::MAX).saturating_add(1);
-            io::stdin()
-                .lock()
-                .take(limit)
-                .read_to_end(&mut bytes)
-                .map_err(|error| {
-                    CliError::Invalid(format!("{kind} stdin read failed: {:?}", error.kind()))
-                })?;
-        } else {
-            let file = fs::File::open(path).map_err(|error| {
-                CliError::Invalid(format!("{kind} file read failed: {:?}", error.kind()))
-            })?;
-            let metadata = file.metadata().map_err(|error| {
-                CliError::Invalid(format!("{kind} metadata read failed: {:?}", error.kind()))
-            })?;
-            if !metadata.is_file() {
-                return Err(CliError::Invalid(format!(
-                    "{kind} input must be a regular file or -"
-                )));
-            }
-            if metadata.len() > u64::try_from(maximum).unwrap_or(u64::MAX) {
-                return Err(CliError::Invalid(format!("{kind} exceeds {maximum} bytes")));
-            }
-            file.take(u64::try_from(maximum).unwrap_or(u64::MAX).saturating_add(1))
-                .read_to_end(&mut bytes)
-                .map_err(|error| {
-                    CliError::Invalid(format!("{kind} file read failed: {:?}", error.kind()))
-                })?;
+    async fn read_bounded(
+        &self,
+        path: &Path,
+        maximum: usize,
+        kind: &str,
+    ) -> Result<Vec<u8>, CliError> {
+        if path == Path::new("-") && self.stdin_consumed.replace(true) {
+            return Err(CliError::Invalid(
+                "stdin may supply only one bounded document".to_owned(),
+            ));
         }
-        if bytes.len() > maximum {
-            return Err(CliError::Invalid(format!("{kind} exceeds {maximum} bytes")));
-        }
-        Ok(bytes)
+        crate::input::read_bounded(path, maximum, kind).await
     }
 }
-
-pub(crate) fn create_new_destination(destination: &Path, kind: &str) -> Result<fs::File, CliError> {
-    if destination.file_name().is_none() {
-        return Err(CliError::Invalid(format!(
-            "{kind} destination must name a file"
-        )));
-    }
-    fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(destination)
-        .map_err(|error| {
-            CliError::Invalid(format!(
-                "{kind} destination must not already exist and must be writable: {:?}",
-                error.kind()
-            ))
-        })
-}
-
-pub(crate) fn safe_identity(value: &str) -> Result<(), CliError> {
-    if value.is_empty()
-        || value.len() > 256
-        || !value.is_ascii()
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
-    {
-        return Err(CliError::Invalid("resource identity is invalid".to_owned()));
-    }
-    Ok(())
-}
-
 fn command_request(
     cli: &Cli,
     command: Command,
@@ -297,7 +248,7 @@ fn command_request(
     Ok(request)
 }
 
-fn generated_command_id() -> String {
+pub(crate) fn generated_command_id() -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
@@ -306,8 +257,18 @@ fn generated_command_id() -> String {
     format!("cli-{millis}-{}", std::process::id())
 }
 
-fn load_credential(cli: &Cli) -> Result<BearerCredential, CliError> {
-    let mut value = if let Some(path) = &cli.token_file {
+fn load_credential(
+    token_file: Option<&Path>,
+    token_env: &str,
+) -> Result<BearerCredential, CliError> {
+    let mut value = if let Some(path) = token_file {
+        let metadata = fs::metadata(path)
+            .map_err(|_| CliError::Invalid("credential file unavailable".to_owned()))?;
+        if !metadata.is_file() || metadata.len() > 4_097 {
+            return Err(CliError::Invalid(
+                "credential file is not a bounded regular file".to_owned(),
+            ));
+        }
         let file = fs::File::open(path).map_err(|error| {
             CliError::Invalid(format!("credential file unavailable: {:?}", error.kind()))
         })?;
@@ -343,7 +304,7 @@ fn load_credential(cli: &Cli) -> Result<BearerCredential, CliError> {
         String::from_utf8(bytes)
             .map_err(|_| CliError::Invalid("credential file is not UTF-8".to_owned()))?
     } else {
-        env::var(&cli.token_env).map_err(|_| {
+        env::var(token_env).map_err(|_| {
             CliError::Invalid(
                 "configured credential environment reference is unavailable".to_owned(),
             )
@@ -358,51 +319,42 @@ fn load_credential(cli: &Cli) -> Result<BearerCredential, CliError> {
     BearerCredential::new(value).map_err(CliError::from)
 }
 
-fn confirm(cli: &Cli, operation: &str) -> Result<(), CliError> {
+async fn confirm(cli: &Cli, operation: &str) -> Result<(), CliError> {
     if cli.yes {
         return Ok(());
     }
-    if cli.json {
+    if cli.json || !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(CliError::Invalid(
-            "high-risk JSON-mode commands require --yes".to_owned(),
+            "high-risk noninteractive commands require --yes".to_owned(),
         ));
     }
     eprint!("Confirm {operation}? Type 'yes': ");
     io::stderr()
         .flush()
         .map_err(|error| CliError::Internal(error.to_string()))?;
-    let mut answer = String::new();
-    io::stdin()
-        .read_line(&mut answer)
-        .map_err(|error| CliError::Internal(error.to_string()))?;
+    let answer = tokio::task::spawn_blocking(|| {
+        let mut answer = String::new();
+        io::stdin()
+            .lock()
+            .take(5)
+            .read_line(&mut answer)
+            .map(|_| answer)
+    })
+    .await
+    .map_err(|error| CliError::Internal(error.to_string()))?
+    .map_err(|error| CliError::Internal(error.to_string()))?;
     if answer.trim() == "yes" {
         Ok(())
     } else {
         Err(CliError::Invalid("operation was not confirmed".to_owned()))
     }
 }
-
-fn encode_output<T: Serialize>(cli: &Cli, kind: &str, value: &T) -> Result<String, CliError> {
-    let document = json!({
-        "schema_version": JSON_OUTPUT_SCHEMA_VERSION,
-        "type": kind,
-        "value": value,
-    });
-    if cli.json {
-        serde_json::to_string(&document)
-    } else {
-        serde_json::to_string_pretty(&document)
-    }
-    .map_err(|error| CliError::Internal(error.to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use clap::Parser as _;
     use milkdrift_control_protocol::Command;
-    use serde_json::json;
 
-    use super::{JSON_OUTPUT_SCHEMA_VERSION, command_request, confirm, encode_output};
+    use super::{command_request, confirm};
     use crate::Cli;
 
     #[test]
@@ -462,25 +414,10 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn json_output_schema_is_stable_and_has_no_control_characters()
-    -> Result<(), Box<dyn std::error::Error>> {
+    #[tokio::test]
+    async fn high_risk_json_mode_requires_yes() -> Result<(), Box<dyn std::error::Error>> {
         let cli = Cli::try_parse_from(["milkdrift", "--json", "daemon", "health"])?;
-        let value = encode_output(&cli, "fixture", &json!({"ok": true}))?;
-        assert_eq!(
-            value,
-            format!(
-                r#"{{"schema_version":{JSON_OUTPUT_SCHEMA_VERSION},"type":"fixture","value":{{"ok":true}}}}"#
-            )
-        );
-        assert!(!value.contains('\u{1b}'));
-        Ok(())
-    }
-
-    #[test]
-    fn high_risk_json_mode_requires_yes() -> Result<(), Box<dyn std::error::Error>> {
-        let cli = Cli::try_parse_from(["milkdrift", "--json", "daemon", "health"])?;
-        assert!(confirm(&cli, "test").is_err());
+        assert!(confirm(&cli, "test").await.is_err());
         Ok(())
     }
 
@@ -488,8 +425,8 @@ mod tests {
     fn artifact_destination_must_be_new() -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let destination = directory.path().join("artifact.bin");
-        drop(super::create_new_destination(&destination, "artifact")?);
-        assert!(super::create_new_destination(&destination, "artifact").is_err());
+        crate::output::PendingFile::create(&destination)?.commit()?;
+        assert!(crate::output::PendingFile::create(&destination).is_err());
         Ok(())
     }
 }

@@ -33,3 +33,4 @@ Do not write an ADR for a local refactor, a choice obvious from a small piece of
 - [0027 — Production continuous controllers require final-entry resource reservations](0027-controller-final-entry-reservations.md)
 - [0028 — TOML daemon configuration compiles into narrow plans](0028-toml-compiled-daemon-configuration.md)
 - [0029 — One daemon clock with durable rollback evidence](0029-durable-daemon-clock-boundary.md)
+- [0030 — Bounded headless operator contract](0030-bounded-headless-operator-contract.md)

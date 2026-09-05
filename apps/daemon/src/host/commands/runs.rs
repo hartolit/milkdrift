@@ -25,6 +25,22 @@ pub(super) fn start(
         run.clone(),
         ScopeId::new("root").map_err(|error| invalid(&error.to_string()))?,
     );
+    let defaults = default_workspace_budget().map_err(|error| invalid(&error.to_string()))?;
+    let artifact_bytes = session
+        .grant
+        .budget()
+        .artifact_bytes
+        .unwrap_or(0)
+        .min(defaults.max_total_artifact_bytes());
+    let workspace_budget = milkdrift_workspace::WorkspaceBudget::new(
+        defaults.max_value_versions(),
+        defaults.max_inline_bytes_per_value(),
+        defaults.max_total_inline_bytes(),
+        defaults.max_artifacts(),
+        defaults.max_bytes_per_artifact().min(artifact_bytes),
+        artifact_bytes,
+    )
+    .map_err(|error| invalid(&error.to_string()))?;
     let create_sequence = owner.execute_control(
         session,
         request,
@@ -34,8 +50,7 @@ pub(super) fn start(
             workflow,
             revision,
             root_scope,
-            workspace_budget: default_workspace_budget()
-                .map_err(|error| invalid(&error.to_string()))?,
+            workspace_budget,
             inputs: Vec::new(),
         },
         "create",

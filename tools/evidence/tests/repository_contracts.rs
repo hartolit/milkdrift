@@ -66,8 +66,40 @@ fn root() -> TestResult<PathBuf> {
     Ok(path.to_path_buf())
 }
 
+#[test]
+fn cli_depends_only_on_external_control_and_local_authoring_owners() -> TestResult {
+    let manifest = read(root()?.join("apps/cli/Cargo.toml"))?;
+    let dependencies = manifest_section(&manifest, "[dependencies]")
+        .lines()
+        .filter_map(|line| line.trim().strip_suffix(".workspace = true"))
+        .filter(|name| name.starts_with("milkdrift-"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        dependencies,
+        BTreeSet::from([
+            "milkdrift-control-client",
+            "milkdrift-control-protocol",
+            "milkdrift-prompt-sequence"
+        ])
+    );
+    let scenario = read(root()?.join("tools/evidence/src/bin/headless-cli-evidence.rs"))?;
+    assert!(!scenario.contains("milkdrift_daemon::"));
+    assert!(!read(root()?.join("README.md"))?.contains("apps/daemon/tests/fixtures"));
+    Ok(())
+}
+
 fn read(path: impl AsRef<Path>) -> TestResult<String> {
     Ok(fs::read_to_string(path)?)
+}
+
+#[test]
+fn maintained_operator_blueprints_are_exact_current_documents() -> TestResult {
+    for name in ["starter", "process", "model"] {
+        let bytes = fs::read(root()?.join(format!("examples/operator/{name}.json")))?;
+        let (document, _) = milkdrift_blueprint::BlueprintRevisionDocument::from_json(&bytes)?;
+        assert_eq!(document.to_canonical_json()?, bytes);
+    }
+    Ok(())
 }
 
 fn numeric_const(relative: &str, name: &str) -> TestResult<u64> {

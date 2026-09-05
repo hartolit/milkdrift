@@ -963,9 +963,8 @@ fn run_uncertainty_scenario(
     )?;
     ensure(
         !retry.status.success()
-            && retry.stdout.is_empty()
-            && retry.stderr.contains("\"classification\":\"conflict\"")
-            && retry.stderr.contains("manual retry"),
+            && retry.stderr.is_empty()
+            && retry.stdout.contains("\"classification\":\"conflict\""),
         "authorized retry bypassed unsupported provider idempotency",
     )?;
     let retain_state = runner.success(&["run", "show", FAILURE_RUN])?;
@@ -1001,6 +1000,8 @@ fn spawn_timeline_follow(runner: &CliRunner, run: &str) -> EvidenceResult<Timeli
             .arg("--token-file")
             .arg(&runner.token_file)
             .arg("--json")
+            .arg("--timeout-secs")
+            .arg("60")
             .args(["run", "timeline", run, "--limit", "100", "--follow"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

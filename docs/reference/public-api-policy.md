@@ -47,7 +47,7 @@ package entry point. Consumers otherwise import the canonical owner directly.
 | `milkdrift-redb-store` | Workspace adapter implementations and configuration. Fault injection and mutation inspection are test-only under `test-admin`. |
 | `milkdrift-local-secret` | Workspace adapter contract for explicitly configured environment/restricted-file secret references; locations, values, and environment enumeration are not exposed. |
 | `milkdrift-daemon` | Workspace application boundary used by its executable, integration tests, and evidence. Its HTTP router and read projections are internal. |
-| `milkdrift-cli` | No library surface. Its command behavior, schema-1 success/failure JSON, and schema-1 JSON Lines stream wrappers are external application contracts. |
+| `milkdrift-cli` | No library surface. Its command behavior, schema-2 success/failure JSON, and schema-2 JSON Lines stream wrappers are external application contracts. |
 | `milkdrift-evidence` | Unpublished development/test-only contract, including the shared actual-binary application harness and fixture request reader. Reports belong under `target/evidence`. |
 
 ## Review method

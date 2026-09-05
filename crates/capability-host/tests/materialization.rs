@@ -170,10 +170,28 @@ fn seed_invocation(
         TimestampMillis::new(10),
         br#"{"schema_version":1,"type":"fixture"}"#.to_vec(),
     )?;
+    let root_scope = milkdrift_workspace::WorkspaceScope::run_root(
+        context.run().clone(),
+        milkdrift_workspace::ScopeId::new("root")?,
+    );
+    let created = RunEventEnvelope::new(
+        EventId::new("event-materialization-created")?,
+        context.run().clone(),
+        RunSequence::FIRST,
+        TimestampMillis::new(10),
+        RunEventKind::RunCreated {
+            workflow: WorkflowId::new("workflow-materialization")?,
+            revision: context.revision().clone(),
+            revision_digest: serde_json::from_value(json!(format!("b3_{}", "2".repeat(64))))?,
+            root_scope: root_scope.clone(),
+            workspace_budget: budget.clone(),
+            inputs: Vec::new(),
+        },
+    )?;
     let event = RunEventEnvelope::new(
         EventId::new("event-materialization")?,
         context.run().clone(),
-        RunSequence::FIRST,
+        RunSequence::new(2),
         TimestampMillis::new(10),
         RunEventKind::NodeScheduled {
             node: context.node().clone(),
@@ -189,14 +207,14 @@ fn seed_invocation(
         context.run().clone(),
         receipt.fingerprint().clone(),
         CommandDisposition::Accepted,
-        RunSequence::FIRST,
-        vec![event.event_id().clone()],
+        RunSequence::new(2),
+        vec![created.event_id().clone(), event.event_id().clone()],
         BoundedJson::new(json!({"accepted": true}))?,
     )?;
     let commit = AtomicRunCommitRequest::new(
         receipt,
-        vec![event],
-        Vec::new(),
+        vec![created, event],
+        vec![milkdrift_persistence::WorkspaceMutation::CreateScope { scope: root_scope }],
         Some(WorkspaceAccounting {
             budget: budget.clone(),
             expected_usage: WorkspaceUsage::EMPTY,
@@ -212,7 +230,7 @@ fn seed_invocation(
                 workflow: WorkflowId::new("workflow-materialization")?,
                 revision: context.revision().clone(),
                 state: IndexedRunState::Active,
-                through_sequence: RunSequence::FIRST,
+                through_sequence: RunSequence::new(2),
                 updated_at: TimestampMillis::new(10),
             }),
             Vec::new(),
@@ -229,12 +247,11 @@ fn isolated_inputs_and_outputs_use_the_durable_artifact_protocol() -> TestResult
     let store_owner = tempfile::tempdir()?;
     let execution_owner = tempfile::tempdir()?;
     let store = Arc::new(RedbStore::open(store_owner.path())?);
-    let budget = WorkspaceBudget::new(16, 1024, 4096, 16, 1024, 4096)?;
+    let budget = WorkspaceBudget::new(16, 1024, 4096, 16, 32, 4096)?;
     let access = StoreInvocationDataAccess::new(
         store.clone(),
         execution_owner.path(),
         ArtifactReadAuthority::PublicOnly,
-        budget.clone(),
     )?;
     let context = context()?;
     let request = request()?;
@@ -269,6 +286,20 @@ fn isolated_inputs_and_outputs_use_the_durable_artifact_protocol() -> TestResult
         reference.size_bytes().ok_or("missing size")?,
     );
     assert!(store.is_committed(&durable)?);
+    // The adapter's materialization limit permits this, but the run's accepted
+    // per-artifact ceiling is smaller. Publication must use the durable run budget.
+    assert!(
+        access
+            .publish_bytes(
+                &context,
+                &request,
+                "over-run-budget",
+                "text/plain",
+                &[0; 64],
+                limits(),
+            )
+            .is_err()
+    );
     Ok(())
 }
 
@@ -285,7 +316,7 @@ fn configured_process_input_can_materialize_the_exact_context_manifest() -> Test
         actor: ActorRef::new("actor-materialization")?,
         evidence: EvidenceId::new("evidence-materialization")?,
     };
-    let access = StoreInvocationDataAccess::new(store, execution_owner.path(), authorized, budget)?;
+    let access = StoreInvocationDataAccess::new(store, execution_owner.path(), authorized)?;
     let manifest_bytes = br#"{"schema_version":2,"selection":"frozen"}"#;
     let manifest = access.publish_bytes(
         &context,
@@ -322,7 +353,6 @@ fn traversal_symlink_special_file_and_budget_escapes_are_rejected() -> TestResul
         store,
         execution_owner.path(),
         ArtifactReadAuthority::PublicOnly,
-        WorkspaceBudget::new(16, 1024, 4096, 16, 1024, 4096)?,
     )?;
     let context = context()?;
     let request = request()?;
@@ -460,7 +490,6 @@ fn failed_publication_is_aborted_without_a_committed_reference() -> TestResult {
         store.clone(),
         execution_owner.path(),
         ArtifactReadAuthority::PublicOnly,
-        budget.clone(),
     )?;
     let context = context()?;
     let request = request()?;

@@ -56,11 +56,16 @@ target/debug/headless-cli-evidence \
   --cli target/debug/milkdrift
 ```
 
-The harness owns the child lifecycle and uses ephemeral loopback HTTP, temporary storage/artifact
-roots, private bearer files, and byte-pinned deterministic process profiles. Every client action is
+The harness owns the child lifecycle and uses the maintained `examples/operator` starter, ephemeral
+loopback HTTP, temporary storage/artifact roots, private bearer files, byte-pinned deterministic
+process profiles, and a separately owned mock model endpoint. Every client action is
 an actual `milkdrift` process using explicit command identities; no CLI process receives a redb
 path. It covers durable reads and command replay across restart, guarded proposals, verified
 artifact download, abrupt-restart uncertainty resolution, and stable JSON success/failure exits.
+The safe starter runs before external adapter scopes are configured. Model assertions cover exact
+generation/profile, ordered observations, usage, context, outputs, and replay across restart.
+The quality workflow runs this combined scenario and deterministic local-model application
+evidence after building the real binaries; real endpoints remain an explicit optional lane.
 
 Focused capability-adapter contract checks are:
 

@@ -370,17 +370,17 @@ fn one_sided_lease_pair_deletion_is_corruption() -> Result<(), Box<dyn std::erro
 fn logical_discovery_validation_detects_symmetric_pair_loss()
 -> Result<(), Box<dyn std::error::Error>> {
     const RUNNABLE_ENTRIES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-        TableDefinition::new("milkdrift.v1.discovery.runnable_entries");
+        TableDefinition::new("milkdrift.v1.discovery.runnable_by_identity");
     const RUNNABLE_ORDERED: TableDefinition<'static, &'static [u8], &'static [u8]> =
         TableDefinition::new("milkdrift.v1.discovery.runnable");
     const RUNNABLE_HEADS: TableDefinition<'static, &'static str, &'static [u8]> =
         TableDefinition::new("milkdrift.v1.discovery.runnable_run_heads");
     const TIMER_ENTRIES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-        TableDefinition::new("milkdrift.v1.discovery.timer_entries");
+        TableDefinition::new("milkdrift.v1.discovery.timers_by_identity");
     const TIMER_ORDERED: TableDefinition<'static, &'static [u8], &'static [u8]> =
         TableDefinition::new("milkdrift.v1.discovery.timers");
     const LEASE_ENTRIES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-        TableDefinition::new("milkdrift.v1.discovery.lease_entries");
+        TableDefinition::new("milkdrift.v1.discovery.leases_by_identity");
     const LEASE_ORDERED: TableDefinition<'static, &'static [u8], &'static [u8]> =
         TableDefinition::new("milkdrift.v1.discovery.leases");
 

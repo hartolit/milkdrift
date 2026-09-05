@@ -77,28 +77,23 @@ The insecure mode refuses non-loopback URLs. Use ordinary HTTPS directly or term
 
 ## Local daemon quick start
 
-Create a version-nine TOML daemon configuration. Relative paths are resolved from the configuration
-file directory. Presets are deterministic shorthand for exact operation sets only; the required
-`authority` table supplies every executable resource scope, ceiling, and validity boundary. The
-checked fixture is a complete minimal starting point:
+Build the applications and follow the maintained [operator setup](examples/operator/README.md).
+It starts in a fresh private directory with a scoped loopback configuration and complete starter,
+then shows ordinary byte-pinned process and separately managed local-model workflows. No test
+fixture or evidence-only binary is needed for product setup.
 
 ```sh
-cp apps/daemon/tests/fixtures/daemon-config-v9.toml daemon.toml
-export MILKDRIFT_OPERATOR_TOKEN='replace-with-a-long-random-local-token'
-cargo run -p milkdrift-daemon --bin milkdrift-daemon -- --config daemon.toml --check-config
-cargo run -p milkdrift-daemon --bin milkdrift-daemon -- --config daemon.toml --print-effective-config
-cargo run -p milkdrift-daemon --bin milkdrift-daemon -- --config daemon.toml
+cargo build -p milkdrift-daemon --bin milkdrift-daemon -p milkdrift-cli --bin milkdrift
+milkdrift-daemon --config /private/operator/daemon.toml --check-config
+milkdrift-daemon --config /private/operator/daemon.toml
+milkdrift --json --timeout-secs 10 daemon readiness
+milkdrift --json --command-id starter-import blueprint import /private/operator/starter.json
+milkdrift --json --command-id starter-start run start run-starter operator-starter REVISION_ID
+milkdrift --json --timeout-secs 10 run wait run-starter --terminal succeeded
 ```
 
-In another terminal:
-
-```sh
-export MILKDRIFT_TOKEN='replace-with-the-same-long-random-local-token'
-cargo run -p milkdrift-cli -- daemon readiness
-cargo run -p milkdrift-cli -- --json capability list
-cargo run -p milkdrift-cli -- --command-id quickstart-blueprint-import-v1 \
-  blueprint import crates/blueprint/tests/fixtures/revision-v2.json
-```
+The guide generates credentials into the environment or references private files; secret values
+never belong in source or argv. Paths resolve against the chosen configuration directory.
 
 With exact coding, verification, and reviewer capability profiles registered and included in the
 actor's scoped grant, the same headless client can import and run an ordered Markdown implementation
@@ -112,7 +107,7 @@ cargo run -p milkdrift-cli -- --command-id quickstart-sequence-import-v1 \
 cargo run -p milkdrift-cli -- --command-id quickstart-run-start-v1 \
   --expected-revision REVISION_ID \
   run start RUN_ID milkdrift-core-convergence REVISION_ID
-cargo run -p milkdrift-cli -- run timeline RUN_ID --follow
+cargo run -p milkdrift-cli -- --timeout-secs 60 run timeline RUN_ID --follow
 ```
 
 Successful verification advances to the next fresh coding-agent process while one explicitly
@@ -129,7 +124,7 @@ and cleanup guidance are in [the external-evidence guide](docs/guides/external-e
 tests the harness but never qualifies as external interoperability proof.
 
 For a model-only daemon/CLI smoke against a separately managed loopback OpenAI-compatible server,
-use `cargo local-model-evidence` with the safe profile under
+use the ordinary [operator commands](examples/operator/README.md#one-separately-managed-loopback-model). Optional structural qualification uses `cargo local-model-evidence` with the safe profile under
 [`examples/local-model`](examples/local-model/openai-compatible-loopback.example.json). The
 [local-model endpoint guide](docs/guides/local-model-endpoint.md) documents deterministic and
 explicit real-endpoint modes; both remain distinct from the qualifying process-plus-model gate.
@@ -159,7 +154,7 @@ A minimal revision is constructed through a validated mutation batch; see the cr
 - `adapters/peer-http`: authenticated HTTP peer transport, durable serving/reconnect, and remote capabilities mapped into the ordinary capability host.
 - `adapters/local-secret`: explicit opaque-secret-reference resolution from bounded environment or restricted-file sources.
 - `apps/daemon`: authoritative local host, bounded runtime owner, authentication, HTTP/SSE API, recovery, and shutdown.
-- `apps/cli`: comprehensive storage-free operator client with human output, stable schema-v1
+- `apps/cli`: comprehensive storage-free operator client with human output, stable schema-v2
   success/failure JSON, and resumable JSON Lines streams.
 - `tools/evidence`: development-only Divan and operational fixtures for critical bounded paths.
 - `.github/workflows`: pinned Linux quality/stress/evidence lanes plus Linux, Windows, and macOS contract validation.

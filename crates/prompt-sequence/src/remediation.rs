@@ -1,5 +1,5 @@
 use milkdrift_authority::ActorRef;
-use milkdrift_blueprint::{AuthorRef, BlueprintRevision};
+use milkdrift_blueprint::{AuthorRef, BlueprintRevisionDocument};
 use milkdrift_capability::ExtensionKey;
 use milkdrift_control::{
     ClaimedStopCondition, ProposalApplicationPolicy, ProposalId, ProposalProvenance,
@@ -17,13 +17,13 @@ use crate::{
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemediationProposalSpec {
     /// Exact live run.
-    pub run: RunId,
+    pub run: String,
     /// Run sequence observed through the authorized read plane.
-    pub observed_sequence: RunSequence,
+    pub observed_sequence: u64,
     /// Proposal identity selected by the caller.
-    pub proposal: ProposalId,
+    pub proposal: String,
     /// Server-authenticated actor identity expected by proposal submission.
-    pub proposer: ActorRef,
+    pub proposer: String,
     /// Failed imported stage.
     pub stage_id: String,
     /// Nonzero bounded remediation generation.
@@ -39,9 +39,15 @@ pub struct RemediationProposalSpec {
 /// remediation, re-verification, re-review, and a renewed approval hold.
 pub fn build_remediation_proposal(
     document: &PromptSequenceDocument,
-    base: &BlueprintRevision,
+    base_document: &[u8],
     spec: RemediationProposalSpec,
 ) -> Result<WorkflowProposalDocument, PromptSequenceError> {
+    let invalid = |error: &dyn std::fmt::Display| PromptSequenceError::Invalid(error.to_string());
+    let (_, base) =
+        BlueprintRevisionDocument::from_json(base_document).map_err(|error| invalid(&error))?;
+    let run = RunId::new(spec.run).map_err(|error| invalid(&error))?;
+    let proposer = ActorRef::new(spec.proposer).map_err(|error| invalid(&error))?;
+    let proposal_id = ProposalId::new(spec.proposal).map_err(|error| invalid(&error))?;
     if base.semantic().workflow().as_str() != document.sequence().workflow_id {
         return Err(PromptSequenceError::Invalid(
             "remediation base revision belongs to a different workflow".to_owned(),
@@ -109,7 +115,7 @@ pub fn build_remediation_proposal(
     base.revise(
         base.id(),
         mutation.clone(),
-        AuthorRef::new(spec.proposer.as_str().to_owned())
+        AuthorRef::new(proposer.as_str().to_owned())
             .map_err(|error| PromptSequenceError::Compilation(error.to_string()))?,
         format!(
             "prospective remediation {} for stage {}",
@@ -119,14 +125,14 @@ pub fn build_remediation_proposal(
     .map_err(|error| PromptSequenceError::Compilation(format!("{error:?}")))?;
 
     let proposal = WorkflowProposal::new(
-        spec.proposal,
-        spec.proposer,
+        proposal_id,
+        proposer,
         ProposalProvenance::Direct,
         base.semantic().workflow().clone(),
-        Some(spec.run),
+        Some(run),
         base.id().clone(),
         base.content_digest().clone(),
-        Some(spec.observed_sequence),
+        Some(RunSequence::new(spec.observed_sequence)),
         mutation,
         format!(
             "insert bounded remediation generation {} after failed stage {}",

@@ -25,7 +25,7 @@ use milkdrift_authority::{
     NetworkProfileRef, NetworkScope, PeerAuthorityScope, ResourceScope, SecretRef, Selection,
     WorkflowRunScope, WorkspaceAuthorityScope,
 };
-use milkdrift_blueprint::{BlueprintRevisionDocument, WorkflowId};
+use milkdrift_blueprint::WorkflowId;
 use milkdrift_capability::{CapabilityId, OperationId, SideEffectClass};
 use milkdrift_control_client::{ClientError, ControlClient};
 use milkdrift_control_protocol::{Command, CommandRequest, ProtocolVersion, decode_json};

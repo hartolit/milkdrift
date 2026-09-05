@@ -14,13 +14,13 @@ use milkdrift_capability::{
 };
 use milkdrift_persistence::{
     ArtifactPublicationId, ArtifactReadAuthority, ArtifactReadRequest, BeginArtifactOutcome,
-    BeginArtifactPublication, MAX_ARTIFACT_CHUNK_BYTES,
+    BeginArtifactPublication, EventPageQuery, MAX_ARTIFACT_CHUNK_BYTES, PageSize, RunEventKind,
 };
 use milkdrift_runtime::RuntimeStore;
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactReference, ArtifactRetention,
-    ArtifactSensitivity, CausalId, CausalReference, ContentDigest, MediaType, WorkspaceBudget,
-    WorkspaceValue, WorkspaceValueReference,
+    ArtifactSensitivity, CausalId, CausalReference, ContentDigest, MediaType, WorkspaceValue,
+    WorkspaceValueReference,
 };
 use tempfile::TempDir;
 use thiserror::Error;
@@ -203,7 +203,6 @@ pub struct StoreInvocationDataAccess {
     store: Arc<dyn RuntimeStore>,
     temporary_root: PathBuf,
     read_authority: ArtifactReadAuthority,
-    workspace_budget: WorkspaceBudget,
 }
 
 impl StoreInvocationDataAccess {
@@ -212,7 +211,6 @@ impl StoreInvocationDataAccess {
         store: Arc<dyn RuntimeStore>,
         temporary_root: impl Into<PathBuf>,
         read_authority: ArtifactReadAuthority,
-        workspace_budget: WorkspaceBudget,
     ) -> Result<Self, InvocationDataError> {
         let temporary_root = temporary_root.into();
         fs::create_dir_all(&temporary_root)
@@ -229,7 +227,6 @@ impl StoreInvocationDataAccess {
             store,
             temporary_root,
             read_authority,
-            workspace_budget,
         })
     }
 
@@ -394,12 +391,34 @@ impl StoreInvocationDataAccess {
             .store
             .workspace_usage(context.run())
             .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
+        // Run creation is the sole owner of this immutable budget. Reading one journal
+        // event avoids a host-global default competing with the accepted run contract.
+        let page = self
+            .store
+            .events(
+                &EventPageQuery::new(
+                    context.run().clone(),
+                    None,
+                    PageSize::new(1)
+                        .map_err(|error| InvocationDataError::Publication(error.to_string()))?,
+                )
+                .map_err(|error| InvocationDataError::Publication(error.to_string()))?,
+            )
+            .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
+        let Some(RunEventKind::RunCreated {
+            workspace_budget, ..
+        }) = page.events.first().map(|event| event.kind())
+        else {
+            return Err(InvocationDataError::Integrity(
+                "run creation budget is absent".to_owned(),
+            ));
+        };
         let begin = match context.controller_reservation() {
             Some(reservation) => BeginArtifactPublication::for_invocation(
                 publication.clone(),
                 context.run().clone(),
                 metadata,
-                self.workspace_budget.clone(),
+                workspace_budget.clone(),
                 usage,
                 reservation.clone(),
             ),
@@ -407,7 +426,7 @@ impl StoreInvocationDataAccess {
                 publication.clone(),
                 context.run().clone(),
                 metadata,
-                self.workspace_budget.clone(),
+                workspace_budget.clone(),
                 usage,
             ),
         }

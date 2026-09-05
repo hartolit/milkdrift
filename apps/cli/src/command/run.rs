@@ -33,12 +33,27 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
         }
         RunCommand::Show { run } => {
             let run = session.client().run(run).await?;
-            if run.terminal.as_deref() == Some("failed") {
-                return Err(CliError::FailedTask(
-                    "run reached a failed terminal outcome".to_owned(),
-                ));
-            }
             session.output("run.show", &run)
+        }
+        RunCommand::Wait {
+            run,
+            terminal,
+            poll_ms,
+            max_polls,
+        } => {
+            for poll in 0..*max_polls {
+                let state = session.client().run(run).await?;
+                if let Some(outcome) = state.terminal.as_deref() {
+                    if !terminal.matches(outcome) || outcome != "succeeded" {
+                        return Err(CliError::FailedTask(Box::new(state)));
+                    }
+                    return session.output("run.wait", &state);
+                }
+                if poll + 1 < *max_polls {
+                    tokio::time::sleep(std::time::Duration::from_millis(*poll_ms)).await;
+                }
+            }
+            Err(CliError::Deadline)
         }
         RunCommand::Pause { run } => {
             submit(
@@ -61,7 +76,7 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
             .await
         }
         RunCommand::Cancel { run } => {
-            session.confirm("request durable run cancellation")?;
+            session.confirm("request durable run cancellation").await?;
             submit(
                 session,
                 "run.cancel",
@@ -100,16 +115,7 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
 }
 
 fn signal_payload(payload: &str) -> Result<Value, CliError> {
-    if payload.len() > milkdrift_capability::MAX_DOCUMENT_BYTES {
-        return Err(CliError::Invalid(format!(
-            "signal payload exceeds {} bytes",
-            milkdrift_capability::MAX_DOCUMENT_BYTES
-        )));
-    }
-    let value = milkdrift_contracts::parse_json_without_duplicates(payload.as_bytes())
-        .map_err(|error| CliError::Invalid(error.to_string()))?;
-    milkdrift_capability::BoundedJson::new(value)
-        .map(|bounded| bounded.value().clone())
+    milkdrift_control_protocol::decode_json(payload.as_bytes())
         .map_err(|error| CliError::Invalid(error.to_string()))
 }
 
@@ -138,7 +144,6 @@ async fn submit(session: &CliSession, kind: &str, command: Command) -> Result<()
 }
 
 async fn follow(session: &CliSession, run: &str) -> Result<(), CliError> {
-    crate::session::safe_identity(run)?;
     super::stream::follow(
         session,
         format!("v1/runs/{run}/stream"),

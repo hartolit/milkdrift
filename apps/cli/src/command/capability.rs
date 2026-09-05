@@ -1,5 +1,32 @@
 use crate::{CapabilityCommand, error::CliError, session::CliSession};
 
+pub(super) async fn provider(
+    session: &CliSession,
+    command: &crate::ProviderCommand,
+) -> Result<(), CliError> {
+    let generations = session
+        .client()
+        .capabilities()
+        .await?
+        .into_iter()
+        .filter(|capability| {
+            capability
+                .provider_profile
+                .as_ref()
+                .is_some_and(|profile| match command {
+                    crate::ProviderCommand::List => true,
+                    crate::ProviderCommand::Show { profile: requested } => profile == requested,
+                })
+        })
+        .collect::<Vec<_>>();
+    if matches!(command, crate::ProviderCommand::Show { .. }) && generations.is_empty() {
+        return Err(CliError::NotFound(
+            "provider profile was not found".to_owned(),
+        ));
+    }
+    session.output(session.cli().operation(), &generations)
+}
+
 pub(super) async fn execute(
     session: &CliSession,
     command: &CapabilityCommand,

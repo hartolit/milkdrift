@@ -168,46 +168,66 @@ Layout cannot contain executable edges, node/task configuration, requirements, p
 
 ## CLI automation contract
 
-`milkdrift --json` prints one compact schema-1 document per successful non-streaming result:
+`milkdrift --json` emits schema 2 to stdout for both success and failure. Schema 1 is superseded;
+there is no legacy writer. Every record has the same envelope fields:
 
 ```json
-{"schema_version":1,"type":"run.show","value":{}}
+{"schema_version":2,"type":"run.show","status":"success","command_id":"inspect-1","value":{},"error":null,"final":true}
 ```
-
-Failures emit exactly one bounded document on stderr and no success document:
 
 ```json
-{"schema_version":1,"type":"error","value":{"classification":"conflict","daemon_code":"conflict","retryable":false,"detail":"bounded public detail"}}
+{"schema_version":2,"type":"run.pause","status":"failure","command_id":"pause-1","value":null,"error":{"classification":"conflict","code":"conflict","daemon_code":"conflict","retryable":false,"detail":"exact command, revision, sequence or runtime policy conflict"},"final":true}
 ```
 
-`classification` is one of `invalid_input`, `authorization`, `conflict`, `unavailable`,
-`not_found`, `daemon_api`, `failed_terminal`, or `internal_client`. `daemon_code` is present only
-for a public daemon error. Detail is limited to public daemon text or a CLI-owned safe description;
-transport causes, internal errors, credentials, headers, documents, provider bodies, prompts,
-artifact bytes, and filesystem paths are not serialized.
+Records are compact, contain no literal control characters, and are bounded by the control document
+ceiling plus 4,096 bytes for presentation. Errors use fixed redacted CLI descriptions. They never
+serialize raw transport/API/parser text, credentials, environment values or submitted documents.
+`type` identifies the operation; malformed arguments use `arguments`. `command_id` preserves the
+explicit/generated request identity (or null before a valid identity exists). `value` carries the
+typed success result, or the complete run read for failed terminal waits. `error` is null on success;
+otherwise it carries stable classification/code, nullable daemon code and retryability, and bounded
+detail. Retryability is unknown (null) after a client deadline or cancellation.
+
+Classifications are `invalid_input`, `authorization`, `conflict`, `unavailable`, `not_found`,
+`daemon_api`, `failed_terminal`, `internal_client`, `timeout`, and `cancelled`.
+JSON failure diagnostics do not go to stderr. Revision show/status omits document bodies; explicit
+`blueprint export --output FILE` writes the canonical document for inspection. `show --document`
+is raw document output only outside JSON mode. Artifact content goes only to an explicit file.
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | Success, including a stream closed normally or by Ctrl-C. |
-| 2 | Invalid local input, configuration, or missing confirmation. |
+| 0 | Successful operation/read, including inspection of a failed run. |
+| 2 | Invalid input/configuration, missing explicit wait/follow deadline, or missing confirmation. |
 | 3 | Authentication or authority failure. |
 | 4 | Optimistic/idempotency conflict. |
-| 5 | Retryable overload, unavailability, timeout, or transport failure. |
+| 5 | Retryable overload, endpoint timeout, unavailability or transport failure. |
 | 6 | Not found. |
 | 7 | Other public daemon API failure. |
-| 8 | `run show` observed a failed terminal outcome. |
+| 8 | `run wait` observed failure/cancellation or a terminal outcome outside its filter; value retains the run. |
 | 9 | Internal client/protocol/presentation failure. |
+| 10 | Overall deadline, poll bound, or reconnect bound reached. |
+| 130 | User cancelled the client with Ctrl-C. |
 
-JSON mode has no colors, ANSI sequences, or prompts. Cancel, controller continuation, proposal
-decision/apply, retry, compensation, and evidence-based terminal resolution require interactive
-`yes` or `--yes`; JSON mode requires `--yes`. Help and version require no endpoint or credential.
-Safe query retry remains inside `milkdrift-control-client`; command presentation never implicitly
-replays a mutation.
+`--timeout-secs` bounds the whole command, including connection, document input, retries and waiting.
+Ordinary commands default to 60 seconds; the maximum is 86,400. `run wait` requires an explicit
+value, polls at `--poll-ms` (default 250, range 10..=60000), and stops after `--max-polls` (default
+1000, maximum 100000). `--terminal any|succeeded|failed|cancelled` selects the terminal condition;
+an incompatible immutable terminal stops immediately with exit 8. Failed/cancelled outcomes
+also exit 8 when selected. No client wait or cancellation changes run state. Preserve the exact
+command ID and request when reconciling a lost mutation response.
 
-Followed run, capability, and daemon-health feeds emit JSON Lines. Each observation is a complete
-schema-1 wrapper. A retryable reconnect emits a `stream_status` document and continues from the
-last successfully decoded authenticated cursor. A nonretryable stream error emits the one final
-error document and exits by the table above. Pages are always explicit and never auto-drained.
+Followed run, capability and health feeds emit JSON Lines with `final:false` for observations and
+reconnect transitions, and exactly one `final:true` failure record on deadline, authority loss,
+nonretryable protocol failure or Ctrl-C. `status` is `success`, `reconnecting` or `failure`.
+`--max-reconnects` (default 5, maximum 100) bounds retries across the command. Noninteractive follow
+requires `--timeout-secs`; interactive follow may last until Ctrl-C. A truncated SSE frame is a
+protocol failure, and a closed stream consumes the reconnect budget. Pages never auto-drain.
+
+High-risk commands require interactive `yes` or `--yes`; JSON and redirected execution require
+`--yes`. Confirmation input is bounded by the command deadline. Local sequence compilation,
+help and version require no endpoint or credential. Safe-query retry belongs to the control client;
+mutations are never retried implicitly. Partial create-new output files are removed on failure,
+timeout and cancellation.
 
 ### CLI operation disposition
 
@@ -216,13 +236,14 @@ The current operator surface intentionally covers every legitimate external oper
 | CLI family | Protocol/client disposition |
 | --- | --- |
 | `daemon health`, `readiness`, `authority` | Detailed/coarse health and actor/grant reads; `health --follow` exposes the health SSE feed. |
-| `blueprint validate`, `import`, `show`, `list`, `diff` | Both definition commands and every revision read/diff route. `show --document` emits exact canonical bytes; `show --output FILE` creates a new file. |
-| `sequence validate`, `import`, `show`, `status`, `stage`, `remediate` | Prompt-sequence command variants plus owner-derived stage association and prospective proposal construction. These are conveniences over ordinary revision/run/proposal operations, not another workflow model. |
-| `run start`, `list`, `show`, `pause`, `resume`, `cancel`, `signal`, `timeline` | Every run command/read; `timeline --follow` exposes the run SSE feed. |
+| `blueprint validate`, `import`, `export`, `show`, `list`, `diff` | Both definition commands and every revision read/diff route. `show --document` emits exact canonical bytes; `show --output FILE` creates a new file. |
+| `sequence validate`, `compile`, `import`, `show`, `status`, `stage`, `remediate` | Prompt-sequence command variants plus owner-derived stage association and prospective proposal construction. These are conveniences over ordinary revision/run/proposal operations, not another workflow model. |
+| `run start`, `list`, `show`, `wait`, `pause`, `resume`, `cancel`, `signal`, `timeline` | Every run command/read; `timeline --follow` exposes the run SSE feed. |
 | `controller status`, `continue` | Both controller command variants and the exact controller read. |
 | `node`; `attempt inspect`, `resolve` | Exact node/attempt reads and `resolve_work` actions `query`, `retry`, `compensate`, `retain`, `resolve-succeeded`, and `resolve-failed`. |
 | `proposal submit`, `list`, `show`, `approve`, `reject`, `apply` | Every proposal command and read route. |
 | `capability list`, `show` | The scoped capability read; `list --follow` exposes the capability SSE feed. |
+| `provider list`, `show` | Authorized provider-profile identities and generations projected from the same scoped capability read. |
 | `peer list`, `show`, `connect`, `reload`, `disconnect`, `drain`, `revoke` | Every peer read and administration route. |
 | `artifact metadata`, `get` | Metadata plus a verified sequence of bounded range reads into one create-new destination. |
 | `layout get`, `put` | The layout read and `put_layout` command. |

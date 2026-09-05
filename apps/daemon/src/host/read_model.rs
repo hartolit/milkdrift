@@ -385,6 +385,36 @@ pub(super) fn public_timeline(event: &milkdrift_persistence::RunEventEnvelope) -
     let attempt_id = string_field(&kind, &["attempt", "attempt_id"]);
     let revision_id = string_field(&kind, &["revision", "to_revision", "from_revision"]);
     let (summary, detail) = match event.kind() {
+        milkdrift_persistence::RunEventKind::CapabilityResolutionDenied {
+            execution,
+            authorization,
+        } => (
+            "capability authority refused before dispatch".to_owned(),
+            json!({"event_id": event.event_id().as_str(), "execution_id": execution.as_str(), "decision_digest": authorization.digest(), "reason_codes": authorization.reason_codes().iter().map(snake_debug).collect::<Vec<_>>()}),
+        ),
+        milkdrift_persistence::RunEventKind::NodePreDispatchFailed {
+            execution,
+            error_class,
+            ..
+        } => (
+            "node input preparation failed before dispatch".to_owned(),
+            json!({"event_id": event.event_id().as_str(), "execution_id": execution.as_str(), "error_class": snake_debug(error_class)}),
+        ),
+        milkdrift_persistence::RunEventKind::NodeTerminal {
+            execution,
+            outcome,
+            error_class,
+            ..
+        }
+        | milkdrift_persistence::RunEventKind::DeterministicNodeTerminal {
+            execution,
+            outcome,
+            error_class,
+            ..
+        } => (
+            "node reached a terminal outcome".to_owned(),
+            json!({"event_id": event.event_id().as_str(), "execution_id": execution.as_str(), "outcome": snake_debug(outcome), "error_class": error_class.as_ref().map(snake_debug)}),
+        ),
         milkdrift_persistence::RunEventKind::SideEffectClassified {
             side_effect,
             idempotency,
@@ -432,7 +462,10 @@ pub(super) fn timeline_category(kind: &str) -> TimelineCategory {
         TimelineCategory::Uncertainty
     } else if kind.contains("signal") || kind.contains("timer") || kind.contains("wait") {
         TimelineCategory::Coordination
-    } else if kind.contains("decision") || kind.contains("authority") {
+    } else if kind.contains("decision")
+        || kind.contains("authority")
+        || kind == "capability_resolution_denied"
+    {
         TimelineCategory::Authority
     } else if kind.contains("node")
         || kind.contains("lease")
