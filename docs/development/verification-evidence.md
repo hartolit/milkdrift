@@ -197,23 +197,22 @@ cleanup defects remain inspectable.
 
 ## Interpretation and limitations
 
-On 2026-09-05 the current local Linux worktree passed formatting, the all-target/all-feature
-check and complete test/doctest suite, Clippy with warnings denied, rustdoc with warnings denied,
-`cargo deny check`, `cargo machete`, duplicate dependency inspection, and complete test listing.
-Focused capability-host, shared production-adapter conformance, complete adapter/daemon,
-peer-service, authority-path, daemon-configuration, two-daemon, and external-evidence suites also
-passed. All seven current-source mutation shards retained no unclassified survivor or timeout. A
-Windows GNU cross-target check passed for the local-process library; it is not Windows runtime
-evidence. The most recent full local release evidence lane, run on 2026-09-04, passed with 256 receipt operations and
-256 peer executions/4,352 peer observations. It retained five hot and 251 cold
-receipts, replayed the oldest cold receipt after reopen, and measured 1,589,248 physical store bytes
-both before and after the final bounded archival transaction. The daemon queue bound was one; 57
-requests were accepted and 199 received the stable overload result in the earlier retained
-measurement; the current dirty-tree run accepted 54 and overloaded 202, again accounting for all 256
-requests. Stream observation/reconnect, post-load recovery, and graceful shutdown succeeded, and
-the Linux task count remained 12. Exact latency distributions and logical byte breakdowns remain
-under the selected untracked `target/` evidence directory because they are machine- and
-filesystem-specific.
+The current Windows/MSVC source has passing formatting, all-target/all-feature checking,
+Clippy/rustdoc with warnings denied, dependency checks, release binary builds, persistence
+contracts and canonical event fixtures. The direct schema lane uses real redb transactions to
+independently remove or mistype all 63 initialized tables and reject unexpected tables/multimaps.
+It does not exercise filesystem directory durability.
+
+Full workspace and storage-backed focused suites are not qualified on this host: the existing
+non-Unix directory-open path returns OS error 5 before startup completes, also reproduced from
+the unmodified baseline. Unix executable fixtures add native Windows path failures; the Windows
+path assertion and external-evidence fixture stack overflow also reproduce on the baseline. Repository
+ownership/cohesion checks pass, but its Unix process-profile fixture fails. The retention,
+controller, peer and authority mutation campaigns stop on failing unmutated baselines; no mutant
+outcome is inferred from that refusal. Operational and actual-binary headless lanes likewise stop
+at storage startup. The five release longevity lanes require a working Unix filesystem runtime.
+A green current-source Unix gate and durability/lifecycle evidence remain necessary; prior
+measurements cannot substitute for them. Raw logs, timings and API inventories stay under `target/`.
 
 The harness does not claim production traffic shape, universal throughput, a memory allocator
 profile, network/TLS performance, a real provider service-level objective, or sandbox strength for

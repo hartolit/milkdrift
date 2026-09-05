@@ -1,8 +1,8 @@
 //! Authorized external command adaptation into focused domain command owners.
 
-use super::{
-    ActorSession, Command, CommandAccepted, CommandRequest, Owner, PublicFailure, layouts,
-};
+use super::{Owner, PublicFailure, layouts};
+use crate::auth::ActorSession;
+use milkdrift_control_protocol::{Command, CommandAccepted, CommandRequest};
 
 mod control;
 mod controllers;

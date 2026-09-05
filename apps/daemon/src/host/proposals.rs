@@ -1,13 +1,20 @@
 //! Proposal discovery projection and exact control-state query ownership.
 
 use super::{
-    ActorSession, ApplicationCommandEffect, ApplicationCursor, ApplicationEffectReference,
-    ApplicationPageQuery, AuthorityOperation, CommandAccepted, CommandId, CommandRequest,
-    ControlCommand, ControlResult, Cursor, Owner, Page, PageSize, ProposalId, ProposalIndexEntry,
-    ProposalIndexStore, ProposalRead, PublicFailure, RunId, TimestampMillis, Value,
-    WorkflowProposalDocument, bounded, corruption, cursor_binding, internal, invalid,
-    parse_revision_id, public_persistence, public_protocol, snake_debug,
+    Owner, PublicFailure, read_model::bounded, read_model::corruption, read_model::cursor_binding,
+    read_model::internal, read_model::invalid, read_model::parse_revision_id,
+    read_model::public_persistence, read_model::public_protocol, read_model::snake_debug,
 };
+use crate::auth::ActorSession;
+use milkdrift_authority::AuthorityOperation;
+use milkdrift_control::{ControlCommand, ControlResult, ProposalId, WorkflowProposalDocument};
+use milkdrift_control_protocol::{CommandAccepted, CommandRequest, Cursor, Page, ProposalRead};
+use milkdrift_persistence::{
+    ApplicationCommandEffect, ApplicationCursor, ApplicationEffectReference, ApplicationPageQuery,
+    CommandId, PageSize, ProposalIndexEntry, ProposalIndexStore, TimestampMillis,
+};
+use milkdrift_workspace::RunId;
+use serde_json::Value;
 
 pub(super) fn application_effect(
     session: &ActorSession,

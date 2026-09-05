@@ -25,7 +25,7 @@ use milkdrift_persistence::{
 };
 use milkdrift_redb_store::RedbStore;
 
-use super::{OwnerCallFailure, OwnerQueue};
+use super::{queue::OwnerCallFailure, queue::OwnerQueue};
 
 fn execution_failure(failure: OwnerCallFailure) -> PersistenceError {
     PersistenceError::Storage {

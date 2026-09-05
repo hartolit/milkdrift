@@ -1,11 +1,17 @@
 //! Presentation-only layout validation, authorization, persistence, and read ownership.
 
 use super::{
-    ActorSession, ApplicationCommandEffect, ApplicationEffectReference, ApplicationLayoutStore,
-    ApplicationLayoutUpdate, AuthorityOperation, CommandAccepted, CommandRequest, IntegrityDigest,
-    LayoutDocument, LayoutOwner, Owner, PublicFailure, RequestedResourceFacts, RevisionStore,
-    TimestampMillis, WorkflowId, bounded, corruption, internal, invalid, not_found,
-    parse_revision_id, public_persistence, public_protocol,
+    Owner, PublicFailure, read_model::bounded, read_model::corruption, read_model::internal,
+    read_model::invalid, read_model::not_found, read_model::parse_revision_id,
+    read_model::public_persistence, read_model::public_protocol,
+};
+use crate::auth::ActorSession;
+use milkdrift_authority::{AuthorityOperation, LayoutOwner, RequestedResourceFacts};
+use milkdrift_blueprint::WorkflowId;
+use milkdrift_control_protocol::{CommandAccepted, CommandRequest, LayoutDocument};
+use milkdrift_persistence::{
+    ApplicationCommandEffect, ApplicationEffectReference, ApplicationLayoutStore,
+    ApplicationLayoutUpdate, IntegrityDigest, RevisionStore, TimestampMillis,
 };
 
 pub(super) fn execute(

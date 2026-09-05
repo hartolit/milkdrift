@@ -1,11 +1,14 @@
 //! Typed request surface for work serialized through the daemon owner.
 
-use super::{
-    ActorSession, ArtifactContentRead, ArtifactMetadataRead, AttemptRead, AuthorityOperation,
-    BTreeSet, CapabilityRead, CommandAccepted, CommandRequest, Cursor, DaemonHost, LayoutDocument,
-    NodeRead, Page, ProposalRead, PublicFailure, PublicRevisionSummary, RequestedResourceFacts,
-    RevisionDiffRead, RevisionRead, RunRead, StreamAuthority, TimelineEntry,
+use super::{ArtifactContentRead, DaemonHost, PublicFailure, StreamAuthority};
+use crate::auth::ActorSession;
+use milkdrift_authority::{AuthorityOperation, RequestedResourceFacts};
+use milkdrift_control_protocol::{
+    ArtifactMetadataRead, AttemptRead, CapabilityRead, CommandAccepted, CommandRequest, Cursor,
+    LayoutDocument, NodeRead, Page, ProposalRead, RevisionDiffRead, RevisionRead,
+    RevisionSummary as PublicRevisionSummary, RunRead, TimelineEntry,
 };
+use std::collections::BTreeSet;
 
 impl DaemonHost {
     pub(crate) async fn authorize_version(
@@ -209,8 +212,10 @@ impl DaemonHost {
         session: ActorSession,
         request: CommandRequest,
     ) -> Result<CommandAccepted, PublicFailure> {
-        self.dispatch(false, move |owner| owner.command(&session, request))
-            .await
+        self.dispatch(false, move |owner| {
+            super::receipts::execute(owner, &session, request)
+        })
+        .await
     }
 
     pub(crate) async fn revision(
@@ -321,7 +326,7 @@ impl DaemonHost {
         limit: u32,
     ) -> Result<Page<ProposalRead>, PublicFailure> {
         self.dispatch(false, move |owner| {
-            owner.proposals(&session, &run, cursor.as_ref(), limit)
+            super::proposals::page(owner, &session, &run, cursor.as_ref(), limit)
         })
         .await
     }
@@ -334,7 +339,7 @@ impl DaemonHost {
         revision: String,
     ) -> Result<ProposalRead, PublicFailure> {
         self.dispatch(false, move |owner| {
-            owner.proposal(&session, &run, &proposal, &revision)
+            super::proposals::exact(owner, &session, &run, &proposal, &revision)
         })
         .await
     }
@@ -379,7 +384,7 @@ impl DaemonHost {
         revision: String,
     ) -> Result<LayoutDocument, PublicFailure> {
         self.dispatch(false, move |owner| {
-            owner.layout(&session, &workflow, &revision)
+            super::layouts::read(owner, &session, &workflow, &revision)
         })
         .await
     }

@@ -79,6 +79,12 @@ health, and unknown-cancellation differences. Capability-host registry and effec
 failed-start cleanup, lifecycle/admission/execute/cancel panic containment, exact cancellation
 correlation, bounded concurrency, in-flight drain behavior, and registry-lock re-entry evidence.
 
+Physical membership is checked independently of host directory syncing by
+`cargo test -p milkdrift-redb-store --lib schema::tests --all-features`. These tests use real redb
+transactions and do not establish filesystem crash durability. Keep the process-style
+`open_faults` and complete redb contract lanes for initialization faults, exact version refusal,
+transaction atomicity and reopen behavior.
+
 Focused application-persistence and cross-transaction recovery checks are:
 
 ```sh

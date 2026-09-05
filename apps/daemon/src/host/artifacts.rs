@@ -1,11 +1,16 @@
 //! Authorized artifact metadata and bounded content-release ownership.
 
 use super::{
-    ActorSession, ArtifactContentRead, ArtifactId, ArtifactMetadataRead, ArtifactReadAuthority,
-    ArtifactReadRequest, ArtifactSensitivity, ArtifactStore, AuthorityOperation, EvidenceId, Owner,
-    PublicFailure, RequestedResourceFacts, invalid, not_found, public_artifact_metadata,
-    public_persistence, unauthorized,
+    ArtifactContentRead, Owner, PublicFailure, read_model::invalid, read_model::not_found,
+    read_model::public_artifact_metadata, read_model::public_persistence, read_model::unauthorized,
 };
+use crate::auth::ActorSession;
+use milkdrift_authority::{AuthorityOperation, RequestedResourceFacts};
+use milkdrift_control_protocol::ArtifactMetadataRead;
+use milkdrift_persistence::{
+    ArtifactReadAuthority, ArtifactReadRequest, ArtifactStore, EvidenceId,
+};
+use milkdrift_workspace::{ArtifactId, ArtifactSensitivity};
 
 impl Owner {
     pub(super) fn artifact_metadata(

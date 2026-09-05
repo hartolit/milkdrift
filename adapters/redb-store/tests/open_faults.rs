@@ -11,7 +11,7 @@ use milkdrift_persistence::{
 use milkdrift_redb_store::{
     FaultInjector, FaultPoint, RedbStore, RedbStoreConfig, injected_failure,
 };
-use redb::{Database, TableDefinition};
+use redb::{Database, MultimapTableDefinition, TableDefinition};
 use tempfile::TempDir;
 
 const DATABASE_FILENAME: &str = "milkdrift.redb";
@@ -93,6 +93,23 @@ fn a_nonempty_partially_initialized_database_is_refused() -> Result<(), Box<dyn 
     drop(database);
 
     assert_corruption(RedbStore::open(directory.path()));
+    Ok(())
+}
+
+#[test]
+fn a_multimap_only_database_is_not_reinitialized() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = TempDir::new()?;
+    let database = Database::create(directory.path().join(DATABASE_FILENAME))?;
+    let write = database.begin_write()?;
+    drop(write.open_multimap_table(MultimapTableDefinition::<u64, u64>::new("unexpected"))?);
+    write.commit()?;
+    drop(database);
+
+    assert_corruption(RedbStore::open(directory.path()));
+    let database = Database::open(directory.path().join(DATABASE_FILENAME))?;
+    let read = database.begin_read()?;
+    assert_eq!(read.list_tables()?.count(), 0);
+    assert_eq!(read.list_multimap_tables()?.count(), 1);
     Ok(())
 }
 

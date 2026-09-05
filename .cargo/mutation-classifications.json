@@ -12,7 +12,7 @@
   },
   "classifications": [
     {
-      "mutant": "adapters/redb-store/src/controller_account.rs:267:39: replace match guard existing.declaration() == declaration with true in apply_controller_transaction",
+      "mutant": "adapters/redb-store/src/controller_account.rs:270:39: replace match guard existing.declaration() == declaration with true in apply_controller_transaction",
       "classification": "unreachable_by_valid_contract",
       "explanation": "The transaction event contract compares every establishment declaration with the immutable existing account before application, so a different declaration for the same canonical account identity is refused before this defensive match guard is reached."
     },

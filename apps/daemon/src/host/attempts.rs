@@ -1,9 +1,14 @@
 //! Authorized current and historical attempt read ownership.
 
 use super::{
-    ActorSession, AttemptRead, AuthorityOperation, ControlCommand, ControlResult, ErrorCode,
-    NodeRead, Owner, PublicFailure, RunId, RunRead, internal, invalid, not_found, public_run,
+    Owner, PublicFailure, read_model::internal, read_model::invalid, read_model::not_found,
+    read_model::public_run,
 };
+use crate::auth::ActorSession;
+use milkdrift_authority::AuthorityOperation;
+use milkdrift_control::{ControlCommand, ControlResult};
+use milkdrift_control_protocol::{AttemptRead, ErrorCode, NodeRead, RunRead};
+use milkdrift_workspace::RunId;
 
 mod authorization;
 mod context;

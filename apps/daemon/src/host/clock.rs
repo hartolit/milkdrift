@@ -1,11 +1,8 @@
 //! Daemon-owned clock boundary and narrow adapters for inward runtime, peer, and storage ports.
 
 use std::{
-    sync::{
-        Arc, Weak,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::{SystemTime, UNIX_EPOCH},
+    sync::Arc, sync::Weak, sync::atomic::AtomicBool, sync::atomic::Ordering, time::SystemTime,
+    time::UNIX_EPOCH,
 };
 
 use milkdrift_peer_http::{PeerClock, PeerClockError};
@@ -18,7 +15,7 @@ use milkdrift_runtime::{BoundaryClock, RuntimeError};
 use thiserror::Error;
 use tracing::{info, warn};
 
-use super::{OwnerCallFailure, OwnerQueue, SharedHealth};
+use super::{health::SharedHealth, queue::OwnerCallFailure, queue::OwnerQueue};
 
 pub(super) trait DaemonClockSource: Send + Sync {
     fn now_unix_ms(&self) -> Result<u64, DaemonClockError>;

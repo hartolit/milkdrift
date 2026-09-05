@@ -1,12 +1,19 @@
 //! Authorized bounded run collection and timeline read-model ownership.
 
 use super::{
-    ActorSession, AuthorityOperation, ControlCommand, ControlResult, Cursor, ErrorCode, Owner,
-    Page, PageSize, PublicFailure, RequestedResourceFacts, RunId, RunQueryStore, RunRead,
-    RunSequence, RunSummaryCursor, RunSummaryFilter, RunSummaryPageQuery, TimelineEntry,
-    WorkflowId, WorkflowRunScope, cursor_binding, internal, invalid, not_found, parse_run_state,
-    public_persistence, public_protocol, public_timeline, unauthorized,
+    Owner, PublicFailure, read_model::cursor_binding, read_model::internal, read_model::invalid,
+    read_model::not_found, read_model::parse_run_state, read_model::public_persistence,
+    read_model::public_protocol, read_model::public_timeline, read_model::unauthorized,
 };
+use crate::auth::ActorSession;
+use milkdrift_authority::{AuthorityOperation, RequestedResourceFacts, WorkflowRunScope};
+use milkdrift_blueprint::WorkflowId;
+use milkdrift_control::{ControlCommand, ControlResult};
+use milkdrift_control_protocol::{Cursor, ErrorCode, Page, RunRead, TimelineEntry};
+use milkdrift_persistence::{
+    PageSize, RunQueryStore, RunSequence, RunSummaryCursor, RunSummaryFilter, RunSummaryPageQuery,
+};
+use milkdrift_workspace::RunId;
 
 impl Owner {
     pub(super) fn runs(

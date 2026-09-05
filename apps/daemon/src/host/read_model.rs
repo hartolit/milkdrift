@@ -1,11 +1,17 @@
-use super::{
-    ActorSession, ArtifactMetadataRead, AttemptRead, AuthorityDecisionSnapshot, BTreeMap, BTreeSet,
-    CommandAccepted, CommandRequest, ControlError, CursorBinding, ErrorCode, ExternalWorkAction,
-    IndexedRunState, NodeRead, PersistenceError, PublicFailure, PublicRevisionSummary,
-    ResolveAction, RevisionChange, RevisionId, RunRead, TimelineCategory, TimelineEntry, Value,
-    json,
+use super::PublicFailure;
+use crate::auth::ActorSession;
+use milkdrift_authority::AuthorityDecisionSnapshot;
+use milkdrift_blueprint::RevisionId;
+use milkdrift_control::ControlError;
+use milkdrift_control_protocol::{
+    ArtifactMetadataRead, AttemptRead, CapabilityOperationRead, CommandAccepted, CommandRequest,
+    CursorBinding, ErrorCode, NodeRead, ResolveAction, RevisionChange,
+    RevisionSummary as PublicRevisionSummary, RunRead, TimelineCategory, TimelineEntry,
 };
-use milkdrift_control_protocol::CapabilityOperationRead;
+use milkdrift_persistence::{IndexedRunState, PersistenceError};
+use milkdrift_runtime::ExternalWorkAction;
+use serde_json::{Value, json};
+use std::{collections::BTreeMap, collections::BTreeSet};
 
 pub(super) fn accepted_sequence(
     request: &CommandRequest,

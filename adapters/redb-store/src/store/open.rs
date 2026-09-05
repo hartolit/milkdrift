@@ -1,9 +1,9 @@
 use super::{
     ARTIFACT_DIRECTORY, DATABASE_FILENAME, Database, Mutex, PathBuf, PersistenceError, RedbStore,
-    RedbStoreConfig, STORAGE_SCHEMA_VERSION, TEMP_DIRECTORY, ensure_regular_file_or_absent, error,
-    fmt, initialize_schema, prepare_owned_directory, sync_owned_directory, validate_schema,
+    RedbStoreConfig, TEMP_DIRECTORY, ensure_regular_file_or_absent, error, fmt, initialize_schema,
+    prepare_owned_directory, sync_owned_directory, validate_schema,
 };
-use crate::clock::require_accepted_clock;
+use crate::{clock::require_accepted_clock, schema::STORAGE_SCHEMA_VERSION};
 use milkdrift_persistence::ClockWatermarkStore as _;
 impl fmt::Debug for RedbStore {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -103,6 +103,10 @@ pub(crate) fn validate_config(config: &RedbStoreConfig) -> Result<(), Persistenc
 
 pub(crate) fn database_is_uninitialized(database: &Database) -> Result<bool, PersistenceError> {
     let read = database.begin_read().map_err(error::redb)?;
-    let mut tables = read.list_tables().map_err(error::redb)?;
-    Ok(tables.next().is_none())
+    Ok(read.list_tables().map_err(error::redb)?.next().is_none()
+        && read
+            .list_multimap_tables()
+            .map_err(error::redb)?
+            .next()
+            .is_none())
 }

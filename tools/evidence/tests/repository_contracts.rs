@@ -40,46 +40,6 @@ const PRODUCTION_COHESION_EXCEPTIONS: &[CohesionException] = &[
         rationale: "one remote peer adapter owns authenticated protocol exchange and failure translation",
     },
     CohesionException {
-        path: "adapters/redb-store/src/admin/cursor.rs",
-        ceiling: 1_072,
-        rationale: "one durable cursor owner validates every administrative scan phase transition",
-    },
-    CohesionException {
-        path: "adapters/redb-store/src/application.rs",
-        ceiling: 1_152,
-        rationale: "one storage owner implements the complete application-state persistence port",
-    },
-    CohesionException {
-        path: "adapters/redb-store/src/controller_account.rs",
-        ceiling: 1_178,
-        rationale: "one storage owner implements the controller-account durable ledger contract",
-    },
-    CohesionException {
-        path: "adapters/redb-store/src/journal/workspace.rs",
-        ceiling: 1_067,
-        rationale: "one journal transaction owner keeps workspace accounting and event commit atomic",
-    },
-    CohesionException {
-        path: "adapters/redb-store/src/peer.rs",
-        ceiling: 1_561,
-        rationale: "one storage owner implements the complete peer-state persistence port",
-    },
-    CohesionException {
-        path: "apps/daemon/src/config.rs",
-        ceiling: 1_368,
-        rationale: "one daemon configuration reader owns validation across the versioned host document",
-    },
-    CohesionException {
-        path: "apps/daemon/src/host.rs",
-        ceiling: 1_830,
-        rationale: "one daemon composition owner coordinates lifecycle across focused private host modules",
-    },
-    CohesionException {
-        path: "apps/daemon/src/http.rs",
-        ceiling: 1_531,
-        rationale: "one transport owner keeps route adaptation and public failure mapping consistent",
-    },
-    CohesionException {
         path: "crates/blueprint/src/validation.rs",
         ceiling: 1_158,
         rationale: "one validator owns the complete immutable blueprint semantic invariant set",
@@ -98,11 +58,6 @@ const PRODUCTION_COHESION_EXCEPTIONS: &[CohesionException] = &[
         path: "crates/control/src/service.rs",
         ceiling: 1_346,
         rationale: "one control service owns authorization and durable command admission ordering",
-    },
-    CohesionException {
-        path: "crates/persistence/src/controller_account.rs",
-        ceiling: 1_966,
-        rationale: "one persistence contract owns controller-account ledger types and transition invariants",
     },
 ];
 
@@ -301,13 +256,16 @@ fn canonical_version_statements_match_source_constants() -> TestResult {
 
 #[test]
 fn peer_protocol_version_is_exact_from_config_through_transport() -> TestResult {
-    let daemon_config = read(root()?.join("apps/daemon/src/config.rs"))?;
+    let daemon_config = read(root()?.join("apps/daemon/src/config/wire.rs"))?;
     assert!(
-        daemon_config.match_indices("PROTOCOL_MINOR_V1").count() >= 4,
-        "daemon peer defaults and both configured bounds must derive from the protocol constant"
+        daemon_config.match_indices("PROTOCOL_MINOR_V1").count() >= 2,
+        "daemon peer defaults must derive from the protocol constant"
     );
+    let compiler = read(root()?.join("apps/daemon/src/config/compile.rs"))?;
+    assert!(compiler.contains("relationship.minimum_minor != PROTOCOL_MINOR_V1"));
+    assert!(compiler.contains("relationship.maximum_minor != PROTOCOL_MINOR_V1"));
 
-    let daemon_host = read(root()?.join("apps/daemon/src/host.rs"))?;
+    let daemon_host = read(root()?.join("apps/daemon/src/host/peers.rs"))?;
     assert!(daemon_host.contains("let versions = ProtocolVersionRange::default();"));
     assert!(daemon_host.contains("major: PROTOCOL_MAJOR_V1"));
     assert!(

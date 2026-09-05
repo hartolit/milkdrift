@@ -1,12 +1,20 @@
 //! Authorized immutable workflow/revision lineage read-model ownership.
 
 use super::{
-    ActorSession, AuthorityOperation, BlueprintRevisionDocument, ControlCommand, ControlResult,
-    Cursor, Owner, Page, PageSize, PublicFailure, PublicRevisionSummary, RequestedResourceFacts,
-    RevisionCursor, RevisionDiffRead, RevisionFilter, RevisionPageQuery, RevisionRead,
-    RevisionStore, WorkflowId, WorkflowRunScope, cursor_binding, diff_keys, internal, invalid,
-    not_found, parse_revision_id, public_persistence, public_protocol, public_revision_summary,
-    unauthorized,
+    Owner, PublicFailure, read_model::cursor_binding, read_model::diff_keys, read_model::internal,
+    read_model::invalid, read_model::not_found, read_model::parse_revision_id,
+    read_model::public_persistence, read_model::public_protocol,
+    read_model::public_revision_summary, read_model::unauthorized,
+};
+use crate::auth::ActorSession;
+use milkdrift_authority::{AuthorityOperation, RequestedResourceFacts, WorkflowRunScope};
+use milkdrift_blueprint::{BlueprintRevisionDocument, WorkflowId};
+use milkdrift_control::{ControlCommand, ControlResult};
+use milkdrift_control_protocol::{
+    Cursor, Page, RevisionDiffRead, RevisionRead, RevisionSummary as PublicRevisionSummary,
+};
+use milkdrift_persistence::{
+    PageSize, RevisionCursor, RevisionFilter, RevisionPageQuery, RevisionStore,
 };
 
 impl Owner {

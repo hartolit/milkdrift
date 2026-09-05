@@ -17,175 +17,125 @@ pub(crate) const SECURITY_AUDIT_NEXT_SEQUENCE_KEY: &str = "security_audit_next_s
 pub(crate) const SECURITY_AUDIT_COUNT_KEY: &str = "security_audit_count";
 pub(crate) const PEER_EXECUTION_GLOBAL_ACCOUNTING_KEY: &str = "global";
 
+// One declaration owns physical names, types, initialization and exact membership.
+// Transaction creation, durable metadata and commit/fault boundaries stay in store::schema.
+macro_rules! physical_tables {
+    ($($table:ident: $key:ty, $value:ty = $name:literal;)*) => {
+        $(pub(crate) const $table: TableDefinition<'static, $key, $value> =
+            TableDefinition::new($name);)*
+
+        pub(crate) fn initialize_tables(write: &redb::WriteTransaction) -> Result<(), milkdrift_persistence::PersistenceError> {
+            $(drop(write.open_table($table).map_err(crate::error::redb)?);)*
+            Ok(())
+        }
+
+        pub(crate) fn validate_tables(read: &redb::ReadTransaction) -> Result<(), milkdrift_persistence::PersistenceError> {
+            use redb::TableHandle as _;
+            // Typed opens independently reject absent tables and wrong key/value encodings.
+            $(drop(read.open_table($table).map_err(crate::error::redb)?);)*
+            for table in read.list_tables().map_err(crate::error::redb)? {
+                if !matches!(table.name(), $($name)|*) {
+                    return Err(crate::error::corruption("unexpected physical table"));
+                }
+            }
+            if read.list_multimap_tables().map_err(crate::error::redb)?.next().is_some() {
+                return Err(crate::error::corruption("unexpected physical multimap table"));
+            }
+            Ok(())
+        }
+    };
+}
+
+physical_tables! {
 // Every durable family has a distinct, permanently named table. Keys that need
 // ordering use the closed binary encodings in `codec`; documents are canonical
 // JSON owned by the inward contracts.
 // Physical-format markers and optimistic aggregate revisions.
-pub(crate) const METADATA: TableDefinition<'static, &'static str, u64> =
-    TableDefinition::new("milkdrift.v1.metadata");
+METADATA: &'static str, u64 = "milkdrift.v1.metadata";
 // Authoritative immutable revision documents plus a derived and verifiable digest index.
-pub(crate) const REVISIONS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.revisions.by_id");
-pub(crate) const REVISIONS_BY_DIGEST: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.revisions.by_digest_and_id");
+REVISIONS: &'static str, &'static [u8] = "milkdrift.v1.revisions.by_id";
+REVISIONS_BY_DIGEST: &'static [u8], &'static [u8] = "milkdrift.v1.revisions.by_digest_and_id";
 // Authoritative journal aggregates, immutable events, cumulative chain checkpoints,
 // chain heads, and atomically accepted command results.
-pub(crate) const RUN_HEADS: TableDefinition<'static, &'static str, u64> =
-    TableDefinition::new("milkdrift.v1.runs.heads");
-pub(crate) const RUN_EVENTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.runs.events");
-pub(crate) const EVENT_HISTORY_DIGESTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.runs.event_history_digests");
-pub(crate) const RUN_HISTORY_HEADS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v2.runs.history_heads");
-pub(crate) const COMMAND_RESULTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.commands.results");
+RUN_HEADS: &'static str, u64 = "milkdrift.v1.runs.heads";
+RUN_EVENTS: &'static [u8], &'static [u8] = "milkdrift.v1.runs.events";
+EVENT_HISTORY_DIGESTS: &'static [u8], &'static [u8] = "milkdrift.v1.runs.event_history_digests";
+RUN_HISTORY_HEADS: &'static str, &'static [u8] = "milkdrift.v2.runs.history_heads";
+COMMAND_RESULTS: &'static [u8], &'static [u8] = "milkdrift.v1.commands.results";
 // Exact-current continuous-controller accounts, immutable run bindings, and transition receipts.
-pub(crate) const CONTROLLER_ACCOUNTS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.controllers.accounts");
-pub(crate) const CONTROLLER_ACCOUNT_REVISIONS: TableDefinition<
-    'static,
-    &'static str,
-    &'static [u8],
-> = TableDefinition::new("milkdrift.v1.controllers.account_revisions");
-pub(crate) const CONTROLLER_RUN_BINDINGS: TableDefinition<'static, &'static str, &'static str> =
-    TableDefinition::new("milkdrift.v1.controllers.run_bindings");
-pub(crate) const CONTROLLER_TRANSITIONS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.controllers.transitions");
-pub(crate) const CONTROLLER_ARTIFACT_CHARGES: TableDefinition<
-    'static,
-    &'static str,
-    &'static [u8],
-> = TableDefinition::new("milkdrift.v1.controllers.artifact_charges");
+CONTROLLER_ACCOUNTS: &'static str, &'static [u8] = "milkdrift.v1.controllers.accounts";
+CONTROLLER_ACCOUNT_REVISIONS: &'static str, &'static [u8] = "milkdrift.v1.controllers.account_revisions";
+CONTROLLER_RUN_BINDINGS: &'static str, &'static str = "milkdrift.v1.controllers.run_bindings";
+CONTROLLER_TRANSITIONS: &'static str, &'static [u8] = "milkdrift.v1.controllers.transitions";
+CONTROLLER_ARTIFACT_CHARGES: &'static str, &'static [u8] = "milkdrift.v1.controllers.artifact_charges";
 // Daemon-owned application receipts have exactly one authoritative physical placement.
 // The completion index is derived bounded operational state for the hot tier only.
-pub(crate) const APPLICATION_COMMAND_RECEIPTS_HOT: TableDefinition<
-    'static,
-    &'static [u8],
-    &'static [u8],
-> = TableDefinition::new("milkdrift.v2.application.command_receipts.hot");
-pub(crate) const APPLICATION_COMMAND_RECEIPTS_COLD: TableDefinition<
-    'static,
-    &'static [u8],
-    &'static [u8],
-> = TableDefinition::new("milkdrift.v2.application.command_receipts.cold");
-pub(crate) const APPLICATION_HOT_RECEIPTS_BY_COMPLETION: TableDefinition<
-    'static,
-    &'static [u8],
-    &'static [u8],
-> = TableDefinition::new("milkdrift.v2.application.command_receipts.hot_by_completion");
+APPLICATION_COMMAND_RECEIPTS_HOT: &'static [u8], &'static [u8] = "milkdrift.v2.application.command_receipts.hot";
+APPLICATION_COMMAND_RECEIPTS_COLD: &'static [u8], &'static [u8] = "milkdrift.v2.application.command_receipts.cold";
+APPLICATION_HOT_RECEIPTS_BY_COMPLETION: &'static [u8], &'static [u8] = "milkdrift.v2.application.command_receipts.hot_by_completion";
 // Presentation layout is authoritative application state but never semantic revision content.
-pub(crate) const APPLICATION_LAYOUTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.application.layouts");
+APPLICATION_LAYOUTS: &'static [u8], &'static [u8] = "milkdrift.v1.application.layouts";
 // Rebuildable proposal discovery projection. Exact state remains in control/runtime facts.
-pub(crate) const APPLICATION_PROPOSALS: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.application.proposals");
+APPLICATION_PROPOSALS: &'static [u8], &'static [u8] = "milkdrift.v1.application.proposals";
 // Independently retained protected-operation audit. Receipt retention is never affected.
-pub(crate) const SECURITY_AUDIT: TableDefinition<'static, u64, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.application.security_audit");
+SECURITY_AUDIT: u64, &'static [u8] = "milkdrift.v1.application.security_audit";
 // Stable signal identities are indexed back to their authoritative receipt event.
-pub(crate) const SIGNAL_RECEIPTS: TableDefinition<'static, &'static [u8], u64> =
-    TableDefinition::new("milkdrift.v1.runs.signal_receipts");
+SIGNAL_RECEIPTS: &'static [u8], u64 = "milkdrift.v1.runs.signal_receipts";
 // Derived and verifiable discoverability/index state. These rows never substitute
 // for an absent authoritative event, head, or command result.
-pub(crate) const RUN_SUMMARIES: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.discovery.run_summaries");
-pub(crate) const NONTERMINAL_RUNS: TableDefinition<'static, &'static str, u8> =
-    TableDefinition::new("milkdrift.v1.discovery.nonterminal_runs");
-pub(crate) const RUNNABLE_ENTRIES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.discovery.runnable_by_identity");
-pub(crate) const RUNNABLE_INDEX: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.discovery.runnable");
-pub(crate) const RUNNABLE_RUN_HEADS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.discovery.runnable_run_heads");
-pub(crate) const TIMER_ENTRIES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.discovery.timers_by_identity");
-pub(crate) const TIMER_INDEX: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.discovery.timers");
-pub(crate) const LEASE_ENTRIES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.discovery.leases_by_identity");
-pub(crate) const LEASE_INDEX: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.discovery.leases");
+RUN_SUMMARIES: &'static str, &'static [u8] = "milkdrift.v1.discovery.run_summaries";
+NONTERMINAL_RUNS: &'static str, u8 = "milkdrift.v1.discovery.nonterminal_runs";
+RUNNABLE_ENTRIES: &'static [u8], &'static [u8] = "milkdrift.v1.discovery.runnable_by_identity";
+RUNNABLE_INDEX: &'static [u8], &'static [u8] = "milkdrift.v1.discovery.runnable";
+RUNNABLE_RUN_HEADS: &'static str, &'static [u8] = "milkdrift.v1.discovery.runnable_run_heads";
+TIMER_ENTRIES: &'static [u8], &'static [u8] = "milkdrift.v1.discovery.timers_by_identity";
+TIMER_INDEX: &'static [u8], &'static [u8] = "milkdrift.v1.discovery.timers";
+LEASE_ENTRIES: &'static [u8], &'static [u8] = "milkdrift.v1.discovery.leases_by_identity";
+LEASE_INDEX: &'static [u8], &'static [u8] = "milkdrift.v1.discovery.leases";
 // Optional snapshots and their derived latest pointer. Snapshots may be discarded;
 // authoritative events remain sufficient for replay.
-pub(crate) const SNAPSHOTS: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.snapshots.by_run_and_id");
-pub(crate) const SNAPSHOT_LATEST: TableDefinition<'static, &'static str, &'static str> =
-    TableDefinition::new("milkdrift.v1.snapshots.latest_by_run");
+SNAPSHOTS: &'static [u8], &'static [u8] = "milkdrift.v1.snapshots.by_run_and_id";
+SNAPSHOT_LATEST: &'static str, &'static str = "milkdrift.v1.snapshots.latest_by_run";
 // Authoritative workspace scope/value documents and aggregate accounting, with
 // derived root/value-head lookup indexes.
-pub(crate) const SCOPES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.workspace.scopes");
-pub(crate) const ROOT_SCOPES: TableDefinition<'static, &'static str, &'static str> =
-    TableDefinition::new("milkdrift.v1.workspace.root_scopes");
-pub(crate) const VALUES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.workspace.values");
-pub(crate) const WORKSPACE_VALUE_HEADS: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.workspace.value_heads");
+SCOPES: &'static [u8], &'static [u8] = "milkdrift.v1.workspace.scopes";
+ROOT_SCOPES: &'static str, &'static str = "milkdrift.v1.workspace.root_scopes";
+VALUES: &'static [u8], &'static [u8] = "milkdrift.v1.workspace.values";
+WORKSPACE_VALUE_HEADS: &'static [u8], &'static [u8] = "milkdrift.v1.workspace.value_heads";
 // Authoritative artifact metadata/publication coordination and derived/verifiable
 // digest, age, ownership, reference, and temporary-path indexes.
-pub(crate) const ARTIFACT_METADATA: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.artifacts.metadata_by_id");
-pub(crate) const ARTIFACT_MANIFEST: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.artifacts.authoritative_manifest");
-pub(crate) const ARTIFACT_PUBLICATIONS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.artifacts.publications");
-pub(crate) const ARTIFACT_PUBLICATIONS_BY_AGE: TableDefinition<
-    'static,
-    &'static [u8],
-    &'static str,
-> = TableDefinition::new("milkdrift.v1.artifacts.writable_by_age");
-pub(crate) const ARTIFACT_RESERVATIONS: TableDefinition<'static, &'static str, &'static str> =
-    TableDefinition::new("milkdrift.v1.artifacts.reservations_by_run");
-pub(crate) const ARTIFACT_TEMP_OWNERS: TableDefinition<'static, &'static str, &'static str> =
-    TableDefinition::new("milkdrift.v1.artifacts.temp_owners");
-pub(crate) const ARTIFACT_TEMP_MANIFEST: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.artifacts.temporary_manifest");
-pub(crate) const ARTIFACT_PATHS: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v2.artifacts.path_inventory");
-pub(crate) const ARTIFACT_DELETE_GUARDS: TableDefinition<'static, &'static [u8], u8> =
-    TableDefinition::new("milkdrift.v2.artifacts.delete_guards");
-pub(crate) const ARTIFACT_DIGEST_RESERVATIONS: TableDefinition<'static, &'static [u8], u8> =
-    TableDefinition::new("milkdrift.v1.artifacts.reservations_by_digest");
-pub(crate) const ARTIFACTS_BY_DIGEST: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.artifacts.by_digest_and_id");
+ARTIFACT_METADATA: &'static str, &'static [u8] = "milkdrift.v1.artifacts.metadata_by_id";
+ARTIFACT_MANIFEST: &'static str, &'static [u8] = "milkdrift.v1.artifacts.authoritative_manifest";
+ARTIFACT_PUBLICATIONS: &'static str, &'static [u8] = "milkdrift.v1.artifacts.publications";
+ARTIFACT_PUBLICATIONS_BY_AGE: &'static [u8], &'static str = "milkdrift.v1.artifacts.writable_by_age";
+ARTIFACT_RESERVATIONS: &'static str, &'static str = "milkdrift.v1.artifacts.reservations_by_run";
+ARTIFACT_TEMP_OWNERS: &'static str, &'static str = "milkdrift.v1.artifacts.temp_owners";
+ARTIFACT_TEMP_MANIFEST: &'static str, &'static [u8] = "milkdrift.v1.artifacts.temporary_manifest";
+ARTIFACT_PATHS: &'static [u8], &'static [u8] = "milkdrift.v2.artifacts.path_inventory";
+ARTIFACT_DELETE_GUARDS: &'static [u8], u8 = "milkdrift.v2.artifacts.delete_guards";
+ARTIFACT_DIGEST_RESERVATIONS: &'static [u8], u8 = "milkdrift.v1.artifacts.reservations_by_digest";
+ARTIFACTS_BY_DIGEST: &'static [u8], &'static [u8] = "milkdrift.v1.artifacts.by_digest_and_id";
 // Derived occurrence index plus authoritative per-run membership/accounting evidence.
-pub(crate) const ARTIFACT_REFERENCES: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.artifacts.references");
-pub(crate) const RUN_ARTIFACT_OWNERSHIP: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.artifacts.ownership_by_run");
-pub(crate) const ARTIFACT_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.artifacts.accounting");
-pub(crate) const WORKSPACE_USAGE: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.workspace.usage");
-pub(crate) const WORKSPACE_BUDGETS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.workspace.budgets");
+ARTIFACT_REFERENCES: &'static [u8], &'static [u8] = "milkdrift.v1.artifacts.references";
+RUN_ARTIFACT_OWNERSHIP: &'static [u8], &'static [u8] = "milkdrift.v1.artifacts.ownership_by_run";
+ARTIFACT_ACCOUNTING: &'static str, &'static [u8] = "milkdrift.v1.artifacts.accounting";
+WORKSPACE_USAGE: &'static str, &'static [u8] = "milkdrift.v1.workspace.usage";
+WORKSPACE_BUDGETS: &'static str, &'static [u8] = "milkdrift.v1.workspace.budgets";
 
 // Serving-peer durable acceptance, queue ownership, append-only observations and retention.
-pub(crate) const PEER_RELATIONSHIPS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.peers.relationships");
-pub(crate) const PEER_CATALOGS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v1.peers.catalogs");
-pub(crate) const PEER_EXECUTIONS: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v2.peers.executions.hot");
-pub(crate) const PEER_EXECUTION_TOMBSTONES: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v2.peers.executions.tombstones");
-pub(crate) const PEER_EXECUTION_LOCATIONS: TableDefinition<'static, &'static str, u8> =
-    TableDefinition::new("milkdrift.v2.peers.executions.locations");
-pub(crate) const PEER_EXECUTIONS_BY_REQUEST: TableDefinition<'static, &'static [u8], &'static str> =
-    TableDefinition::new("milkdrift.v2.peers.executions_by_request");
-pub(crate) const PEER_OBSERVATIONS: TableDefinition<'static, &'static [u8], &'static [u8]> =
-    TableDefinition::new("milkdrift.v2.peers.observations.hot");
-pub(crate) const PEER_OBSERVATION_ARTIFACTS: TableDefinition<
-    'static,
-    &'static [u8],
-    &'static [u8],
-> = TableDefinition::new("milkdrift.v2.peers.observation_artifacts.hot");
-pub(crate) const PEER_DISPATCH_AVAILABLE: TableDefinition<'static, &'static [u8], &'static str> =
-    TableDefinition::new("milkdrift.v2.peers.dispatch_available");
-pub(crate) const PEER_ACTIVE_CLAIMS: TableDefinition<'static, &'static [u8], &'static str> =
-    TableDefinition::new("milkdrift.v2.peers.active_claims");
-pub(crate) const PEER_TERMINAL_INDEX: TableDefinition<'static, &'static [u8], &'static str> =
-    TableDefinition::new("milkdrift.v2.peers.hot_terminal_retention");
-pub(crate) const PEER_EXECUTION_ACCOUNTING: TableDefinition<'static, &'static str, &'static [u8]> =
-    TableDefinition::new("milkdrift.v2.peers.accounting");
+PEER_RELATIONSHIPS: &'static str, &'static [u8] = "milkdrift.v1.peers.relationships";
+PEER_CATALOGS: &'static str, &'static [u8] = "milkdrift.v1.peers.catalogs";
+PEER_EXECUTIONS: &'static str, &'static [u8] = "milkdrift.v2.peers.executions.hot";
+PEER_EXECUTION_TOMBSTONES: &'static str, &'static [u8] = "milkdrift.v2.peers.executions.tombstones";
+PEER_EXECUTION_LOCATIONS: &'static str, u8 = "milkdrift.v2.peers.executions.locations";
+PEER_EXECUTIONS_BY_REQUEST: &'static [u8], &'static str = "milkdrift.v2.peers.executions_by_request";
+PEER_OBSERVATIONS: &'static [u8], &'static [u8] = "milkdrift.v2.peers.observations.hot";
+PEER_OBSERVATION_ARTIFACTS: &'static [u8], &'static [u8] = "milkdrift.v2.peers.observation_artifacts.hot";
+PEER_DISPATCH_AVAILABLE: &'static [u8], &'static str = "milkdrift.v2.peers.dispatch_available";
+PEER_ACTIVE_CLAIMS: &'static [u8], &'static str = "milkdrift.v2.peers.active_claims";
+PEER_TERMINAL_INDEX: &'static [u8], &'static str = "milkdrift.v2.peers.hot_terminal_retention";
+PEER_EXECUTION_ACCOUNTING: &'static str, &'static [u8] = "milkdrift.v2.peers.accounting";
+}
+
+#[cfg(test)]
+mod tests;

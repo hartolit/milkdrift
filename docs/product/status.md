@@ -215,23 +215,25 @@ Current exact versions are:
 
 ## Current validation/evidence snapshot
 
-- Current local Linux worktree snapshot (2026-09-05): formatting, all-target/all-feature checking, the complete
-  workspace test and doctest suite, Clippy with warnings denied, rustdoc with warnings denied,
-  `cargo deny check`, `cargo machete`, duplicate dependency inspection, and test inventory all pass.
-  Five explicitly manual longevity/storage-bound tests remain ignored in the ordinary suite.
-- All five manual longevity lanes pass separately in release mode: 10,001 receipt commits across
-  hot/cold turnover and restart, two-daemon peer retention/restart, controller checkpoint/restart,
-  controller reservation/artifact turnover and restart, and the 2,049-occurrence runtime frontier.
-  The seven pinned current-source mutation shards enumerate 625 mutants across authority,
-  retention, runtime, uncertainty, controller admission/accounting, context, and peer ownership.
-  The complete current campaign catches 586; 37 are compiler-unviable, and two exact defensive
-  guards retain reviewed unreachable-contract classifications after their earlier validators were
-  exercised directly. There are no unclassified survivors or timeouts.
-- The simplified all-feature `cargo-public-api` inventory is retained under `target/public-api` for
-  per-package review. This boundary intentionally adds the narrow admission-envelope,
-  prepared-entry, and durable controller-account contracts shared by their real owners. The daemon
-  still exposes its effective configuration as an opaque compiled plan rather than validated raw
-  fields. Lint allowances remain individually justified at their use sites.
+- Current local Windows/MSVC snapshot (2026-09-05): formatting, all-target/all-feature checking,
+  Clippy and rustdoc with warnings denied, dependency policy checks, and release binary builds
+  pass. The persistence contract suites and exact event fixtures pass. Direct redb schema tests
+  reject each missing or mistyped member of the 63-table schema, plus unexpected tables/multimaps.
+- The full workspace suite is not green on this host. Redb's existing non-Unix directory-open
+  path fails with OS error 5 during durability syncing, including on the unmodified baseline.
+  Unix executable fixtures, Windows path assertions and an external-evidence fixture stack overflow
+  also prevent native qualification; the path assertion and stack overflow reproduce on the baseline. Storage-backed
+  daemon queue, recovery, shutdown and transport evidence therefore remains unqualified here.
+  Repository ownership/cohesion checks pass; its Unix process-profile fixture does not.
+- Retention, controller, peer and authority mutation campaigns refuse their failing unmutated
+  baselines before testing mutants. Operational and actual-binary headless evidence also stop at
+  storage startup. Release longevity lanes require a working Unix filesystem runtime; current
+  source has no passing longevity or mutation qualification from this host.
+- Default and all-feature public-API inventories under `target/public-api` remove the unused
+  controller-total addition method and two unused daemon failure variants. Redb's public item
+  count is unchanged. The daemon still exposes an opaque compiled configuration plan. All nine
+  persistence/redb/daemon cohesion exceptions are removed; no production file in that scope
+  exceeds 1,000 lines.
 - The maintained evidence suites cover immutable/schema readers, validating constructors, hostile
   bounds, exact idempotency/conflict, crash/reopen and deterministic fault boundaries, projection
   replay, reconciliation, causal context, process/model adapters, controller lifecycle, application
@@ -250,12 +252,10 @@ Current exact versions are:
   retained uncertainty, unsafe-retry refusal, and explicit retain. Operator real-endpoint mode
   requires an explicit loopback profile and never falls back; no such profile was supplied here.
 - `milkdrift-evidence` owns repeatable storage/projection/context/artifact/daemon measurements,
-  the Cargo-native mutation shard/classification runner, and operational reports under
-  `target/`. The current dirty-tree 256-operation run accepted 54 requests and returned 202 stable
-  overload results, reopens five hot and 251 cold receipts plus 256 peer executions, reconnects the
-  stream, and shuts down with the Linux task count unchanged at 12. It records Git
-  commit/tree/dirty state plus `rustc -vV` and is not release qualification. The hermetic
-  external-evidence report remains explicitly non-qualifying for real interoperability.
+  the Cargo-native mutation shard/classification runner, and operational reports under `target/`.
+  Reports bind Git commit/tree/dirty state and `rustc -vV`; previous measurements do not qualify
+  the current source. The hermetic external-evidence report remains non-qualifying for real
+  interoperability.
 - Raw API inventories are generated under `target/public-api`; generated public-API reports and
   pass histories are not source documentation.
 - `cargo machete` reports no unused dependency. `cargo deny` accepts the maintained transitive

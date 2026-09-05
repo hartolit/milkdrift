@@ -1,14 +1,22 @@
 //! External command idempotency, deterministic rejection, and recovery boundary.
 
 use super::{
-    APPLICATION_COMMAND_SCHEMA_VERSION, ActorSession, ApplicationCommandCommit,
-    ApplicationCommandCommitOutcome, ApplicationCommandEffect, ApplicationCommandReceipt,
-    ApplicationCommandResult, ApplicationCommandStore, ApplicationEffectReference,
-    BlueprintRevisionDocument, Command, CommandAccepted, CommandId, CommandRequest, Deserialize,
-    ErrorCode, IntegrityDigest, Owner, PublicFailure, RunId, RunSequence, Serialize,
-    TimestampMillis, Value, bounded, conflict, corruption, internal, invalid, layouts,
-    parse_revision_id, proposals, public_persistence, public_protocol,
+    APPLICATION_COMMAND_SCHEMA_VERSION, Owner, PublicFailure, layouts, proposals,
+    read_model::bounded, read_model::conflict, read_model::corruption, read_model::internal,
+    read_model::invalid, read_model::parse_revision_id, read_model::public_persistence,
+    read_model::public_protocol,
 };
+use crate::auth::ActorSession;
+use milkdrift_blueprint::BlueprintRevisionDocument;
+use milkdrift_control_protocol::{Command, CommandAccepted, CommandRequest, ErrorCode};
+use milkdrift_persistence::{
+    ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
+    ApplicationCommandReceipt, ApplicationCommandResult, ApplicationCommandStore,
+    ApplicationEffectReference, CommandId, IntegrityDigest, RunSequence, TimestampMillis,
+};
+use milkdrift_workspace::RunId;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 pub(super) fn execute(
     owner: &mut Owner,

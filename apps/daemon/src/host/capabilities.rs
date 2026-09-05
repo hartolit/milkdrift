@@ -1,12 +1,16 @@
 //! Local capability registration, health checks, and authorized read-model ownership.
 
-use super::{
-    ActorSession, AdapterConfig, Arc, AuthorityOperation, CapabilityHost, CapabilityId,
-    CapabilityRead, ControlService, EndpointProfile, ErrorCode, InvocationDataAccess,
-    LocalProcessAdapter, LocalSecretResolver, ModelEndpointAdapter, Owner, ProcessProfileDocument,
-    PublicFailure, RequestedResourceFacts, ResultSink, WorkflowControlAdapter, bounded,
-    descriptor_for_profile, fs, snake_debug, workflow_control_descriptor,
-};
+use super::{Owner, PublicFailure, read_model::bounded, read_model::snake_debug};
+use crate::{auth::ActorSession, config::AdapterConfig};
+use milkdrift_authority::{AuthorityOperation, RequestedResourceFacts};
+use milkdrift_capability::CapabilityId;
+use milkdrift_capability_host::{CapabilityHost, InvocationDataAccess};
+use milkdrift_control::{ControlService, WorkflowControlAdapter, workflow_control_descriptor};
+use milkdrift_control_protocol::{CapabilityRead, ErrorCode};
+use milkdrift_local_process::{LocalProcessAdapter, ProcessProfileDocument};
+use milkdrift_local_secret::LocalSecretResolver;
+use milkdrift_model_provider::{EndpointProfile, ModelEndpointAdapter, descriptor_for_profile};
+use std::{fs, sync::Arc};
 
 impl Owner {
     pub(super) fn capabilities(
@@ -148,4 +152,44 @@ pub(super) fn register_configured(
             .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+use milkdrift_capability_host::{AdapterInvocation, MaterializationLimits};
+use milkdrift_control::{ControlError, ControlResultSink, MAX_CONTROL_RESULT_BYTES};
+
+struct ResultSink {
+    data: Arc<dyn InvocationDataAccess>,
+}
+
+impl ControlResultSink for ResultSink {
+    fn publish(
+        &self,
+        invocation: &AdapterInvocation<'_>,
+        bytes: &[u8],
+    ) -> Result<milkdrift_capability::ArtifactReference, ControlError> {
+        let context = invocation.context().ok_or_else(|| {
+            ControlError::InvalidContract(
+                "control result publication requires durable context".to_owned(),
+            )
+        })?;
+        self.data
+            .publish_bytes(
+                context,
+                invocation.request(),
+                "control_result",
+                "application/vnd.milkdrift.control-result+json",
+                bytes,
+                MaterializationLimits {
+                    max_files: 1,
+                    max_file_bytes: MAX_CONTROL_RESULT_BYTES,
+                    max_total_bytes: MAX_CONTROL_RESULT_BYTES,
+                    max_path_bytes: 256,
+                    max_directory_depth: 8,
+                    chunk_bytes: 262_144,
+                }
+                .validate()
+                .map_err(|error| ControlError::InvalidContract(error.to_string()))?,
+            )
+            .map_err(|error| ControlError::InvalidContract(error.to_string()))
+    }
 }

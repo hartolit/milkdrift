@@ -1,9 +1,11 @@
-use super::cursor::{
-    index_cursor_position, make_integrity_cursor, scan_binary_bytes_phase,
-    scan_binary_string_phase, scan_binary_u8_phase, scan_binary_u64_phase, scan_string_bytes_phase,
-    scan_string_string_phase, scan_string_u8_phase, scan_string_u64_phase, scan_u64_bytes_phase,
+use super::{
+    IntegrityScanCursor, IntegrityScanFamily, IntegrityScanResult, PersistenceError,
+    cursor::index_cursor_position, cursor::make_integrity_cursor,
 };
-use super::{IntegrityScanCursor, IntegrityScanFamily, IntegrityScanResult, PersistenceError};
+use crate::{
+    admin::scan::scan_binary_phase, admin::scan::scan_string_phase,
+    admin::scan::scan_u64_bytes_phase,
+};
 
 mod application;
 mod artifacts;
@@ -86,7 +88,7 @@ impl ScanContext<'_, '_> {
         component: &str,
         validate: impl FnMut(&[u8], &[u8]) -> Result<(), PersistenceError>,
     ) -> Result<(), PersistenceError> {
-        scan_binary_bytes_phase(
+        scan_binary_phase(
             phase,
             self.start_phase,
             self.start_key.as_deref(),
@@ -108,7 +110,7 @@ impl ScanContext<'_, '_> {
         component: &str,
         validate: impl FnMut(&[u8], &str) -> Result<(), PersistenceError>,
     ) -> Result<(), PersistenceError> {
-        scan_binary_string_phase(
+        scan_binary_phase(
             phase,
             self.start_phase,
             self.start_key.as_deref(),
@@ -130,7 +132,7 @@ impl ScanContext<'_, '_> {
         component: &str,
         validate: impl FnMut(&[u8], u8) -> Result<(), PersistenceError>,
     ) -> Result<(), PersistenceError> {
-        scan_binary_u8_phase(
+        scan_binary_phase(
             phase,
             self.start_phase,
             self.start_key.as_deref(),
@@ -152,7 +154,7 @@ impl ScanContext<'_, '_> {
         component: &str,
         validate: impl FnMut(&[u8], u64) -> Result<(), PersistenceError>,
     ) -> Result<(), PersistenceError> {
-        scan_binary_u64_phase(
+        scan_binary_phase(
             phase,
             self.start_phase,
             self.start_key.as_deref(),
@@ -196,7 +198,7 @@ impl ScanContext<'_, '_> {
         component: &str,
         validate: impl FnMut(&str, &[u8]) -> Result<(), PersistenceError>,
     ) -> Result<(), PersistenceError> {
-        scan_string_bytes_phase(
+        scan_string_phase(
             phase,
             self.start_phase,
             self.start_key.as_deref(),
@@ -218,7 +220,7 @@ impl ScanContext<'_, '_> {
         component: &str,
         validate: impl FnMut(&str, &str) -> Result<(), PersistenceError>,
     ) -> Result<(), PersistenceError> {
-        scan_string_string_phase(
+        scan_string_phase(
             phase,
             self.start_phase,
             self.start_key.as_deref(),
@@ -240,7 +242,7 @@ impl ScanContext<'_, '_> {
         component: &str,
         validate: impl FnMut(&str, u8) -> Result<(), PersistenceError>,
     ) -> Result<(), PersistenceError> {
-        scan_string_u8_phase(
+        scan_string_phase(
             phase,
             self.start_phase,
             self.start_key.as_deref(),
@@ -262,7 +264,7 @@ impl ScanContext<'_, '_> {
         component: &str,
         validate: impl FnMut(&str, u64) -> Result<(), PersistenceError>,
     ) -> Result<(), PersistenceError> {
-        scan_string_u64_phase(
+        scan_string_phase(
             phase,
             self.start_phase,
             self.start_key.as_deref(),
