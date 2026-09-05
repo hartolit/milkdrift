@@ -678,21 +678,15 @@ impl CapabilityAdapter for LocalProcessAdapter {
             )
             .map_err(|error| AdapterError::external_failure(error.to_string()));
         };
+        // The monitor owns signal delivery and its grace/force deadlines. Signalling here
+        // races its first TERM against an already exiting group (EPERM on macOS).
         control.cancel_requested.store(true, Ordering::SeqCst);
-        let signal = control.request_graceful();
-        let (accepted, detail) = match signal {
-            Ok(()) => (
-                true,
-                "termination requested; terminal observation remains pending".to_owned(),
-            ),
-            Err(message) => (false, bounded(&message)),
-        };
         CancellationAcknowledgement::new(
             request.invocation().clone(),
             request.request_sequence(),
-            accepted,
+            true,
             false,
-            Some(detail),
+            Some("termination requested; terminal observation remains pending".to_owned()),
         )
         .map_err(|error| AdapterError::external_failure(error.to_string()))
     }

@@ -23,6 +23,11 @@ failure and triggers group cleanup. The profile states honestly that descendants
 escape by creating a different session/group. Non-Unix builds advertise immediate-child-only
 behavior and cannot report confirmed tree cancellation.
 
+Cancellation callbacks record a request and acknowledge that terminal observation is pending.
+The execution monitor owns graceful signalling and escalation deadlines; callbacks do not send
+an additional TERM concurrently with that monitor. On Unix, forced adapter shutdown retains its
+immediate best-effort group kill.
+
 ## Rejected alternatives
 
 - Escaping substitutions into a shell string, because escaping is shell- and context-dependent.

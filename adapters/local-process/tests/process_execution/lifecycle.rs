@@ -97,11 +97,17 @@ fn cancellation_terminates_child_and_grandchild_in_owned_group() -> TestResult {
     }
     let pids = fs::read_to_string(&pid_path)?;
     assert!(pids.lines().count() >= 3);
-    let _ = TaskExecutor::cancel(
+    let acknowledgement = TaskExecutor::cancel(
         &host,
         &CancellationRequest::new(request.invocation().clone(), 1, "tree cancellation")?,
     )?;
+    assert!(acknowledgement.accepted());
+    assert!(!acknowledgement.terminal_boundary());
     handle.join().map_err(|_| "execution thread panicked")??;
+    assert_eq!(
+        terminal_status(&reporter.events()?),
+        Some(TerminalStatus::Cancelled)
+    );
     for pid in pids.lines() {
         let pid: i32 = pid.parse()?;
         let pid = rustix::process::Pid::from_raw(pid).ok_or("invalid fixture pid")?;
