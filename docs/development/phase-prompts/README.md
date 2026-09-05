@@ -1,94 +1,75 @@
-# Milkdrift pre-UI execution prompt sequence
+# Milkdrift pristine-readiness execution prompts
 
-These prompts extend the current repository without authorizing graphical UI work. They are designed for sequential execution with a fresh coding-agent context for each pass.
+This package is for the current post-CLI Milkdrift checkout. It is not a request for another architectural rebirth and it is not a feature roadmap. Its purpose is to make the implemented system proportionate, traceable, routinely usable through public headless interfaces, and stable enough for the owner to begin studying the final architecture rather than accumulated implementation history.
 
-Do not commit this prompt package into Milkdrift. The repository’s canonical documents remain authoritative.
+“Pristine” is defined operationally by `00-pristine-readiness-contract.md`. It does not mean that no future improvement is possible. It means that the current product slice has one coherent implementation, accidental complexity has been removed, the normal operator path works without privileged test machinery, and remaining limitations are explicit rather than hidden by more abstraction.
+
+## How to execute
+
+Record the starting commit before pass 1:
+
+```sh
+git rev-parse HEAD
+git rev-parse HEAD^{tree}
+git status --short
+```
+
+Use a fresh agent context for every numbered pass. Give that agent:
+
+1. the repository resulting from the previous pass;
+2. `00-pristine-readiness-contract.md`;
+3. exactly one numbered prompt;
+4. no persuasive completion summary from an earlier agent.
+
+Review and apply one result before starting the next pass. Preserve each pass as one reviewable commit or patch. Do not ask agents to commit this prompt package or copy it into repository documentation.
 
 ## Execution order
 
-### 1. Restore the baseline
+1. `01-contract-ownership-and-public-surface.md`
+2. `02-runtime-execution-kernel-contraction.md`
+3. `03-persistence-redb-and-daemon-contraction.md`
+4. `04-test-and-evidence-contraction.md`
+5. `05-headless-operator-readiness.md`
+6. `06-documentation-and-comprehension.md`
+7. `07-independent-readiness-closure.md`
 
-Give a fresh agent:
+The order is intentional:
 
-- `00-shared-execution-contract.md`
-- `01-current-head-integrity-and-portability.md`
+- Contract ownership is corrected before downstream code is reorganized around it.
+- Runtime responsibilities are contracted before storage and daemon composition are simplified.
+- Tests and evidence are reduced only after production ownership is stable enough to test through canonical paths.
+- The CLI is finished after the semantic and host boundaries it consumes have stopped moving.
+- Documentation is compressed after code ownership is final.
+- A different agent then audits, repairs, qualifies, and either declares readiness or leaves one exact blocker.
 
-Apply and review the complete result before continuing.
+## Static baseline from the supplied checkout
 
-### 2. Contract and public-surface contraction
+These figures are diagnostic starting points, not targets that may be gamed:
 
-Give a fresh agent the resulting repository plus:
+- 388 Rust files and approximately 178,245 Rust lines;
+- approximately 119,000 production Rust lines after excluding integration-test directories and embedded `#[cfg(test)]` tails;
+- approximately 50,000 Rust lines under integration-test directories;
+- 64 Markdown files and approximately 8,009 Markdown lines;
+- 51 Rust files above 1,000 lines, including 24 production files listed in the repository’s cohesion-exception table;
+- 76 `too_many_arguments` allowances;
+- approximately 62 private `*Wire` structures, 92 manual `Deserialize` implementations, and 410 `deny_unknown_fields` annotations;
+- the CLI directly depends on ten Milkdrift packages;
+- the committed `docs/development/phase-prompts/` directory contains about 1,341 lines despite its own instruction not to commit the prompt package.
 
-- `00-shared-execution-contract.md`
-- `02-contract-boundaries-and-public-surface.md`
+The agents must reproduce current measurements from the real Git checkout before relying on these approximate values.
 
-This pass deliberately preserves blueprint/capability separation unless current dependency evidence proves a better existing owner. It guarantees concrete code cleanup regardless of that ownership conclusion.
+## Readiness outcome
 
-### 3. Adapter conformance
+After pass 7, the intended state is:
 
-Give a fresh agent the resulting repository plus:
+```text
+stable semantic owners
+    + contracted public and dependency surfaces
+    + one traceable command/effect/recovery path
+    + tests that observe that path independently
+    + a routine daemon/CLI workflow from a fresh directory
+    + concise non-duplicated documentation
+    + an explicit architecture freeze
+```
 
-- `00-shared-execution-contract.md`
-- `03-capability-adapter-conformance.md`
-
-Apply and review the result.
-
-### 4. Execute the existing controller-admission package
-
-Use the prompts already present in the repository:
-
-1. Give one fresh implementation agent:
-   - `docs/development/phase-prompts/00-controller-admission-contract.md`
-   - `docs/development/phase-prompts/01-implement-controller-admission.md`
-2. Apply and review that result.
-3. Give a different fresh agent:
-   - `docs/development/phase-prompts/00-controller-admission-contract.md`
-   - `docs/development/phase-prompts/02-independent-closure-and-activation.md`
-
-Activation must remain closed when the existing ADR/evidence gate is not satisfied. Do not weaken that result to keep the sequence moving.
-
-If this controller package has already been executed on the current branch, skip this step and require Pass 4 to inspect the implementation that actually exists.
-
-### 5. Cohesion after semantic changes
-
-Give a fresh agent:
-
-- `00-shared-execution-contract.md`
-- `04-cohesion-and-owner-structure.md`
-
-This is intentionally after controller work so large files are organized around the final current responsibilities rather than refactored twice.
-
-### 6. Complete the headless product surface
-
-Give a fresh agent:
-
-- `00-shared-execution-contract.md`
-- `05-thin-cli-headless-product-surface.md`
-
-The CLI must become comprehensive and automation-safe without owning workflow semantics or storage.
-
-### 7. Run local model dogfood
-
-After a small loopback OpenAI-compatible server is available, give a fresh agent:
-
-- `00-shared-execution-contract.md`
-- `06-local-model-and-external-effect-dogfood.md`
-
-The agent must not install or manage the server from Milkdrift. When the real endpoint is absent, deterministic implementation and tests may proceed, but real evidence remains explicitly blocked.
-
-### 8. Independent closure
-
-Give a final fresh agent that did not implement the earlier passes:
-
-- `00-shared-execution-contract.md`
-- `07-independent-pre-ui-closure.md`
-
-This pass independently repairs findings and runs the full local, mutation, operational, longevity, hosted-as-available, and external-as-available evidence campaign.
-
-## Handoff discipline
-
-- Use the repository produced by the prior pass, not a parallel branch with stale assumptions.
-- Review each result before starting the next pass.
-- Preserve one commit or otherwise clearly isolated diff per pass so regressions can be attributed.
-- Do not give later agents the earlier agent’s persuasive summary as evidence; give them source, tests, logs, and the next prompt.
-- Never accept documentation-only completion for an implementation pass.
+External credentials or hosted runners may remain unavailable. That prevents external qualification claims, not in-repository cleanup. Agents must never weaken a gate, fabricate evidence, or enable continuous controllers merely to obtain a “ready” label.
