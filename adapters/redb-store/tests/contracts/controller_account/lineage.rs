@@ -1,4 +1,124 @@
 use super::*;
+use milkdrift_persistence::IntegrityDigest;
+
+#[test]
+fn controller_establishment_cannot_bind_an_unrelated_originating_run() -> TestResult {
+    let directory = TempDir::new()?;
+    let store = RedbStore::open(directory.path())?;
+    let owner = RunId::new("run-controller-origin")?;
+    let unrelated = RunId::new("run-controller-unrelated")?;
+    let declared = declaration(&owner, "exact-origin")?;
+    let invalid = ControllerAccountTransaction::new(
+        ControllerTransitionId::new("transition-controller-forged-origin")?,
+        None,
+        vec![ControllerAccountAction::Establish {
+            declaration: declared.clone(),
+            bind_run: unrelated.clone(),
+        }],
+    );
+    assert!(
+        matches!(invalid, Err(PersistenceError::InvalidDocument(message)) if message.contains("originating run"))
+    );
+
+    let valid = transaction(
+        "transition-controller-forged-origin",
+        None,
+        vec![ControllerAccountAction::Establish {
+            declaration: declared.clone(),
+            bind_run: owner.clone(),
+        }],
+    )?;
+    valid.validate()?;
+    let mut wire = serde_json::to_value(&valid)?;
+    wire["actions"][0]["bind_run"] = serde_json::to_value(&unrelated)?;
+    let untrusted: ControllerAccountTransaction = serde_json::from_value(wire)?;
+    assert!(
+        matches!(untrusted.validate(), Err(PersistenceError::InvalidDocument(message)) if message.contains("originating run"))
+    );
+    let forged = request(
+        &unrelated,
+        "command-controller-forged-origin",
+        "event-controller-forged-origin",
+        RunSequence::ZERO,
+        activation(&declared, "forged-origin", RunSequence::ZERO)?,
+    )?
+    .with_controller_account_transaction(untrusted)?;
+    let result = store.commit_command(&forged);
+    assert!(
+        matches!(&result, Err(PersistenceError::InvalidDocument(message)) if message.contains("originating run")),
+        "mismatched controller origin was not refused: {result:?}"
+    );
+    assert!(store.controller_account(declared.account())?.is_none());
+    assert!(store.controller_account_binding(&unrelated)?.is_none());
+    assert!(store.run_summary(&unrelated)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn controller_transaction_bounds_guards_and_fingerprint_are_exact() -> TestResult {
+    let run = RunId::new("run-transaction-contract")?;
+    let account = declaration(&run, "transaction-contract")?.account().clone();
+    let other = declaration(&run, "other-transaction")?.account().clone();
+    let revision = IntegrityDigest::hash(b"observed-account-revision");
+    let transition = ControllerTransitionId::new("transition-contract")?;
+    let binding = ControllerAccountAction::BindRun {
+        account: account.clone(),
+        run,
+    };
+    let settlement = ControllerAccountAction::SettleTerminal {
+        reservation: ControllerReservationId::for_attempt(
+            &account,
+            &AttemptId::new("attempt-transaction-contract")?,
+        )?,
+        account: account.clone(),
+        usage: None,
+    };
+    let other_settlement = ControllerAccountAction::SettleTerminal {
+        reservation: ControllerReservationId::for_attempt(
+            &other,
+            &AttemptId::new("attempt-other-transaction")?,
+        )?,
+        account: other.clone(),
+        usage: None,
+    };
+    let maximum = 256;
+    for actions in [Vec::new(), vec![binding.clone(); maximum + 1]] {
+        assert!(matches!(
+            ControllerAccountTransaction::new(transition.clone(), None, actions),
+            Err(PersistenceError::Bounds { .. })
+        ));
+    }
+    ControllerAccountTransaction::new(transition.clone(), None, vec![binding.clone(); maximum])?
+        .validate()?;
+    for (guard, actions) in [
+        (None, vec![settlement.clone()]),
+        (Some((other, revision.clone())), vec![settlement.clone()]),
+        (Some((account.clone(), revision.clone())), vec![binding]),
+        (
+            Some((account.clone(), revision.clone())),
+            vec![settlement.clone(), other_settlement],
+        ),
+    ] {
+        assert!(matches!(
+            ControllerAccountTransaction::new(transition.clone(), guard, actions),
+            Err(PersistenceError::InvalidDocument(_))
+        ));
+    }
+    let valid =
+        ControllerAccountTransaction::new(transition, Some((account, revision)), vec![settlement])?;
+    let mut wire = serde_json::to_value(&valid)?;
+    let roundtrip: ControllerAccountTransaction = serde_json::from_value(wire.clone())?;
+    assert_eq!(roundtrip, valid);
+    roundtrip.validate()?;
+    wire["fingerprint"] =
+        serde_json::to_value(IntegrityDigest::hash(b"different canonical request"))?;
+    let altered: ControllerAccountTransaction = serde_json::from_value(wire)?;
+    assert!(matches!(
+        altered.validate(),
+        Err(PersistenceError::InvalidDocument(_))
+    ));
+    Ok(())
+}
 
 #[test]
 fn controller_lineage_actions_require_exact_activation_and_child_events() -> TestResult {

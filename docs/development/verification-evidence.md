@@ -91,6 +91,9 @@ replay/recovery/reconciliation, controller accounting, context budgets, peer lif
 catalog renewal with bounded registration retirement. It
 excludes generated fixtures and unrelated constructors. A failing unmutated baseline cannot
 qualify a campaign.
+Controller transaction revalidation is included. Independent contract tests cover originating-run
+binding, action bounds, exact revision guards, and canonical fingerprints. Cargo-mutants 27.1 skips
+constructors named `new`; constructor fault injection must be recorded separately from its campaigns.
 
 Retain each `mutants.out` directory with exact source identity, logs, and `outcomes.json`.
 Unclassified survivors and timeouts fail. Fix missing assertions or record an exact reviewed entry

@@ -14,7 +14,7 @@
     {
       "mutant": "adapters/redb-store/src/controller_account.rs:270:39: replace match guard existing.declaration() == declaration with true in apply_controller_transaction",
       "classification": "unreachable_by_valid_contract",
-      "explanation": "The transaction event contract compares every establishment declaration with the immutable existing account before application, so a different declaration for the same canonical account identity is refused before this defensive match guard is reached."
+      "explanation": "An establishment transaction must bind its declared originating run, and canonical account identity fixes that run. Re-establishing an existing account therefore encounters its existing run binding; pre-application event validation rejects a declaration differing from that immutable account before this defensive match guard is reached."
     },
     {
       "mutant": "crates/runtime/src/engine/reconciliation.rs:29:13: replace || with && in RuntimeService::plan_revision_adoption",

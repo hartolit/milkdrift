@@ -151,6 +151,7 @@ impl MutationShard {
                     "crates/control/src/controller/policy.rs",
                     "crates/persistence/src/controller_account.rs",
                     "crates/persistence/src/controller_account/transition.rs",
+                    "crates/persistence/src/controller_account/transaction.rs",
                     "adapters/redb-store/src/controller_account.rs",
                     "adapters/redb-store/src/controller_account/validation.rs",
                     "adapters/redb-store/src/clock.rs",
@@ -160,7 +161,7 @@ impl MutationShard {
                     "crates/runtime/src/engine/effects/entry.rs",
                     "crates/capability-host/src/lib.rs",
                 ],
-                pattern: "(ControllerPolicy::assess|ControllerLifecycleOwner.*(progress|assess)|bound_outcome|ControllerAccountState::(admit|settle_terminal|charge_artifact)|apply_controller_transaction|charge_artifact_publication|validate_(account_key|event_link|event_transaction_contract|lineage_transaction_contract|publication_controller_charge)|terminal_(settlement|usage)|commit_artifact|execute_invocation_effect|prepare_exact_entry|RedbStore::(sample_clock|observe_clock_with))",
+                pattern: "(ControllerPolicy::assess|ControllerLifecycleOwner.*(progress|assess)|bound_outcome|ControllerAccountState::(admit|settle_terminal|charge_artifact)|ControllerAccountTransaction::validate|apply_controller_transaction|charge_artifact_publication|validate_(account_key|event_link|event_transaction_contract|lineage_transaction_contract|publication_controller_charge)|terminal_(settlement|usage)|commit_artifact|execute_invocation_effect|prepare_exact_entry|RedbStore::(sample_clock|observe_clock_with))",
                 test_packages: &[
                     "milkdrift-control",
                     "milkdrift-persistence",

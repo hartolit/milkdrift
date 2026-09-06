@@ -78,6 +78,18 @@ impl ControllerAccountTransaction {
                 reason: format!("must contain 1..={MAX_CONTROLLER_ACCOUNT_ACTIONS} actions"),
             });
         }
+        for action in &actions {
+            if let ControllerAccountAction::Establish {
+                declaration,
+                bind_run,
+            } = action
+                && declaration.controller_run() != bind_run
+            {
+                return Err(PersistenceError::InvalidDocument(
+                    "controller establishment must bind its declared originating run".to_owned(),
+                ));
+            }
+        }
         let mut guarded_account = None;
         for account in actions.iter().filter_map(|action| match action {
             ControllerAccountAction::AdmitEntry { account, .. }
