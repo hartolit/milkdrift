@@ -1,5 +1,7 @@
 //! Shared peer-service integration fixtures and durable-store mutation helpers.
 
+use super::faults::ControlledPeerClock;
+
 pub(super) use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -770,115 +772,6 @@ pub(super) fn progress_observation(
     })
 }
 
-pub(super) fn invalid_tombstones(
-    valid: &PeerExecutionTombstone,
-    request: &PeerInvocationRequest,
-) -> TestResult<Vec<PeerExecutionTombstone>> {
-    let mut invalid_tombstones = Vec::new();
-    macro_rules! invalid_with {
-        ($change:expr) => {{
-            let mut invalid = valid.clone();
-            $change(&mut invalid);
-            invalid_tombstones.push(invalid);
-        }};
-    }
-    invalid_with!(|value: &mut PeerExecutionTombstone| value.schema_version = 0);
-    invalid_with!(|value: &mut PeerExecutionTombstone| value.relationship_generation = 0);
-    invalid_with!(|value: &mut PeerExecutionTombstone| value.acceptance_sequence = 0);
-    invalid_with!(|value: &mut PeerExecutionTombstone| value.accepted_at_unix_ms = 0);
-    invalid_with!(|value: &mut PeerExecutionTombstone| value.catalog_generation = 0);
-    invalid_with!(|value: &mut PeerExecutionTombstone| value.capability_generation = 0);
-    invalid_with!(|value: &mut PeerExecutionTombstone| value.authority.grant_revision = 0);
-    invalid_with!(|value: &mut PeerExecutionTombstone| value.authority.policy_version = 0);
-    invalid_with!(|value: &mut PeerExecutionTombstone| value.archived_at_unix_ms = 0);
-    invalid_with!(|value: &mut PeerExecutionTombstone| {
-        value.compacted_through_sequence = value.last_observation_sequence.saturating_add(1);
-    });
-    invalid_with!(|value: &mut PeerExecutionTombstone| {
-        value.accounting.observations = value.accounting.observations.saturating_add(1);
-    });
-    invalid_with!(|value: &mut PeerExecutionTombstone| value.request_digest = "invalid".to_owned());
-    invalid_with!(|value: &mut PeerExecutionTombstone| value.catalog_digest = "invalid".to_owned());
-    invalid_with!(
-        |value: &mut PeerExecutionTombstone| value.capability_digest = "invalid".to_owned()
-    );
-    invalid_with!(
-        |value: &mut PeerExecutionTombstone| value.authority.decision_digest = "invalid".to_owned()
-    );
-    invalid_with!(
-        |value: &mut PeerExecutionTombstone| value.observation_digest = "invalid".to_owned()
-    );
-
-    let other_execution = PeerExecutionId::new("execution-fact-corruption-other")?;
-    let wrong_execution =
-        terminal_observation(request, &other_execution, 1, TerminalStatus::Success)?;
-    invalid_with!(|value: &mut PeerExecutionTombstone| {
-        value.disposition = PeerArchivedDisposition::Terminal {
-            observation: Box::new(wrong_execution.clone()),
-        };
-    });
-    let wrong_sequence = terminal_observation(
-        request,
-        &valid.execution,
-        valid.last_observation_sequence.saturating_add(1),
-        TerminalStatus::Success,
-    )?;
-    invalid_with!(|value: &mut PeerExecutionTombstone| {
-        value.disposition = PeerArchivedDisposition::Terminal {
-            observation: Box::new(wrong_sequence.clone()),
-        };
-    });
-    let progress =
-        progress_observation(request, &valid.execution, valid.last_observation_sequence)?;
-    invalid_with!(|value: &mut PeerExecutionTombstone| {
-        value.disposition = PeerArchivedDisposition::Terminal {
-            observation: Box::new(progress.clone()),
-        };
-    });
-    let mut late = terminal_observation(
-        request,
-        &valid.execution,
-        valid.last_observation_sequence,
-        TerminalStatus::Success,
-    )?;
-    late.observed_at_unix_ms = valid.archived_at_unix_ms.saturating_add(1);
-    invalid_with!(|value: &mut PeerExecutionTombstone| {
-        value.disposition = PeerArchivedDisposition::Terminal {
-            observation: Box::new(late.clone()),
-        };
-    });
-    invalid_with!(|value: &mut PeerExecutionTombstone| {
-        value.disposition = PeerArchivedDisposition::Uncertain {
-            uncertain_at_unix_ms: 0,
-            reason: "reason".to_owned(),
-        };
-    });
-    invalid_with!(|value: &mut PeerExecutionTombstone| {
-        value.disposition = PeerArchivedDisposition::Uncertain {
-            uncertain_at_unix_ms: value.archived_at_unix_ms.saturating_add(1),
-            reason: "reason".to_owned(),
-        };
-    });
-    invalid_with!(|value: &mut PeerExecutionTombstone| {
-        value.disposition = PeerArchivedDisposition::Uncertain {
-            uncertain_at_unix_ms: value.archived_at_unix_ms,
-            reason: String::new(),
-        };
-    });
-    invalid_with!(|value: &mut PeerExecutionTombstone| {
-        value.disposition = PeerArchivedDisposition::Uncertain {
-            uncertain_at_unix_ms: value.archived_at_unix_ms,
-            reason: "x".repeat(2_049),
-        };
-    });
-    let mut wrong_cancellation = valid_cancellation(&valid.execution)?;
-    wrong_cancellation.request.execution = other_execution;
-    invalid_with!(|value: &mut PeerExecutionTombstone| {
-        value.cancellation = Some(wrong_cancellation.clone());
-    });
-    Ok(invalid_tombstones)
-}
-
 pub(super) fn valid_cancellation(
     execution: &PeerExecutionId,
 ) -> TestResult<PeerCancellationRecord> {
@@ -937,14 +830,3 @@ pub(super) fn overwrite_peer_document<T: Serialize>(
     write.commit()?;
     Ok(())
 }
-
-pub(super) fn assert_peer_integrity_refuses(root: &Path, case: &str) -> TestResult {
-    if let Ok(store) = RedbStore::open(root)
-        && store.verify_peer_execution_integrity().is_ok()
-    {
-        return Err(format!("peer integrity accepted {case}").into());
-    }
-    Ok(())
-}
-
-use super::faults::ControlledPeerClock;

@@ -614,7 +614,7 @@ fn checksum_valid_peer_primary_and_tombstone_fact_corruption_is_rejected() -> Te
         *tombstone
     };
 
-    for invalid in invalid_tombstones(&tombstone, &request)? {
+    for invalid in invalid_tombstones(&tombstone)? {
         overwrite_peer_document(
             root.path(),
             PEER_EXECUTION_TOMBSTONES,
@@ -658,5 +658,137 @@ fn checksum_valid_peer_primary_and_tombstone_fact_corruption_is_rejected() -> Te
     )?;
     let store = RedbStore::open(root.path())?;
     store.verify_peer_execution_integrity()?;
+    Ok(())
+}
+
+fn invalid_tombstones(valid: &PeerExecutionTombstone) -> TestResult<Vec<PeerExecutionTombstone>> {
+    let mut invalid_tombstones = Vec::new();
+    macro_rules! invalid_with {
+        ($change:expr) => {{
+            let mut invalid = valid.clone();
+            $change(&mut invalid);
+            invalid_tombstones.push(invalid);
+        }};
+    }
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.schema_version = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.relationship_generation = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.acceptance_sequence = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.accepted_at_unix_ms = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.catalog_generation = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.capability_generation = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.authority.grant_revision = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.authority.policy_version = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.archived_at_unix_ms = 0);
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.compacted_through_sequence = value.last_observation_sequence.saturating_add(1);
+    });
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.accounting.observations = value.accounting.observations.saturating_add(1);
+    });
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.request_digest = "invalid".to_owned());
+    invalid_with!(|value: &mut PeerExecutionTombstone| value.catalog_digest = "invalid".to_owned());
+    invalid_with!(
+        |value: &mut PeerExecutionTombstone| value.capability_digest = "invalid".to_owned()
+    );
+    invalid_with!(
+        |value: &mut PeerExecutionTombstone| value.authority.decision_digest = "invalid".to_owned()
+    );
+    invalid_with!(
+        |value: &mut PeerExecutionTombstone| value.observation_digest = "invalid".to_owned()
+    );
+
+    // Mutate the accepted observation itself: a freshly sampled clock could also make every
+    // case newer than archival and hide a missing identity, sequence, or terminal guard.
+    let PeerArchivedDisposition::Terminal { observation } = &valid.disposition else {
+        return Err("corruption cases require an archived terminal observation".into());
+    };
+    let other_execution = PeerExecutionId::new("execution-fact-corruption-other")?;
+    let mut wrong_execution = observation.as_ref().clone();
+    wrong_execution.execution = other_execution.clone();
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Terminal {
+            observation: Box::new(wrong_execution.clone()),
+        };
+    });
+    let mut wrong_sequence = observation.as_ref().clone();
+    wrong_sequence.sequence += 1;
+    wrong_sequence.event = InvocationEvent::new(
+        observation.event.invocation().clone(),
+        wrong_sequence.sequence,
+        observation.event.kind().clone(),
+    )?;
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Terminal {
+            observation: Box::new(wrong_sequence.clone()),
+        };
+    });
+    let mut progress = observation.as_ref().clone();
+    progress.category = ObservationCategory::Progress;
+    progress.event = InvocationEvent::new(
+        observation.event.invocation().clone(),
+        observation.sequence,
+        InvocationEventKind::Progress {
+            message: "progress is not terminal proof".to_owned(),
+            completed_units: None,
+            total_units: None,
+        },
+    )?;
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Terminal {
+            observation: Box::new(progress.clone()),
+        };
+    });
+    let mut late = observation.as_ref().clone();
+    late.observed_at_unix_ms = valid.archived_at_unix_ms.saturating_add(1);
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Terminal {
+            observation: Box::new(late.clone()),
+        };
+    });
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Uncertain {
+            uncertain_at_unix_ms: 0,
+            reason: "reason".to_owned(),
+        };
+    });
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Uncertain {
+            uncertain_at_unix_ms: value.archived_at_unix_ms.saturating_add(1),
+            reason: "reason".to_owned(),
+        };
+    });
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Uncertain {
+            uncertain_at_unix_ms: value.archived_at_unix_ms,
+            reason: String::new(),
+        };
+    });
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.disposition = PeerArchivedDisposition::Uncertain {
+            uncertain_at_unix_ms: value.archived_at_unix_ms,
+            reason: "x".repeat(2_049),
+        };
+    });
+    let mut wrong_cancellation = valid_cancellation(&valid.execution)?;
+    wrong_cancellation.request.execution = other_execution;
+    invalid_with!(|value: &mut PeerExecutionTombstone| {
+        value.cancellation = Some(wrong_cancellation.clone());
+    });
+    Ok(invalid_tombstones)
+}
+
+fn assert_peer_integrity_refuses(root: &Path, case: &str) -> TestResult {
+    let result = RedbStore::open(root).and_then(|store| store.verify_peer_execution_integrity());
+    assert!(
+        matches!(
+            result,
+            Err(PersistenceError::Corruption(_))
+                | Err(PersistenceError::Storage {
+                    class: StorageFailureClass::Corruption,
+                    ..
+                })
+        ),
+        "{case} must produce a corruption refusal, got {result:?}"
+    );
     Ok(())
 }
