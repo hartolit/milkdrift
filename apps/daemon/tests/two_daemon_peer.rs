@@ -88,6 +88,7 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
 
     let before = daemon_b.client.peer("peer-a").await?;
     assert!(!before.connected);
+    assert_eq!(before.health, "disconnected");
     let connected = daemon_b.client.peer_action("peer-a", "connect").await?;
     assert!(connected.connected);
     assert_eq!(connected.health, "authenticated_catalog_live");
@@ -120,6 +121,7 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
 
     let disconnected = daemon_b.client.peer_action("peer-a", "disconnect").await?;
     assert!(!disconnected.connected);
+    assert_eq!(disconnected.health, "disconnected");
     assert_eq!(disconnected.registered_capabilities, 0);
 
     write_secret(&root_a.path().join("peer.token"), "rotated-peer-token")?;

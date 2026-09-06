@@ -188,6 +188,7 @@ impl MutationShard {
                 pattern: "(admit_peer_execution|claim_dispatch|mark_entered|release_claim|mark_uncertain|append_peer_observation|request_peer_cancellation|acknowledge_peer_cancellation|recover_claims|archive_peer_executions|release_active_accounting|validate_record|validate_tombstone|PeerRegistry::apply_catalog|Registrations::(reap|retire))",
                 test_packages: &[
                     "milkdrift-peer-http",
+                    "milkdrift-redb-store",
                     "milkdrift-evidence",
                     "milkdrift-daemon",
                     "milkdrift-local-process",
@@ -218,6 +219,9 @@ struct Arguments {
     /// List the selected mutants without running the campaign.
     #[arg(long)]
     list: bool,
+    /// Run a zero-based cargo-mutants partition, such as 0/4; all partitions qualify one shard.
+    #[arg(long)]
+    partition: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -294,6 +298,9 @@ fn execute(arguments: Arguments) -> ToolResult<u8> {
     })?;
 
     let mut command = mutation_command(&repository, &output, specification)?;
+    if let Some(partition) = arguments.partition {
+        command.arg("--shard").arg(partition);
+    }
     if arguments.list {
         command.arg("--list");
     }
@@ -578,9 +585,18 @@ mod tests {
         let authority = Arguments::try_parse_from(["mutation-evidence", "authority"])?;
         assert_eq!(authority.shard, MutationShard::Authority);
         assert!(!authority.list);
+        assert!(authority.partition.is_none());
         let peer = Arguments::try_parse_from(["mutation-evidence", "peer", "--list"])?;
         assert_eq!(peer.shard, MutationShard::Peer);
         assert!(peer.list);
+        let partition = Arguments::try_parse_from([
+            "mutation-evidence",
+            "peer",
+            "--partition",
+            "0/4",
+            "--list",
+        ])?;
+        assert_eq!(partition.partition.as_deref(), Some("0/4"));
         assert!(Arguments::try_parse_from(["mutation-evidence"]).is_err());
         assert!(Arguments::try_parse_from(["mutation-evidence", "unknown"]).is_err());
         assert!(Arguments::try_parse_from(["mutation-evidence", "peer", "--run"]).is_err());

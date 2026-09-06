@@ -23,7 +23,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [authority, retention, runtime, uncertainty, controller, context, peer]
+        include:
+          - { shard: authority, partition: 0, partitions: 1 }
+          - { shard: retention, partition: 0, partitions: 1 }
+          - { shard: runtime, partition: 0, partitions: 1 }
+          - { shard: uncertainty, partition: 0, partitions: 1 }
+          - { shard: controller, partition: 0, partitions: 1 }
+          - { shard: context, partition: 0, partitions: 1 }
+          - { shard: peer, partition: 0, partitions: 4 }
+          - { shard: peer, partition: 1, partitions: 4 }
+          - { shard: peer, partition: 2, partitions: 4 }
+          - { shard: peer, partition: 3, partitions: 4 }
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -35,14 +45,18 @@ jobs:
         run: cargo install cargo-mutants --version 27.1.0 --locked
       - name: Run focused mutation shard
         env:
-          CARGO_MUTANTS_JOBS: "2"
+          CARGO_MUTANTS_JOBS: ${{ matrix.shard == 'peer' && '1' || '2' }}
+          CARGO_MUTANTS_BUILD_TIMEOUT: "600"
           CARGO_MUTANTS_MINIMUM_TEST_TIMEOUT: "600"
-        run: cargo mutation-evidence "${{ matrix.shard }}"
+          CARGO_BUILD_JOBS: "2"
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_PROFILE_TEST_DEBUG: "0"
+        run: cargo mutation-evidence "${{ matrix.shard }}" --partition "${{ matrix.partition }}/${{ matrix.partitions }}"
       - name: Upload mutation outcomes and logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: mutation-${{ matrix.shard }}
+          name: mutation-${{ matrix.shard }}-${{ matrix.partition }}
           path: target/mutation/${{ matrix.shard }}/mutants.out
           if-no-files-found: error
           retention-days: 14

@@ -65,6 +65,15 @@ where the live runner executable cannot be replaced.
 On a host dominated by debug-symbol linking, Cargo's `CARGO_PROFILE_DEV_DEBUG=0` and
 `CARGO_PROFILE_TEST_DEBUG=0` retain test assertions while omitting debug symbols. Record these
 settings and `CARGO_BUILD_JOBS` alongside the campaign; they do not classify failed builds.
+Hosted campaigns omit debug symbols and retain assertions. The peer campaign uses four disjoint
+partitions to fit its complete application suites within the 180-minute job bound. Locally,
+`cargo mutation-evidence peer --partition 0/4` runs the first partition. The pinned tool owns
+partition parsing and selection; qualification requires the union of every partition to match the
+unpartitioned mutant list exactly. Partitioning preserves the selected tests and enforces each
+mutation's separate deadlines.
+Hosted builds allow 600 seconds and use two Cargo compiler jobs. Each peer partition runs one
+mutation worker so application tests do not compete with another mutation's compilation; its test
+selection includes the redb owner's contracts as well as peer, daemon, process, and evidence tests.
 The pinned tool times its baseline over mutated packages, while a shard may select more packages
 for each mutation. Set its `CARGO_MUTANTS_MINIMUM_TEST_TIMEOUT` from a measured full selected-suite
 run when that broader suite needs more time; an inadequate automatic deadline must be rerun, not

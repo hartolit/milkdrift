@@ -63,10 +63,10 @@ values; repository contracts check the version cells against source.
 
 ## Limitations now
 
-- Real external interoperability remains unqualified. It requires an operator-supplied byte-pinned
-  real coding agent, a reachable supported model profile returning response identity and usage,
-  private credentials where required, and a clean strict-mode report. Deterministic helpers and
-  mock endpoints do not qualify. Continuous controllers therefore remain unavailable in production;
+- Combined real coding-agent/model interoperability remains unqualified: no operator-supplied
+  byte-pinned real coding-agent profile is available. A separately managed supported model has
+  passed the ordinary model scenario, but a clean strict combined report is still required.
+  Deterministic helpers and mock endpoints do not qualify. Continuous controllers therefore remain unavailable in production;
   library stop behavior is fail-at-bound, and ambiguous multiple proposer occurrences are refused.
 - Trusted processes have daemon-account privileges. No sandbox, network isolation, CPU/memory
   quotas, malicious-descendant containment, universal atomic hashed-handle execution, directory
@@ -90,9 +90,8 @@ values; repository contracts check the version cells against source.
   peer tombstones grow for the store generation. No storage migration, online destructive rotation,
   export/delete operation, automatic proposal-index rebuild, whole-database authenticity, rollback
   protection, or filesystem power-loss qualification is claimed.
-- No UI is implemented or authorized. Hosted quality/platform/mutation/benchmark/stress evidence
-  has not qualified the current source. Actual graceful OS-signal evidence requires a Unix host;
-  forced Windows child termination does not qualify that claim.
+- No UI is implemented or authorized. Actual graceful OS-signal evidence is qualified on the
+  hosted Linux runner; forced Windows child termination does not qualify that platform claim.
 
 ## Current validation/evidence snapshot
 
@@ -104,10 +103,11 @@ ordinary model example against a controlled loopback endpoint pass, as does the 
 scenario. Adapter, authority, runtime, context, artifact, and recovery
 contracts provide additional software evidence, not real-provider or power-loss qualification.
 
-The complete Windows workspace suite passes with portable process fixtures and explicit Python/Git
-fixture prerequisites. The full gate is being repeated for the latest clock/cursor corrections; all 14
-control-plane tests and three bounded timeline-observer regressions pass. All-library public API
-inventories pass under default and all features, with no default test-helper exports.
+The Windows workspace suite passes 675 tests with five release-only longevity tests ignored and
+run separately. Portable process fixtures use explicit Python/Git prerequisites. The 14 control-plane
+tests, three bounded timeline-observer regressions, and peer transport/resource authorization
+regression pass. All-library public API inventories pass under default and all features, with no
+default test-helper exports.
 
 Release actual-binary headless, deterministic model, and separately managed real-model smoke lanes
 pass. The real endpoint was temporary LM Studio with `prism-ml/bonsai-27b`, thinking disabled and
@@ -118,10 +118,19 @@ refusal. This model-only smoke does not qualify the combined real-agent/model ga
 replacement remains an operator profile change through the [same guide](../guides/local-model-endpoint.md).
 
 Release receipt, peer, controller-lifecycle, controller-admission, historical-frontier longevity,
-projection stress, and effect-worker shutdown proofs pass. Eleven available benchmark smoke
-scenarios pass; the full benchmark and operational runners explicitly refuse the unavailable Unix
-graceful-signal proof on this Windows host. Current-source mutation campaigns are pending complete
-classification, so independent readiness and the architecture freeze remain open.
+projection stress, and effect-worker shutdown proofs pass. Hosted Linux
+[benchmark and operational evidence](https://github.com/hartolit/milkdrift/actions/runs/34021380874)
+passes all twelve scenarios, overload recovery, bounded storage/frontier observations, stream
+reconnection, and graceful shutdown. Hosted [release stress](https://github.com/hartolit/milkdrift/actions/runs/34021380881)
+also passes. Both use commit `2599839`, whose production source is unchanged in this checkout.
+
+Hosted [Linux quality](https://github.com/hartolit/milkdrift/actions/runs/34021964548) and
+[Windows/macOS/Linux platform checks](https://github.com/hartolit/milkdrift/actions/runs/34021964535)
+pass at `878a3e3`; Linux runs the full workspace suite and actual daemon/CLI/model scenarios, while
+the platform matrix runs its declared selected suites. Six mutation groups pass with reviewed
+diagnostics and no timeouts. Complete peer mutation qualification, including the strengthened
+authority, catalog-filtering, and disconnected-health assertions, remains pending. Independent readiness and the
+architecture freeze remain open until that check passes.
 
 [Verification evidence](../development/verification-evidence.md) owns commands, pinned workflows,
 report meaning, and classification rules. Configured workflows are not executed evidence. Raw

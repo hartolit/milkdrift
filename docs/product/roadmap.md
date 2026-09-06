@@ -2,9 +2,10 @@
 
 Ordered unfinished work; [status](status.md) owns implementation and evidence facts.
 
-1. **Qualify the existing headless system.** Obtain a passing full Unix gate and hosted
-   Windows/macOS platform, mutation, benchmark, operational, and longevity artifacts for the
-   current source. Resolve observed failures before claiming portability or durability.
+1. **Complete peer mutation qualification.** Finish the complete current-source campaign with
+   the strengthened transport/resource authorization, catalog-filtering, and disconnected-health assertions. Every
+   partition must finish without a timeout or unclassified survivor before independent readiness
+   and the architecture freeze can close; the other hosted qualification checks pass.
 2. **Establish real external interoperability.** Run strict external evidence with an
    operator-supplied byte-pinned coding agent and supported model endpoint, private credential
    sources, and a validated redacted consumer report. Hermetic fixtures cannot close this slice.

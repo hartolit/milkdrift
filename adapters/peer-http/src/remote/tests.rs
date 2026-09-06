@@ -40,6 +40,7 @@ struct ControlledClock {
 }
 
 type ConformanceServer = (String, JoinHandle<Result<(), String>>);
+const UNREACHABLE_REMOTE_ADDRESS: &str = "127.0.0.1:9";
 
 impl ControlledClock {
     const fn new(now: u64) -> Self {
@@ -201,7 +202,7 @@ fn remote_case(scenario: ConformanceScenario) -> Result<RemoteCase, Box<dyn std:
         let (address, server) = serve_archived_execution(remote.clone())?;
         (address, Some(server))
     } else {
-        ("127.0.0.1:9".to_owned(), None)
+        (UNREACHABLE_REMOTE_ADDRESS.to_owned(), None)
     };
     let credential = Arc::new(SensitiveSecret::new(
         b"peer-remote-conformance-secret".to_vec(),
@@ -435,6 +436,182 @@ fn remote_capability_adapter_passes_shared_conformance() -> Result<(), Box<dyn s
 }
 
 #[test]
+fn remote_resolution_requires_transport_scope_and_each_resource_ceiling()
+-> Result<(), Box<dyn std::error::Error>> {
+    use milkdrift_authority::{
+        ActorRef, AuthorityEvaluator, AuthorityExecutionProvenance, AuthorityGrantBuilder,
+        AuthorityOperation, AuthorityRequest, BoundaryTimeMillis, CapabilityAuthorityScope,
+        DecisionId, DecisionReasonCode, ExecutionAuthorityBasis, GrantId, GrantSetEvaluator,
+        NetworkScope, PolicyId, RequestedResourceFacts, ResourceScope, WorkflowRunScope,
+    };
+    use milkdrift_blueprint::WorkflowId;
+    use milkdrift_capability::CapabilityRequirement;
+    use milkdrift_runtime::{CapabilityResolutionContext, ExecutorError};
+
+    let fixture = remote_case(ConformanceScenario::Lifecycle)?;
+    // The adapter's public contract declares one remote invocation and one occupied slot.
+    // Candidate selection also enforces these minima, so selection alone cannot detect an
+    // incomplete declaration at the adapter boundary.
+    let declared = fixture.adapter.authority_requirements();
+    assert_eq!(declared.budget.invocations, Some(1));
+    assert_eq!(declared.budget.concurrency, Some(1));
+    let host = CapabilityHost::new(
+        HostConfig {
+            max_registrations: 1,
+            max_generations_per_capability: 1,
+            max_concurrent_per_generation: 1,
+            observation_stale_after_ms: 1_000,
+        },
+        CapabilitySelectionPolicy::priorities(BTreeMap::new()),
+    )?;
+    let observation =
+        CapabilityObservation::new(fixture.descriptor.identity().clone(), 100, true, 0, "live")?;
+    host.register(fixture.descriptor, fixture.adapter, Some(observation))?;
+    let peer_profile = NetworkProfileRef::new("peer:peer-remote-conformance-target")?;
+    let endpoint = UNREACHABLE_REMOTE_ADDRESS.to_owned();
+    let transport = NetworkScope::new(
+        BTreeSet::from([peer_profile.clone()]),
+        BTreeSet::from([endpoint.clone()]),
+    )?;
+    let budget = AuthorityBudget {
+        cost_minor: Some(1),
+        duration_ms: Some(1_000),
+        invocations: Some(1),
+        artifact_bytes: Some(1_024),
+        concurrency: Some(1),
+        units: None,
+    };
+    let mut cases = vec![(transport.clone(), budget, None)];
+    for (profiles, destinations) in [
+        (BTreeSet::new(), BTreeSet::from([endpoint.clone()])),
+        (BTreeSet::from([peer_profile.clone()]), BTreeSet::new()),
+        (
+            BTreeSet::from([NetworkProfileRef::new("peer:another-peer")?]),
+            BTreeSet::from([endpoint.clone()]),
+        ),
+        (
+            BTreeSet::from([peer_profile.clone()]),
+            BTreeSet::from(["127.0.0.1:2".to_owned()]),
+        ),
+    ] {
+        cases.push((
+            NetworkScope::new(profiles, destinations)?,
+            budget,
+            Some(DecisionReasonCode::NetworkMismatch),
+        ));
+    }
+    for insufficient in [
+        AuthorityBudget {
+            cost_minor: Some(0),
+            ..budget
+        },
+        AuthorityBudget {
+            duration_ms: Some(999),
+            ..budget
+        },
+        AuthorityBudget {
+            invocations: Some(0),
+            ..budget
+        },
+        AuthorityBudget {
+            artifact_bytes: Some(1_023),
+            ..budget
+        },
+        AuthorityBudget {
+            concurrency: Some(0),
+            ..budget
+        },
+    ] {
+        cases.push((
+            transport.clone(),
+            insufficient,
+            Some(DecisionReasonCode::BudgetExcess),
+        ));
+    }
+    for (network, ceiling, denied_reason) in cases {
+        let actor = ActorRef::new("human:remote-network-test")?;
+        let grant_id = GrantId::new("grant:remote-network-test")?;
+        let workflow = WorkflowId::new("remote-network-test")?;
+        let run = RunId::new("run-remote-network-test")?;
+        let grant = AuthorityGrantBuilder::new(grant_id.clone(), 1, actor.clone())
+            .operations(BTreeSet::from([
+                AuthorityOperation::StartRun,
+                AuthorityOperation::InvokeCapability,
+            ]))
+            .resources(ResourceScope {
+                workflow_run: WorkflowRunScope::Workflow {
+                    workflow: workflow.clone(),
+                },
+                capability: CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
+                filesystem: Vec::new(),
+                network,
+                secrets: BTreeSet::new(),
+                artifacts: milkdrift_authority::ArtifactAuthorityScope::none(),
+                layouts: milkdrift_authority::LayoutAuthorityScope::none(),
+                peers: milkdrift_authority::PeerAuthorityScope::none(),
+                daemon: milkdrift_authority::DaemonAuthorityScope::default(),
+                workspace: milkdrift_authority::WorkspaceAuthorityScope::none(),
+            })
+            .budget(ceiling)
+            .validity(BoundaryTimeMillis::new(0), BoundaryTimeMillis::new(1_000))
+            .build()?;
+        let digest = grant.digest()?;
+        let evaluator = GrantSetEvaluator::new(
+            PolicyId::new("test.remote-network")?,
+            1,
+            [grant],
+            BTreeMap::new(),
+        )?;
+        let mut resources = RequestedResourceFacts::empty();
+        resources.workflow = Some(workflow.clone());
+        resources.run = Some(run.clone());
+        let start = evaluator.evaluate(&AuthorityRequest {
+            decision: DecisionId::new("decision:remote-network-start")?,
+            actor,
+            grant: grant_id,
+            grant_revision: 1,
+            grant_digest: digest,
+            revocation_generation: 0,
+            operation: AuthorityOperation::StartRun,
+            resources,
+            budget: AuthorityBudget::default(),
+            evaluated_at: BoundaryTimeMillis::new(100),
+            provenance: AuthorityExecutionProvenance::default(),
+        })?;
+        assert!(start.is_allowed());
+        let revision: RevisionId =
+            serde_json::from_value(serde_json::json!(format!("rev_{}", "1".repeat(64))))?;
+        let basis =
+            ExecutionAuthorityBasis::from_start_decision(&start, workflow, run, revision.clone())?;
+        let context = CapabilityResolutionContext::new(
+            basis,
+            revision,
+            NodeId::new("task")?,
+            NodeExecutionId::new("execution-remote-network")?,
+            AttemptId::new("attempt-remote-network")?,
+        );
+        let resolved = host.resolve_authorized_at(
+            &CapabilityRequirement::new(OperationId::new("model.generate")?),
+            &context,
+            &evaluator,
+            100,
+        );
+        if let Some(denied_reason) = denied_reason {
+            assert!(
+                matches!(resolved, Err(ExecutorError::AuthorityDenied { reasons, .. })
+                if reasons == vec![denied_reason])
+            );
+        } else {
+            assert!(
+                resolved.is_ok(),
+                "the exact transport scope and resource ceilings must resolve: {resolved:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn remote_catalog_registration_fails_closed_and_recovers_with_the_clock()
 -> Result<(), Box<dyn std::error::Error>> {
     let local = PeerId::new("peer-remote-clock-local")?;
@@ -521,6 +698,25 @@ fn remote_catalog_registration_fails_closed_and_recovers_with_the_clock()
     assert!(!registry.status().connected);
 
     clock.available.store(true, Ordering::SeqCst);
+    for (draining, available) in [(true, true), (false, false), (true, false)] {
+        let filtered = milkdrift_peer_protocol::CatalogEntry {
+            draining,
+            observation: CapabilityObservation::new(
+                entry.descriptor.identity().clone(),
+                90,
+                available,
+                0,
+                "filtered catalog entry",
+            )?,
+            ..entry.clone()
+        };
+        assert!(
+            registry
+                .apply_catalog(CatalogSnapshot::new(1, 90, 110, vec![filtered])?)?
+                .is_empty()
+        );
+        assert_eq!(registry.registration_count(), 0);
+    }
     assert!(registry.apply_catalog(catalog.clone()).is_ok());
     assert!(registry.status().connected);
 

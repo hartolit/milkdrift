@@ -20,6 +20,11 @@
       "mutant": "crates/runtime/src/engine/reconciliation.rs:29:13: replace || with && in RuntimeService::plan_revision_adoption",
       "classification": "unreachable_by_valid_contract",
       "explanation": "A non-active projection without a termination record cannot produce a valid reconciliation history or plan; the ordinary command path rejects that invalid state after this defensive early guard as well."
+    },
+    {
+      "mutant": "adapters/peer-http/src/remote.rs:224:17: delete field health from struct PeerRegistryStatus expression in PeerRegistry::status",
+      "classification": "unreachable_by_valid_contract",
+      "explanation": "This fallback requires poisoning the private status mutex. Every holder only moves or clones owned validated identifiers, strings, and primitive diagnostic fields; no caller callback, clock, adapter, network operation, or fallible formatter runs while this guard is held. Allocation failure aborts rather than unwinding. Supported registry operations therefore cannot poison this mutex; ordinary disconnected and failed-connection health remain independently tested."
     }
   ]
 }
