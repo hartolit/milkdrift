@@ -522,7 +522,7 @@ impl ControlService {
         })
     }
 
-    #[allow(clippy::too_many_arguments)] // One validated control operation keeps its authority and optimistic facts explicit.
+    #[allow(clippy::too_many_arguments)] // Acceptance binds the guarded proposal and proposed revision to one run, reconciliation decision, and authority outcome.
     fn decide_proposal(
         &self,
         document: &ControlCommandDocument,
@@ -702,7 +702,7 @@ impl ControlService {
         ensure_accepted(&execution)
     }
 
-    #[allow(clippy::too_many_arguments)] // One validated control operation keeps its authority and optimistic facts explicit.
+    #[allow(clippy::too_many_arguments)] // Translation preserves the control identity, expected run sequence, phase, and reason/evidence in one runtime command.
     fn runtime_command(
         &self,
         document: &ControlCommandDocument,

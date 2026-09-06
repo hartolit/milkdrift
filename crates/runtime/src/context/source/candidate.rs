@@ -170,7 +170,7 @@ impl DurableContextCandidateSource<'_> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)] // One exact durable output occurrence has these facts.
+    #[allow(clippy::too_many_arguments)] // Output provenance needs the exact execution, attempt, value, and event plus scope exposure and cached causal distances.
     pub(super) fn output_candidate(
         &self,
         request: &ContextSourceRequest<'_>,
@@ -283,7 +283,7 @@ impl DurableContextCandidateSource<'_> {
         })
     }
 
-    #[allow(clippy::too_many_arguments)] // One exact journal evidence occurrence has these facts.
+    #[allow(clippy::too_many_arguments)] // Journal provenance binds event roles and actor to the exact execution/attempt and cached causal distances.
     pub(super) fn event_candidate(
         &self,
         request: &ContextSourceRequest<'_>,

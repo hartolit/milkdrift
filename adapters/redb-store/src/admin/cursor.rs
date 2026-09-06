@@ -93,7 +93,6 @@ pub(crate) fn scan_index_sample(
     Ok(result)
 }
 
-#[allow(clippy::too_many_arguments)] // Test-admin cursor corruption fixtures name each physical table boundary explicitly.
 pub(crate) fn make_artifact_digest_cursor(
     phase: u8,
     physical_key: &[u8],

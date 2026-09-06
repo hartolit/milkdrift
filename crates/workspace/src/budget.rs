@@ -41,7 +41,6 @@ milkdrift_contracts::deserialize_via!(WorkspaceBudget, WorkspaceBudgetWire, |wir
 
 impl WorkspaceBudget {
     /// Constructs a consistent set of workspace limits.
-    #[allow(clippy::too_many_arguments)] // One validated workspace budget keeps every independent resource ceiling explicit.
     pub fn new(
         max_value_versions: u64,
         max_inline_bytes_per_value: u64,

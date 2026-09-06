@@ -32,8 +32,8 @@ pub use controller::{
 };
 pub use document::{
     ClaimedStopCondition, MAX_PROPOSAL_DOCUMENT_BYTES, PROPOSAL_SCHEMA_VERSION_V1,
-    ProposalApplicationPolicy, ProposalArtifactReference, ProposalProvenance, RequestedRunAction,
-    WorkflowProposal, WorkflowProposalDocument, workflow_proposal_structured_output,
+    ProposalApplicationPolicy, ProposalProvenance, RequestedRunAction, WorkflowProposal,
+    WorkflowProposalDocument, workflow_proposal_structured_output,
 };
 pub use error::ControlError;
 pub use identity::{ControlId, ControllerId, ControllerPolicyDigest, ProposalDigest, ProposalId};

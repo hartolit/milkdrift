@@ -331,7 +331,7 @@ pub struct ModelTaskRequest {
 
 impl ModelTaskRequest {
     /// Constructs and validates a provider-neutral request.
-    #[allow(clippy::too_many_arguments)] // One validated model contract keeps its exact context or task facts explicit.
+    #[allow(clippy::too_many_arguments)] // Messages, tools, output format, session, and generation bounds are validated as one executable model request.
     pub fn new(
         messages: Vec<Message>,
         tools: Vec<ToolDefinition>,

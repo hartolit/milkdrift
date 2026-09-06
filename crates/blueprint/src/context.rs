@@ -542,7 +542,7 @@ impl Default for TaskContextPolicy {
 
 impl TaskContextPolicy {
     /// Constructs a validated policy from explicit semantic facts.
-    #[allow(clippy::too_many_arguments)] // One validated blueprint contract keeps every semantic selector fact explicit.
+    #[allow(clippy::too_many_arguments)] // Selection, ordering, omission, and budget policies are validated together as one immutable selector.
     pub fn new(
         include_direct_inputs: bool,
         ancestor_depth: Option<u16>,

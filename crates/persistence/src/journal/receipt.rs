@@ -80,7 +80,6 @@ impl CommandReceipt {
     /// The complete command document is still retained for audit. Runtime callers use this
     /// constructor so an exact command can be retried at a newer optimistic sequence or
     /// timestamp without turning the same [`CommandId`] into a false conflict.
-    #[allow(clippy::too_many_arguments)] // One validated durable document keeps its complete storage facts explicit.
     pub fn new_idempotent(
         command: CommandId,
         run: RunId,
@@ -247,7 +246,6 @@ impl<'de> Deserialize<'de> for CommandResultDocument {
 
 impl CommandResultDocument {
     /// Constructs the exact result retained by the idempotency record.
-    #[allow(clippy::too_many_arguments)] // One validated durable document keeps its complete storage facts explicit.
     pub fn new(
         command: CommandId,
         run: RunId,
@@ -271,7 +269,7 @@ impl CommandResultDocument {
     }
 
     /// Constructs an authorization-bearing external command result.
-    #[allow(clippy::too_many_arguments)] // One validated durable document keeps its complete storage facts explicit.
+    #[allow(clippy::too_many_arguments)] // External results bind exact command identity and disposition to event identities, sequence, payload, and authorization.
     pub fn new_authorized(
         command: CommandId,
         run: RunId,
@@ -295,7 +293,7 @@ impl CommandResultDocument {
         )
     }
 
-    #[allow(clippy::too_many_arguments)] // One validated durable document keeps its complete storage facts explicit.
+    #[allow(clippy::too_many_arguments)] // One constructor enforces schema/authorization consistency and accepted/rejected event invariants for both readers.
     fn build(
         schema_version: u32,
         command: CommandId,

@@ -101,7 +101,7 @@ pub struct ControllerLimits {
 
 impl ControllerLimits {
     /// Constructs nonzero hard limits for every controller dimension.
-    #[allow(clippy::too_many_arguments)] // One validated control operation keeps its authority and optimistic facts explicit.
+    #[allow(clippy::too_many_arguments)] // Independent cumulative ceilings and checkpoint cadence must all be explicit when validating a controller budget.
     pub fn new(
         max_invocations: u32,
         max_revisions: u32,

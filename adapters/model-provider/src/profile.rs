@@ -185,7 +185,7 @@ pub struct EndpointProfile {
 
 impl EndpointProfile {
     /// Constructs a completely validated non-secret profile.
-    #[allow(clippy::too_many_arguments)] // One validated endpoint profile owns this closed schema.
+    #[allow(clippy::too_many_arguments)] // Endpoint identity, transport policy, features, and ceilings are validated together before registration.
     pub fn new(
         identity: ProviderProfileRef,
         revision: u64,

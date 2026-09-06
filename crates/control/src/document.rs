@@ -32,9 +32,6 @@ const PROPOSAL_JSON_LIMITS: JsonLimits = JsonLimits {
     maximum_container_items: MAX_PROPOSAL_ITEMS,
 };
 
-/// Exact content-addressed artifact reference retained by a proposal.
-pub type ProposalArtifactReference = ArtifactReference;
-
 /// Producer-declared provenance references retained as untrusted proposal data.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
@@ -190,7 +187,7 @@ struct ProposalDigestInput<'a> {
 
 impl WorkflowProposal {
     /// Constructs a bounded proposal and derives its deterministic digest.
-    #[allow(clippy::too_many_arguments)] // One validated control operation keeps its authority and optimistic facts explicit.
+    #[allow(clippy::too_many_arguments)] // A proposal binds its exact base and mutation to proposer provenance, evidence, and application policy.
     pub fn new(
         identity: ProposalId,
         proposer: ActorRef,

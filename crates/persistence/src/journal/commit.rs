@@ -370,7 +370,7 @@ pub struct AtomicRunCommitRequest {
 
 impl AtomicRunCommitRequest {
     /// Validates cross-document atomicity and sequence invariants.
-    #[allow(clippy::too_many_arguments)] // One validated durable document keeps its complete storage facts explicit.
+    #[allow(clippy::too_many_arguments)] // One atomic commit binds receipt/events to workspace accounting, artifact references, lease guard, result, and indexes.
     pub fn new(
         receipt: CommandReceipt,
         events: Vec<RunEventEnvelope>,

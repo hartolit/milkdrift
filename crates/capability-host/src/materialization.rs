@@ -174,7 +174,7 @@ pub trait InvocationDataAccess: Send + Sync {
     ) -> Result<Box<dyn MaterializedExecution>, InvocationDataError>;
 
     /// Imports and publishes one declared regular output file.
-    #[allow(clippy::too_many_arguments)] // One materialization operation keeps its authority and publication facts explicit.
+    #[allow(clippy::too_many_arguments)] // Publication binds an authorized invocation to one workspace path, output identity, media type, and byte limits.
     fn publish_file(
         &self,
         context: &AdapterExecutionContext,
@@ -588,7 +588,7 @@ impl InvocationDataAccess for StoreInvocationDataAccess {
         }))
     }
 
-    #[allow(clippy::too_many_arguments)] // One materialization operation keeps its authority and publication facts explicit.
+    #[allow(clippy::too_many_arguments)] // Publication binds an authorized invocation to one workspace path, output identity, media type, and byte limits.
     fn publish_file(
         &self,
         context: &AdapterExecutionContext,

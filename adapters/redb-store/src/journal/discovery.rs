@@ -599,7 +599,7 @@ pub(crate) fn record_artifact_references(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)] // One bounded storage query keeps its cursor and table views explicit.
+#[allow(clippy::too_many_arguments)] // Paired identity/order tables and their key projections are checked within one bounded read transaction.
 pub(crate) fn read_ordered_index<T: for<'de> Deserialize<'de> + Serialize>(
     read: &redb::ReadTransaction,
     identity_definition: redb::TableDefinition<'static, &'static [u8], &'static [u8]>,

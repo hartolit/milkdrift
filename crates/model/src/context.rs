@@ -339,7 +339,7 @@ pub struct ContextManifestEntry {
 
 impl ContextManifestEntry {
     /// Constructs a validated selected entry.
-    #[allow(clippy::too_many_arguments)] // One validated model contract keeps its exact context or task facts explicit.
+    #[allow(clippy::too_many_arguments)] // An entry validates exact source provenance against selected content, byte accounting, authority, and inclusion reason.
     pub fn new(
         ordinal: u32,
         kind: ContextSemanticKind,
@@ -668,7 +668,7 @@ struct DigestInput<'a> {
 
 impl ContextManifest {
     /// Validates exact totals/order and computes a deterministic manifest digest.
-    #[allow(clippy::too_many_arguments)] // One validated model contract keeps its exact context or task facts explicit.
+    #[allow(clippy::too_many_arguments)] // The manifest binds one attempt and frozen policy to entries, omissions, and budget-checked aggregate totals.
     pub fn new(
         run: RunId,
         revision: RevisionId,
