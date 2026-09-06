@@ -391,11 +391,16 @@ pub fn wait_for_readiness(runner: &CliRunner, daemon: &mut OwnedChild) -> Eviden
 }
 
 /// Polls actual CLI run state until an independent scenario predicate holds.
-pub fn wait_for_run<F>(runner: &CliRunner, run: &str, predicate: F) -> EvidenceResult<Value>
+pub fn wait_for_run<F>(
+    runner: &CliRunner,
+    run: &str,
+    timeout: Duration,
+    predicate: F,
+) -> EvidenceResult<Value>
 where
     F: Fn(&Value) -> bool,
 {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + timeout;
     loop {
         let output = runner.run(&["run", "show", run], None)?;
         if output.status.success() {

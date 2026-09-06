@@ -14,7 +14,7 @@ use milkdrift_local_process::ProcessProfileDocument;
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
 const COHESION_REVIEW_LINES: usize = 1_000;
-const MAXIMUM_SOURCE_LINES: usize = 2_000;
+const MAXIMUM_SOURCE_LINES: usize = 1_500;
 
 #[derive(Clone, Copy, Debug)]
 struct CohesionException {
@@ -26,33 +26,33 @@ struct CohesionException {
 const PRODUCTION_COHESION_EXCEPTIONS: &[CohesionException] = &[
     CohesionException {
         path: "adapters/local-process/src/config.rs",
-        ceiling: 1_152,
-        rationale: "one versioned process-profile reader validates the complete external adapter contract",
+        ceiling: 1_145,
+        rationale: "profile decoding checks executable identity, substitution/input references, filesystem access, stream secrecy, and aggregate output bounds before registration",
     },
     CohesionException {
         path: "adapters/model-provider/src/adapter.rs",
-        ceiling: 1_291,
-        rationale: "one provider adapter owns request mapping, streaming, and bounded response classification",
+        ceiling: 1_191,
+        rationale: "exact endpoint entry binds selected context materialization to bounded HTTP observations and refuses successful publication after incomplete provider responses",
     },
     CohesionException {
         path: "crates/blueprint/src/validation.rs",
         ceiling: 1_158,
-        rationale: "one validator owns the complete immutable blueprint semantic invariant set",
+        rationale: "graph validation combines bounded diagnostics with acyclic reachability, schema-compatible edges, and exact fork/join and subworkflow interface ownership",
     },
     CohesionException {
         path: "crates/capability/src/descriptor.rs",
-        ceiling: 1_213,
-        rationale: "one descriptor owner validates the complete versioned capability declaration contract",
+        ceiling: 1_166,
+        rationale: "descriptor validation binds operation schemas, side-effect/idempotency compatibility, admission limits, and provenance before canonical generation identity is computed",
     },
     CohesionException {
         path: "crates/capability/src/invocation.rs",
-        ceiling: 1_284,
-        rationale: "one invocation owner validates exact values, references, and accounting metadata",
+        ceiling: 1_224,
+        rationale: "invocation wire constructors reject contradictory request references, terminal status/failure/usage facts, and cancellation acknowledgement identity boundaries",
     },
     CohesionException {
         path: "crates/control/src/service.rs",
         ceiling: 1_346,
-        rationale: "one control service owns authorization and durable command admission ordering",
+        rationale: "proposal submission and approval preserve candidate validation, actor authority, controller assessment, revision storage, and prospective runtime acceptance ordering",
     },
 ];
 
@@ -648,6 +648,7 @@ fn cohesion_policy_rejects_missing_stale_duplicate_over_broad_and_exceeded_excep
         SourceLineCount::production("crates/example/src/stale.rs", 900),
         SourceLineCount::production("crates/example/src/duplicate.rs", 1_001),
         SourceLineCount::production("crates/example/src/exceeded.rs", 1_101),
+        SourceLineCount::production("crates/example/src/generic.rs", 1_001),
         SourceLineCount {
             path: "crates/example/tests/large.rs".to_owned(),
             lines: 1_500,
@@ -680,9 +681,21 @@ fn cohesion_policy_rejects_missing_stale_duplicate_over_broad_and_exceeded_excep
             ceiling: 1_050,
             rationale: "this deliberately exceeded fixture has enough words for policy validation",
         },
+        CohesionException {
+            path: "crates/example/src/generic.rs",
+            ceiling: 1_050,
+            rationale: "one owner implements the complete contract in this file",
+        },
     ];
     let errors = cohesion_policy_errors(&exceptions, &sources).join("\n");
-    for category in ["missing", "stale", "duplicate", "over-broad", "exceeded"] {
+    for category in [
+        "missing",
+        "stale",
+        "duplicate",
+        "over-broad",
+        "exceeded",
+        "weak rationale",
+    ] {
         assert!(
             errors.contains(category),
             "missing {category} diagnostic: {errors}"
@@ -801,7 +814,13 @@ fn cohesion_policy_errors(
             errors.push(format!("over-broad exception: {}", exception.path));
             continue;
         }
-        if exception.rationale.split_whitespace().count() < 6 {
+        if exception.rationale.split_whitespace().count() < 6
+            || exception.rationale.contains("complete contract")
+            || exception
+                .rationale
+                .contains("complete external adapter contract")
+            || exception.rationale.contains("complete versioned")
+        {
             errors.push(format!("empty or weak rationale: {}", exception.path));
         }
         if exception.ceiling <= COHESION_REVIEW_LINES || exception.ceiling >= MAXIMUM_SOURCE_LINES {

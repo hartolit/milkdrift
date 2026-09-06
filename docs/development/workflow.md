@@ -6,8 +6,17 @@ Use the exact toolchain in [rust-toolchain.toml](../../rust-toolchain.toml).
 
 ## Full local gate
 
-Run from the repository root. Build the product daemon before isolated application evidence tests;
-the workspace gate also builds the application targets.
+Run from the repository root. Build the product daemon before isolated application evidence tests
+and the shared process fixture before isolated daemon integration tests:
+
+```sh
+cargo build -p milkdrift-daemon --bin milkdrift-daemon \
+  -p milkdrift-local-process --bin milkdrift-process-test-helper
+```
+
+The workspace gate also builds these targets. Hermetic external-evidence tests require Python 3
+and Git on the harness's `PATH`; generated verifiers use the resolved absolute Git executable
+because process adapters deliberately clear the child environment.
 
 ```sh
 cargo fmt --all -- --check
@@ -52,9 +61,9 @@ cargo test -p milkdrift-daemon --test two_daemon_peer --all-features
 ```
 
 Tests use temporary stores, ephemeral loopback listeners, fixed identities/clocks, controlled
-adapters, and private fixture credentials. Model mocks contact no provider. The local-process
-suite uses its Rust helper; some daemon/evidence fixtures require Unix executables such as
-`/bin/echo`. See [status](../product/status.md) for executed platform evidence. Native source checks
+adapters, and private fixture credentials. Model mocks contact no provider. Local-process and
+daemon integration suites share the byte-pinned Rust process helper. See
+[status](../product/status.md) for executed platform evidence. Native source checks
 or cross-compilation alone cannot establish runtime portability or filesystem durability.
 
 Shared production-adapter conformance and host lifecycle checks:

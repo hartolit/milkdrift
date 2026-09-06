@@ -36,7 +36,9 @@ jobs:
           --test application_state
           release_receipt_longevity_crosses_many_hot_bounds_and_replays_after_restart
           -- --ignored --exact --nocapture
-      - name: Run peer retention turnover and restart
+      - name: Build the peer process fixture
+        run: cargo build --release -p milkdrift-local-process --bin milkdrift-process-test-helper
+      - name: Verify peer retention turnover and restart
         run: >-
           cargo test --release
           -p milkdrift-daemon

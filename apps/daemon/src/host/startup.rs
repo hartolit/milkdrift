@@ -200,7 +200,8 @@ impl Owner {
                 max_registrations: 1_024,
                 max_generations_per_capability: 16,
                 max_concurrent_per_generation: runtime_plan.global_concurrency,
-                observation_stale_after_ms: 60_000,
+                observation_stale_after_ms:
+                    super::capabilities::CAPABILITY_OBSERVATION_STALE_AFTER_MS,
             },
             CapabilitySelectionPolicy::priorities(BTreeMap::new()),
         )

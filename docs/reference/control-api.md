@@ -152,6 +152,12 @@ SSE `data` values are `ObservationEnvelope` documents with protocol, cursor, obs
 
 Run-feed positions interleave durable timeline sequence (`2 × sequence`) and its following compact status (`2 × sequence + 1`). Transport heartbeats are SSE comments and are never durable events. Server generators and owner calls are bounded; backpressure retains no unbounded per-client event queue. Authentication and exact authority are reevaluated on every bounded polling cycle. Rotation, revocation, narrowing, draining, invalid history, or authorization change stops future disclosure and closes the feed with an authorization closing/resync item where possible; already delivered history is not rewritten.
 
+The authenticated session constructs cursor bindings for both page and stream consumers. Exact
+feed/filter identity and the immutable grant digest bind the scope; stream-to-page translation
+uses that same construction. Reaching the journal head waits for later events without changing
+the continuation position. A cursor rejected after an implementation or authority change requires
+a fresh authorized subscription or page read.
+
 `milkdrift-control-client::subscribe` reconnects retryable transport failures with its last successfully decoded cursor. Reconnect never submits or replays a command.
 
 ## Layout schema 1

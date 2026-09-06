@@ -6,6 +6,15 @@ use tracing::warn;
 
 impl Owner {
     pub(super) fn maintenance(&self, health: &SharedHealth) {
+        if let Err(error) = self.refresh_capability_health() {
+            warn!(
+                outcome = "error",
+                code = "capability_health",
+                "{}",
+                bounded(&error.message)
+            );
+            health.failure("bounded capability health refresh failed");
+        }
         match self.store.application_receipt_status() {
             Ok(status) if status.hot_count >= u64::from(status.hot_bound) => {
                 let outcome = self.now().and_then(|now| {

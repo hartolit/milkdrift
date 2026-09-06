@@ -1,10 +1,9 @@
 //! Authorized immutable workflow/revision lineage read-model ownership.
 
 use super::{
-    Owner, PublicFailure, read_model::cursor_binding, read_model::diff_keys, read_model::internal,
-    read_model::invalid, read_model::not_found, read_model::parse_revision_id,
-    read_model::public_persistence, read_model::public_protocol,
-    read_model::public_revision_summary, read_model::unauthorized,
+    Owner, PublicFailure, read_model::diff_keys, read_model::internal, read_model::invalid,
+    read_model::not_found, read_model::parse_revision_id, read_model::public_persistence,
+    read_model::public_protocol, read_model::public_revision_summary, read_model::unauthorized,
 };
 use crate::auth::ActorSession;
 use milkdrift_authority::{AuthorityOperation, RequestedResourceFacts, WorkflowRunScope};
@@ -95,7 +94,7 @@ impl Owner {
             resources,
             "read:revisions",
         )?;
-        let binding = cursor_binding(session, &feed)?;
+        let binding = session.cursor_binding(&feed);
         let filter = RevisionFilter {
             workflow: workflow_id,
         };

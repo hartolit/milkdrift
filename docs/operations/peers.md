@@ -21,7 +21,13 @@ milkdrift --yes peer drain PEER_ID
 milkdrift --yes peer revoke PEER_ID
 ```
 
-`peer list/show` first filters configured relationships through the local actor's exact peer scope, then reports authenticated connection health, remote session ID, exact catalog generation/digest/expiry, registration count, and live revocation without transport secrets. `connected` means a current authenticated session and verified catalog—even when filtering produces zero registrations—and is not shared workflow truth. The serving catalog is filtered by the relationship's expanded capability/provider/health grant before projection. Inspect `capability list` for mapped generation health and provenance. A disconnect drains new resolution while exact accepted work follows its durable observation/uncertainty rules; reconnect after an irreversible drain creates a fresh local registration generation even when the remote catalog is still cached.
+`peer list/show` first filters configured relationships through the local actor's exact peer scope, then reports authenticated connection health, remote session ID, exact catalog generation/digest/expiry, registration count, and live revocation without transport secrets. `connected` means an authenticated session and verified catalog—even when filtering produces zero registrations—and is not shared workflow truth. Check the reported expiry before starting work. The serving catalog is filtered by the relationship's expanded capability/provider/health grant before projection. Inspect `capability list` for mapped generation health and provenance. A disconnect drains new resolution while exact accepted work follows its durable observation/uncertainty rules; reconnect after an irreversible drain creates a fresh local registration generation even when the remote catalog is still cached.
+
+Reload may return a still-live cached catalog with the same expiry. A renewed catalog replaces the
+local adapter even when the remote descriptor is unchanged. Old registrations remain while exact
+execution permits are held and are reclaimed on later reload/disconnect after those permits leave.
+The host's generation bounds still apply when old work has not drained. Plan a bounded invocation
+inside the catalog's remaining lifetime; expiry during execution may preserve uncertainty.
 
 Serving work uses the schema-9 enabled-mode `peers.serving` policy. `worker_threads`, `maximum_global_active`, and `maximum_dispatch_queue` bound live ownership; `maximum_hot_terminal_records` bounds completed/uncertain detailed history; `archive_batch_size` bounds each oldest-first compaction pass; and `observation_hot_retention_ms` prevents premature loss of reconnectable detail. These values are validated independently of `application_receipts` and security-audit retention. Keep the hot bound at least as large as the global active bound and choose a batch no larger than the hot bound.
 

@@ -3,11 +3,12 @@ use milkdrift_authority::{AccessMode, FilesystemScope};
 use milkdrift_evidence::{
     EvidenceResult,
     application::{ensure, run_command, write_private},
+    http_fixture::read_request,
 };
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::{Read as _, Write as _},
+    io::Write as _,
     net::{SocketAddr, TcpListener},
     path::{Path, PathBuf},
     sync::{
@@ -44,32 +45,7 @@ impl MockModel {
                     }
                     Err(error) => return Err(error),
                 };
-                stream.set_nonblocking(false)?;
-                stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-                stream.set_write_timeout(Some(Duration::from_secs(2)))?;
-                let mut bytes = Vec::new();
-                loop {
-                    let mut chunk = [0; 4096];
-                    let count = stream.read(&mut chunk)?;
-                    if count == 0 || bytes.len() + count > 1_048_576 {
-                        return Err(std::io::Error::other("mock request truncated or oversized"));
-                    }
-                    bytes.extend_from_slice(&chunk[..count]);
-                    if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
-                        let header = String::from_utf8_lossy(&bytes[..end]);
-                        let length = header
-                            .lines()
-                            .find_map(|line| {
-                                line.split_once(':')
-                                    .filter(|(key, _)| key.eq_ignore_ascii_case("content-length"))
-                                    .and_then(|(_, value)| value.trim().parse::<usize>().ok())
-                            })
-                            .ok_or_else(|| std::io::Error::other("mock request has no length"))?;
-                        if bytes.len() >= end + 4 + length {
-                            break;
-                        }
-                    }
-                }
+                read_request(&mut stream)?;
                 entered.fetch_add(1, Ordering::SeqCst);
                 let body = concat!(
                     "data: {\"id\":\"operator-response-1\",\"model\":\"operator-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ack\"},\"finish_reason\":null}]}\n\n",

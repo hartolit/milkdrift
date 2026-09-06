@@ -2,8 +2,8 @@
 
 use super::{Owner, PublicFailure, read_model::bounded, read_model::snake_debug};
 use crate::{auth::ActorSession, config::AdapterConfig};
-use milkdrift_authority::{AuthorityOperation, RequestedResourceFacts};
-use milkdrift_capability::CapabilityId;
+use milkdrift_authority::{AuthorityOperation, CapabilityAuthorityScope, RequestedResourceFacts};
+use milkdrift_capability::{CapabilityId, SideEffectClass};
 use milkdrift_capability_host::{CapabilityHost, InvocationDataAccess};
 use milkdrift_control::{ControlService, WorkflowControlAdapter, workflow_control_descriptor};
 use milkdrift_control_protocol::{CapabilityRead, ErrorCode};
@@ -12,7 +12,42 @@ use milkdrift_local_secret::LocalSecretResolver;
 use milkdrift_model_provider::{EndpointProfile, ModelEndpointAdapter, descriptor_for_profile};
 use std::{fs, sync::Arc};
 
+pub(super) const CAPABILITY_OBSERVATION_STALE_AFTER_MS: u64 = 60_000;
+
 impl Owner {
+    pub(super) fn refresh_capability_health(&self) -> Result<(), PublicFailure> {
+        let now = self.now()?;
+        let unavailable = |error: milkdrift_capability_host::HostError| {
+            PublicFailure::new(ErrorCode::Unavailable, bounded(&error.to_string()), true)
+        };
+        // The host bounds this inventory. Refresh current generations before their observations
+        // expire; one broken adapter must not prevent the others from being observed.
+        let views = self
+            .capability_host
+            .generations(
+                &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
+                now,
+            )
+            .map_err(unavailable)?;
+        let mut failure = None;
+        for view in views {
+            if view.current
+                && !view.draining
+                && view.observed_at_unix_ms.is_none_or(|observed| {
+                    now.saturating_sub(observed) >= CAPABILITY_OBSERVATION_STALE_AFTER_MS / 2
+                })
+                && let Err(error) = self.capability_host.refresh_health(
+                    &view.capability,
+                    view.descriptor_revision,
+                    now,
+                )
+            {
+                failure.get_or_insert_with(|| unavailable(error));
+            }
+        }
+        failure.map_or(Ok(()), Err)
+    }
+
     pub(super) fn capabilities(
         &self,
         session: &ActorSession,

@@ -164,6 +164,8 @@ pub fn generated_profiles(
     session_root: &Path,
 ) -> Result<GeneratedProfiles, String> {
     let python = find_executable(&["python3", "python"])?;
+    let git = find_executable(&["git"])?;
+    let git = git.to_str().ok_or("Git executable path is not UTF-8")?;
     let weak_verifier = write_profile(
         session_root,
         repository,
@@ -171,7 +173,7 @@ pub fn generated_profiles(
         "evidence-verifier-weak",
         "evidence-verifier-weak",
         verifier_code(),
-        vec!["weak".to_owned()],
+        vec!["weak".to_owned(), git.to_owned()],
         Vec::new(),
         vec![
             (
@@ -192,7 +194,7 @@ pub fn generated_profiles(
         "evidence-verifier-good",
         "evidence-verifier-good",
         verifier_code(),
-        vec!["good".to_owned()],
+        vec!["good".to_owned(), git.to_owned()],
         Vec::new(),
         vec![
             (
@@ -255,12 +257,12 @@ pub fn generated_profiles(
 }
 
 fn fixture_agent_value(repository: &Path, session_root: &Path) -> Result<Value, String> {
-    let python = Path::new("/usr/bin/python3");
-    let identity = hash_file(python).map_err(|error| error.to_string())?;
+    let python = find_executable(&["python3", "python"])?;
+    let identity = hash_file(&python).map_err(|error| error.to_string())?;
     Ok(base_profile(
         repository,
         session_root,
-        python,
+        &python,
         identity,
         "fixture-coding-agent",
         "fixture-coding-agent",
@@ -440,16 +442,21 @@ fn reject_fixture_profile(value: &Value) -> Result<(), String> {
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
+    let basename = basename.strip_suffix(".exe").unwrap_or(&basename);
     let rejected = [
         "bash",
+        "cmd",
         "cp",
         "dash",
         "echo",
         "env",
+        "evidence-process-helper",
         "false",
         "milkdrift-process-test-helper",
         "node",
         "perl",
+        "powershell",
+        "pwsh",
         "python",
         "python3",
         "python3.14",
@@ -471,7 +478,7 @@ fn reject_fixture_profile(value: &Value) -> Result<(), String> {
                         .unwrap_or(true)
             })
         });
-    if rejected.contains(&basename.as_str())
+    if rejected.contains(&basename)
         || basename.starts_with("python")
         || basename.contains("fixture")
         || basename.contains("mock")
@@ -509,8 +516,8 @@ sys.stdin.read()
 fn verifier_code() -> &'static str {
     r#"import json, pathlib, subprocess, sys
 mode=sys.argv[1]
-root=pathlib.Path(sys.argv[2])
-diff=subprocess.run(['git','diff','--binary','HEAD'],check=False,capture_output=True,text=True)
+root=pathlib.Path(sys.argv[3])
+diff=subprocess.run([sys.argv[2],'diff','--binary','HEAD'],check=False,capture_output=True,text=True)
 tests=subprocess.run([sys.executable,'-m','unittest','-v'],check=False,capture_output=True,text=True)
 log='ORCHESTRATION_FAULT_INJECTION='+str(mode=='weak')+'\n'+tests.stdout+tests.stderr
 (root/'verification.log').write_text(log)
@@ -575,6 +582,14 @@ mod tests {
             "/usr/bin/python3",
             "/opt/evidence/mock-agent",
             "/opt/evidence/milkdrift-process-test-helper",
+            "/opt/evidence/echo.exe",
+            "/opt/evidence/node.exe",
+            "/opt/evidence/cmd.exe",
+            "/opt/evidence/PowerShell.exe",
+            "/opt/evidence/pwsh",
+            "/opt/evidence/SH.EXE",
+            "/opt/evidence/evidence-process-helper.exe",
+            "/opt/evidence/evidence-process-helper",
         ] {
             let value = json!({"profile":{"executable":executable,"extensions":{}}});
             assert!(reject_fixture_profile(&value).is_err());

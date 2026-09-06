@@ -1,6 +1,6 @@
 //! Shared daemon process, configuration, blueprint, and authority fixtures.
 
-//! Loopback-only integration coverage for the durable daemon control plane.
+pub(super) use crate::process::configured_process_profile;
 
 pub(super) use std::{
     collections::BTreeMap,
@@ -187,20 +187,6 @@ pub(super) fn configuration_document_with_process_profiles(
     })
 }
 
-pub(super) fn configured_process_profile(directory: &TempDir) -> TestResult<std::path::PathBuf> {
-    let executable = std::path::Path::new("/bin/echo");
-    let bytes = fs::read(executable)?;
-    let mut profile: serde_json::Value = serde_json::from_slice(include_bytes!(
-        "../../../../adapters/local-process/tests/fixtures/process-profile-v2.json"
-    ))?;
-    profile["profile"]["implementation"]["content_digest"] =
-        serde_json::json!(format!("b3_{}", blake3::hash(&bytes)));
-    profile["profile"]["implementation"]["size_bytes"] = serde_json::json!(bytes.len());
-    let path = directory.path().join("process-profile-v2.json");
-    fs::write(&path, serde_json::to_vec(&profile)?)?;
-    Ok(path)
-}
-
 pub(super) struct DogfoodProfiles {
     pub(super) coding: std::path::PathBuf,
     pub(super) good_verification: std::path::PathBuf,
@@ -313,6 +299,7 @@ pub(super) fn dogfood_process_profiles(
     directory: &TempDir,
     repository: &std::path::Path,
 ) -> TestResult<DogfoodProfiles> {
+    let executable = crate::process::executable()?;
     let host_directory = serde_json::json!({
         "type": "authorized_host_path",
         "path": repository
@@ -322,8 +309,8 @@ pub(super) fn dogfood_process_profiles(
         repository,
         "dogfood-coding",
         "dogfood-coding-agent",
-        std::path::Path::new("/usr/bin/tee"),
-        serde_json::json!(["-a", "progress.md"]),
+        &executable,
+        serde_json::json!(["append-stdin", "progress.md"]),
         serde_json::json!({}),
         host_directory.clone(),
         serde_json::json!([{"input": "prompt", "relative_path": "prompt.json"}]),
@@ -338,8 +325,12 @@ pub(super) fn dogfood_process_profiles(
         repository,
         "dogfood-verification-good",
         "dogfood-verifier-good",
-        std::path::Path::new("/bin/cp"),
-        serde_json::json!(["progress.md", "{{execution_root}}/verification-pass.json"]),
+        &executable,
+        serde_json::json!([
+            "copy",
+            "progress.md",
+            std::path::Path::new("{{execution_root}}").join("verification-pass.json")
+        ]),
         serde_json::json!({
             "execution_root": {"type": "execution_root"}
         }),
@@ -361,10 +352,11 @@ pub(super) fn dogfood_process_profiles(
         repository,
         "dogfood-verification-weak",
         "dogfood-verifier-weak",
-        std::path::Path::new("/bin/cp"),
+        &executable,
         serde_json::json!([
+            "copy",
             "progress.md",
-            "{{execution_root}}/weak-verification-result.json"
+            std::path::Path::new("{{execution_root}}").join("weak-verification-result.json")
         ]),
         serde_json::json!({
             "execution_root": {"type": "execution_root"}
@@ -382,8 +374,12 @@ pub(super) fn dogfood_process_profiles(
         repository,
         "dogfood-reviewer",
         "dogfood-reviewer",
-        std::path::Path::new("/bin/cp"),
-        serde_json::json!(["progress.md", "{{execution_root}}/review.json"]),
+        &executable,
+        serde_json::json!([
+            "copy",
+            "progress.md",
+            std::path::Path::new("{{execution_root}}").join("review.json")
+        ]),
         serde_json::json!({
             "execution_root": {"type": "execution_root"}
         }),

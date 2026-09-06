@@ -23,6 +23,35 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
     let mut arguments = env::args().skip(1);
     let command = arguments.next().ok_or("missing fixture command")?;
     match command.as_str() {
+        "echo" => {
+            writeln!(
+                std::io::stdout(),
+                "{}",
+                arguments.collect::<Vec<_>>().join(" ")
+            )?;
+            Ok(0)
+        }
+        "append-stdin" => {
+            let path = arguments.next().ok_or("missing append path")?;
+            let mut bytes = Vec::new();
+            std::io::stdin().take(65_537).read_to_end(&mut bytes)?;
+            if bytes.len() > 65_536 {
+                return Err("fixture stdin exceeds bound".into());
+            }
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)?
+                .write_all(&bytes)?;
+            std::io::stdout().write_all(&bytes)?;
+            Ok(0)
+        }
+        "copy" => {
+            let source = arguments.next().ok_or("missing copy source")?;
+            let destination = arguments.next().ok_or("missing copy destination")?;
+            std::fs::copy(source, destination)?;
+            Ok(0)
+        }
         "inspect" => {
             let output = arguments.next().ok_or("missing output path")?;
             let environment_name = arguments.next().ok_or("missing environment name")?;

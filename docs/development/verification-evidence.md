@@ -56,8 +56,19 @@ cargo mutation-evidence context
 cargo mutation-evidence peer
 ```
 
+`CARGO_MUTANTS_JOBS` selects the campaign concurrency (default 2), and
+`CARGO_MUTANTS_BUILD_TIMEOUT` sets a positive build deadline in seconds (default 180). A slow host
+may require serial builds and a larger measured deadline. Preserve failed campaign artifacts and
+rerun after infrastructure failures; a timed-out build or a file-lock failure is not evidence that
+a mutant was caught. Finish workspace builds before running a campaign, particularly on Windows
+where the live runner executable cannot be replaced.
+On a host dominated by debug-symbol linking, Cargo's `CARGO_PROFILE_DEV_DEBUG=0` and
+`CARGO_PROFILE_TEST_DEBUG=0` retain test assertions while omitting debug symbols. Record these
+settings and `CARGO_BUILD_JOBS` alongside the campaign; they do not classify failed builds.
+
 Scope covers authority conjunctions, application/peer idempotency and retention, runtime optimistic
-replay/recovery/reconciliation, controller accounting, context budgets, and peer lifecycle. It
+replay/recovery/reconciliation, controller accounting, context budgets, peer lifecycle, and exact
+catalog renewal with bounded registration retirement. It
 excludes generated fixtures and unrelated constructors. A failing unmutated baseline cannot
 qualify a campaign.
 

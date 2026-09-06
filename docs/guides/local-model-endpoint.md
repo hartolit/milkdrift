@@ -4,6 +4,10 @@ Milkdrift treats a local model server as a configured capability endpoint. It do
 weights, select a model architecture, manage inference memory, or start/stop the server. Run and
 secure the server separately.
 
+LM Studio is a temporary development endpoint, not a Milkdrift dependency. Replacing it with
+llama.cpp's server or another compatible server means updating the operator-owned endpoint profile
+and rechecking that server/model's advertised behavior through this same path.
+
 For ordinary setup and execution, use the maintained
 [headless operator path](../../examples/operator/README.md#one-separately-managed-loopback-model).
 It registers a profile, imports `model.json`, starts and waits through the CLI, and inspects exact
@@ -85,6 +89,13 @@ target/debug/local-model-evidence \
   --model-capability local-model-loopback \
   --output target/local-model-real
 ```
+
+The lane waits at most 180 seconds for model terminal evidence; `--timeout-secs` accepts 1–3,600.
+Its default output allowance is 64 units. Set `--max-output-units` (1–65,536) when the chosen model
+needs a larger bounded allowance before returning final text. The profile's request and idle
+deadlines remain independent. Reasoning-only output that reaches its limit does not establish the
+streaming/final-text evidence required by this lane. Relative profile and credential-reference
+paths are resolved before the generated daemon configuration is written.
 
 If the profile names `secret:model-token`, add
 `--secret-source secret:model-token=/absolute/private/model.token`. Unix secret files must be

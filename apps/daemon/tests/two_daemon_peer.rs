@@ -1,5 +1,9 @@
 //! Deterministic two-daemon authenticated catalog and local registration coverage.
 
+#[path = "support/process.rs"]
+mod process;
+use process::configured_process_profile;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -240,6 +244,29 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
 
     // Cross the tiny serving hot-history bound repeatedly before the restart half.
     for index in 0..turnovers {
+        // Keep the entire bounded operation inside a live catalog. The serving peer caches
+        // snapshots until expiry, so wait out a nearly expired snapshot before reconnecting.
+        let peer = daemon_b.client.peer_action("peer-a", "reload").await?;
+        assert!(peer.connected);
+        let expires = peer
+            .catalog_expires_at_unix_ms
+            .ok_or("catalog expiry absent")?;
+        let now = u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis(),
+        )?;
+        let remaining = expires.saturating_sub(now);
+        if remaining < 8_000 {
+            tokio::time::sleep(Duration::from_millis(remaining + 1)).await;
+            let renewed = daemon_b.client.peer_action("peer-a", "reload").await?;
+            assert!(renewed.connected);
+            assert!(
+                renewed
+                    .catalog_expires_at_unix_ms
+                    .is_some_and(|value| value > expires)
+            );
+        }
         let run_id = format!("run-peer-turnover-{index}");
         daemon_b
             .client
@@ -407,12 +434,11 @@ fn configuration(
             .port_or_known_default()
             .ok_or("peer endpoint port absent")?
     );
-    let executable_root = std::path::Path::new("/bin/echo")
-        .canonicalize()?
+    let executable_root = process::executable()?
         .parent()
         .ok_or("canonical test executable has no parent")?
         .to_owned();
-    let temporary_root = std::path::Path::new("/tmp").canonicalize()?;
+    let temporary_root = std::env::temp_dir().canonicalize()?;
     let mut operator_authority = ActorGrantConfig::dangerous_administrator();
     operator_authority.resources.network = NetworkScope::new(
         BTreeSet::from([NetworkProfileRef::new(format!("peer:{remote_peer}"))?]),
@@ -520,20 +546,6 @@ fn configuration(
     }
     .validate(root.path())
     .map_err(Into::into)
-}
-
-fn configured_process_profile(directory: &TempDir) -> TestResult<std::path::PathBuf> {
-    let executable = std::path::Path::new("/bin/echo");
-    let bytes = fs::read(executable)?;
-    let mut profile: serde_json::Value = serde_json::from_slice(include_bytes!(
-        "../../../adapters/local-process/tests/fixtures/process-profile-v2.json"
-    ))?;
-    profile["profile"]["implementation"]["content_digest"] =
-        serde_json::json!(format!("b3_{}", blake3::hash(&bytes)));
-    profile["profile"]["implementation"]["size_bytes"] = serde_json::json!(bytes.len());
-    let path = directory.path().join("process-profile-v2.json");
-    fs::write(&path, serde_json::to_vec(&profile)?)?;
-    Ok(path)
 }
 
 fn command(identity: &str, command: Command) -> CommandRequest {

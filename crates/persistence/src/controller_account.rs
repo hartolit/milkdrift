@@ -36,7 +36,6 @@ pub struct ControllerResourceBudget {
 
 impl ControllerResourceBudget {
     /// Constructs nonzero immutable ceilings for every ledger-owned dimension.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cost_micros: u64,
         currency: CurrencyCode,

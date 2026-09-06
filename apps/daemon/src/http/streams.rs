@@ -11,8 +11,7 @@ use axum::{
 };
 use futures_util::Stream;
 use milkdrift_control_protocol::{
-    CapabilityRead, Cursor, CursorBinding, ErrorCode, Observation, ObservationEnvelope,
-    ProtocolVersion,
+    CapabilityRead, Cursor, ErrorCode, Observation, ObservationEnvelope, ProtocolVersion,
 };
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
 use tracing::{info, warn};
@@ -41,7 +40,7 @@ pub(super) async fn run_stream(
         &request_id,
     )
     .await?;
-    let initial_binding = stream_cursor_binding(&initial_session, &feed);
+    let initial_binding = initial_session.cursor_binding(&feed);
     let mut stream_position = query
         .cursor
         .as_ref()
@@ -98,7 +97,7 @@ pub(super) async fn run_stream(
                 None
             } else {
                 let timeline_feed = format!("timeline:{run}");
-                Some(stream_cursor_binding(&session, &timeline_feed))
+                Some(session.cursor_binding(&timeline_feed))
                     .and_then(|binding| Cursor::new_bound(
                         &timeline_feed,
                         last_sequence,
@@ -166,7 +165,7 @@ pub(super) async fn capability_stream(
         &request_id,
     )
     .await?;
-    let initial_binding = stream_cursor_binding(&initial_session, &feed);
+    let initial_binding = initial_session.cursor_binding(&feed);
     let mut position = query
         .cursor
         .as_ref()
@@ -198,7 +197,7 @@ pub(super) async fn capability_stream(
                 Ok(decision) => decision,
                 Err(_) => break,
             };
-            let binding = stream_cursor_binding(&session, &feed);
+            let binding = session.cursor_binding(&feed);
             if state.host.health().draining {
                 if let Ok(event) = observation_event(&state.host, &feed, position.saturating_add(1), Observation::StreamClosing { reason: "daemon is draining".to_owned() }, &session, &decision).await {
                     yield Ok(event);
@@ -291,7 +290,7 @@ pub(super) async fn health_stream(
         &request_id,
     )
     .await?;
-    let initial_binding = stream_cursor_binding(&initial_session, &feed);
+    let initial_binding = initial_session.cursor_binding(&feed);
     let mut position = query
         .cursor
         .as_ref()
@@ -358,21 +357,6 @@ async fn stream_authority(
     Ok(decision)
 }
 
-fn stream_cursor_binding(session: &ActorSession, exact_resource_and_filter: &str) -> CursorBinding {
-    let claim = session.context.authority();
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"milkdrift.continuation-scope.v1\0");
-    hasher.update(exact_resource_and_filter.as_bytes());
-    hasher.update(format!("{:?}", session.grant.resources()).as_bytes());
-    CursorBinding {
-        actor: session.actor.as_str().to_owned(),
-        grant_id: claim.grant().as_str().to_owned(),
-        grant_revision: claim.grant_revision(),
-        grant_digest: claim.grant_digest().as_str().to_owned(),
-        scope_digest: format!("b3_{}", hasher.finalize()),
-    }
-}
-
 async fn observation_event(
     host: &DaemonHost,
     feed: &str,
@@ -392,7 +376,7 @@ async fn observation_event(
     let cursor = Cursor::new_bound(
         feed,
         position,
-        stream_cursor_binding(session, feed),
+        session.cursor_binding(feed),
         decision_digest,
         session.cursor_key(),
     )

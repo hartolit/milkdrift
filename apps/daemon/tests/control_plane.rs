@@ -6,5 +6,7 @@ mod control_workflows;
 mod durability;
 #[path = "control_plane/operations.rs"]
 mod operations;
+#[path = "support/process.rs"]
+mod process;
 #[path = "control_plane/support.rs"]
 mod support;

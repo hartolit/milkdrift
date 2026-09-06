@@ -99,6 +99,7 @@ impl MutationShard {
                 pattern: "(Selection.*(matches|is_subset_of)|validate_count|GrantSetEvaluator.*evaluate|CapabilityAuthorityScope::is_subset_of|AuthorityBudget::fits_within|within|validate_admission)",
                 test_packages: &[
                     "milkdrift-authority",
+                    "milkdrift-local-process",
                     "milkdrift-peer-http",
                     "milkdrift-evidence",
                     "milkdrift-daemon",
@@ -112,6 +113,7 @@ impl MutationShard {
                     "milkdrift-redb-store",
                     "milkdrift-evidence",
                     "milkdrift-daemon",
+                    "milkdrift-local-process",
                 ],
                 cargo_test_arguments: &[],
             },
@@ -175,17 +177,19 @@ impl MutationShard {
             },
             Self::Peer => ShardSpecification {
                 files: &[
+                    "adapters/peer-http/src/remote.rs",
                     "adapters/redb-store/src/peer.rs",
                     "adapters/redb-store/src/peer/accounting.rs",
                     "adapters/redb-store/src/peer/claims.rs",
                     "adapters/redb-store/src/peer/retention.rs",
                     "adapters/redb-store/src/peer/validation.rs",
                 ],
-                pattern: "(admit_peer_execution|claim_dispatch|mark_entered|release_claim|mark_uncertain|append_peer_observation|request_peer_cancellation|acknowledge_peer_cancellation|recover_claims|archive_peer_executions|release_active_accounting|validate_record|validate_tombstone)",
+                pattern: "(admit_peer_execution|claim_dispatch|mark_entered|release_claim|mark_uncertain|append_peer_observation|request_peer_cancellation|acknowledge_peer_cancellation|recover_claims|archive_peer_executions|release_active_accounting|validate_record|validate_tombstone|PeerRegistry::apply_catalog|Registrations::(reap|retire))",
                 test_packages: &[
                     "milkdrift-peer-http",
                     "milkdrift-evidence",
                     "milkdrift-daemon",
+                    "milkdrift-local-process",
                 ],
                 cargo_test_arguments: &[],
             },
@@ -336,22 +340,20 @@ fn mutation_output(shard: MutationShard) -> ToolResult<PathBuf> {
     }
 }
 
-fn mutation_jobs() -> ToolResult<u32> {
-    let Some(value) = env::var_os("CARGO_MUTANTS_JOBS") else {
-        return Ok(DEFAULT_JOBS);
+fn positive_environment(name: &str, default: u32) -> ToolResult<u32> {
+    let Some(value) = env::var_os(name) else {
+        return Ok(default);
     };
     let value = value
         .to_str()
-        .ok_or_else(|| ToolFailure::operational("CARGO_MUTANTS_JOBS must be valid Unicode"))?;
+        .ok_or_else(|| ToolFailure::operational(format!("{name} must be valid Unicode")))?;
     let jobs = value.parse::<u32>().map_err(|error| {
-        ToolFailure::operational(format!(
-            "CARGO_MUTANTS_JOBS must be a positive integer: {error}"
-        ))
+        ToolFailure::operational(format!("{name} must be a positive integer: {error}"))
     })?;
     if jobs == 0 {
-        return Err(ToolFailure::operational(
-            "CARGO_MUTANTS_JOBS must be greater than zero",
-        ));
+        return Err(ToolFailure::operational(format!(
+            "{name} must be greater than zero"
+        )));
     }
     Ok(jobs)
 }
@@ -372,13 +374,13 @@ fn mutation_command(
         .arg("--output")
         .arg(output)
         .arg("--jobs")
-        .arg(mutation_jobs()?.to_string())
+        .arg(positive_environment("CARGO_MUTANTS_JOBS", DEFAULT_JOBS)?.to_string())
         .arg("--re")
         .arg(specification.pattern)
         .arg("--baseline")
         .arg("run")
         .arg("--build-timeout")
-        .arg("180")
+        .arg(positive_environment("CARGO_MUTANTS_BUILD_TIMEOUT", 180)?.to_string())
         .arg("--no-shuffle");
     for file in specification.files {
         command.arg("--file").arg(file);

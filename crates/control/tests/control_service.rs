@@ -575,7 +575,6 @@ fn services_with_grant_and_revocations(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn services_with_executor_and_revocations(
     store: Arc<RedbStore>,
     actor: &ActorRef,

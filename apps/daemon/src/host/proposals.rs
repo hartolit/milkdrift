@@ -1,9 +1,9 @@
 //! Proposal discovery projection and exact control-state query ownership.
 
 use super::{
-    Owner, PublicFailure, read_model::bounded, read_model::corruption, read_model::cursor_binding,
-    read_model::internal, read_model::invalid, read_model::parse_revision_id,
-    read_model::public_persistence, read_model::public_protocol, read_model::snake_debug,
+    Owner, PublicFailure, read_model::bounded, read_model::corruption, read_model::internal,
+    read_model::invalid, read_model::parse_revision_id, read_model::public_persistence,
+    read_model::public_protocol, read_model::snake_debug,
 };
 use crate::auth::ActorSession;
 use milkdrift_authority::AuthorityOperation;
@@ -70,7 +70,7 @@ pub(super) fn page(
         AuthorityOperation::InspectProposal,
         "read:proposals",
     )?;
-    let binding = cursor_binding(session, &feed)?;
+    let binding = session.cursor_binding(&feed);
     let after = cursor
         .map(|cursor| {
             cursor

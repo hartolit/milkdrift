@@ -186,9 +186,15 @@ fn serve_archived_execution(
     Ok((address, handle))
 }
 
-fn remote_conformance_case(
-    scenario: ConformanceScenario,
-) -> Result<AdapterConformanceCase, Box<dyn std::error::Error>> {
+struct RemoteCase {
+    adapter: Arc<RemoteCapabilityAdapter>,
+    descriptor: CapabilityDescriptor,
+    request: InvocationRequest,
+    context: AdapterExecutionContext,
+    server: Option<JoinHandle<Result<(), String>>>,
+}
+
+fn remote_case(scenario: ConformanceScenario) -> Result<RemoteCase, Box<dyn std::error::Error>> {
     let origin = PeerId::new("peer-remote-conformance-origin")?;
     let remote = PeerId::new("peer-remote-conformance-target")?;
     let (address, server) = if scenario.executes() {
@@ -290,17 +296,30 @@ fn remote_conformance_case(
     });
     let revision: RevisionId =
         serde_json::from_value(serde_json::json!(format!("rev_{}", "0".repeat(64))))?;
-    let case = AdapterConformanceCase::new(
+    Ok(RemoteCase {
         adapter,
-        local_descriptor,
+        descriptor: local_descriptor,
         request,
-        AdapterExecutionContext::new(
+        context: AdapterExecutionContext::new(
             RunId::new("run-remote-conformance")?,
             revision,
             NodeId::new("remote-conformance")?,
             NodeExecutionId::new("execution-remote-conformance")?,
             AttemptId::new("attempt-remote-conformance")?,
         ),
+        server,
+    })
+}
+
+fn remote_conformance_case(
+    scenario: ConformanceScenario,
+) -> Result<AdapterConformanceCase, Box<dyn std::error::Error>> {
+    let fixture = remote_case(scenario)?;
+    let case = AdapterConformanceCase::new(
+        fixture.adapter,
+        fixture.descriptor,
+        fixture.request,
+        fixture.context,
         AdapterConformanceExpectations {
             start_replay: StartReplayExpectation::Idempotent,
             available_while_draining: false,
@@ -308,7 +327,7 @@ fn remote_conformance_case(
             unknown_cancellation: UnknownCancellationExpectation::Unavailable,
         },
     )?;
-    Ok(match server {
+    Ok(match fixture.server {
         Some(server) => case.with_cleanup(move || {
             server
                 .join()
@@ -316,6 +335,97 @@ fn remote_conformance_case(
         }),
         None => case,
     })
+}
+
+#[test]
+fn catalog_retirement_keeps_the_exact_active_permit_until_reporting_finishes()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::mpsc;
+
+    struct HeldTerminal {
+        entered: mpsc::SyncSender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+    impl AdapterReporter for HeldTerminal {
+        fn invocation(&self, event: InvocationEvent) -> Result<(), AdapterError> {
+            if matches!(event.kind(), InvocationEventKind::Terminal { .. }) {
+                self.entered
+                    .send(())
+                    .map_err(|error| AdapterError::external_failure(error.to_string()))?;
+                self.release
+                    .lock()
+                    .map_err(|error| AdapterError::external_failure(error.to_string()))?
+                    .recv_timeout(Duration::from_secs(2))
+                    .map_err(|error| AdapterError::external_failure(error.to_string()))?;
+            }
+            Ok(())
+        }
+        fn heartbeat(&self) -> Result<(), AdapterError> {
+            Ok(())
+        }
+    }
+
+    let fixture = remote_case(ConformanceScenario::HostDrain)?;
+    let host = CapabilityHost::new(
+        HostConfig {
+            max_registrations: 1,
+            max_generations_per_capability: 1,
+            max_concurrent_per_generation: 1,
+            observation_stale_after_ms: 1_000,
+        },
+        CapabilitySelectionPolicy::priorities(BTreeMap::new()),
+    )?;
+    host.register(fixture.descriptor.clone(), fixture.adapter, None)?;
+    let key = (
+        fixture.descriptor.identity().clone(),
+        fixture.descriptor.descriptor_revision(),
+    );
+    let mut registrations = Registrations {
+        active: BTreeMap::from([(
+            key.clone(),
+            Registration {
+                local_capability: key.0.clone(),
+                local_revision: key.1,
+            },
+        )]),
+        draining: Vec::new(),
+    };
+    let snapshot = ResolvedCapabilitySnapshot::from_descriptor(
+        &fixture.descriptor,
+        fixture.request.operation(),
+    )?;
+    let (entered, entry) = mpsc::sync_channel(1);
+    let (release, released) = mpsc::sync_channel(1);
+    let executor = host.clone();
+    let worker = std::thread::spawn(move || {
+        executor.execute_exact_with_context(
+            &snapshot,
+            &fixture.request,
+            &fixture.context,
+            &HeldTerminal {
+                entered,
+                release: Mutex::new(released),
+            },
+        )
+    });
+    entry.recv_timeout(Duration::from_secs(2))?;
+    registrations.retire(&key, &host)?;
+    assert!(registrations.active.is_empty());
+    assert_eq!(registrations.draining.len(), 1);
+    registrations.reap(&host)?;
+    assert_eq!(registrations.draining.len(), 1);
+    release.send(())?;
+    worker.join().map_err(|_| "remote worker panicked")??;
+    registrations.reap(&host)?;
+    assert!(registrations.draining.is_empty());
+    let scope = milkdrift_authority::CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown);
+    assert!(host.catalog_generations(&scope)?.is_empty());
+    fixture
+        .server
+        .ok_or("remote fixture server absent")?
+        .join()
+        .map_err(|_| "remote server panicked")??;
+    Ok(())
 }
 
 #[test]
@@ -383,8 +493,25 @@ fn remote_catalog_registration_fails_closed_and_recovers_with_the_clock()
         CapabilitySelectionPolicy::priorities(BTreeMap::new()),
     )?;
     let clock = Arc::new(ControlledClock::new(100));
-    let registry = PeerRegistry::new(host, client, relationship, clock.clone())?;
-    let catalog = CatalogSnapshot::new(1, 90, 110, Vec::new())?;
+    let registry = PeerRegistry::new(host.clone(), client, relationship, clock.clone())?;
+    let descriptor = CapabilityDescriptorDocument::from_json(include_bytes!(
+        "../../../../crates/capability/tests/fixtures/descriptor-v1.json"
+    ))?
+    .body()
+    .clone();
+    let entry = milkdrift_peer_protocol::CatalogEntry {
+        observation: CapabilityObservation::new(
+            descriptor.identity().clone(),
+            90,
+            true,
+            0,
+            "live",
+        )?,
+        invocable_operations: BTreeSet::from([OperationId::new("model.generate")?]),
+        descriptor,
+        draining: false,
+    };
+    let catalog = CatalogSnapshot::new(1, 90, 110, vec![entry.clone()])?;
 
     clock.available.store(false, Ordering::SeqCst);
     assert!(matches!(
@@ -397,7 +524,37 @@ fn remote_catalog_registration_fails_closed_and_recovers_with_the_clock()
     assert!(registry.apply_catalog(catalog.clone()).is_ok());
     assert!(registry.status().connected);
 
-    clock.now.store(111, Ordering::SeqCst);
+    // A fresh catalog with the same remote descriptor must replace its expired local adapter.
+    // The host's one-generation limit also proves that completed generations are reclaimed.
+    for generation in 2..12 {
+        let now = 100 + generation * 10;
+        clock.now.store(now, Ordering::SeqCst);
+        let replacement = CatalogSnapshot::new(generation, now, now + 10, vec![entry.clone()])?;
+        let facts = registry.apply_catalog(replacement.clone())?;
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].catalog_generation, generation);
+        assert!(registry.apply_catalog(replacement)?.is_empty());
+        assert_eq!(registry.registration_count(), 1);
+        let registered = host.catalog_generations(
+            &milkdrift_authority::CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
+        )?;
+        assert_eq!(registered.len(), 1);
+        let current = &registered[0];
+        host.refresh_health(
+            current.descriptor.identity(),
+            current.descriptor.descriptor_revision(),
+            now,
+        )?;
+        assert!(
+            host.catalog_generations(&milkdrift_authority::CapabilityAuthorityScope::allow_any(
+                SideEffectClass::Unknown
+            ))?[0]
+                .observation
+                .as_ref()
+                .is_some_and(CapabilityObservation::available)
+        );
+    }
+
     assert!(matches!(
         registry.apply_catalog(catalog),
         Err(PeerHttpError::Unavailable(_))

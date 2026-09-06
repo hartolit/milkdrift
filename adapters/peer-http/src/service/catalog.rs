@@ -44,7 +44,7 @@ impl PeerService {
         )?;
         self.check_rate(&relationship, "catalog")?;
         let now = self.now()?;
-        let entries = self.catalog_entries(&relationship, now)?;
+        let entries = self.catalog_entries(&relationship)?;
         let fingerprint = catalog_fingerprint(&entries)?;
         let mut catalogs = self
             .catalogs
@@ -98,7 +98,6 @@ impl PeerService {
     fn catalog_entries(
         &self,
         relationship: &PeerRelationship,
-        now: u64,
     ) -> Result<Vec<CatalogEntry>, PeerHttpError> {
         if self.drain_state() != DrainState::Ready {
             return Ok(Vec::new());
@@ -140,9 +139,7 @@ impl PeerService {
             let descriptor = filtered_descriptor(&generation, operations)?;
             let observation = milkdrift_capability::CapabilityObservation::new(
                 descriptor.identity().clone(),
-                observation
-                    .observed_at_unix_ms()
-                    .max(now.saturating_sub(300_000)),
+                observation.observed_at_unix_ms(),
                 observation.available(),
                 observation.current_load(),
                 bounded(observation.health_summary(), 512),

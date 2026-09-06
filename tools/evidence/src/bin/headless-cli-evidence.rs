@@ -286,11 +286,16 @@ fn run(arguments: Arguments) -> EvidenceResult {
     )?;
     assert_error(&start_conflict, 4, "conflict", Some("conflict"))?;
 
-    let waiting = wait_for_run(&runner, "run-headless-primary", |run| {
-        run["value"]["nodes"]
-            .as_array()
-            .is_some_and(|nodes| nodes.iter().any(|node| node["node_id"] == "approval"))
-    })?;
+    let waiting = wait_for_run(
+        &runner,
+        "run-headless-primary",
+        Duration::from_secs(10),
+        |run| {
+            run["value"]["nodes"]
+                .as_array()
+                .is_some_and(|nodes| nodes.iter().any(|node| node["node_id"] == "approval"))
+        },
+    )?;
     let pause_sequence = required_u64(&waiting, &["value", "sequence"])?;
     runner.success(&[
         "--command-id",
@@ -404,9 +409,12 @@ fn run(arguments: Arguments) -> EvidenceResult {
         "resume",
         "run-headless-primary",
     ])?;
-    wait_for_run(&runner, "run-headless-primary", |run| {
-        run["value"]["terminal"] == "succeeded"
-    })?;
+    wait_for_run(
+        &runner,
+        "run-headless-primary",
+        Duration::from_secs(10),
+        |run| run["value"]["terminal"] == "succeeded",
+    )?;
 
     let artifact = attempt_read["value"]["outputs"]
         .as_array()
@@ -467,14 +475,19 @@ fn run(arguments: Arguments) -> EvidenceResult {
         "headless-cli-uncertain",
         uncertain_blueprint.id().as_str(),
     ])?;
-    let entered = wait_for_run(&runner, "run-headless-uncertain", |run| {
-        run["value"]["nodes"].as_array().is_some_and(|nodes| {
-            nodes.iter().any(|node| {
-                node["node_id"] == "process"
-                    && node["latest_attempt"]["entry_authorization"]["allowed"] == true
+    let entered = wait_for_run(
+        &runner,
+        "run-headless-uncertain",
+        Duration::from_secs(10),
+        |run| {
+            run["value"]["nodes"].as_array().is_some_and(|nodes| {
+                nodes.iter().any(|node| {
+                    node["node_id"] == "process"
+                        && node["latest_attempt"]["entry_authorization"]["allowed"] == true
+                })
             })
-        })
-    })?;
+        },
+    )?;
     let uncertain_attempt = entered["value"]["nodes"]
         .as_array()
         .and_then(|nodes| nodes.iter().find(|node| node["node_id"] == "process"))
@@ -487,11 +500,16 @@ fn run(arguments: Arguments) -> EvidenceResult {
     thread::sleep(Duration::from_millis(5_200));
     daemon = start_daemon(&arguments.daemon, &config_path)?;
     wait_for_readiness(&runner, &mut daemon)?;
-    let uncertain = wait_for_run(&runner, "run-headless-uncertain", |run| {
-        run["value"]["uncertainty_count"]
-            .as_u64()
-            .is_some_and(|count| count > 0)
-    })?;
+    let uncertain = wait_for_run(
+        &runner,
+        "run-headless-uncertain",
+        Duration::from_secs(10),
+        |run| {
+            run["value"]["uncertainty_count"]
+                .as_u64()
+                .is_some_and(|count| count > 0)
+        },
+    )?;
     let resolution_sequence = required_u64(&uncertain, &["value", "sequence"])?;
     runner.success(&[
         "--command-id",

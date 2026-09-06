@@ -11,7 +11,9 @@ This document owns current implementation, limitations, exact versions, and qual
 - The daemon compiles strict TOML into owner-specific plans, recovers with admission closed, and
   serves authenticated commands, reads, artifacts, and resumable feeds through one bounded owner.
   Process/model/control/peer adapters use exact generations, final authority checks, fixed workers,
-  and incremental durable reporting. Boundary-clock rollback fails closed across restart.
+  and incremental durable reporting. Capability health is refreshed before observations become
+  stale. Pages and streams share authenticated cursor-scope construction. Boundary-clock rollback
+  fails closed across restart.
 - The CLI covers blueprint/sequence authoring, run/proposal/controller/peer/layout control,
   retained-work resolution, bounded inspection, verified create-new downloads, wait/follow deadlines,
   and stable machine output. [Production examples](../../examples/operator/README.md) provide
@@ -89,7 +91,8 @@ values; repository contracts check the version cells against source.
   export/delete operation, automatic proposal-index rebuild, whole-database authenticity, rollback
   protection, or filesystem power-loss qualification is claimed.
 - No UI is implemented or authorized. Hosted quality/platform/mutation/benchmark/stress evidence
-  has not qualified the current source; a native Windows full suite includes Unix-only fixtures.
+  has not qualified the current source. Actual graceful OS-signal evidence requires a Unix host;
+  forced Windows child termination does not qualify that claim.
 
 ## Current validation/evidence snapshot
 
@@ -101,17 +104,24 @@ ordinary model example against a controlled loopback endpoint pass, as does the 
 scenario. Adapter, authority, runtime, context, artifact, and recovery
 contracts provide additional software evidence, not real-provider or power-loss qualification.
 
-The full workspace test run has 660 passes, six failures, and five ignored cases. Failures are in
-`control_plane`, `two_daemon_peer`, and `external_evidence`, whose fixtures require Unix paths such
-as `/bin/echo`, `/usr/bin/tee`, `/bin/cp`, and `/usr/bin/python3`. A full Unix gate is required.
+The complete Windows workspace suite passes with portable process fixtures and explicit Python/Git
+fixture prerequisites. The full gate is being repeated for the latest cursor correction; all 14
+control-plane tests and three bounded timeline-observer regressions pass. All-library public API
+inventories pass under default and all features, with no default test-helper exports.
 
-The separate deterministic local-model lane is **unqualified** on this host: its serial run
-published model-response and text artifacts but exceeded the harness's 10-second state wait
-before terminal evidence. That observation does not establish whether a runtime fault or host
-latency caused the timeout. The successful headless scenario does not replace this lane.
+Release actual-binary headless, deterministic model, and separately managed real-model smoke lanes
+pass. The real endpoint was temporary LM Studio with `prism-ml/bonsai-27b`, thinking disabled and
+explicit response/idle/output bounds. Evidence establishes final text, streamed progress, response
+identity, supplied usage, selected/omitted context, artifact linkage, and duplicate-free restart.
+The controlled post-entry close separately establishes retained uncertainty and unsafe-retry
+refusal. This model-only smoke does not qualify the combined real-agent/model gate. Server
+replacement remains an operator profile change through the [same guide](../guides/local-model-endpoint.md).
 
-Hosted platform/lifecycle evidence and separately managed real-model/coding-agent profiles were
-not supplied. Previous mutation, longevity, benchmark, and hosted results do not qualify this tree.
+Release receipt, peer, controller-lifecycle, controller-admission, historical-frontier longevity,
+projection stress, and effect-worker shutdown proofs pass. Eleven available benchmark smoke
+scenarios pass; the full benchmark and operational runners explicitly refuse the unavailable Unix
+graceful-signal proof on this Windows host. Current-source mutation campaigns are pending complete
+classification, so independent readiness and the architecture freeze remain open.
 
 [Verification evidence](../development/verification-evidence.md) owns commands, pinned workflows,
 report meaning, and classification rules. Configured workflows are not executed evidence. Raw

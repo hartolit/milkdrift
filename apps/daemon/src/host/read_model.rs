@@ -1,12 +1,11 @@
 use super::PublicFailure;
-use crate::auth::ActorSession;
 use milkdrift_authority::AuthorityDecisionSnapshot;
 use milkdrift_blueprint::RevisionId;
 use milkdrift_control::ControlError;
 use milkdrift_control_protocol::{
     ArtifactMetadataRead, AttemptRead, CapabilityOperationRead, CommandAccepted, CommandRequest,
-    CursorBinding, ErrorCode, NodeRead, ResolveAction, RevisionChange,
-    RevisionSummary as PublicRevisionSummary, RunRead, TimelineCategory, TimelineEntry,
+    ErrorCode, NodeRead, ResolveAction, RevisionChange, RevisionSummary as PublicRevisionSummary,
+    RunRead, TimelineCategory, TimelineEntry,
 };
 use milkdrift_persistence::{IndexedRunState, PersistenceError};
 use milkdrift_runtime::ExternalWorkAction;
@@ -576,27 +575,6 @@ pub(super) fn snake_debug(value: &impl std::fmt::Debug) -> String {
 
 pub(super) fn bounded(value: &str) -> String {
     milkdrift_contracts::truncate_utf8(value, 4_096).to_owned()
-}
-
-pub(super) fn cursor_binding(
-    session: &ActorSession,
-    exact_resource_and_filter: &str,
-) -> Result<CursorBinding, PublicFailure> {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"milkdrift.continuation-scope.v1\0");
-    hasher.update(exact_resource_and_filter.as_bytes());
-    Ok(CursorBinding {
-        actor: session.actor.as_str().to_owned(),
-        grant_id: session.grant.identity().as_str().to_owned(),
-        grant_revision: session.grant.revision(),
-        grant_digest: session
-            .grant
-            .digest()
-            .map_err(|_| internal())?
-            .as_str()
-            .to_owned(),
-        scope_digest: format!("b3_{}", hasher.finalize()),
-    })
 }
 
 pub(super) fn invalid(message: &str) -> PublicFailure {

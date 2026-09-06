@@ -1,9 +1,9 @@
 //! Authorized bounded run collection and timeline read-model ownership.
 
 use super::{
-    Owner, PublicFailure, read_model::cursor_binding, read_model::internal, read_model::invalid,
-    read_model::not_found, read_model::parse_run_state, read_model::public_persistence,
-    read_model::public_protocol, read_model::public_timeline, read_model::unauthorized,
+    Owner, PublicFailure, read_model::internal, read_model::invalid, read_model::not_found,
+    read_model::parse_run_state, read_model::public_persistence, read_model::public_protocol,
+    read_model::public_timeline, read_model::unauthorized,
 };
 use crate::auth::ActorSession;
 use milkdrift_authority::{AuthorityOperation, RequestedResourceFacts, WorkflowRunScope};
@@ -84,7 +84,7 @@ impl Owner {
             resources,
             "read:runs",
         )?;
-        let binding = cursor_binding(session, &feed)?;
+        let binding = session.cursor_binding(&feed);
         let filter = RunSummaryFilter {
             state: indexed_state,
             workflow: workflow_id,
@@ -147,7 +147,7 @@ impl Owner {
             AuthorityOperation::InspectTimeline,
             "read:timeline",
         )?;
-        let binding = cursor_binding(session, &feed)?;
+        let binding = session.cursor_binding(&feed);
         let next_sequence = cursor
             .map(|cursor| {
                 cursor

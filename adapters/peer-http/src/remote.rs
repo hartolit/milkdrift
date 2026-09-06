@@ -53,6 +53,44 @@ struct Registration {
     local_revision: u64,
 }
 
+#[derive(Default)]
+struct Registrations {
+    active: BTreeMap<(CapabilityId, u64), Registration>,
+    // Retained only while exact host permits remain; the host bounds total generations.
+    draining: Vec<Registration>,
+}
+
+impl Registrations {
+    fn reap(&mut self, host: &CapabilityHost) -> Result<(), PeerHttpError> {
+        let mut index = 0;
+        while let Some(registration) = self.draining.get(index) {
+            match host.finish_drain(&registration.local_capability, registration.local_revision) {
+                Ok(()) => {
+                    self.draining.swap_remove(index);
+                }
+                Err(milkdrift_capability_host::HostError::InFlight(_)) => index += 1,
+                Err(error) => return Err(PeerHttpError::Unavailable(error.to_string())),
+            }
+        }
+        Ok(())
+    }
+
+    fn retire(
+        &mut self,
+        key: &(CapabilityId, u64),
+        host: &CapabilityHost,
+    ) -> Result<(), PeerHttpError> {
+        if let Some(registration) = self.active.get(key) {
+            host.begin_drain(&registration.local_capability, registration.local_revision)
+                .map_err(|error| PeerHttpError::Unavailable(error.to_string()))?;
+            if let Some(registration) = self.active.remove(key) {
+                self.draining.push(registration);
+            }
+        }
+        self.reap(host)
+    }
+}
+
 /// Safe live peer/session/catalog diagnostics without credentials or endpoint internals.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PeerRegistryStatus {
@@ -76,7 +114,7 @@ pub struct PeerRegistry {
     client: Arc<PeerHttpClient>,
     relationship: PeerRelationship,
     clock: Arc<dyn PeerClock>,
-    registrations: Mutex<BTreeMap<(CapabilityId, u64), Registration>>,
+    registrations: Mutex<Registrations>,
     registration_generation: Mutex<u64>,
     status: Mutex<PeerRegistryStatus>,
 }
@@ -110,7 +148,7 @@ impl PeerRegistry {
             client,
             relationship,
             clock,
-            registrations: Mutex::new(BTreeMap::new()),
+            registrations: Mutex::new(Registrations::default()),
             registration_generation: Mutex::new(0),
             status: Mutex::new(PeerRegistryStatus {
                 health: "disconnected".to_owned(),
@@ -175,7 +213,7 @@ impl PeerRegistry {
     pub fn registration_count(&self) -> usize {
         self.registrations
             .lock()
-            .map_or(0, |registrations| registrations.len())
+            .map_or(0, |registrations| registrations.active.len())
     }
 
     /// Current safe peer/session/catalog diagnostic snapshot.
@@ -214,11 +252,12 @@ impl PeerRegistry {
         let mut registrations = self.registrations.lock().map_err(|_| {
             PeerHttpError::Unavailable("peer registry state unavailable".to_owned())
         })?;
+        registrations.reap(&self.host)?;
         let registration_generation = {
             let mut generation = self.registration_generation.lock().map_err(|_| {
                 PeerHttpError::Unavailable("peer registry generation unavailable".to_owned())
             })?;
-            if registrations.is_empty() {
+            if registrations.active.is_empty() {
                 *generation = generation.saturating_add(1).max(1);
             }
             *generation
@@ -232,9 +271,6 @@ impl PeerRegistry {
                 entry.descriptor.descriptor_revision(),
             );
             accepted.insert(key.clone());
-            if registrations.contains_key(&key) {
-                continue;
-            }
             let facts = RemoteCapabilityProvenance {
                 peer: self.relationship.remote_peer.clone(),
                 catalog_generation: catalog.generation,
@@ -252,6 +288,14 @@ impl PeerRegistry {
             )?;
             let local_capability = descriptor.identity().clone();
             let local_revision = descriptor.descriptor_revision();
+            if registrations
+                .active
+                .get(&key)
+                .is_some_and(|registered| registered.local_revision == local_revision)
+            {
+                continue;
+            }
+            registrations.retire(&key, &self.host)?;
             let authority_requirements =
                 remote_authority_requirements(self.client.as_ref(), &self.relationship)?;
             let adapter = Arc::new(RemoteCapabilityAdapter {
@@ -278,7 +322,7 @@ impl PeerRegistry {
             self.host
                 .register(descriptor, adapter, Some(observation))
                 .map_err(|error| PeerHttpError::Unavailable(error.to_string()))?;
-            registrations.insert(
+            registrations.active.insert(
                 key,
                 Registration {
                     local_capability,
@@ -288,15 +332,13 @@ impl PeerRegistry {
             provenance.push(facts);
         }
         let stale = registrations
+            .active
             .iter()
             .filter(|(key, _registration)| !accepted.contains(*key))
-            .map(|(key, registration)| (key.clone(), registration.clone()))
+            .map(|(key, _registration)| key.clone())
             .collect::<Vec<_>>();
-        for (key, registration) in stale {
-            let _ = self
-                .host
-                .begin_drain(&registration.local_capability, registration.local_revision);
-            registrations.remove(&key);
+        for key in stale {
+            registrations.retire(&key, &self.host)?;
         }
         if let Ok(mut status) = self.status.lock() {
             status.connected = true;
@@ -313,12 +355,10 @@ impl PeerRegistry {
         let mut registrations = self.registrations.lock().map_err(|_| {
             PeerHttpError::Unavailable("peer registry state unavailable".to_owned())
         })?;
-        for registration in registrations.values() {
-            let _ = self
-                .host
-                .begin_drain(&registration.local_capability, registration.local_revision);
+        for key in registrations.active.keys().cloned().collect::<Vec<_>>() {
+            registrations.retire(&key, &self.host)?;
         }
-        registrations.clear();
+        registrations.reap(&self.host)?;
         let mut status = self.status.lock().map_err(|_| {
             PeerHttpError::Unavailable("peer registry status unavailable".to_owned())
         })?;

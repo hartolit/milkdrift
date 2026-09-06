@@ -3,14 +3,12 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::{BufRead, BufReader, Read, Write},
+    io::Write,
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Component, Path, PathBuf},
-    process::{Command as ProcessCommand, Stdio},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
-        mpsc,
     },
     thread,
     time::Duration,
@@ -80,6 +78,12 @@ struct Arguments {
     /// Capability identity assigned to the real profile.
     #[arg(long, default_value = SUCCESS_CAPABILITY)]
     model_capability: String,
+    /// Hard bound for the real model's terminal evidence, including provider response time.
+    #[arg(long, default_value_t = 180, value_parser = clap::value_parser!(u64).range(1..=3600))]
+    timeout_secs: u64,
+    /// Bounded model output allowance; reasoning models may need more than the smoke default.
+    #[arg(long, default_value_t = 64, value_parser = clap::value_parser!(u64).range(1..=65536))]
+    max_output_units: u64,
     /// Explicit `secret-reference=/private/file` mapping, repeatable.
     #[arg(long = "secret-source", value_parser = parse_secret_source)]
     secret_sources: Vec<(String, PathBuf)>,
@@ -221,8 +225,9 @@ fn run(arguments: Arguments) -> EvidenceResult {
         }
         Mode::OperatorRealEndpoint => arguments
             .model_profile
-            .clone()
-            .ok_or("real mode requires --model-profile")?,
+            .as_ref()
+            .ok_or("real mode requires --model-profile")?
+            .canonicalize()?,
     };
     let success_facts = inspect_profile(&success_profile)?;
     validate_real_profile(arguments.mode, &success_profile, &success_facts)?;
@@ -240,7 +245,9 @@ fn run(arguments: Arguments) -> EvidenceResult {
         if secret_sources
             .insert(
                 reference.clone(),
-                SecretSourceConfig::File { path: path.clone() },
+                SecretSourceConfig::File {
+                    path: path.canonicalize()?,
+                },
             )
             .is_some()
         {
@@ -305,13 +312,19 @@ fn run(arguments: Arguments) -> EvidenceResult {
         &arguments.model_capability,
         &success_facts,
         true,
+        arguments.max_output_units,
     )?;
     let success_document =
         BlueprintRevisionDocument::new(&success_blueprint).to_canonical_json()?;
     let success_path = session.join("model-blueprint.json");
     fs::write(&success_path, &success_document)?;
-    let failure_blueprint =
-        model_revision(FAILURE_WORKFLOW, FAILURE_CAPABILITY, &failure_facts, false)?;
+    let failure_blueprint = model_revision(
+        FAILURE_WORKFLOW,
+        FAILURE_CAPABILITY,
+        &failure_facts,
+        false,
+        arguments.max_output_units,
+    )?;
     let failure_document =
         BlueprintRevisionDocument::new(&failure_blueprint).to_canonical_json()?;
     let failure_path = session.join("uncertain-blueprint.json");
@@ -347,7 +360,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
         SUCCESS_WORKFLOW,
         success_blueprint.id().as_str(),
     ])?;
-    let waiting = wait_for_run(&runner, SUCCESS_RUN, |run| {
+    let waiting = wait_for_run(&runner, SUCCESS_RUN, Duration::from_secs(10), |run| {
         node(run, "model-release").is_some() && node(run, "model").is_none()
     })?;
     let waiting_sequence = required_u64(&waiting, &["value", "sequence"])?;
@@ -360,7 +373,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
             && node(&reopened_wait, "model").is_none(),
         "restart changed the unreleased wait boundary or entered the model",
     )?;
-    let mut follower = spawn_timeline_follow(&runner, SUCCESS_RUN)?;
+    let mut follower = TimelineFollower::start(&runner, SUCCESS_RUN, arguments.timeout_secs)?;
     runner.success(&[
         "--command-id",
         "local-model-signal-1",
@@ -376,14 +389,13 @@ fn run(arguments: Arguments) -> EvidenceResult {
         "--payload",
         r#"{"release":true}"#,
     ])?;
-    let completed = wait_for_run(&runner, SUCCESS_RUN, |run| {
-        run["value"]["terminal"] == "succeeded"
-    })?;
-    let follower_output = stop_follower(&mut follower)?;
-    ensure(
-        follower_output.contains("run.timeline") && follower_output.contains("run.observation"),
-        "timeline follow did not expose both its bounded page and resumed observations",
+    let completed = wait_for_run(
+        &runner,
+        SUCCESS_RUN,
+        Duration::from_secs(arguments.timeout_secs),
+        |run| run["value"]["terminal"] == "succeeded",
     )?;
+    follower.finish()?;
     let model_node = node(&completed, "model").ok_or("model execution is absent")?;
     ensure(
         model_node["attempt_count"] == 1,
@@ -535,13 +547,6 @@ struct UncertaintyObservation {
     attempt_id: String,
 }
 
-struct TimelineFollower {
-    child: milkdrift_evidence::application::OwnedChild,
-    lines: mpsc::Receiver<String>,
-    reader: Option<thread::JoinHandle<std::io::Result<()>>>,
-    observed: Vec<String>,
-}
-
 fn validate_mode(arguments: &Arguments) -> EvidenceResult {
     CapabilityId::new(&arguments.model_capability)?;
     match arguments.mode {
@@ -586,8 +591,9 @@ fn model_revision(
     capability: &str,
     facts: &ModelFacts,
     with_evidence_and_wait: bool,
+    max_output_units: u64,
 ) -> EvidenceResult<BlueprintRevision> {
-    let model = model_node(capability, facts, with_evidence_and_wait)?;
+    let model = model_node(capability, facts, with_evidence_and_wait, max_output_units)?;
     let done = Node::new(
         NodeId::new("done")?,
         NodeKind::Terminal {
@@ -655,7 +661,12 @@ fn evidence_node(identity: &str, capability: &str) -> EvidenceResult<Node> {
     )
 }
 
-fn model_node(capability: &str, facts: &ModelFacts, select_evidence: bool) -> EvidenceResult<Node> {
+fn model_node(
+    capability: &str,
+    facts: &ModelFacts,
+    select_evidence: bool,
+    max_output_units: u64,
+) -> EvidenceResult<Node> {
     let mut requirement = CapabilityRequirement::new(OperationId::new("model.generate")?)
         .exact(CapabilityId::new(capability)?)
         .provider_profile(ProviderProfileRef::new(&facts.profile_id)?)
@@ -702,7 +713,7 @@ fn model_node(capability: &str, facts: &ModelFacts, select_evidence: bool) -> Ev
         None,
         SessionSelection::Fresh,
         None,
-        64,
+        max_output_units,
         facts.streaming,
         BTreeMap::new(),
     )?;
@@ -922,7 +933,7 @@ fn run_uncertainty_scenario(
         FAILURE_WORKFLOW,
         blueprint.id().as_str(),
     ])?;
-    let uncertain = wait_for_run(runner, FAILURE_RUN, |run| {
+    let uncertain = wait_for_run(runner, FAILURE_RUN, Duration::from_secs(10), |run| {
         run["value"]["uncertainty_count"]
             .as_u64()
             .is_some_and(|count| count == 1)
@@ -992,76 +1003,6 @@ fn run_uncertainty_scenario(
     Ok(UncertaintyObservation { attempt_id })
 }
 
-fn spawn_timeline_follow(runner: &CliRunner, run: &str) -> EvidenceResult<TimelineFollower> {
-    let mut child = milkdrift_evidence::application::OwnedChild::spawn(
-        ProcessCommand::new(&runner.executable)
-            .arg("--endpoint")
-            .arg(&runner.endpoint)
-            .arg("--token-file")
-            .arg(&runner.token_file)
-            .arg("--json")
-            .arg("--timeout-secs")
-            .arg("60")
-            .args(["run", "timeline", run, "--limit", "100", "--follow"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null()),
-    )?;
-    let stdout = child
-        .take_stdout()
-        .ok_or("timeline stdout pipe is absent")?;
-    let (send, lines) = mpsc::sync_channel(64);
-    let reader = thread::spawn(move || {
-        let mut input = BufReader::new(stdout);
-        loop {
-            let mut line = String::new();
-            let read = input.by_ref().take(131_073).read_line(&mut line)?;
-            if read == 0 {
-                break;
-            }
-            if read > 131_072 {
-                return Err(std::io::Error::other("timeline line exceeds bound"));
-            }
-            match send.try_send(line) {
-                Ok(()) => {}
-                Err(mpsc::TrySendError::Disconnected(_)) => break,
-                Err(mpsc::TrySendError::Full(_)) => {
-                    return Err(std::io::Error::other("timeline observation queue overflow"));
-                }
-            }
-        }
-        Ok(())
-    });
-    let mut follower = TimelineFollower {
-        child,
-        lines,
-        reader: Some(reader),
-        observed: Vec::new(),
-    };
-    let initial = follower.lines.recv_timeout(Duration::from_secs(10))?;
-    ensure(
-        initial.contains("run.timeline"),
-        "timeline follower did not establish its bounded initial page",
-    )?;
-    follower.observed.push(initial);
-    Ok(follower)
-}
-
-impl Drop for TimelineFollower {
-    fn drop(&mut self) {
-        let _ = stop_follower(self);
-    }
-}
-
-fn stop_follower(follower: &mut TimelineFollower) -> EvidenceResult<String> {
-    follower.child.terminate()?;
-    if let Some(reader) = follower.reader.take() {
-        reader.join().map_err(|_| "timeline reader panicked")??;
-    }
-    follower.observed.extend(follower.lines.try_iter());
-    Ok(follower.observed.join("\n"))
-}
-
 fn node<'a>(run: &'a Value, identity: &str) -> Option<&'a Value> {
     run["value"]["nodes"]
         .as_array()?
@@ -1093,3 +1034,8 @@ use profiles::{
     inspect_profile, parse_secret_source, profile_destination, validate_real_profile,
     write_model_profile, write_text_evidence_profile,
 };
+
+#[path = "local-model-evidence/timeline.rs"]
+mod timeline;
+
+use timeline::TimelineFollower;

@@ -65,6 +65,10 @@ async fn daemon_stream_reconnect_auth_rotation_and_shutdown() -> TestResult {
         .ok_or("run stream closed before its first observation")??;
     assert_eq!(first.feed, "run:run-stream");
     let first_position = first.cursor.position_for("run:run-stream")?;
+    let mut last_timeline = match &first.observation {
+        Observation::Timeline(entry) => entry.sequence,
+        _ => 0,
+    };
     drop(stream);
 
     let mut resumed = daemon
@@ -74,6 +78,44 @@ async fn daemon_stream_reconnect_auth_rotation_and_shutdown() -> TestResult {
         .await?
         .ok_or("resumed run stream closed")??;
     assert!(second.cursor.position_for("run:run-stream")? > first_position);
+    let head = tokio::time::timeout(Duration::from_secs(3), async {
+        let mut observed = second;
+        loop {
+            match observed.observation {
+                Observation::RunStatus(status) if status.sequence == last_timeline => {
+                    break Ok::<_, Box<dyn std::error::Error>>(status.sequence);
+                }
+                Observation::Timeline(entry) => last_timeline = entry.sequence,
+                Observation::RunStatus(_) => {}
+                other => return Err(format!("unexpected continuation: {other:?}").into()),
+            }
+            observed = resumed
+                .next()
+                .await
+                .ok_or("stream ended before its head")??;
+        }
+    })
+    .await??;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(600), resumed.next())
+            .await
+            .is_err(),
+        "a stream at the journal head must wait, not reject its own continuation cursor"
+    );
+    daemon
+        .client
+        .submit(&request(
+            "stream-pause-after-idle",
+            Some(head),
+            Command::PauseRun {
+                run_id: "run-stream".to_owned(),
+            },
+        ))
+        .await?;
+    let changed = tokio::time::timeout(Duration::from_secs(3), resumed.next())
+        .await?
+        .ok_or("stream ended before the new command")??;
+    assert!(matches!(changed.observation, Observation::Timeline(entry) if entry.sequence > head));
     drop(resumed);
 
     let mut capabilities = daemon.client.subscribe("v1/stream/capabilities", None);

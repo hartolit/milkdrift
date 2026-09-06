@@ -130,6 +130,50 @@ fn queue_test_host() -> Result<(tempfile::TempDir, DaemonHost), Box<dyn std::err
 }
 
 #[tokio::test]
+async fn maintenance_refreshes_capability_health_after_an_idle_minute()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (root, initial) = queue_test_host()?;
+    initial.shutdown().await?;
+    let clock = Arc::new(ControlledDaemonClock::new(100));
+    let host = DaemonHost::start_with_clock(
+        clock_test_config(root.path(), &root.path().join("operator.token"))?,
+        clock.clone(),
+    )?;
+    clock.set(70_000);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let refreshed = loop {
+        let refreshed = host
+            .dispatch(false, |owner| {
+                let scope = milkdrift_authority::CapabilityAuthorityScope::allow_any(
+                    milkdrift_capability::SideEffectClass::Unknown,
+                );
+                let views = owner
+                    .capability_host
+                    .catalog_generations(&scope)
+                    .map_err(|error| super::read_model::invalid(&error.to_string()))?;
+                Ok(!views.is_empty()
+                    && views.iter().all(|view| {
+                        view.observation.as_ref().is_some_and(|observation| {
+                            observation.available() && observation.observed_at_unix_ms() == 70_000
+                        })
+                    }))
+            })
+            .await
+            .map_err(|error| error.message)?;
+        if refreshed || tokio::time::Instant::now() >= deadline {
+            break refreshed;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    };
+    host.shutdown().await?;
+    assert!(
+        refreshed,
+        "idle daemon left its healthy capabilities permanently stale"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn owner_queue_overload_and_dropped_reply_release_occupancy()
 -> Result<(), Box<dyn std::error::Error>> {
     use super::queue::OwnerRequest;

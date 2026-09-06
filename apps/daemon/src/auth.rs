@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 use milkdrift_authority::{ActorRef, AuthorityGrant, GrantId, SecretRef};
 use milkdrift_capability_host::SecretResolver;
 use milkdrift_control::{ActorAuthorityContext, AuthorityPreset};
+use milkdrift_control_protocol::CursorBinding;
 use milkdrift_local_secret::LocalSecretResolver;
 use milkdrift_runtime::CommandAuthorityClaim;
 use subtle::ConstantTimeEq;
@@ -21,6 +22,22 @@ pub(crate) struct ActorSession {
 impl ActorSession {
     pub const fn cursor_key(&self) -> &[u8; 32] {
         &self.cursor_key
+    }
+
+    pub fn cursor_binding(&self, exact_resource_and_filter: &str) -> CursorBinding {
+        let claim = self.context.authority();
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"milkdrift.continuation-scope.v1\0");
+        hasher.update(exact_resource_and_filter.as_bytes());
+        // The immutable grant digest already binds every resource restriction. Pages and
+        // streams must use this same scope construction when translating their cursors.
+        CursorBinding {
+            actor: self.actor.as_str().to_owned(),
+            grant_id: claim.grant().as_str().to_owned(),
+            grant_revision: claim.grant_revision(),
+            grant_digest: claim.grant_digest().as_str().to_owned(),
+            scope_digest: format!("b3_{}", hasher.finalize()),
+        }
     }
 }
 

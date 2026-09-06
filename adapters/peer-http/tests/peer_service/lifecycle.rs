@@ -3,6 +3,45 @@
 use super::support::*;
 
 #[test]
+fn catalog_preserves_the_actual_health_observation_time() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let store = Arc::new(RedbStore::open(root.path())?);
+    let clock = Arc::new(ControlledPeerClock::new(now()));
+    let (host, _) = host_with_adapter(Arc::new(TerminalAdapter {
+        capability: CapabilityId::new("test-capability")?,
+        delay: Duration::ZERO,
+        active: Arc::new(AtomicUsize::new(0)),
+        maximum: Arc::new(AtomicUsize::new(0)),
+        calls: Arc::new(AtomicUsize::new(0)),
+        requirements: CapabilityExecutionRequirements::default(),
+    }))?;
+    let observed = host.catalog_generations(
+        &milkdrift_authority::CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
+    )?[0]
+        .observation
+        .as_ref()
+        .ok_or("health observation absent")?
+        .observed_at_unix_ms();
+    let peer = PeerId::new("peer-health-time")?;
+    let service = PeerService::new(
+        server_config(peer.clone(), PeerId::new("peer-health-target")?, 1, 4)?,
+        host,
+        store,
+        clock.clone(),
+    )?;
+    service.recover(1_024)?;
+    clock.set(observed + 400_000)?;
+    let catalog = service.catalog(&peer)?;
+    assert_eq!(catalog.entries.len(), 1);
+    assert_eq!(
+        catalog.entries[0].observation.observed_at_unix_ms(),
+        observed
+    );
+    assert!(service.shutdown_workers(Duration::from_secs(2)).clean);
+    Ok(())
+}
+
+#[test]
 fn peer_clock_failure_and_backward_movement_fail_closed_at_expiry() -> TestResult {
     let root = tempfile::tempdir()?;
     let store = Arc::new(RedbStore::open(root.path())?);
