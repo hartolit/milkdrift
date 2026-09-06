@@ -7,6 +7,7 @@ on:
       - ".cargo/mutants.toml"
       - ".cargo/mutation-classifications.json"
       - "tools/evidence/src/bin/mutation-evidence.rs"
+      - "adapters/peer-http/src/service/lifecycle.rs"
   workflow_dispatch:
   schedule:
     - cron: "13 2 * * 6"

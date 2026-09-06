@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - ".github/workflows/stress.yml"
+      - "adapters/peer-http/src/service/lifecycle.rs"
   workflow_dispatch:
   schedule:
     - cron: "17 3 * * 0"

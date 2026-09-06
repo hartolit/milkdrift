@@ -7,7 +7,8 @@ use std::{
 
 use milkdrift_capability::PeerId;
 use milkdrift_persistence::{
-    PageSize, PeerExecutionStatus, PeerRelationshipState, PeerRetentionRequest, TimestampMillis,
+    PageSize, PeerExecutionStatus, PeerRecoveryResult, PeerRelationshipState, PeerRetentionRequest,
+    TimestampMillis,
 };
 
 use super::{
@@ -94,15 +95,11 @@ impl PeerService {
         let bounded = maximum.min(configured).max(1);
         let limit = PageSize::new(u32::try_from(bounded).unwrap_or(u32::MAX))
             .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
-        loop {
-            let recovered = self
-                .executions
+        recover_claim_pages(|| {
+            self.executions
                 .recover_peer_claims(self.now()?, limit)
-                .map_err(map_execution_persistence)?;
-            if !recovered.more {
-                break;
-            }
-        }
+                .map_err(map_execution_persistence)
+        })?;
         self.executions
             .verify_peer_execution_integrity()
             .map_err(map_execution_persistence)?;
@@ -143,5 +140,74 @@ impl PeerService {
         self.executions
             .peer_execution_status()
             .map_err(map_execution_persistence)
+    }
+}
+
+fn recover_claim_pages(
+    mut recover_page: impl FnMut() -> Result<PeerRecoveryResult, PeerHttpError>,
+) -> Result<(), PeerHttpError> {
+    loop {
+        let recovered = recover_page()?;
+        if !recovered.more {
+            return Ok(());
+        }
+        if recovered.requeued == 0 && recovered.uncertain == 0 {
+            return Err(PeerHttpError::Unavailable(
+                "peer claim recovery reported more work without progress".to_owned(),
+            ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PeerHttpError, PeerRecoveryResult, recover_claim_pages};
+
+    #[test]
+    fn recovery_refuses_an_empty_continuation_before_requesting_another_page() {
+        let mut calls = 0;
+        let result = recover_claim_pages(|| {
+            calls += 1;
+            if calls > 1 {
+                return Err(PeerHttpError::Unavailable(
+                    "unexpected next page".to_owned(),
+                ));
+            }
+            Ok(PeerRecoveryResult {
+                more: true,
+                ..PeerRecoveryResult::default()
+            })
+        });
+        assert_eq!(calls, 1);
+        assert!(matches!(result, Err(PeerHttpError::Unavailable(reason))
+            if reason == "peer claim recovery reported more work without progress"));
+    }
+
+    #[test]
+    fn recovery_exhausts_requeued_and_uncertain_pages_and_accepts_an_empty_frontier() {
+        let mut pages = [
+            PeerRecoveryResult {
+                requeued: 1,
+                uncertain: 0,
+                more: true,
+            },
+            PeerRecoveryResult {
+                requeued: 0,
+                uncertain: 1,
+                more: true,
+            },
+            PeerRecoveryResult::default(),
+        ]
+        .into_iter();
+        assert!(
+            recover_claim_pages(|| {
+                pages
+                    .next()
+                    .ok_or_else(|| PeerHttpError::Unavailable("past the frontier".to_owned()))
+            })
+            .is_ok()
+        );
+        assert!(pages.next().is_none());
+        assert!(recover_claim_pages(|| Ok(PeerRecoveryResult::default())).is_ok());
     }
 }

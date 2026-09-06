@@ -484,6 +484,10 @@ fn recovery_reports_a_remaining_claim_frontier_after_a_bounded_page() -> TestRes
     let second = store.recover_peer_claims(now(), PageSize::new(1)?)?;
     assert_eq!(second.requeued, 1);
     assert!(!second.more);
+    let empty = store.recover_peer_claims(now(), PageSize::new(1)?)?;
+    assert_eq!(empty.requeued, 0);
+    assert_eq!(empty.uncertain, 0);
+    assert!(!empty.more);
     Ok(())
 }
 

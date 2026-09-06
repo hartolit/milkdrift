@@ -14,6 +14,8 @@ This document owns current implementation, limitations, exact versions, and qual
   and incremental durable reporting. Capability health is refreshed before observations become
   stale. Pages and streams share authenticated cursor-scope construction. Boundary-clock rollback
   fails closed across restart; fresh clock sampling is serialized with watermark transactions.
+  Peer startup refuses a recovery continuation that reports no recovered claims; admission stays
+  closed instead of repeatedly requesting an empty page.
 - The CLI covers blueprint/sequence authoring, run/proposal/controller/peer/layout control,
   retained-work resolution, bounded inspection, verified create-new downloads, wait/follow deadlines,
   and stable machine output. [Production examples](../../examples/operator/README.md) provide
@@ -103,7 +105,7 @@ ordinary model example against a controlled loopback endpoint pass, as does the 
 scenario. Adapter, authority, runtime, context, artifact, and recovery
 contracts provide additional software evidence, not real-provider or power-loss qualification.
 
-The Windows workspace suite passes 675 tests with five release-only longevity tests ignored and
+The Windows workspace suite at `da53e06` passes 676 tests with five release-only longevity tests ignored and
 run separately. Portable process fixtures use explicit Python/Git prerequisites. The 14 control-plane
 tests, three bounded timeline-observer regressions, and peer transport/resource authorization
 regression pass. All-library public API inventories pass under default and all features, with no
@@ -122,15 +124,17 @@ projection stress, and effect-worker shutdown proofs pass. Hosted Linux
 [benchmark and operational evidence](https://github.com/hartolit/milkdrift/actions/runs/34021380874)
 passes all twelve scenarios, overload recovery, bounded storage/frontier observations, stream
 reconnection, and graceful shutdown. Hosted [release stress](https://github.com/hartolit/milkdrift/actions/runs/34021380881)
-also passes. Both use commit `2599839`, whose production source is unchanged in this checkout.
+also passes. Both use commit `2599839`; fresh qualification of the peer recovery progress refusal
+is pending.
 
-Hosted [Linux quality](https://github.com/hartolit/milkdrift/actions/runs/34021964548) and
-[Windows/macOS/Linux platform checks](https://github.com/hartolit/milkdrift/actions/runs/34021964535)
-pass at `878a3e3`; Linux runs the full workspace suite and actual daemon/CLI/model scenarios, while
+Hosted [Linux quality](https://github.com/hartolit/milkdrift/actions/runs/34034194173) and
+[Windows/macOS/Linux platform checks](https://github.com/hartolit/milkdrift/actions/runs/34034194104)
+pass at `da53e06`; Linux runs the full workspace suite and actual daemon/CLI/model scenarios, while
 the platform matrix runs its declared selected suites. Six mutation groups pass with reviewed
-diagnostics and no timeouts. Complete peer mutation qualification, including the strengthened
-authority, catalog-filtering, and disconnected-health assertions, remains pending. Independent readiness and the
-architecture freeze remain open until that check passes.
+diagnostics and no timeouts. The [peer campaign](https://github.com/hartolit/milkdrift/actions/runs/34032284287)
+at `5e2a297` exposed two test timeouts when an empty recovery frontier incorrectly reported more
+work. These are failed qualification results. The startup progress refusal and its tests now need
+fresh complete qualification. Independent readiness and the architecture freeze remain open.
 
 [Verification evidence](../development/verification-evidence.md) owns commands, pinned workflows,
 report meaning, and classification rules. Configured workflows are not executed evidence. Raw
