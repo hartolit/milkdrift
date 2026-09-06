@@ -659,11 +659,6 @@ impl RuntimeService {
         ))
     }
 
-    /// Alias for hosts that name restart orchestration explicitly.
-    pub fn recover_nonterminal_runs(&self) -> Result<RecoveryResult, RuntimeError> {
-        self.recover()
-    }
-
     pub(super) fn propagate_cancellation(
         &self,
         now: TimestampMillis,

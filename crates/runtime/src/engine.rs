@@ -825,16 +825,6 @@ impl RuntimeService {
         Ok((CommandExecution { result, replayed }, rejection))
     }
 
-    /// Alias emphasizing that command execution means durable transition handling,
-    /// never direct executor mutation.
-    pub fn execute_command(
-        &self,
-        command: &RunCommandDocument,
-        claim: &CommandAuthorityClaim,
-    ) -> Result<CommandExecution, RuntimeError> {
-        self.handle_authorized_command(command, claim)
-    }
-
     fn command_allowed_while_draining(&self, command: &RunCommand) -> bool {
         self.is_accepting_admission()
             || !matches!(
