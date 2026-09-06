@@ -36,7 +36,9 @@ and explicit adapter registration; do not describe that configuration as a local
 
 Artifact authority is either `{ "type": "deny_all" }` or an allow scope containing an explicit
 `Any`/nonempty `Only` identity selector and a nonempty sensitivity set; there is no implicit empty
-identity wildcard. Layout authority is either deny-all or a shared-layout scope with an explicit
+identity wildcard. Artifact operations use this scope independently of workflow/run scope: an
+`Any` artifact selector is not restricted to artifacts produced by the grant's selected workflow.
+Layout authority is either deny-all or a shared-layout scope with an explicit
 revision selector. Actor-owned/private layouts are reserved in the authority vocabulary but are
 not implemented by the control protocol, daemon, or persistence adapter. Empty peer and workspace
 scopes deny access unless their explicit wildcard boolean is set. Daemon flags independently grant coarse

@@ -762,7 +762,11 @@ fn artifact_metadata_and_content_require_exact_identity_and_sensitivity_scope() 
                 AuthorityOperation::ReadArtifactContent,
             ]))
             .resources(ResourceScope {
-                workflow_run: WorkflowRunScope::Any,
+                // Artifact operations use their own identity/sensitivity scope, even when
+                // the same grant restricts workflow operations to one unrelated workflow.
+                workflow_run: WorkflowRunScope::Workflow {
+                    workflow: WorkflowId::new("workflow-unrelated")?,
+                },
                 capability: CapabilityAuthorityScope::deny_all(),
                 filesystem: Vec::new(),
                 network: NetworkScope::empty(),

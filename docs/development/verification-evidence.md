@@ -162,8 +162,8 @@ execution. Closure requires successful runs on their declared hosts for the sour
 a local or cross-target check cannot substitute.
 The mutation, benchmark, and stress workflows also run when their own workflow file changes, so
 edits to manual/weekly evidence commands are checked before their next scheduled run.
-Mutation runner/configuration and peer conformance-test edits also trigger its checks, and a newer push supersedes the older
-mutation run on the same branch.
+Mutation runner/configuration and authority/peer contract-test edits also trigger its checks.
+A newer push supersedes the older mutation run on the same branch.
 
 Deterministic fault/reopen, clock rollback, reservation/artifact, conformance, and corruption tests
 prove software invariants, not filesystem power-loss behavior, sandbox strength, provider service

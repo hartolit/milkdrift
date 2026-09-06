@@ -38,6 +38,9 @@ Copy `process.json` and `process-profile.example.json`. Review and edit the prof
   literal argument. On Windows, use `C:/Windows/System32/whoami.exe` with arguments
   `["/user", "/fo", "csv", "/nh"]`. The reader requires a nonempty argument vector. The executable
   runs with the daemon account's privileges.
+- Match `platform` to the daemon build. On Windows set `owned_process_group` and
+  `terminal_group_observation` to `false`; keep `descendant_escape_prevention = false`.
+  The shipped Unix values are refused by a Windows build.
 - Compute its BLAKE3 with `b3sum EXECUTABLE`, put `b3_` followed by the 64 hex digits in
   `implementation.content_digest`, and put its exact file length in `size_bytes`.
   A changed executable requires a newly reviewed profile revision. BLAKE3 CLI tooling is external
@@ -81,8 +84,9 @@ sensitivities = ["public", "internal", "restricted"]
 type = "any"
 ```
 
-This deliberately permits generated artifact identities within the independently checked workflow
-scope. Review that scope and set `dangerous_allow_broad_authority = true` visibly in
+This deliberately permits every artifact identity at the listed sensitivities. Artifact access is
+independent of workflow/run scope; use an `only` selector for known artifact IDs when narrower
+access is required. Review this scope and set `dangerous_allow_broad_authority = true` visibly in
 `[actors.authority]`; this acknowledgement does not grant any additional resource by itself.
 Validate with `--check-config`, restart, inspect `capability show operator-process`, import
 `process.json`, and start `run-process operator-starter REVISION`. Use fresh explicit command

@@ -9,6 +9,7 @@ on:
       - "tools/evidence/src/bin/mutation-evidence.rs"
       - "adapters/peer-http/src/service/lifecycle.rs"
       - "adapters/peer-http/tests/**"
+      - "crates/authority/tests/**"
   workflow_dispatch:
   schedule:
     - cron: "13 2 * * 6"
