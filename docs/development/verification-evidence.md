@@ -65,6 +65,12 @@ where the live runner executable cannot be replaced.
 On a host dominated by debug-symbol linking, Cargo's `CARGO_PROFILE_DEV_DEBUG=0` and
 `CARGO_PROFILE_TEST_DEBUG=0` retain test assertions while omitting debug symbols. Record these
 settings and `CARGO_BUILD_JOBS` alongside the campaign; they do not classify failed builds.
+The pinned tool times its baseline over mutated packages, while a shard may select more packages
+for each mutation. Set its `CARGO_MUTANTS_MINIMUM_TEST_TIMEOUT` from a measured full selected-suite
+run when that broader suite needs more time; an inadequate automatic deadline must be rerun, not
+classified as a caught mutant. Hosted shards allow at least 600 seconds for that broader suite.
+Mutation checkouts retain Git metadata because application-evidence tests require exact source
+provenance; a missing repository must never make a mutation look caught.
 
 Scope covers authority conjunctions, application/peer idempotency and retention, runtime optimistic
 replay/recovery/reconciliation, controller accounting, context budgets, peer lifecycle, and exact
@@ -142,6 +148,8 @@ execution. Closure requires successful runs on their declared hosts for the sour
 a local or cross-target check cannot substitute.
 The mutation, benchmark, and stress workflows also run when their own workflow file changes, so
 edits to manual/weekly evidence commands are checked before their next scheduled run.
+Mutation runner/configuration edits also trigger its checks, and a newer push supersedes the older
+mutation run on the same branch.
 
 Deterministic fault/reopen, clock rollback, reservation/artifact, conformance, and corruption tests
 prove software invariants, not filesystem power-loss behavior, sandbox strength, provider service

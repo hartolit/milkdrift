@@ -4,6 +4,9 @@ on:
   push:
     paths:
       - ".github/workflows/mutation.yml"
+      - ".cargo/mutants.toml"
+      - ".cargo/mutation-classifications.json"
+      - "tools/evidence/src/bin/mutation-evidence.rs"
   workflow_dispatch:
   schedule:
     - cron: "13 2 * * 6"
@@ -13,7 +16,7 @@ permissions:
 
 concurrency:
   group: mutation-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   mutation:
@@ -33,6 +36,7 @@ jobs:
       - name: Run focused mutation shard
         env:
           CARGO_MUTANTS_JOBS: "2"
+          CARGO_MUTANTS_MINIMUM_TEST_TIMEOUT: "600"
         run: cargo mutation-evidence "${{ matrix.shard }}"
       - name: Upload mutation outcomes and logs
         if: always()
