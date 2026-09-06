@@ -2,7 +2,8 @@
 
 use super::super::RuntimeService;
 use super::super::support::{
-    CommandPlan, cancellation_reason_for_execution, checked_timestamp_add, run_drain_reason,
+    CommandPlan, bounded_observation_reason, cancellation_reason_for_execution,
+    checked_timestamp_add, observation_text, run_drain_reason,
 };
 use crate::projection::{AttemptState, RunProjection};
 use crate::{RunCommandDocument, RuntimeError, WorkerReport};
@@ -224,7 +225,7 @@ impl RuntimeService {
                         error_class: None,
                         detail: acknowledgement
                             .detail()
-                            .map(|detail| BoundedDetail::new(detail.to_owned()))
+                            .map(|detail| BoundedDetail::new(observation_text(detail)))
                             .transpose()?,
                     });
                 }
@@ -320,7 +321,7 @@ impl RuntimeService {
                 Ok(CommandPlan::one(RunEventKind::NodeProgressRecorded {
                     attempt: attempt.clone(),
                     report_sequence: report.sequence(),
-                    detail: BoundedDetail::new(message.clone())?,
+                    detail: BoundedDetail::new(observation_text(message))?,
                     completed_units: *completed_units,
                     total_units: *total_units,
                 }))
@@ -585,7 +586,7 @@ impl RuntimeService {
                 attempt: attempt.clone(),
                 report_sequence,
                 side_effect: classified.side_effect(),
-                reason: Reason::new(terminal.failure().map_or(
+                reason: bounded_observation_reason(terminal.failure().map_or(
                     "executor reported an uncertain external outcome",
                     |failure| failure.message(),
                 ))?,
@@ -631,7 +632,7 @@ impl RuntimeService {
                         NodeOutcome::Failed
                     },
                     Some(failure.class()),
-                    Some(BoundedDetail::new(failure.message().to_owned())?),
+                    Some(BoundedDetail::new(observation_text(failure.message()))?),
                 )
             }
             TerminalStatus::Uncertain => {

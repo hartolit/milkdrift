@@ -48,6 +48,11 @@ continuation artifacts, and provider-managed sessions currently have no OpenAI-c
 Cancellation signals cause the response reader to close at its next observable read boundary; the
 acknowledgement truthfully does not claim provider-side termination.
 
+Durable progress and failure details replace control characters with spaces; bounded uncertainty
+reasons also truncate at a UTF-8 boundary. This diagnostic projection does not change model output:
+the canonical response and final-text artifacts retain the exact completed text, including newlines
+and tabs. Multiline streaming is covered by the actual daemon/CLI deterministic endpoint lane.
+
 The operation contract is deliberately conservative. `model.generate` advertises unknown side
 effects, unsupported idempotency, and best-effort cancellation. Request bytes may have entered a
 provider even when the response is lost, so a post-entry close, malformed/truncated response,

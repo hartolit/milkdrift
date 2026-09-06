@@ -31,6 +31,32 @@ use milkdrift_workspace::{
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+// Invocation contracts allow arbitrary UTF-8 text. Durable diagnostic fields reject controls;
+// project those characters to spaces without altering the separately published output artifacts.
+pub(super) fn observation_text(text: &str) -> String {
+    text.chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
+pub(super) fn bounded_observation_reason(
+    detail: &str,
+) -> Result<Reason, milkdrift_persistence::PersistenceError> {
+    let mut value = observation_text(detail);
+    if value.is_empty() {
+        value.push_str("external effect boundary returned without terminal evidence");
+    }
+    let boundary = milkdrift_contracts::truncate_utf8(&value, 2_000).len();
+    value.truncate(boundary);
+    Reason::new(value)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum DispatchOutcome {
     Dispatched,

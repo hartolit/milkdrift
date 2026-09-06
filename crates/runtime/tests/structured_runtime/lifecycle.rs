@@ -3,6 +3,171 @@
 use super::*;
 
 #[test]
+fn multiline_progress_remains_bounded_durable_and_replayable() -> TestResult {
+    let harness = Harness::new("multiline-progress")?;
+    let revision = task_revision("workflow-multiline-progress")?;
+    let run = RunId::new("run-multiline-progress")?;
+    let maximum_message = format!("{}\tx", "é".repeat(2_047));
+    assert_eq!(maximum_message.len(), 4_096);
+    harness.executor.set_script(
+        OperationId::new("model.generate")?,
+        vec![
+            InvocationEventKind::Progress {
+                message: "first\nsecond\r\n\t\u{1b}終".to_owned(),
+                completed_units: Some(1),
+                total_units: Some(2),
+            },
+            InvocationEventKind::Progress {
+                message: maximum_message,
+                completed_units: Some(2),
+                total_units: Some(2),
+            },
+            InvocationEventKind::Terminal {
+                terminal: successful_terminal()?,
+            },
+        ],
+    )?;
+    harness.put_revision(&revision)?;
+    harness.create_and_start(&run, &revision)?;
+    assert_eq!(runtime_tick(&harness.runtime)?.completed, 1);
+    let history = harness.runtime.history(&run)?;
+    let progress = history
+        .iter()
+        .filter_map(|event| match event.kind() {
+            RunEventKind::NodeProgressRecorded {
+                report_sequence,
+                detail,
+                completed_units,
+                total_units,
+                ..
+            } => Some((
+                *report_sequence,
+                detail.as_str(),
+                *completed_units,
+                *total_units,
+            )),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let maximum_detail = format!("{} x", "é".repeat(2_047));
+    assert_eq!(
+        progress,
+        vec![
+            (1, "first second    終", Some(1), Some(2)),
+            (2, maximum_detail.as_str(), Some(2), Some(2))
+        ]
+    );
+    assert!(
+        !history
+            .iter()
+            .any(|event| matches!(event.kind(), RunEventKind::ExternalOutcomeUncertain { .. }))
+    );
+    let mut replay = milkdrift_runtime::RunProjection::default();
+    for event in &history {
+        replay.apply(event)?;
+    }
+    assert_eq!(replay, harness.runtime.projection(&run)?);
+    assert_eq!(
+        replay.lifecycle(),
+        RunLifecycle::Terminal(RunOutcome::Succeeded)
+    );
+    Ok(())
+}
+
+#[test]
+fn external_terminal_text_cannot_change_failure_or_uncertainty_classification() -> TestResult {
+    for (label, status) in [
+        ("failure", TerminalStatus::Failure),
+        ("rejected", TerminalStatus::Rejected),
+        ("uncertain", TerminalStatus::Uncertain),
+        ("empty-uncertain", TerminalStatus::Uncertain),
+    ] {
+        let harness = Harness::new(&format!("terminal-text-{label}"))?;
+        let revision = task_revision(&format!("workflow-terminal-text-{label}"))?;
+        let run = RunId::new(format!("run-terminal-text-{label}"))?;
+        let message = if label == "empty-uncertain" {
+            String::new()
+        } else {
+            let message = format!("provider\n\t{}", "é".repeat(2_043));
+            assert_eq!(message.len(), 4_096);
+            message
+        };
+        harness.executor.set_script(
+            OperationId::new("model.generate")?,
+            vec![InvocationEventKind::Terminal {
+                terminal: InvocationTerminal::new(
+                    status,
+                    Vec::new(),
+                    Some(InvocationFailure::new(
+                        ErrorClass::Provider,
+                        false,
+                        "provider_failure",
+                        message,
+                        None,
+                    )?),
+                    None,
+                    SideEffectClass::None,
+                )?,
+            }],
+        )?;
+        harness.put_revision(&revision)?;
+        harness.create_and_start(&run, &revision)?;
+        runtime_tick(&harness.runtime)?;
+        let history = harness.runtime.history(&run)?;
+        if status == TerminalStatus::Uncertain {
+            let reasons = history
+                .iter()
+                .filter_map(|event| match event.kind() {
+                    RunEventKind::ExternalOutcomeUncertain { reason, .. } => Some(reason.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let expected = if label == "empty-uncertain" {
+                "external effect boundary returned without terminal evidence".to_owned()
+            } else {
+                format!("provider  {}", "é".repeat(995))
+            };
+            assert_eq!(reasons, vec![expected]);
+        } else {
+            let expected = if status == TerminalStatus::Failure {
+                NodeOutcome::Failed
+            } else {
+                NodeOutcome::Rejected
+            };
+            let terminals = history
+                .iter()
+                .filter_map(|event| match event.kind() {
+                    RunEventKind::NodeTerminal {
+                        outcome,
+                        error_class,
+                        detail,
+                        ..
+                    } => Some((
+                        *outcome,
+                        *error_class,
+                        detail.as_ref().map(|detail| detail.as_str().to_owned()),
+                    )),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                terminals,
+                vec![(
+                    expected,
+                    Some(ErrorClass::Provider),
+                    Some(format!("provider  {}", "é".repeat(2_043)))
+                )]
+            );
+            assert!(!history.iter().any(|event| matches!(
+                event.kind(),
+                RunEventKind::ExternalOutcomeUncertain { .. }
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn claimed_effect_execution_reports_durable_entry_transition() -> TestResult {
     let harness = Harness::new("effect-tick-claimed")?;
     let revision = task_revision("workflow-effect-tick-claimed")?;

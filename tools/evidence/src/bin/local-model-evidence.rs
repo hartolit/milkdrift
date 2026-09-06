@@ -136,7 +136,7 @@ impl ControlledEndpoint {
                     ),
                     format!(
                         "data: {}\n\n",
-                        json!({"id":"fixture-response-1","model":"fixture-local-model","choices":[{"delta":{"content":"MODEL_OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":19,"completion_tokens":4}})
+                        json!({"id":"fixture-response-1","model":"fixture-local-model","choices":[{"delta":{"content":"\nMODEL\tOK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":19,"completion_tokens":4}})
                     ),
                     "data: [DONE]\n\n".to_owned(),
                 ]
@@ -426,6 +426,12 @@ fn run(arguments: Arguments) -> EvidenceResult {
     let captured_request = match success_endpoint.as_mut() {
         Some(endpoint) => {
             let request = endpoint.join()?;
+            let response =
+                ModelResponseDocument::from_json(&fs::read(session.join("model-response.json"))?)?;
+            ensure(
+                response.body().text() == "MILKDRIFT_\nMODEL\tOK",
+                "durable model output lost exact multiline provider text",
+            )?;
             ensure(
                 request.contains("selected architecture evidence")
                     && !request.contains("omitted unrelated evidence"),

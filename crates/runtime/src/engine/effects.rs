@@ -18,7 +18,9 @@ use milkdrift_persistence::{
 use milkdrift_workspace::RunId;
 use tracing::warn;
 
-use super::support::{CommandPlan, cancellation_reason_for_execution, run_drain_reason};
+use super::support::{
+    CommandPlan, bounded_observation_reason, cancellation_reason_for_execution, run_drain_reason,
+};
 use super::{CommandExecution, RuntimeService};
 use crate::projection::{AttemptState, NodeExecutionState};
 use crate::{
@@ -511,7 +513,7 @@ impl RuntimeService {
             attempt: attempt.clone(),
             report_sequence,
             side_effect: side_effect.side_effect(),
-            reason: bounded_uncertainty_reason(detail)?,
+            reason: bounded_observation_reason(detail)?,
             evidence: Vec::new(),
         });
         if self.config.retry_policy.permits_automatic_retry(
@@ -550,25 +552,6 @@ impl RuntimeService {
         )?;
         Ok(())
     }
-}
-
-fn bounded_uncertainty_reason(detail: &str) -> Result<Reason, PersistenceError> {
-    let mut value = detail
-        .chars()
-        .map(|character| {
-            if character.is_control() {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect::<String>();
-    if value.is_empty() {
-        value.push_str("external effect boundary returned without terminal evidence");
-    }
-    let boundary = milkdrift_contracts::truncate_utf8(&value, 2_000).len();
-    value.truncate(boundary);
-    Reason::new(value)
 }
 
 #[cfg(test)]

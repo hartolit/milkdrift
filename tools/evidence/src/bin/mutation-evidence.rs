@@ -137,7 +137,7 @@ impl MutationShard {
                     "crates/runtime/src/engine/effects.rs",
                     "crates/runtime/src/engine/support.rs",
                 ],
-                pattern: "(^|::)(recovery_classification|record_effect_uncertainty)$",
+                pattern: "(^|::)(recovery_classification|record_effect_uncertainty|observation_text|bounded_observation_reason)$",
                 // cargo-mutants 27.1 also emits struct-field deletion mutants from the selected
                 // effects file even when their enclosing function does not match `--re`.
                 // Controller integration tests therefore remain in this lane so those incidental
