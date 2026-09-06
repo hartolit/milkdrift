@@ -7,10 +7,9 @@ use std::{
 
 use milkdrift_peer_http::{PeerClock, PeerClockError};
 use milkdrift_persistence::{
-    ClockWatermarkObservation, ClockWatermarkStore, PersistenceError, StorageFailureClass,
-    TimestampMillis,
+    ClockWatermarkObservation, PersistenceError, StorageFailureClass, TimestampMillis,
 };
-use milkdrift_redb_store::{ArtifactClock, RedbStore};
+use milkdrift_redb_store::{RedbStore, StoreClock};
 use milkdrift_runtime::{BoundaryClock, RuntimeError};
 use thiserror::Error;
 use tracing::{info, warn};
@@ -46,7 +45,6 @@ pub(super) enum DaemonClockError {
 }
 
 struct DurableClockInner {
-    source: Arc<dyn DaemonClockSource>,
     queue: OwnerQueue,
     store: Weak<RedbStore>,
     health: Arc<SharedHealth>,
@@ -61,14 +59,12 @@ pub(super) struct DurableClock {
 
 impl DurableClock {
     pub(super) fn new(
-        source: Arc<dyn DaemonClockSource>,
         queue: OwnerQueue,
         store: Weak<RedbStore>,
         health: Arc<SharedHealth>,
     ) -> Self {
         Self {
             inner: Arc::new(DurableClockInner {
-                source,
                 queue,
                 store,
                 health,
@@ -78,16 +74,14 @@ impl DurableClock {
     }
 
     pub(super) fn now(&self) -> Result<TimestampMillis, DaemonClockError> {
-        let source = self.inner.source.clone();
         let store = self.inner.store.clone();
         let result = self.inner.queue.call(
             move || {
-                let observed = TimestampMillis::new(source.now_unix_ms()?);
                 let store = store.upgrade().ok_or(DaemonClockError::Unavailable)?;
-                match store
-                    .observe_clock(observed)
-                    .map_err(|_| DaemonClockError::Unavailable)?
-                {
+                let (observed, outcome) = store
+                    .sample_clock()
+                    .map_err(|_| DaemonClockError::Unavailable)?;
+                match outcome {
                     ClockWatermarkObservation::Advanced | ClockWatermarkObservation::Unchanged => {
                         Ok(observed)
                     }
@@ -177,10 +171,10 @@ impl BoundaryClock for RuntimeClockAdapter {
     }
 }
 
-/// Raw source adapter used only where redb advances the watermark in the same write transaction.
-pub(super) struct ArtifactClockAdapter(pub(super) Arc<dyn DaemonClockSource>);
+/// Raw source adapter sampled only after redb acquires the watermark's write transaction.
+pub(super) struct StoreClockAdapter(pub(super) Arc<dyn DaemonClockSource>);
 
-impl ArtifactClock for ArtifactClockAdapter {
+impl StoreClock for StoreClockAdapter {
     fn now(&self) -> Result<TimestampMillis, PersistenceError> {
         self.0
             .now_unix_ms()
@@ -197,6 +191,7 @@ mod tests {
     use std::sync::atomic::AtomicU64;
 
     use milkdrift_peer_http::PeerClockError;
+    use milkdrift_persistence::ClockWatermarkStore;
     use tempfile::TempDir;
 
     use super::*;
@@ -240,7 +235,7 @@ mod tests {
         let source = Arc::new(ControlledSource::new(100));
         let store = Arc::new(RedbStore::open_with_config(
             milkdrift_redb_store::RedbStoreConfig::new(directory.path())
-                .with_artifact_clock(Arc::new(ArtifactClockAdapter(source.clone()))),
+                .with_clock(Arc::new(StoreClockAdapter(source.clone()))),
         )?);
         let storage = StoragePlan {
             data_root: directory.path().to_path_buf(),
@@ -255,12 +250,7 @@ mod tests {
             health.clone(),
             std::thread::current().id(),
         );
-        let clock = DurableClock::new(
-            source.clone(),
-            queue,
-            Arc::downgrade(&store),
-            health.clone(),
-        );
+        let clock = DurableClock::new(queue, Arc::downgrade(&store), health.clone());
         let peer = clock.peer_adapter();
 
         assert_eq!(peer.now_unix_ms()?, 100);

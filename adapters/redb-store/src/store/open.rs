@@ -31,7 +31,7 @@ impl RedbStore {
     )]
     pub fn open_with_config(config: RedbStoreConfig) -> Result<Self, PersistenceError> {
         validate_config(&config)?;
-        let startup_observation = config.artifact_clock.now()?;
+        let startup_observation = config.clock.now()?;
         prepare_owned_directory(&config.root, "storage root")?;
         let database_path = config.root.join(DATABASE_FILENAME);
         ensure_regular_file_or_absent(&database_path, "storage database")?;
@@ -61,7 +61,7 @@ impl RedbStore {
             application_receipt_archive_batch_size: config.application_receipt_archive_batch_size,
             max_security_audit_records: config.max_security_audit_records,
             faults: config.faults,
-            artifact_clock: config.artifact_clock,
+            clock: config.clock,
             artifact_serialization: Mutex::new(()),
         };
         require_accepted_clock(store.observe_clock(startup_observation)?)?;

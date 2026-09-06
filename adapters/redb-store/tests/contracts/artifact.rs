@@ -1,9 +1,9 @@
 use super::*;
 
 #[derive(Debug)]
-struct FixedArtifactClock(TimestampMillis);
+struct FixedStoreClock(TimestampMillis);
 
-impl ArtifactClock for FixedArtifactClock {
+impl StoreClock for FixedStoreClock {
     fn now(&self) -> Result<TimestampMillis, PersistenceError> {
         Ok(self.0)
     }
@@ -101,8 +101,7 @@ fn artifact_cleanup_uses_the_injected_publication_clock() -> Result<(), Box<dyn 
     let directory = TempDir::new()?;
     let created_at = TimestampMillis::new(50);
     let store = RedbStore::open_with_config(
-        RedbStoreConfig::new(directory.path())
-            .with_artifact_clock(Arc::new(FixedArtifactClock(created_at))),
+        RedbStoreConfig::new(directory.path()).with_clock(Arc::new(FixedStoreClock(created_at))),
     )?;
     let bytes = b"clocked artifact publication";
     let request = BeginArtifactPublication::new(

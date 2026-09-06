@@ -1,8 +1,8 @@
 //! Immutable startup plan and closed-admission component construction.
 use super::{
     DaemonHost, HostError, LEGACY_SIDECAR_FILE, Owner, OwnerRequest, PeerRuntime,
-    build_peer_runtime, capabilities, clock::ArtifactClockAdapter, clock::DaemonClockSource,
-    clock::DurableClock, clock::SystemDaemonClock, health::Lifecycle, health::SharedHealth,
+    build_peer_runtime, capabilities, clock::DaemonClockSource, clock::DurableClock,
+    clock::StoreClockAdapter, clock::SystemDaemonClock, health::Lifecycle, health::SharedHealth,
     queue::OwnerQueue,
 };
 use crate::{
@@ -175,17 +175,12 @@ impl Owner {
                         storage.application_receipts.archive_batch_size,
                     )
                     .with_security_audit_limit(storage.security_audit_record_bound)
-                    .with_artifact_clock(Arc::new(ArtifactClockAdapter(clock_source.clone()))),
+                    .with_clock(Arc::new(StoreClockAdapter(clock_source.clone()))),
             )
             .map_err(|error| error.to_string())?,
         );
         let owner_queue = OwnerQueue::new(sender, health.clone(), thread::current().id());
-        let clock = DurableClock::new(
-            clock_source,
-            owner_queue.clone(),
-            Arc::downgrade(&store),
-            health.clone(),
-        );
+        let clock = DurableClock::new(owner_queue.clone(), Arc::downgrade(&store), health.clone());
         let authority = Arc::new(
             GrantSetEvaluator::new(
                 PolicyId::new("daemon.authority.v1").map_err(|error| error.to_string())?,

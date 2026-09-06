@@ -12,17 +12,17 @@ pub(crate) const DEFAULT_HOT_APPLICATION_RECEIPTS: u32 = 10_000;
 pub(crate) const DEFAULT_APPLICATION_RECEIPT_ARCHIVE_BATCH_SIZE: u32 = 256;
 pub(crate) const DEFAULT_MAX_SECURITY_AUDIT_RECORDS: u32 = 100_000;
 
-/// Injected boundary clock for artifact-publication facts that control cleanup.
-pub trait ArtifactClock: Send + Sync {
-    /// Returns the timestamp durably recorded for a newly accepted publication.
+/// Injected clock sampled within storage transactions for durable boundary facts.
+pub trait StoreClock: Send + Sync {
+    /// Returns the current timestamp for a watermark, publication, or archival observation.
     fn now(&self) -> Result<TimestampMillis, PersistenceError>;
 }
 
-/// Production artifact clock backed by the host system clock.
+/// Production storage clock backed by the host system clock.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct SystemArtifactClock;
+pub struct SystemStoreClock;
 
-impl ArtifactClock for SystemArtifactClock {
+impl StoreClock for SystemStoreClock {
     fn now(&self) -> Result<TimestampMillis, PersistenceError> {
         let duration = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -43,7 +43,7 @@ pub struct RedbStoreConfig {
     pub(crate) application_receipt_archive_batch_size: u32,
     pub(crate) max_security_audit_records: u32,
     pub(crate) faults: Arc<dyn FaultInjector>,
-    pub(crate) artifact_clock: Arc<dyn ArtifactClock>,
+    pub(crate) clock: Arc<dyn StoreClock>,
 }
 
 impl fmt::Debug for RedbStoreConfig {
@@ -83,7 +83,7 @@ impl RedbStoreConfig {
             application_receipt_archive_batch_size: DEFAULT_APPLICATION_RECEIPT_ARCHIVE_BATCH_SIZE,
             max_security_audit_records: DEFAULT_MAX_SECURITY_AUDIT_RECORDS,
             faults: no_faults(),
-            artifact_clock: Arc::new(SystemArtifactClock),
+            clock: Arc::new(SystemStoreClock),
         }
     }
 
@@ -128,10 +128,10 @@ impl RedbStoreConfig {
         self
     }
 
-    /// Installs the deterministic clock used for accepted publication timestamps.
+    /// Installs the clock used for fresh watermark, publication, and archival observations.
     #[must_use]
-    pub fn with_artifact_clock(mut self, clock: Arc<dyn ArtifactClock>) -> Self {
-        self.artifact_clock = clock;
+    pub fn with_clock(mut self, clock: Arc<dyn StoreClock>) -> Self {
+        self.clock = clock;
         self
     }
 }
@@ -152,6 +152,6 @@ pub struct RedbStore {
     pub(crate) application_receipt_archive_batch_size: u32,
     pub(crate) max_security_audit_records: u32,
     pub(crate) faults: Arc<dyn FaultInjector>,
-    pub(crate) artifact_clock: Arc<dyn ArtifactClock>,
+    pub(crate) clock: Arc<dyn StoreClock>,
     pub(crate) artifact_serialization: Mutex<()>,
 }

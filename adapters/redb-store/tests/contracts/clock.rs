@@ -3,9 +3,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::*;
 
 #[derive(Debug)]
-struct MutableArtifactClock(AtomicU64);
+struct MutableStoreClock(AtomicU64);
 
-impl MutableArtifactClock {
+impl MutableStoreClock {
     const fn new(now: u64) -> Self {
         Self(AtomicU64::new(now))
     }
@@ -15,7 +15,7 @@ impl MutableArtifactClock {
     }
 }
 
-impl ArtifactClock for MutableArtifactClock {
+impl StoreClock for MutableStoreClock {
     fn now(&self) -> Result<TimestampMillis, PersistenceError> {
         Ok(TimestampMillis::new(self.0.load(Ordering::SeqCst)))
     }
@@ -25,9 +25,9 @@ impl ArtifactClock for MutableArtifactClock {
 fn durable_clock_watermark_rejects_rollback_after_reopen() -> Result<(), Box<dyn std::error::Error>>
 {
     let directory = TempDir::new()?;
-    let clock = Arc::new(MutableArtifactClock::new(100));
+    let clock = Arc::new(MutableStoreClock::new(100));
     let store = RedbStore::open_with_config(
-        RedbStoreConfig::new(directory.path()).with_artifact_clock(clock.clone()),
+        RedbStoreConfig::new(directory.path()).with_clock(clock.clone()),
     )?;
     assert_eq!(store.clock_watermark()?, Some(TimestampMillis::new(100)));
     assert_eq!(
@@ -38,7 +38,7 @@ fn durable_clock_watermark_rejects_rollback_after_reopen() -> Result<(), Box<dyn
 
     clock.set(119);
     let rollback = RedbStore::open_with_config(
-        RedbStoreConfig::new(directory.path()).with_artifact_clock(clock.clone()),
+        RedbStoreConfig::new(directory.path()).with_clock(clock.clone()),
     );
     assert!(matches!(
         rollback,
@@ -49,9 +49,8 @@ fn durable_clock_watermark_rejects_rollback_after_reopen() -> Result<(), Box<dyn
     ));
 
     clock.set(120);
-    let reopened = RedbStore::open_with_config(
-        RedbStoreConfig::new(directory.path()).with_artifact_clock(clock),
-    )?;
+    let reopened =
+        RedbStore::open_with_config(RedbStoreConfig::new(directory.path()).with_clock(clock))?;
     assert_eq!(reopened.clock_watermark()?, Some(TimestampMillis::new(120)));
     Ok(())
 }
@@ -87,10 +86,10 @@ fn schema_nine_refuses_missing_clock_watermark() -> Result<(), Box<dyn std::erro
 fn artifact_acceptance_and_clock_advance_share_one_transaction()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = TempDir::new()?;
-    let clock = Arc::new(MutableArtifactClock::new(100));
+    let clock = Arc::new(MutableStoreClock::new(100));
     let store = RedbStore::open_with_config(
         RedbStoreConfig::new(directory.path())
-            .with_artifact_clock(clock.clone())
+            .with_clock(clock.clone())
             .with_fault_injector(Arc::new(FailOnce::new(
                 FaultPoint::BeforeArtifactBeginCommit,
             ))),

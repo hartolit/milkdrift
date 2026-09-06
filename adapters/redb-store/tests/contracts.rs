@@ -52,7 +52,7 @@ use milkdrift_persistence::{
     TimestampMillis, WorkerId, WorkspaceAccounting, WorkspaceMutation, WorkspaceStore,
     history_digest,
 };
-use milkdrift_redb_store::{ArtifactClock, FaultPoint, RedbStore, RedbStoreConfig};
+use milkdrift_redb_store::{FaultPoint, RedbStore, RedbStoreConfig, StoreClock};
 use milkdrift_workspace::{
     ArtifactId, ArtifactMetadata, ArtifactProvenance, ArtifactRetention, ArtifactSensitivity,
     BranchId, CausalId, CausalReference, ContentDigest, MediaType, RunId, ScopeId, SubworkflowId,

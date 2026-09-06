@@ -369,6 +369,10 @@ scheduling, or timestamps; artifact acceptance advances it in the same transacti
 rollback refuses work and records redacted health evidence. Restart cannot forget a later observed
 instant. Elapsed time during downtime still trusts the OS clock. Post-entry peer clock/store loss
 retries the exact release/uncertainty transition without another adapter invocation.
+Fresh samples are taken only after acquiring the redb write transaction, so concurrent artifact or
+receipt publication cannot overtake an earlier sample and manufacture a rollback. The configured
+store clock supplies all fresh durable observations; caller-owned timestamps retain exact
+watermark validation through the persistence port.
 
 One mutex owns coherent operational health and feed generation. Queue guards release occupancy on
 dequeue/drop. Owner-request panic closes ordinary admission; queued requests recheck readiness.

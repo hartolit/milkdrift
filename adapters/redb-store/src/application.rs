@@ -37,7 +37,7 @@ impl RedbStore {
         let mut accounting = transaction_receipt_accounting(&write)?;
         let hot_bound = u64::from(self.hot_application_receipt_bound);
         if accounting.hot_count > hot_bound {
-            let archived_at = self.artifact_clock.now()?;
+            let archived_at = self.clock.now()?;
             require_clock_in_transaction(&write, archived_at)?;
             while accounting.hot_count > hot_bound {
                 let excess = accounting.hot_count - hot_bound;

@@ -195,7 +195,7 @@ impl ArtifactStore for RedbStore {
             }
         }
 
-        let created_at = self.artifact_clock.now()?;
+        let created_at = self.clock.now()?;
         require_clock_in_transaction(&write, created_at)?;
         let created_at_millis = created_at.get();
         let record = PublicationRecord::from_request(request, created_at_millis);

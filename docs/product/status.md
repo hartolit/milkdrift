@@ -13,7 +13,7 @@ This document owns current implementation, limitations, exact versions, and qual
   Process/model/control/peer adapters use exact generations, final authority checks, fixed workers,
   and incremental durable reporting. Capability health is refreshed before observations become
   stale. Pages and streams share authenticated cursor-scope construction. Boundary-clock rollback
-  fails closed across restart.
+  fails closed across restart; fresh clock sampling is serialized with watermark transactions.
 - The CLI covers blueprint/sequence authoring, run/proposal/controller/peer/layout control,
   retained-work resolution, bounded inspection, verified create-new downloads, wait/follow deadlines,
   and stable machine output. [Production examples](../../examples/operator/README.md) provide
@@ -105,7 +105,7 @@ scenario. Adapter, authority, runtime, context, artifact, and recovery
 contracts provide additional software evidence, not real-provider or power-loss qualification.
 
 The complete Windows workspace suite passes with portable process fixtures and explicit Python/Git
-fixture prerequisites. The full gate is being repeated for the latest cursor correction; all 14
+fixture prerequisites. The full gate is being repeated for the latest clock/cursor corrections; all 14
 control-plane tests and three bounded timeline-observer regressions pass. All-library public API
 inventories pass under default and all features, with no default test-helper exports.
 
