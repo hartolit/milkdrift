@@ -137,6 +137,8 @@ The operational runner asserts a bounded frontier over 10,000 events, cold-recei
 reopen, and sustained receipt/peer turnover. It distinguishes logical document bytes from physical
 redb-directory allocation. Daemon phases measure sequential/concurrent load, bounded-queue overload,
 slow SSE consumption, authenticated reconnect, post-overload recovery, and public Ctrl-C shutdown.
+Recovery and reconnect use separate bounded phases; reconnect requires a fresh health observation
+with a changed cursor. Retryable stream errors alone never establish reconnection.
 The signal lane requires Unix; child thread counts use Linux `/proc` when available. A separate
 blocking-adapter regression checks fixed worker backpressure and unresolved forced-shutdown truth.
 

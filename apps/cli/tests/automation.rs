@@ -119,7 +119,22 @@ fn http(status: u16, body: String) -> String {
     )
 }
 fn run_state(terminal: Option<&str>) -> Value {
-    json!({"run_id":"run-one","sequence":10,"lifecycle":if terminal.is_some(){"terminal"}else{"running"},"terminal":terminal,"workflow_id":"workflow-one","revision_id":"revision-one","semantic_digest":null,"nodes":[],"uncertainty_count":0})
+    let lifecycle = if terminal.is_some() {
+        "terminal"
+    } else {
+        "running"
+    };
+    json!({
+        "run_id": "run-one",
+        "sequence": 10,
+        "lifecycle": lifecycle,
+        "terminal": terminal,
+        "workflow_id": "workflow-one",
+        "revision_id": "revision-one",
+        "semantic_digest": null,
+        "nodes": [],
+        "uncertainty_count": 0
+    })
 }
 
 fn invoke(

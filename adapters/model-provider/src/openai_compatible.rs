@@ -18,24 +18,47 @@ pub(crate) fn request(
     profile_options: &BTreeMap<ExtensionKey, BoundedJson>,
     mut load: impl FnMut(&ArtifactReference) -> Result<Vec<u8>, HttpError>,
 ) -> Result<Value, HttpError> {
-    let mut messages=task.messages().iter().map(|message|{
-        let role=match message.role(){MessageRole::System=>"system",MessageRole::Developer=>"developer",
-            MessageRole::User=>"user",MessageRole::Assistant=>"assistant",MessageRole::ToolResult=>"tool"};
-        let mut parts=Vec::new();
-        for part in message.parts(){match part{
-            ContentPart::Text{text}=>parts.push(json!({"type":"text","text":text})),
-            ContentPart::Image{reference}=>{
-                let media=reference.media_type().ok_or(HttpError::Policy("image reference lacks media type"))?;
-                let bytes=load(reference)?; let data=base64::engine::general_purpose::STANDARD.encode(bytes);
-                parts.push(json!({"type":"image_url","image_url":{"url":format!("data:{media};base64,{data}")}}));
+    let mut messages = task.messages().iter().map(|message| {
+        let role = match message.role() {
+            MessageRole::System => "system",
+            MessageRole::Developer => "developer",
+            MessageRole::User => "user",
+            MessageRole::Assistant => "assistant",
+            MessageRole::ToolResult => "tool",
+        };
+        let mut parts = Vec::new();
+        for part in message.parts() {
+            match part {
+                ContentPart::Text { text } => parts.push(json!({"type":"text","text":text})),
+                ContentPart::Image { reference } => {
+                    let media = reference
+                        .media_type()
+                        .ok_or(HttpError::Policy("image reference lacks media type"))?;
+                    let bytes = load(reference)?;
+                    let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+                    parts.push(json!({
+                        "type": "image_url",
+                        "image_url": {"url": format!("data:{media};base64,{data}")}
+                    }));
+                }
+                ContentPart::Artifact { .. } | ContentPart::File { .. } => {
+                    return Err(HttpError::Policy(
+                        "generic artifact/file mapping is unsupported by OpenAI-compatible chat",
+                    ));
+                }
             }
-            ContentPart::Artifact{..}|ContentPart::File{..}=>return Err(HttpError::Policy("generic artifact/file mapping is unsupported by OpenAI-compatible chat")),
-        }}
-        let content=if parts.len()==1&&parts[0].get("type")==Some(&Value::String("text".to_owned())){parts[0]["text"].clone()}else{Value::Array(parts)};
-        let mut value=json!({"role":role,"content":content});
-        if let Some(id)=message.tool_call_id(){value["tool_call_id"]=Value::String(id.to_owned());}
+        }
+        let content = if parts.len() == 1 && parts[0].get("type") == Some(&Value::String("text".to_owned())) {
+            parts[0]["text"].clone()
+        } else {
+            Value::Array(parts)
+        };
+        let mut value = json!({"role":role,"content":content});
+        if let Some(id) = message.tool_call_id() {
+            value["tool_call_id"] = Value::String(id.to_owned());
+        }
         Ok(value)
-    }).collect::<Result<Vec<_>,HttpError>>()?;
+    }).collect::<Result<Vec<_>, HttpError>>()?;
     messages.insert(0, json!({
         "role":"system",
         "content":[{"type":"text","text":format!(

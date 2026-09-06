@@ -8,7 +8,7 @@ use crate::application::{
 };
 use futures_util::StreamExt as _;
 use milkdrift_control_client::{ClientError, ControlClient};
-use milkdrift_control_protocol::ErrorCode;
+use milkdrift_control_protocol::{ErrorCode, Observation};
 use milkdrift_daemon::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
     AuthorityPresetConfig, DaemonConfig, PeerHostConfig, RuntimeHostConfig, SecretSourceConfig,
@@ -33,7 +33,7 @@ pub struct DaemonEvidence {
     pub latency: LatencySummary,
     /// A deliberately slow health-stream consumer received an observation.
     pub slow_consumer_observed: bool,
-    /// A cursor-bound reconnect completed when the daemon closed the stream for shutdown.
+    /// A cursor-bound reconnect received a fresh authenticated health observation.
     pub stream_reconnected: bool,
     /// A low-load request succeeded after overload.
     pub recovered: bool,
@@ -97,7 +97,10 @@ pub fn measure_daemon_saturation(operations: u32) -> EvidenceResult<DaemonEviden
             .ok()
             .flatten()
             .transpose()?;
-        let slow_consumer_observed = first_observation.is_some();
+        let slow_consumer_observed = first_observation.as_ref().is_some_and(|item| {
+            item.feed == "daemon-health"
+                && matches!(&item.observation, Observation::DaemonHealth(health) if health.ready)
+        });
         let resume_cursor = first_observation.map(|observation| observation.cursor);
         tokio::time::sleep(Duration::from_millis(750)).await;
 
@@ -131,11 +134,20 @@ pub fn measure_daemon_saturation(operations: u32) -> EvidenceResult<DaemonEviden
         }
 
         drop(slow_stream);
-        let mut resumed = running.client.subscribe("v1/stream/health", resume_cursor);
-        let reconnect_task = tokio::spawn(async move {
-            tokio::time::timeout(Duration::from_secs(3), resumed.next()).await
-        });
-        let recovered = running.client.health().await?.ready;
+        // A reconnect authorizes through the same single-slot owner queue. Finish
+        // the low-load recovery read before introducing another concurrent caller.
+        let recovery_deadline = Instant::now() + Duration::from_secs(3);
+        let recovered = loop {
+            match running.client.health().await {
+                Ok(health) => break health.ready,
+                Err(ClientError::Api(error))
+                    if error.code == ErrorCode::Overload && Instant::now() < recovery_deadline =>
+                {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
         let tasks_after = process_task_count(running.process.id())?;
         if let (Some(before), Some(after)) = (tasks_before, tasks_after)
             && after > before.saturating_add(8)
@@ -143,15 +155,26 @@ pub fn measure_daemon_saturation(operations: u32) -> EvidenceResult<DaemonEviden
             return Err(std::io::Error::other("daemon load left unbounded process tasks").into());
         }
         let latency = LatencySummary::from_durations(latencies)?;
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut resumed = running
+            .client
+            .subscribe("v1/stream/health", resume_cursor.clone());
+        let observation = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                match resumed.next().await {
+                    Some(Ok(observation)) => return EvidenceResult::Ok(observation),
+                    Some(Err(error)) if error.retryable() => continue,
+                    Some(Err(error)) => return Err(error.into()),
+                    None => return Err("reconnected health stream ended without an observation".into()),
+                }
+            }
+        })
+        .await??;
+        let stream_reconnected = Some(&observation.cursor) != resume_cursor.as_ref()
+            && observation.feed == "daemon-health"
+            && matches!(observation.observation, Observation::DaemonHealth(health) if health.ready);
+        drop(resumed);
         let RunningDaemon { mut process, .. } = running;
         let graceful_shutdown = process.shutdown().is_ok();
-        let stream_reconnected = reconnect_task
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .flatten()
-            .is_some();
         if !graceful_shutdown || !recovered || !slow_consumer_observed || !stream_reconnected {
             return Err(std::io::Error::other(format!(
                 "daemon evidence failed: recovered={recovered}, slow_consumer={slow_consumer_observed}, reconnected={stream_reconnected}, shutdown={graceful_shutdown}"

@@ -144,7 +144,7 @@ fn fixture_process_and_model_scenario_failures_exit_nonzero() -> TestResult {
         assert!(!result.status.success());
         let (_, report) = read_report(&output)?;
         assert_eq!(report["qualifying"], false);
-        assert_eq!(report[fault]["outcome"], "failed");
+        assert_eq!(report[fault]["outcome"], "failed", "{fault}: {report}");
         assert!(
             report[fault]["failure_reason"]
                 .as_str()

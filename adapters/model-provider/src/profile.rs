@@ -295,8 +295,16 @@ impl EndpointProfile {
                 url::Host::Ipv6(ip) => ip.is_loopback(),
                 url::Host::Domain(domain) => domain.eq_ignore_ascii_case("localhost"),
             });
-        match url.scheme(){"https"=>{},"http" if self.local_development && loopback=>{},_=>return Err(ProfileError::Invalid(
-            "remote endpoints require HTTPS; HTTP is limited to explicit loopback development profiles".to_owned()))}
+        match url.scheme() {
+            "https" => {}
+            "http" if self.local_development && loopback => {}
+            _ => {
+                return Err(ProfileError::Invalid(
+                    "remote endpoints require HTTPS; HTTP is limited to explicit loopback development profiles"
+                        .to_owned(),
+                ));
+            }
+        }
         if matches!(self.auth, AuthMode::NoAuth)
             && !self.local_development
             && url.scheme() != "https"

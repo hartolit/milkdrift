@@ -49,13 +49,19 @@ pub(crate) fn request(
                 }
             }
         }
-        match message.role(){
-            MessageRole::System=>system.extend(content),
-            MessageRole::ToolResult=>messages.push(json!({"role":"user","content":[{"type":"tool_result",
-                "tool_use_id":message.tool_call_id().ok_or(HttpError::MalformedResponse)?,"content":content}]})),
-            MessageRole::User=>messages.push(json!({"role":"user","content":content})),
-            MessageRole::Assistant=>messages.push(json!({"role":"assistant","content":content})),
-            MessageRole::Developer=>unreachable!(),
+        match message.role() {
+            MessageRole::System => system.extend(content),
+            MessageRole::ToolResult => messages.push(json!({
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": message.tool_call_id().ok_or(HttpError::MalformedResponse)?,
+                    "content": content
+                }]
+            })),
+            MessageRole::User => messages.push(json!({"role":"user","content":content})),
+            MessageRole::Assistant => messages.push(json!({"role":"assistant","content":content})),
+            MessageRole::Developer => unreachable!(),
         }
     }
     if !context_parts.is_empty() {
