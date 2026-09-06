@@ -4,7 +4,9 @@ on:
   push:
     paths:
       - ".github/workflows/benchmarks.yml"
-      - "adapters/peer-http/src/service/lifecycle.rs"
+      - "**/*.rs"
+      - "**/Cargo.toml"
+      - "Cargo.lock"
   workflow_dispatch:
   schedule:
     - cron: "29 3 * * 6"

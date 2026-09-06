@@ -162,6 +162,7 @@ execution. Closure requires successful runs on their declared hosts for the sour
 a local or cross-target check cannot substitute.
 The mutation, benchmark, and stress workflows also run when their own workflow file changes, so
 edits to manual/weekly evidence commands are checked before their next scheduled run.
+Benchmark and stress lanes also run for Rust source and Cargo manifest/lockfile changes.
 Mutation runner/configuration and authority/peer contract-test edits also trigger its checks.
 A newer push supersedes the older mutation run on the same branch.
 
