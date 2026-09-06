@@ -24,11 +24,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { shard: authority, partition: 0, partitions: 1 }
+          - { shard: authority, partition: 0, partitions: 2 }
+          - { shard: authority, partition: 1, partitions: 2 }
           - { shard: retention, partition: 0, partitions: 1 }
-          - { shard: runtime, partition: 0, partitions: 1 }
+          - { shard: runtime, partition: 0, partitions: 2 }
+          - { shard: runtime, partition: 1, partitions: 2 }
           - { shard: uncertainty, partition: 0, partitions: 1 }
-          - { shard: controller, partition: 0, partitions: 1 }
+          - { shard: controller, partition: 0, partitions: 4 }
+          - { shard: controller, partition: 1, partitions: 4 }
+          - { shard: controller, partition: 2, partitions: 4 }
+          - { shard: controller, partition: 3, partitions: 4 }
           - { shard: context, partition: 0, partitions: 1 }
           - { shard: peer, partition: 0, partitions: 4 }
           - { shard: peer, partition: 1, partitions: 4 }

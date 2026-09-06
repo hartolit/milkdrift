@@ -47,6 +47,159 @@ fn transport_configuration_requires_https_or_explicit_loopback_development() -> 
 }
 
 #[test]
+fn admission_requires_a_live_exact_relationship_and_catalog() -> TestResult {
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum Case {
+        ExactExpiry,
+        MissingRelationship,
+        DisabledRelationship,
+        RelationshipGeneration,
+        ExpiredRelationship,
+        MissingCatalog,
+        StaleCatalogRelationship,
+        CatalogGeneration,
+        CatalogDigest,
+        ExpiredCatalog,
+    }
+
+    for (case, rejection) in [
+        (Case::ExactExpiry, None),
+        (
+            Case::MissingRelationship,
+            Some(PeerAdmissionRejection::RelationshipUnavailable),
+        ),
+        (
+            Case::DisabledRelationship,
+            Some(PeerAdmissionRejection::RelationshipUnavailable),
+        ),
+        (
+            Case::ExpiredRelationship,
+            Some(PeerAdmissionRejection::RelationshipUnavailable),
+        ),
+        (
+            Case::RelationshipGeneration,
+            Some(PeerAdmissionRejection::RelationshipUnavailable),
+        ),
+        (
+            Case::MissingCatalog,
+            Some(PeerAdmissionRejection::CatalogUnavailable),
+        ),
+        (
+            Case::StaleCatalogRelationship,
+            Some(PeerAdmissionRejection::CatalogUnavailable),
+        ),
+        (
+            Case::CatalogGeneration,
+            Some(PeerAdmissionRejection::CatalogUnavailable),
+        ),
+        (
+            Case::CatalogDigest,
+            Some(PeerAdmissionRejection::CatalogUnavailable),
+        ),
+        (
+            Case::ExpiredCatalog,
+            Some(PeerAdmissionRejection::CatalogUnavailable),
+        ),
+    ] {
+        let root = tempfile::tempdir()?;
+        let store = RedbStore::open(root.path())?;
+        let peer = PeerId::new("peer-admission-current")?;
+        let target = PeerId::new("peer-admission-target")?;
+        let catalog = milkdrift_peer_protocol::CatalogSnapshot::new(
+            1,
+            1,
+            now().saturating_add(60_000),
+            Vec::new(),
+        )?;
+        let requested_digest = if case == Case::CatalogDigest {
+            milkdrift_peer_protocol::CatalogSnapshot::new(
+                1,
+                2,
+                catalog.expires_at_unix_ms,
+                Vec::new(),
+            )?
+            .digest
+        } else {
+            catalog.digest.clone()
+        };
+        let request = request(
+            &peer,
+            &target,
+            &descriptor()?,
+            if case == Case::CatalogGeneration {
+                2
+            } else {
+                1
+            },
+            requested_digest,
+            "request-admission-current",
+            "invocation-admission-current",
+        )?;
+        let authority = allowed_decision(&peer)?;
+        let boundary = now();
+        let mut relationship = PeerRelationshipState {
+            peer: peer.clone(),
+            generation: 1,
+            enabled: true,
+            expires_at_unix_ms: boundary - u64::from(case == Case::ExpiredRelationship),
+            maximum_active: 1,
+        };
+        store.set_peer_admission_open(true)?;
+        if case != Case::MissingRelationship {
+            store.configure_peer_relationship(&relationship)?;
+        }
+        if !matches!(case, Case::MissingRelationship | Case::MissingCatalog) {
+            store.publish_peer_catalog(&PeerCatalogState {
+                peer: peer.clone(),
+                relationship_generation: 1,
+                generation: 1,
+                digest: catalog.digest.as_str().to_owned(),
+                expires_at_unix_ms: boundary - u64::from(case == Case::ExpiredCatalog),
+            })?;
+        }
+        let relationship_generation = match case {
+            Case::DisabledRelationship | Case::StaleCatalogRelationship => {
+                relationship.generation = 2;
+                relationship.enabled = case != Case::DisabledRelationship;
+                store.configure_peer_relationship(&relationship)?;
+                2
+            }
+            Case::RelationshipGeneration => 2,
+            _ => 1,
+        };
+        let execution = PeerExecutionId::new("execution-admission-current")?;
+        let outcome = store.admit_peer_execution(&PeerAdmission {
+            owner_peer: &peer,
+            request: &request,
+            authority: &authority,
+            execution: &execution,
+            relationship_generation,
+            accepted_at_unix_ms: boundary,
+            maximum_global_active: 1,
+            maximum_dispatch_queue: 1,
+            maximum_hot_terminal_records: 1,
+            archive_batch_size: 1,
+            archive_terminal_before_or_at_unix_ms: 1,
+        })?;
+        if let Some(expected) = rejection {
+            assert!(
+                matches!(outcome, PeerAdmissionOutcome::Rejected(actual) if actual == expected),
+                "unexpected admission result for {case:?}: {outcome:?}"
+            );
+            assert!(store.peer_execution(&peer, &execution)?.is_none());
+            let status = store.peer_execution_status()?;
+            assert_eq!(status.active, 0);
+            assert_eq!(status.dispatch_queued, 0);
+        } else {
+            assert!(matches!(outcome, PeerAdmissionOutcome::Accepted(_)));
+            assert!(store.peer_execution(&peer, &execution)?.is_some());
+            assert_eq!(store.peer_execution_status()?.active, 1);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn atomic_final_slot_and_idempotency_survive_reopen() -> TestResult {
     let root = tempfile::tempdir()?;
     let store = Arc::new(RedbStore::open(root.path())?);

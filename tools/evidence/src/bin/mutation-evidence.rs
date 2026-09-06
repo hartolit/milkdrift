@@ -193,7 +193,19 @@ impl MutationShard {
                     "milkdrift-daemon",
                     "milkdrift-local-process",
                 ],
-                cargo_test_arguments: &[],
+                // These process/model-only harness scenarios configure no peers. Their short
+                // HTTP deadlines caused unrelated failures to hide peer survivors under load.
+                // The full workspace gate and relevant authority/receipt campaigns retain them;
+                // all peer, storage, daemon-peer, and operational contracts stay in this shard.
+                cargo_test_arguments: &[
+                    "--",
+                    "--skip",
+                    "fixture_proves_the_harness_without_claiming_external_qualification",
+                    "--skip",
+                    "fixture_process_and_model_scenario_failures_exit_nonzero",
+                    "--skip",
+                    "fixture_requires_acknowledgement_and_tracked_outputs_are_refused",
+                ],
             },
         }
     }
