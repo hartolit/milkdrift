@@ -1,6 +1,9 @@
 name: targeted mutation evidence
 
 on:
+  push:
+    paths:
+      - ".github/workflows/mutation.yml"
   workflow_dispatch:
   schedule:
     - cron: "13 2 * * 6"

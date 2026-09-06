@@ -140,6 +140,8 @@ Actions use immutable SHAs, jobs have timeouts/read permissions/concurrency limi
 logs remain available on failure. Workflow definitions establish configured lanes, not successful
 execution. Closure requires successful runs on their declared hosts for the source being qualified;
 a local or cross-target check cannot substitute.
+The mutation, benchmark, and stress workflows also run when their own workflow file changes, so
+edits to manual/weekly evidence commands are checked before their next scheduled run.
 
 Deterministic fault/reopen, clock rollback, reservation/artifact, conformance, and corruption tests
 prove software invariants, not filesystem power-loss behavior, sandbox strength, provider service

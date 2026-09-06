@@ -1,6 +1,9 @@
 name: benchmark and operational evidence
 
 on:
+  push:
+    paths:
+      - ".github/workflows/benchmarks.yml"
   workflow_dispatch:
   schedule:
     - cron: "29 3 * * 6"
