@@ -5,11 +5,12 @@ agents, tools, humans, and peer machines. It lets an operator inspect execution,
 revise future work while retaining the history and evidence needed to understand each decision.
 Models and tools run outside the core.
 
-The product is a pre-1.0 headless daemon and CLI. There is no UI or storage migration. Local
-processes run with the daemon account's privileges; they are not sandboxed. Controller final-entry
-resource accounting exists in the libraries, but continuous controller activation remains refused
-pending qualification. Real external interoperability and hosted portability evidence remain
-incomplete; [status](docs/product/status.md) owns the exact versions, limitations, and evidence.
+The pre-1.0 headless kernel is maintainership-ready, with broad architectural cleanup frozen.
+There is no UI or storage migration. Local processes run with the daemon account's privileges;
+they are not sandboxed. Controller final-entry accounting exists in the libraries, but production
+continuous controllers remain unavailable until strict real coding-agent/model qualification.
+[Status](docs/product/status.md) owns exact versions, limitations, and evidence;
+the [roadmap](docs/product/roadmap.md) owns the remaining work.
 
 ## Fresh-directory quick start
 

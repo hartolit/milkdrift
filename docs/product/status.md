@@ -32,7 +32,8 @@ This document owns current implementation, limitations, exact versions, and qual
 - Prompt sequences compile trusted-process coding, verification, review, and remediation stages
   into ordinary revisions on the same daemon/control path.
 - Controller libraries implement durable policy assessment and cumulative accounts across runs and
-  descendants. Final-entry reservations and entry intent commit atomically; artifact publication
+  descendants. Establishment binds the declared originating run. Final-entry reservations and
+  entry intent commit atomically; artifact publication
   and logical-byte charges also commit atomically. Account revisions retain replayable predecessor
   evidence. **The production daemon leaves the controller lifecycle uninstalled** pending a current
   qualifying real external-evidence run.
@@ -97,44 +98,54 @@ values; repository contracts check the version cells against source.
 
 ## Current validation/evidence snapshot
 
-Local Windows/MSVC formatting, all-target/all-feature checking, Clippy, warning-denying rustdoc,
-dependency audits, test discovery, and 21 repository contracts pass. CLI examples parse, and actual
-executables validate bare/relative/absolute configuration paths. The fresh-directory starter,
-ordinary byte-pinned Windows process, verified artifact download, settled restart/replay, and
-ordinary model example against a controlled loopback endpoint pass, as does the headless daemon/CLI
-scenario. Adapter, authority, runtime, context, artifact, and recovery
-contracts provide additional software evidence, not real-provider or power-loss qualification.
+The pre-UI kernel is maintainership-ready. Broad architectural cleanup is frozen under the
+[roadmap](roadmap.md); continuous controller activation remains a separate qualification decision.
 
-The Windows workspace suite at `da53e06` passes 676 tests with five release-only longevity tests ignored and
-run separately. Portable process fixtures use explicit Python/Git prerequisites. The 14 control-plane
-tests, three bounded timeline-observer regressions, and peer transport/resource authorization
-regression pass. All-library public API inventories pass under default and all features, with no
-default test-helper exports.
+Implementation commit `0b251625feec6848e650694ff57e2094c88413b5` passes the complete local Windows/MSVC
+gate: formatting, all-target/all-feature checking, 682 workspace tests, Clippy, warning-denying
+rustdoc, dependency audits, test discovery, and all 21 repository contracts. Five manual longevity
+tests are ignored in the ordinary suite and pass separately in release mode. All 21 library public
+APIs are inventoried under default and all features, with no default test-helper exports.
 
-Release actual-binary headless, deterministic model, and separately managed real-model smoke lanes
-pass. The real endpoint was temporary LM Studio with `prism-ml/bonsai-27b`, thinking disabled and
-explicit response/idle/output bounds. Evidence establishes final text, streamed progress, response
-identity, supplied usage, selected/omitted context, artifact linkage, and duplicate-free restart.
-The controlled post-entry close separately establishes retained uncertainty and unsafe-retry
-refusal. This model-only smoke does not qualify the combined real-agent/model gate. Server
-replacement remains an operator profile change through the [same guide](../guides/local-model-endpoint.md).
+The fresh-directory starter, ordinary byte-pinned Windows process, verified artifact download,
+exact replay/conflict, settled restart, and failure path pass through actual binaries. Release
+headless daemon/CLI evidence and deterministic multiline model evidence also pass. Portable process
+fixtures retain explicit Python/Git prerequisites. These software checks do not qualify filesystem
+power loss or real coding-agent interoperability.
+
+The ordinary model scenario passes against separately managed LM Studio with
+`google/gemma-4-12b-qat`, explicit response/idle bounds, and a 4,096-unit output allowance. Evidence
+establishes final text, streamed progress, supplied response identity/usage, selected and omitted
+context, linked artifacts, and restart without another attempt. A controlled post-entry close
+separately proves retained uncertainty and unsafe-retry refusal. This model-only smoke does not
+qualify the combined real-agent/model gate. Endpoint replacement remains an operator profile change
+through the [same guide](../guides/local-model-endpoint.md).
+
+A bounded Gemma/Bonsai fork/join experiment completes both author branches and preserves exact
+replay/restart. Its Bonsai reviewer reports a length finish at 2,048 output units with no final text;
+the stronger useful-review check therefore fails. The deterministic actual-binary counterpart
+verifies that both distinct author texts reach the reviewer while private response metadata remains
+excluded. Workflow success is not evidence that a model produced a useful review.
 
 Release receipt, peer, controller-lifecycle, controller-admission, historical-frontier longevity,
 projection stress, and effect-worker shutdown proofs pass. Hosted Linux
-[benchmark and operational evidence](https://github.com/hartolit/milkdrift/actions/runs/34021380874)
-passes all twelve scenarios, overload recovery, bounded storage/frontier observations, stream
-reconnection, and graceful shutdown. Hosted [release stress](https://github.com/hartolit/milkdrift/actions/runs/34021380881)
-also passes. Both use commit `2599839`; fresh qualification of the peer recovery progress refusal
-is pending.
+[benchmark and operational evidence](https://github.com/hartolit/milkdrift/actions/runs/34065354712)
+passes all twelve scenarios, overload recovery, bounded storage/frontier observations, a real
+fresh-cursor stream reconnect, and graceful shutdown. Hosted
+[release stress](https://github.com/hartolit/milkdrift/actions/runs/34065354738) also passes at the
+same implementation commit. Windows signal refusal is not counted as graceful-shutdown proof.
 
-Hosted [Linux quality](https://github.com/hartolit/milkdrift/actions/runs/34034194173) and
-[Windows/macOS/Linux platform checks](https://github.com/hartolit/milkdrift/actions/runs/34034194104)
-pass at `da53e06`; Linux runs the full workspace suite and actual daemon/CLI/model scenarios, while
-the platform matrix runs its declared selected suites. Six mutation groups pass with reviewed
-diagnostics and no timeouts. The [peer campaign](https://github.com/hartolit/milkdrift/actions/runs/34032284287)
-at `5e2a297` exposed two test timeouts when an empty recovery frontier incorrectly reported more
-work. These are failed qualification results. The startup progress refusal and its tests now need
-fresh complete qualification. Independent readiness and the architecture freeze remain open.
+Hosted [Linux quality](https://github.com/hartolit/milkdrift/actions/runs/34065354710) and
+[Windows/macOS/Linux platform checks](https://github.com/hartolit/milkdrift/actions/runs/34065354722)
+pass at that commit. Linux quality includes the complete workspace and actual daemon/CLI/model
+scenarios; the platform matrix runs complete workspace checking and its declared selected suites.
+All seven [mutation groups](https://github.com/hartolit/milkdrift/actions/runs/34065354713) complete
+across 15 partitions (656 campaign entries), with 3 exact reviewed classifications, no unclassified
+survivors, no timeouts, and inspected compiler diagnostics. Partition selections match their full
+groups without gaps or overlaps. Separate controller-origin fault injections are caught; the
+[evidence guide](../development/verification-evidence.md) explains constructor exclusions.
+Two retention entries whose early fixture timeouts prevented later owner tests were independently
+requalified by rerunning the exact mutations through the existing storage contract.
 
 [Verification evidence](../development/verification-evidence.md) owns commands, pinned workflows,
 report meaning, and classification rules. Configured workflows are not executed evidence. Raw

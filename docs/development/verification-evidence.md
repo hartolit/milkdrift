@@ -96,6 +96,10 @@ binding, action bounds, exact revision guards, and canonical fingerprints. Cargo
 constructors named `new`; constructor fault injection must be recorded separately from its campaigns.
 
 Retain each `mutants.out` directory with exact source identity, logs, and `outcomes.json`.
+Inspect the actual failing test: an unrelated fixture timeout cannot qualify a caught mutant.
+Cargo may stop at an early failing target before later owner tests run. Recheck each affected exact
+mutation through its relevant owner contracts, using `--cargo-test-arg=--no-fail-fast` when needed,
+and retain both the original failure and the recheck evidence.
 Unclassified survivors and timeouts fail. Fix missing assertions or record an exact reviewed entry
 in [.cargo/mutation-classifications.json](../../.cargo/mutation-classifications.json). Accepted
 classifications are only equivalent behavior, unreachable under a validated public contract, or

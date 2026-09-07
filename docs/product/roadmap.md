@@ -2,18 +2,16 @@
 
 Ordered unfinished work; [status](status.md) owns implementation and evidence facts.
 
-1. **Complete peer mutation qualification.** Finish the complete current-source campaign with
-   the strengthened transport/resource authorization, catalog-filtering, and disconnected-health assertions. Every
-   partition must finish without a timeout or unclassified survivor before independent readiness
-   and the architecture freeze can close; the other hosted qualification checks pass.
-2. **Establish real external interoperability.** Run strict external evidence with an
+1. **Establish real external interoperability.** Run strict external evidence with an
    operator-supplied byte-pinned coding agent and supported model endpoint, private credential
-   sources, and a validated redacted consumer report. Hermetic fixtures cannot close this slice.
-3. **Activate qualified controller admission.** After the final-entry account boundary meets its
-   independent hostile-concurrency, crash/reopen, artifact, compaction, mutation, longevity,
-   operational, full-gate, and real external conditions, install the existing lifecycle through
-   the production composition root. Keep activation refused until then.
+   sources, and a validated redacted consumer report. Hermetic fixtures and model-only smoke runs
+   cannot close this qualification.
+2. **Activate qualified controller admission.** After the final-entry account boundary has current
+   hostile-concurrency, crash/reopen, artifact, compaction, mutation, longevity, operational,
+   full-gate, and qualifying real external evidence, install the existing lifecycle through the
+   production composition root. Keep activation refused until every prerequisite is met.
 
-After independent closure, broad architectural construction stops. Further work needs operation
-and source tracing, a measured defect, or a bounded product requirement. A UI, new provider family,
-or workflow primitive requires separate reviewed authorization.
+Broad architectural cleanup is frozen. Future architectural changes must begin with a measured
+defect, a public operator need, or a violated invariant. Source study and ordinary operation should
+challenge the stable implementation before expansion. A UI, new provider family, or workflow
+primitive requires a separate independently reviewed task with explicit authorization.
