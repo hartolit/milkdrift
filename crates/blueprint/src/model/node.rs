@@ -25,7 +25,14 @@ pub enum TerminalOutcome {
     Cancelled,
 }
 
-/// Private-invariant configuration for an externally executed task.
+/// Declares which capability a task needs and which context it may receive.
+///
+/// Use [`Self::new`] with a [`TaskContextPolicy`] to request earlier evidence, or
+/// [`Self::direct_inputs`] for the default selection. Put the result in
+/// [`NodeKind::Task`] and declare the node's data ports separately. This is definition
+/// data: the host resolves the requirement later, and the runtime applies the policy
+/// for model/process tasks before dispatch. The resulting context manifest records
+/// what was selected for the attempt. See [`TaskContextPolicy`] for a complete example.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskConfig {
@@ -51,7 +58,16 @@ milkdrift_contracts::deserialize_via!(TaskConfig, TaskConfigWire, |wire| Self::n
 .and_then(|config| config.with_output_context_roles(wire.output_context_roles)));
 
 impl TaskConfig {
-    /// Constructs a task from one capability requirement and immutable context policy.
+    /// Attaches an explicit context policy to one capability requirement.
+    ///
+    /// Output roles start empty; [`Self::with_output_context_roles`] tags this task's
+    /// future outputs for other tasks to select. Construction does not resolve a live
+    /// capability or check that the requested historical sources are available.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the capability requirement is invalid or the policy
+    /// cannot be canonically encoded for its digest.
     pub fn new(
         requirement: CapabilityRequirement,
         context_policy: TaskContextPolicy,
@@ -82,7 +98,11 @@ impl TaskConfig {
         Ok(self)
     }
 
-    /// Constructs a task using the deliberate v2 direct-input-only default policy.
+    /// Constructs a task with [`TaskContextPolicy::default`]: direct inputs, no requested
+    /// ancestor history, default budgets/exclusions, fresh-session intent, and required
+    /// context checks enabled. This does not declare the node's data ports or bindings.
+    ///
+    /// Use [`Self::new`] to make a different choice. Errors are the same as for that constructor.
     pub fn direct_inputs(requirement: CapabilityRequirement) -> Result<Self, ModelError> {
         Self::new(requirement, TaskContextPolicy::default())
     }
@@ -93,7 +113,7 @@ impl TaskConfig {
         &self.requirement
     }
 
-    /// Immutable causal context selection policy.
+    /// The task's requested context policy, not the runtime's selected context manifest.
     #[must_use]
     pub const fn context_policy(&self) -> &TaskContextPolicy {
         &self.context_policy

@@ -10,7 +10,15 @@ use milkdrift_workspace::{
 
 use crate::{ModelContractError, document::encode};
 
-/// Current context-manifest schema with materialization digests and exact producer provenance.
+/// Version of the saved selection inside [`ContextManifestDocument`](crate::ContextManifestDocument).
+///
+/// Version 2 records the inputs selected for an attempt, their content digests and sizes,
+/// and the known execution/capability identities that produced them. Materialization uses
+/// those byte facts to detect changed or corrupt content; producer facts let a reader
+/// trace the evidence back to its source. `ContextManifest` deserialization accepts only
+/// this version and verifies its digest. Version 1 is refused because it lacks those
+/// materialization/provenance facts; unknown versions are also refused, not guessed or
+/// migrated. The enclosing model-document version is independent; see [`ContextManifest`].
 const CONTEXT_MANIFEST_SCHEMA_VERSION_V2: u32 = 2;
 const MAX_ENTRIES: usize = 4_096;
 const MAX_OMISSIONS: usize = 4_096;
@@ -631,7 +639,33 @@ pub struct ContextTotals {
     pub model_input_units: Option<u64>,
 }
 
-/// Exact immutable selection used for one invocation attempt.
+/// Records which context was selected for one task attempt and what was omitted.
+///
+/// The runtime applies a blueprint [`TaskContextPolicy`](milkdrift_blueprint::TaskContextPolicy)
+/// and constructs this record before dispatching a model/process task. Each
+/// [`ContextManifestEntry`] identifies the source, content digest and byte counts,
+/// semantic roles, governing revision, and known producer execution, attempt, actor,
+/// capability generation, profile, or peer. These identities distinguish evidence from
+/// different attempts even when the task name is the same. Optional producer fields
+/// remain absent when the source did not record them.
+///
+/// The manifest also carries the consuming run/revision/node/execution/attempt, policy
+/// version and digest, omission reasons, totals, and applied budget. It contains
+/// references and bounded metadata rather than copying every source's content. The
+/// runtime saves its canonical document as a restricted artifact. Materialization loads
+/// selected non-direct sources and checks their digest, size, and media facts before
+/// supplying them to the adapter. A digest detects bytes that contradict the saved
+/// record; it does not grant read authority or establish that the evidence is trustworthy.
+///
+/// # Reading a saved manifest
+///
+/// Use [`ContextManifestDocument::from_json`](crate::ContextManifestDocument::from_json)
+/// and then `body()`. There are two independent `schema_version` fields: the outer model
+/// document envelope is version 1; its `manifest` body is version 2. The body reader
+/// rejects version 1 and every unknown version, validates entries/order/totals, and
+/// recomputes the manifest digest. It never upgrades missing provenance or repairs a
+/// contradictory digest. Invalid body versions surface as decoding errors; unsupported
+/// outer document versions return [`ModelContractError::UnsupportedVersion`].
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextManifest {
@@ -810,7 +844,7 @@ impl ContextManifest {
     pub const fn digest(&self) -> &ContextManifestDigest {
         &self.digest
     }
-    /// Exact manifest schema version.
+    /// Version of this selection body; independent of the enclosing document's version.
     #[must_use]
     pub const fn schema_version(&self) -> u32 {
         self.schema_version

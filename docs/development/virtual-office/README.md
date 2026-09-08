@@ -9,8 +9,8 @@ and findings. [Workflow](../workflow.md#choose-verification-for-the-change) owns
 
 ## Current sprints
 
-- [Documentation clarity](documentation-clarity/README.md): prepared for execution; no rewrite
-  assignment has been completed.
+- [Documentation clarity](documentation-clarity/README.md): phase 01 is ready for review; no
+  rewrite result has been accepted.
 
 ## Start a sprint
 

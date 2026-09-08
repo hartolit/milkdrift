@@ -12,7 +12,19 @@ const MAX_TEXT_BYTES: usize = 1_048_576;
 const MAX_TOOLS: usize = 64;
 const MAX_TOOL_CALLS: usize = 128;
 
-/// Hard provider-neutral ceiling for requested model output units.
+/// Largest output allowance accepted by [`ModelTaskRequest::new`]: 4,000,000 units.
+///
+/// Construction and deserialization reject zero or values above this ceiling with
+/// [`ModelContractError::Invalid`]. Both current model-provider mappings send the
+/// requested allowance as `max_tokens`, so units refer to the endpoint's generated-token
+/// allowance, not bytes or input tokens. Input-text, encoded request, response, and stream
+/// byte limits are checked separately.
+///
+/// This is a shared contract ceiling, not a promise that any endpoint supports it. The
+/// model-provider adapter checks configured features and protocol mappings before HTTP;
+/// it does not discover an endpoint's numeric token limit. The endpoint may reject a
+/// value that passes this constructor. The adapter also uses this ceiling in its declared
+/// authority budget; it is not a measurement of actual usage.
 pub const MAX_MODEL_OUTPUT_UNITS: u64 = 4_000_000;
 
 /// Provider-neutral message role. Adapters must reject roles they cannot map.
@@ -315,7 +327,13 @@ pub struct ReasoningControl {
     pub maximum_units: Option<u64>,
 }
 
-/// Complete provider-neutral model task. Model identity is intentionally absent.
+/// Describes the messages and generation choices for one external model request.
+///
+/// Construct with [`Self::new`], then encode through [`crate::ModelTaskRequestDocument`]
+/// for the reserved [`crate::MODEL_TASK_INPUT_NAME`] invocation input. The resolved
+/// endpoint profile supplies the model identity. Its adapter checks whether it can map
+/// the requested roles, parts, tools, session, reasoning, and streaming choices before
+/// contacting the endpoint. Shared validation here does not prove endpoint support.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelTaskRequest {
@@ -330,7 +348,47 @@ pub struct ModelTaskRequest {
 }
 
 impl ModelTaskRequest {
-    /// Constructs and validates a provider-neutral request.
+    /// Validates messages and generation choices without contacting a model endpoint.
+    ///
+    /// `maximum_output_units` is an inclusive output allowance in
+    /// `1..=MAX_MODEL_OUTPUT_UNITS`, sent as `max_tokens` by the current mappings. It
+    /// neither limits input size nor reserves that many bytes. Set `session` explicitly;
+    /// both current endpoint mappings support only [`SessionSelection::Fresh`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelContractError::Invalid`] for an output allowance of zero or above
+    /// [`MAX_MODEL_OUTPUT_UNITS`], empty or excessive message counts, excessive tool or
+    /// extension counts, duplicate tool names, invalid message/session facts, or a zero
+    /// reasoning-unit cap. Text beyond the per-message-part or aggregate input bound
+    /// returns [`ModelContractError::Bounds`]. No provider request has been made at this
+    /// point; reduce the invalid allowance or input before constructing the request again.
+    ///
+    /// ```
+    /// use std::collections::BTreeMap;
+    /// use milkdrift_model::{
+    ///     ContentPart, MAX_MODEL_OUTPUT_UNITS, Message, MessageRole, ModelContractError,
+    ///     ModelTaskRequest, SessionSelection,
+    /// };
+    ///
+    /// let message = Message::new(
+    ///     MessageRole::User,
+    ///     vec![ContentPart::Text { text: "Summarize the supplied evidence.".to_owned() }],
+    ///     None,
+    /// )?;
+    /// let request_with_limit = |limit| ModelTaskRequest::new(
+    ///     vec![message.clone()], Vec::new(), None, SessionSelection::Fresh,
+    ///     None, limit, false, BTreeMap::new(),
+    /// );
+    /// let request = request_with_limit(512)?;
+    /// assert_eq!(request.maximum_output_units(), 512);
+    /// assert!(matches!(request_with_limit(0), Err(ModelContractError::Invalid(_))));
+    /// assert!(matches!(
+    ///     request_with_limit(MAX_MODEL_OUTPUT_UNITS + 1),
+    ///     Err(ModelContractError::Invalid(_)),
+    /// ));
+    /// # Ok::<(), ModelContractError>(())
+    /// ```
     #[allow(clippy::too_many_arguments)] // Messages, tools, output format, session, and generation bounds are validated as one executable model request.
     pub fn new(
         messages: Vec<Message>,
@@ -380,7 +438,9 @@ impl ModelTaskRequest {
     pub const fn reasoning(&self) -> Option<ReasoningControl> {
         self.reasoning
     }
-    /// Provider input-unit cap for generated output.
+    /// Requested generated-output allowance, sent as `max_tokens` by current adapters.
+    /// This is not an input-token limit, byte limit, or observed usage; see
+    /// [`MAX_MODEL_OUTPUT_UNITS`] for shared bounds and endpoint limitations.
     #[must_use]
     pub const fn maximum_output_units(&self) -> u64 {
         self.maximum_output_units

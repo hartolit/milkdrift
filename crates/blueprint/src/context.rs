@@ -201,7 +201,17 @@ impl ContextArtifactSelector {
     }
 }
 
-/// Hard manifest-selection budgets checked before content is loaded.
+/// Limits how much context the runtime considers and selects for an attempt.
+///
+/// Item counts, non-artifact bytes, artifact bytes, and per-item bytes have separate
+/// ceilings. Discovery and manifest-document limits also apply, so fitting the selected
+/// content budget alone does not guarantee a manifest can be built. Optional items that
+/// do not fit follow [`ContextTruncation`]; required-item handling follows
+/// [`TaskContextPolicy::fail_closed`]. These limits do not bound the final provider HTTP
+/// request or response, which have separate adapter limits.
+///
+/// Start with [`Self::default`] or [`Self::new`], then use
+/// [`Self::with_discovery_limits`] for tighter discovery/materialization bounds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextBudget {
@@ -211,7 +221,9 @@ pub struct ContextBudget {
     pub max_bytes: u64,
     /// Maximum aggregate referenced artifact bytes.
     pub max_artifact_bytes: u64,
-    /// Optional provider-neutral model-input-unit estimate.
+    /// Maximum sum of available model-input-unit estimates; `None` disables this check.
+    /// Missing estimates contribute no units. This is not a tokenizer or a guarantee
+    /// that the resulting request fits a particular model's context window.
     pub max_model_input_units: Option<u64>,
     /// Maximum durable journal records examined while discovering candidates.
     #[serde(
@@ -426,20 +438,108 @@ pub enum ContextTruncation {
     StopAtFirstOverflow,
 }
 
-/// Provider session policy selected at blueprint-definition time.
+/// Declares the task author's intended session behavior.
+///
+/// This choice is part of the policy digest. The current runtime does not translate or
+/// enforce it against an adapter request. For a model task, the separately supplied
+/// `milkdrift_model::SessionSelection` controls the actual request; both current model
+/// endpoint mappings accept only its `Fresh` variant. Selecting continuation here alone
+/// therefore does not arrange a continued session.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextSessionPolicy {
-    /// Send the complete frozen manifest without hidden provider state.
+    /// Request a fresh session using explicitly supplied context (the default).
     #[default]
     Fresh,
-    /// Require an exact continuation reference on each invocation.
+    /// Declare that continuation should use exact prior references.
     ExplicitContinuation,
-    /// Permit an explicitly configured provider-managed session feature.
+    /// Declare intent to use an explicitly configured provider-managed session.
     ProviderManaged,
 }
 
-/// Immutable, declarative context policy owned by a task definition.
+/// Chooses which inputs and earlier results the runtime may consider for a task.
+///
+/// Attach this policy through [`crate::TaskConfig::new`]. When the runtime prepares a
+/// task resolved to a model or process capability, it discovers candidates from bounded
+/// durable history and workspace metadata, applies selection and access checks, and
+/// saves the result as a `milkdrift_model::ContextManifest` before dispatch. The manifest
+/// records selected sources, omissions and their reasons, byte totals, and this policy's
+/// digest. A retry reuses that selection and those omissions under its new attempt ID;
+/// it does not gather newer history. Other capability categories currently skip this
+/// context-building path.
+///
+/// # Defaults and selection
+///
+/// [`Self::default`] considers direct task inputs without requesting ancestor history,
+/// exact sources, or semantic roles. It includes [`ContextCategory::DirectInput`] and
+/// excludes raw progress, tool traces, verbose command output, and prior prompts. It
+/// uses [`ContextBudget::default`], [`ContextTruncation::OmitOversized`],
+/// [`ContextSessionPolicy::Fresh`], and `fail_closed = true`.
+///
+/// [`Self::new`] takes all choices explicitly; it does not add the default exclusions.
+/// Ancestor depth, selected nodes, exact sources, roles, and included categories are
+/// alternative ways to request a candidate, not filters that must all match. Excluded
+/// categories take precedence. An artifact filter narrows candidates categorized as
+/// artifacts; it does not itself include them. A role selects recorded semantic tags,
+/// such as [`ContextSemanticRole::Verification`], rather than words in a task's output.
+///
+/// Requesting a source never grants access to it. Branch-private evidence stays private
+/// unless an explicit data/join/import boundary exposes that result; naming the node or
+/// execution cannot expose a sibling's workspace. Authority and isolation omissions
+/// redact the protected source identity and byte counts. The policy governs context
+/// selection, not task input bindings: omitting a direct input from the manifest does
+/// not remove that input from the invocation.
+///
+/// # Budgets and failures
+///
+/// The runtime orders candidates by causal distance, semantic kind, source node, and
+/// serialized source reference, then applies [`ContextBudget`]. With `OmitOversized`,
+/// an optional item that does not fit is omitted and later items are still considered.
+/// [`Self::fail_closed`] describes required-source failures and the current limitation
+/// of `StopAtFirstOverflow`. Discovery errors or an oversized manifest can prevent
+/// dispatch even when selected content fits. Session intent has separate limitations;
+/// see [`ContextSessionPolicy`].
+///
+/// # Example
+///
+/// Give a review task its direct inputs plus up to two incoming control/data edges of
+/// ancestor evidence. Keep the usual noisy categories excluded and allow at most eight
+/// selected items. This constructs a node definition; a complete revision must also
+/// declare its ports, bindings, and graph edges.
+///
+/// ```
+/// use std::collections::BTreeSet;
+/// use milkdrift_blueprint::{
+///     ContextBudget, ContextOrdering, ContextSessionPolicy, ContextTruncation,
+///     Node, NodeId, NodeKind, TaskConfig, TaskContextPolicy,
+/// };
+/// use milkdrift_capability::{CapabilityRequirement, OperationId};
+///
+/// let defaults = TaskContextPolicy::default();
+/// let policy = TaskContextPolicy::new(
+///     true,                              // Consider direct inputs.
+///     Some(2),                           // Also consider ancestors up to two edges away.
+///     BTreeSet::new(),                    // No additional named nodes.
+///     BTreeSet::new(),                    // No additional roles.
+///     defaults.include_categories().clone(),
+///     defaults.exclude_categories().clone(),
+///     None,                              // No artifact metadata filter.
+///     ContextBudget::new(8, 32_768, 1_048_576, None)?,
+///     ContextOrdering::CausalKindSource,
+///     ContextTruncation::OmitOversized,    // Continue after an optional item does not fit.
+///     ContextSessionPolicy::Fresh,
+///     true,                              // Refuse unavailable required context.
+/// )?;
+/// let config = TaskConfig::new(
+///     CapabilityRequirement::new(OperationId::new("model.generate")?),
+///     policy,
+/// )?;
+/// assert_eq!(config.context_policy().ancestor_depth(), Some(2));
+/// assert_eq!(config.context_policy().budget().max_items, 8);
+/// let node = Node::new(NodeId::new("review")?, NodeKind::Task { config })?;
+/// assert_eq!(node.id().as_str(), "review");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskContextPolicy {
@@ -541,7 +641,21 @@ impl Default for TaskContextPolicy {
 }
 
 impl TaskContextPolicy {
-    /// Constructs a validated policy from explicit semantic facts.
+    /// Constructs a policy from explicit selectors, budgets, and failure/session choices.
+    ///
+    /// Exact execution, workspace, and evidence sets start empty; add them with
+    /// [`Self::with_exact_sources`]. See the [type documentation](Self) for how selectors
+    /// combine and for a task-attachment example.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] for `ancestor_depth = Some(0)`, more than 256 entries in a
+    /// selector set, overlapping included/excluded categories, or invalid budgets.
+    /// Budget validation rejects zero required bounds, more than 65,536 items or candidate
+    /// records, an artifact count above the item limit, an event-summary count above the
+    /// candidate limit, or a manifest limit above 2,097,152 bytes. `Some(0)` is not a valid
+    /// model-input-unit limit. Node existence is checked when the graph is validated;
+    /// source availability and authority are checked during runtime preparation.
     #[allow(clippy::too_many_arguments)] // Selection, ordering, omission, and budget policies are validated together as one immutable selector.
     pub fn new(
         include_direct_inputs: bool,
@@ -576,43 +690,64 @@ impl TaskContextPolicy {
         Ok(policy)
     }
 
-    /// Whether exact declared task inputs are eligible.
+    /// Whether direct inputs have their own inclusion rule.
+    ///
+    /// `false` does not veto other selectors, including the `DirectInput` category.
+    /// Excluding that category prevents manifest selection, but leaves task bindings intact.
     #[must_use]
     pub const fn include_direct_inputs(&self) -> bool {
         self.include_direct_inputs
     }
 
-    /// Maximum incoming graph-edge depth, when ancestry is enabled.
+    /// Maximum incoming control/data-edge depth requested for ancestor discovery.
+    /// `None` disables ancestry as an inclusion rule; other selectors still apply.
+    /// Historical ancestry follows the revision that governed the source execution.
     #[must_use]
     pub const fn ancestor_depth(&self) -> Option<u16> {
         self.ancestor_depth
     }
 
-    /// Explicitly selected semantic node identities.
+    /// Nodes whose discovered evidence may be selected, across execution occurrences.
+    /// Each node must exist in the graph; selection still respects exclusions and visibility.
     #[must_use]
     pub const fn selected_nodes(&self) -> &BTreeSet<NodeId> {
         &self.selected_nodes
     }
 
-    /// Exact execution-occurrence identities selected in addition to semantic nodes.
+    /// Exact execution IDs whose evidence is requested; see [`Self::with_exact_sources`].
     #[must_use]
     pub const fn selected_executions(&self) -> &BTreeSet<String> {
         &self.exact_sources.selected_executions
     }
 
-    /// Exact canonical workspace-value references selected by policy.
+    /// Serialized exact workspace-value references; see [`Self::with_exact_sources`].
     #[must_use]
     pub const fn selected_workspace_values(&self) -> &BTreeSet<String> {
         &self.exact_sources.selected_workspace_values
     }
 
-    /// Explicit bounded durable evidence identities supplied by workflow/operator policy.
+    /// Serialized exact evidence sources; see [`Self::with_exact_sources`].
     #[must_use]
     pub const fn explicit_evidence(&self) -> &BTreeSet<String> {
         &self.exact_sources.explicit_evidence
     }
 
-    /// Adds exact execution, workspace-value, and evidence selectors.
+    /// Replaces all three exact-source sets, leaving the other policy choices intact.
+    ///
+    /// Execution selectors are `milkdrift_persistence::NodeExecutionId` strings.
+    /// Workspace selectors use `serde_json::to_string` on a
+    /// `milkdrift_workspace::WorkspaceValueReference`; evidence selectors serialize a
+    /// `milkdrift_model::ContextSource`. Obtain these references from durable results,
+    /// rather than guessing node names or filesystem paths. These types live outside
+    /// blueprint; this method checks string bounds, while runtime discovery parses and
+    /// resolves their meaning. An empty set clears that kind of exact selection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if any set exceeds 256 entries or a string is empty or
+    /// exceeds 1,024 bytes. Success does not prove that a string is a valid source or
+    /// that its bytes exist or are accessible. Malformed references and executions with
+    /// no discovered durable evidence fail during preparation, even with `fail_closed = false`.
     pub fn with_exact_sources(
         mut self,
         selected_executions: BTreeSet<String>,
@@ -633,13 +768,13 @@ impl TaskContextPolicy {
         Ok(self)
     }
 
-    /// Explicitly selected known semantic roles.
+    /// Recorded output/evidence roles that provide an additional inclusion rule.
     #[must_use]
     pub const fn selected_roles(&self) -> &BTreeSet<ContextSemanticRole> {
         &self.selected_roles
     }
 
-    /// Included semantic categories.
+    /// Categories that provide an additional inclusion rule, independent of ancestor depth.
     #[must_use]
     pub const fn include_categories(&self) -> &BTreeSet<ContextCategory> {
         &self.include_categories
@@ -651,43 +786,60 @@ impl TaskContextPolicy {
         &self.exclude_categories
     }
 
-    /// Optional artifact metadata filter.
+    /// Optional filter for candidates categorized as artifacts; `None` adds no filter.
+    /// A matching artifact still needs an inclusion rule and access permission.
     #[must_use]
     pub const fn artifact_selector(&self) -> Option<&ContextArtifactSelector> {
         self.artifact_selector.as_ref()
     }
 
-    /// Hard selection budget.
+    /// Limits used during discovery, selection, and manifest construction.
     #[must_use]
     pub const fn budget(&self) -> ContextBudget {
         self.budget
     }
 
-    /// Stable ordering policy.
+    /// Ordering used to decide which candidates get the available budget first.
     #[must_use]
     pub const fn ordering(&self) -> ContextOrdering {
         self.ordering
     }
 
-    /// Stable overflow handling.
+    /// Whether selection continues after an item is omitted for exceeding a budget.
     #[must_use]
     pub const fn truncation(&self) -> ContextTruncation {
         self.truncation
     }
 
-    /// Explicit provider-session policy.
+    /// Declared session intent, subject to the limitations on [`ContextSessionPolicy`].
     #[must_use]
     pub const fn session(&self) -> ContextSessionPolicy {
         self.session
     }
 
-    /// Whether unresolved required context rejects dispatch.
+    /// Whether a required candidate fails preparation when it cannot be included.
+    ///
+    /// While selection is active, `true` rejects required eligible candidates that are
+    /// unavailable, denied authority, or over budget. A required exact-source candidate
+    /// also fails if excluded or branch-isolated. Required direct inputs come from task
+    /// port declarations; exact-source discovery can also add required candidates.
+    /// Broad node/role/category selectors do not make every matching candidate required.
+    /// With `false`, those selection failures become omissions, not permission to read
+    /// denied content. Discovery, decoding, and later integrity failures can still stop work.
+    ///
+    /// Current limitation: after [`ContextTruncation::StopAtFirstOverflow`] stops
+    /// selection, later eligible candidates are omitted without checking whether they
+    /// are required. Use [`ContextTruncation::OmitOversized`] when relying on required-item
+    /// checks; do not treat the stop mode as an all-required-sources guarantee.
     #[must_use]
     pub const fn fail_closed(&self) -> bool {
         self.fail_closed
     }
 
-    /// Domain-separated digest of the canonical policy bytes.
+    /// Identifies the complete policy, including budgets, exclusions, and session intent.
+    /// The manifest saves this digest so its selection can be tied to the task definition.
+    /// Canonical JSON makes set ordering irrelevant; encoding beyond the policy's JSON
+    /// bounds returns [`ModelError`].
     pub fn digest(&self) -> Result<ContentDigest, ModelError> {
         let bytes = canonical_json_bytes(self, POLICY_JSON_LIMITS)
             .map_err(|error| ModelError::new("context", format!("{error:?}")))?;

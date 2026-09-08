@@ -1,10 +1,25 @@
-//! Immutable blueprint definitions and revision transactions.
+//! Define a workflow and publish validated, immutable revisions of what it should do.
+//!
+//! Workflow authors and importers build [`Node`]s, ports, and edges, then submit them in
+//! a [`MutationBatch`] to [`BlueprintRevision::genesis`] or to a new revision of an
+//! existing blueprint. Graph validation refuses incompatible bindings, missing targets,
+//! and cycles before a revision is published. This crate defines the program; runtime
+//! scheduling, persistence, capability execution, and authority have separate owners.
 //!
 //! A blueprint is a reusable declarative workflow or subworkflow package. A workflow
 //! gives a top-level blueprint identity and revision lineage. A revision is one
 //! immutable semantic snapshot. Runs and node executions are later runtime concepts;
 //! mutable execution state is never stored on a [`Node`]. Layout is presentation state
 //! and is deliberately absent from semantic identity.
+//!
+//! For an external task, [`TaskConfig`] pairs a capability requirement with a
+//! [`TaskContextPolicy`]. The policy asks for inputs and earlier evidence; the runtime
+//! later records its actual selection in a context manifest. Start with
+//! [`TaskConfig::direct_inputs`] for direct inputs only, or follow the executable
+//! example on [`TaskContextPolicy`] to request bounded ancestor evidence.
+//!
+//! The example below publishes a minimal revision with a success terminal. Larger
+//! revisions use the same mutation/validation path; creating one does not start a run.
 //!
 //! ```
 //! use milkdrift_blueprint::{
