@@ -18,7 +18,11 @@ architecture, or protocol facts.
 - [Development workflow](development/workflow.md) contains build, test, lint, fixture, and focused
   evidence commands.
 - [Engineering rules](development/engineering-rules.md) define standing implementation-quality
-  policy.
+  and documentation policy.
+- [Virtual office](development/virtual-office/README.md) holds temporary sprint assignments and
+  handoffs, with a [whiteboard](development/virtual-office/whiteboard/README.md) for broader issues
+  and discussions that may span sprints. Completed sprint files are removed after useful outcomes
+  are incorporated into maintained documentation.
 - [Verification and operational evidence](development/verification-evidence.md) defines repeatable
   evidence lanes and their limitations.
 

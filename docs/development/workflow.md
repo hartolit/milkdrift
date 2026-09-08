@@ -2,12 +2,54 @@
 
 This document owns build, test, lint, fixture, and focused verification commands.
 Use the exact toolchain in [rust-toolchain.toml](../../rust-toolchain.toml).
-[Engineering rules](engineering-rules.md) owns implementation policy.
+[Engineering rules](engineering-rules.md) owns implementation and documentation policy.
+[Virtual office](virtual-office/README.md) explains how to divide long-running work into temporary,
+limited assignments and remove sprint coordination files after completion. Its
+[whiteboard](virtual-office/whiteboard/README.md) carries broader topics into sprint preparation.
+
+## Choose verification for the change
+
+Choose by what changed, including uncommitted work being integrated, rather than by filename or
+task label. For mixed changes, combine the applicable checks; executable changes require the full
+gate. Review the final diff,
+run `git diff --check`, and report the checks actually run. A discussion or planned experiment
+is not executed evidence.
+
+| Change | Required verification before completion |
+| --- | --- |
+| Prose, planning, policy, or whiteboard notes only | Read for accuracy and consistency, check local links and document structure with the documentation contracts below, and inspect affected Markdown formatting. No full Rust gate is required. |
+| Rust comments, rustdoc, or Rust documentation examples only | The prose checks, `cargo fmt --all -- --check`, affected package doctests, and warning-denying rustdoc. Run relevant owner tests when needed to substantiate a changed behavior explanation or example. |
+| CLI/configuration examples inside documentation | The prose checks plus existing command parsing or production-reader checks for the changed examples. Run the relevant scenario when the claim depends on its execution, and state any unavailable prerequisites. |
+| Executable code, tests, fixtures, manifests/lockfiles, schema/data files, runtime configuration, build scripts, or CI behavior | The full local gate below, plus any relevant focused or evidence suites. |
+
+Documentation checks use the existing repository contract target:
+
+```sh
+cargo test -p milkdrift-evidence --test repository_contracts --all-features documentation::
+```
+
+For Rust documentation, replace `PACKAGE` with each affected package name:
+
+```sh
+cargo test -p PACKAGE --doc --all-features
+RUSTDOCFLAGS='-D warnings' cargo doc -p PACKAGE --all-features --no-deps
+```
+
+Use the PowerShell environment handling below for rustdoc. Maintained CLI examples are checked by
+`cargo test -p milkdrift-cli --all-features documentation::`; repository documentation contracts
+also check maintained example documents through their production readers. A Markdown file used
+as executable input still needs the executable-change checks. New compatibility, security, or
+interoperability claims need the evidence required by their owner, regardless of file type.
+
+For a documentation sprint, workers run the checks for their changed area and the coordinator
+verifies the integrated result. Do not repeat unchanged successful checks at every phase handoff;
+rerun when new changes, failures, or unresolved concerns affect their result. CI keeps its configured
+gate; this policy determines local verification and does not change CI workflows.
 
 ## Full local gate
 
-Run from the repository root. Build the product daemon before isolated application evidence tests
-and the shared process fixture before isolated daemon integration tests:
+When required above, run from the repository root. Build the product daemon before isolated
+application evidence tests and the shared process fixture before isolated daemon integration tests:
 
 ```sh
 cargo build -p milkdrift-daemon --bin milkdrift-daemon \
@@ -17,6 +59,9 @@ cargo build -p milkdrift-daemon --bin milkdrift-daemon \
 The workspace gate also builds these targets. Hermetic external-evidence tests require Python 3
 and Git on the harness's `PATH`; generated verifiers use the resolved absolute Git executable
 because process adapters deliberately clear the child environment.
+On Windows, put a real Python installation before the `WindowsApps` execution aliases on `PATH`.
+The fixture resolves and hashes the interpreter file; an alias can fail executable resolution
+before a scenario starts. Adjust the test shell's `PATH`, not the fixture's identity checks.
 
 ```sh
 cargo fmt --all -- --check
@@ -38,7 +83,8 @@ deny/machete/duplicate-tree audit; pinned CI tool versions are in
 
 ## Focused suites
 
-Select the owning boundary while iterating; a focused pass does not replace the full gate.
+Select the owning boundary while iterating. A focused pass does not replace the full gate for
+changes that require it under the verification policy.
 
 ```sh
 cargo test -p milkdrift-blueprint --test kernel --all-features

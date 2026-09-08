@@ -53,25 +53,21 @@ implementation evidence for current versions.
 - Complete an owned boundary end to end: implementation, refusal paths, tests, docs, and evidence.
 - Prefer deletion, private modules, and narrow visibility. Do not add generic `common`, framework,
   registry, or abstraction layers without a proven multi-owner contract.
-- Keep current facts in canonical docs. Do not add pass diaries, prompt histories, duplicated status
-  pages, or generated inventories to the repository.
+- Keep current facts in canonical docs. Temporary sprint plans, assignments, and progress notes
+  belong in the [virtual office](docs/development/virtual-office/README.md); broader issues and
+  discussions may persist across sprints on its whiteboard. Follow the
+  [scope and findings policy](docs/development/engineering-rules.md#findings-beyond-the-assignment).
+  Elsewhere, do not add pass diaries, prompt histories, duplicated status pages, or generated inventories.
+- Write documentation to explain purpose, use, and consequences in plain language. Follow the
+  [documentation standard](docs/development/engineering-rules.md#7-documentation) for prose,
+  code comments, and package READMEs; naming technical properties is not an explanation.
 - Preserve the current scope freeze: no UI, new provider family, or new workflow primitive until an
   independently reviewed task explicitly authorizes it.
 - Make no support, safety, portability, or interoperability claim that tests or evidence do not
   establish.
-- Before completion, run the full gate:
-
-  ```sh
-  cargo fmt --all -- --check
-  cargo check --workspace --all-targets --all-features
-  cargo test --workspace --all-features --no-fail-fast
-  cargo clippy --workspace --all-targets --all-features -- -D warnings
-  RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps
-  cargo deny check
-  cargo machete
-  cargo tree --workspace --duplicates
-  cargo test --workspace --all-features -- --list
-  ```
+- Before completion, follow the [verification policy](docs/development/workflow.md#choose-verification-for-the-change).
+  Executable changes require the full gate. Prose, planning, and documentation-only changes use
+  the checks specified there; report the checks actually run and any limits on the evidence.
 
 Use `docs/development/workflow.md` for focused suites, evidence lanes, fixture rules, and public-API
 review. `docs/development/engineering-rules.md` owns standing implementation-quality policy.

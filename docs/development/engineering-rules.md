@@ -1,15 +1,16 @@
 # Engineering Rules
 
-**Status:** Standing implementation policy  
-**Use:** Reference this file when asking a contributor or agent to clean up, refactor, or implement code.
+**Status:** Standing engineering and documentation policy
+
+**Use:** Reference this file when asking a contributor or agent to document, clean up, refactor, or implement code.
 
 ## Purpose
 
-This document governs **implementation quality and architectural discipline**. It does not define product goals, domain concepts, or the current system architecture; those belong in the project’s vision and architecture documents.
+This document governs implementation quality, code organization, and useful documentation. Product goals, domain concepts, and the current system architecture belong in the project’s vision and architecture documents.
 
 Its purpose is practical:
 
-> Leave one simple, coherent, complete, and extensible implementation behind.
+> Leave code that works and an explanation that lets the next contributor understand and use it.
 
 A task is not complete because a diff exists or tests pass. It is complete when the intended design is applied throughout its scope, the previous design is removed, and the result is demonstrably better.
 
@@ -21,6 +22,7 @@ A task is not complete because a diff exists or tests pass. It is complete when 
 4. [Compatibility](#4-compatibility)
 5. [Definition of done](#5-definition-of-done)
 6. [Agent execution procedure](#6-agent-execution-procedure)
+7. [Documentation](#7-documentation)
 
 ---
 
@@ -105,7 +107,7 @@ function
   → public trait
 ```
 
-### 1.5 Fully materialize every adopted abstraction
+### 1.5 Apply each shared design throughout its scope
 
 An abstraction is incomplete while equivalent code remains within its declared scope.
 
@@ -389,7 +391,7 @@ A change is complete only when every applicable row is true.
 | Interface | Public APIs are minimal, typed, and do not leak unrelated mechanisms. |
 | Lifecycle | Resources, cancellation, shutdown, and bounds have explicit outcomes. |
 | Evidence | Tests and checks prove the rule and important failure cases. |
-| Documentation | Canonical examples and documentation show only the resulting design. |
+| Documentation | A new reader can explain the purpose, follow a supported use, and understand important limits from the maintained prose, package README, and API docs. Claims match source and tests; links and examples work. See section 7. |
 | Final search | No conflicting implementation remains in the declared scope. |
 
 A change is incomplete when the new and old designs both remain valid paths for the same responsibility.
@@ -403,7 +405,7 @@ A change is incomplete when the new and old designs both remain valid paths for 
 1. Read the relevant implementation, tests, configuration, composition roots, and owning documentation.
 2. Identify the responsibility being changed and its intended owner.
 3. Search the whole workspace for equivalent implementations, callers, defaults, and bypasses.
-4. Define the complete migration scope.
+4. Define the responsibility, expected result, exclusions, checks, and stop condition. Identify likely files to coordinate edits; use the [virtual office](virtual-office/README.md) for sprint assignments.
 5. Choose the simplest complete design and the smallest suitable Rust mechanism.
 
 ### During implementation
@@ -425,3 +427,131 @@ A change is incomplete when the new and old designs both remain valid paths for 
 6. Report what became canonical, what was removed, and what evidence proves completion.
 
 Do not finish merely because the requested edit exists. Finish when one clear, complete, and extensible implementation remains.
+
+For documentation assignments, apply this procedure by tracing the behavior being explained and
+improving its explanation. A documentation task does not authorize code redesign, API renaming,
+new features, or changes to serialized data. If prose and code disagree, establish which is wrong;
+do not describe an accidental implementation as the intended contract. Apply the findings policy below.
+
+### Findings beyond the assignment
+
+Scope follows an assigned responsibility and its acceptance criteria, not a file count. Complete
+necessary corrections, callers, tests, and documentation within that responsibility even when
+the plan did not anticipate them. Update the file list as they are discovered. Coordinate shared
+files with other workers; respect explicit user exclusions and separately assigned ownership.
+A genuine conflict needs a narrow scope decision, not an unfinished result disguised as a new issue.
+
+Use the [whiteboard](virtual-office/whiteboard/README.md) for problems or ideas requiring a broader
+decision, another responsibility, or work excluded by the assignment. Explain the evidence or
+opportunity and why separate attention is useful. Fix ordinary in-scope findings directly.
+Whiteboard contributions are optional; never invent an entry or weaken a deliverable to create one.
+
+An entry is not an established defect, approved design, or automatic dependency. Continue the
+assignment unless a demonstrated problem prevents its correctness or acceptance, and report that
+specific impact. Recording a topic does not lift the product scope freeze. The whiteboard procedure
+owns investigation and carryover; the [office procedure](virtual-office/README.md) owns sprint cleanup.
+
+## 7. Documentation
+
+### 7.1 Explain the work to a reader
+
+Write for a contributor who knows Rust but has not learned Milkdrift's internal vocabulary. For
+operator guides, assume familiarity with a shell, not the implementation. Lead with the problem
+or action, explain how the relevant parts work together, and then introduce the technical detail
+needed to use or change them correctly.
+
+- Use subjects and verbs: say who selects an input, what is stored, and when a request is refused.
+- Explain a necessary technical term where the reader first needs it, or link to its explanation.
+  Keep precise names such as revision, attempt, and context manifest consistent with the owning
+  documents and code. Do not rename APIs merely to simplify prose.
+- Replace strings of properties with behavior and consequences. For example, explain that a retry
+  reuses the previously selected inputs before calling that selection frozen.
+- Include a concrete example when defaults, ordering, authority, or failure behavior would
+  otherwise be hard to understand. Preserve distinctions such as unknown outcome versus failure.
+- Remove repetition and empty claims of simplicity, safety, strictness, or correctness. Keep
+  limits and caveats that affect a reader's decision, and explain why they matter.
+
+Clarity is the goal, not minimum length. A paragraph may be necessary to explain a type; a short
+sentence may be enough for a straightforward accessor. Do not replace jargon with padded prose,
+impose a word count, or mechanically replace every occurrence of a technical word.
+
+### 7.2 Code comments must add understanding
+
+Public types, traits, and substantial functions should let a caller answer the relevant questions
+without reading their implementation:
+
+1. What problem does this solve, and who uses it in the larger operation?
+2. How is a valid value constructed or the operation called? What do the defaults mean?
+3. What do inputs and outputs mean, including units, ordering, ownership, and special values?
+4. Which failures can occur, and what has already happened when they do?
+5. Which related API should the reader use next?
+
+Put shared explanations on the owning type, trait, or module, and link to them from methods.
+Document implementation obligations on traits, especially persistence, cancellation, and error
+behavior. Use `# Errors`, `# Panics`, and examples when relevant rather than adding empty sections.
+Private comments should explain a decision, ordering dependency, surprising constraint, or
+failure consequence. Delete comments that only narrate obvious syntax. Explain test setup when
+its ordering or unusual values are necessary to observe the behavior under test.
+
+For a constant, explain what it measures and where it is enforced. Distinguish a format version,
+an unconditional limit, a default, and a configurable choice. Describe rejection or overflow
+behavior and link to the validating API when useful. If the reason for a particular value is
+unknown, do not invent a performance, security, or provider justification.
+
+The following examples show the expected level of explanation. They are editorial examples,
+not additional contract owners; verify details in source before using them as rustdoc.
+
+| Insufficient comment | What the explanation needs to tell the reader |
+| --- | --- |
+| `Current context-manifest schema with materialization digests and exact producer provenance.` | The version identifies the saved record of inputs selected for an attempt. Explain that the content digests let the host check the bytes it loads, and producer fields identify the execution and capability that supplied the content. State which versions the reader accepts, based on its actual validation. |
+| `Hard provider-neutral ceiling for requested model output units.` | `ModelTaskRequest` rejects a requested output allowance of zero or above `MAX_MODEL_OUTPUT_UNITS`. Explain what is counted: the current adapters send this as the provider's `max_tokens` allowance, not a byte limit. Passing shared validation does not establish what a particular endpoint supports. Do not invent why the numeric ceiling was chosen. |
+| `Immutable, declarative context policy owned by a task definition.` | Explain that `TaskContextPolicy` tells the runtime which inputs and earlier results may be considered for a task. Show how to construct it and attach it to `TaskConfig`, explain the default selection, and distinguish this request from the manifest that records the runtime's actual selection. Explain that selecting a source does not grant access to it. |
+
+A useful opening for the policy type would be:
+
+> Chooses which inputs and earlier results the runtime may consider when preparing a task.
+> Attach the policy to the task's `TaskConfig`. The default considers direct task inputs and
+> does not request ancestor history. Use `TaskContextPolicy::new` to specify additional selection
+> rules and budgets. The runtime applies these rules together with access checks and branch
+> visibility, then records the selected and omitted items in a context manifest for the attempt.
+
+That opening still needs a supported construction example and explanations of consequential
+options. A sentence containing the right domain words does not satisfy this standard by itself.
+
+### 7.3 Give every package an introduction
+
+Every workspace package, including adapters, applications, and development tools, needs a
+`README.md` beside its `Cargo.toml`. It should explain:
+
+- the problem the package solves and who calls or runs it;
+- its responsibility in one concrete operation, with links to adjacent owners;
+- the main entry points and one small, supported use or source trace;
+- important setup, feature choices, failure behavior, and limits relevant to that use;
+- where to find API detail, maintained examples, and the relevant verification commands.
+
+Scale the explanation to the package. An internal helper package can demonstrate a current
+consumer; it need not pretend to be a standalone application. A daemon or CLI README should
+link to the maintained operator setup instead of maintaining a second setup recipe. Name
+development-only features as such.
+
+Library `//!` documentation must also orient readers who arrive through rustdoc: explain purpose,
+main APIs, and a normal use. Keep detailed API behavior in rustdoc and package orientation in the
+README. Share an introduction only when it renders correctly in both places; do not add a macro
+or documentation framework to avoid a few purposeful sentences. The architecture document still
+owns the workspace dependency map, and status still owns current versions and qualification.
+
+### 7.4 Check accuracy and usefulness
+
+Trace explanations through constructors/readers, real callers, and relevant tests. Keep Rust
+examples executable as doctests where practical. Show imports, error handling, and observable
+results; label excerpts or pseudocode. Do not use `ignore` or `no_run` merely to hide a broken
+example. Preserve fixture bytes, wire fields, versions, CLI spellings, and recorded evidence.
+
+Choose checks under the [verification policy](workflow.md#choose-verification-for-the-change).
+Inspect the rendered documentation when links, shared Markdown, or examples change. A clean build
+or `missing_docs` result establishes neither readability nor explanatory value.
+
+Review from the reader's position: can they describe the purpose, make a supported call, explain
+its result, and anticipate a meaningful failure without reverse-engineering the implementation?
+If not, revise the explanation. Update existing documentation where it owns the fact and use the
+[office procedure](virtual-office/README.md) to retain or digest working notes.
