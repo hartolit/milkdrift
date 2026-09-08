@@ -140,6 +140,8 @@ fn valid_acceptance_and_rejection_documents_preserve_one_sequence_authority()
         Err(PersistenceError::InvalidDocument(_))
     ));
 
+    // A saved rejection at sequence zero needs no created run or workspace state:
+    // its receipt/result must remain replayable without manufacturing a run event.
     let rejected_run = RunId::new("run-rejected")?;
     let rejected_command = CommandId::new("command-rejected")?;
     let rejected_receipt = CommandReceipt::new(
@@ -326,6 +328,8 @@ fn atomic_workspace_mutations_exactly_materialize_subworkflow_facts()
         ),
     )?;
 
+    // Every event reference is still present. The extra value isolates the other
+    // half of the contract: no workspace write may lack an introducing event.
     let hidden = WorkspaceValueEntry::initial(
         scope.reference().clone(),
         ValueKey::new("hidden")?,

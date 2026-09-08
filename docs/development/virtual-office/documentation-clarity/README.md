@@ -1,6 +1,8 @@
 # Documentation clarity sprint
 
-Status: phase 01 executed and ready for review; no rewrite result has been accepted.
+Status: phase 01, phase 02's contracts assignment, and phase 03's persistence commit assignment
+are ready for review.
+No rewrite result has been independently accepted.
 
 Make Milkdrift understandable to a contributor learning the code and an operator using the
 applications. Replace compressed jargon with explanations of purpose, use, relationships, and
@@ -54,13 +56,13 @@ inventories under `target/` rather than pasting them here. A README alone does n
 | Phase | Package or document area | State | Reviewed scope / next portion |
 | --- | --- | --- | --- |
 | 01 | Context example in blueprint/model | ready for review | Policy construction/accessors, task attachment, manifest version, output limit, and both package introductions. See the handoff below; remaining APIs are still queued for phase 02. |
-| 02 | `crates/contracts` | queued | — |
+| 02 | `crates/contracts` | ready for review | All current exports, private/test comments, README, and crate introduction reviewed by the worker. Independent acceptance and browser visual inspection remain; see the 02-contracts handoff. |
 | 02 | `crates/capability` | queued | — |
 | 02 | `crates/blueprint` | queued | Include remaining APIs after phase 01. |
 | 02 | `crates/workspace` | queued | — |
 | 02 | `crates/authority` | queued | — |
 | 02 | `crates/model` | queued | Include remaining APIs after phase 01. |
-| 03 | `crates/persistence` | queued | — |
+| 03 | `crates/persistence` | partial; ready for review | `03-persistence-commit`: package introduction and command commit/result/replay path. See the handoff; discovery reads and the remaining persistence ports are still queued. |
 | 03 | `crates/runtime` | queued | Split context, scheduling, reporting, recovery, and structured work. |
 | 03 | `crates/capability-host` | queued | — |
 | 03 | `crates/control` | queued | — |
@@ -215,6 +217,226 @@ Next permitted action: a reviewer checks whether the explanation lets a contribu
 the policy, follow its application, and interpret a limit failure without reading method bodies.
 Acceptance and any subsequent phase assignment remain with that review; this handoff does not
 dispatch further work.
+
+### Phase 02 contracts assignment
+
+Assignment `02-contracts` follows the user's 2026-09-08 request to execute
+[phase 02](02-foundation-packages.md). Codex coordinates and executes the first queued package.
+The explicit request authorizes this next assignment; phase 01 at commit `e93d749` supplies the
+style example, but its independent acceptance remains pending. Reviewer: to be assigned after
+handoff. The whiteboard's context-policy issue is outside this package and is left open.
+
+The reader should be able to compose the JSON checks used by a document owner, interpret a
+structural refusal, and distinguish shared mechanics from the caller's byte limits, schema,
+semantic validation, and digest verification. Include all current exports in
+`crates/contracts/src/lib.rs` and `src/text.rs`, their private implementation/test comments,
+the crate introduction, and a new package README. Trace model document readers, capability
+documents/identities/schema conversion, blueprint digest parsing, and host diagnostic truncation.
+Other foundation packages are consumers for this assignment, not rewrite targets. Preserve
+executable source, visibility, manifests, fixtures, versions, and existing test assertions.
+
+Codex owns Cargo jobs and final diff review. Run contracts unit tests and doctests, model and
+capability contract suites, formatting, warning-denying contracts rustdoc, and documentation
+contracts under the verification policy. Inspect rendered introductions, linked APIs, and
+examples; verify that source and fixture bytes outside comments remain unchanged. Keep raw
+evidence under ignored `target/documentation-clarity/phase02-contracts/`. Stop with this package's
+reviewable handoff and explicit remaining coverage; do not start another package or phase 03.
+
+### Phase 02 contracts handoff
+
+Codex completed the `02-contracts` edits on 2026-09-08 against base commit
+`e93d749753d3e86b8e4fe22a14699a1e1bfbd13c`. This is a documentation-only result awaiting reader
+review, not an independently accepted package. Logs, generated-HTML inspection, final diff,
+working-tree identity, and file hashes belong under ignored
+`target/documentation-clarity/phase02-contracts/`.
+
+Changed and reviewed explanations:
+
+- [Package README](../../../../crates/contracts/README.md) and
+  [crate introduction](../../../../crates/contracts/src/lib.rs): the model document's read/write
+  path, shared checks and caller responsibilities, a supported use with observable output,
+  feature/setup requirements, adjacent owners, and verification commands.
+- In `src/lib.rs`, `validated_string_type!` and its generated `new`/`as_str` explain validator
+  inputs/results, ownership, exact text preservation, serialization, and invoking-package Serde
+  requirements. `deserialize_via!` explains wire decoding, constructor conversion, and both
+  failure boundaries. Both have executable construction/refusal examples.
+- `JsonLimits` and all four fields, `JsonBoundKind` and its variants, `JsonBoundViolation` and
+  its three accessors, and `CanonicalJsonError` and both variants: units, inclusive/zero bounds,
+  encoded versus decoded text, scalar depth, diagnostic-path limits, and caller error mapping.
+- `canonical_json_bytes`, `parse_json_without_duplicates`, `validate_json_value`, and
+  `preflight_json_structure`: order of checks, allocation and total-byte responsibilities,
+  recursive key sorting with preserved array order, decoded duplicate keys, trailing input,
+  first-refusal behavior, and the remaining domain checks. Examples cover sorted output,
+  duplicate escape spellings, byte-limit errors, and preflight/decoded-validation differences.
+- [Text helpers](../../../../crates/contracts/src/text.rs): `truncate_utf8` retains its useful
+  longest-borrowed-prefix explanation and adds zero/multibyte behavior and examples.
+  `is_canonical_blake3_digest` retains its exact-spelling and owner-boundary introduction and
+  adds content-verification responsibility, case/whitespace refusals, and an example.
+
+The existing `JsonBoundKind` string/key/array/object variant descriptions, `JsonBoundViolation::kind`,
+and `CanonicalJsonError::Bounds` were already sufficient under their expanded owning types and
+were retained. Private JSON sorting/validation, visitor methods, text implementation, and all six
+unit tests were inspected. Three ordinary comments now explain encoded-byte counting, checking
+duplicates before map insertion can replace a value, and why the depth test's scalar matters.
+Straightforward traversal, primitive visitor conversions, and remaining test setup needed no
+extra narration; no existing test assertions changed. There are no additional source files or
+unreviewed exports in the current contracts package.
+
+The behavioral trace includes [model readers and error mapping](../../../../crates/model/src/document.rs),
+[capability documents](../../../../crates/capability/src/document.rs),
+[capability bounds](../../../../crates/capability/src/bounded.rs),
+[identity construction](../../../../crates/capability/src/identity.rs),
+[`SchemaContract` wire conversion](../../../../crates/capability/src/descriptor.rs),
+[blueprint digest parsing](../../../../crates/blueprint/src/identity.rs), and
+[host diagnostic truncation](../../../../crates/capability-host/src/adapter.rs). These consumers
+were read for evidence and remain unchanged; this handoff claims no broader package coverage.
+
+Two misleading descriptions were documentation drift: the old depth field mentioned only
+containers although validation and its existing test also count scalar children, and the old
+violation introduction promised a precise location although preflight always returns `$` and
+decoded key paths are unescaped diagnostics. The revised docs and executable examples reflect
+those established behaviors. No new unresolved implementation finding was identified.
+
+Executed checks:
+
+| Check | Result / log in the phase 02 contracts target directory |
+| --- | --- |
+| `cargo fmt --all -- --check` | Passed; `format.log`. |
+| `cargo test -p milkdrift-contracts --all-features` | 6 unit tests and all 8 new doctests passed; `contracts.log`. |
+| Model and capability `contracts` targets, all features | 4 model and 7 capability tests passed, including golden bytes, invalid shape/version, and constructor refusal; `consumer-contracts.log`. |
+| Contracts rustdoc, all features, no dependencies, `RUSTDOCFLAGS=-D warnings` | Passed; `rustdoc.log`. Previous environment value restored. |
+| Source and fixture preservation | Both changed Rust files have identical nonblank, non-line-comment source to HEAD; all 10 capability/model fixtures are byte-identical; `source-and-fixtures.log`. |
+| Generated HTML inspection | Read all 13 crate/public-item introduction blocks and verified 35 local documentation links/anchors; `generated-html.log`. |
+| Repository `documentation::` contracts, all features | 8 tests passed, including local links, Markdown structure, source-derived versions, and maintained example readers; `documentation-contracts.log`. |
+| Final diff review and `git diff --check` | Scoped documentation-only diff reviewed; whitespace check passed; `final-diff-check.log`. |
+
+The browser security policy blocked the local-file rustdoc URL. Generated HTML content and links
+were inspected directly, and Markdown structure was reviewed, but this is not browser visual
+evidence. Browser visual inspection remains a review action. No full executable gate was run
+because implementation, manifests, test assertions, fixtures, and schema data are unchanged.
+
+Next permitted action: review whether a contributor can compose the shared checks, explain the
+sorted output and a refusal, and identify the caller's remaining obligations. The current
+contracts package has no remaining source portion to rewrite; acceptance and browser visual
+inspection remain. Capability is the next queued package for a separate bounded phase 02
+assignment. Blueprint, workspace, authority, and model retain their queued portions, including
+the phase 01 exclusions. No other package or phase 03 was started.
+
+### Phase 03 persistence commit assignment
+
+Assignment `03-persistence-commit` follows the user's 2026-09-08 request to execute
+[phase 03](03-execution-packages.md). Codex coordinates and executes the first queued execution
+package's command commit and replay portion. The explicit request authorizes this assignment;
+phase 01 at `e93d749` supplies the style example, with independent acceptance still pending.
+Reviewer: to be assigned after handoff. The whiteboard's context-policy topic does not affect
+this storage contract. Existing uncommitted phase 02 contracts edits are preserved.
+
+The reader should be able to follow a runtime command into an atomic storage request, identify
+which facts commit together, and recover a saved result after an ambiguous storage error without
+mistaking command replay for permission to repeat external work. Include the persistence README,
+crate introduction, journal receipt/result and commit contracts, related error guidance, and
+consequential private/test comments on this path. Inspect adjacent query, artifact, snapshot,
+account, runtime, and redb owners as evidence. Detailed discovery, workspace provenance, artifact
+streaming, snapshots, application/peer ports, controller transitions, and event families remain
+separate portions. No executable behavior, API names/visibility, manifests, fixtures, or claims
+of qualification may change.
+
+Codex owns Cargo jobs and integrated diff review. Run persistence tests/doctests, redb command
+replay and fault-boundary tests, relevant runtime restart/denial tests, formatting,
+warning-denying persistence rustdoc, and documentation contracts. Inspect rendered introductions,
+examples, links, and the final diff; retain raw logs and source/fixture preservation checks under
+ignored `target/documentation-clarity/phase03-persistence-commit/`. Stop with the reviewed portion,
+evidence, unresolved findings, and next portion to assign. Do not start another package or phase 04.
+
+### Phase 03 persistence commit handoff
+
+Codex completed `03-persistence-commit` on 2026-09-08 against base commit
+`e93d749753d3e86b8e4fe22a14699a1e1bfbd13c`, with the pre-existing phase 02 contracts changes retained.
+This portion is ready for independent reader review; the whole persistence package is not
+complete. Logs, final file hashes, tracked diff, and working-tree identity are under ignored
+`target/documentation-clarity/phase03-persistence-commit/`.
+
+The reader can now follow run creation into a storage request, explain why its event, root scope,
+input values, usage, discovery summary, and response must save together, and distinguish a durable
+rejection from a storage error after commit. The receipt example demonstrates identical intent
+with changed delivery metadata and a different fingerprint for changed intent. Recovery guidance
+uses the saved result and its fingerprint or exact redelivery; it does not authorize another
+external attempt.
+
+Changed and reviewed scope:
+
+- [Package README](../../../../crates/persistence/README.md) and
+  [crate introduction](../../../../crates/persistence/src/lib.rs): purpose, run-creation trace,
+  storage-facing entry points, constructor versus commit, publication/checkpoint ordering,
+  lost responses, feature/setup requirements, and relevant verification.
+- [Receipt and result](../../../../crates/persistence/src/journal/receipt.rs): both receipt
+  constructors, identity/audit/intent accessors, fingerprint example, result construction,
+  authorization retention, sequence interpretation, canonical writing, and versioned reading.
+  The result reader's field checks are distinguished from the writer's generic JSON structure
+  check. Straightforward identity, disposition, event-ID, and payload accessors were inspected
+  and retained where the owning explanation supplies their context.
+- [Commit contract](../../../../crates/persistence/src/journal/commit.rs): workspace mutation
+  and accounting obligations, `RunIndexUpdate`, `AtomicRunCommitRequest` construction and both
+  attachments, `AtomicRunCommitOutcome`, and all `RunJournal` methods. Existing field/accessor
+  descriptions and the lease guard were inspected for this commit path and retained. Detailed
+  index discovery and scheduling remain separate coverage.
+- [Journal constants](../../../../crates/persistence/src/journal.rs) and
+  [related errors](../../../../crates/persistence/src/error.rs): which lists/bytes are bounded,
+  where refusal occurs, internal versus authorization-bearing result formats, conflicts,
+  publication recovery, and the limits of storage-failure classifications. Unrelated application,
+  peer, artifact-read, and administrative error variants remain for their owning portions.
+- Private receipt validation/fingerprinting, result decoding/building, request validation and
+  index validation were read. One private comment now explains why exact workspace/event equality
+  also prevents hidden writes. Two
+  [test comments](../../../../crates/persistence/tests/contracts/atomic_commands.rs) explain the
+  zero-event rejection and hidden-value setup. Other straightforward validation needed no narration;
+  executable source and assertions are unchanged.
+
+The source trace includes [runtime receipt construction](../../../../crates/runtime/src/command.rs),
+[accepted/rejected commit planning](../../../../crates/runtime/src/engine/command_planning/commit.rs),
+[redb append/replay and guards](../../../../adapters/redb-store/src/journal/append.rs), and the
+adjacent [query](../../../../crates/persistence/src/journal/query.rs),
+[artifact](../../../../crates/persistence/src/artifact.rs),
+[snapshot](../../../../crates/persistence/src/snapshot.rs), and
+[account transaction](../../../../adapters/redb-store/src/controller_account.rs) owners.
+ADRs [0003](../../../decisions/0003-redb-transactions-and-content-addressed-artifacts.md) and
+[0004](../../../decisions/0004-side-effects-retries-and-uncertain-outcomes.md) supply the intended
+transaction and uncertainty boundaries. Those adjacent packages were evidence sources, not
+rewrite targets.
+
+The old crate introduction's blanket “schema-v1” description and the result constant's “current”
+label were documentation drift: the existing readers, writers, and golden tests establish the
+current event format and separate internal/authorized result forms. The updated introductions
+defer exact current versions to their owners. No schema, compatibility, durability, or
+interoperability qualification changed, and no new unresolved implementation finding was
+established in this portion.
+
+Executed checks:
+
+| Check | Result / log in the phase 03 persistence commit target directory |
+| --- | --- |
+| `cargo test -p milkdrift-persistence --all-features` | 48 unit/integration tests and 3 doctests passed, including the new receipt example and two existing compile-fail examples; `persistence.log`. |
+| Redb `contracts` exact-name filters, all features | One command fault-boundary test and one reopen/replay/conflict test passed; `redb-faults.log`, `redb-replay.log`. The first injects failure before and after commit; the second reads retained history after reopening. |
+| Runtime `durable_runtime`, all features | 8 tests passed, including full object teardown/recovery and durable authority denial without reevaluation on replay; `runtime-durable.log`. |
+| Warning-denying persistence rustdoc, all features, no dependencies | Passed; final text in `rustdoc-final.log`. Previous `RUSTDOCFLAGS` restored. |
+| Repository `documentation::` contracts, all features | 8 tests passed; `documentation-contracts.log` and final handoff check in `documentation-contracts-final.log`. |
+| Formatting and final diff checks | `cargo fmt --all -- --check` and `git diff --check` passed; `format.log`, `final-checks.log`. |
+| Source and fixture preservation | All six changed Rust files retain identical nonblank, non-line-comment source to HEAD; all 25 persistence fixtures are byte-identical; `source-and-fixtures.log`. |
+| Rendered documentation | Browser inspection of the crate introduction, `RunJournal`, receipt example, atomic request, saved result, and a rustdoc-rendered README; `browser-review.log`. The crate-to-trait link navigated correctly; repository contracts check README source links. |
+
+No full executable gate was run because the changes are prose, Rust documentation, and comments
+only. These checks support the described software boundaries; they do not qualify filesystem
+power loss, remote interoperability, or exactly-once external work. Browser review is the worker's
+visual check, not independent acceptance.
+
+Next permitted action: independently review whether a contributor can construct a receipt,
+follow the accepted and rejected commit paths, identify which state must be atomic, and recover
+an ambiguous command result. Then assign persistence's bounded journal/discovery reads and their
+recovery consumers. Remaining portions also include detailed workspace provenance, artifact
+publication/reads, snapshots, revisions, event/identity documents, application/peer ports,
+controller accounts, clock, and administration. Existing historical-version labels in the event
+and peer introductions need review in those portions. Runtime, capability-host, control, and
+prompt-sequence remain queued. No additional package or phase 04 was started.
 
 ## Completion criteria
 

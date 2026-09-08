@@ -14,11 +14,18 @@ use crate::{
     bounded::MAX_EVENTS_PER_COMMIT,
 };
 
-/// Exact canonical runtime command receipt used for durable idempotency.
+/// Identifies a runtime command so storage can recognize a repeated delivery.
 ///
-/// Persistence does not interpret runtime transitions. It retains the complete audit
-/// document, the canonical semantic intent, and their derived fingerprint so a repeated
-/// [`CommandId`] can be proven identical or conflicting across delivery retries.
+/// The runtime supplies a complete audit document and the intent whose meaning must
+/// stay unchanged across retries. Storage retains both and compares the fingerprint
+/// for the same `(run, command)` before checking a new delivery's expected sequence.
+/// This lets a lost response be recovered without appending the command's events again.
+///
+/// Use [`Self::new`] when every document byte belongs to the intent. Runtime callers
+/// use [`Self::new_idempotent`] to separate delivery metadata from intent. Both check
+/// canonical JSON, but neither checks runtime command meaning or evaluates authority.
+/// Construction writes nothing; include the receipt in an
+/// [`AtomicRunCommitRequest`](crate::AtomicRunCommitRequest).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandReceipt {
     command: CommandId,
@@ -54,7 +61,12 @@ fn validate_canonical_command_bytes(
 }
 
 impl CommandReceipt {
-    /// Constructs a receipt from a runtime-owned canonical command document.
+    /// Uses the same canonical JSON bytes for audit and intent.
+    ///
+    /// Any change to those bytes changes the fingerprint. The separate
+    /// `expected_sequence` and `submitted_at` arguments are retained metadata; they
+    /// affect the fingerprint only if the caller also includes them in the document.
+    /// See [`Self::new_idempotent`] for byte requirements and errors.
     pub fn new(
         command: CommandId,
         run: RunId,
@@ -74,12 +86,64 @@ impl CommandReceipt {
         )
     }
 
-    /// Constructs a receipt whose idempotency fingerprint is bound to a canonical semantic
-    /// intent document rather than retry-local delivery metadata.
+    /// Separates the complete audit document from the intent used to identify retries.
     ///
-    /// The complete command document is still retained for audit. Runtime callers use this
-    /// constructor so an exact command can be retried at a newer optimistic sequence or
-    /// timestamp without turning the same [`CommandId`] into a false conflict.
+    /// The fingerprint binds `command`, `run`, `actor`, and `canonical_intent`, with
+    /// length framing and a domain separator. It excludes `expected_sequence`,
+    /// `submitted_at`, and `canonical_document`. The runtime may therefore replan the
+    /// same intent at a newer sequence after a conflict. If storage already saved a
+    /// result, it returns that first result and keeps the original audit document.
+    ///
+    /// The caller must include every fact that changes command meaning in the intent,
+    /// including any authority claim. Persistence cannot infer those facts or check
+    /// that the two documents agree. This constructor does not relax an external
+    /// protocol's complete-request idempotency rules.
+    ///
+    /// # Errors
+    ///
+    /// Each document must contain `1..=MAX_COMMAND_DOCUMENT_BYTES` bytes of compact,
+    /// recursively key-sorted JSON. Empty/oversized inputs return
+    /// [`PersistenceError::Bounds`]; malformed JSON returns [`PersistenceError::Json`].
+    /// Noncanonical bytes, including whitespace or duplicate keys, are refused, as are
+    /// documents that exceed the persistence JSON structure limits. No bytes are saved.
+    ///
+    /// # Example
+    ///
+    /// This storage-facing example uses a small illustrative intent, not a runtime
+    /// command wire document. The runtime owns production command encoding.
+    ///
+    /// ```
+    /// use milkdrift_authority::ActorRef;
+    /// use milkdrift_persistence::{CommandId, CommandReceipt, RunSequence, TimestampMillis};
+    /// use milkdrift_workspace::RunId;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let command = CommandId::new("command:pause")?;
+    /// let run = RunId::new("run:example")?;
+    /// let actor = ActorRef::new("human:operator")?;
+    /// let first = CommandReceipt::new_idempotent(
+    ///     command.clone(), run.clone(), actor.clone(),
+    ///     RunSequence::new(4), TimestampMillis::new(100),
+    ///     br#"{"delivery":100,"type":"pause"}"#.to_vec(),
+    ///     br#"{"type":"pause"}"#.to_vec(),
+    /// )?;
+    /// let redelivery = CommandReceipt::new_idempotent(
+    ///     command.clone(), run.clone(), actor.clone(),
+    ///     RunSequence::new(7), TimestampMillis::new(200),
+    ///     br#"{"delivery":200,"type":"pause"}"#.to_vec(),
+    ///     br#"{"type":"pause"}"#.to_vec(),
+    /// )?;
+    /// assert_eq!(first.fingerprint(), redelivery.fingerprint());
+    /// assert_ne!(first.canonical_document(), redelivery.canonical_document());
+    ///
+    /// let changed = CommandReceipt::new(
+    ///     command, run, actor, RunSequence::new(7), TimestampMillis::new(200),
+    ///     br#"{"type":"resume"}"#.to_vec(),
+    /// )?;
+    /// assert_ne!(first.fingerprint(), changed.fingerprint());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn new_idempotent(
         command: CommandId,
         run: RunId,
@@ -138,13 +202,14 @@ impl CommandReceipt {
         &self.actor
     }
 
-    /// Optimistic guard supplied by the runtime.
+    /// Journal head the runtime planned against; checked only for a new command.
     #[must_use]
     pub const fn expected_sequence(&self) -> RunSequence {
         self.expected_sequence
     }
 
-    /// Boundary-clock receipt timestamp.
+    /// Caller-supplied receipt time in milliseconds since the Unix epoch.
+    /// This type stores the observation; it does not read or advance a clock.
     #[must_use]
     pub const fn submitted_at(&self) -> TimestampMillis {
         self.submitted_at
@@ -166,7 +231,7 @@ impl CommandReceipt {
         &self.canonical_intent
     }
 
-    /// Domain-separated command fingerprint.
+    /// Digest binding command, run, actor, and canonical intent for replay comparison.
     #[must_use]
     pub const fn fingerprint(&self) -> &IntegrityDigest {
         &self.fingerprint
@@ -183,7 +248,17 @@ pub enum CommandDisposition {
     Rejected,
 }
 
-/// Fully durable typed result returned for exact command redelivery.
+/// Response that storage retains with a command receipt and returns on redelivery.
+///
+/// The runtime supplies the disposition, ordered event IDs, resulting sequence, and
+/// bounded result payload. [`crate::AtomicRunCommitRequest::new`] checks them against
+/// the receipt and actual proposed append. Constructing or decoding this value does
+/// not prove that any command has committed; retrieve that evidence through
+/// [`crate::RunJournal::command_result`] or [`crate::RunJournal::commit_command`].
+///
+/// External results carry the original authority decision. Replay returns that
+/// decision and payload without reevaluating authority. A durable rejection has no
+/// events; it is still a saved result, unlike a storage error.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommandResultDocument {
@@ -245,7 +320,19 @@ impl<'de> Deserialize<'de> for CommandResultDocument {
 }
 
 impl CommandResultDocument {
-    /// Constructs the exact result retained by the idempotency record.
+    /// Constructs a version 1 result for an internal command, without authorization.
+    ///
+    /// Use [`Self::new_authorized`] for an external command. `event_ids` must be in
+    /// append order and `resulting_sequence` must name the resulting journal head;
+    /// the enclosing commit checks that correspondence. `result` is the runtime's
+    /// response payload, not event or artifact content.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PersistenceError::Bounds`] above [`MAX_EVENTS_PER_COMMIT`] event IDs.
+    /// Duplicate IDs, accepted results without events, and rejected results with
+    /// events return [`PersistenceError::InvalidDocument`]. Persistence has not yet
+    /// checked these IDs against stored history or written a result.
     pub fn new(
         command: CommandId,
         run: RunId,
@@ -268,7 +355,14 @@ impl CommandResultDocument {
         )
     }
 
-    /// Constructs an authorization-bearing external command result.
+    /// Constructs a version 2 result retaining the external authority decision.
+    ///
+    /// The caller evaluates authority before constructing this record and supplies
+    /// the exact decision used for this command, including a denial when applicable.
+    /// This method checks document shape; it does not authorize execution or establish
+    /// that the decision belongs to the supplied command. See [`Self::new`] for
+    /// event/sequence inputs and their errors. Serialization retains the decision so
+    /// redelivery can return it even after current authority changes.
     #[allow(clippy::too_many_arguments)] // External results bind exact command identity and disposition to event identities, sequence, payload, and authorization.
     pub fn new_authorized(
         command: CommandId,
@@ -371,7 +465,8 @@ impl CommandResultDocument {
         self.disposition
     }
 
-    /// Authoritative journal sequence after the original result.
+    /// Journal head after the original command, which may precede today's head.
+    /// A rejected result retains the receipt's expected sequence and adds no events.
     #[must_use]
     pub const fn resulting_sequence(&self) -> RunSequence {
         self.resulting_sequence
@@ -395,12 +490,32 @@ impl CommandResultDocument {
         self.authorization.as_ref()
     }
 
-    /// Serializes recursively key-sorted canonical compact JSON.
+    /// Encodes compact, recursively key-sorted JSON for storage or exact comparison.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if encoding exceeds [`MAX_COMMAND_RESULT_DOCUMENT_BYTES`] or
+    /// the persistence JSON structure limits, or if serialization fails. This method
+    /// only returns bytes; it does not commit them.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, PersistenceError> {
         crate::document::canonical_json_bytes(self, MAX_COMMAND_RESULT_DOCUMENT_BYTES)
     }
 
-    /// Decodes, version-checks, and revalidates a persisted command result.
+    /// Reads a version 1 internal or version 2 authorization-bearing result.
+    ///
+    /// Version 1 must omit authorization; version 2 must contain it. The reader
+    /// accepts noncanonical formatting and revalidates shape, nested documents, and
+    /// event-ID constraints. Use [`Self::to_canonical_json`] for canonical bytes;
+    /// storage separately verifies the result against its receipt and journal.
+    ///
+    /// # Errors
+    ///
+    /// Refuses documents above [`MAX_COMMAND_RESULT_DOCUMENT_BYTES`], duplicate keys,
+    /// malformed JSON, unknown fields, and inconsistent result contents. Nested fields
+    /// enforce their own readers' bounds; this does not run the writer's generic JSON
+    /// structure check.
+    /// Unsupported numeric versions return [`PersistenceError::UnsupportedVersion`];
+    /// malformed fields or nested documents also fail rather than being ignored.
     pub fn from_json(bytes: &[u8]) -> Result<Self, PersistenceError> {
         if bytes.len() > MAX_COMMAND_RESULT_DOCUMENT_BYTES {
             return Err(PersistenceError::Bounds {

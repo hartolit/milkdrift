@@ -1,8 +1,51 @@
-//! Low-level deterministic JSON and lexical mechanics shared by durable contract owners.
+//! Check and encode JSON using the mechanics shared by Milkdrift's document owners.
 //!
-//! This crate deliberately owns no workflow identities, schema versions, error policy,
-//! or business limits. Domain crates supply those policies explicitly and map violations
-//! into their own stable error classifications.
+//! A model request reader, for example, checks its total input-byte limit, calls
+//! [`preflight_json_structure`], [`parse_json_without_duplicates`], and
+//! [`validate_json_value`], then checks the version and deserializes a validated request.
+//! This crate supplies the middle three steps. The document owner supplies [`JsonLimits`],
+//! the total byte limit, accepted fields and versions, and the meaning of the result.
+//!
+//! For writing, [`canonical_json_bytes`] sorts object keys recursively and produces compact
+//! JSON while preserving array order. Owners use those bytes in their own documents and
+//! digest calculations, and check the total encoded length separately. Shared checks do
+//! not make a JSON value a valid workflow, model request, or authorized operation.
+//!
+//! This example uses illustrative limits to read and re-encode a small value. Its error
+//! mapping is deliberately local; a production owner maps failures to its contract errors.
+//!
+//! ```
+//! use milkdrift_contracts::{
+//!     JsonLimits, canonical_json_bytes, parse_json_without_duplicates,
+//!     preflight_json_structure, validate_json_value,
+//! };
+//!
+//! let limits = JsonLimits {
+//!     maximum_depth: 4,
+//!     maximum_string_bytes: 64,
+//!     maximum_key_bytes: 32,
+//!     maximum_container_items: 8,
+//! };
+//! let input = br#"{"z":[2,1],"a":"ok"}"#;
+//! let maximum_document_bytes = 256;
+//! if input.len() > maximum_document_bytes {
+//!     return Err("document too large".to_owned());
+//! }
+//! preflight_json_structure(input, limits).map_err(|error| format!("{error:?}"))?;
+//! let value = parse_json_without_duplicates(input).map_err(|error| error.to_string())?;
+//! validate_json_value(&value, limits).map_err(|error| format!("{error:?}"))?;
+//! let bytes = canonical_json_bytes(&value, limits).map_err(|error| format!("{error:?}"))?;
+//! assert!(bytes.len() <= maximum_document_bytes);
+//! assert_eq!(bytes, br#"{"a":"ok","z":[2,1]}"#);
+//! assert!(parse_json_without_duplicates(br#"{"a":1,"a":2}"#).is_err());
+//! # Ok::<(), String>(())
+//! ```
+//!
+//! [`validated_string_type!`] and [`deserialize_via!`] help callers use their own validators
+//! during Serde deserialization. [`is_canonical_blake3_digest`] checks digest spelling;
+//! [`truncate_utf8`] shortens text to a byte allowance. Neither helper owns the caller's
+//! digest calculation, diagnostic policy, or business limits. This package has no feature
+//! flags and requires no daemon, storage, or provider setup.
 
 use std::{collections::BTreeSet, fmt};
 
@@ -16,11 +59,48 @@ mod text;
 
 pub use text::{is_canonical_blake3_digest, truncate_utf8};
 
-/// Defines a private-storage validated string newtype while leaving validation and errors
-/// in the invoking domain.
+/// Define a string wrapper whose constructor and Serde reader use the same caller-owned check.
 ///
-/// The validator expression receives `(&str, &'static str)` and returns the declared error.
-/// Domain crates may add conversions that are meaningful at their own API boundary.
+/// Invoke this at module scope with the type's documentation, visibility, error type, and
+/// validator. The validator receives `(&str, &'static str)`: the supplied text and the
+/// generated type name for diagnostics. It must return `Result<(), E>` for the declared
+/// error type `E`, which must implement [`fmt::Display`] for Serde error conversion.
+/// The caller chooses length, character, namespace, and other rules; no rule is implicit.
+///
+/// The generated type stores an owned `String` in a private field. `new` validates without
+/// changing the text, and `as_str` borrows it. Display and serialization expose the text;
+/// deserialization reads a string and calls `new`, reporting validation errors through
+/// Serde. Equality, hashing, and ordering use the stored string. This is unsuitable for
+/// secrets requiring redacted Display or Debug. Add domain-specific conversions separately;
+/// the macro does not implement `FromStr` or `TryFrom`.
+///
+/// The invoking package needs a dependency named `serde`, which the expansion references.
+/// Define real domain identities in their owning package, as capability does for its IDs.
+///
+/// ```
+/// use milkdrift_contracts::validated_string_type;
+///
+/// validated_string_type! {
+///     /// Name accepted by this example's caller.
+///     pub struct ShortName;
+///     error = &'static str;
+///     validate = |value: &str, _kind: &'static str| {
+///         if value.is_empty() || value.len() > 8 {
+///             Err("name must contain 1..=8 UTF-8 bytes")
+///         } else {
+///             Ok(())
+///         }
+///     };
+/// }
+///
+/// let name = ShortName::new("review")?;
+/// assert_eq!(name.as_str(), "review");
+/// assert_eq!(serde_json::to_string(&name)?, r#""review""#);
+/// assert_eq!(serde_json::from_str::<ShortName>(r#""review""#)?, name);
+/// assert!(ShortName::new("").is_err());
+/// assert!(serde_json::from_str::<ShortName>(r#""""#).is_err());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[macro_export]
 macro_rules! validated_string_type {
     (
@@ -34,14 +114,17 @@ macro_rules! validated_string_type {
         $visibility struct $name(String);
 
         impl $name {
-            /// Constructs and validates the identity.
+            /// Owns the supplied text after applying this type's validator.
+            ///
+            /// Returns the validator's error if the text is refused; accepted text is
+            /// stored exactly as supplied, without trimming or normalization.
             pub fn new(value: impl Into<String>) -> Result<Self, $error> {
                 let value = value.into();
                 ($validator)(&value, stringify!($name))?;
                 Ok(Self(value))
             }
 
-            /// Returns the validated identity text.
+            /// Borrows the stored, validated text without allocating.
             #[must_use]
             pub fn as_str(&self) -> &str {
                 &self.0
@@ -75,12 +158,41 @@ macro_rules! validated_string_type {
     };
 }
 
-/// Implements `Deserialize` by decoding one private wire representation and passing it
-/// through the owning domain's validating conversion.
+/// Implement Serde deserialization by reading a wire type and converting it to a validated type.
 ///
-/// The wire type continues to own strict Serde shape policy, while the supplied expression
-/// continues to own domain validation and error vocabulary. This macro only removes the
-/// repeated mechanical adapter between those two boundaries.
+/// Use this when deriving `Deserialize` on the public type would bypass its constructor.
+/// The wire type describes accepted input fields, often with `#[serde(deny_unknown_fields)]`.
+/// After it deserializes, the conversion expression receives that owned value and must
+/// return `Result<Target, E>`, where `E` implements [`fmt::Display`]. Wire decoding errors
+/// stop before conversion; conversion errors become custom Serde errors.
+///
+/// Invoke at module scope in the target type's owner. The package must depend on `serde`
+/// under that name. This macro implements only `Deserialize`: serialization, field policy,
+/// and semantic validation remain with the caller. It does not reject arbitrary duplicate
+/// object keys or impose document bounds; document readers use the JSON helpers separately.
+///
+/// ```
+/// use milkdrift_contracts::deserialize_via;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// #[serde(deny_unknown_fields)]
+/// struct VersionWire { version: u32 }
+///
+/// #[derive(Debug, PartialEq)]
+/// struct Version(u32);
+/// impl Version {
+///     fn new(value: u32) -> Result<Self, &'static str> {
+///         if value == 0 { Err("version must be nonzero") } else { Ok(Self(value)) }
+///     }
+/// }
+/// deserialize_via!(Version, VersionWire, |wire| Self::new(wire.version));
+///
+/// assert_eq!(serde_json::from_str::<Version>(r#"{"version":1}"#)?, Version(1));
+/// assert!(serde_json::from_str::<Version>(r#"{"version":0}"#).is_err());
+/// assert!(serde_json::from_str::<Version>(r#"{"version":1,"extra":true}"#).is_err());
+/// # Ok::<(), serde_json::Error>(())
+/// ```
 #[macro_export]
 macro_rules! deserialize_via {
     ($target:ty, $wire:ty, |$value:ident| $conversion:expr $(,)?) => {
@@ -96,23 +208,42 @@ macro_rules! deserialize_via {
     };
 }
 
-/// Structural JSON bounds whose meanings are shared across contract domains.
+/// Choose the depth, text size, and per-container limits for one document family.
+///
+/// Construct this with all four fields; there is no shared default. Maxima are inclusive,
+/// and zero is a real limit, never an unlimited sentinel. There is no separate budget for
+/// total input/output bytes or tree nodes, and no numeric-token length limit. A document
+/// owner checks total bytes separately, before parsing and after encoding.
+///
+/// [`validate_json_value`] checks decoded values. [`preflight_json_structure`] uses the
+/// same fields on the byte representation, with the differences described below. Both
+/// checks are needed when a reader uses preflight; success there is not full validation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct JsonLimits {
-    /// Maximum recursive container depth, with the root at depth zero.
+    /// Maximum value depth: the root is zero and every array element or object value
+    /// adds one, including scalars. At zero, `[]` is allowed but `[0]` fails decoded
+    /// validation. Preflight checks only container openings, so `[0]` passes that scan.
     pub maximum_depth: usize,
-    /// Maximum UTF-8 byte length of a JSON string value.
+    /// Maximum UTF-8 bytes in each decoded string value, excluding quotes.
+    /// Preflight counts the encoded bytes inside quotes, including escape syntax:
+    /// `"\u0061"` counts as six bytes there and one byte after decoding.
     pub maximum_string_bytes: usize,
-    /// Maximum UTF-8 byte length of an object key.
+    /// Maximum UTF-8 bytes in each decoded object key, excluding quotes.
+    /// Preflight counts escape syntax as it does for string values.
     pub maximum_key_bytes: usize,
-    /// Maximum number of values in an array or entries in an object.
+    /// Maximum entries in each object or elements in each array, checked separately
+    /// for every container. Zero permits only empty containers.
     pub maximum_container_items: usize,
 }
 
-/// The structural category that exceeded a configured JSON limit.
+/// Identify which [`JsonLimits`] maximum caused a [`JsonBoundViolation`].
+///
+/// Owners can match this category to produce their own error vocabulary, using the
+/// violation's path and maximum for detail. Byte counts depend on whether the check
+/// ran before parsing or on decoded values; see [`JsonLimits`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum JsonBoundKind {
-    /// Recursive container nesting depth.
+    /// Value depth, or container-opening depth during preflight.
     Depth,
     /// String value byte length.
     String,
@@ -124,7 +255,13 @@ pub enum JsonBoundKind {
     Object,
 }
 
-/// One precisely located structural JSON bound violation.
+/// A structural check's first reported refusal, with its category and configured maximum.
+///
+/// Returned by [`validate_json_value`] and [`preflight_json_structure`], or carried by
+/// [`CanonicalJsonError::Bounds`]. Inspect it through the accessors and map it into the
+/// owning document's error type. It does not retain the rejected value or actual size.
+/// Preflight has no decoded path and reports `$`; decoded validation locates the value
+/// or container as described by [`Self::path`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JsonBoundViolation {
     path: String,
@@ -133,7 +270,10 @@ pub struct JsonBoundViolation {
 }
 
 impl JsonBoundViolation {
-    /// JSON-like path of the value or container that violated the limit.
+    /// Diagnostic location, rooted at `$`, with `.key` and `[index]` steps for decoded
+    /// values. A key-length violation points to its containing object; preflight always
+    /// returns `$`. Keys are inserted without escaping, so this is not a JSON Pointer
+    /// or an unambiguous address for keys containing dots or brackets.
     #[must_use]
     pub fn path(&self) -> &str {
         &self.path
@@ -145,14 +285,33 @@ impl JsonBoundViolation {
         self.kind
     }
 
-    /// Configured maximum for the violated category.
+    /// The configured maximum, in depth, bytes, or entries according to [`Self::kind`]
+    /// and the check used. This is the allowed limit, not the measured offending size.
     #[must_use]
     pub const fn maximum(&self) -> usize {
         self.maximum
     }
 }
 
-/// Serializes a value to recursively key-sorted compact JSON after structural validation.
+/// Encode a serializable value as compact JSON with recursively sorted object keys.
+///
+/// First converts `value` to a [`serde_json::Value`], checks it with
+/// [`validate_json_value`], sorts keys by Rust string ordering, then serializes the tree.
+/// Array order is preserved, including arrays containing objects. The caller's value is
+/// not mutated. JSON string/number encoding follows Serde JSON; this function does not
+/// add Unicode normalization, a schema envelope, or a digest.
+///
+/// The temporary tree and returned bytes are allocated before any caller-owned total-byte
+/// check. Use the [`crate` example](crate) for the read/write sequence, and check the
+/// returned length against the document owner's limit. This function cannot recover
+/// duplicate keys already lost while constructing a `Value`; parse input bytes with
+/// [`parse_json_without_duplicates`] first when duplicate rejection is required.
+///
+/// # Errors
+///
+/// Returns [`CanonicalJsonError::Json`] if conversion or serialization fails, or
+/// [`CanonicalJsonError::Bounds`] if the converted value exceeds a supplied limit.
+/// Successful serialization does not itself validate the value's domain meaning.
 pub fn canonical_json_bytes<T: Serialize>(
     value: &T,
     limits: JsonLimits,
@@ -163,7 +322,30 @@ pub fn canonical_json_bytes<T: Serialize>(
     serde_json::to_vec(&value).map_err(CanonicalJsonError::Json)
 }
 
-/// Parses exactly one JSON value while rejecting duplicate object keys at every depth.
+/// Parse exactly one JSON value, refusing duplicate object keys at every depth.
+///
+/// Object keys are compared after JSON escape decoding, so `"a"` and `"\u0061"` count
+/// as duplicates in the same object even when their values agree. Equal keys in separate
+/// objects are allowed. Leading and trailing whitespace is accepted; a second value is not.
+///
+/// This allocates a value tree without caller-supplied structural or total-byte limits.
+/// Check the input length and use [`preflight_json_structure`] before this call when
+/// reading bounded documents, then apply [`validate_json_value`] and the owner's schema
+/// and semantic checks. Parsing alone accepts unknown fields and unsupported versions.
+///
+/// # Errors
+///
+/// Returns a Serde JSON error for invalid JSON (including its parser recursion limit),
+/// a duplicate decoded key, or trailing non-whitespace input.
+///
+/// ```
+/// use milkdrift_contracts::parse_json_without_duplicates;
+///
+/// assert!(parse_json_without_duplicates(br#"{"a":1,"\u0061":1}"#).is_err());
+/// assert!(parse_json_without_duplicates(b"true false").is_err());
+/// assert_eq!(parse_json_without_duplicates(b" true \n")?, serde_json::json!(true));
+/// # Ok::<(), serde_json::Error>(())
+/// ```
 pub fn parse_json_without_duplicates(bytes: &[u8]) -> Result<Value, serde_json::Error> {
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let value = DuplicateCheckedValue::deserialize(&mut deserializer)?.0;
@@ -171,16 +353,76 @@ pub fn parse_json_without_duplicates(bytes: &[u8]) -> Result<Value, serde_json::
     Ok(value)
 }
 
-/// Validates a parsed JSON value against explicit structural limits.
+/// Check an existing JSON tree against the caller's [`JsonLimits`], without changing it.
+///
+/// Depth includes scalar children; string and key sizes count decoded UTF-8 bytes.
+/// Each container's size is checked before visiting its children, and each object key's
+/// size is checked before its value. Arrays are visited in index order and objects in
+/// their map iteration order. The first violation stops traversal.
+///
+/// Use this after duplicate-checked parsing or before encoding. It cannot detect duplicate
+/// keys already discarded by another parser, and does not check document size, schema
+/// versions, allowed fields, or domain meaning. Those checks remain with the caller.
+///
+/// # Errors
+///
+/// Returns a [`JsonBoundViolation`] when a value exceeds one of the supplied maxima.
+///
+/// ```
+/// use milkdrift_contracts::{JsonBoundKind, JsonLimits, validate_json_value};
+/// use serde_json::json;
+///
+/// let limits = JsonLimits {
+///     maximum_depth: 2, maximum_string_bytes: 2,
+///     maximum_key_bytes: 8, maximum_container_items: 4,
+/// };
+/// assert!(validate_json_value(&json!({"names": ["é"]}), limits).is_ok());
+/// let error = validate_json_value(&json!({"names": ["€"]}), limits)
+///     .expect_err("three UTF-8 bytes exceed the two-byte string limit");
+/// assert_eq!(error.kind(), JsonBoundKind::String);
+/// assert_eq!(error.path(), "$.names[0]");
+/// assert_eq!(error.maximum(), 2);
+/// ```
 pub fn validate_json_value(value: &Value, limits: JsonLimits) -> Result<(), JsonBoundViolation> {
     validate_value(value, "$", 0, limits)
 }
 
-/// Rejects disproportionate JSON depth, strings, keys, and container cardinality before
-/// a general-purpose parser can allocate the corresponding value tree.
+/// Scan JSON bytes for structural excess before allocating a decoded value tree.
 ///
-/// This lexical pass is intentionally conservative for escaped strings; the ordinary
-/// JSON parser remains responsible for syntax and duplicate-key validation afterward.
+/// Call this after the owner's input-byte check and before [`parse_json_without_duplicates`].
+/// The scan keeps a stack of open containers, counts their entries, and counts bytes inside
+/// quoted keys and strings. It does not decode escape sequences: `"\u0061"` uses six bytes
+/// against the string limit even though parsing produces one byte. Such input can be
+/// refused here while an equivalent unescaped spelling passes.
+///
+/// Depth is checked on container openings only; scalar children need the later
+/// [`validate_json_value`] check. This is not a syntax checker: malformed, incomplete, or
+/// duplicate-bearing input may pass. Always follow success with duplicate-checked parsing,
+/// decoded-value validation, and the owner's schema and semantic checks.
+///
+/// # Errors
+///
+/// Returns the first detected [`JsonBoundViolation`], with path `$`. No total-byte limit
+/// or numeric-token length limit is supplied by this scan.
+///
+/// ```
+/// use milkdrift_contracts::{
+///     JsonLimits, parse_json_without_duplicates, preflight_json_structure, validate_json_value,
+/// };
+///
+/// let limits = JsonLimits {
+///     maximum_depth: 0, maximum_string_bytes: 1,
+///     maximum_key_bytes: 8, maximum_container_items: 2,
+/// };
+/// let escaped = br#""\u0061""#;
+/// assert!(preflight_json_structure(escaped, limits).is_err());
+/// assert!(validate_json_value(&parse_json_without_duplicates(escaped)?, limits).is_ok());
+/// assert!(preflight_json_structure(b"[0]", limits).is_ok());
+/// assert!(validate_json_value(&parse_json_without_duplicates(b"[0]")?, limits).is_err());
+/// assert!(preflight_json_structure(b"[", limits).is_ok());
+/// assert!(parse_json_without_duplicates(b"[").is_err());
+/// # Ok::<(), serde_json::Error>(())
+/// ```
 pub fn preflight_json_structure(
     bytes: &[u8],
     limits: JsonLimits,
@@ -199,6 +441,7 @@ pub fn preflight_json_structure(
     while index < bytes.len() {
         let byte = bytes[index];
         if in_string {
+            // Count wire bytes, including escape spelling, without allocating decoded text.
             if escaped {
                 escaped = false;
                 string_bytes = string_bytes.saturating_add(1);
@@ -281,10 +524,13 @@ pub fn preflight_json_structure(
     Ok(())
 }
 
-/// Failure while producing canonical JSON.
+/// Distinguish serialization failures from structural-limit refusals during encoding.
+///
+/// [`canonical_json_bytes`] returns this for the document owner to map into its own error
+/// type. It is an inspectable enum with Debug output, not a shared Display/error policy.
 #[derive(Debug)]
 pub enum CanonicalJsonError {
-    /// Serialization failed.
+    /// Conversion to a JSON value or encoding of that value failed; retains Serde's error.
     Json(serde_json::Error),
     /// The serialized value exceeded a structural bound.
     Bounds(JsonBoundViolation),
@@ -453,6 +699,7 @@ impl<'de> Visitor<'de> for DuplicateCheckedVisitor {
         let mut keys = BTreeSet::new();
         let mut values = Map::new();
         while let Some(key) = map.next_key::<String>()? {
+            // Check the decoded key before insertion could replace an earlier value.
             if !keys.insert(key.clone()) {
                 return Err(serde::de::Error::custom(format!(
                     "duplicate JSON object key '{key}'"
@@ -508,6 +755,7 @@ mod tests {
 
     #[test]
     fn structural_bounds_report_kind_path_and_limit() {
+        // The scalar at depth five must fail even though its parent is at the depth limit.
         let result = validate_json_value(&json!({"a": {"b": {"c": {"d": {"e": 1}}}}}), LIMITS);
         assert!(result.is_err());
         if let Err(error) = result {

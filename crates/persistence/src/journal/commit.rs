@@ -17,7 +17,12 @@ use crate::{
     bounded::MAX_EVENTS_PER_COMMIT,
 };
 
-/// Workspace mutation applied in the same transaction as accepted event history.
+/// Materializes a scope or value introduced by this command's events.
+///
+/// Include these in [`AtomicRunCommitRequest::new`], not in a separate write. The
+/// constructor requires an exact match between introduced scope/value identities and
+/// mutations, so accepted history cannot describe an input or output omitted from the
+/// workspace transaction. Storage also validates saved ancestry and value provenance.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum WorkspaceMutation {
@@ -33,12 +38,18 @@ pub enum WorkspaceMutation {
     },
 }
 
-/// Optimistic workspace budget/accounting guard coordinated with a journal commit.
+/// Charges workspace changes while checking the usage the runtime planned against.
 ///
-/// Artifact content publication and aggregate reference accounting are separate.
-/// This guard atomically charges inline immutable value versions and the exact first
-/// references admitted by this journal commit; the adapter verifies those references
-/// against `AtomicRunCommitRequest::newly_referenced_artifacts`.
+/// Supply this even for an accepted command that adds no values or artifacts; in that
+/// case expected and resulting usage agree. Rejected commands must omit it. The
+/// request constructor recomputes charges for all `PutValue` mutations and newly
+/// referenced artifacts. Storage compares expected usage and the budget with saved
+/// state inside the commit, so concurrent plans cannot both spend the same allowance.
+///
+/// Publishing artifact content is a separate operation. This guard charges its first
+/// reference in the run; storage checks that membership against
+/// [`AtomicRunCommitRequest::newly_referenced_artifacts`]. A usage conflict requires
+/// the runtime to read current usage and replan, not just replace this guard.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceAccounting {
     /// Immutable limits for the run/workspace accounting domain.
@@ -265,7 +276,17 @@ pub enum LeaseIndexMutation {
     },
 }
 
-/// Complete derived index update coordinated with one journal append.
+/// Updates the records used to discover a run's unfinished work after an append.
+///
+/// The runtime derives the summary and runnable/timer/lease changes from its projected
+/// events. Storage commits them with those events so scheduling and recovery do not
+/// miss newly eligible work or rediscover a released lease. They remain verifiable
+/// views of the journal, not independent authority to start work.
+///
+/// [`Self::default`] contains no changes and is used for a rejected command. Every
+/// accepted append needs a summary at its resulting head, even when the three
+/// mutation lists are empty. [`AtomicRunCommitRequest::new`] validates identities,
+/// sequence alignment, duplicate mutations, and the combined mutation bound.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunIndexUpdate {
@@ -280,7 +301,8 @@ pub struct RunIndexUpdate {
 }
 
 impl RunIndexUpdate {
-    /// Creates one immutable derived-index transition.
+    /// Collects the runtime's derived summary and index changes without validating them.
+    /// Pass the update to [`AtomicRunCommitRequest::new`] to check it against the append.
     #[must_use]
     pub fn new(
         summary: Option<RunSummaryIndex>,
@@ -330,12 +352,23 @@ impl RunIndexUpdate {
     }
 }
 
-/// One all-or-nothing command receipt, event, workspace, result, and index commit.
+/// Everything storage must save together for one runtime command.
 ///
-/// Implementations must first look up `(run, command)`. An equal fingerprint returns
-/// the original result without checking the now-stale optimistic guard or writing;
-/// a different fingerprint returns [`PersistenceError::IdempotencyConflict`]. Only a
-/// previously unseen command checks `expected_sequence` and performs the transaction.
+/// The runtime plans events and their workspace/accounting and discovery consequences,
+/// then constructs this request with a matching receipt and result. Construction
+/// checks those documents against each other; [`RunJournal::commit_command`] checks
+/// them against storage and performs the transaction. A valid request alone proves
+/// neither that the runtime transition was authorized nor that anything was saved.
+///
+/// For example, a `RunCreated` event needs its declared root scope in `workspace`,
+/// accounting even when no input consumes budget, and a summary at the resulting
+/// sequence. Omitting the scope is an invalid request, not a partially created run.
+/// A rejected command instead has empty event/workspace/artifact lists, no accounting
+/// or lease guard, an empty index update, and a rejected result at the expected head.
+///
+/// Add any controller transaction or projection commitment through the corresponding
+/// builder before committing. Neither attachment is written separately by this type.
+/// See [`RunJournal`] for replay order, storage obligations, and lost-response recovery.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct AtomicRunCommitRequest {
@@ -369,7 +402,27 @@ pub struct AtomicRunCommitRequest {
 }
 
 impl AtomicRunCommitRequest {
-    /// Validates cross-document atomicity and sequence invariants.
+    /// Checks that the receipt, events, result, workspace, and indexes describe one append.
+    ///
+    /// Events must belong to the receipt's run and be contiguous immediately after its
+    /// expected sequence. The result must bind the same command fingerprint, event IDs
+    /// in order, and final sequence. Workspace mutations must exactly supply the scopes
+    /// and value identities those events introduce; hidden extra mutations also fail.
+    ///
+    /// `required_artifacts` must name every direct event/workspace artifact reference
+    /// exactly once. `newly_referenced_artifacts` is a distinct subset being charged to
+    /// this run for the first time. The constructor verifies the lists and accounting
+    /// arithmetic; storage later verifies committed content, membership, and usage.
+    /// `expected_lease_revision` is required exactly when an event grants or regrants
+    /// a lease. Obtain it from the active-lease read used to plan admission.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PersistenceError::Bounds`] for oversized event, workspace, artifact,
+    /// or combined index lists; [`PersistenceError::SequenceOverflow`] if numbering
+    /// the append exhausts the sequence; and [`PersistenceError::InvalidDocument`] for
+    /// inconsistent documents, duplicates, or invalid budget/accounting calculations.
+    /// No storage is read or changed, so these errors cannot indicate a partial commit.
     #[allow(clippy::too_many_arguments)] // One atomic commit binds receipt/events to workspace accounting, artifact references, lease guard, result, and indexes.
     pub fn new(
         receipt: CommandReceipt,
@@ -581,6 +634,8 @@ impl AtomicRunCommitRequest {
                 }
             }
         }
+        // Equality also rejects hidden writes: checking only that event references
+        // are present would permit workspace changes with no explaining event.
         if mutated_scopes != declared_scopes || mutated_values != introduced_values {
             return Err(PersistenceError::InvalidDocument(
                 "workspace mutations must exactly materialize scope/value references introduced by the command's events"
@@ -688,10 +743,17 @@ impl AtomicRunCommitRequest {
         })
     }
 
-    /// Attaches a projection commitment to the accepted resulting journal head.
+    /// Binds a future optional snapshot's payload to this accepted append.
     ///
-    /// Storage must persist this in the same transaction as the event append. Rejected
-    /// commands cannot carry a projection commitment.
+    /// Storage records the commitment with the events. The runtime may then save the
+    /// snapshot through [`crate::SnapshotStore`]; that later write can fail without
+    /// undoing this command. The commitment is evidence for checking a snapshot,
+    /// not the snapshot payload or a substitute for journal replay.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PersistenceError::InvalidDocument`] for a rejected command or a second
+    /// attachment. Construction only attaches the commitment; it does not save it.
     pub fn with_projection_checkpoint(
         mut self,
         checkpoint: crate::ProjectionCheckpoint,
@@ -710,7 +772,17 @@ impl AtomicRunCommitRequest {
         Ok(self)
     }
 
-    /// Attaches the sole controller-account mutation owned by this runtime commit.
+    /// Includes a controller-account transition in the same commit as its run events.
+    ///
+    /// This prevents an entry intent from becoming visible without its corresponding
+    /// resource reservation. Storage must check the transaction against current
+    /// account state and the events before committing either consequence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PersistenceError::InvalidDocument`] for a rejected command or a second
+    /// attachment. Account-specific validation remains with the transaction and store;
+    /// this builder only attaches it and writes nothing.
     pub fn with_controller_account_transaction(
         mut self,
         transaction: crate::ControllerAccountTransaction,
@@ -874,12 +946,17 @@ fn validate_index_sequences(
     Ok(())
 }
 
-/// Result of the one atomic durable command operation.
+/// Whether storage saved a new command result or returned an existing one.
+///
+/// Both variants contain the original result, which may be accepted or rejected.
+/// Neither reports completion of external work. In particular, `Committed` with a
+/// rejected [`CommandDisposition`] saved a refusal without appending run events.
 #[derive(Clone, Debug, PartialEq)]
 pub enum AtomicRunCommitOutcome {
-    /// A previously unseen command was committed.
+    /// A previously unseen command's receipt and result were saved with all its changes.
     Committed(CommandResultDocument),
-    /// An exactly matching command was redelivered; no bytes were changed.
+    /// The receipt matched a saved command; its original result is returned without writes.
+    /// The returned sequence may be older than the run's current head.
     Replayed(CommandResultDocument),
 }
 
@@ -893,23 +970,69 @@ impl AtomicRunCommitOutcome {
     }
 }
 
-/// Narrow synchronous object-safe append/idempotency port.
+/// Saves runtime command decisions and retrieves their durable results.
+///
+/// Runtime command handling calls this synchronous port after planning a transition.
+/// Implementers own storage transactions and integrity checks; they do not authorize
+/// commands, choose runtime transitions, or invoke capabilities. Sharing a port across
+/// threads must preserve the same atomicity and optimistic guards.
+///
+/// # Implementation obligations
+///
+/// For `(run, command)`, validate any saved receipt/result and its supporting history,
+/// then compare the incoming fingerprint. An exact match returns the saved result
+/// without writes or testing the now-stale expected sequence; a mismatch returns
+/// [`PersistenceError::IdempotencyConflict`]. Replay must not bypass integrity checks.
+///
+/// For a new command, compare the run head and applicable workspace, lease, and account
+/// guards inside the write transaction. Validate committed artifact references and
+/// saved scope/value provenance. Commit the receipt/result, contiguous events and
+/// history integrity evidence, run head, workspace/accounting, artifact-reference
+/// membership, and summary/runnable/timer/lease updates together. Include attached
+/// account transitions and projection commitments. Readers must never observe only
+/// part of that change. A runtime rejection saves only its receipt/result.
+///
+/// # Recovery after an error
+///
+/// A storage failure can be reported after a transaction commits. Preserve the command
+/// identity and intent, then query [`Self::command_result`] or redeliver through
+/// [`Self::commit_command`]. Do not infer absence from a failed read or generate a fresh
+/// command identity to escape an unknown outcome. This resolves the saved command
+/// result; retrying external work still requires the runtime's attempt/recovery rules.
 pub trait RunJournal: Send + Sync {
-    /// Atomically accepts/rejects one command and coordinates every durable consequence.
+    /// Persists the runtime's decision according to this trait's atomicity/replay contract.
     ///
-    /// Receipt, contiguous event append, command result, workspace mutations,
-    /// required-artifact validation, run summary, and runnable/timer/lease indexes are
-    /// one crash-atomic call. Implementations must never expose an accepted event that
-    /// references absent workspace state or uncommitted artifact content.
+    /// `Ok` returns a durable result, including a runtime rejection when that is the
+    /// request's disposition. Replayed requests return the stored result rather than
+    /// the newly supplied result or events.
+    ///
+    /// # Errors
+    ///
+    /// Sequence, workspace-usage, lease, and controller-account revision conflicts
+    /// require the runtime to reread affected state and reconsider the plan. An
+    /// idempotency conflict preserves the existing command's result. Missing committed
+    /// artifacts, invalid persisted relationships, corruption, and storage failures
+    /// also refuse the operation. See the trait's recovery guidance: an error alone
+    /// does not prove that the transaction failed to commit.
     fn commit_command(
         &self,
         request: &AtomicRunCommitRequest,
     ) -> Result<AtomicRunCommitOutcome, PersistenceError>;
 
-    /// Returns the sole authoritative aggregate sequence, or zero when absent.
+    /// Returns the verified journal head, or zero when the run has no events.
+    ///
+    /// A rejected command can have a saved result at sequence zero, so this is not a
+    /// command-result lookup. Integrity or storage failure must return an error, not
+    /// zero. The observed head can become stale before a subsequent commit.
     fn head(&self, run: &RunId) -> Result<RunSequence, PersistenceError>;
 
-    /// Returns a prior exact idempotency result when present.
+    /// Reads the saved result for `(run, command)`, including durable rejections.
+    ///
+    /// Compare its fingerprint with the intended receipt before treating it as that
+    /// request's answer: this lookup takes no intent to compare. `None` means no result
+    /// was found at this read, not that external work could not have happened. Storage
+    /// must validate the record and its history links; corrupt or unreadable evidence
+    /// returns an error rather than `None`.
     fn command_result(
         &self,
         run: &RunId,

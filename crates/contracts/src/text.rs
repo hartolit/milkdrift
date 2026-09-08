@@ -2,6 +2,20 @@
 /// `maximum_bytes`.
 ///
 /// The returned slice borrows the input and therefore performs no allocation.
+/// Callers use this to fit text, such as a diagnostic summary, into their own byte limit.
+/// Zero returns an empty slice; a limit at least as large as the input returns it whole.
+/// A limit inside a multibyte character backs up to that character's start. This preserves
+/// UTF-8, but can split a user-perceived character made from multiple Unicode scalars.
+/// It adds no ellipsis and performs no redaction; the caller owns those choices.
+///
+/// ```
+/// use milkdrift_contracts::truncate_utf8;
+///
+/// assert_eq!(truncate_utf8("éclair", 1), "");
+/// assert_eq!(truncate_utf8("éclair", 3), "éc");
+/// assert_eq!(truncate_utf8("hello", 0), "");
+/// assert_eq!(truncate_utf8("hello", 64), "hello");
+/// ```
 #[must_use]
 pub fn truncate_utf8(value: &str, maximum_bytes: usize) -> &str {
     if value.len() <= maximum_bytes {
@@ -18,6 +32,18 @@ pub fn truncate_utf8(value: &str, maximum_bytes: usize) -> &str {
 ///
 /// This checks lexical form only. Digest domains, hashing policy, semantic types,
 /// and error vocabularies remain with their owning packages.
+/// Use it when reading digest text; the owner must separately compute and compare a
+/// digest to verify referenced content. The prefix and hex letters are case-sensitive,
+/// whitespace is refused, and no normalization is performed.
+///
+/// ```
+/// use milkdrift_contracts::is_canonical_blake3_digest;
+///
+/// let text = format!("b3_{}", "a".repeat(64));
+/// assert!(is_canonical_blake3_digest(&text));
+/// assert!(!is_canonical_blake3_digest(&text.to_uppercase()));
+/// assert!(!is_canonical_blake3_digest(&format!("{text}\n")));
+/// ```
 #[must_use]
 pub fn is_canonical_blake3_digest(value: &str) -> bool {
     value.strip_prefix("b3_").is_some_and(|hex| {

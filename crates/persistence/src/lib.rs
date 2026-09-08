@@ -1,18 +1,30 @@
-//! Durable, adapter-neutral persistence documents and narrow synchronous ports.
+//! Save a runtime decision together with the facts needed to recover it.
 //!
-//! This crate owns stable execution identities, schema-v1 checksummed run facts,
-//! atomic command/journal contracts, immutable revision storage, verifiable recovery
-//! indexes, snapshot integrity, workspace transaction mutations, content-addressed
-//! artifact streaming, and storage lifecycle/health boundaries. It owns no runtime
-//! transition decisions, async executor, wall clock, filesystem path, database handle,
-//! table name, transaction object, generic key/value API, or `redb` type.
+//! The runtime decides whether a command is allowed and which events it produces.
+//! This crate gives it storage documents and synchronous traits that a storage adapter
+//! implements. For example, accepting a new run must save its creation event, root
+//! workspace scope, usage, discovery summary, and command result together. Otherwise
+//! restart could find a run whose inputs or saved response are missing.
 //!
-//! [`RunJournal::commit_command`] is the sole accepted-command write boundary. A first
-//! delivery checks the aggregate sequence and atomically records the exact command
-//! receipt/result, contiguous events, workspace state/accounting, and discoverability
-//! indexes after proving every artifact reference is committed. Exact redelivery
-//! returns the original result without writes; identity reuse with different canonical
-//! command bytes is a typed conflict.
+//! Follow [`CommandReceipt`] into [`AtomicRunCommitRequest`] and call
+//! [`RunJournal::commit_command`] through the configured storage implementation.
+//! Constructing the request checks its internal consistency; it writes nothing.
+//! Storage checks current history and commits all consequences or none. A command the
+//! runtime rejects can still have a saved result, with no events or workspace changes.
+//!
+//! If a response is lost after commit, redelivering the same command returns
+//! [`AtomicRunCommitOutcome::Replayed`]. Reusing its identity for different intent
+//! conflicts. [`RunJournal::command_result`] retrieves the saved outcome, and
+//! [`RunQueryStore::events`] reads the supporting history in bounded pages. Neither
+//! a saved command acceptance nor an error proves whether external work finished;
+//! the runtime must interpret durable attempt observations before allowing another try.
+//!
+//! Other owners use [`RevisionStore`] for immutable definitions, [`ArtifactStore`] for
+//! content publication, and [`SnapshotStore`] for optional recovery checkpoints.
+//! Application, peer, clock, and controller-account ports keep their own explicit
+//! transactions. This library opens no database and runs no capability or worker.
+//! The package README traces the runtime caller and the redb implementation; detailed
+//! commit obligations and recovery guidance start at [`RunJournal`].
 
 mod admin;
 mod application;

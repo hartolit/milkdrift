@@ -3,7 +3,12 @@ use thiserror::Error;
 
 use crate::{CommandId, IntegrityDigest, RunSequence};
 
-/// Stable classification for failures reported by a storage adapter.
+/// Classifies an adapter failure without exposing a database-specific error type.
+///
+/// These classes describe the failure, not whether a write committed or an external
+/// effect happened. In particular, `Unavailable` is not permission to retry work with
+/// a new identity. Follow the affected port's recovery contract, such as
+/// [`crate::RunJournal`]'s saved-result lookup and command redelivery.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StorageFailureClass {
     /// Stored bytes or indexes failed integrity validation.
@@ -20,7 +25,12 @@ pub enum StorageFailureClass {
     Internal,
 }
 
-/// Failure returned by a durable persistence port.
+/// A document could not be constructed/read, or a storage operation could not return success.
+///
+/// This is distinct from a saved command result whose disposition is
+/// [`crate::CommandDisposition::Rejected`]. Constructors have no storage effects;
+/// errors from a write port need that port's recovery rules. [`crate::RunJournal`]
+/// explains how to recover a result when an error may have arrived after commit.
 #[derive(Debug, Error)]
 pub enum PersistenceError {
     /// A persistence-owned typed identity was malformed.
@@ -48,20 +58,23 @@ pub enum PersistenceError {
     /// JSON was malformed or did not match the closed schema.
     #[error("invalid durable JSON: {0}")]
     Json(#[from] serde_json::Error),
-    /// A document or storage schema is not the exact version this binary understands.
+    /// A reader does not support the supplied document or storage schema version.
+    /// Some families accept several versions; consult the owning reader for that set.
     #[error("unsupported {document} schema version {found}; supported version is {supported}")]
     UnsupportedVersion {
         /// Durable document family.
         document: &'static str,
         /// Version read from storage.
         found: u32,
-        /// Exact supported version.
+        /// Version reported by the reader as its supported target, not a list of all readable forms.
         supported: u32,
     },
     /// Stored data failed its checksum or another integrity check.
     #[error("durable data corruption: {0}")]
     Corruption(String),
-    /// The event sequence changed since the caller read the aggregate.
+    /// A new command's expected sequence differs from the current journal head.
+    /// The runtime must reread history and replan; changing only the guard could admit
+    /// a transition calculated from stale state. Exact replay precedes this check.
     #[error("run {run} sequence conflict: expected {expected}, actual {actual}")]
     SequenceConflict {
         /// Conflicting run.
@@ -71,7 +84,9 @@ pub enum PersistenceError {
         /// Authoritative journal sequence.
         actual: RunSequence,
     },
-    /// An idempotency identity was reused for different command content.
+    /// A saved `(run, command)` has a different intent fingerprint.
+    /// Preserve the original result and resolve which request was intended; do not
+    /// choose a fresh key merely to bypass the conflict after losing a response.
     #[error(
         "command {command} idempotency conflict for run {run}: existing fingerprint {existing}, supplied {supplied}"
     )]
@@ -128,16 +143,19 @@ pub enum PersistenceError {
     /// A cursor is malformed, belongs to another query, or is no longer resumable.
     #[error("invalid page cursor: {0}")]
     InvalidCursor(String),
-    /// A required artifact is not durably committed, so an event may not reference it.
+    /// A required artifact is not durably committed, so this append cannot reference it.
+    /// Resolve publication through [`crate::ArtifactStore`] before planning the append again.
     #[error("artifact is not durably committed: {0}")]
     ArtifactNotCommitted(String),
-    /// Stored workspace accounting changed since the caller read it.
+    /// Stored workspace accounting differs from the proposed commit's expected usage.
+    /// Recompute charges from current usage before attempting a new commit.
     #[error("workspace usage conflict for run {run}")]
     WorkspaceUsageConflict {
         /// Conflicting workspace/run accounting domain.
         run: RunId,
     },
     /// The active-lease set changed after runtime admission was calculated.
+    /// Recheck capacity from a fresh lease snapshot before planning another grant.
     #[error("lease revision conflict: expected {expected}, actual {actual}")]
     LeaseRevisionConflict {
         /// Opaque lease-set revision observed by the runtime.
