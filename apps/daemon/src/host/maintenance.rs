@@ -1,4 +1,8 @@
-//! Bounded receipt retention, peer maintenance and runtime worker polling.
+//! Advance eligible work and retire old operational detail between owner requests.
+//!
+//! Each pass refreshes capability health, maintains receipt/peer retention, ticks the scheduler,
+//! and notifies effect workers. Archival preserves replay identity; health failures report the
+//! affected maintenance boundary without manufacturing new workflow outcomes.
 use super::{Owner, health::SharedHealth, read_model::bounded, read_model::public_persistence};
 use milkdrift_persistence::{ApplicationReceiptArchiveRequest, TimestampMillis};
 use std::sync::Weak;

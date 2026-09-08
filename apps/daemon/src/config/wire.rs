@@ -26,7 +26,10 @@ pub enum SecretSourceConfig {
     },
 }
 
-/// Coarse configured authority preset expanded into an immutable ordinary grant.
+/// Chooses the operation set used when compiling an actor's grant.
+///
+/// Resource selectors, budgets, validity, and revocation come from the actor binding separately.
+/// A controller preset therefore cannot authorize a resource omitted from that binding.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthorityPresetConfig {
@@ -58,11 +61,14 @@ pub struct ActorBindingConfig {
     pub preset: AuthorityPresetConfig,
     /// Explicit ordinary resource scope, numeric ceilings, and validity interval.
     pub authority: ActorGrantConfig,
-    /// False revokes authentication immediately without removing audit configuration.
+    /// False disables this binding when the configuration is loaded at startup.
     pub enabled: bool,
 }
 
-/// Explicit schema-v7 grant facts; preset names choose operations only.
+/// Resource scope, limits, and validity accompanying an actor's operation preset.
+///
+/// Keep these facts explicit even for a read-only preset. Advancing a grant's content requires
+/// a new `grant_revision`; a running daemon adopts that configuration on restart.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActorGrantConfig {
@@ -166,7 +172,10 @@ impl Default for RuntimeHostConfig {
     }
 }
 
-/// Bounded hot lifecycle for exact application-command receipts.
+/// Limits recent receipt storage while preserving old command results for exact replay.
+///
+/// Archival moves complete receipts to cold storage; these settings do not bound total history
+/// or expire command IDs. Monitor disk capacity as cold receipts accumulate.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationReceiptConfig {
@@ -215,7 +224,11 @@ pub enum PeerHostConfig {
     },
 }
 
-/// Independent bounded serving-peer execution lifecycle configuration.
+/// Worker, admission, and history limits for work this daemon accepts from peers.
+///
+/// Active work reserves room for its eventual terminal record. Old eligible terminal detail
+/// can become a compact tombstone, retaining request replay/conflict facts after progress rows
+/// expire. This retention policy is independent of local application receipts and artifacts.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PeerServingConfig {
@@ -252,7 +265,10 @@ impl Default for PeerServingConfig {
     }
 }
 
-/// One operator-configured authenticated remote peer relationship.
+/// Connects a known peer identity and endpoint to explicit operations, resources, and quotas.
+///
+/// Both daemons need corresponding relationship configuration. Catalog reload refreshes remote
+/// registrations; changing these configured authority facts requires a validated restart.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PeerRelationshipConfig {
@@ -394,7 +410,10 @@ pub struct ModelProfileConfig {
     pub profile: PathBuf,
 }
 
-/// Ordered daemon shutdown policy.
+/// How long shutdown allows owned work to drain and what to do with outstanding effects.
+///
+/// A deadline or cancellation request does not establish an external terminal outcome. The host
+/// reports retained or unresolved work when it cannot finish the chosen policy cleanly.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShutdownConfig {
@@ -425,7 +444,11 @@ pub enum ShutdownEffectPolicy {
     Retain,
 }
 
-/// Complete bounded exact-current daemon host configuration.
+/// Operator choices for one daemon, normally read from TOML with [`Self::load`].
+///
+/// Rust callers may assemble the public fields and call [`Self::validate`] with an explicit
+/// base directory. Both routes produce the same immutable [`super::DaemonPlan`]; profile paths
+/// name separately owned documents, and secret sources contain references rather than values.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DaemonConfig {

@@ -1,3 +1,8 @@
+//! Validates and writes the bounded summary an operator can review for qualification.
+//!
+//! Required facts and secret-byte checks can reject a report; they do not independently attest
+//! its claims. Full scenario output remains in sensitive scratch data outside this summary.
+
 use std::{collections::BTreeSet, fs, path::Path};
 
 use serde::{Deserialize, Serialize};

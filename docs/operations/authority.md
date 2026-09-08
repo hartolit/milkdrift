@@ -1,11 +1,18 @@
 # Daemon control and execution authority
 
+Configure authority by asking what this actor needs to do and which resources that work can touch.
+The credential selects an actor; its grant must cover both the command and later capability entry.
+For example, permission to start a workflow does not by itself permit its process to execute or
+let the caller download restricted output.
+
 Daemon configuration schema 9 requires every actor binding to contain an explicit `authority`
 table. Preset names deterministically expand to typed operation sets; they do not imply resource
 access and are not retained as executable session policy. The resource scope, numeric ceilings,
 validity interval, grant identity/revision, and revocation generation are independent inputs to the
 immutable schema-4 grant. Authentication selects that exact actor and grant but grants nothing by
 itself.
+
+## Choose operations and resources
 
 Start with the maintained [operator configuration](../../examples/operator/daemon.toml) and
 [process/model setup](../../examples/operator/README.md). Its authority table is complete;
@@ -14,7 +21,11 @@ the intended operation. Test fixtures are compatibility evidence, not operator c
 Capability authority is either `{ "type": "deny_all" }` or an explicit conjunctive allow scope.
 Every allow dimension is `{ "type": "any" }` or `{ "type": "only", "values": [...] }`.
 `Only` requires 1..=128 ordered unique values; an empty array is invalid and never means wildcard.
-The side-effect ceiling applies in addition to every selector. Filesystem roots use one canonical
+The side-effect ceiling applies in addition to every selector.
+
+### Filesystem, network, and secrets
+
+Filesystem roots use one canonical
 durable grammar: Unix roots are `/` or begin with `/`, and ordinary Windows drive roots are `C:/`
 or begin with an uppercase ASCII drive plus `:/`. Both forms use `/` separators and compare exact
 components rather than string prefixes. A Unix root never contains a Windows root, different
@@ -28,11 +39,15 @@ named Windows drive root such as `C:/`; `/` is not a cross-platform wildcard. Ne
 are credential-free `host:port` values and network profiles are named immutable transport profiles.
 Secret references are opaque names; secret values never belong in the document.
 
+### Match the complete task requirement
+
 Revision admission checks the complete capability requirement envelope. Unspecified requirement
 dimensions mean `Any`, so a narrower grant refuses the revision even when an exact capability is
 named. Requirements currently cannot express locality or peer selectors; ordinary task grants
 therefore need `Any` for those dimensions. Use exact capability, profile, and trust-zone constraints
 and explicit adapter registration; do not describe that configuration as a locality-restricted grant.
+
+## Grant inspection separately
 
 Artifact authority is either `{ "type": "deny_all" }` or an allow scope containing an explicit
 `Any`/nonempty `Only` identity selector and a nonempty sensitivity set; there is no implicit empty
@@ -45,6 +60,8 @@ scopes deny access unless their explicit wildcard boolean is set. Daemon flags i
 readiness, detailed health, the caller's own authority view, redacted configuration, and bounded
 audit views. Protected artifact/provider/peer/health details are therefore not implied by workflow
 inspection.
+
+## Set bounds and validate
 
 Every numeric ceiling must be present for a safe grant, including provider-neutral `units`. Use a
 finite `valid_until`, declare the strongest side effect the actor may cause, and grant only the
@@ -75,8 +92,17 @@ redacts secret-source details, and is independent of source comments and formatt
 
 ## Changing authority
 
+Use `milkdrift daemon authority` to confirm the actor and grant selected by the credential. When
+a start is refused, compare the whole reachable task requirement with the grant; when later entry
+is refused, also compare the exact adapter's filesystem, network, secret, and resource needs.
+
 Advance `grant_revision` whenever changing a grant's content; an identity/revision pair binds one
 immutable grant. For revocation, advance the revocation generation or disable the actor and restart.
 Existing page and reconnect
 cursors then fail closed; open streams stop future disclosure on their next bounded check;
 already-entered external work keeps its truthful terminal history.
+
+Replacing a referenced credential file changes the value resolved on subsequent requests. Changing
+a variable in a client shell does not change the environment of an already running daemon. Client
+credential objects and old cursor MACs also do not update themselves: reconnect with the new value
+and obtain fresh continuations when the server refuses the old ones.

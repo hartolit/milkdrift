@@ -1,3 +1,8 @@
+//! Separate synthetic metadata selection from runtime discovery and selected-input loading.
+//!
+//! These fixtures measure specific policy/materialization paths. They do not establish every
+//! combined required-evidence, session-intent, or omission-redaction case in the runtime.
+
 use std::collections::BTreeSet;
 
 use milkdrift_blueprint::{

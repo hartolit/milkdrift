@@ -1,4 +1,4 @@
-//! Commands transport adaptation over typed daemon calls.
+//! Authenticate and decode a command before handing its unchanged envelope to the owner.
 use super::{ApiError, AppState, authenticate, owner_error, protocol_error, success};
 use axum::{body::Bytes, extract::State, http::HeaderMap, http::StatusCode, response::Response};
 use milkdrift_control_protocol::{Command, CommandRequest, ErrorCode, decode_json};

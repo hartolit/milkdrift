@@ -4,6 +4,10 @@
 
 ## Authentication and session
 
+For two-daemon configuration and diagnostics, follow [peer operations](../operations/peers.md).
+The [protocol package guide](../../crates/peer-protocol/README.md) follows a remote invocation;
+this reference owns its message and retention contract.
+
 HTTP bearer authentication maps current secret bytes to one configured `PeerId`; the handshake's
 `claimed_peer` cross-checks that identity and cannot choose it. Each relationship's actions and
 filters expand into an ordinary immutable authority grant. The service uses the shared evaluator

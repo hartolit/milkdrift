@@ -1,3 +1,8 @@
+//! Builds the disposable repository and ordinary definitions exercised by the external runner.
+//!
+//! Process verification/remediation and model context are explicit workflow inputs. Scenario
+//! execution and report qualification remain with their respective owners.
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,

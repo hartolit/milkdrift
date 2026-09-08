@@ -1,8 +1,25 @@
-//! Reusable authenticated asynchronous client for the Milkdrift control protocol.
+//! Operate a Milkdrift daemon through authenticated requests and incremental observations.
 //!
-//! The client owns version negotiation, typed request execution, bounded retries for
-//! safe queries, page helpers that never auto-drain a feed, and resumable SSE parsing.
-//! It contains no command-line or user-interface presentation policy.
+//! Construct a [`ControlClient`], call [`ControlClient::negotiate`], then submit commands or
+//! inspect authorized read models. Safe JSON queries have bounded retries; command submission
+//! sends once so a caller can deliberately recover a lost reply with the exact saved request.
+//! Page methods fetch one page. [`ControlClient::subscribe`] reconnects observations, while its
+//! consumer owns the overall deadline, reconnection limit, and handling of resynchronization.
+//!
+//! Construction performs no network request:
+//!
+//! ```
+//! use milkdrift_control_client::{BearerCredential, ClientConfig, ControlClient};
+//!
+//! let config = ClientConfig::new("http://127.0.0.1:9734/".parse()?);
+//! let credential = BearerCredential::new("example-only-credential")?;
+//! let client = ControlClient::new(config, credential)?;
+//! # let _ = client;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! Obtain real credentials from a private source. The server supplies actor/grant identity;
+//! the client contains no CLI confirmation or presentation policy.
 
 use std::{fmt, pin::Pin, time::Duration};
 
@@ -56,7 +73,7 @@ impl fmt::Debug for BearerCredential {
 pub struct ClientConfig {
     /// Daemon base URL, normally loopback HTTP.
     pub endpoint: Url,
-    /// Request timeout excluding long-lived streams.
+    /// Timeout per non-streaming request; safe-query retries can extend the complete call.
     pub request_timeout: Duration,
     /// Safe-query retry count after the initial attempt.
     pub safe_query_retries: u8,
@@ -126,7 +143,10 @@ pub enum ClientError {
 }
 
 impl ClientError {
-    /// Whether repeating the exact operation later is permitted by classification.
+    /// Whether this failure is classified as retryable.
+    ///
+    /// A timeout can follow durable command acceptance. Retrying a mutation still requires
+    /// its exact original request and authority; this flag does not prove non-execution.
     #[must_use]
     pub fn retryable(&self) -> bool {
         match self {
@@ -148,11 +168,14 @@ pub struct ArtifactRange {
     pub complete_size: u64,
     /// Declared media type.
     pub content_type: String,
-    /// Verified range bytes.
+    /// Bounded response bytes; the caller verifies the assembled artifact's size and digest.
     pub bytes: Vec<u8>,
 }
 
-/// Typed authenticated client shared by CLI and future GUI clients.
+/// Authenticated transport used by the CLI and other Rust consumers.
+///
+/// Clones share the HTTP connection pool and immutable credential. Build a new client after
+/// credential rotation and obtain fresh cursors when the daemon refuses old continuations.
 #[derive(Clone)]
 pub struct ControlClient {
     http: reqwest::Client,
@@ -414,7 +437,10 @@ impl ControlClient {
             .await
     }
 
-    /// Fetches one explicit bounded byte range without following redirects.
+    /// Fetches one explicit bounded byte range without redirects or automatic retries.
+    ///
+    /// This bounds the response body; it does not hash a complete artifact. Read metadata
+    /// first, assemble ranges, and verify total size and content digest before accepting a file.
     pub async fn artifact_range(
         &self,
         artifact: &str,
@@ -490,8 +516,11 @@ impl ControlClient {
 
     /// Opens an SSE feed and reconnects with the latest observed cursor.
     ///
-    /// A public non-retryable API error ends the stream. Heartbeat comments are ignored;
-    /// commands are never submitted by this stream path.
+    /// Retryable failures are yielded before reconnecting; there is no overall retry limit.
+    /// The consumer owns its deadline and handles `ResyncRequired`/`StreamClosing` observations.
+    /// The resume cursor advances on decoding, not on durable consumer acknowledgement.
+    /// A nonretryable API error or malformed frame ends the stream. Dropping it stops local
+    /// observation without cancelling work on the daemon. Heartbeat comments are ignored.
     pub fn subscribe(
         &self,
         feed_path: impl Into<String>,

@@ -4,6 +4,12 @@ An ADR records a durable choice that changes a product boundary, compatibility p
 
 Do not write an ADR for a local refactor, a choice obvious from a small piece of code, a status update, or a decision that merely restates the implementation. Current facts belong in `docs/product/status.md`; intended ordering belongs in `docs/product/roadmap.md`.
 
+Read these as decisions and their evolution. Version numbers and references to later work may
+describe the adoption boundary, not today's implementation. Use [current status](../product/status.md)
+for supported versions and qualification, and [architecture](../architecture.md) for the combined
+ownership model. In particular, the controller decisions preserve the production activation gate;
+their existence does not establish that continuous controllers are installed.
+
 - [0001 — Rebirth as a durable workflow system](0001-rebirth-as-durable-workflow-system.md)
 - [0002 — Append-only run events and deterministic projections](0002-append-only-run-events-and-deterministic-projections.md)
 - [0003 — Redb transactions and content-addressed artifact ownership](0003-redb-transactions-and-content-addressed-artifacts.md)

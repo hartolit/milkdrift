@@ -11,7 +11,8 @@ and rechecking that server/model's advertised behavior through this same path.
 For ordinary setup and execution, use the maintained
 [headless operator path](../../examples/operator/README.md#one-separately-managed-loopback-model).
 It registers a profile, imports `model.json`, starts and waits through the CLI, and inspects exact
-attempt/context/output evidence. The evidence commands below add structural qualification.
+attempt/context/output evidence. The commands below check those observations in a repeatable
+model-only scenario; they do not qualify the combined coding-agent/model gate.
 
 The maintained loopback profile is
 [`openai-compatible-loopback.example.json`](../../examples/local-model/openai-compatible-loopback.example.json).

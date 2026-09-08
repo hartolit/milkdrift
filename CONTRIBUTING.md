@@ -1,11 +1,17 @@
 # Contributing to Milkdrift
 
-Milkdrift is rebuilding around a small, pure semantic kernel. Changes should preserve the dependency direction and the ownership rules in [the architecture constitution](docs/architecture.md).
+Start with [AGENTS.md](AGENTS.md) and its reading order. Milkdrift's headless applications already
+run through a durable workflow kernel; [status](docs/product/status.md) explains current behavior
+and limitations, and the [roadmap](docs/product/roadmap.md) identifies the remaining work and scope
+freeze. Use [the implementation reading path](docs/README.md#learning-the-implementation) to trace
+an operator action to its source and independent tests.
 
-Before submitting a change, follow the [development workflow](docs/development/workflow.md) and
-[engineering rules](docs/development/engineering-rules.md). Add tests that establish observable
-invariants, keep serialized schema changes explicit, and write an ADR only when a decision changes
-a durable project boundary. Product-authored Rust remains safe Rust. Dependencies need a concrete
-risk or maintenance benefit and must pass `cargo deny check`.
+Keep each fact with its [architectural owner](docs/architecture.md). Follow the
+[engineering rules](docs/development/engineering-rules.md), including the documentation standard,
+and choose checks using the [verification policy](docs/development/workflow.md#choose-verification-for-the-change).
+Executable changes require the full gate; documentation-only changes have their own checks.
+Tests should establish observable invariants, and schema changes need explicit compatibility
+review. Write an ADR when a decision changes a durable boundary. Product-authored Rust remains
+safe Rust; dependency changes need a concrete benefit and the required dependency audits.
 
 Contributions are licensed under `MIT OR Apache-2.0`.

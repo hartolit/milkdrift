@@ -1,12 +1,14 @@
 # Milkdrift documentation
 
-This index routes readers to each documentation owner. It does not duplicate product, status,
-architecture, or protocol facts.
+To run your first workflow, start with the [fresh-directory recipe](../README.md#fresh-directory-quick-start)
+and [operator examples](../examples/operator/README.md). To contribute, follow the product reading
+order below, then trace an operation through [the implementation](#learning-the-implementation).
+Use the references when you need an exact command, field, or compatibility rule.
 
 ## Understand the product
 
 - [Product vision](product/vision.md) owns enduring intent and non-negotiable semantics.
-- [Architecture constitution](architecture.md) owns boundaries, terminology, dependency direction,
+- [Architecture](architecture.md) owns boundaries, terminology, dependency direction,
   and compatibility rules.
 - [Current status](product/status.md) owns implemented behavior, limitations, and the latest evidence
   snapshot.
@@ -28,6 +30,9 @@ architecture, or protocol facts.
 
 ## Use Milkdrift
 
+- [Operator setup and ordinary process/model examples](../examples/operator/README.md)
+- [CLI command families and scripting](../apps/cli/README.md)
+- [Rust client requests, pages, and reconnect](../crates/control-client/README.md)
 - [Headless prompt-sequence dogfood](guides/headless-dogfood.md)
 - [Local process operator guide](guides/local-process.md)
 - [Local model endpoint guide](guides/local-model-endpoint.md)
@@ -35,6 +40,7 @@ architecture, or protocol facts.
 
 ## Operate Milkdrift
 
+- [Daemon package and request lifecycle](../apps/daemon/README.md)
 - [Daemon operation and durable state](operations/daemon.md)
 - [Control and execution authority](operations/authority.md)
 - [Peer connectivity](operations/peers.md)

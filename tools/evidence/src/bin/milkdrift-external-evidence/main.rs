@@ -1,4 +1,9 @@
-//! Operator-driven real process and model interoperability evidence harness.
+//! Qualify a real coding agent and model endpoint through ordinary daemon operations.
+//!
+//! Operator profiles supply external resources; generated workflows exercise verification,
+//! remediation, selected context, and settled-boundary restart. The report owner validates
+//! exact source/scenario evidence and redaction. Fixture mode tests this harness and always
+//! remains non-qualifying, even when every scenario assertion succeeds.
 
 mod profiles;
 mod report;

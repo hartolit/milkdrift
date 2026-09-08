@@ -24,8 +24,10 @@ declared verification-success artifact. Review is another fresh-context `Task`; 
 ordinary durable `SignalWait` for `sequence.approved`. The final outcome is an explicit `Terminal`.
 There is no dogfood node kind, scheduler, hidden retry loop, Git implementation, or UI state.
 
-Every coding task requests `fresh` context. Fresh means a new process/provider session, not a new
-repository: a `shared_sequential` repository profile and a local-process
+The maintained example requests `fresh` context for each coding task. The schema also accepts
+explicit continuation intent; the configured process must implement it, and the declaration alone
+does not create a persistent external session. A fresh invocation need not use a new repository:
+a `shared_sequential` repository profile and a local-process
 `authorized_host_path` working directory let accepted files persist across separate invocations.
 Parallel designs must select `isolated_worktrees` and use operator-configured version-control and
 merge capabilities; the runtime does not manufacture branches or commits.
@@ -69,7 +71,9 @@ and execute operations plus starting-state, diff, and verification evidence poli
 Use the [operator setup](../../examples/operator/README.md#startup-and-restart) for endpoint and
 private credential configuration. The [CLI automation contract](../reference/control-api.md#cli-automation-contract)
 owns success/failure JSON, stdout, exits, deadlines, bounded files/stdin, and reconnect behavior.
-Use explicit command IDs and repeat exactly the same arguments and bytes after a lost response.
+Use explicit command IDs and preserve each complete submitted request after a lost response.
+The [remediation flow](#failure-and-remediation) constructs a proposal from fresh reads and needs
+the additional recovery guidance below.
 
 ## Import and run
 
@@ -147,8 +151,10 @@ Query and retain do not claim a terminal outcome.
 
 ## Failure and remediation
 
-If verification omits the declared success artifact, no later stage becomes eligible. The failure
-arm runs the independent reviewer and waits durably for approval. First pause the aggregate using
+If a verifier completes but omits the declared success artifact, the `pause_for_review` failure
+arm runs the independent reviewer and waits durably for approval. A verifier invocation that
+itself fails does not become this artifact-absence branch; inspect its attempt first. Imports
+using `fail_run` instead go to a failure terminal. For the review path, first pause the aggregate using
 the shared run command, then create a bounded proposal from the exact original sequence and current
 revision:
 
@@ -181,6 +187,17 @@ mutation removes only the unused failure continuation and prospectively inserts 
 verification, success re-review, failure re-review, and renewed approval nodes. The runtime's
 existing reconciliation plan preserves completed executions and facts. Apply changes the pinned
 revision while the run remains paused; an explicit signal and resume are still required.
+
+Use the returned sequence and proposal facts at each step; earlier guards can become stale after
+an accepted decision. Keep the original sequence document unchanged for remediation provenance.
+Signalling the original approval wait without applying a repair leads to its failure terminal,
+not to an automatically repaired next stage.
+
+`sequence remediate` reads the current run and actor to build the proposal. After a lost reply,
+rerunning the same arguments can therefore produce a different document under the old command ID.
+Inspect the run, proposal list, and proposed revision to establish what was retained before
+proceeding. Automation that needs exact submission replay should retain a complete proposal
+document and submit it with `proposal submit`; a fresh command ID is new intent, not recovery.
 
 The frozen run grant remains authoritative. A proposed verifier/profile or other requirement
 outside that envelope is rejected at revision adoption. The sequence document limits remediation

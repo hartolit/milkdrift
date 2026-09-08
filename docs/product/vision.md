@@ -1325,30 +1325,10 @@ Dependency direction is inward. UI, HTTP, redb, provider SDKs, process APIs, and
 
 ## 29. Canonical vocabulary
 
-Use these terms consistently:
-
-- **Blueprint** — a reusable declarative workflow or subworkflow package.
-- **Workflow** — a top-level blueprint identity with revision lineage.
-- **Revision** — one immutable semantic workflow definition.
-- **Run** — one durable execution pinned to a revision lineage.
-- **Node** — a definition-time unit.
-- **Node execution** — one runtime occurrence of a node.
-- **Attempt** — one exact execution attempt under a capability resolution.
-- **Edge** — explicit control and/or data dependency.
-- **Capability requirement** — what an operation needs.
-- **Capability descriptor** — immutable honest advertisement of one generation.
-- **Capability observation** — mutable health/load/availability evidence.
-- **Actor** — authenticated human, service, controller, or peer principal.
-- **Grant** — immutable scoped authority revision.
-- **Controller** — actor authorized to influence future workflow execution.
-- **Event** — immutable accepted run fact.
-- **Projection** — disposable state derived from events.
-- **Artifact** — immutable content reference with digest and provenance.
-- **Workspace** — scoped logical mutable state for a run or branch.
-- **Context manifest** — exact record of selected and omitted task evidence.
-- **Reconciliation** — prospective comparison/application of a newer revision to a live run.
-- **Peer execution host** — remote Milkdrift daemon exposing authorized capabilities.
-- **Layout** — non-semantic presentation state.
+Use the [architecture terminology](../architecture.md#terminology) consistently across code,
+documentation, and clients. The distinctions explained here carry product meaning: a definition
+is not an execution, an observation is not authority, and a later revision cannot change what an
+earlier attempt did. A client may present these facts differently without inventing new semantics.
 
 ## 30. Non-goals and anti-goals
 

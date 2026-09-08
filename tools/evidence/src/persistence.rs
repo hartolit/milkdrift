@@ -1,3 +1,9 @@
+//! Measure journal, projection, artifact, and receipt operations through their product ports.
+//!
+//! Logical document counts/bytes and physical directory allocation answer different questions.
+//! Reopen and cold replay establish retained software state; they do not test filesystem power
+//! loss. The in-memory snapshot measurement is also distinct from verified durable recovery.
+
 use std::{fs, path::Path, time::Instant};
 
 use milkdrift_authority::{ActorRef, GrantDigest, GrantId};

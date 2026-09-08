@@ -32,4 +32,11 @@ Peer compaction deletes only peer-owned detail and observation-to-artifact mappi
 
 ## Consequences
 
-Completed executions no longer consume live execution capacity forever, while exact replay/conflict remains durable for the store generation. Operational observation history is intentionally unavailable after the configured horizon, but its count/digest and final disposition remain auditable. Tombstones continue to grow on disk; they are compact identity truth, not a bounded audit log. Configuration schema 6, peer protocol 1.1, redb physical schema 7, and internal document format 10 are exact-current and older incompatible forms are refused without migration.
+Completed executions no longer consume live execution capacity forever, while exact replay/conflict
+remains durable for the store generation. Operational observation history is intentionally
+unavailable after the configured horizon, but its count/digest and final disposition remain
+auditable. Tombstones continue to grow on disk; they are compact identity truth, not a bounded
+audit log. This decision introduced configuration schema 6, peer protocol 1.1, redb physical
+schema 7, and internal document format 10. Later decisions advanced those versions; the
+[current compatibility boundary](../product/status.md#implemented-now) owns
+the accepted forms and migration limits.

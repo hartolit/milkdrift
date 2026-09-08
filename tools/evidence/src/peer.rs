@@ -1,3 +1,8 @@
+//! Drive peer records through acceptance, entry, observation, and archival in a local store.
+//!
+//! Replaying hot records and tombstones measures the persistence contract without claiming
+//! connectivity or interoperability with an independently deployed peer.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use milkdrift_authority::{

@@ -1,3 +1,8 @@
+//! Validates operator process identity and builds the scenario's isolated helper profiles.
+//!
+//! Real mode rejects known fixture agents; fixture mode deliberately supplies one. Both paths
+//! revalidate generated profiles before the daemon can register them.
+
 use std::{
     collections::BTreeSet,
     fs,

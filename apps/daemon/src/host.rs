@@ -110,7 +110,11 @@ impl PublicFailure {
     }
 }
 
-/// Cloneable daemon handle shared by HTTP route state.
+/// Handle to a started host, shared by HTTP routes while one thread owns durable operations.
+///
+/// Cloning shares the same queues, workers, and storage lifecycle. Arrange one orderly
+/// [`Self::shutdown`] (or use [`crate::serve`]) before releasing the host; socket closure alone
+/// does not finish external work or its final persistence calls.
 #[derive(Clone)]
 pub struct DaemonHost {
     sender: Arc<SyncSender<OwnerRequest>>,

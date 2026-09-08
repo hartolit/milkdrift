@@ -1,6 +1,9 @@
 # Local control API 2.3
 
-This document is the implemented external contract for `milkdrift-daemon`. It describes a local control plane, not a peer protocol or public internet service.
+Use this reference for exact requests, replies, routes, and CLI machine output. For setup, begin
+with the [operator examples](../../examples/operator/README.md); for Rust integration, use the
+[control client guide](../../crates/control-client/README.md). This is the daemon's local control
+plane. Remote capability execution uses the separate [peer protocol](peer-protocol.md).
 
 ## Transport, authentication, and negotiation
 
@@ -12,7 +15,10 @@ Clients negotiate with `POST /v1/version`:
 {"protocol":{"major":2,"minor":3}}
 ```
 
-Major 2 is required; protocol 1 is refused. Attempt and capability read fields are specified
+Major 2 is required; protocol 1 is refused. For that major, the current implementation returns
+minor 3 rather than selecting the lower offered minor or downgrading response fields. Clients
+must accept the current response shape; older strict readers are not qualified by this exchange.
+Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
 the negotiated envelope version. JSON success bodies use:
 
@@ -45,7 +51,8 @@ Stable codes are `unauthenticated`, `unauthorized`, `invalid_input`, `conflict`,
 
 ## Commands
 
-All mutations use `POST /v1/commands`. A command envelope has no actor field:
+Workflow, run, proposal, controller, and layout commands use `POST /v1/commands`. Peer lifecycle
+administration uses the separate routes below. A command envelope has no actor field:
 
 ```json
 {
@@ -83,6 +90,10 @@ The closed command types are:
 | `put_layout` | `layout` | `write_layout` | Optimistically store presentation-only state for the exact workflow/revision/shared owner. |
 
 Evidence kinds accepted by the daemon are `authority_decision`, `worker_observation`, `external_receipt`, `artifact`, and `recovery_observation`. A success returns `CommandAccepted`: `command_id`, `replayed`, optional `resulting_sequence`, stable `result_type`, and a bounded command-specific `value`.
+
+Acceptance is not task completion. Read the run and exact attempts to establish execution outcome.
+Controller commands describe the library contract; the production daemon still refuses continuous
+controller activation under the [qualification gate](../product/status.md#limitations-now).
 
 Controller status contains the policy controller identity/digest; exact run, governing revision,
 node, and execution; lifecycle state; every progress and limit field; last assessment
@@ -158,7 +169,16 @@ uses that same construction. Reaching the journal head waits for later events wi
 the continuation position. A cursor rejected after an implementation or authority change requires
 a fresh authorized subscription or page read.
 
-`milkdrift-control-client::subscribe` reconnects retryable transport failures with its last successfully decoded cursor. Reconnect never submits or replays a command.
+`milkdrift-control-client::subscribe` reconnects retryable transport failures with its last decoded
+cursor and yields errors between connections. Its consumer owns the overall deadline and retry
+limit, handles `resync_required` by refreshing the view, and decides how to handle `stream_closing`.
+The cursor advances when decoded, not when the consumer persists its item. Reconnect never submits
+or replays a command.
+
+The CLI's `run timeline --follow` first reads a timeline page, then starts a fresh run stream.
+Its `--cursor` applies to that page; a `timeline:{run}` continuation cannot resume `run:{run}`.
+The stream can repeat timeline facts already shown in the initial page. Consumers combining both
+use the durable timeline sequence to identify those repeated facts.
 
 ## Layout schema 1
 

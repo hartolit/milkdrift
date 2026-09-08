@@ -50,7 +50,8 @@ stable reason codes, never credentials or protected payloads.
 
 ## External operation inventory
 
-The inventory below is exhaustive for the implemented local HTTP surface. “Durable” means the
+The inventory below records the authority mapping at adoption; the
+[control reference](../reference/control-api.md) owns the complete current route list. “Durable” means the
 authority decision is retained because the operation mutates durable state or releases protected
 content; ordinary refreshes are evaluated but not appended to an unbounded audit.
 

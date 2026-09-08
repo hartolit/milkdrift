@@ -1,4 +1,4 @@
-//! Immutable effective daemon plans and the schema-9 configuration boundary.
+//! Compile operator configuration once, then give each host component only its owned plan.
 mod compile;
 mod redaction;
 mod wire;
@@ -44,7 +44,11 @@ const CONFIG_DIGEST_LIMITS: JsonLimits = JsonLimits {
     maximum_container_items: 4_096,
 };
 
-/// Immutable path-normalized daemon construction plan.
+/// Validated configuration ready for [`crate::DaemonHost::start`].
+///
+/// Created by [`DaemonConfig::load`] or [`DaemonConfig::validate`], with relative paths resolved
+/// against the configuration base. Startup consumes its storage, authentication, adapter, and
+/// worker plans; editing the source TOML afterward does not update a running host.
 #[derive(Clone, Debug)]
 pub struct DaemonPlan {
     bind: SocketAddr,

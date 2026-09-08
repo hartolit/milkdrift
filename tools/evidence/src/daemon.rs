@@ -1,3 +1,8 @@
+//! Measures public daemon requests under load, then observes overload recovery and shutdown.
+//!
+//! The harness launches the actual binary and reads health through the control client. The
+//! graceful signal lane uses Unix; process-thread counts are available only through Linux `/proc`.
+
 use std::{
     collections::BTreeMap,
     time::{Duration, Instant},

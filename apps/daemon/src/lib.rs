@@ -1,8 +1,14 @@
-//! Local-first Milkdrift daemon host and versioned HTTP control plane.
+//! Run a durable Milkdrift host and expose it through the authenticated control API.
 //!
-//! The async reactor owns sockets only. A dedicated bounded runtime-owner thread owns
-//! durable control/query calls, while caller-owned effect workers enter external adapter
-//! boundaries on their own fixed threads.
+//! Load operator TOML with [`DaemonConfig::load`] to obtain a validated [`DaemonPlan`].
+//! [`DaemonHost::start`] recovers storage and starts adapters/workers before returning ready;
+//! [`serve`] connects that host to a listener and a caller-supplied shutdown future.
+//!
+//! HTTP handlers authenticate and frame requests. A bounded owner thread serializes durable
+//! command and read calls, while fixed effect workers enter external capabilities. A command
+//! reply reports acceptance; subsequent run and attempt reads report execution. Callers must
+//! complete [`DaemonHost::shutdown`] when hosting without [`serve`] so workers can finish
+//! their durable writes before storage ownership ends.
 
 mod auth;
 mod config;

@@ -1,8 +1,31 @@
-//! Pure versioned wire contracts for the local Milkdrift control plane.
+//! Requests and read models shared by Milkdrift clients and the daemon.
 //!
-//! This crate deliberately contains no HTTP, asynchronous runtime, database, process,
-//! provider, or UI types. Identities are opaque strings at this boundary and internal
-//! durable event variants are projected into the stable [`TimelineCategory`] vocabulary.
+//! Submit a [`CommandRequest`] to ask for a change, then inspect [`RunRead`], [`AttemptRead`],
+//! or [`TimelineEntry`] to learn what happened. [`Page`] and [`ObservationEnvelope`] carry
+//! continuations so clients can browse or follow work incrementally. Transport lives in
+//! `milkdrift-control-client`; the daemon supplies authentication and semantic validation.
+//!
+//! Identities are opaque strings here. Internal journal events are projected into the public
+//! [`TimelineCategory`] vocabulary so clients need not depend on runtime or storage types.
+//! Use [`decode_json`] for bounded, duplicate-rejecting input, then the owning type's validation:
+//!
+//! ```
+//! use milkdrift_control_protocol::{Command, CommandRequest, ProtocolVersion, decode_json, encode_json};
+//!
+//! let request = CommandRequest {
+//!     protocol: ProtocolVersion::CURRENT,
+//!     command_id: "pause-review-1".into(),
+//!     expected_sequence: Some(42),
+//!     expected_revision: None,
+//!     reason: "Inspect verification output".into(),
+//!     evidence: vec![],
+//!     command: Command::PauseRun { run_id: "run-review".into() },
+//! };
+//! let received: CommandRequest = decode_json(&encode_json(&request)?)?;
+//! received.validate()?; // Envelope checks; the daemon checks the run and authority.
+//! assert_eq!(received, request);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -98,7 +121,9 @@ impl ProtocolVersion {
         minor: PROTOCOL_MINOR,
     };
 
-    /// Rejects unsupported majors and negotiates the lower minor.
+    /// Rejects unsupported majors and returns the server's current minor.
+    ///
+    /// This does not select the lower minor or downgrade response shapes for older clients.
     pub fn negotiate(self) -> Result<Self, ProtocolError> {
         if self.major != PROTOCOL_MAJOR {
             return Err(ProtocolError::UnsupportedMajor {
@@ -157,7 +182,7 @@ pub enum ErrorCode {
     UnsupportedVersion,
     /// A deadline elapsed.
     Timeout,
-    /// A non-redacted internal failure occurred.
+    /// An internal failure occurred; the public diagnostic remains redacted.
     Internal,
 }
 
@@ -209,7 +234,12 @@ pub struct ResponseEnvelope<T> {
     pub value: T,
 }
 
-/// Stable opaque pagination or stream continuation.
+/// Opaque continuation returned by a page or stream for reuse with the same query.
+///
+/// Daemon routes issue authenticated cursors tied to actor, grant, filters, and credential.
+/// Clients retain their text unchanged. Server code must use [`Self::position_for_bound`] or
+/// [`Self::key_for_bound`] before trusting a continuation; the position-only readers do not
+/// verify its MAC or authority binding.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct Cursor(String);
@@ -400,7 +430,7 @@ impl Cursor {
         Ok(wire.position)
     }
 
-    /// Creates a cursor bound to one exact feed and monotonic position.
+    /// Creates an unauthenticated feed/position cursor for local use, not daemon requests.
     pub fn new(feed: &str, position: u64) -> Result<Self, ProtocolError> {
         validate_identifier("feed", feed, 256)?;
         let bytes = serde_json::to_vec(&CursorWire {
@@ -412,7 +442,7 @@ impl Cursor {
         Ok(Self(URL_SAFE_NO_PAD.encode(bytes)))
     }
 
-    /// Decodes the position only when the cursor belongs to `expected_feed`.
+    /// Inspects a sequence position for `expected_feed` without verifying authority or the MAC.
     pub fn position_for(&self, expected_feed: &str) -> Result<u64, ProtocolError> {
         let bytes = URL_SAFE_NO_PAD
             .decode(&self.0)
@@ -459,7 +489,7 @@ impl Cursor {
         }
     }
 
-    /// Creates a cursor bound to one exact feed and stable identity resume key.
+    /// Creates an unauthenticated identity continuation for local use, not daemon requests.
     pub fn new_key(feed: &str, key: &str) -> Result<Self, ProtocolError> {
         validate_identifier("feed", feed, 256)?;
         validate_identifier("cursor.key", key, 256)?;
@@ -472,7 +502,7 @@ impl Cursor {
         Ok(Self(URL_SAFE_NO_PAD.encode(bytes)))
     }
 
-    /// Decodes a stable identity resume key only for the exact selected feed.
+    /// Inspects an identity key for the selected feed without verifying authority or the MAC.
     pub fn key_for(&self, expected_feed: &str) -> Result<String, ProtocolError> {
         let bytes = URL_SAFE_NO_PAD
             .decode(&self.0)
@@ -588,7 +618,10 @@ impl PageRequest {
     }
 }
 
-/// One bounded stable-cursor page.
+/// One bounded page; request further items explicitly with `next_cursor` and the same filters.
+///
+/// `observed_cursor` describes the head seen during this read. It is distinct from the
+/// continuation after the returned items and must not be used to skip unread pages.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Page<T> {
@@ -600,7 +633,10 @@ pub struct Page<T> {
     pub observed_cursor: Option<Cursor>,
 }
 
-/// Strictly duplicate-checks, bounds-checks, and decodes one protocol JSON document.
+/// Bounds and decodes one protocol JSON document, rejecting duplicate fields.
+///
+/// Call the decoded type's validation method where provided. This generic reader does not
+/// call [`CommandRequest::validate`] or [`LayoutDocument::validate`] for the caller.
 pub fn decode_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ProtocolError> {
     if bytes.len() > MAX_DOCUMENT_BYTES {
         return Err(ProtocolError::Bounds(format!(

@@ -1,4 +1,8 @@
-//! Actual-binary local-model smoke evidence with a deterministic parser fixture.
+//! Observe one model workflow through actual daemon/CLI binaries.
+//!
+//! Deterministic mode owns a loopback parser fixture; real mode requires an explicit operator
+//! profile and never falls back. Both modes produce structural model-only evidence and remain
+//! non-qualifying for the combined external-agent/model gate.
 
 use std::{
     collections::{BTreeMap, BTreeSet},

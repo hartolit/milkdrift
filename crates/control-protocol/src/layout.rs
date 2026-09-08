@@ -29,7 +29,11 @@ pub struct LayoutViewport {
     pub zoom: f64,
 }
 
-/// Independent versioned presentation layout.
+/// Positions and annotations associated with an exact workflow revision.
+///
+/// Changing a layout leaves semantic revision identity and execution history untouched.
+/// Seal edited content before submission. The daemon checks the expected update generation
+/// and replaces author provenance with the authenticated actor before retaining the write.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LayoutDocument {

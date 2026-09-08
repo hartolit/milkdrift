@@ -18,7 +18,10 @@ use std::{
 };
 
 impl DaemonConfig {
-    /// Loads bounded duplicate-safe TOML and compiles it before storage is opened.
+    /// Reads TOML and compiles it using the configuration file's parent as the path base.
+    ///
+    /// This validates configuration and referenced paths without starting the host. Adapter
+    /// profile contents, executable identity, and storage recovery are checked during startup.
     pub fn load(path: &Path) -> Result<DaemonPlan, ConfigError> {
         let bytes = fs::read(path).map_err(|error| ConfigError::Read(error.kind().to_string()))?;
         if bytes.len() > MAX_DOCUMENT_BYTES {
@@ -37,7 +40,10 @@ impl DaemonConfig {
         config.validate(parent)
     }
 
-    /// Deterministically validates and normalizes a programmatically built config.
+    /// Compiles a programmatically built configuration, resolving paths relative to `base`.
+    ///
+    /// Use this instead of passing unchecked Serde input to host components. The returned plan
+    /// fixes effective values for one startup; it does not open storage or reload a live daemon.
     pub fn validate(mut self, base: &Path) -> Result<DaemonPlan, ConfigError> {
         if self.schema_version != DAEMON_CONFIG_SCHEMA_VERSION {
             return Err(ConfigError::UnsupportedVersion(self.schema_version));

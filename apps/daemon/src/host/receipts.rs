@@ -1,4 +1,9 @@
-//! External command idempotency, deterministic rejection, and recovery boundary.
+//! Recover a lost command reply without applying the command a second time.
+//!
+//! Lookup precedes new-command execution. The fingerprint binds the original envelope and
+//! authenticated grant; a retained result replays and changed content conflicts. Layout and
+//! proposal discovery changes commit with the receipt. Runtime/control acceptance uses stable
+//! internal command identities to recover the gap before an external receipt is committed.
 
 use super::{
     APPLICATION_COMMAND_SCHEMA_VERSION, Owner, PublicFailure, layouts, proposals,

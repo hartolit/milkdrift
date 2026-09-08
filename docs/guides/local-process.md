@@ -99,6 +99,11 @@ operator identity decision. Regenerate v1 profiles as schema v2 under operator c
 
 ## Execution and trust boundaries
 
+For one invocation, the host creates the input workspace, the adapter prepares direct arguments
+and explicit environment, and the final identity check precedes spawn. Captured output becomes
+an artifact only through declared publication. Inspect the attempt and its artifacts to distinguish
+process exit, accepted output, cancellation, and an unknown outcome.
+
 An isolated workflow may materialize a selected repository input into its fresh execution
 directory and export a declared patch. The coding-agent template instead uses the explicit
 `authorized_host_path` mode for persistent operator-owned repository progress and bounded prompt
@@ -125,3 +130,7 @@ remains between that check and OS process entry. Unix process groups support obs
 but a malicious descendant can escape into another session/group. Non-Unix builds report no
 complete process-tree cancellation. Child-count and resource limits remain observations unless an
 external host sandbox enforces them.
+
+Current cleanup after a durable reporting failure is also incomplete: the source paths are
+recorded in [status](../product/status.md#limitations-now). Ordinary cancellation evidence does
+not establish cleanup when reporting itself fails after spawn.

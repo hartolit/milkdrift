@@ -11,9 +11,11 @@ credential-free CI/self-test mode; it deliberately sets the report and both scen
 
 ## Prerequisites
 
-- Build prerequisites from the [development workflow](../development/workflow.md), `/usr/bin/git`,
-  `/usr/bin/python3`, and a `b3sum` CLI for preparing exact executable facts. Python is used only
-  by the separate verifier/reviewer/evidence helpers.
+- Build prerequisites from the [development workflow](../development/workflow.md), Git, Python 3,
+  and a `b3sum` CLI for preparing exact executable facts. The harness resolves Git/Python from
+  `PATH`; on Windows put a real Python installation before the WindowsApps aliases. Python is
+  used by the separate verifier/reviewer/evidence helpers. The preparation commands below use
+  a Unix shell and GNU `stat`; use your host's file-length command on other platforms.
 - A clean Milkdrift checkout at the exact commit/tree being cited. Real mode refuses a dirty
   checkout because the recorded Git tree would not identify the tested source; fixture mode records
   `dirty_at_start` but remains non-qualifying.
@@ -85,15 +87,15 @@ the output directory has been accepted. The selected output directory must initi
 The process scenario initializes an exact Git commit containing a deliberately broken calculator,
 imports an ordinary prompt sequence, and starts a fresh real agent. A separate verifier publishes
 result/log facts but intentionally withholds the success artifact. That is labeled orchestration
-fault injection, not blamed on the agent. A fresh independent reviewer runs, the daemon shuts down
-cleanly, and a new daemon recovers the durable approval boundary. The harness then submits,
+fault injection, not blamed on the agent. A fresh independent reviewer runs, the harness terminates
+and reaps the daemon at the settled approval boundary, and a new daemon recovers it. The harness then submits,
 approves, and applies an ordinary digest-bound remediation proposal, signals and resumes the run,
 starts a second fresh agent process, and runs the good verifier. It checks distinct invocation IDs,
 attempt provenance, output artifacts, no duplicate attempts, and the exact initial/final
 commit/tree plus dirty-diff digest.
 
 The model scenario publishes two selected evidence artifacts and one intentionally unselected
-artifact, then stops at a durable signal wait before adapter entry. After a clean daemon restart it
+artifact, then stops at a durable signal wait before adapter entry. After terminating and reopening the daemon it
 verifies the same unreleased sequence, signals once, and permits one endpoint request. The model
 task uses the frozen manifest, Fresh session policy, the endpoint's advertised streaming mode, and
 either strict JSON `{ "ok": true }` or the exact text `MILKDRIFT_EVIDENCE_OK`. Success requires
@@ -101,8 +103,10 @@ selected/omitted artifact identity, durable fragment counts, response/finish/usa
 provider metadata, exact profile/protocol/model/origin provenance, committed output artifacts, and
 one attempt with no uncertainty.
 
-The harness uses controlled daemon shutdown. It never edits redb directly and does not add an
-evidence-only scheduler, semantic node, provider family, or privileged endpoint.
+These are controlled abrupt process restarts at settled workflow boundaries. They do not exercise
+graceful OS-signal shutdown or filesystem power loss. The separate
+[operational lane](../development/verification-evidence.md#benchmarks-and-operations) owns graceful
+shutdown evidence. The harness uses the actual daemon and never edits redb directly.
 
 ## Endpoint profiles
 

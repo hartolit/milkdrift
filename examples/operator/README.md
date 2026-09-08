@@ -3,7 +3,7 @@
 These maintained files use the production daemon reader and ordinary immutable blueprint documents.
 Copy them into a private directory outside the repository. The initial configuration grants
 controller operations only for workflow `operator-starter`, finite budgets, no filesystem/network
-access, and no artifact access. No adapter is enabled. Its terminal-only starter proves setup
+access, and no artifact access. No external adapter is enabled. Its terminal-only starter proves setup
 without external work or broad authority.
 
 ## Startup and restart
@@ -38,8 +38,8 @@ Copy `process.json` and `process-profile.example.json`. Review and edit the prof
   literal argument. On Windows, use `C:/Windows/System32/whoami.exe` with arguments
   `["/user", "/fo", "csv", "/nh"]`. The reader requires a nonempty argument vector. The executable
   runs with the daemon account's privileges.
-- Match `platform` to the daemon build. On Windows set `owned_process_group` and
-  `terminal_group_observation` to `false`; keep `descendant_escape_prevention = false`.
+- Match `platform` to the daemon build. On Windows set all three fields to `false`:
+  `owned_process_group`, `terminal_group_observation`, and `descendant_escape_prevention`.
   The shipped Unix values are refused by a Windows build.
 - Compute its BLAKE3 with `b3sum EXECUTABLE`, put `b3_` followed by the 64 hex digits in
   `implementation.content_digest`, and put its exact file length in `size_bytes`.
@@ -50,8 +50,7 @@ Copy `process.json` and `process-profile.example.json`. Review and edit the prof
   by the daemon. Inputs and stdin are explicitly empty/disabled. The declared output is the
   bounded `stdout` artifact; stderr is bounded and discarded.
 - Keep the 10-second wall timeout, bounded output/capture limits, best-effort cancellation, and
-  `retain_uncertain` restart policy. On Windows set all three `platform` fields to false:
-  Unix process-group ownership and terminal group observation are not available.
+  `retain_uncertain` restart policy.
 
 Keep profile ceilings within the [process authority requirements](../../docs/guides/local-process.md#profile-schema-2).
 The maintained template fits the starter's finite artifact grant.

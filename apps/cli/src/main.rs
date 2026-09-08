@@ -1,4 +1,8 @@
-//! Thin operator CLI over `milkdrift-control-client`.
+//! Submit operator intent and present daemon evidence through `milkdrift-control-client`.
+//!
+//! Arguments and the overall deadline live here; session, command families, and output owners
+//! implement the call. Expiring a CLI request or pressing Ctrl-C stops local waiting without
+//! deciding whether a daemon command was accepted or cancelling the workflow.
 
 use std::{env, io::IsTerminal as _, path::PathBuf, process::ExitCode, time::Duration};
 

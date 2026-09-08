@@ -1,3 +1,8 @@
+//! Drives actual daemon/client operations and gathers the process and model observations.
+//!
+//! Restart checkpoints first reach a settled wait, then kill and reap the daemon. Their recovery
+//! evidence does not establish graceful signal handling or interruption during external entry.
+
 use super::{
     AgentProfile, Arc, ArtifactEvidence, AtomicUsize, BTreeSet, CapabilityId, Command,
     CommandRequest, ControlClient, DaemonLaunch, Duration, HarnessResult, MODEL_RUN,

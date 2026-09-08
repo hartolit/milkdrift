@@ -1,4 +1,7 @@
-//! Proposal discovery projection and exact control-state query ownership.
+//! Discover retained proposals, then ask control for the exact reconciliation state.
+//!
+//! The application index locates proposals across receipt archival; it does not own approval
+//! or application truth. Reads validate each retained association before projecting its status.
 
 use super::{
     Owner, PublicFailure, read_model::bounded, read_model::corruption, read_model::internal,

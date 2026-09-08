@@ -33,9 +33,10 @@ development profiles. Secrets exist only during header construction. Streaming f
 bounded observations; canonical response/text/structured/tool-call/provider-metadata outputs are
 committed artifacts before success. Tool calls remain data.
 
-The direct dependency is reqwest 0.12 with only blocking, JSON, rustls TLS, and stream features.
+The original direct dependency was reqwest 0.12 with only blocking, JSON, rustls TLS, and stream features.
 Its rustls chain introduces the permissive ISC, BSD-3-Clause, and CDLA-Permissive-2.0 licenses;
 these are explicitly admitted by dependency policy. No provider SDK is used.
+The [workspace manifest](../../Cargo.toml) owns the current dependency version and features.
 
 ## Rejected alternatives
 

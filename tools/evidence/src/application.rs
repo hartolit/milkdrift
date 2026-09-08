@@ -1,4 +1,11 @@
-//! Actual child-process, daemon-configuration, and JSON boundary harness.
+//! Own application children while scenarios observe public configuration and control behavior.
+//!
+//! [`DaemonLaunch`] checks configuration through the product
+//! binary and waits for authenticated readiness. [`CliRunner`]
+//! executes a real CLI and checks its machine output. Keep restart intent explicit:
+//! [`terminate`](crate::application::OwnedChild::terminate) kills and reaps;
+//! [`shutdown`](crate::application::OwnedChild::shutdown) exercises graceful Ctrl-C shutdown only
+//! on Unix. Neither is a filesystem power-loss test.
 
 use std::{
     collections::BTreeMap,
@@ -82,7 +89,10 @@ impl DaemonLaunch {
     }
 }
 
-/// One owned child, including cleanup on every early return.
+/// Owns an immediate child and attempts termination/reaping when a scenario exits early.
+///
+/// This is harness cleanup, not process-tree containment. Use an explicit lifecycle method
+/// when its success or failure is part of the evidence instead of relying on best-effort drop.
 pub struct OwnedChild(Child);
 
 impl OwnedChild {
@@ -128,7 +138,9 @@ impl OwnedChild {
         }
     }
 
-    /// Uses the daemon's public Ctrl-C boundary and verifies a successful exit.
+    /// Uses the daemon's public Ctrl-C boundary and verifies a successful exit on Unix.
+    ///
+    /// Other platforms return an error: forced termination cannot stand in for this observation.
     pub fn shutdown(&mut self) -> EvidenceResult {
         #[cfg(unix)]
         {
@@ -159,7 +171,11 @@ impl Drop for OwnedChild {
     }
 }
 
-/// Runs a command with bounded output files and a deadline, without pipe deadlocks.
+/// Captures a command in temporary files so stdout/stderr pipes cannot block its exit.
+///
+/// The harness polls output sizes and a deadline, then bounds each captured read. These checks
+/// are observed limits; they do not impose an OS disk quota between polls. The child owner
+/// attempts cleanup on error, and callers decide which captured text is safe to publish.
 pub fn run_command(
     command: &mut ProcessCommand,
     stdin: Option<&[u8]>,

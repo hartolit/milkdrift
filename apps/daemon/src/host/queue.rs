@@ -1,4 +1,9 @@
-//! Bounded synchronous bridge into the daemon's single durable owner thread.
+//! Serialize durable calls while leaving sockets and external effects on their own workers.
+//!
+//! Ordinary queue saturation returns overload. Once queued, a call can still execute after
+//! its caller loses the reply or times out, which is why mutations need durable receipts.
+//! A panicking request closes ordinary admission but leaves final persistence and shutdown
+//! calls serviceable so workers can relinquish their owned work.
 
 use std::{
     sync::Arc, sync::Weak, sync::mpsc::SyncSender, sync::mpsc::TrySendError,

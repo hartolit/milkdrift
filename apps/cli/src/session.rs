@@ -1,4 +1,8 @@
-//! One connected CLI session and its shared input, envelope, confirmation, and output policy.
+//! Load one credential and negotiate before routing a command through the shared client.
+//!
+//! Common envelope construction preserves operator IDs, guards, reasons, and evidence. Local
+//! confirmation expresses operator intent; the daemon still owns authorization and acceptance.
+//! Document reads share a single-stdin-use rule so one command cannot consume it twice.
 
 use std::{
     cell::Cell,

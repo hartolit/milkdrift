@@ -1,6 +1,12 @@
 # Architecture
 
-This document owns terminology, semantic ownership, dependency direction, and durable invariants.
+Milkdrift separates the definition of work, the history of its execution, and authority to change
+what happens next. A client submits intent to the daemon; the runtime accepts facts durably and
+asks external capabilities to perform work. Clients inspect projections of those facts instead
+of opening storage or reconstructing adapter behavior themselves.
+
+This document explains which component owns each part of that operation and the invariants that
+connect them. The terminology and package map below support the detailed lifecycle sections.
 Read [vision](product/vision.md) for intent, [status](product/status.md) for exact current versions
 and qualification, and [the source-learning route](README.md#learning-the-implementation) to trace
 the executable system. Engineering policy belongs in [engineering rules](development/engineering-rules.md).
@@ -110,12 +116,28 @@ revision/effect, approver, and policy. Preset names expand into grants rather th
 
 ## One command and external-effect path
 
+Consider a client starting a run. The reply confirms the accepted command; task completion arrives
+later through durable adapter observations. Two connected paths preserve that distinction:
+
 ```text
-CLI → control client/protocol → authenticated daemon owner → authority decision
- → runtime admission → atomic command receipt/events → scheduling and exact resolution
- → durable context + dispatch → exact-generation permit → final authority/account admission
- → durable adapter-entry intent → adapter observations → durable reporter → projection → CLI
+client request
+    |
+    v
+authentication → authority → durable command result → reply
+                                  |
+                                  v
+                              scheduler
+                                  |
+                                  v
+                           capability entry
+                                  |
+                                  v
+                        observations → read models
 ```
+
+If the reply is lost, exact request replay recovers the command result. If an external operation
+loses its result after entry, the runtime may retain an uncertain attempt. Command replay does
+not turn that missing external evidence into a success or authorize another invocation.
 
 Each externally initiated mutation binds actor, exact grant revision/digest, command identity,
 canonical complete request, and optimistic guards. Authentication supplies server-owned actor
@@ -194,6 +216,11 @@ authority, scheduling, and effects stay with existing owners.
 
 ## Context and artifacts
 
+Context answers what evidence one task should receive. A task revision requests sources and
+budgets; runtime selects from causally visible work and records the selection before dispatch.
+The capability host then loads the selected bytes. Keeping selection separate from loading lets
+an inspector explain what the attempt received even after newer work or a revision exists.
+
 Branches isolate mutable workspace state. Cross-branch transfer requires declared data edges,
 artifacts, joins, reducers, or explicit imports. An authorized persistent host repository is an
 explicit sequential-process choice; parallel work requires separate worktrees/scopes and merge
@@ -238,6 +265,11 @@ deduplication do not duplicate logical charges. Explicit retention may expire by
 safe metadata and integrity evidence; compaction never silently deletes artifact content or outputs.
 
 ## History, compaction, and recovery
+
+Long-running workflows need complete history without keeping every settled attempt in the active
+scheduler state. The journal retains accepted facts; the projection keeps what current work still
+needs. Compaction changes the latter, so historical inspection must follow retained identities
+back to journal pages rather than interpreting a compact view as the entire run.
 
 | State | Authority and bound |
 | --- | --- |
@@ -359,6 +391,11 @@ use core publication/read ports. [Peer protocol](reference/peer-protocol.md) own
 details; [peer operations](operations/peers.md) owns operator connectivity and quotas.
 
 ## Daemon lifecycle and compatibility
+
+The [daemon](../apps/daemon/README.md) connects these owners into one process. Startup establishes
+what can safely continue before accepting new work; shutdown keeps storage available until workers
+have finished their final reports. Operators arrange configuration, credentials, external services,
+and backup through [daemon operations](operations/daemon.md).
 
 Strict bounded duplicate/unknown-field-rejecting TOML compiles once into normalized immutable owner
 plans. Enabled peer mode requires identity; internal owners receive only their section. One bounded

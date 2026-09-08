@@ -110,7 +110,7 @@ impl DaemonHost {
             .ok_or_else(|| HostError::Shutdown("peer status disappeared".to_owned()))
     }
 
-    /// Revokes one live relationship and drains its registrations until reload/restart.
+    /// Revokes one live relationship and drains its registrations until daemon restart.
     pub(crate) async fn revoke_peer(&self, peer: &PeerId) -> Result<PeerRead, HostError> {
         let durable_peer = peer.clone();
         self.dispatch(false, move |owner| owner.revoke_peer(&durable_peer))

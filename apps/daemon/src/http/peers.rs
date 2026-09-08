@@ -1,4 +1,4 @@
-//! Peers transport adaptation over typed daemon calls.
+//! Expose configured peer observations and explicit administration under the local actor's grant.
 use super::{ApiError, AppState, authenticate, owner_error, success};
 use crate::auth::ActorSession;
 use axum::{extract::Path, extract::State, http::HeaderMap, http::StatusCode, response::Response};

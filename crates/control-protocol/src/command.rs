@@ -13,7 +13,11 @@ pub struct EvidenceRef {
     pub kind: String,
 }
 
-/// External mutating request. Actor identity is intentionally absent.
+/// One client-owned request whose exact identity lets a caller recover a lost reply.
+///
+/// Keep the entire envelope when retrying: reason, evidence, guards, and body participate in
+/// replay/conflict checks along with the authenticated actor and grant. Actor identity comes
+/// from the daemon's credential mapping, so it cannot be supplied in this document.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommandRequest {
@@ -62,7 +66,7 @@ impl CommandRequest {
     }
 }
 
-/// Closed version-one mutation vocabulary.
+/// Operations carried by the current external command envelope.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 #[allow(missing_docs)] // Variant prose documents each compact operation payload.
@@ -165,7 +169,11 @@ pub enum ProposalDecision {
     Reject,
 }
 
-/// Durable command acceptance response.
+/// Result of command acceptance, which may precede completion of the requested work.
+///
+/// For example, starting a run returns its accepted identity and sequence; run/attempt reads
+/// establish whether its tasks later succeeded. `replayed` reports receipt recovery and does
+/// not mean the daemon executed the operation again.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommandAccepted {

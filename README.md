@@ -60,6 +60,8 @@ Next run [one byte-pinned local process](examples/operator/README.md#one-byte-pi
 or [one separately managed model](examples/operator/README.md#one-separately-managed-loopback-model).
 [Prompt sequences](docs/guides/headless-dogfood.md) compose coding, verification, review, and
 prospective remediation. [Daemon operations](docs/operations/daemon.md) covers retention and backup.
+The [CLI guide](apps/cli/README.md) helps choose a command and interpret script results;
+the [Rust client guide](crates/control-client/README.md) explains direct API use and reconnect.
 
 ## Read the repository
 

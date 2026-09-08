@@ -1,4 +1,4 @@
-//! Artifacts transport adaptation over typed daemon calls.
+//! Serve authorized artifact metadata and bounded byte ranges with HTTP content headers.
 use super::{
     ApiError, AppState, MAX_ARTIFACT_HTTP_RANGE, authenticate, not_found_response, owner_error,
     success,

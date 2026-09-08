@@ -160,7 +160,10 @@ pub struct RevisionChange {
     pub detail: Value,
 }
 
-/// Compact current run status.
+/// Current run status and execution frontier, rather than a complete execution history.
+///
+/// Settled attempt details can leave this view during compaction. Use an exact attempt read
+/// or paged timeline to inspect older work; absence from `nodes` is not proof it never ran.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunRead {
@@ -204,7 +207,11 @@ pub struct NodeRead {
     pub latest_attempt: Option<AttemptRead>,
 }
 
-/// Bounded attempt status and provenance.
+/// Evidence for one exact attempt, reconstructed from current state or historical events.
+///
+/// Capability and authority fields describe the selection used for this attempt, not today's
+/// registry. Context and output detail depends on read authority and response limits; missing
+/// optional detail alone does not establish that no context or output existed.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AttemptRead {

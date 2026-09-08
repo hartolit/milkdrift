@@ -1,4 +1,8 @@
-//! Streams transport adaptation over typed daemon calls.
+//! Poll authorized read models and frame them as resumable SSE observations.
+//!
+//! Each poll rechecks credentials and authority. Timeline and run-stream cursors use distinct
+//! feeds; capability observations retain only a bounded window per authority scope. Closing a
+//! connection ends disclosure, not the underlying run or invocation.
 use super::{
     ApiError, AppState, CAPABILITY_FEED_ITEMS, ListQuery, STREAM_PAGE_ITEMS, authenticate,
     bearer_header, owner_error, protocol_error,

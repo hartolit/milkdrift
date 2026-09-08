@@ -1,4 +1,4 @@
-//! Reads transport adaptation over typed daemon calls.
+//! Translate HTTP identities and page queries into authorized owner reads.
 use super::{ApiError, AppState, authenticate, owner_error, protocol_error, success};
 use crate::auth::ActorSession;
 use axum::{

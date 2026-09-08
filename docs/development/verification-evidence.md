@@ -1,7 +1,9 @@
 # Verification and operational evidence
 
-This document owns evidence commands, interpretation, and qualification limits. The ordinary
-[full gate](workflow.md#full-local-gate) establishes correctness; benchmarks measure behavior.
+Use this guide to choose a reproducible check and understand what its observations support.
+The ordinary [full gate](workflow.md#full-local-gate) checks executable changes; the additional
+lanes below exercise application use, mutation sensitivity, sustained load, and external resources.
+The [evidence package guide](../../tools/evidence/README.md) compares the tools and their entry points.
 [Status](../product/status.md#current-validationevidence-snapshot) owns the latest executed state.
 
 ## Actual-binary scenarios
@@ -159,7 +161,7 @@ prompts, provider payloads, artifact bytes, and environment values are excluded.
 
 | Workflow | Configured evidence |
 | --- | --- |
-| [quality](../../.github/workflows/quality.yml) | Linux full gate, real operator scenario, deterministic local model. |
+| [quality](../../.github/workflows/quality.yml) | Linux full gate, actual CLI/daemon operator scenario with controlled capabilities, deterministic local model. |
 | [platform](../../.github/workflows/platform.yml) | Pinned Ubuntu, Windows, macOS checks and selected domain/protocol/client/process tests. |
 | [mutation](../../.github/workflows/mutation.yml) | Seven weekly/manual shards and complete mutation artifacts. |
 | [benchmarks](../../.github/workflows/benchmarks.yml) | Smoke/full distributions, operational reports, worker saturation. |

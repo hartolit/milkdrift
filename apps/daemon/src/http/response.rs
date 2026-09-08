@@ -1,4 +1,4 @@
-//! Response transport adaptation over typed daemon calls.
+//! Encode bounded protocol replies and map failures to redacted HTTP errors.
 use super::AppState;
 use crate::{auth::ActorSession, host::PublicFailure};
 use axum::{

@@ -1,3 +1,9 @@
+//! Compile sequence inputs through their owner and submit ordinary daemon commands.
+//!
+//! Stage inspection uses the saved revision's mapping. Remediation reads the current run and
+//! actor before building a proposal, so rerunning the same CLI arguments after a lost reply can
+//! produce a different guarded document; inspect durable proposal state before proceeding.
+
 use milkdrift_control_protocol::Command;
 use milkdrift_prompt_sequence::{
     PromptSource, RemediationProposalSpec, build_remediation_proposal,

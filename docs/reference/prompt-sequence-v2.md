@@ -9,6 +9,10 @@ to executable enforcement boundaries.
 
 ## Markdown envelope
 
+For a complete input, use the [maintained example](../../examples/headless-dogfood-sequence.md).
+The [operator guide](../guides/headless-dogfood.md) covers configuration and execution; the
+[package guide](../../crates/prompt-sequence/README.md) explains compilation and repair.
+
 The first nonempty line must open a fenced JSON header:
 
 ````text

@@ -1,4 +1,8 @@
-//! Authorized current and historical attempt read ownership.
+//! Find exact attempt evidence after it has left the compact run frontier.
+//!
+//! Run and node views use current projections. Attempt reads first try that projection, then
+//! reconstruct historical evidence and attach separately authorized context. Historical reads
+//! bound memory but can scan substantial journal history.
 
 use super::{
     Owner, PublicFailure, read_model::internal, read_model::invalid, read_model::not_found,

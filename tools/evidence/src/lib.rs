@@ -1,13 +1,20 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-//! Development-only repeatable performance and operational evidence for Milkdrift.
+//! Reproduce product behavior and measure selected paths with controlled evidence scenarios.
 //!
-//! This package deliberately depends outward on product crates. No semantic crate
-//! depends on this harness, and its reports live under `target/evidence`.
+//! The binaries exercise actual daemon/CLI use, local or external model/process scenarios,
+//! mutation campaigns, and operational load. Library functions supply the shared measurements
+//! and [`application`] child lifecycle. Product crates remain the owners of configuration,
+//! scheduling, storage, and authority; none depends on this development package.
+//!
+//! [`ScenarioMeasurement`] records work and a result checksum, while [`StorageEvidence`] and
+//! [`DaemonEvidence`] report the observations needed to interpret turnover and recovery. Timing
+//! is not a correctness budget. Deterministic fixtures and a model-only smoke run cannot qualify
+//! combined real-agent/model interoperability; that requires the external runner's strict report.
+//! Keep reports and sensitive scenario state in ignored `target/` or private external directories.
 
 mod adapters;
-/// Bounded actual-binary application qualification harness.
 pub mod application;
 mod context;
 mod daemon;

@@ -1,3 +1,8 @@
+//! Exercises artifact I/O, model stream parsing, and local process capture with fixed inputs.
+//!
+//! These measurements isolate adapter paths for repeatability. Real process/model qualification
+//! belongs to the external runner, where operator-supplied resources replace the fixtures.
+
 use std::{
     collections::BTreeMap,
     fs,

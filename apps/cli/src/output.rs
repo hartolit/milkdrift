@@ -6,7 +6,11 @@ use serde_json::{Value, json};
 
 use crate::{Cli, error::CliError};
 
-/// Owns a create-new output until verification commits it, including future cancellation.
+/// Removes a newly created file on drop unless the caller commits a complete result.
+///
+/// Artifact callers verify size and digest before committing; export callers finish encoding.
+/// The destination is visible while being written, so this is cleanup ownership, not an atomic
+/// rename or a guarantee of cleanup after forced process termination.
 pub(crate) struct PendingFile {
     file: Option<std::fs::File>,
     path: std::path::PathBuf,

@@ -1,4 +1,7 @@
-//! Shell-free actual-binary proof for the storage-free Milkdrift CLI product surface.
+//! Exercise actual CLI/daemon requests from maintained operator files in a fresh directory.
+//!
+//! Deterministic process and model fixtures make replay, inspection, control, artifact, and
+//! restart assertions repeatable. They do not qualify real-agent/model interoperability.
 
 use std::{
     fs,

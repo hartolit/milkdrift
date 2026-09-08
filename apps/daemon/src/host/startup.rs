@@ -1,4 +1,9 @@
-//! Immutable startup plan and closed-admission component construction.
+//! Recover active work before allowing a request or worker to start new execution.
+//!
+//! Configuration becomes concrete storage, authority, runtime, adapters, and workers here.
+//! The startup channel returns readiness only after recovery and registration succeed; an
+//! error returns to the launcher with admission closed. Continuous-controller lifecycle
+//! installation remains gated separately from the existing control service.
 use super::{
     DaemonHost, HostError, LEGACY_SIDECAR_FILE, Owner, OwnerRequest, PeerRuntime,
     build_peer_runtime, capabilities, clock::DaemonClockSource, clock::DurableClock,

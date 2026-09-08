@@ -1,4 +1,7 @@
-//! Ordered peer/effect drain while the durable owner still serves final calls.
+//! Keep the durable owner available until peer and effect workers finish their final writes.
+//!
+//! Close admission first, transfer workers for deadline-bound joining, then stop/join the owner.
+//! Reversing that order could strand a worker waiting to persist its terminal or uncertain result.
 use super::{
     DaemonHost, HostError, Owner, PublicFailure, health::Lifecycle, health::SharedHealth,
     read_model::bounded,
@@ -30,7 +33,11 @@ impl DaemonHost {
         durable
     }
 
-    /// Runs ordered shutdown and joins the owner thread.
+    /// Closes admission, drains peer/effect workers under policy, and joins the owner thread.
+    ///
+    /// An error can follow completed cleanup when effects remain unresolved or a worker/owner
+    /// failed. Inspect retained work after recovery; the error is not permission to replay an
+    /// external effect with a new identity.
     pub async fn shutdown(&self) -> Result<(), HostError> {
         let shutdown_started = std::time::Instant::now();
         let drain_error = self.begin_draining().await.err();

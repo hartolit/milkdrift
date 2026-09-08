@@ -1,3 +1,5 @@
+//! Assemble bounded ranges and verify the complete artifact before committing its new file.
+
 use std::{io::Write as _, path::Path};
 
 use serde_json::json;

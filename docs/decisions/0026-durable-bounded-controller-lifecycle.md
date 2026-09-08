@@ -71,7 +71,9 @@ One controller policy document exists per immutable revision. Multiple logical o
 independent by execution identity. Controller-authored proposals are rejected when multiple active
 occurrences make proposer attribution ambiguous. Paused-at-bound behavior and unsafe reinterpretation
 of legacy controller metadata are deliberately unsupported. ADR 0027 records why the production
-daemon leaves the lifecycle uninstalled until cumulative resources are reserved at final entry.
+daemon leaves the lifecycle uninstalled pending final-entry accounting and qualifying evidence.
+The accounting boundary now exists in the libraries; [status](../product/status.md) owns the
+remaining production qualification and installation conditions.
 
 ## Reconsideration triggers
 
