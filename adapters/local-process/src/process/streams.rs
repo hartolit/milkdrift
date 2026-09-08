@@ -50,6 +50,8 @@ pub(super) fn spawn_reader<R: Read + Send + 'static>(
                 accepted = accepted.saturating_add(u64::try_from(take).unwrap_or(u64::MAX));
             }
             if take < count && !overflow_sent {
+                // Report overflow once, then keep draining so a full OS pipe cannot stall
+                // a child that the profile allows to continue with truncated capture.
                 sender
                     .send(StreamMessage::Overflow(stream))
                     .map_err(|_error| "stream receiver disconnected".to_owned())?;

@@ -129,7 +129,11 @@ pub enum EffectWorkerError {
     StateUnavailable,
 }
 
-/// Embeddable owner of fixed caller-created threads and bounded effect queues.
+/// Runs claimed runtime effects on fixed threads, with a separate cancellation queue and thread.
+///
+/// The embedding owner calls [`Self::poll`] to admit work and [`Self::shutdown`] before releasing
+/// persistence. Keeping cancellation separate lets stop requests proceed while all execution
+/// threads are occupied. Queue space limits claims, not the amount of durable pending work.
 pub struct EffectWorkerHost {
     runtime: Arc<RuntimeService>,
     capability_host: CapabilityHost,
@@ -299,6 +303,9 @@ impl EffectWorkerHost {
     }
 
     /// Stops admission, applies the explicit policy, and joins every worker on clean shutdown.
+    ///
+    /// `deadline` is a duration from this call. An unclean result means worker or adapter lifecycle
+    /// completion was not established within it; it is not proof that external work stopped.
     pub fn shutdown(
         &self,
         mode: EffectShutdownMode,

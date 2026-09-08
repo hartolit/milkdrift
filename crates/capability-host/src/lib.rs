@@ -1,7 +1,14 @@
-//! Live, generation-safe capability adapter hosting above the durable runtime.
+//! Connect durable runtime work to live process, model, control, and peer adapters.
 //!
-//! Descriptors remain immutable semantic facts. Health, admission, draining, ownership,
-//! adapter handles, and secret resolution remain bounded live host state.
+//! [`CapabilityHost`] implements runtime's `TaskExecutor`: it selects authorized generations
+//! and holds an exact-generation permit during entry. Implement [`CapabilityAdapter`] to supply
+//! an external mechanism, and use [`AdapterReporter`] to return durable observations rather
+//! than changing workflow state directly.
+//!
+//! [`EffectWorkerHost`] supplies explicitly polled, bounded execution and cancellation queues.
+//! [`InvocationDataAccess`] and [`SecretResolver`] provide the bytes an authorized adapter needs.
+//! The embedding daemon owns startup, health refresh, and shutdown ordering; the package README
+//! follows that consumer through a complete invocation.
 
 mod adapter;
 #[cfg(any(test, feature = "test-support"))]

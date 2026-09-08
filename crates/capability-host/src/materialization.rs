@@ -1,4 +1,8 @@
-//! Host-owned materialization and artifact-publication boundary for concrete adapters.
+//! Supply selected input bytes and publish adapter results without exposing store layout.
+//!
+//! The caller brings authorized input selections and artifact-read authority. This bridge checks
+//! reference integrity and run budgets; it does not reevaluate the actor's grant. Processes lease
+//! isolated directories while model adapters can read and publish bounded byte buffers directly.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -87,20 +91,21 @@ impl InputMaterialization {
     }
 }
 
-/// Inclusive defensive bounds applied while materializing and importing files.
+/// Inclusive limits for selected input batches and individual output publications.
+/// Adapters must separately account for output count and aggregate bytes across publications.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MaterializationLimits {
-    /// Maximum selected input/output file count.
+    /// Maximum selected input count per materialization; adapters also use it for output batches.
     pub max_files: u32,
     /// Maximum bytes in one selected input/output file.
     pub max_file_bytes: u64,
-    /// Maximum aggregate selected input/output bytes.
+    /// Maximum aggregate materialized input bytes; output aggregation is the caller's responsibility.
     pub max_total_bytes: u64,
     /// Maximum platform path bytes/UTF-8 bytes for configured relative paths.
     pub max_path_bytes: usize,
     /// Maximum relative directory depth.
     pub max_directory_depth: usize,
-    /// Bounded artifact I/O chunk size.
+    /// Maximum artifact-read chunk size. Publications use the persistence chunk ceiling.
     pub chunk_bytes: u32,
 }
 
@@ -137,7 +142,11 @@ pub trait MaterializedExecution: Send {
     fn input_path(&self, input_name: &str) -> Option<&Path>;
 }
 
-/// Narrow host-owned input/materialization/output port used by process adapters.
+/// Input and artifact port shared by process and model adapters.
+///
+/// Implementations verify durable references before returning bytes and preserve invocation
+/// provenance when publishing. Callers own selection authorization and aggregate output accounting
+/// across calls; one publication method cannot account for an adapter's whole output set.
 pub trait InvocationDataAccess: Send + Sync {
     /// Reads and verifies one exact invocation input through the host-owned ports.
     fn read_input_bytes(
@@ -198,7 +207,12 @@ pub trait InvocationDataAccess: Send + Sync {
     ) -> Result<CapabilityArtifactReference, InvocationDataError>;
 }
 
-/// Production bridge over the injected runtime persistence ports.
+/// Materializes inputs and publishes results through injected runtime persistence ports.
+///
+/// Artifact reads use the authority supplied at construction. Publications use the run's accepted
+/// workspace budget and restricted, while-referenced metadata; repeated exact publication can
+/// resume or return its committed reference. Temporary execution directories are leased until
+/// the returned [`MaterializedExecution`] is dropped.
 pub struct StoreInvocationDataAccess {
     store: Arc<dyn RuntimeStore>,
     temporary_root: PathBuf,

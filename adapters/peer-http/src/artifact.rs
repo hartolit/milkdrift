@@ -46,7 +46,11 @@ pub enum PeerArtifactError {
     Unavailable,
 }
 
-/// Narrow verified artifact transfer port. Durable bytes always belong to the core artifact port.
+/// Negotiate and transfer artifact bytes after the peer service authorizes execution ownership.
+///
+/// The service uses [`Self::transfer_facts`] to reauthorize each chunk. Implementations preserve
+/// exact offsets and metadata, and publish through the core artifact owner rather than creating
+/// a competing peer-specific store of durable bytes.
 pub trait PeerArtifactStore: Send + Sync {
     /// Returns exact immutable transfer facts for chunk-time reauthorization.
     fn transfer_facts(
@@ -110,7 +114,11 @@ struct TransferState {
     next_offset: u64,
 }
 
-/// Bounded peer transfer adapter over Milkdrift's ordinary artifact publication/read authority.
+/// Stage peer transfers through the ordinary core artifact publication and read ports.
+///
+/// Live transfer metadata is bounded and expiring. After restart, negotiate the same offer again
+/// to recover a core publication's durable offset. Successful upload publication preserves source
+/// sensitivity/retention and adds peer/execution provenance; downloads use authorized core ranges.
 pub struct CorePeerArtifactStore {
     core: Arc<dyn PeerCoreArtifactStore>,
     clock: Arc<dyn PeerClock>,

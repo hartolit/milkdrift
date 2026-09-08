@@ -1,3 +1,6 @@
+//! Project hot records and archived tombstones into protocol responses without new storage state.
+//! Both forms preserve request identity; archival changes available detail, not acceptance truth.
+
 use milkdrift_peer_protocol::{
     ArchivedExecutionSummary, InvocationAcceptance, InvocationLookup, ObservationHistory,
     RemoteExecutionStatus,

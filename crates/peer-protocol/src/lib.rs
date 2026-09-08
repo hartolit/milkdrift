@@ -1,11 +1,16 @@
 #![forbid(unsafe_code)]
 
-//! Transport-neutral, bounded protocol contracts between authenticated Milkdrift peers.
+//! Describe remote acceptance and observations while each host retains its own durable truth.
 //!
-//! This package intentionally owns no socket, async runtime, TLS, database, provider,
-//! process, or workflow state. A transport authenticates a
-//! [`PeerId`](milkdrift_capability::PeerId) and then decodes these messages under the limits
-//! negotiated by the two configured daemons.
+//! Begin with [`HandshakeRequest`] and [`CatalogSnapshot`] to find an advertised generation.
+//! [`PeerInvocationRequest`] binds the exact selection and delegated scope; its request identity
+//! survives lost replies through [`InvocationAcceptance`] and [`InvocationLookup`]. Follow a
+//! known execution with [`ObservationPage`], which distinguishes retained rows from archival.
+//!
+//! A transport authenticates the peer and calls [`decode_envelope`] with bounded limits. Call
+//! payload `validate`/`validate_for` methods for semantic and request-binding checks as applicable.
+//! These contracts perform no authentication or I/O; `milkdrift-peer-http` supplies the current
+//! transport, worker lifecycle, and core artifact bridge.
 
 mod artifact;
 mod catalog;

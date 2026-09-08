@@ -1,3 +1,8 @@
+//! Observe child exit and owned descendants while draining streams and servicing cancellation.
+//!
+//! The cancellation method only sets a flag. This monitor owns signal order and grace/force
+//! deadlines so competing callers cannot each start a separate termination sequence.
+
 use std::{
     process::{Child, ExitStatus},
     sync::{

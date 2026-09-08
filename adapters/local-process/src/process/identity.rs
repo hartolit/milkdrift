@@ -1,3 +1,8 @@
+//! Bind operator-declared bytes to a host path, then recheck that binding before entry.
+//!
+//! Metadata observations detect changes during hashing and contribute platform provenance.
+//! They do not replace the content digest or provide atomic execution of the hashed open file.
+
 use std::{
     fs::{self, File, Metadata},
     io::{self, Read},

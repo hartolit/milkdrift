@@ -83,7 +83,9 @@ pub enum ProxyPolicy {
     System,
 }
 
-/// Model features explicitly advertised by one profile.
+/// Features the operator declares usable through this profile's protocol mapping.
+/// These flags do not discover server capabilities. Profile validation rejects unmapped features,
+/// and invocation negotiation checks the task plus injected context before sending a request.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelFeature {
@@ -107,7 +109,11 @@ pub enum ModelFeature {
     ProviderSessions,
 }
 
-/// Defensive HTTP and stream limits.
+/// HTTP and stream ceilings for one endpoint profile, in bytes or milliseconds as named.
+///
+/// The blocking transport applies `min(request_timeout_ms, idle_timeout_ms)` to the whole request.
+/// It does not reset an independent idle timer when data arrives. These are local bounds, not
+/// evidence that the server accepts the model contract's maximum output allowance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EndpointLimits {
@@ -115,7 +121,7 @@ pub struct EndpointLimits {
     pub connect_timeout_ms: u64,
     /// Whole-request timeout.
     pub request_timeout_ms: u64,
-    /// Idle/read timeout.
+    /// Upper bound also applied to the whole request by the current blocking transport.
     pub idle_timeout_ms: u64,
     /// Maximum response-header count.
     pub max_headers: u16,
@@ -160,7 +166,12 @@ impl EndpointLimits {
     }
 }
 
-/// Versioned endpoint profile containing no secret values.
+/// Operator-selected endpoint, model, mapping features, and transport policy for one generation.
+///
+/// Load with [`Self::from_json`] or build with [`Self::new`], then use the same profile for
+/// [`crate::ModelEndpointAdapter`] and [`crate::descriptor_for_profile`]. Authentication stores
+/// only a secret reference; resolution happens at request entry. A profile is a configured
+/// contract, not the result of a provider discovery or health request.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EndpointProfile {

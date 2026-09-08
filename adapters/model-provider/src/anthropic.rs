@@ -1,3 +1,8 @@
+//! Map native Messages requests, content blocks, tool results, and usage observations.
+//!
+//! System content is separate from ordinary messages, and tool results become user content.
+//! Stream completion requires `message_stop` and closed tool blocks before publishing a response.
+
 use std::collections::BTreeMap;
 
 use base64::Engine as _;

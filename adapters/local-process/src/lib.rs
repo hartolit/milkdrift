@@ -1,7 +1,13 @@
-//! Safe argument-vector local process capability adapter.
+//! Run a byte-pinned executable as a workflow capability using direct OS arguments.
 //!
-//! The crate owns OS process/filesystem interaction but no runtime state or redb layout.
-//! Durable input/output access is injected through `milkdrift-capability-host`.
+//! Read a [`ProcessProfileDocument`], then construct [`LocalProcessAdapter`] with explicit data
+//! and secret ports. Construction verifies executable identity and host paths; register the
+//! adapter's descriptor with the capability host. [`WorkingDirectoryMode`] chooses temporary
+//! execution or an authorized persistent repository, while [`CapturePolicy`] and [`OutputRule`]
+//! choose which results can be published.
+//!
+//! The child has the daemon account's privileges. Input staging and direct argv do not create
+//! a sandbox; [`PlatformSupport`] describes the process ownership this build can observe.
 
 mod config;
 mod process;

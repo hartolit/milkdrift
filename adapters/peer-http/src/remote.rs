@@ -108,7 +108,11 @@ pub struct PeerRegistryStatus {
     pub health: String,
 }
 
-/// Catalog consumer that maps each remote generation into the existing capability host.
+/// Make a configured peer's advertised operations selectable by the local runtime.
+///
+/// [`Self::connect`] verifies a complete catalog and registers ordinary adapters with exact
+/// remote provenance. Renewal replaces catalog-bound local generations; old held permits drain.
+/// [`Self::disconnect`] stops new resolution without cancelling remote executions already accepted.
 pub struct PeerRegistry {
     host: CapabilityHost,
     client: Arc<PeerHttpClient>,
@@ -741,6 +745,8 @@ enum Lifecycle {
     Stopped = 3,
 }
 
+// Relationship quotas bound what the origin asks for. They do not establish a locally enforceable
+// resource reservation for work running on another host.
 fn remote_admission_envelope() -> InvocationAdmissionEnvelope {
     InvocationAdmissionEnvelope::new(
         AdmissionBound::Unknown,

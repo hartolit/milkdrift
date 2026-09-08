@@ -276,9 +276,9 @@ impl<'a> AdapterInvocation<'a> {
 
 /// Durable observation sink exposed without runtime state-mutation APIs.
 ///
-/// The host supplies a sink scoped to exactly one invocation. Implementations must propagate
-/// every sink failure, must emit contiguous sequences beginning at the sink's current durable
-/// sequence, and must emit at most one terminal observation with nothing after it. A successful
+/// The host supplies a sink scoped to exactly one invocation. Adapters must propagate every sink
+/// failure, preserve contiguous invocation sequence numbers (one for the first observation),
+/// and emit at most one terminal observation with nothing after it. A successful
 /// return from [`AdapterReporter::invocation`] means the observation crossed the owning durable
 /// boundary; it is not merely queued in adapter memory.
 pub trait AdapterReporter: Send + Sync {
@@ -302,6 +302,8 @@ pub trait AdapterReporter: Send + Sync {
 /// shutdown behavior explicit in their own state machine.
 pub trait CapabilityAdapter: Send + Sync {
     /// Derives enforceable bounds for this exact immutable request and generation.
+    /// This hook runs before durable entry intent; it must not start external work. Return
+    /// unknown resource dimensions honestly so runtime can refuse unsupported reservations.
     fn admission_envelope(
         &self,
         invocation: &AdapterInvocation<'_>,
@@ -320,6 +322,9 @@ pub trait CapabilityAdapter: Send + Sync {
     fn start(&self) -> Result<(), AdapterError>;
 
     /// Executes exactly the supplied immutable selection with no fallback.
+    /// Emit observations through the reporter and propagate its failures. A successful method
+    /// return without durable terminal evidence does not establish completion. Resource-owning
+    /// implementations must also arrange cleanup when reporting fails after external entry.
     fn execute(
         &self,
         invocation: &AdapterInvocation<'_>,

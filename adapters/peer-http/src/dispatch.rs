@@ -1,3 +1,8 @@
+//! Own fixed serving threads while durable storage owns the accepted queue and claims.
+//!
+//! Notifications only wake workers; they are not execution authority. A worker retains one failed
+//! recovery transition and retries it before claiming other work, avoiding a second adapter entry.
+
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{Arc, Condvar, Mutex, Weak},

@@ -80,6 +80,10 @@ values; repository contracts check the version cells against source.
 - Trusted processes have daemon-account privileges. No sandbox, network isolation, CPU/memory
   quotas, malicious-descendant containment, universal atomic hashed-handle execution, directory
   artifacts, writable shared mounts, or complete non-Unix process-tree cancellation is claimed.
+  Source inspection also found incomplete cleanup when durable reporting fails after process spawn:
+  an early report can bypass termination/joining, and monitor errors join I/O before terminating the
+  child. The [cleanup finding](../development/virtual-office/whiteboard/issues/process-reporting-cleanup.md)
+  records the paths; existing ordinary cancellation tests do not establish this combined case.
 - Peers require operator connectivity; the daemon listener is loopback-only. There is no discovery,
   NAT traversal, coordinator, automatic CA/internal mTLS mapper, consensus, shared database,
   model synchronization, or automatic transfer of every artifact. Grants/profiles/relationships

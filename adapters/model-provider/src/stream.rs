@@ -1,6 +1,8 @@
 use thiserror::Error;
 
-/// Strict bounded SSE parser accepting only UTF-8 field lines and complete events.
+/// Frame complete UTF-8 SSE data events across arbitrary read boundaries.
+/// Multiple `data:` lines join with newlines; EOF with pending data is truncation, not completion.
+/// Provider parsers separately decide whether the framed events prove a complete response.
 pub(crate) struct SseParser {
     pending: Vec<u8>,
     data: Vec<u8>,

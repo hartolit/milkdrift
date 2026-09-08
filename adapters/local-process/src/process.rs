@@ -50,6 +50,14 @@ use streams::{
 const STREAM_CHANNEL_MESSAGES: usize = 16;
 
 /// Production local-process adapter for one immutable validated profile generation.
+///
+/// Construct it with host-owned data/secret ports, then register [`Self::descriptor`] and the
+/// adapter together. The invocation worker owns preparation, child monitoring, and publication.
+/// Health and final pre-spawn checks latch identity failures until a new generation is registered.
+///
+/// Current reporting-failure cleanup is incomplete: the initial post-spawn report can return before
+/// child termination/I/O joining, and monitor errors reach joins before termination. The package
+/// README links the source finding; ordinary cancellation behavior does not cover these paths.
 pub struct LocalProcessAdapter {
     profile: ProcessProfile,
     descriptor: CapabilityDescriptor,
@@ -68,6 +76,8 @@ pub struct LocalProcessAdapter {
 
 impl LocalProcessAdapter {
     /// Canonicalizes configured host paths and creates one adapter generation.
+    /// Reads and hashes the executable, refusing a mismatch with the profile's byte identity.
+    /// This binds configuration without spawning the child; execution follows host registration.
     pub fn new(
         profile: ProcessProfile,
         data: Arc<dyn InvocationDataAccess>,

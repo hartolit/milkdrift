@@ -37,7 +37,24 @@ impl Default for DecodeLimits {
     }
 }
 
-/// Versioned peer message envelope with bounded namespaced optional extensions.
+/// Portable wrapper for a typed peer message and optional namespaced extensions.
+///
+/// Use [`encode_envelope`] and [`decode_envelope`] at wire boundaries. The generic codec checks
+/// structure and version; payload-specific validators bind a reply to the request or cursor.
+///
+/// ```
+/// use milkdrift_peer_protocol::{
+///     DecodeLimits, InvocationLookup, PeerRequestId, ProtocolEnvelope,
+///     decode_envelope, encode_envelope,
+/// };
+/// let request = PeerRequestId::new("request:inspect")?;
+/// let bytes = encode_envelope(&ProtocolEnvelope::v1(InvocationLookup::NotAccepted {
+///     request_id: request.clone(),
+/// }))?;
+/// let decoded = decode_envelope::<InvocationLookup>(&bytes, DecodeLimits::default())?;
+/// decoded.message.validate_for(&request)?;
+/// # Ok::<(), milkdrift_peer_protocol::PeerProtocolError>(())
+/// ```
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProtocolEnvelope<T> {

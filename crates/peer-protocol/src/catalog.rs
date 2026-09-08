@@ -45,7 +45,11 @@ impl CatalogEntry {
     }
 }
 
-/// Complete expiring catalog observation for one authenticated relationship.
+/// What a serving host advertises to one relationship at a particular generation and expiry.
+///
+/// The digest binds the complete observation used by a subsequent [`crate::PeerInvocationRequest`].
+/// This is discovery evidence, not a reservation: acceptance must recheck current authority and
+/// admission. Renewing the catalog cannot change an already accepted execution's selection.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CatalogSnapshot {
@@ -208,6 +212,7 @@ fn compute_digest(
 }
 
 /// Incremental catalog mutation relative to one exact prior generation.
+/// The current HTTP transport exchanges complete snapshots and advertises this feature as false.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CatalogUpdate {

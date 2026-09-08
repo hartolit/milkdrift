@@ -83,7 +83,11 @@ impl AdmissionMonetaryBound {
     }
 }
 
-/// Exact immutable-request admission envelope returned before adapter entry.
+/// Resource maxima an adapter can enforce for one request before external entry.
+///
+/// Runtime uses these facts to reserve controller resources before committing entry intent.
+/// Keep a missing bound [`AdmissionBound::Unknown`]; descriptor estimates and eventual usage
+/// observations cannot substitute for a limit the adapter can enforce.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InvocationAdmissionEnvelope {

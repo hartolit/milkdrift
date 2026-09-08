@@ -1,3 +1,8 @@
+//! Map chat-completions requests and responses, including provider-specific tool deltas.
+//!
+//! SSE framing lives in `stream`; this module decides what its data means. A stream needs both
+//! a payload and `[DONE]` before accumulated text/tools can become response artifacts.
+
 use std::collections::BTreeMap;
 
 use base64::Engine as _;

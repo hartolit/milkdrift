@@ -47,7 +47,8 @@ use crate::{
     store::{acceptance, archived_summary, lookup as execution_lookup, snapshot_status},
 };
 
-/// Caller-supplied boundary clock for deterministic protocol and restart tests.
+/// Supply boundary time for peer authority, deadlines, leases, and durable observations.
+/// The embedding daemon uses its durable clock; tests can inject controlled failures and time.
 pub trait PeerClock: Send + Sync {
     /// Current Unix epoch milliseconds, rejecting unavailable or backward-moving time.
     fn now_unix_ms(&self) -> Result<u64, PeerClockError>;
@@ -70,7 +71,8 @@ pub enum PeerClockError {
     Unavailable,
 }
 
-/// Production boundary clock.
+/// Standalone system clock with a process-local monotonic observation check.
+/// Restart-persistent rollback detection requires the daemon's injected durable clock.
 #[derive(Debug, Default)]
 pub struct SystemPeerClock {
     last_unix_ms: Mutex<u64>,
@@ -114,7 +116,12 @@ struct RateWindow {
     requests: u32,
 }
 
-/// Authenticated peer application service shared by HTTP routes and deterministic tests.
+/// Serving host's durable acceptance, authority, and execution-observation boundary.
+///
+/// Construction starts fixed workers with claims and admission closed. Register local adapters,
+/// then call [`Self::recover`] before serving new work. HTTP authenticates callers and delegates
+/// here; direct library callers must supply the authenticated peer identity themselves.
+/// [`Self::shutdown_workers`] must run while the store and capability host can accept final writes.
 pub struct PeerService {
     config: PeerServerConfig,
     relationships: BTreeMap<PeerId, PeerRelationship>,
@@ -163,7 +170,8 @@ impl PeerService {
         usize::from(self.config.limits.connections)
     }
 
-    /// Constructs a ready service. Call [`Self::recover`] after local adapters register.
+    /// Constructs a service with admission closed and artifact exchange disabled.
+    /// Call [`Self::recover`] after local adapters register.
     pub fn new(
         config: PeerServerConfig,
         capability_host: CapabilityHost,
@@ -179,7 +187,7 @@ impl PeerService {
         )
     }
 
-    /// Constructs a ready service with a verified artifact exchange port.
+    /// Constructs a service with admission closed and a verified artifact exchange port.
     pub fn new_with_artifacts(
         config: PeerServerConfig,
         capability_host: CapabilityHost,
@@ -360,6 +368,8 @@ impl PeerService {
     }
 
     /// Atomically accepts one exact request into the durable bounded dispatch queue.
+    /// The response confirms acceptance, not adapter entry. Exact replay is looked up before
+    /// fresh catalog/capacity checks; conflicting request bytes retain the original execution.
     pub fn invoke(
         self: &Arc<Self>,
         authenticated_peer: &PeerId,

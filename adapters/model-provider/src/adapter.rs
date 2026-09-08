@@ -152,6 +152,11 @@ struct PreparedOutput {
 }
 
 /// One synchronous host adapter for an exact endpoint-profile revision.
+///
+/// The host supplies durable provenance and a frozen manifest with each model request. This
+/// adapter verifies selected content, negotiates the task against the profile, and publishes
+/// complete responses through [`InvocationDataAccess`]. Health reports local lifecycle/load;
+/// it makes no endpoint request. Use [`descriptor_for_profile`] with the same identity/profile.
 pub struct ModelEndpointAdapter {
     capability: CapabilityId,
     profile: EndpointProfile,
@@ -874,6 +879,8 @@ impl ModelEndpointAdapter {
                 }
             }
         }
+        // This checks the model request only. Runtime does not compare it with the blueprint's
+        // ContextSessionPolicy, so accepting Fresh cannot establish that policy was enforced.
         match task.session() {
             SessionSelection::Fresh => {}
             SessionSelection::ExplicitContinuation { .. } => {
@@ -1057,6 +1064,8 @@ fn network_destination(endpoint: &url::Url) -> Result<String, AdapterError> {
 }
 
 /// Creates the immutable capability descriptor corresponding exactly to a profile.
+/// Its features come from configuration without contacting the endpoint. Register this result
+/// with a [`ModelEndpointAdapter`] built from the same capability identity and profile revision.
 pub fn descriptor_for_profile(
     capability: CapabilityId,
     profile: &EndpointProfile,

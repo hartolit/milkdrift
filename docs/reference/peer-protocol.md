@@ -4,13 +4,28 @@
 
 ## Authentication and session
 
-HTTP bearer authentication maps current secret bytes to exactly one configured `PeerId` before a body is trusted. The handshake `claimed_peer` must equal that identity but cannot choose it. Each relationship's configured actions and filters are expanded once into an ordinary immutable authority grant, and every handshake, catalog/provider/health read, invocation, execution observation, cancellation, and artifact transfer is evaluated by the shared authority evaluator. Authentication never supplies fallback access. Handshake returns daemon session identity, selected version, feature intersection, hard limits, heartbeat/idle/execution lease policy, and ready/draining/shutdown state. It contains no secrets or internal configuration.
+HTTP bearer authentication maps current secret bytes to one configured `PeerId`; the handshake's
+`claimed_peer` cross-checks that identity and cannot choose it. Each relationship's actions and
+filters expand into an ordinary immutable authority grant. The service uses the shared evaluator
+for session negotiation, catalog reads, invocation, observations, cancellation, and artifact transfer.
+Authentication alone grants none of those operations.
+
+Handshake returns the daemon session, selected version, lower offered hard limits, lease timing,
+and lifecycle state without secrets or internal configuration. The current HTTP service reports
+its supported feature flags rather than intersecting them with the request: resumable observations,
+artifacts, and archived replay are enabled; incremental catalogs are disabled. The transport uses
+complete catalog snapshots even though the protocol crate defines incremental-update messages.
 
 Non-loopback endpoints must be HTTPS. HTTP is accepted only when `AllowInsecureLoopbackDevelopment` is explicit and the configured host is loopback/localhost. Redirects are disabled, endpoints are operator configured, CORS is absent, bodies/chunks are bounded, and request credentials are resolved at request time for rotation. Fixed one-minute request windows enforce the configured maximum independently for each authenticated peer and action/operation bucket; accepted exact invocation replays bypass fresh-work rate admission.
 
 ## Catalog
 
-A complete `CatalogSnapshot` has monotonic generation, issue/expiry boundaries, sorted exact descriptor entries, invocable operation subsets, filtered observations, draining state, and a domain-separated canonical BLAKE3 digest. The server starts from the live capability-host snapshot, then evaluates the relationship grant's capability identity, operation, provider profile, peer, side-effect, expiry, revocation, health, and quota facts before projection. Explicit empty capability/operation allowlists become deny-all scope and advertise nothing.
+A complete `CatalogSnapshot` binds its generation, issue/expiry times, sorted descriptor entries,
+invocable operations, and observations with a canonical BLAKE3 digest. The service requires a live
+relationship and authorized catalog/health/profile reads, then projects current non-draining
+generations with available observations through the relationship's capability scope. Empty
+capability or operation allowlists advertise nothing. Invocation acceptance separately checks the
+adapter's full resource requirements, current catalog, and capacity; a catalog entry is no reservation.
 
 The consumer verifies digest/TTL and maps each remote `(PeerId, capability, descriptor revision, catalog generation/digest)` to a collision-resistant local identity/revision. Provider/category/schema facts are preserved, locality becomes `peer`, the configured trust zone and a `dev.milkdrift.peer/provenance` extension are added, and the adapter is registered normally. Renewal replaces the adapter even when the remote descriptor is unchanged; exact catalog replay preserves its registration. Replacement and disconnect drain old registrations, which are removed only after their host permits leave. Expired adapters report unavailable health and refuse new entry. Health observation timestamps retain the original measurement time. Same display names from different peers never merge.
 

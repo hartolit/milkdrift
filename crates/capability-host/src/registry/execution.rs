@@ -22,6 +22,10 @@ use crate::{
 
 impl CapabilityHost {
     /// Executes one already-persisted exact snapshot without re-resolution or fallback.
+    ///
+    /// The caller must own authorization and durable reporting. This direct host boundary checks
+    /// selection and permits but does not run runtime's final authority/account transaction.
+    /// Ordinary runtime work uses the `TaskExecutor` prepared-entry path instead.
     pub fn execute_exact(
         &self,
         snapshot: &ResolvedCapabilitySnapshot,
@@ -44,6 +48,7 @@ impl CapabilityHost {
     }
 
     /// Executes one already-persisted exact snapshot with explicit durable provenance.
+    /// The caller has the same authorization/reporting obligations as [`Self::execute_exact`].
     pub fn execute_exact_with_context(
         &self,
         snapshot: &ResolvedCapabilitySnapshot,
@@ -257,6 +262,8 @@ impl AdapterReporter for ReporterBridge<'_> {
     }
 }
 
+// Live capacity lasts through the prepared closure as well as adapter execution. Dropping an
+// unentered preparation after a denied or replayed durable decision must release the same slot.
 struct Permit {
     core: Arc<HostCore>,
     key: GenerationKey,

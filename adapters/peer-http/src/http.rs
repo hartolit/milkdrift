@@ -128,7 +128,11 @@ impl IntoResponse for ApiError {
     }
 }
 
-/// Builds the distinct `/peer/v1` route and authentication realm. CORS is absent.
+/// Expose the peer service under `/peer/v1`, with a distinct bearer authentication realm.
+///
+/// The caller owns the listener and TLS termination. Routes bound blocking service calls and
+/// body sizes; observation streams reauthenticate each page. SSE closure alone does not carry
+/// archived history—use lookup or observation pages for its final/uncertain summary. CORS is absent.
 pub fn peer_router(service: Arc<PeerService>) -> Router {
     let blocking_call_limit = service.http_connection_limit();
     authorized_peer_routes! { Router::new();

@@ -15,7 +15,11 @@ pub enum SecretResolverError {
     ResolverUnavailable,
 }
 
-/// Narrow host/adapter secret port; resolved values never enter serializable contracts.
+/// Resolve an explicit reference after the caller has authorized its use.
+///
+/// The port has no actor or grant argument and performs no authority evaluation. Keep returned
+/// sensitive bytes within the external adapter/authentication boundary, outside serializable
+/// invocation contracts. Production sources are supplied by `milkdrift-local-secret`.
 pub trait SecretResolver: Send + Sync {
     /// Resolves one authorized opaque reference into explicitly sensitive bytes.
     fn resolve(&self, reference: &SecretRef) -> Result<SensitiveSecret, SecretResolverError>;

@@ -19,7 +19,11 @@ pub enum ArtifactTransferDirection {
     Download,
 }
 
-/// Metadata-first transfer offer. No filename or host path is accepted.
+/// Ask to transfer one exact artifact before sending bytes.
+///
+/// The receiver checks execution ownership, sensitivity, expiry, and budget before returning an
+/// [`ArtifactTransferDecision`]. Digest/size identify content; no filename or host path chooses
+/// placement. Reuse the same transfer identity and metadata to resume an incomplete publication.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactMetadataOffer {

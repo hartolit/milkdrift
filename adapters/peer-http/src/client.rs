@@ -20,7 +20,11 @@ use url::Url;
 
 use crate::{PeerClientConfig, PeerCredentialSource, PeerHttpError, StaticPeerCredential};
 
-/// Bounded blocking client used behind the synchronous capability-adapter boundary.
+/// Blocking peer client used by the origin's remote capability adapter.
+///
+/// Handshake cross-checks the configured identity/version. Submission retries preserve exact
+/// request bytes; lookup, observation, and cancellation responses are bound to their requested
+/// identities before returning. Construction chooses static or request-time credential resolution.
 pub struct PeerHttpClient {
     config: PeerClientConfig,
     client: Client,
@@ -41,7 +45,8 @@ impl std::fmt::Debug for PeerHttpClient {
 }
 
 impl PeerHttpClient {
-    /// Builds a Rustls-backed HTTPS client for one operator-configured endpoint.
+    /// Builds a client using the already resolved credential in `config`.
+    /// Use [`Self::new_with_credential_source`] when future requests must see credential rotation.
     pub fn new(config: PeerClientConfig) -> Result<Arc<Self>, PeerHttpError> {
         let credential = Arc::new(StaticPeerCredential::new(config.bearer_credential.clone()));
         Self::new_with_credential_source(config, credential)
@@ -148,6 +153,7 @@ impl PeerHttpClient {
 
     /// Submits under exact idempotency. Transport ambiguity retries the same request, then
     /// queries the key before reporting uncertainty to the adapter.
+    /// An error may follow remote acceptance; it is not permission to submit replacement work.
     pub fn submit(
         &self,
         request: &PeerInvocationRequest,

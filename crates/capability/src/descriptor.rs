@@ -509,7 +509,11 @@ impl ResourceObservations {
     }
 }
 
-/// Immutable capability description. Live state belongs in [`CapabilityObservation`].
+/// Advertisement of one immutable capability generation, built with [`DescriptorBuilder`].
+///
+/// Operation contracts let tasks ask for supported behavior before a live adapter is chosen.
+/// Changing these facts requires a new descriptor revision; changing health belongs in
+/// [`CapabilityObservation`]. A matching advertisement is neither permission nor a reservation.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CapabilityDescriptor {
     identity: CapabilityId,
@@ -653,7 +657,7 @@ impl CapabilityDescriptor {
         &self.extensions
     }
 
-    /// Returns whether this descriptor satisfies a selection requirement.
+    /// Checks advertised semantics only; authority, health, and permits are host decisions.
     #[must_use]
     pub fn matches(&self, requirement: &CapabilityRequirement) -> RequirementMatch {
         let mut reasons = Vec::new();
@@ -854,7 +858,20 @@ impl DescriptorBuilder {
     }
 }
 
-/// Selection expression carried by a blueprint task.
+/// The operation and constraints a blueprint task asks the host to satisfy.
+///
+/// Start with [`Self::new`] and narrow the acceptable provider, features, and effects as needed.
+/// Categories are alternatives; features and trust zones are cumulative requirements. The
+/// expression stays in the revision while each attempt records its own exact selection.
+///
+/// ```
+/// use milkdrift_capability::{CapabilityRequirement, OperationId, SideEffectClass};
+/// let requirement = CapabilityRequirement::new(OperationId::new("example.inspect")?)
+///     .maximum_side_effect(SideEffectClass::ReadOnly)
+///     .cancellation(true);
+/// assert!(requirement.cancellation_required());
+/// # Ok::<(), milkdrift_capability::ContractError>(())
+/// ```
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapabilityRequirement {
@@ -904,7 +921,7 @@ milkdrift_contracts::deserialize_via!(CapabilityRequirement, CapabilityRequireme
 });
 
 impl CapabilityRequirement {
-    /// Constructs a constraint expression around one exact operation.
+    /// Requires this operation, allowing any provider and side-effect class until narrowed.
     pub fn new(operation: OperationId) -> Self {
         Self {
             exact_capability: None,

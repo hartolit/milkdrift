@@ -1,8 +1,9 @@
-//! Explicit local environment- and restricted-file-backed secret resolution.
+//! Resolve configured secret references at an authorized local boundary.
 //!
-//! Configuration maps opaque references to exact local sources. The resolver never
-//! enumerates the ambient environment, retains resolved values, or accepts relative
-//! file paths whose meaning could change with the process working directory.
+//! Build [`LocalSecretSource`] values and give their reference-to-source map to
+//! [`LocalSecretResolver`]. Sources are read on each `SecretResolver::resolve` call, so callers
+//! see credential rotation without a value cache. The caller owns authorization; the resolver
+//! receives no grant. Sources use exact environment names or absolute file paths.
 
 use std::{
     collections::BTreeMap,
@@ -37,7 +38,10 @@ enum SourceKind {
     File(PathBuf),
 }
 
-/// One validated local source containing no resolved secret value.
+/// Where to read one credential when requested, without loading it during configuration.
+///
+/// Values must contain 1..=4,096 bytes. File reads strip one trailing LF or CRLF; on Unix they
+/// reject group/other permission bits. Non-Unix file ACL checks are outside this implementation.
 #[derive(Clone, Eq, PartialEq)]
 pub struct LocalSecretSource(SourceKind);
 
@@ -89,7 +93,22 @@ impl fmt::Debug for LocalSecretSource {
     }
 }
 
-/// Resolver from explicitly configured opaque references to local sources.
+/// Rereads an explicitly mapped source each time an authorized caller needs its value.
+///
+/// Unknown references and source failures return the same redacted `Unavailable` error. The
+/// mapping is fixed at construction; changing source contents rotates the value without caching.
+///
+/// ```
+/// use std::collections::BTreeMap;
+/// use milkdrift_authority::SecretRef;
+/// use milkdrift_local_secret::{LocalSecretResolver, LocalSecretSource};
+/// let reference = SecretRef::new("secret:model-key")?;
+/// let source = LocalSecretSource::environment("MILKDRIFT_MODEL_KEY")?;
+/// let resolver = LocalSecretResolver::new(BTreeMap::from([(reference, source)]));
+/// // Construction does not read MILKDRIFT_MODEL_KEY.
+/// # let _ = resolver;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub struct LocalSecretResolver {
     sources: BTreeMap<SecretRef, LocalSecretSource>,
 }
@@ -225,6 +244,8 @@ mod tests {
             return Ok(());
         }
 
+        // A child gets a private environment without mutating shared process state in
+        // the parallel test runner.
         let status = std::process::Command::new(env::current_exe()?)
             .args([
                 "--exact",

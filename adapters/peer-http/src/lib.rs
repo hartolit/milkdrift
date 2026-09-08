@@ -1,6 +1,16 @@
 #![forbid(unsafe_code)]
 
-//! Authenticated HTTPS peer transport and ordinary capability-host adapter.
+//! Execute a capability on a configured peer while retaining separate origin and serving records.
+//!
+//! On the origin, [`PeerRegistry`] connects a [`PeerHttpClient`] to the local capability host and
+//! registers remote catalog generations as ordinary adapters. On the server, [`PeerService`]
+//! authorizes and durably accepts requests, then fixed workers enter the exact local generation.
+//! Construct the service with admission closed and call [`PeerService::recover`] after adapters
+//! are registered; [`peer_router`] exposes its HTTP routes.
+//!
+//! [`CorePeerArtifactStore`] connects explicit transfers to core artifact publication/read ports.
+//! Credentials and relationship scope are operator supplied. Session loss does not erase accepted
+//! work; clients use exact request lookup and resumable observation pages to recover knowledge.
 
 mod artifact;
 mod auth;

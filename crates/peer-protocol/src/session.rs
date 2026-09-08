@@ -10,7 +10,7 @@ pub const PROTOCOL_MAJOR_V1: u16 = 1;
 /// Current protocol minor adding request-bound invocation lookup responses.
 pub const PROTOCOL_MINOR_V1: u16 = 2;
 
-/// One selected peer protocol version.
+/// One selected peer protocol version; current message codecs accept only [`Self::V1_2`].
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProtocolVersion {
@@ -267,7 +267,8 @@ pub struct HandshakeResponse {
     pub session: SessionId,
     /// Negotiated version.
     pub selected_version: ProtocolVersion,
-    /// Mutually useful features.
+    /// Feature flags returned by the server. The current HTTP service reports its supported
+    /// set rather than intersecting it with the request's feature flags.
     pub features: FeatureSet,
     /// Negotiated hard limits.
     pub limits: HardLimits,

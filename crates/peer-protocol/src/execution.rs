@@ -138,7 +138,12 @@ fn safe_reference(value: &str) -> bool {
         })
 }
 
-/// Exact immutable invocation submitted to one selected peer/catalog/generation.
+/// One exact submission whose identity can recover a lost acceptance reply.
+///
+/// [`Self::new`] digests the selection, inputs, catalog, limits, deadline, and delegation together.
+/// Retry the same facts under the same request ID. Changing even the deadline is a conflicting
+/// request, not a renewal of the original acceptance. The serving host owns authorization and
+/// durable acceptance; this type checks the portable request's internal consistency.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PeerInvocationRequest {
@@ -354,7 +359,11 @@ fn compute_request_digest(
     Ok(format!("b3_{}", hasher.finalize().to_hex()))
 }
 
-/// Durable submission outcome. Accepted identities never change across replay.
+/// Whether the serving host durably accepted this exact submission.
+///
+/// Acceptance precedes adapter entry and is not execution success. Use [`Self::validate_for`] to
+/// bind a decoded reply to the submitted request, then follow the accepted execution's observations.
+/// Archived replay carries its retained outcome without asking the capability to run again.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum InvocationAcceptance {
@@ -452,7 +461,10 @@ impl InvocationAcceptance {
     }
 }
 
-/// Current durable knowledge returned by idempotency lookup.
+/// Recover acceptance knowledge by request ID after a missing or ambiguous reply.
+///
+/// `NotAccepted` is a statement from the durable owner; a transport error cannot stand in for it.
+/// `Known` may contain hot or archived history, while `Unknown` preserves missing evidence.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum InvocationLookup {
@@ -672,7 +684,12 @@ impl PeerObservation {
     }
 }
 
-/// Bounded resumable observation page. Transport heartbeats are not entries.
+/// Continue observing an execution after an exclusive sequence cursor.
+///
+/// Hot rows are contiguous and bounded. Archived history instead supplies a retained summary,
+/// so an empty page does not mean no work occurred. `closed` stops further observation; inspect
+/// terminal/history facts to distinguish completion from an unknown outcome. Transport keepalives
+/// consume no semantic sequence numbers.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ObservationPage {

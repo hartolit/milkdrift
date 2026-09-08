@@ -1,8 +1,14 @@
-//! Pure, provider-neutral capability and invocation contracts for Milkdrift.
+//! Describe the external operation a task needs and the evidence returned by its executor.
 //!
-//! The crate describes what an executor claims and what an invocation observed.
-//! It deliberately owns no live registry, credentials, provider client, transport,
-//! or executor lifecycle.
+//! Start with [`CapabilityRequirement`] for a task and [`DescriptorBuilder`] for an adapter's
+//! advertisement. [`CapabilityDescriptor::matches`] checks compatibility; the capability host
+//! separately checks authority, health, and capacity. Once selected, a
+//! [`ResolvedCapabilitySnapshot`] freezes the generation for an attempt.
+//!
+//! [`InvocationRequest`] carries inputs to that generation. [`InvocationEvent`] carries bounded
+//! observations back; runtime decides their effect on the workflow. Use the `*Document` readers
+//! and canonical writers for portable forms. Live adapters and their resource ownership belong
+//! in `milkdrift-capability-host`.
 
 mod admission;
 mod bounded;

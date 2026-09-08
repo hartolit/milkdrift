@@ -38,6 +38,10 @@ impl CapabilityHost {
     }
 
     /// Registers one immutable descriptor generation and starts its adapter.
+    ///
+    /// Identical descriptor facts replay the existing registration without starting or replacing
+    /// its adapter. A new generation is visible only after `start` succeeds. Registering a higher
+    /// revision makes it current for new resolution while retaining older exact selections.
     pub fn register(
         &self,
         descriptor: CapabilityDescriptor,
@@ -183,7 +187,10 @@ impl CapabilityHost {
         self.update_observation(capability, descriptor_revision, observation)
     }
 
-    /// Resolves against one mutex-protected registry snapshot and explicit boundary time.
+    /// Selects a matching generation after authority, fresh health, and capacity checks.
+    ///
+    /// Authority is evaluated before mutable availability so denial is not presented as absence.
+    /// The returned selection holds no permit; exact entry can still fail after this call.
     pub fn resolve_authorized_at(
         &self,
         requirement: &CapabilityRequirement,

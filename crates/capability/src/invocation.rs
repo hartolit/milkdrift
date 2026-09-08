@@ -289,7 +289,11 @@ impl InputReference {
     }
 }
 
-/// Immutable request delivered to an executor adapter.
+/// Inputs and identity for one invocation of an already selected capability.
+///
+/// Pair this with [`crate::ResolvedCapabilitySnapshot`], which supplies the exact descriptor
+/// revision and operation contract. The idempotency key has only the behavior that generation
+/// advertises; carrying a key does not itself make external writes safe to repeat.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct InvocationRequest {
     invocation: InvocationId,
@@ -1118,7 +1122,11 @@ milkdrift_contracts::deserialize_via!(CancellationRequest, CancellationRequestWi
     Self::new(wire.invocation, wire.request_sequence, wire.reason)
 });
 
-/// Executor acknowledgement of a cancellation request.
+/// What the executor can confirm about one exact cancellation request.
+///
+/// `accepted` means processing was accepted; `terminal_boundary` separately promises that no
+/// later external effect can occur. A process may acknowledge a stop flag while its monitor
+/// still waits for termination, so callers must not equate those two facts.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CancellationAcknowledgement {

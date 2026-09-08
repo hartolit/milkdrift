@@ -17,7 +17,10 @@ mod selection;
 
 use crate::{AdapterError, CapabilityAdapter};
 
-/// Bounded host configuration; no hidden queue is implemented in this pass.
+/// Bounds for retained generations, held permits, and observation age.
+///
+/// This registry has no waiting queue. [`crate::EffectWorkerHost`] separately bounds claimed
+/// runtime work; exact entry returns overload when a generation has no immediate permit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HostConfig {
     /// Maximum exact registrations across every identity.
@@ -44,7 +47,8 @@ impl HostConfig {
     }
 }
 
-/// Authority and deterministic priority facts applied during live resolution.
+/// Deterministic priorities among otherwise eligible capability identities.
+/// Authority comes from each run's resolution context and evaluator.
 #[derive(Clone, Debug)]
 pub struct CapabilitySelectionPolicy {
     priorities: BTreeMap<CapabilityId, i32>,
@@ -80,7 +84,7 @@ pub enum GenerationHealth {
     Stale,
 }
 
-/// Immutable bounded generation view for future daemon clients.
+/// Scoped generation read model used by daemon capability inspection.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GenerationView {
     /// Capability identity.
@@ -235,7 +239,11 @@ struct HostCore {
     state: Mutex<RegistryState>,
 }
 
-/// Embeddable live registry and runtime `TaskExecutor` bridge.
+/// Owns live adapter generations and implements runtime's [`milkdrift_runtime::TaskExecutor`].
+///
+/// Register an adapter, refresh its health, and let runtime select and claim work through the
+/// executor trait. Selection does not reserve capacity. Entry holds a permit for the exact
+/// snapshot; draining keeps that generation usable by pinned work until removal.
 #[derive(Clone)]
 pub struct CapabilityHost {
     core: Arc<HostCore>,

@@ -17,6 +17,8 @@ const DIGEST_DOMAIN_V2: &[u8] = b"milkdrift.resolved-capability-snapshot.v2\0";
 ///
 /// The digest covers every selection fact using a versioned canonical payload and
 /// a domain-separated BLAKE3 hash. It does not represent live availability.
+/// Runtime retains this record with the attempt so later entry can verify the same generation
+/// even after a newer one is registered. Creating a snapshot does not reserve live capacity.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvedCapabilitySnapshot {

@@ -54,7 +54,11 @@ pub enum ProcessProfileError {
     Descriptor(String),
 }
 
-/// Versioned configuration envelope. Secret values never appear in this document.
+/// Load a process profile from strict, bounded JSON before binding it to a host.
+///
+/// Use [`Self::from_json`] for operator input and pass [`Self::into_profile`] to
+/// [`crate::LocalProcessAdapter::new`]. Reading checks declared policy; adapter construction
+/// separately checks the executable bytes and host paths. Secret fields contain references.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProcessProfileDocument {
@@ -172,7 +176,8 @@ pub enum SubstitutionSource {
     IdempotencyKey,
 }
 
-/// How the child's working directory is selected beneath its isolated root.
+/// Choose temporary execution or an explicitly authorized persistent host working directory.
+/// Input and output materialization remains under the isolated root in every mode.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum WorkingDirectoryMode {
@@ -223,7 +228,9 @@ pub struct InputFileRule {
     pub(crate) relative_path: PathBuf,
 }
 
-/// Explicit environment mediation policy.
+/// Names copied into an otherwise empty child environment.
+/// Non-secret values come from the allowlist; secret values are resolved at invocation entry.
+/// Profiles with secrets must disable stdout/stderr progress streaming.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentPolicy {
@@ -306,7 +313,9 @@ pub enum OverflowAction {
     Terminate,
 }
 
-/// Independent bounded stdout or stderr policy.
+/// Decide how much of one stream to retain, report as progress, and publish as an artifact.
+/// The reader continues draining after the capture ceiling; [`OverflowAction`] chooses whether
+/// the monitor also terminates the child. Progress events have a separate count allowance.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapturePolicy {
@@ -327,7 +336,9 @@ pub struct OutputRule {
     pub(crate) required: bool,
 }
 
-/// Recovery policy advertised by the configured executable contract.
+/// Whether the external program can safely repeat work after its outcome is lost.
+/// A stable key is useful only when the program implements the advertised idempotency scope;
+/// the adapter cannot recover a process from a saved PID or infer that its earlier work finished.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RestartPolicy {
@@ -421,7 +432,11 @@ impl ProcessLimits {
     }
 }
 
-/// Validated immutable local-process profile revision.
+/// Operator choices for one executable generation, read through [`ProcessProfileDocument`].
+///
+/// The profile binds byte identity, direct argument templates, data paths, environment, and
+/// reporting/recovery policy. [`crate::LocalProcessAdapter::new`] turns those declarations into
+/// verified host facts and a descriptor. Changing executable bytes requires a new revision.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProcessProfile {

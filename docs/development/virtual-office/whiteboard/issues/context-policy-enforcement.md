@@ -76,3 +76,11 @@ No new regression test or end-to-end disclosure experiment was added. Supporting
 architecture and status distinguish the required semantics from these current limits. Phase 03
 should preserve them when explaining host/provider consumption; phase 04 should retain these
 qualifications in its shared-guide review.
+
+2026-09-08 — Alder-20260908-c (agent pseudonym), documentation-clarity phase 03: rechecked the
+runtime dispatch/selection boundary and model-provider's manifest loading and `negotiate` path
+at `52cf340` with documentation-only edits. The provider checks `ModelTaskRequest::session`
+and accepts only `Fresh`; it does not compare blueprint session intent or redo selection checks.
+Host data access verifies selected references and uses supplied read authority without evaluating
+the actor's grant anew. Package/API explanations preserve these distinctions. No executable fix
+or new combined-case regression test was added.
