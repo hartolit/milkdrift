@@ -65,3 +65,14 @@ explanations retain the distinction between declarations and enforcement, and th
 `Fresh` with `OmitOversized`. The final source review additionally traced the omission-reason
 precedence described above and qualified the redaction claims at the policy/manifest APIs.
 No executable fix, new regression test, or end-to-end disclosure experiment was introduced.
+
+2026-09-08 — Codex, documentation-clarity phase 02: rechecked runtime dispatch, candidate
+construction, selection, omission construction, selected-content materialization, and provider
+session negotiation at `b479d54` with documentation-only changes. All three gaps above remain.
+Runtime's package and API explanations now distinguish the selection actually recorded from
+policy intent; the materialization helper verifies selected facts but performs no grant evaluation.
+Existing causal-context tests cover active required checks and optional stopping separately.
+No new regression test or end-to-end disclosure experiment was added. Supporting corrections in
+architecture and status distinguish the required semantics from these current limits. Phase 03
+should preserve them when explaining host/provider consumption; phase 04 should retain these
+qualifications in its shared-guide review.

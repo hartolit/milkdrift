@@ -14,6 +14,12 @@ pub const MAX_ORPHAN_CLEANUP_CURSOR_KEY_BYTES: usize = 512;
 
 /// Request to begin one bounded, content-addressed artifact publication.
 ///
+/// Supply expected metadata and workspace usage before sending content. The store reserves
+/// publication ownership and rechecks accounting at commit. Reuse the same publication
+/// identity after a lost response; [`BeginArtifactOutcome`] tells whether to resume at an
+/// exact offset or use the already committed metadata. Invocation-owned controller output
+/// uses [`Self::for_invocation`] to name its final-entry reservation.
+///
 /// Checked request facts cannot be rewritten after construction:
 ///
 /// ```compile_fail
@@ -439,6 +445,19 @@ pub struct OrphanCleanupResult {
 }
 
 /// Narrow synchronous, streaming, content-addressed artifact port.
+///
+/// Publish with `begin_publication`, sequential `write_chunk` calls, and
+/// `commit_publication`; abort work deliberately abandoned before commit. Implementations
+/// must retain enough session and ownership evidence to resume these steps after an
+/// interrupted response. Exact replay neither substitutes metadata nor repeats a logical
+/// charge, even when several artifacts share content bytes.
+///
+/// Content must be verified and durably published before metadata/accounting accepts it.
+/// A failure in between may leave unreferenced content for replay or cleanup. Controller
+/// charges participate in the metadata transaction. Publication errors can follow a
+/// completed step, so recover with the original session identity and returned offset.
+/// Reads verify content independently of the caller's authority proof; this port does
+/// not authenticate an actor or evaluate a grant.
 pub trait ArtifactStore: Send + Sync {
     /// Begins an idempotent sequential temporary publication and validates its intended
     /// budget transition. Usage is checked again and committed only at publication.
@@ -457,7 +476,8 @@ pub trait ArtifactStore: Send + Sync {
 
     /// Verifies exact size/digest, durably flushes content, publishes atomically, and then
     /// commits immutable metadata/accounting. A crash before metadata commit can leave
-    /// only an unreferenced blob; a committed reference can never point at missing bytes.
+    /// only an unreferenced blob. Success requires the referenced bytes to be present and
+    /// verified; later corruption or storage loss must be reported on read.
     fn commit_publication(
         &self,
         publication: &ArtifactPublicationId,

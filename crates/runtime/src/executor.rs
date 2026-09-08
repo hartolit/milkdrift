@@ -530,6 +530,12 @@ type PreparedEntry<'a> = Box<
 >;
 
 /// One-shot exact-generation entry prepared before the durable final-entry commit.
+///
+/// The executor captures the exact generation/permit and request-specific resource
+/// envelope without entering adapter code. Runtime commits final authority and account
+/// admission, then consumes this handle. Dropping it before entry releases captured
+/// ownership. The in-memory one-shot closure complements the durable entry guard; it
+/// cannot by itself prevent another invocation after a process restart.
 pub struct PreparedExecution<'a> {
     dispatch: ExecutionDispatch,
     envelope: InvocationAdmissionEnvelope,
@@ -615,7 +621,13 @@ impl<'a> PreparedExecution<'a> {
     }
 }
 
-/// Narrow object-safe boundary implemented by Pass 3 registries/adapters.
+/// Connect runtime scheduling to an external capability host.
+///
+/// Resolution chooses an immutable generation; preparation retains that exact generation
+/// without entering adapter code. Runtime then commits the final entry decision and
+/// consumes the prepared handle. Implementations report through [`ExecutionReporter`]
+/// and distinguish failure before entry from loss of an outcome after entry. They must
+/// not append run events, retry effects independently, or substitute a newer generation.
 pub trait TaskExecutor: Send + Sync {
     /// Deterministically resolves an exact immutable descriptor and operation snapshot.
     fn resolve(
@@ -625,6 +637,10 @@ pub trait TaskExecutor: Send + Sync {
     ) -> Result<ResolvedCapability, ExecutorError>;
 
     /// Resolves under one exact run/attempt authority context.
+    ///
+    /// The default checks the resolved descriptor with empty adapter requirements. Hosts
+    /// with path, network, secret, or resource requirements must override it so those
+    /// facts participate in candidate authorization; the production capability host does.
     fn resolve_authorized(
         &self,
         requirement: &CapabilityRequirement,

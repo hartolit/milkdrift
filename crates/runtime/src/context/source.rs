@@ -1,4 +1,9 @@
-//! Authoritative metadata discovery and selected-only context materialization.
+//! Find task evidence without loading every candidate's content.
+//!
+//! Discovery combines direct inputs, compact projection anchors, a bounded recent journal
+//! tail, and explicit sources at one frozen sequence. Historical revisions and scope
+//! exposure determine which earlier work may participate. Materialization later follows
+//! only manifest-selected references, verifying their content against the frozen facts.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -73,6 +78,11 @@ pub trait ContextCandidateSource {
 }
 
 /// Production source over journal, workspace, revision, artifact, and authority ports.
+///
+/// Reads metadata and targeted historical events, not a lifetime transcript. Exact
+/// terminal anchors keep older current outputs discoverable beyond the recent tail.
+/// A join exposes its declared result downstream; membership in a sibling scope alone
+/// does not expose that scope's private failures or outputs.
 pub struct DurableContextCandidateSource<'a> {
     store: &'a dyn crate::RuntimeStore,
     authority: &'a dyn AuthorityEvaluator,

@@ -34,6 +34,10 @@ impl StoreClock for SystemStoreClock {
 }
 
 /// Bounded local-store configuration.
+///
+/// Start with [`Self::new`] and override the limits needed by the deployment. Validation
+/// happens at [`RedbStore::open_with_config`]. Artifact limits apply in addition to each
+/// run's workspace budget; receipt archival and audit eviction have separate lifecycles.
 pub struct RedbStoreConfig {
     pub(crate) root: PathBuf,
     pub(crate) max_artifact_bytes: u64,
@@ -88,6 +92,8 @@ impl RedbStoreConfig {
     }
 
     /// Applies the bounded hot receipt lifecycle; cold exact replay remains lifetime durable.
+    /// Both counts must be nonzero and the archive batch cannot exceed the hot bound.
+    /// Reopening under a smaller bound archives excess hot receipts without expiring them.
     #[must_use]
     pub fn with_application_receipt_lifecycle(
         mut self,
@@ -107,6 +113,10 @@ impl RedbStoreConfig {
     }
 
     /// Applies adapter-wide content and verified-read bounds.
+    ///
+    /// All arguments are bytes. `max_read_bytes` bounds the complete artifact rehashed
+    /// for a read, not just the returned chunk. A small range request therefore cannot
+    /// read an artifact larger than that verification bound.
     #[must_use]
     pub fn with_artifact_limits(
         mut self,
@@ -140,6 +150,9 @@ impl RedbStoreConfig {
 ///
 /// The embedded database remains private; callers interact only through the
 /// `milkdrift-persistence` ports implemented by this type.
+/// Share this owner rather than opening a separate database for each port. Dropping the
+/// final owner releases storage; the application must first drain workers that may still
+/// publish observations or artifacts.
 pub struct RedbStore {
     pub(crate) database: Database,
     pub(crate) root: PathBuf,

@@ -218,6 +218,12 @@ impl ReconciliationPlan {
 }
 
 /// Pure deterministic planner over exact immutable revisions and one event projection.
+///
+/// Supply occurrence history at `based_on_sequence`, including governing revisions and
+/// structured ownership. The result describes prospective actions; persist it before
+/// recording approval or applying changes. Application must reject intervening work that
+/// makes the plan stale instead of silently replanning under an old approval. Completed
+/// and committed work retain their original meaning even if their nodes change or disappear.
 pub fn plan_reconciliation(
     reconciliation: ReconciliationId,
     plan: ReconciliationPlanId,

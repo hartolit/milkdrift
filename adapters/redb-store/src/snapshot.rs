@@ -1,3 +1,10 @@
+//! Bind optional replay checkpoints to the journal append that produced their payload.
+//!
+//! Each append extends the history chain and may attach a payload commitment. Snapshot
+//! storage later verifies the envelope, exact prefix, and commitment before accepting
+//! bytes or advancing the latest pointer. Discarding an invalid optional snapshot leaves
+//! the journal intact for runtime replay.
+
 use std::ops::Bound;
 
 use milkdrift_persistence::{

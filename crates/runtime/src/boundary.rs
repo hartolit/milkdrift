@@ -8,6 +8,10 @@ use milkdrift_persistence::TimestampMillis;
 use crate::RuntimeError;
 
 /// Boundary supplying timestamp facts; replay never calls it.
+///
+/// New scheduling, authority, and recovery decisions use these observations. Production
+/// daemon composition persists rollback evidence before returning time; the standalone
+/// [`SystemBoundaryClock`] only samples the OS clock and provides no durable watermark.
 pub trait BoundaryClock: Send + Sync {
     /// Returns the current epoch-millisecond observation.
     fn now(&self) -> Result<TimestampMillis, RuntimeError>;
@@ -77,12 +81,16 @@ impl BoundaryClock for ManualClock {
 }
 
 /// Boundary for stable IDs recorded in durable facts.
+/// Implementations must avoid reusing identities across service restarts. Replay reads
+/// recorded identities instead of allocating replacements.
 pub trait IdGenerator: Send + Sync {
     /// Produces one bounded safe-ASCII identity under a stable semantic kind.
     fn next(&self, kind: &'static str) -> Result<String, RuntimeError>;
 }
 
 /// Deterministic monotonic ID generator scoped by an externally stable instance prefix.
+/// Reopening with the same prefix and initial counter repeats IDs. Composition must use
+/// a distinct instance prefix or a safely resumed counter for newly generated facts.
 #[derive(Debug)]
 pub struct SequentialIdGenerator {
     prefix: String,

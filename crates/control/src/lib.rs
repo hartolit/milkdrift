@@ -1,9 +1,14 @@
-//! Audited, authority-scoped workflow control shared by human, service, and AI callers.
+//! Inspect work and change its future through one authorized control service.
 //!
-//! This application layer treats every proposal as untrusted data, creates prospective
-//! immutable blueprint revisions, and routes live changes through the durable runtime
-//! command and reconciliation path. It owns no database, network server, provider client,
-//! secret resolver, UI, or alternate event writer.
+//! Submit a [`ControlCommandDocument`] to [`ControlService::execute`]. Simple operations
+//! become runtime commands. A [`WorkflowProposalDocument`] first passes validation,
+//! authority, and risk classification before creating an immutable prospective revision;
+//! runtime reconciliation governs its application to a live run.
+//!
+//! [`WorkflowControlAdapter`] exposes the same service as a hosted capability.
+//! [`ControllerLifecycleOwner`] assesses ordinary bounded controller repeats using durable
+//! accounts and history. It is available for library integration; the production daemon
+//! leaves it uninstalled pending external-evidence qualification.
 
 mod adapter;
 mod command;

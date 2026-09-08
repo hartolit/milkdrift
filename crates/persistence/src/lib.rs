@@ -1,30 +1,19 @@
 //! Save a runtime decision together with the facts needed to recover it.
 //!
-//! The runtime decides whether a command is allowed and which events it produces.
-//! This crate gives it storage documents and synchronous traits that a storage adapter
-//! implements. For example, accepting a new run must save its creation event, root
-//! workspace scope, usage, discovery summary, and command result together. Otherwise
-//! restart could find a run whose inputs or saved response are missing.
+//! Runtime plans events; [`RunJournal`] saves them with the command result, workspace
+//! changes, account transitions, and discovery indexes in one transaction. A
+//! [`CommandReceipt`] lets the caller recover a lost reply without another append.
 //!
-//! Follow [`CommandReceipt`] into [`AtomicRunCommitRequest`] and call
-//! [`RunJournal::commit_command`] through the configured storage implementation.
-//! Constructing the request checks its internal consistency; it writes nothing.
-//! Storage checks current history and commits all consequences or none. A command the
-//! runtime rejects can still have a saved result, with no events or workspace changes.
+//! Use [`AtomicRunCommitRequest`] to assemble that transaction. [`RunQueryStore`] and
+//! [`WorkspaceStore`] read the saved facts, while [`RevisionStore`] owns immutable
+//! definitions and [`ArtifactStore`] owns content publication. [`SnapshotStore`] provides
+//! optional verified replay checkpoints. None of these ports decides what a run should do.
 //!
-//! If a response is lost after commit, redelivering the same command returns
-//! [`AtomicRunCommitOutcome::Replayed`]. Reusing its identity for different intent
-//! conflicts. [`RunJournal::command_result`] retrieves the saved outcome, and
-//! [`RunQueryStore::events`] reads the supporting history in bounded pages. Neither
-//! a saved command acceptance nor an error proves whether external work finished;
-//! the runtime must interpret durable attempt observations before allowing another try.
-//!
-//! Other owners use [`RevisionStore`] for immutable definitions, [`ArtifactStore`] for
-//! content publication, and [`SnapshotStore`] for optional recovery checkpoints.
-//! Application, peer, clock, and controller-account ports keep their own explicit
-//! transactions. This library opens no database and runs no capability or worker.
-//! The package README traces the runtime caller and the redb implementation; detailed
-//! commit obligations and recovery guidance start at [`RunJournal`].
+//! Application receipts retain external responses; peer records retain remote acceptance;
+//! controller accounts reserve cumulative resources. Their ports document which changes
+//! must commit together and how to recover an interrupted call. [`ClockWatermarkStore`]
+//! remembers observed time and [`StorageAdmin`] supports explicit integrity inspection.
+//! Storage adapters implement these synchronous contracts without exposing database types.
 
 mod admin;
 mod application;

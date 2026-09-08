@@ -39,7 +39,7 @@ const COMMAND_JSON_LIMITS: JsonLimits = JsonLimits {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExternalWorkAction {
-    /// Query the external system using a separately authorized capability.
+    /// Record a query decision; actual querying requires a separately authorized capability.
     Query,
     /// Create a new attempt when the side-effect/idempotency policy permits it.
     Retry,

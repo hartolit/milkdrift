@@ -13,7 +13,7 @@ use crate::{
 
 /// Legacy run-event envelope schema retained for exact historical reads.
 pub const RUN_EVENT_SCHEMA_VERSION_V1: u32 = 1;
-/// Current run-event envelope schema with controller, attributed reconciliation, and child-usage facts.
+/// Readable run-event schema with controller, attributed reconciliation, and child-usage facts.
 pub const RUN_EVENT_SCHEMA_VERSION_V2: u32 = 2;
 /// Current run-event envelope schema with atomic controller final-entry admission facts.
 pub const RUN_EVENT_SCHEMA_VERSION_V3: u32 = 3;

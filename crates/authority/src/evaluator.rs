@@ -5,7 +5,12 @@ use crate::{
     DecisionReasonCode, FilesystemScope, GrantId, PolicyId,
 };
 
-/// Object-safe pure authority policy boundary injected into runtime and host services.
+/// Decide whether supplied facts fit an actor's authority, without performing the action.
+///
+/// Runtime, control, and capability hosts share this port. Implementations must evaluate
+/// the exact request and return a snapshot binding it to their policy. Denial is an
+/// ordinary decision; an error means no usable decision was produced. Callers own
+/// authentication, trustworthy resource/time facts, enforcement, and durable recording.
 pub trait AuthorityEvaluator: Send + Sync {
     /// Evaluates only the supplied immutable facts and returns an exact snapshot.
     fn evaluate(
@@ -14,7 +19,11 @@ pub trait AuthorityEvaluator: Send + Sync {
     ) -> Result<AuthorityDecisionSnapshot, AuthorityError>;
 }
 
-/// Deterministic immutable grant set and revocation-generation policy.
+/// Evaluate requests against explicitly supplied immutable grants and revocation generations.
+///
+/// Each request names one exact grant revision and digest. The evaluator does not choose
+/// a broader grant when that claim fails, combine several grants, or refresh configuration.
+/// Equal inputs under the same configured set produce the same decision.
 pub struct GrantSetEvaluator {
     policy: PolicyId,
     policy_version: u32,

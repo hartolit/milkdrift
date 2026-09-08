@@ -115,6 +115,11 @@ pub enum ClaimedStopCondition {
 }
 
 /// Fully decoded bounded workflow proposal body.
+///
+/// Describes a mutation against an exact immutable base and, for live work, an observed
+/// run sequence. Parsing proves shape and digest consistency. [`crate::ControlService`]
+/// must still check caller authority, classify risk, and reconcile the resulting revision.
+/// Producer provenance, notes, and stop claims remain untrusted data throughout that path.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowProposal {

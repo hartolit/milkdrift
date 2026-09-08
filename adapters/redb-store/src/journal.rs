@@ -1,3 +1,9 @@
+//! Commit runtime decisions and serve verified views of their saved evidence.
+//!
+//! The append transaction owns events, receipts, workspace/account changes, and discovery
+//! together. Query modules validate records against that history. Discovery indexes make
+//! scheduling and startup bounded; they cannot establish facts missing from the journal.
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     ops::Bound,

@@ -200,6 +200,12 @@ pub struct RunSummaryPage {
 }
 
 /// Read-only journal and discoverability queries for runtime/recovery/control APIs.
+///
+/// Event pages explain what happened; summary, runnable, timer, and lease queries locate
+/// work to inspect or advance. Discovery never authorizes dispatch. Implementations must
+/// verify the supporting records and return corruption as an error, not absence.
+/// Filtered pages may be empty with an advancing continuation: callers must follow
+/// `next` until it is absent. Separate calls can observe later commits.
 pub trait RunQueryStore: Send + Sync {
     /// Reads a verified contiguous event page. Malformed history is an error.
     ///
@@ -301,6 +307,12 @@ pub trait RunDiscoveryIntegrityStore: Send + Sync {
 
 /// Read-only access to durable workspace state. All mutations occur through
 /// [`crate::RunJournal::commit_command`] to preserve crash atomicity with event history.
+///
+/// Use exact value references when reproducing an input; `latest_value` asks a different
+/// question and may return a later version. Implementations verify scope links, immutable
+/// origins, and derived heads rather than falling back to a nearby value on corruption.
+/// These internal reads carry no authority claim; callers enforce scope visibility and
+/// read permission before exposing their results.
 pub trait WorkspaceStore: Send + Sync {
     /// Reads the exact durable budget usage used as the next optimistic accounting guard.
     fn workspace_usage(&self, run: &RunId) -> Result<WorkspaceUsage, PersistenceError>;

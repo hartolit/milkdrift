@@ -811,7 +811,7 @@ pub struct ControllerBlueprintSpec {
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```
 /// use milkdrift_blueprint::{
 ///     AuthorRef, BlueprintRevision, Condition, Mutation, MutationBatch, Node, NodeId,
 ///     NodeKind, PinnedSubworkflow, TerminalOutcome, WorkflowId, WorkflowInterface,
@@ -849,6 +849,8 @@ pub struct ControllerBlueprintSpec {
 ///     author: AuthorRef::new("human:operator")?,
 /// })?)
 /// # }
+/// # let _wrapper = build()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn build_controller_blueprint(
     spec: ControllerBlueprintSpec,

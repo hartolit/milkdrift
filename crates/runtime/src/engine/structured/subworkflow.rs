@@ -1,4 +1,9 @@
-//! Subworkflow intent creation and attached child-aggregate lifecycle.
+//! Connect a parent execution to an exact pinned child run and its declared outputs.
+//!
+//! Parent intent and child creation use separate idempotent commands. Stable child
+//! identities let recovery finish that handoff after interruption. Input materialization,
+//! inherited authority/account binding, child termination, and output imports remain
+//! explicit facts; the parent does not infer completion from a missing child record.
 
 use super::super::RuntimeService;
 use super::super::support::{CommandPlan, bounded_projection_set};

@@ -85,6 +85,10 @@ pub struct PolicyClassification {
 }
 
 /// Classifies a fully validated old/new revision pair at an optional live boundary.
+///
+/// Use the result to choose whether separate approval is required. Even [`RiskClass::Low`]
+/// needs exact apply authority and a current reconciliation plan; this function neither
+/// stores the revision nor authorizes its execution.
 #[must_use]
 pub fn classify_proposal(
     old: &BlueprintRevision,

@@ -66,6 +66,12 @@ values; repository contracts check the version cells against source.
 
 ## Limitations now
 
+- Context policy session intent is not compared with the model request's session. With
+  `StopAtFirstOverflow`, an optional overflow can skip later eligible required-evidence checks.
+  Omission-reason precedence can also retain protected reference metadata. The
+  [runtime builder](../../crates/runtime/src/context.rs) describes these implementation gaps;
+  [the source finding](../development/virtual-office/whiteboard/issues/context-policy-enforcement.md)
+  records the follow-up. Existing tests do not establish the missing combined cases.
 - Combined real coding-agent/model interoperability remains unqualified: no operator-supplied
   byte-pinned real coding-agent profile is available. A separately managed supported model has
   passed the ordinary model scenario, but a clean strict combined report is still required.

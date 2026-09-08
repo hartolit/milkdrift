@@ -1,4 +1,8 @@
-//! Pure deterministic construction of exact causal context manifests.
+//! Select task evidence before dispatch and record the selection in an immutable manifest.
+//!
+//! The durable source supplies metadata at one frozen history boundary. Selection ranks
+//! that metadata under the task policy and budgets, then publication saves the manifest
+//! before scheduling. Content is loaded separately from only the selected references.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -166,6 +170,19 @@ pub enum ContextBuildError {
 }
 
 /// Stateless deterministic context planner.
+///
+/// Supply metadata discovered for the exact revision, execution, and attempt. Selection
+/// orders candidates, checks active availability/authority/budget rules, and records both
+/// selected evidence and omissions. Publish the manifest before materializing content.
+///
+/// Current enforcement has limits callers must account for. With `StopAtFirstOverflow`,
+/// an optional overflow stops subsequent eligible candidates before their required checks;
+/// `OmitOversized` continues those checks. Omission redaction currently depends on the
+/// reported reason: `SelectionStopped` or `ExcludedCategory` can retain protected source
+/// references and sizes. A manifest is not proof of complete omission-metadata redaction.
+/// Task session policy is also not enforced against the model request's session; dispatch
+/// and provider negotiation use separate fields. These are implementation gaps, not
+/// permission to weaken required-evidence or disclosure rules.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CausalContextBuilder;
 
@@ -547,6 +564,9 @@ fn candidate_is_artifact(candidate: &ContextCandidate) -> bool {
 }
 
 fn omission(candidate: &ContextCandidate, reason: ContextOmissionReason) -> ContextOmission {
+    // Redaction follows the chosen reason rather than independent visibility facts.
+    // Earlier stopping/exclusion can mask a branch/authority reason and leave protected
+    // references and sizes in the omission.
     let redacted = matches!(
         reason,
         ContextOmissionReason::BranchIsolated | ContextOmissionReason::AuthorityDenied

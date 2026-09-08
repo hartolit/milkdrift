@@ -1,3 +1,10 @@
+//! Recover a consistent run prefix without retaining its whole event history.
+//!
+//! Projection folds pin the first observed head and consume bounded contiguous pages.
+//! A verified optional snapshot can shorten the prefix to replay. Historical inspection
+//! follows journal evidence when compaction has removed an attempt from current state;
+//! bounded memory does not imply a constant-time historical lookup.
+
 use milkdrift_contracts::{
     JsonLimits, parse_json_without_duplicates, preflight_json_structure, validate_json_value,
 };

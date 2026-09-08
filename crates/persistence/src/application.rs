@@ -109,7 +109,12 @@ impl ApplicationCommandResult {
     }
 }
 
-/// Checksummed-row payload that is the daemon's external idempotency truth.
+/// Retained answer to one actor-scoped external command, including a durable rejection.
+///
+/// The digest binds the complete canonical request; the result preserves the original
+/// response and any authoritative effect reference. This is separate from a runtime
+/// [`crate::CommandReceipt`], whose intent can exclude delivery metadata. Hot/cold
+/// archival preserves the same document so a lost reply remains recoverable.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationCommandReceipt {
@@ -560,6 +565,11 @@ pub enum ApplicationCommandCommitOutcome {
 }
 
 /// Narrow external-command receipt/idempotency port.
+///
+/// A receipt belongs to exactly one tier for the store generation. Implementations must
+/// look through hot and cold storage, verify saved records, and preserve exact responses
+/// and conflict detection during archival. A storage error can follow commit: reread by
+/// actor/command or redeliver the same commit before deciding what happened.
 pub trait ApplicationCommandStore: Send + Sync {
     /// Reads one exact actor-scoped external receipt.
     fn application_command_receipt(
@@ -568,11 +578,18 @@ pub trait ApplicationCommandStore: Send + Sync {
         command: &CommandId,
     ) -> Result<Option<ApplicationCommandReceipt>, PersistenceError>;
     /// Atomically checks/inserts a receipt and its optional same-store effect.
+    ///
+    /// Check existing identity/digest for replay or conflict before applying fresh effect
+    /// guards. For a new identity, receipt insertion, required archival, and a supplied
+    /// layout/proposal-index effect commit together. Runtime effects use a separate
+    /// idempotent journal transaction; the application must recover that result if its
+    /// receipt was not saved. This port cannot repeat the runtime operation on its own.
     fn commit_application_command(
         &self,
         commit: &ApplicationCommandCommit,
     ) -> Result<ApplicationCommandCommitOutcome, PersistenceError>;
     /// Lists receipts in stable bounded key order for administration/recovery.
+    /// Pagination spans both tiers; moving a receipt must not change its logical cursor key.
     fn application_command_receipts(
         &self,
         query: &ApplicationPageQuery,
@@ -580,6 +597,8 @@ pub trait ApplicationCommandStore: Send + Sync {
     /// Returns exact hot/cold accounting and the most recent successful archival boundary.
     fn application_receipt_status(&self) -> Result<ApplicationReceiptStatus, PersistenceError>;
     /// Moves at most the configured batch of oldest complete hot receipts to cold storage.
+    /// The supplied archival generation guards the whole move. Preserve receipt bytes,
+    /// remove hot ownership, and update counters/generation atomically; do not evict identity.
     fn archive_application_command_receipts(
         &self,
         request: ApplicationReceiptArchiveRequest,
@@ -602,6 +621,10 @@ pub trait ApplicationLayoutStore: Send + Sync {
 }
 
 /// First-class proposal discovery projection port.
+///
+/// Entries point back to authoritative accepted receipts. Rebuild checks both receipt
+/// tiers and replaces only derived discovery; it does not recreate proposals or run
+/// decisions. The daemon does not automatically rebuild this index during startup.
 pub trait ProposalIndexStore: Send + Sync {
     /// Lists exact proposal identities for one run without scanning command receipts.
     fn proposal_index(

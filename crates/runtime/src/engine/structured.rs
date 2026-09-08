@@ -1,4 +1,9 @@
-//! Deterministic structured-control coordination.
+//! Advance blueprint control nodes as journaled work alongside external tasks.
+//!
+//! Branch/fork, wait, repeat, and child-workflow steps accumulate events and workspace
+//! changes in the caller's candidate transition. A bounded pass may leave unfinished
+//! ownership for the next tick. `Eligible` alone does not mean a structured execution
+//! is untouched: its branch, timer, wait, or child records can already own live work.
 
 mod reducer;
 mod repeat;

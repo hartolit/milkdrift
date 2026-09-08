@@ -497,6 +497,12 @@ pub enum SnapshotLoad {
 }
 
 /// Optional snapshot optimization port.
+///
+/// Runtime first attaches a [`ProjectionCheckpoint`] to an accepted journal append,
+/// then saves the corresponding payload here. Implementations must verify the envelope,
+/// covered history, and append-time payload commitment before returning `Verified`.
+/// Runtime separately checks its payload schema and state. A missing/rejected optional
+/// snapshot falls back to journal replay; an error reading authoritative history does not.
 pub trait SnapshotStore: Send + Sync {
     /// Returns the cumulative digest of one exact authoritative event prefix.
     ///
@@ -511,9 +517,11 @@ pub trait SnapshotStore: Send + Sync {
 
     /// Stores an immutable snapshot and advances the latest pointer atomically.
     ///
-    /// Implementations verify `covered_sequence` is not beyond the journal head,
-    /// recompute `history_digest` from exact authoritative event envelopes, and require
-    /// an equal projection commitment recorded atomically at that journal sequence.
+    /// Implementations verify `covered_sequence` is not beyond the journal head, compare
+    /// `history_digest` with the authoritative prefix digest, and require an equal
+    /// projection commitment recorded atomically at that sequence. The prefix digest may
+    /// come from the append-time chain checkpoint; saving a snapshot does not require a
+    /// fresh scan of all covered events.
     fn put_snapshot(&self, snapshot: &SnapshotDocument) -> Result<(), PersistenceError>;
 
     /// Loads and validates the latest candidate. A rejected snapshot is never used to

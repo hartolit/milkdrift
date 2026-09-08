@@ -163,6 +163,11 @@ impl RequestedResourceFacts {
 }
 
 /// Complete pure input to one authority evaluation.
+///
+/// The boundary that authenticates the actor must bind its exact grant claim. Resource
+/// facts come from the operation, stored metadata, or the selected adapter generation;
+/// accepting a caller's unsupported assertion here would authorize the wrong action.
+/// This value carries no proof of authentication by itself.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorityRequest {

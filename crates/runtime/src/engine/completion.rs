@@ -1,4 +1,9 @@
-//! Structured completion, branch/join closure, successor materialization, and signal draining.
+//! Turn settled work into ready successors without leaving owned work behind.
+//!
+//! Completion materializes declared outputs, closes branch/join obligations, and examines
+//! successor frontiers in bounded passes. A terminal outcome is finalized only after its
+//! required structured drain; a nested fork's own terminal event is not proof that all
+//! child branches have finished.
 
 mod signals;
 

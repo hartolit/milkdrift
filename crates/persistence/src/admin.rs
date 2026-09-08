@@ -157,6 +157,12 @@ pub struct IntegrityScanResult {
 }
 
 /// Narrow lifecycle/schema/health port for a durable adapter.
+///
+/// Use schema information to decide whether ordinary access is supported and health for
+/// a bounded operational sample. A historical integrity scan is explicit work: retain
+/// its continuation and verification mode until exhausted. Each page may observe a new
+/// read transaction, so completion is not a whole-store snapshot across concurrent writes.
+/// Implementations report corruption without repairing history or deleting evidence.
 pub trait StorageAdmin: Send + Sync {
     /// Returns physical schema compatibility. Older and future formats are refused.
     fn schema_info(&self) -> Result<StorageSchemaInfo, PersistenceError>;

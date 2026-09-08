@@ -20,10 +20,15 @@ use super::{
 };
 use crate::ControlError;
 
-/// Canonical integration owner for typed controller parsing, accounting, and assessment.
+/// Assess whether an ordinary controller repeat may take its next durable step.
 ///
-/// The production daemon leaves this owner uninstalled until cumulative controller resources are
-/// reserved at the final external-entry boundary.
+/// Reads immutable policy, lifecycle history, and persistence-owned account totals and
+/// reservations. Runtime records the assessment before creating another cycle or accepting
+/// a checkpoint continuation. The account's final-entry and artifact transactions own
+/// cumulative resource changes; assessment does not reserve resources a second time.
+///
+/// Final-entry accounting is implemented, but the production daemon still leaves this
+/// lifecycle uninstalled pending the qualification recorded in the product status/roadmap.
 pub struct ControllerLifecycleOwner {
     revisions: Arc<dyn RevisionStore>,
 }

@@ -96,6 +96,11 @@ impl From<&BlueprintRevision> for RevisionSummary {
 }
 
 /// Narrow immutable workflow-revision store.
+///
+/// Publish parents before children. A stored revision becomes available for run creation
+/// or prospective reconciliation; insertion alone changes no run pin. Readers verify
+/// immutable content and ancestry. A failed write can be recovered by reading the exact
+/// identity or repeating `put_revision` with the same canonical content.
 pub trait RevisionStore: Send + Sync {
     /// Stores one verified immutable revision.
     ///
@@ -120,7 +125,7 @@ pub trait RevisionStore: Send + Sync {
         revision: &RevisionId,
     ) -> Result<Option<RevisionSummary>, PersistenceError>;
 
-    /// Finds all revisions sharing exact semantic content, bounded by the caller.
+    /// Finds revisions sharing exact semantic content, up to the caller's bound.
     fn revisions_by_content(
         &self,
         digest: &ContentDigest,
@@ -128,5 +133,7 @@ pub trait RevisionStore: Send + Sync {
     ) -> Result<Vec<RevisionSummary>, PersistenceError>;
 
     /// Lists a bounded stable identity-ordered page without scanning complete lineage history.
+    /// A filtered page may contain no matches while its physical scan cursor advances;
+    /// continue until `next` is absent.
     fn revisions(&self, query: &RevisionPageQuery) -> Result<RevisionPage, PersistenceError>;
 }

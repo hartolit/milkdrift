@@ -208,16 +208,19 @@ settled history alone cannot exhaust discovery; there is no whole-history chrono
 
 Historical ancestry follows each execution's governing revision. A join exposes only its declared
 result to descendants of that exact join; sibling failures and private output cannot cross by
-association. Subworkflow imports follow their exact durable parent link. Redacted omissions reveal
-no protected identities or sizes. Ordering is causal depth, semantic kind, node, execution, and
+association. Subworkflow imports follow their exact durable parent link. Omission records must not
+reveal protected identities or sizes. Ordering is causal depth, semantic kind, node, execution, and
 canonical reference bytes. Scan/depth/event-summary/item/artifact/per-item/byte/manifest/unit
 bounds apply deterministically. Optional losses retain policy/budget/authority/missing/corrupt/
-unsupported/superseded/isolation reasons; required losses fail before dispatch.
+unsupported/superseded/isolation reasons; fail-closed policy requires required losses to fail before
+dispatch. Current enforcement gaps in required checks, omission redaction, and session intent are
+recorded in [status](product/status.md#limitations-now) and the
+[runtime builder](../crates/runtime/src/context.rs); the declared policy is not proof of enforcement.
 
 The canonical manifest binds run/revision/execution/attempt and policy digest. Each selection binds
 content digest/size, semantic tags, governing revision, scope/sequence/time, producer actor,
 capability/generation/profile/peer/invocation, causal evidence, sensitivity, authority, and reason.
-Redacted omissions, totals, budget, and a domain-separated digest complete the record. Its restricted
+Omissions, totals, budget, and a domain-separated digest complete the record. Its restricted
 artifact is committed and journal-published before scheduling can reach an adapter; invocation
 carries the compact reference. A retry rebinds the prior selection to its new attempt without
 rescanning later history. A different selection requires a distinct manifest/attempt.

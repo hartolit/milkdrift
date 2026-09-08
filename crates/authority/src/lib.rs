@@ -1,7 +1,13 @@
-//! Pure, deterministic authority contracts for every Milkdrift boundary.
+//! Decide whether an actor may perform an operation with the supplied resources.
 //!
-//! This crate authenticates nobody and resolves no secrets. It owns immutable grants,
-//! caller-supplied boundary facts, deterministic decisions, and opaque references only.
+//! A trusted caller constructs an [`AuthorityRequest`] from its authenticated actor,
+//! exact grant claim, resource facts, and boundary time. [`GrantSetEvaluator`] returns
+//! an allowed or denied [`AuthorityDecisionSnapshot`] for the caller to enforce and
+//! retain. The evaluator neither authenticates the actor nor performs the operation.
+//!
+//! Build grants with [`AuthorityGrantBuilder`]; use [`Selection`] for explicit wildcards
+//! or exact allowlists. [`ExecutionAuthorityBasis`] carries an accepted run's grant
+//! reference into later capability decisions, which still check current revocation.
 
 mod document;
 mod evaluator;

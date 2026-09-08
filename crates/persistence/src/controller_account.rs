@@ -1,4 +1,10 @@
-//! Durable controller declaration, resource vectors and exact state model.
+//! Reserve a controller's cumulative allowance before admitting external work.
+//!
+//! A declaration fixes the account and its ceilings. Runtime plans an entry against the
+//! current revision; the journal transaction independently verifies the transition and
+//! commits it beside the entry event. Artifact publication charges the same account in
+//! its metadata transaction. Terminal evidence settles known use; unknown remainders
+//! stay reserved and block admission. Control lifecycle assessment reads this state.
 mod identity;
 mod transaction;
 mod transition;
@@ -403,6 +409,11 @@ impl ControllerReservation {
 }
 
 /// Exact current durable account state.
+///
+/// `settled` records accepted use; `outstanding` retains allowances whose outcome is not
+/// fully known. [`Self::committed_totals`] combines them for conservative assessment.
+/// Mutation methods calculate a candidate state in memory. Persist it only through the
+/// owning journal or artifact transaction with its exact revision guard and evidence.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControllerAccountState {
@@ -584,6 +595,10 @@ pub enum ControllerArtifactOwner {
 }
 
 /// Narrow durable read port; mutations occur only inside journal/artifact transactions.
+///
+/// A descendant inherits one immutable account binding, so starting a child cannot reset
+/// cumulative ceilings. Implementations verify the account's declaration, totals, and
+/// revision evidence on load; missing bound state is corruption, not an unbound run.
 pub trait ControllerAccountStore: Send + Sync {
     /// Resolves the immutable optional account binding for a run.
     fn controller_account_binding(

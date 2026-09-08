@@ -18,6 +18,12 @@ use super::{
 };
 
 /// Immutable, exact revision of one authority grant.
+///
+/// An operation must fit both the allowed operations and the applicable resource/budget
+/// scopes during the inclusive validity interval. Build with [`AuthorityGrantBuilder`]
+/// or decode with [`Self::from_json`], then supply it to [`crate::GrantSetEvaluator`].
+/// Changing permissions requires another revision; historical decisions keep their
+/// original grant digest and revocation generation.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorityGrant {
@@ -150,6 +156,11 @@ impl AuthorityGrant {
 }
 
 /// Builder that publishes a grant only after complete invariant validation.
+///
+/// Starts with no allowed operations or capability/resource permissions. Set the scopes
+/// needed by those operations explicitly; selecting an operation alone does not grant
+/// capability invocation or protected reads. The initial workflow/run selector is `Any`,
+/// so narrow it through [`Self::resources`] when the operation should target one workflow.
 pub struct AuthorityGrantBuilder {
     grant: AuthorityGrant,
 }

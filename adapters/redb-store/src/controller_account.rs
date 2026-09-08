@@ -1,3 +1,10 @@
+//! Commit controller resource changes with the events or artifacts that justify them.
+//!
+//! Recompute journal transitions against the guarded account and validate their entry,
+//! terminal, and child-lineage links before writing. Artifact publication uses the same
+//! account owner within its metadata transaction. Immutable predecessor revisions retain
+//! evidence for replay and integrity inspection after active reservations settle.
+
 mod validation;
 use validation::validate_event_transaction_contract;
 pub(crate) use validation::{terminal_settlement_from_events, validate_event_link};

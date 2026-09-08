@@ -1,4 +1,9 @@
-//! Deterministic structured-node execution, reducers, repeats, and subworkflow intent creation.
+//! Run a pinned body in explicit iterations and decide whether another may begin.
+//!
+//! Each child outcome feeds the recorded condition and remaining bounds. Exhaustion
+//! follows the definition's stop/approval policy; a continuation decision is durable.
+//! Marked controller repeats additionally require the installed lifecycle assessment
+//! before child creation, so their cumulative account cannot be reset by another cycle.
 
 use super::super::RuntimeService;
 use super::super::support::{

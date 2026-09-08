@@ -24,6 +24,14 @@ impl RedbStore {
     }
 
     /// Opens or creates a durable local store from explicit bounds and hooks.
+    ///
+    /// Validates the owned paths and exact schema, checks startup time against the
+    /// watermark, and restores configured application retention bounds. Older/future
+    /// schemas and unsafe paths fail; this operation performs no storage migration.
+    /// It may initialize storage or archive receipts before returning, so an error does
+    /// not imply an untouched directory. Reopening uses those same durable records.
+    ///
+    /// Workflow recovery and full historical integrity scans are separate operations.
     #[tracing::instrument(
         name = "milkdrift.redb_store.open",
         skip_all,

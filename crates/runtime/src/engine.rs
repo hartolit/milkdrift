@@ -44,7 +44,11 @@ const PROJECTION_SNAPSHOT_INTERVAL_EVENTS: u64 = 128;
 const MAX_DURABLE_INVOCATION_REQUEST_BYTES: usize =
     milkdrift_persistence::MAX_EVENT_DOCUMENT_BYTES / 2;
 
-/// One object-safe durable owner used by the headless runtime.
+/// The persistence ports that must describe the same durable store to this runtime.
+///
+/// A blanket implementation combines the narrow traits for composition. Each trait's
+/// transaction and integrity obligations still apply; supplying unrelated journal,
+/// workspace, artifact, or account owners would break their shared commit guarantees.
 pub trait RuntimeStore:
     RevisionStore
     + RunJournal
@@ -106,7 +110,8 @@ pub struct RuntimeConfig {
 }
 
 impl RuntimeConfig {
-    /// Constructs a service policy.  A tick is deliberately capped at 1,024 items.
+    /// Constructs a service policy with a nonzero lease duration in milliseconds and
+    /// a tick bound no greater than [`milkdrift_persistence::MAX_PAGE_SIZE`].
     pub fn new(
         worker: WorkerId,
         internal_actor: ActorRef,
@@ -666,6 +671,15 @@ impl RuntimeService {
     }
 
     /// Authorizes, validates, and crash-atomically commits one external command.
+    ///
+    /// A saved matching intent returns its original result before fresh evaluation or
+    /// optimistic checks. For a new command, inspect the returned result's disposition:
+    /// authority or transition denial can be a durable rejection rather than an error.
+    /// Acceptance saves events; it does not execute the resulting external work.
+    ///
+    /// On storage failure, retain the command identity and intent and recover the saved
+    /// result. Do not infer rollback or generate a new identity from a lost reply.
+    /// [`Self::scheduler_tick`] and the separately claimed effects advance accepted work.
     ///
     /// Internal system transitions and worker reports are rejected before evaluation and
     /// remain reachable only through private runtime-owned paths.

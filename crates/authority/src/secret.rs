@@ -1,6 +1,10 @@
 use std::fmt;
 
 /// Explicitly sensitive resolved bytes with redacted formatting and no serialization or clone.
+///
+/// Resolvers hand this value to adapters, which borrow the bytes with [`Self::expose`].
+/// Redacted formatting prevents ordinary diagnostics from printing them; code inside
+/// the closure can still copy or disclose bytes and must honor its boundary's policy.
 pub struct SensitiveSecret(Vec<u8>);
 
 impl SensitiveSecret {

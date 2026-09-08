@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{PageSize, PersistenceError, TimestampMillis, WorkerId};
 
-/// Current checksummed hot peer-execution primary-record schema.
+/// Readable hot peer-execution schema predating exact input/output artifact accounting.
 pub const PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2: u32 = 2;
 /// Current record schema whose artifact accounting includes exact inputs and cumulative outputs.
 pub const PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3: u32 = 3;
@@ -574,6 +574,13 @@ pub struct PeerRetentionPage {
 ///
 /// Implementations own atomic admission/accounting, dispatch indexes, append-only
 /// observations, recovery and explicit retention. They expose no database transaction types.
+/// The serving peer's acceptance is separate from the origin runtime's journal: a local
+/// run command cannot atomically establish a remote outcome.
+///
+/// Lookup and admission must consult both hot records and tombstones. Exact canonical
+/// requests replay; changed requests conflict for the store generation. After a lost
+/// admission reply, use the same owner/request identity rather than submitting new work.
+/// Entry and terminal evidence remain separate from acceptance and cancellation.
 pub trait PeerExecutionStore: Send + Sync {
     /// Opens or closes the durable admission/entry gate through one serialized transaction.
     fn set_peer_admission_open(&self, open: bool) -> Result<(), PersistenceError>;
@@ -632,6 +639,9 @@ pub trait PeerExecutionStore: Send + Sync {
     ) -> Result<PeerClaimOutcome, PersistenceError>;
 
     /// Distinct CAS immediately before adapter invocation.
+    /// Recheck the exact worker/claim, relationship, admission gate, and supplied authority
+    /// in the entry transaction. Once entry is recorded, recovery must never return that
+    /// work to automatic dispatch merely because a lease or reply was lost.
     fn mark_peer_entered(
         &self,
         request: &PeerEntryRequest<'_>,
@@ -693,13 +703,19 @@ pub trait PeerExecutionStore: Send + Sync {
     ) -> Result<PeerExecutionRecord, PersistenceError>;
 
     /// Recovers one bounded page of claims from a previous daemon owner.
+    /// Use while ordinary admission is closed and the previous workers are gone. Pre-entry
+    /// claims may be requeued; known-entered claims become uncertain. Continue while
+    /// `more` is true, requiring progress rather than accepting an endless empty page.
     fn recover_peer_claims(
         &self,
         recovered_at_unix_ms: u64,
         limit: PageSize,
     ) -> Result<PeerRecoveryResult, PersistenceError>;
 
-    /// Marks one bounded terminal page archived without deleting idempotency/provenance facts.
+    /// Replaces eligible terminal/uncertain hot records with compact tombstones atomically.
+    /// Preserve exact request conflict detection, acceptance, provenance, and final
+    /// disposition while retiring detailed observations. Artifact bytes retain their own
+    /// ownership and retention policy.
     fn archive_peer_executions(
         &self,
         request: &PeerRetentionRequest,

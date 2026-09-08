@@ -1,3 +1,10 @@
+//! Inspect physical storage without changing workflow history.
+//!
+//! Health samples selected components. Explicit scans traverse records and derived
+//! relationships in bounded pages, optionally rehashing artifact content. The cursor
+//! carries the physical phase and verification mode; schema/phase order is part of its
+//! compatibility contract. Repair and artifact cleanup are not hidden inside inspection.
+
 use std::ops::Bound;
 
 use crate::{

@@ -1,3 +1,10 @@
+//! Coordinate resumable artifact files with immutable metadata and accounting.
+//!
+//! Publication saves intent before filesystem changes and accepts metadata only after
+//! content verification/publication. Path inventories and delete guards let restart and
+//! bounded cleanup distinguish abandoned files from live ownership. Accounting charges
+//! each logical publication once, even when content deduplicates by digest.
+
 use std::{
     collections::BTreeSet,
     fs::{self, File, OpenOptions},

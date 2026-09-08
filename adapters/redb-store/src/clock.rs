@@ -10,6 +10,10 @@ use crate::{
 
 impl RedbStore {
     /// Samples under the write transaction so concurrent publication cannot overtake the sample.
+    ///
+    /// Returns both the raw observation and its watermark outcome. A caller must inspect
+    /// the outcome: `RejectedRollback` is a successful comparison, not usable current
+    /// time. Sampling/store errors likewise provide no accepted time for a new decision.
     pub fn sample_clock(
         &self,
     ) -> Result<(TimestampMillis, ClockWatermarkObservation), PersistenceError> {

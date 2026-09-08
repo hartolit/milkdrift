@@ -4,6 +4,12 @@
 //! executor dependency. It accepts already-decoded event envelopes and either
 //! projects every fact or rejects the history at the first point where doing so
 //! would require guessing.
+//!
+//! Folding an event also retires detail whose last operational consumer has closed.
+//! Current executions, waits, retries, uncertainty, outputs, and reconciliation retain
+//! the facts needed for the next decision. Older detail remains in the journal. Public
+//! `apply` preserves the previous prefix on error; private replay folds use a disposable
+//! candidate to avoid cloning on every event.
 
 pub(super) mod serde_map {
     use std::collections::BTreeMap;

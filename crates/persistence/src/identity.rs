@@ -131,8 +131,9 @@ impl fmt::Display for RunSequence {
 
 /// Portable timestamp fact as Unix epoch milliseconds.
 ///
-/// A timestamp is supplied by a boundary clock and merely recorded by persistence;
-/// no persistence operation reads the wall clock.
+/// Records an observation supplied by the owning clock boundary. Constructing this value
+/// neither samples a clock nor checks the durable watermark; the accepting port owns
+/// that comparison.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct TimestampMillis(u64);

@@ -1,3 +1,9 @@
+//! Store immutable definitions with their ancestry and content-discovery indexes.
+//!
+//! Insertion verifies parents and exact canonical content before one transaction publishes
+//! the revision. Read paths check indexes against those documents. A successful insert
+//! only makes a revision available; runtime commands own run creation and adoption.
+
 use std::ops::Bound;
 
 use milkdrift_blueprint::{

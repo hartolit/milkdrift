@@ -16,8 +16,11 @@ pub enum ClockWatermarkObservation {
 
 /// Durable high-water evidence for an externally owned boundary clock.
 ///
-/// The store does not read wall time. Callers supply an observation, and the store atomically
-/// advances or rejects it so a process restart cannot forget an already observed later time.
+/// This port accepts an exact caller-supplied observation. Implementations compare it
+/// atomically with the retained watermark, advance for a newer value, accept equality,
+/// and reject older values without lowering the watermark. Callers must not use a
+/// rejected observation as current time. Restart therefore cannot forget a later
+/// accepted observation, although elapsed downtime still depends on the external clock.
 pub trait ClockWatermarkStore: Send + Sync {
     /// Compares and, when newer, durably records one boundary-clock observation.
     fn observe_clock(

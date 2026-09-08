@@ -1,3 +1,10 @@
+//! Retain external command answers across delivery loss and hot-tier archival.
+//!
+//! Exact lookup spans hot and cold rows before considering a new effect. A new receipt
+//! shares its transaction with required archival and any layout/proposal-index change.
+//! Runtime effects have already used their own stable command identity; this module
+//! saves their response, not another workflow transition. Audit retention is independent.
+
 mod layouts;
 pub(crate) use layouts::decode_layout;
 use layouts::layout_key;

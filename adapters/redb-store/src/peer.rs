@@ -1,3 +1,10 @@
+//! Preserve a serving peer's acceptance independently of the origin run's history.
+//!
+//! Admission binds request identity and capacity; claims assign workers; a separate
+//! entry transaction records the boundary before adapter invocation. Recovery may requeue
+//! pre-entry claims but retains known-entered uncertainty. Retention moves eligible hot
+//! records to tombstones without making their request identities available for reuse.
+
 mod claims;
 mod records;
 use records::{

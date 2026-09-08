@@ -537,12 +537,17 @@ impl NetworkScope {
 }
 
 /// Numeric ceilings evaluated for a command or capability request.
+///
+/// In a request, `None` means no amount is requested in that dimension. In a grant,
+/// `None` grants no explicit amount: a requested `Some` requires a sufficient `Some`
+/// ceiling. These comparisons do not accumulate usage across invocations; durable
+/// controller accounts own cumulative reservations and charges.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorityBudget {
     /// Maximum minor currency units.
     pub cost_minor: Option<u64>,
-    /// Maximum boundary duration.
+    /// Maximum boundary duration in milliseconds.
     pub duration_ms: Option<u64>,
     /// Maximum invocations.
     pub invocations: Option<u64>,

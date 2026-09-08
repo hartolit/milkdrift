@@ -1,4 +1,8 @@
-//! Deterministic context ranking, bounded selection, and final manifest construction.
+//! Rank metadata candidates and turn the actual selection into a manifest.
+//!
+//! Budget overflow either omits one candidate or stops later selection. The stopped
+//! branch currently precedes eligible required-candidate checks, so a saved manifest
+//! can omit required evidence without a build error. The builder documents this gap.
 
 use milkdrift_blueprint::{ContextTruncation, NodeId};
 use milkdrift_model::{

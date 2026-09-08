@@ -25,6 +25,11 @@ const BINDING_KEY_JSON_LIMITS: JsonLimits = JsonLimits {
 };
 
 /// Hard scheduler admission limits. Every value is non-zero.
+///
+/// Runtime counts active durable leases against these limits before admitting another
+/// attempt. The lease-set revision guards the eventual commit against concurrent changes.
+/// These are runtime admission bounds; the capability host also enforces its worker and
+/// generation capacity at preparation/entry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SchedulerLimits {
     global: u32,
@@ -205,6 +210,12 @@ pub(crate) fn select_fair_runnable(
 }
 
 /// Retry bounds and conservative safety classification.
+///
+/// An adapter's retry hint is only one input. Another attempt also needs an allowed error
+/// class, remaining attempts, and frozen effect/idempotency facts that make replay safe.
+/// Runtime records the new attempt and backoff timer; policy evaluation itself starts no
+/// work. Explicit retained-work retry uses these same bounds and cannot override unsafe
+/// non-idempotent or unknown effects.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RetryPolicy {
     maximum_attempts: u32,

@@ -1,11 +1,15 @@
-//! Durable run command handling, deterministic projection, scheduling, execution,
-//! recovery, and prospective revision reconciliation for Milkdrift.
+//! Turn authorized commands and execution observations into durable workflow progress.
 //!
-//! The crate owns workflow state transitions but no database, provider, operating
-//! system process, network, asynchronous runtime, HTTP API, or UI. Every accepted
-//! transition is expressed as a persistence-owned append-only event. Executor
-//! adapters report bounded observations through [`TaskExecutor`]; they cannot mutate
-//! projections or append history.
+//! [`RuntimeService`] plans and commits events through [`RuntimeStore`]. Drive it with
+//! command, scheduler, recovery, and effect calls; it starts no worker threads.
+//! [`TaskExecutor`] resolves external capabilities and prepares their exact entry, while
+//! [`ExecutionReporter`] returns observations to runtime for durable acceptance.
+//!
+//! [`RunProjection`] reconstructs current obligations from accepted history.
+//! [`CausalContextBuilder`] selects task evidence before dispatch; reconciliation changes
+//! future work without changing the definitions governing old executions. Command replay
+//! recovers a saved response. External retry is a separate decision based on attempt
+//! evidence, side effects, idempotency, and [`RetryPolicy`].
 
 mod boundary;
 mod command;

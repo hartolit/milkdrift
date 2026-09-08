@@ -1,4 +1,8 @@
-//! Deterministic structured-node execution, reducers, repeats, and subworkflow intent creation.
+//! Materialize declared reducer inputs and combine them after synchronization.
+//!
+//! A join decides which branches count; this operation separately resolves the declared
+//! data inputs. Built-in collect/first reductions stay deterministic. Capability-backed
+//! reduction proceeds through ordinary task dispatch and authority.
 
 use super::super::RuntimeService;
 use super::super::transition::PlanTransition;

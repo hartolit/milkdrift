@@ -12,7 +12,13 @@ use super::{
     ContextBuildError, exact_event, persistence, summarize_context_event, workspace_artifact,
 };
 
-/// Loads only the selected sources after the manifest artifact is durable.
+/// Converts manifest-selected evidence into invocation inputs after manifest publication.
+///
+/// Verifies workspace/event bytes and artifact metadata against selected facts. Artifact
+/// content stays referenced for later host loading and verification. Direct inputs already
+/// travel with the frozen request. This helper does not evaluate grants: use a manifest
+/// from the authorized discovery/selection path and preserve the host's read boundary.
+/// Missing or changed selected sources fail instead of selecting replacement evidence.
 pub fn materialize_selected_context(
     store: &dyn crate::RuntimeStore,
     manifest: &ContextManifest,

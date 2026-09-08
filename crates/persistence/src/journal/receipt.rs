@@ -14,18 +14,16 @@ use crate::{
     bounded::MAX_EVENTS_PER_COMMIT,
 };
 
-/// Identifies a runtime command so storage can recognize a repeated delivery.
+/// Retains command identity and intent so a lost reply can be recovered without another append.
 ///
 /// The runtime supplies a complete audit document and the intent whose meaning must
 /// stay unchanged across retries. Storage retains both and compares the fingerprint
 /// for the same `(run, command)` before checking a new delivery's expected sequence.
-/// This lets a lost response be recovered without appending the command's events again.
 ///
 /// Use [`Self::new`] when every document byte belongs to the intent. Runtime callers
 /// use [`Self::new_idempotent`] to separate delivery metadata from intent. Both check
-/// canonical JSON, but neither checks runtime command meaning or evaluates authority.
-/// Construction writes nothing; include the receipt in an
-/// [`AtomicRunCommitRequest`](crate::AtomicRunCommitRequest).
+/// canonical JSON; the runtime owns command meaning and authority. Include the receipt
+/// in an [`AtomicRunCommitRequest`](crate::AtomicRunCommitRequest).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandReceipt {
     command: CommandId,
@@ -105,7 +103,7 @@ impl CommandReceipt {
     /// recursively key-sorted JSON. Empty/oversized inputs return
     /// [`PersistenceError::Bounds`]; malformed JSON returns [`PersistenceError::Json`].
     /// Noncanonical bytes, including whitespace or duplicate keys, are refused, as are
-    /// documents that exceed the persistence JSON structure limits. No bytes are saved.
+    /// documents that exceed the persistence JSON structure limits.
     ///
     /// # Example
     ///
@@ -223,9 +221,7 @@ impl CommandReceipt {
 
     /// Canonical semantic intent bytes that own idempotency across delivery retries.
     ///
-    /// These bytes are persisted separately from the complete audit document so storage
-    /// can reconstruct and validate the semantic fingerprint without interpreting runtime
-    /// fields such as the optimistic sequence or delivery timestamp.
+    /// Storage uses these bytes to verify the fingerprint without interpreting runtime fields.
     #[must_use]
     pub fn canonical_intent(&self) -> &[u8] {
         &self.canonical_intent
@@ -331,8 +327,7 @@ impl CommandResultDocument {
     ///
     /// Returns [`PersistenceError::Bounds`] above [`MAX_EVENTS_PER_COMMIT`] event IDs.
     /// Duplicate IDs, accepted results without events, and rejected results with
-    /// events return [`PersistenceError::InvalidDocument`]. Persistence has not yet
-    /// checked these IDs against stored history or written a result.
+    /// events return [`PersistenceError::InvalidDocument`].
     pub fn new(
         command: CommandId,
         run: RunId,
@@ -495,8 +490,7 @@ impl CommandResultDocument {
     /// # Errors
     ///
     /// Returns an error if encoding exceeds [`MAX_COMMAND_RESULT_DOCUMENT_BYTES`] or
-    /// the persistence JSON structure limits, or if serialization fails. This method
-    /// only returns bytes; it does not commit them.
+    /// the persistence JSON structure limits, or if serialization fails.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, PersistenceError> {
         crate::document::canonical_json_bytes(self, MAX_COMMAND_RESULT_DOCUMENT_BYTES)
     }
