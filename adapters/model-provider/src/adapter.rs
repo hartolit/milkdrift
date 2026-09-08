@@ -67,7 +67,6 @@ fn verify_context_bytes(
     Ok(())
 }
 
-/// Exact selected content after host-owned integrity verification.
 pub(crate) enum MaterializedContextPart {
     Text {
         label: String,
@@ -80,7 +79,6 @@ pub(crate) enum MaterializedContextPart {
     },
 }
 
-/// Immutable state shared by every phase of one entered provider request.
 struct ModelExecution<'a> {
     context: &'a milkdrift_capability_host::AdapterExecutionContext,
     request: &'a InvocationRequest,
@@ -151,12 +149,8 @@ struct PreparedOutput {
     bytes: Vec<u8>,
 }
 
-/// One synchronous host adapter for an exact endpoint-profile revision.
-///
-/// The host supplies durable provenance and a frozen manifest with each model request. This
-/// adapter verifies selected content, negotiates the task against the profile, and publishes
-/// complete responses through [`InvocationDataAccess`]. Health reports local lifecycle/load;
-/// it makes no endpoint request. Use [`descriptor_for_profile`] with the same identity/profile.
+/// Verifies frozen context, negotiates the model task, and publishes through [`InvocationDataAccess`].
+/// Register with [`descriptor_for_profile`] using the same capability identity and profile revision.
 pub struct ModelEndpointAdapter {
     capability: CapabilityId,
     profile: EndpointProfile,
@@ -879,8 +873,7 @@ impl ModelEndpointAdapter {
                 }
             }
         }
-        // This checks the model request only. Runtime does not compare it with the blueprint's
-        // ContextSessionPolicy, so accepting Fresh cannot establish that policy was enforced.
+        // Blueprint session intent is not compared here; Fresh validates only the model request.
         match task.session() {
             SessionSelection::Fresh => {}
             SessionSelection::ExplicitContinuation { .. } => {
@@ -1063,9 +1056,7 @@ fn network_destination(endpoint: &url::Url) -> Result<String, AdapterError> {
     Ok(format!("{host}:{port}"))
 }
 
-/// Creates the immutable capability descriptor corresponding exactly to a profile.
-/// Its features come from configuration without contacting the endpoint. Register this result
-/// with a [`ModelEndpointAdapter`] built from the same capability identity and profile revision.
+/// Advertises the configured profile for [`ModelEndpointAdapter`] without probing the endpoint.
 pub fn descriptor_for_profile(
     capability: CapabilityId,
     profile: &EndpointProfile,

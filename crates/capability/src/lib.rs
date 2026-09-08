@@ -5,6 +5,17 @@
 //! separately checks authority, health, and capacity. Once selected, a
 //! [`ResolvedCapabilitySnapshot`] freezes the generation for an attempt.
 //!
+//! For example, ask for a read-only operation with cancellation support:
+//!
+//! ```
+//! use milkdrift_capability::{CapabilityRequirement, OperationId, SideEffectClass};
+//! let requirement = CapabilityRequirement::new(OperationId::new("example.inspect")?)
+//!     .maximum_side_effect(SideEffectClass::ReadOnly)
+//!     .cancellation(true);
+//! assert!(requirement.cancellation_required());
+//! # Ok::<(), milkdrift_capability::ContractError>(())
+//! ```
+//!
 //! [`InvocationRequest`] carries inputs to that generation. [`InvocationEvent`] carries bounded
 //! observations back; runtime decides their effect on the workflow. Use the `*Document` readers
 //! and canonical writers for portable forms. Live adapters and their resource ownership belong

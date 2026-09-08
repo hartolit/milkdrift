@@ -2,8 +2,7 @@
 
 Source inspection found gaps between context-policy intent and the current runtime path.
 They affect claims about session selection, required evidence, and omission metadata. Resolving
-them requires executable changes and regression tests, which are excluded from the documentation
-sprint.
+them requires a focused executable change and regression tests at the policy/runtime owners.
 
 ## Current technical assessment
 
@@ -73,9 +72,7 @@ Runtime's package and API explanations now distinguish the selection actually re
 policy intent; the materialization helper verifies selected facts but performs no grant evaluation.
 Existing causal-context tests cover active required checks and optional stopping separately.
 No new regression test or end-to-end disclosure experiment was added. Supporting corrections in
-architecture and status distinguish the required semantics from these current limits. Phase 03
-should preserve them when explaining host/provider consumption; phase 04 should retain these
-qualifications in its shared-guide review.
+architecture and status distinguish the required semantics from these current limits.
 
 2026-09-08 — Alder-20260908-c (agent pseudonym), documentation-clarity phase 03: rechecked the
 runtime dispatch/selection boundary and model-provider's manifest loading and `negotiate` path

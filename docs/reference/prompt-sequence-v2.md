@@ -65,8 +65,9 @@ Each stage contains:
 A capability/profile requirement contains exact `capability`, `operation`, `provider_profile`,
 `execution_trust`, and `maximum_side_effect`. Schema 2 accepts only `process.execute`, a null
 provider profile, and `trusted_host_process`, matching the generated direct-input contract. It
-selects an already configured process generation. No import field can define executable argv, a
-network destination, a secret value, or ambient authority. Verification `checks` are safe
+names a configured capability; the host resolves its exact generation when preparing an attempt.
+No import field can define executable argv, a network destination, a secret value, or ambient
+authority. Verification `checks` are safe
 namespaced data identifiers, not commands or shell strings. If the repository artifact policy
 requires a diff, every stage must declare `diff`.
 
@@ -96,17 +97,26 @@ Each stage generates coding and verification `Task` nodes, a safe `Branch`, and 
 inputs. Verification receives repository and verification contracts. The gate's optional data edge
 tests only whether the exact success artifact exists.
 
-Coding context selects causal implementation/requirement evidence and applies the declared session
-policy. Verification is always fresh and selects bounded implementation/requirement ancestors.
-Review is fresh and selects implementation, requirement, verification, failure-evidence, and review
-roles while explicitly excluding prior prompts, raw progress, tool traces, verbose command output,
-and final-output chronology.
+The compiler requests causal implementation/requirement evidence for coding and records the
+declared session intent. Verification and review request fresh sessions; the configured processes
+must implement that intent. A declaration alone does not arrange or enforce external continuation;
+see the [context-policy contract](../../crates/blueprint/src/context.rs).
+
+Verification requests bounded implementation/requirement ancestors. Review requests implementation,
+requirement, verification, failure-evidence, and review roles, excluding prior prompts, raw progress,
+tool traces, verbose command output, and final-output chronology. Runtime selects available evidence
+under authority and budget checks; the saved manifest records selections and omissions for the attempt.
 
 Generated revision metadata under `org.milkdrift/prompt-sequence` records schema, sequence identity,
 import digest, repository identity/reference/digest, remediation-generation limit, ordered node
 mapping, prompt digests, and verification artifact names. Remediation rejects a caller-supplied
 document unless its canonical import digest, repository digest, and stage mapping exactly match
 that frozen metadata.
+
+Use the import schema and provenance fields to identify the format. The generated revision reason
+currently says schema v1 despite the v2 import; the
+[version-label finding](../development/virtual-office/whiteboard/issues/prompt-sequence-version-label.md)
+tracks that executable correction and its effect on newly generated revision identities.
 
 Validation/import use the existing `validate_blueprint`/`import_blueprint` authority operations and
 ordinary immutable revision store. Execution and remediation use the existing run, proposal,

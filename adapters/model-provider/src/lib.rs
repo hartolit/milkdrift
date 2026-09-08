@@ -4,6 +4,7 @@
 //! [`descriptor_for_profile`] result with the capability host. Tasks use `milkdrift-model` request
 //! documents and runtime's frozen context manifest. [`ModelFeature`] determines which task and
 //! injected-context features this profile advertises; negotiation precedes HTTP entry.
+//! Health reports local lifecycle and load without probing endpoint availability.
 //!
 //! OpenAI-compatible chat and native Anthropic mappings share transport bounds while retaining
 //! their own request and completion semantics. Returned tool calls remain data. Cancellation

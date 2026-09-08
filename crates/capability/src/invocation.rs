@@ -10,10 +10,6 @@ use crate::{
 const MAX_INPUTS: usize = 256;
 const MAX_INPUT_NAME: usize = 128;
 /// Maximum encoded bytes of one opaque durable value/artifact reference.
-///
-/// This deliberately accommodates the canonical encoding of every valid
-/// Milkdrift workspace and artifact reference without teaching capability
-/// contracts about workspace identity components.
 pub const MAX_DURABLE_REFERENCE_BYTES: usize = 1_024;
 const MAX_ARTIFACT_MEDIA_TYPE_BYTES: usize = 255;
 const MAX_EVENT_TEXT: usize = 4_096;
@@ -289,11 +285,9 @@ impl InputReference {
     }
 }
 
-/// Inputs and identity for one invocation of an already selected capability.
-///
-/// Pair this with [`crate::ResolvedCapabilitySnapshot`], which supplies the exact descriptor
-/// revision and operation contract. The idempotency key has only the behavior that generation
-/// advertises; carrying a key does not itself make external writes safe to repeat.
+/// Inputs and identity paired with [`crate::ResolvedCapabilitySnapshot`] for the exact generation.
+/// An idempotency key provides only that generation's advertised guarantees;
+/// carrying one does not itself make external writes safe to repeat.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct InvocationRequest {
     invocation: InvocationId,
@@ -1123,7 +1117,6 @@ milkdrift_contracts::deserialize_via!(CancellationRequest, CancellationRequestWi
 });
 
 /// What the executor can confirm about one exact cancellation request.
-///
 /// `accepted` means processing was accepted; `terminal_boundary` separately promises that no
 /// later external effect can occur. A process may acknowledge a stop flag while its monitor
 /// still waits for termination, so callers must not equate those two facts.

@@ -100,23 +100,18 @@ pub enum Locality {
     Unspecified,
 }
 
-/// Exact execution-isolation/trust fact advertised by a capability generation.
-///
-/// This is intentionally separate from operator-defined trust-zone labels. A
-/// trusted host process is not interchangeable with an enforced sandbox even
-/// when both are local or share the same policy zone.
+/// Advertised process isolation, independent of operator-defined trust-zone labels.
+/// Sharing a locality or zone does not make a trusted process an enforced sandbox.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionTrustClass {
-    /// The capability does not execute an operating-system process, or makes no
-    /// process-isolation claim.
+    /// No operating-system process, or no process-isolation claim.
     #[default]
     Unspecified,
     /// A process executes with the daemon account's host authority while
     /// Milkdrift mediates declared arguments, environment, inputs, and outputs.
     TrustedHostProcess,
-    /// A separate adapter enforces and advertises a complete container,
-    /// namespace, or virtual-machine isolation contract.
+    /// A separate adapter enforces its advertised container, namespace, or VM isolation.
     SandboxedProcess,
 }
 
@@ -509,11 +504,8 @@ impl ResourceObservations {
     }
 }
 
-/// Advertisement of one immutable capability generation, built with [`DescriptorBuilder`].
-///
-/// Operation contracts let tasks ask for supported behavior before a live adapter is chosen.
-/// Changing these facts requires a new descriptor revision; changing health belongs in
-/// [`CapabilityObservation`]. A matching advertisement is neither permission nor a reservation.
+/// Immutable advertisement built with [`DescriptorBuilder`]; changed facts need a new revision.
+/// Live health belongs in [`CapabilityObservation`]. Matching grants neither permission nor capacity.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CapabilityDescriptor {
     identity: CapabilityId,
@@ -863,15 +855,6 @@ impl DescriptorBuilder {
 /// Start with [`Self::new`] and narrow the acceptable provider, features, and effects as needed.
 /// Categories are alternatives; features and trust zones are cumulative requirements. The
 /// expression stays in the revision while each attempt records its own exact selection.
-///
-/// ```
-/// use milkdrift_capability::{CapabilityRequirement, OperationId, SideEffectClass};
-/// let requirement = CapabilityRequirement::new(OperationId::new("example.inspect")?)
-///     .maximum_side_effect(SideEffectClass::ReadOnly)
-///     .cancellation(true);
-/// assert!(requirement.cancellation_required());
-/// # Ok::<(), milkdrift_capability::ContractError>(())
-/// ```
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapabilityRequirement {

@@ -98,9 +98,11 @@ target/debug/local-model-evidence \
 
 The lane waits at most 180 seconds for model terminal evidence; `--timeout-secs` accepts 1–3,600.
 Its default output allowance is 64 units. Set `--max-output-units` (1–65,536) when the chosen model
-needs a larger bounded allowance before returning final text. The profile's request and idle
-deadlines remain independent. Reasoning-only output that reaches its limit does not establish the
-streaming/final-text evidence required by this lane. Relative profile and credential-reference
+needs a larger bounded allowance before returning final text. The harness deadline is separate
+from the adapter's HTTP timeout. The adapter currently uses the smaller of the profile's request
+and idle limits as a whole-request deadline; incoming fragments do not reset an idle timer.
+Reasoning-only output that reaches its limit does not establish the streaming/final-text evidence
+required by this lane. Relative profile and credential-reference
 paths are resolved before the generated daemon configuration is written.
 
 If the profile names `secret:model-token`, add

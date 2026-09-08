@@ -1,7 +1,4 @@
-//! Lower a validated sequence into the blueprint operations used by every workflow author.
-//!
-//! Stage construction is shared by initial imports and prospective remediation, so
-//! verification contracts and their artifact-presence gates keep the same meaning.
+//! Initial imports and prospective remediation share stage construction and verification gates.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -95,11 +92,9 @@ impl CompiledPromptSequence {
 
 /// Returns the exact ordinary-node identities associated with one imported stage.
 ///
-/// The import layer owns this association, including remediation generations. Consumers must not
-/// infer it from generated node-name prefixes.
-/// Missing or unsupported import provenance, an absent stage, or references to absent
-/// declared nodes are refused. Results are deterministic node IDs for this revision,
-/// not evidence that any of those nodes have executed.
+/// The import owns this association, including remediation; do not infer it from node-name prefixes.
+/// Missing/unsupported provenance, absent stages, and absent declared nodes are refused.
+/// Returned node IDs associate definitions with a stage; they do not establish execution.
 pub fn stage_node_ids(
     revision_document: &[u8],
     stage_id: &str,
@@ -186,12 +181,11 @@ fn declared_stage_nodes(stage: &StageBlueprintSummary) -> BTreeSet<String> {
 ///
 /// Pass an unchanged document from [`PromptSequenceDocument::from_bytes`] or `from_json`.
 /// This builds and validates the blueprint but does not repeat all import-reader checks.
-/// The revision retains import/profile digests and stage association for later inspection
-/// and remediation. No capability is resolved and no revision is persisted here.
+/// Import/profile digests and stage association support later inspection and remediation.
 ///
 /// Artifact prompts need an exact size and media type in addition to identity and digest.
 /// Port/identifier conflicts, blueprint bounds, and invalid topology return a compilation
-/// error. Import bounds are separate from the limits of the resulting graph and batch.
+/// error; import bounds and graph/batch bounds apply separately.
 pub fn compile(
     document: &PromptSequenceDocument,
     author: AuthorRef,

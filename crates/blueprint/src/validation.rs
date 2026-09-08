@@ -1,9 +1,3 @@
-//! Check relationships that individual node and port constructors cannot see.
-//!
-//! Mutation application validates the complete candidate here before publishing a
-//! revision. Independent diagnostics are retained up to a fixed bound so callers can
-//! repair several graph errors together without receiving an unbounded error document.
-
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
@@ -62,11 +56,7 @@ pub enum DiagnosticCode {
     UnsupportedVersion,
 }
 
-/// Locates a definition error for an authoring client or controller.
-///
-/// Branch on [`Self::code`] and display the message with its location. An operation
-/// index points into the submitted batch, but final graph checks may attach the last
-/// operation's index rather than identify one operation as the cause.
+/// Locates a definition error; branch on [`Self::code`] and display its message and location.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Diagnostic {
     code: DiagnosticCode,
@@ -122,8 +112,7 @@ impl Diagnostic {
         &self.message
     }
 
-    /// Zero-based batch operation index, when attached by mutation application.
-    /// Final candidate validation may use the last operation as the batch boundary.
+    /// Zero-based batch index; final graph validation may attach the last operation, not a unique cause.
     #[must_use]
     pub const fn operation_index(&self) -> Option<usize> {
         self.operation_index
@@ -153,10 +142,7 @@ mod tests {
     }
 }
 
-/// Definition errors found while validating a candidate graph.
-///
-/// Inspect [`Self::diagnostics`] to repair the candidate and submit a new complete batch.
-/// At most 256 diagnostics are retained, so another pass may reveal further errors.
+/// Up to 256 candidate-graph errors; inspect [`Self::diagnostics`] and resubmit a repaired batch.
 #[derive(Clone, Debug, Error, PartialEq)]
 #[error("blueprint validation failed with {} diagnostic(s)", .diagnostics.len())]
 pub struct ValidationError {

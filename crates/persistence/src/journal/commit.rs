@@ -18,11 +18,8 @@ use crate::{
 };
 
 /// Materializes a scope or value introduced by this command's events.
-///
-/// Include these in [`AtomicRunCommitRequest::new`], not in a separate write. The
-/// constructor requires an exact match between introduced scope/value identities and
-/// mutations, so accepted history cannot describe an input or output omitted from the
-/// workspace transaction. Storage also validates saved ancestry and value provenance.
+/// [`AtomicRunCommitRequest::new`] checks these against the events; storage checks
+/// saved ancestry and provenance and commits them together.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum WorkspaceMutation {
@@ -40,16 +37,11 @@ pub enum WorkspaceMutation {
 
 /// Charges workspace changes while checking the usage the runtime planned against.
 ///
-/// Supply this even for an accepted command that adds no values or artifacts; in that
-/// case expected and resulting usage agree. Rejected commands must omit it. The
-/// request constructor recomputes charges for all `PutValue` mutations and newly
-/// referenced artifacts. Storage compares expected usage and the budget with saved
-/// state inside the commit, so concurrent plans cannot both spend the same allowance.
-///
-/// Publishing artifact content is a separate operation. This guard charges its first
-/// reference in the run; storage checks that membership against
-/// [`AtomicRunCommitRequest::newly_referenced_artifacts`]. A usage conflict requires
-/// the runtime to read current usage and replan, not just replace this guard.
+/// Accepted commands require this even with unchanged usage; rejected commands omit it.
+/// The constructor recomputes value and first-artifact-reference charges. Storage checks
+/// saved usage and artifact membership atomically, preventing concurrent overspending.
+/// A conflict requires rereading usage and replanning, not just replacing the guard.
+/// Artifact-content publication remains a separate operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceAccounting {
     /// Immutable limits for the run/workspace accounting domain.
@@ -278,15 +270,10 @@ pub enum LeaseIndexMutation {
 
 /// Updates the records used to discover a run's unfinished work after an append.
 ///
-/// The runtime derives the summary and runnable/timer/lease changes from its projected
-/// events. Storage commits them with those events so scheduling and recovery do not
-/// miss newly eligible work or rediscover a released lease. They remain verifiable
-/// views of the journal, not independent authority to start work.
-///
-/// [`Self::default`] contains no changes and is used for a rejected command. Every
-/// accepted append needs a summary at its resulting head, even when the three
-/// mutation lists are empty. [`AtomicRunCommitRequest::new`] validates identities,
-/// sequence alignment, duplicate mutations, and the combined mutation bound.
+/// Runtime derives these from projected events; storage commits both together so
+/// recovery finds newly eligible work and skips released leases. Accepted appends need
+/// a summary at their resulting head; rejected commands use the empty [`Self::default`].
+/// [`AtomicRunCommitRequest::new`] checks the update against the append and its bounds.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunIndexUpdate {
@@ -354,21 +341,14 @@ impl RunIndexUpdate {
 
 /// Everything storage must save together for one runtime command.
 ///
-/// The runtime plans events and their workspace/accounting and discovery consequences,
-/// then constructs this request with a matching receipt and result. Construction
-/// checks those documents against each other; [`RunJournal::commit_command`] checks
-/// them against storage and performs the transaction. A valid request alone proves
-/// neither that the runtime transition was authorized nor that anything was saved.
-///
-/// For example, a `RunCreated` event needs its declared root scope in `workspace`,
-/// accounting even when no input consumes budget, and a summary at the resulting
-/// sequence. Omitting the scope is an invalid request, not a partially created run.
-/// A rejected command instead has empty event/workspace/artifact lists, no accounting
-/// or lease guard, an empty index update, and a rejected result at the expected head.
-///
-/// Add any controller transaction or projection commitment through the corresponding
-/// builder before committing. Neither attachment is written separately by this type.
-/// See [`RunJournal`] for replay order, storage obligations, and lost-response recovery.
+/// Runtime plans the events, receipt/result, workspace/accounting and discovery changes.
+/// Construction checks their agreement; [`RunJournal::commit_command`] checks stored
+/// state and saves them. For example, `RunCreated` requires its root scope, accounting
+/// even with no inputs, and a resulting-head summary; missing the scope refuses the request.
+/// Rejections have no events, workspace/artifact changes, accounting, lease guard, or
+/// index update, and retain a rejected result at the expected head.
+/// Attach controller changes or a projection commitment before committing. [`RunJournal`]
+/// owns replay and lost-response recovery; constructing this value neither authorizes nor saves it.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct AtomicRunCommitRequest {
@@ -385,11 +365,8 @@ pub struct AtomicRunCommitRequest {
     /// Required artifacts first admitted into this run's accounting domain by this commit.
     newly_referenced_artifacts: Vec<ArtifactReference>,
     /// Exact active-lease revision observed while admitting a new durable lease.
-    ///
-    /// Present exactly when this commit contains a `LeaseGranted` or `NodeReLeased`
-    /// fact. The adapter compares it atomically before the lease/index mutation so
-    /// concurrent runtime services cannot both admit against the same pre-lease
-    /// global usage.
+    /// Required for `LeaseGranted`/`NodeReLeased`; the adapter compares it atomically
+    /// so concurrent services cannot admit against the same pre-lease global usage.
     expected_lease_revision: Option<IntegrityDigest>,
     /// Optional controller-account mutation committed beside the event facts.
     controller_account: Option<crate::ControllerAccountTransaction>,
@@ -745,15 +722,9 @@ impl AtomicRunCommitRequest {
 
     /// Binds a future optional snapshot's payload to this accepted append.
     ///
-    /// Storage records the commitment with the events. The runtime may then save the
-    /// snapshot through [`crate::SnapshotStore`]; that later write can fail without
-    /// undoing this command. The commitment is evidence for checking a snapshot,
-    /// not the snapshot payload or a substitute for journal replay.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PersistenceError::InvalidDocument`] for a rejected command or a second
-    /// attachment. Construction only attaches the commitment; it does not save it.
+    /// Storage commits this evidence with the events. A later [`crate::SnapshotStore`]
+    /// write can fail without undoing the command; the commitment is not the payload.
+    /// Returns [`PersistenceError::InvalidDocument`] for rejection or a second attachment.
     pub fn with_projection_checkpoint(
         mut self,
         checkpoint: crate::ProjectionCheckpoint,
@@ -774,15 +745,10 @@ impl AtomicRunCommitRequest {
 
     /// Includes a controller-account transition in the same commit as its run events.
     ///
-    /// This prevents an entry intent from becoming visible without its corresponding
-    /// resource reservation. Storage must check the transaction against current
-    /// account state and the events before committing either consequence.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PersistenceError::InvalidDocument`] for a rejected command or a second
-    /// attachment. Account-specific validation remains with the transaction and store;
-    /// this builder only attaches it and writes nothing.
+    /// Storage checks current account state and events before committing both, so entry
+    /// intent cannot become visible without its reservation. This builder only attaches
+    /// the transaction; account-specific validation remains with its constructor and store.
+    /// Returns [`PersistenceError::InvalidDocument`] for rejection or a second attachment.
     pub fn with_controller_account_transaction(
         mut self,
         transaction: crate::ControllerAccountTransaction,
@@ -1002,18 +968,10 @@ impl AtomicRunCommitOutcome {
 pub trait RunJournal: Send + Sync {
     /// Persists the runtime's decision according to this trait's atomicity/replay contract.
     ///
-    /// `Ok` returns a durable result, including a runtime rejection when that is the
-    /// request's disposition. Replayed requests return the stored result rather than
-    /// the newly supplied result or events.
-    ///
-    /// # Errors
-    ///
-    /// Sequence, workspace-usage, lease, and controller-account revision conflicts
-    /// require the runtime to reread affected state and reconsider the plan. An
-    /// idempotency conflict preserves the existing command's result. Missing committed
-    /// artifacts, invalid persisted relationships, corruption, and storage failures
-    /// also refuse the operation. See the trait's recovery guidance: an error alone
-    /// does not prove that the transaction failed to commit.
+    /// Sequence, usage, lease, or account conflicts require rereading state and replanning.
+    /// Idempotency conflicts preserve the saved result. Missing artifacts, invalid stored
+    /// relationships, corruption, and storage failures also refuse the operation.
+    /// Follow the trait's recovery guidance: an error can arrive after commit.
     fn commit_command(
         &self,
         request: &AtomicRunCommitRequest,

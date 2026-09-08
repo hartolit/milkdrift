@@ -1,8 +1,8 @@
 # Process cleanup when durable reporting fails
 
 Source inspection found exits from the local-process adapter that do not establish cleanup of
-the child and its I/O threads after a reporter failure. Executable fixes and regression tests are
-outside the documentation-clarity assignment.
+the child and its I/O threads after a reporter failure. Repair belongs in a focused local-process
+adapter change with lifecycle regression tests.
 
 ## Current technical assessment
 

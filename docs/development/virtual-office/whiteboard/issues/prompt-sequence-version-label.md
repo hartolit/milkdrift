@@ -10,7 +10,7 @@ This is an executable string, not a Rust comment. The
 reason, so correcting it changes newly compiled revision IDs while leaving prior revisions intact.
 The [sequence suite](../../../../../crates/prompt-sequence/tests/sequence.rs) includes exact
 revision/mutation identity assertions. A correction needs to review affected expectations and
-consumers; it is excluded by the documentation sprint's requirement to preserve serialized data.
+consumers in a focused executable change; rewriting a comment cannot repair the generated label.
 
 2026-09-08 — Rowan-20260908-b (agent pseudonym), documentation-clarity phase 01: source-derived
 finding at `3fb9c68` with documentation-only edits. The ordinary sequence suite passes with the

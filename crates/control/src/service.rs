@@ -28,14 +28,8 @@ use crate::{
 
 const MAX_PROPOSAL_AUTHORITY_REVISION_WALK: usize = 512;
 
-/// Shared application service for authority-scoped human, service, and AI workflow control.
-///
-/// [`Self::execute`] validates proposals and routes live changes through the injected
-/// runtime. Supply the same revision and authority owners used by that runtime, and
-/// obtain each command's actor context from trusted authentication. Proposal storage,
-/// reconciliation, and an optional requested action can span multiple commits; callers
-/// must recover using the original identities rather than assuming an error rolled back
-/// all steps. The daemon separately retains complete external responses.
+/// Shared workflow control through the injected runtime. Calls may span multiple commits;
+/// recover errors using the original identities rather than assuming all steps rolled back.
 pub struct ControlService {
     revisions: Arc<dyn RevisionStore>,
     runtime: Arc<RuntimeService>,
@@ -60,21 +54,15 @@ impl ControlService {
         }
     }
 
-    /// Returns this service's lifecycle owner for explicit runtime installation.
-    ///
-    /// Construction and this accessor do not install it. The production daemon leaves
-    /// installation disabled pending qualification; library composition must install
-    /// the owner before opening runtime admission.
+    /// Returns the owner to install explicitly before runtime admission.
+    /// The production daemon leaves installation disabled pending qualification.
     #[must_use]
     pub fn controller_lifecycle_owner(&self) -> Arc<ControllerLifecycleOwner> {
         self.controller.clone()
     }
 
-    /// Executes one complete versioned command through a single authoritative path.
-    ///
-    /// Inspect commands return current authorized views. Mutations require the applicable
-    /// exact guards and authority; a proposal's claimed risk or completion cannot supply
-    /// either. A stored proposal revision does not imply that its live plan was applied.
+    /// Checks trusted actor context and exact guards before reads or mutations.
+    /// Proposal claims grant no authority; storing a revision does not apply its live plan.
     pub fn execute(
         &self,
         document: &ControlCommandDocument,
@@ -103,8 +91,7 @@ impl ControlService {
                 ) {
                     Ok(()) => {}
                     Err(ControlError::AuthorizationDenied { .. }) => {
-                        // Exact revision identifiers are content addresses. Normalize an
-                        // out-of-scope existing revision to the same response as an absent one.
+                        // Hide out-of-scope content addresses behind the same response as absence.
                         return Err(ControlError::BaseRevisionNotFound);
                     }
                     Err(error) => return Err(error),
@@ -996,9 +983,7 @@ impl ControlService {
         if !self.evaluate_allowed(document, operation, general, budget)? {
             return Ok(false);
         }
-        // A proposal is authorized against the complete old and candidate execution envelopes,
-        // including capability reducers and every pinned subworkflow/repeat body. This prevents a
-        // harmless-looking parent mutation from importing authority the controller does not own.
+        // Check old/new envelopes, reducers and pinned bodies so nested work cannot import authority.
         for root in [old, new] {
             for requirement in self.revision_requirements(root)? {
                 let envelope = CapabilityAuthorityScope::requirement_envelope(&requirement)?;

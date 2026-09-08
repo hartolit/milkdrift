@@ -9,9 +9,7 @@ and findings. [Workflow](../workflow.md#choose-verification-for-the-change) owns
 
 ## Current sprints
 
-- [Documentation clarity](documentation-clarity/README.md): revised into four substantial execution
-  areas and integrated reader review. Earlier drafts require reassessment; no result has independent
-  acceptance under the revised standard.
+No active sprints.
 
 ## Start a sprint
 
