@@ -9,7 +9,7 @@ what belongs here; [the office procedure](../README.md) handles sprint coordinat
 
 | Topic | Kind | State | Next action or assigned sprint/task | Last evaluation |
 | --- | --- | --- | --- | --- |
-| [Context policy enforcement](issues/context-policy-enforcement.md) | issue | open | Assign a focused runtime/adapter investigation of session intent and required evidence after selection stops; executable fixes are outside documentation phase 01. | 2026-09-08 |
+| [Context policy enforcement](issues/context-policy-enforcement.md) | issue | open | Assign a focused runtime/adapter investigation of session intent and required evidence after selection stops; executable fixes are outside the documentation sprint. | 2026-09-08 |
 
 This overview alone owns planning state, next actions, assignment links, and last-evaluation dates.
 Topic files hold evidence, current technical assessment, and dated contributions. Keep execution

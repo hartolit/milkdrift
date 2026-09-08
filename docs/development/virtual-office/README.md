@@ -9,9 +9,9 @@ and findings. [Workflow](../workflow.md#choose-verification-for-the-change) owns
 
 ## Current sprints
 
-- [Documentation clarity](documentation-clarity/README.md): phase 01, phase 02's contracts, and
-  phase 03's persistence commit assignment are ready for review; no rewrite result has been
-  independently accepted.
+- [Documentation clarity](documentation-clarity/README.md): revised into four substantial execution
+  areas and integrated reader review. Earlier drafts require reassessment; no result has independent
+  acceptance under the revised standard.
 
 ## Start a sprint
 
@@ -25,22 +25,29 @@ relevant sources, checks, and a stop condition. Likely files help coordinate edi
 prose or a small table; derive routine details from the user's request instead of requiring a
 completed form. Add phase prompts only where they make repeated assignments easier to execute.
 
-Split work where responsibilities or real dependencies differ. A phase number or file count does
-not by itself require another handoff or prevent independent work from proceeding.
+Give an assignment enough scope to finish a useful outcome across its related packages or documents.
+Treat internal iterations as work steps, not separate assignments that each require a fresh setup
+and handoff. Split where responsibilities, actual coordination conflicts, or explicit constraints
+require it. A phase number or file count does not require another handoff or prevent independent
+work from proceeding.
 
 ## Assign, execute, and review
 
 The coordinator maintains assignments and accepted coverage. A worker completes the assigned
 outcome, then hands back the result, reviewed scope, checks, and unresolved findings. The same
-agent can coordinate and execute when no delegation is needed. Start further assignments only
-within the work the user has authorized.
+agent can coordinate and execute when no delegation is needed. An instruction to execute a phase
+assigns its stated scope unless the user narrows it. Continue through that scope without requesting
+another assignment for each package or internal milestone; start further areas only within the
+work the user has authorized.
 
 When delegation is explicitly assigned, coordinate shared files before editing them and keep
 workspace Cargo jobs with one owner. Do not create further agent tasks merely because a phase
 prompt exists. Preserve other contributors' changes.
 
-Keep one current handoff per assignment; update it rather than appending daily reports. Link to
-broader findings on the whiteboard. Raw logs and generated inventories belong under ignored
+Keep one short current handoff per assignment; update it rather than appending daily reports.
+If a session ends before the assignment is complete, record completed coverage and where to resume
+so the next session can continue the same work. Link to broader findings on the whiteboard.
+Raw logs and generated inventories belong under ignored
 `target/` or in CI artifacts. Reviews assess the result against its acceptance criteria and the
 applicable engineering rules. If review stalls, state the unresolved question and seek a concrete
 decision or a better-scoped assignment; do not continue an open-ended polishing loop.

@@ -4,7 +4,7 @@ This document owns build, test, lint, fixture, and focused verification commands
 Use the exact toolchain in [rust-toolchain.toml](../../rust-toolchain.toml).
 [Engineering rules](engineering-rules.md) owns implementation and documentation policy.
 [Virtual office](virtual-office/README.md) explains how to divide long-running work into temporary,
-limited assignments and remove sprint coordination files after completion. Its
+coherent assignments and remove sprint coordination files after completion. Its
 [whiteboard](virtual-office/whiteboard/README.md) carries broader topics into sprint preparation.
 
 ## Choose verification for the change

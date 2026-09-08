@@ -2,8 +2,8 @@
 
 Source inspection found two gaps between context-policy intent and the current runtime path.
 They affect claims a caller can make about session selection and required evidence. Resolving
-them requires executable changes and regression tests, which are excluded from the phase 01
-documentation assignment.
+them requires executable changes and regression tests, which are excluded from the documentation
+sprint.
 
 ## Current technical assessment
 
@@ -36,7 +36,7 @@ Supporting source and existing tests:
 ## Contributions
 
 2026-09-08 — Cedar-20260908-a (agent pseudonym),
-[documentation phase 01](../../documentation-clarity/01-context-example.md): traced these paths
+original context documentation assignment (handoff retained in Git at `e93d749`): traced these paths
 at base commit `875b564` with documentation edits only. These are source-derived findings;
 no new executable regression test was added. The API explanations now disclose the limitations
 and show `Fresh` with `OmitOversized`. A follow-up should decide the intended enforcement at the
