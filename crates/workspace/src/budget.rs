@@ -8,6 +8,10 @@ use crate::{ArtifactMetadata, ArtifactReference, WorkspaceError, WorkspaceValue}
 /// A run's first admission of an artifact and each workspace value version are
 /// charged separately. Persistence de-duplicates later references to the same
 /// immutable artifact within that run.
+///
+/// Admission methods return proposed usage without mutating the input. Commit that
+/// usage with the corresponding value/artifact change in the owner's transaction.
+/// Computing a result here does not reserve capacity against concurrent callers.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceBudget {
@@ -126,6 +130,10 @@ impl WorkspaceBudget {
     }
 
     /// Computes usage after admitting one immutable workspace value version.
+    ///
+    /// Every value counts as a version. JSON adds its encoded bytes; an artifact value
+    /// adds no inline bytes. Admit its artifact reference separately if this accounting
+    /// domain has not already charged it. Excess or arithmetic overflow returns an error.
     pub fn admit_value(
         &self,
         usage: &WorkspaceUsage,
@@ -163,7 +171,7 @@ impl WorkspaceBudget {
     }
 
     /// Computes usage after this budget domain first references one already
-    /// committed artifact. Repeated references to the same immutable content must
+    /// committed artifact. Repeated references to the same exact artifact must
     /// be de-duplicated by the owning persistence transaction before this call.
     pub fn admit_artifact_reference(
         &self,

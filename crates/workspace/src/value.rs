@@ -3,7 +3,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ArtifactReference, ScopeReference, ValueKey, ValueVersion, WorkspaceError};
 
-/// Exact durable reference to one immutable workspace value version.
+/// Names one exact value version, allowing later reads to recover the same input.
+///
+/// Scope and key identify the stream; version chooses an immutable record within it.
+/// A reference is neither the content nor a request for the latest version. Obtain
+/// durable references from accepted entries before passing them as task inputs.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceValueReference {
@@ -111,7 +115,12 @@ pub enum ValueOrigin {
     },
 }
 
-/// One immutable and fully versioned workspace value record.
+/// A value together with its exact reference and how its stream began or advanced.
+///
+/// Choose `initial` for a new stream, `inherited` for an ancestor-derived local stream,
+/// `imported` for a cross-run result, and `successor` for the next local version.
+/// Constructors check record consistency. Persistence checks source existence and
+/// sequencing when committing the entry; these methods do not append anything.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceValueEntry {
@@ -180,6 +189,10 @@ impl WorkspaceValueEntry {
     }
 
     /// Creates the exact next version of an existing scope-local value stream.
+    ///
+    /// Scope and key stay unchanged, and the version advances by one. To change an
+    /// ancestor's value locally, call [`Self::inherited`] first. Version overflow is
+    /// refused; storage separately checks that `previous` is the accepted predecessor.
     pub fn successor(
         previous: WorkspaceValueReference,
         value: WorkspaceValue,

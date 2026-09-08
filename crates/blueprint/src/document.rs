@@ -126,7 +126,11 @@ struct RevisionReadWire {
     semantic: SemanticWire,
 }
 
-/// Canonical schema-v2 envelope for an immutable blueprint revision.
+/// Portable form used to save, inspect, or submit an immutable revision.
+///
+/// Wrap a constructed revision with [`Self::new`], or load bytes with [`Self::from_json`].
+/// The reader returns both the envelope and a validated [`BlueprintRevision`], recomputing
+/// its content digest and revision ID so edited bytes cannot retain an old identity.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct BlueprintRevisionDocument {
     schema_version: u32,
@@ -161,7 +165,11 @@ impl BlueprintRevisionDocument {
         canonical_value_bytes(self)
     }
 
-    /// Reads, bounds-checks, version-checks, validates, and integrity-checks a revision.
+    /// Loads a revision, refusing duplicate/unknown fields, unsupported versions,
+    /// invalid graphs, and contradictory derived identities.
+    ///
+    /// Input is limited to 4,194,304 bytes. Acceptance verifies the document itself;
+    /// storage still resolves parents, and runtime resolves pinned child revisions.
     pub fn from_json(bytes: &[u8]) -> Result<(Self, BlueprintRevision), DocumentError> {
         if bytes.len() > MAX_BLUEPRINT_DOCUMENT_BYTES {
             return Err(DocumentError::Bounds {
@@ -211,6 +219,9 @@ impl BlueprintRevisionDocument {
 }
 
 /// Calculates the schema-v2 domain-separated fingerprint of one immutable node definition.
+///
+/// Reconciliation uses this with [`node_dependency_fingerprint`] to distinguish a
+/// change to what the task does from a change to which work it depends on.
 pub fn node_configuration_fingerprint(node: &Node) -> Result<NodeFingerprint, DocumentError> {
     let bytes = canonical_value_bytes(node)?;
     let mut hasher = blake3::Hasher::new();

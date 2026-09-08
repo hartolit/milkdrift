@@ -5,17 +5,16 @@
 //! supplied under [`MODEL_TASK_INPUT_NAME`]. The model-provider adapter uses the resolved
 //! endpoint profile to check supported features and map the request to that endpoint's
 //! protocol. A locally valid request can still ask for an unsupported endpoint feature
-//! or token allowance; [`MAX_MODEL_OUTPUT_UNITS`] explains that boundary.
+//! or token allowance; [`ModelTaskRequest::new`] explains those choices.
 //!
 //! Separately, the runtime uses a blueprint task's context policy to construct a
-//! [`ContextManifest`]. It records what evidence an attempt received, including omitted
-//! sources and byte/provenance facts, and survives retries without selecting newer
+//! [`ContextManifest`]. It records evidence selected for an attempt, omitted sources,
+//! and byte/provenance facts, and survives retries without selecting newer
 //! history. This contract also serves process tasks. [`ModelResponse`] preserves final
 //! text, structured output, tool-call data, finish reason, and reported usage; a returned
 //! tool call is data, not an instruction this crate executes.
 //!
-//! This package contains no HTTP client, provider SDK, credential value, async runtime,
-//! durable store, or hidden session. Provider wire mappings live in adapter packages.
+//! Provider wire mappings and network calls live in the model-provider adapter.
 //!
 //! A request can be constructed and round-tripped without a provider or credentials:
 //!

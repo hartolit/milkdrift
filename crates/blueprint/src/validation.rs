@@ -1,3 +1,9 @@
+//! Check relationships that individual node and port constructors cannot see.
+//!
+//! Mutation application validates the complete candidate here before publishing a
+//! revision. Independent diagnostics are retained up to a fixed bound so callers can
+//! repair several graph errors together without receiving an unbounded error document.
+
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
@@ -50,13 +56,17 @@ pub enum DiagnosticCode {
     InvalidNodeConfiguration,
     /// A mutation conflicts with the selected immutable base.
     RevisionConflict,
-    /// A serialized digest or derived revision identity was not authentic.
+    /// A serialized digest or revision identity contradicted its derived value.
     IntegrityMismatch,
     /// A schema version is unsupported.
     UnsupportedVersion,
 }
 
-/// Bounded structured diagnostic for a GUI, CLI, or controller.
+/// Locates a definition error for an authoring client or controller.
+///
+/// Branch on [`Self::code`] and display the message with its location. An operation
+/// index points into the submitted batch, but final graph checks may attach the last
+/// operation's index rather than identify one operation as the cause.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Diagnostic {
     code: DiagnosticCode,
@@ -112,7 +122,8 @@ impl Diagnostic {
         &self.message
     }
 
-    /// Mutation operation associated with this error when known.
+    /// Zero-based batch operation index, when attached by mutation application.
+    /// Final candidate validation may use the last operation as the batch boundary.
     #[must_use]
     pub const fn operation_index(&self) -> Option<usize> {
         self.operation_index
@@ -142,7 +153,10 @@ mod tests {
     }
 }
 
-/// One or more independent semantic validation failures.
+/// Definition errors found while validating a candidate graph.
+///
+/// Inspect [`Self::diagnostics`] to repair the candidate and submit a new complete batch.
+/// At most 256 diagnostics are retained, so another pass may reveal further errors.
 #[derive(Clone, Debug, Error, PartialEq)]
 #[error("blueprint validation failed with {} diagnostic(s)", .diagnostics.len())]
 pub struct ValidationError {

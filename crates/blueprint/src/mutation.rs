@@ -77,7 +77,12 @@ pub enum Mutation {
     },
 }
 
-/// Versioned atomic list of semantic mutations.
+/// One complete edit submitted to [`crate::BlueprintRevision::genesis`] or `revise`.
+///
+/// Keep dependent changes in the same batch, such as replacing a task's ports and its
+/// incident edges. Operations execute in order, but graph validation checks the final
+/// candidate. The ID binds that ordered operation list, allowing an exact edit to be
+/// identified independently of the revision it produces.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct MutationBatch {
     schema_version: u32,
@@ -106,6 +111,10 @@ milkdrift_contracts::deserialize_via!(MutationBatch, MutationBatchWire, |wire| {
 
 impl MutationBatch {
     /// Creates a deterministic batch identity from its canonical operation content.
+    ///
+    /// Accepts 1..=512 operations within the document bounds. This checks the batch's
+    /// shape and encoding; targets, dependencies, and graph validity are checked when
+    /// a revision applies it.
     pub fn new(operations: Vec<Mutation>) -> Result<Self, MutationError> {
         let bytes = crate::document::canonical_value_bytes(&operations)
             .map_err(|error| MutationError::Serialization(error.to_string()))?;

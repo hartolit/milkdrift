@@ -14,6 +14,9 @@ use crate::{
 };
 
 /// Exact live-run facts used to build a bounded prospective remediation proposal.
+///
+/// Obtain these from authorized run/revision reads. The builder binds them into a
+/// proposal; submission and application later recheck whether they are still current.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemediationProposalSpec {
     /// Exact live run.
@@ -37,6 +40,16 @@ pub struct RemediationProposalSpec {
 
 /// Builds a normal digest-bound workflow proposal that prospectively inserts
 /// remediation, re-verification, re-review, and a renewed approval hold.
+///
+/// Pass the original validated import and exact current revision bytes. Their workflow,
+/// import/profile digests, and stage association must agree. The stage must use
+/// `PauseForReview`, generation must be within the import's review-loop allowance, and
+/// the resulting graph must validate against the base. A verifier override belongs in
+/// `spec`, preserving the original import's provenance.
+///
+/// The result requires ordinary approval and application. It neither changes the run
+/// nor delivers its approval signal. Apply an accepted repair before signalling the hold:
+/// the original hold still leads to failure until its future route is revised.
 pub fn build_remediation_proposal(
     document: &PromptSequenceDocument,
     base_document: &[u8],

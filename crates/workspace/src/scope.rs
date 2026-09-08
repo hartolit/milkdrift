@@ -6,7 +6,7 @@ use crate::{
     BranchId, IterationId, RunId, ScopeId, SubworkflowId, WorkspaceError, WorkspaceValueReference,
 };
 
-/// Maximum supported nesting of structured workspace scopes.
+/// Maximum scopes in a lineage, counting both the root and leaf.
 pub const MAX_SCOPE_DEPTH: usize = 64;
 
 /// Durable reference to one exact scope in one run.
@@ -200,6 +200,8 @@ impl WorkspaceScope {
 /// Exact immutable values in any ancestor scope are readable by the leaf. Only
 /// the leaf owns new versions of its local streams. A sibling scope is absent
 /// from the lineage and is therefore neither readable nor writable.
+/// These predicates check ancestry only; the owner must obtain the chain from durable
+/// scope records and apply any separate authority checks before disclosing content.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScopeLineage {
@@ -218,6 +220,10 @@ milkdrift_contracts::deserialize_via!(ScopeLineage, ScopeLineageWire, |wire| Sel
 
 impl ScopeLineage {
     /// Validates a complete root-to-leaf scope chain.
+    ///
+    /// Supply 1..=[`MAX_SCOPE_DEPTH`] distinct scopes, starting at a run root. Each later
+    /// scope must name the preceding scope as its exact parent. A partial chain or one
+    /// assembled from unrelated branches returns [`WorkspaceError::InvalidScope`].
     pub fn new(scopes: Vec<WorkspaceScope>) -> Result<Self, WorkspaceError> {
         if scopes.is_empty() {
             return Err(WorkspaceError::InvalidScope(

@@ -1,3 +1,9 @@
+//! Portable envelopes at the model/manifest boundary.
+//!
+//! Readers combine shared JSON bounds and duplicate checks with the owning body's
+//! constructors. The outer version describes the document envelope; the context manifest
+//! also has its own body version and digest. Keep those checks separate when reading it.
+
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
@@ -137,12 +143,16 @@ macro_rules! document {
                 &self.$field
             }
 
-            /// Deterministic canonical JSON.
+            /// Encodes compact, key-sorted JSON within the 2,097,152-byte document limit.
             pub fn to_canonical_json(&self) -> Result<Vec<u8>, ModelContractError> {
                 encode(self)
             }
 
-            /// Bounds-checks, parses, and validates one document.
+            /// Loads a bounded document through its body's validation path.
+            ///
+            /// Refuses excessive bytes/structure, duplicate or unknown fields, unsupported
+            /// versions, and inconsistent body facts. Use this reader for external bytes;
+            /// direct Serde decoding does not apply all document-level bounds.
             pub fn from_json(bytes: &[u8]) -> Result<Self, ModelContractError> {
                 read(bytes, $label)
             }

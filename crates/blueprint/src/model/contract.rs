@@ -11,7 +11,10 @@ use super::ModelError;
 const MAX_INTERFACE_FIELDS: usize = 256;
 const MAX_METADATA_ENTRIES: usize = 64;
 
-/// Exact schema identity/version used for compatibility checks.
+/// Names the value contract used to connect ports and workflow interfaces.
+///
+/// Compatibility here means equal identity and version. This reference carries no JSON
+/// Schema body; the consumer of a value owns interpretation of its content.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SchemaRef {
@@ -97,7 +100,12 @@ impl InterfaceField {
     }
 }
 
-/// Declared input and output contract of a workflow or subworkflow.
+/// The inputs callers supply and outputs successful terminals must expose.
+///
+/// Nodes bind inputs with [`BindingSource::WorkflowInput`] or `SubworkflowParameter`.
+/// For each required output, a successful terminal must have a required data input
+/// with the same field name and schema. A [`super::PinnedSubworkflow`] carries this
+/// interface so a parent can validate its call without copying the child graph.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorkflowInterface {
     inputs: BTreeMap<FieldId, InterfaceField>,
@@ -265,7 +273,12 @@ impl BlueprintMetadata {
     }
 }
 
-/// Source bound to a node data input or safe condition operand.
+/// Where a node input or condition operand gets its value.
+///
+/// Use a literal for small author-supplied data, an interface binding for a run input,
+/// or `NodeOutput` for earlier work. A node-output binding must have an exact matching
+/// data edge, even when a path selects just one field. Workspace/artifact references
+/// are opaque here; runtime resolves them against durable facts and access checks.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum BindingSource {
@@ -335,7 +348,11 @@ pub(super) enum PortDirection {
     Output,
 }
 
-/// Declared data port; constructors prevent input/output contradictions.
+/// The schema and requiredness of one input, or the schema of one published output.
+///
+/// Attach inputs and outputs with the matching [`super::Node`] builder. An input either
+/// supplies an explicit binding or receives a data edge. A `NodeOutput` binding uses both
+/// to declare the dependency and select within its value; other combinations are refused.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DataPort {
@@ -369,6 +386,10 @@ milkdrift_contracts::deserialize_via!(DataPort, DataPortWire, |wire| {
 
 impl DataPort {
     /// Creates an input port with an optional explicit binding.
+    ///
+    /// `required` means the value must resolve before execution. With no binding, declare
+    /// an incoming data edge in the revision. A required input cannot bind an optional
+    /// workflow field; the graph validator reports that mismatch.
     pub fn input(
         schema: SchemaRef,
         required: bool,

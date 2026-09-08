@@ -12,19 +12,7 @@ const MAX_TEXT_BYTES: usize = 1_048_576;
 const MAX_TOOLS: usize = 64;
 const MAX_TOOL_CALLS: usize = 128;
 
-/// Largest output allowance accepted by [`ModelTaskRequest::new`]: 4,000,000 units.
-///
-/// Construction and deserialization reject zero or values above this ceiling with
-/// [`ModelContractError::Invalid`]. Both current model-provider mappings send the
-/// requested allowance as `max_tokens`, so units refer to the endpoint's generated-token
-/// allowance, not bytes or input tokens. Input-text, encoded request, response, and stream
-/// byte limits are checked separately.
-///
-/// This is a shared contract ceiling, not a promise that any endpoint supports it. The
-/// model-provider adapter checks configured features and protocol mappings before HTTP;
-/// it does not discover an endpoint's numeric token limit. The endpoint may reject a
-/// value that passes this constructor. The adapter also uses this ceiling in its declared
-/// authority budget; it is not a measurement of actual usage.
+/// Maximum generated-output units per request; endpoint support may impose a lower limit.
 pub const MAX_MODEL_OUTPUT_UNITS: u64 = 4_000_000;
 
 /// Provider-neutral message role. Adapters must reject roles they cannot map.
@@ -43,7 +31,11 @@ pub enum MessageRole {
     ToolResult,
 }
 
-/// One bounded message content part.
+/// Text or an immutable content reference in a message.
+///
+/// References keep large content out of the request document; the adapter materializes
+/// supported parts. The current mappings support configured images but refuse generic
+/// artifact/file parts. Representable contract variants do not imply endpoint support.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum ContentPart {
@@ -69,7 +61,11 @@ pub enum ContentPart {
     },
 }
 
-/// Ordered provider-neutral message.
+/// One role-labelled message whose parts retain their supplied order.
+///
+/// Use `ToolResult` with the exact returned call ID when supplying tool results; all
+/// other roles must omit that ID. Role labels describe the conversation, not an actor's
+/// authority to execute tools or change a workflow.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Message {
@@ -80,6 +76,10 @@ pub struct Message {
 
 impl Message {
     /// Constructs and validates one message.
+    ///
+    /// Supply 1..=1,024 parts, with at most 1,048,576 UTF-8 bytes per text part. Tool-result
+    /// messages require a nonempty safe call ID; supplying it for another role is refused.
+    /// The whole request imposes an additional aggregate text limit.
     pub fn new(
         role: MessageRole,
         parts: Vec<ContentPart>,
@@ -161,7 +161,11 @@ milkdrift_contracts::deserialize_via!(Message, MessageWire, |wire| Self::new(
     wire.tool_call_id
 ));
 
-/// Tool definition whose JSON schema remains data rather than executable code.
+/// Describes a callable shape that a model may request in its response.
+///
+/// This is schema data for the endpoint, not a capability registration. A returned
+/// [`ToolCall`] must go through the normal authorized execution path if a caller chooses
+/// to act on it. The input schema is bounded JSON; this constructor does not interpret it.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolDefinition {
@@ -226,7 +230,11 @@ milkdrift_contracts::deserialize_via!(ToolDefinition, ToolDefinitionWire, |wire|
     wire.input_schema
 ));
 
-/// Requested structured result shape.
+/// Asks the endpoint to produce a named JSON result shape.
+///
+/// `strict` requests schema enforcement from a supporting mapping. Construction checks
+/// the name and retains bounded schema data; it does not validate a schema language or
+/// check a later response against it.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StructuredOutput {
@@ -285,7 +293,12 @@ milkdrift_contracts::deserialize_via!(StructuredOutput, StructuredOutputWire, |w
     wire.strict
 ));
 
-/// Reproducible provider-session selection.
+/// Selects the model request's conversation state explicitly.
+///
+/// Current endpoint mappings accept only `Fresh`. The continuation variants preserve
+/// intent in the contract but are refused before HTTP until a mapping supports them.
+/// This request field is separate from the blueprint context-session declaration;
+/// runtime currently does not compare the two.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum SessionSelection {
@@ -305,7 +318,7 @@ pub enum SessionSelection {
     },
 }
 
-/// Feature-gated reasoning effort.
+/// Requested reasoning effort, subject to the endpoint profile and protocol mapping.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningEffort {
@@ -357,38 +370,14 @@ impl ModelTaskRequest {
     ///
     /// # Errors
     ///
-    /// Returns [`ModelContractError::Invalid`] for an output allowance of zero or above
-    /// [`MAX_MODEL_OUTPUT_UNITS`], empty or excessive message counts, excessive tool or
-    /// extension counts, duplicate tool names, invalid message/session facts, or a zero
-    /// reasoning-unit cap. Text beyond the per-message-part or aggregate input bound
-    /// returns [`ModelContractError::Bounds`]. No provider request has been made at this
-    /// point; reduce the invalid allowance or input before constructing the request again.
+    /// Supply 1..=256 messages, at most 64 distinct tool names, and at most 64 extensions.
+    /// Invalid counts, duplicate tools, a zero reasoning cap, or an output allowance outside
+    /// `1..=MAX_MODEL_OUTPUT_UNITS` return [`ModelContractError::Invalid`]. Aggregate text
+    /// beyond 1,048,576 UTF-8 bytes returns [`ModelContractError::Bounds`].
     ///
-    /// ```
-    /// use std::collections::BTreeMap;
-    /// use milkdrift_model::{
-    ///     ContentPart, MAX_MODEL_OUTPUT_UNITS, Message, MessageRole, ModelContractError,
-    ///     ModelTaskRequest, SessionSelection,
-    /// };
-    ///
-    /// let message = Message::new(
-    ///     MessageRole::User,
-    ///     vec![ContentPart::Text { text: "Summarize the supplied evidence.".to_owned() }],
-    ///     None,
-    /// )?;
-    /// let request_with_limit = |limit| ModelTaskRequest::new(
-    ///     vec![message.clone()], Vec::new(), None, SessionSelection::Fresh,
-    ///     None, limit, false, BTreeMap::new(),
-    /// );
-    /// let request = request_with_limit(512)?;
-    /// assert_eq!(request.maximum_output_units(), 512);
-    /// assert!(matches!(request_with_limit(0), Err(ModelContractError::Invalid(_))));
-    /// assert!(matches!(
-    ///     request_with_limit(MAX_MODEL_OUTPUT_UNITS + 1),
-    ///     Err(ModelContractError::Invalid(_)),
-    /// ));
-    /// # Ok::<(), ModelContractError>(())
-    /// ```
+    /// A valid allowance can still exceed an endpoint's own limit; the adapter does not
+    /// discover numeric token ceilings. Encoded HTTP request/response limits are separate.
+    /// See the [crate example](crate) for request construction and document encoding.
     #[allow(clippy::too_many_arguments)] // Messages, tools, output format, session, and generation bounds are validated as one executable model request.
     pub fn new(
         messages: Vec<Message>,
@@ -439,8 +428,7 @@ impl ModelTaskRequest {
         self.reasoning
     }
     /// Requested generated-output allowance, sent as `max_tokens` by current adapters.
-    /// This is not an input-token limit, byte limit, or observed usage; see
-    /// [`MAX_MODEL_OUTPUT_UNITS`] for shared bounds and endpoint limitations.
+    /// See [`Self::new`] for its bounds and distinction from byte limits and usage.
     #[must_use]
     pub const fn maximum_output_units(&self) -> u64 {
         self.maximum_output_units
@@ -537,7 +525,11 @@ milkdrift_contracts::deserialize_via!(ModelTaskRequest, ModelTaskRequestWire, |w
     w.extensions,
 ));
 
-/// Structured tool-call request returned as data only.
+/// A model's proposed tool invocation, preserved as response data.
+///
+/// `id` correlates a later [`MessageRole::ToolResult`]; `name` and `arguments` describe
+/// the proposed call. This constructor checks identity spelling, not whether a tool
+/// exists, its argument schema matches, or execution is authorized.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolCall {
@@ -617,6 +609,10 @@ pub enum FinishReason {
 }
 
 /// Provider-observed usage and optional cost evidence.
+///
+/// `None` means unreported, not zero. Units follow the endpoint's accounting; the core
+/// does not infer tokenization or prices. A [`ModelResponse`] requires cost and currency
+/// together, with a three-letter uppercase currency spelling.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Usage {
@@ -632,7 +628,13 @@ pub struct Usage {
     pub currency: Option<String>,
 }
 
-/// Canonical complete response published as an artifact.
+/// The endpoint's complete reported result, retained for inspection and later work.
+///
+/// Check [`Self::finish_reason`] alongside text, structured output, and tool calls.
+/// Empty text is valid, including a length-limited result, so a successful document
+/// round trip is not proof of a useful answer. A tool call remains data. Adapters publish
+/// the response and output artifacts before reporting success; incomplete streams do
+/// not become a complete response merely because text fragments arrived.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelResponse {
@@ -646,6 +648,10 @@ pub struct ModelResponse {
 
 impl ModelResponse {
     /// Constructs a bounded canonical model response.
+    ///
+    /// Refuses text above 1,048,576 bytes, more than 128 tool calls or 64 metadata entries,
+    /// and inconsistent cost/currency facts. It does not infer missing usage or validate
+    /// structured output against the original request's schema.
     pub fn new(
         text: String,
         structured: Option<BoundedJson>,
@@ -731,7 +737,11 @@ milkdrift_contracts::deserialize_via!(ModelResponse, ModelResponseWire, |w| Self
     w.provider_metadata,
 ));
 
-/// Bounded streaming observation; the canonical complete result remains an artifact.
+/// Progress toward a model result, or the complete result when one is available.
+///
+/// Text fragments alone do not establish completion; callers need terminal evidence.
+/// Producers and enclosing documents impose fragment/progress bounds: these enum fields
+/// are directly constructible and their strings have no independent constructor check.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum ModelStreamEvent {

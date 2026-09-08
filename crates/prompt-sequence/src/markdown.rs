@@ -118,6 +118,8 @@ fn finish_section(
     let Some(identity) = identity else {
         return Ok(());
     };
+    // Give Markdown imports a stable prompt ending regardless of blank lines before
+    // the next heading; JSON inline prompts keep their explicitly supplied text.
     while body.ends_with('\n') {
         body.pop();
     }

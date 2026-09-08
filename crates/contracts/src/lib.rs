@@ -1,15 +1,14 @@
-//! Check and encode JSON using the mechanics shared by Milkdrift's document owners.
+//! Keep shared document checks consistent across Milkdrift's schema owners.
 //!
-//! A model request reader, for example, checks its total input-byte limit, calls
-//! [`preflight_json_structure`], [`parse_json_without_duplicates`], and
-//! [`validate_json_value`], then checks the version and deserializes a validated request.
-//! This crate supplies the middle three steps. The document owner supplies [`JsonLimits`],
-//! the total byte limit, accepted fields and versions, and the meaning of the result.
+//! A saved request must have one meaning and fit the reader's limits. These helpers
+//! reject ambiguous JSON, bound its structure, and give writers consistent bytes.
+//! Application callers use their domain's document reader; document implementers compose
+//! the helpers below with their own versions, fields, constructors, and total-byte limits.
 //!
-//! For writing, [`canonical_json_bytes`] sorts object keys recursively and produces compact
-//! JSON while preserving array order. Owners use those bytes in their own documents and
-//! digest calculations, and check the total encoded length separately. Shared checks do
-//! not make a JSON value a valid workflow, model request, or authorized operation.
+//! [`preflight_json_structure`] limits structure before tree allocation, while
+//! [`parse_json_without_duplicates`] and [`validate_json_value`] check parsed input.
+//! [`canonical_json_bytes`] supplies compact, recursively key-sorted output, preserving
+//! array order. The document owner decides what the resulting value means.
 //!
 //! This example uses illustrative limits to read and re-encode a small value. Its error
 //! mapping is deliberately local; a production owner maps failures to its contract errors.
@@ -41,11 +40,9 @@
 //! # Ok::<(), String>(())
 //! ```
 //!
-//! [`validated_string_type!`] and [`deserialize_via!`] help callers use their own validators
-//! during Serde deserialization. [`is_canonical_blake3_digest`] checks digest spelling;
-//! [`truncate_utf8`] shortens text to a byte allowance. Neither helper owns the caller's
-//! digest calculation, diagnostic policy, or business limits. This package has no feature
-//! flags and requires no daemon, storage, or provider setup.
+//! [`validated_string_type!`] and [`deserialize_via!`] reuse the owner's constructors
+//! during deserialization. [`is_canonical_blake3_digest`] and [`truncate_utf8`] provide
+//! the shared lexical checks and byte-bounded text handling.
 
 use std::{collections::BTreeSet, fmt};
 
@@ -61,21 +58,16 @@ pub use text::{is_canonical_blake3_digest, truncate_utf8};
 
 /// Define a string wrapper whose constructor and Serde reader use the same caller-owned check.
 ///
-/// Invoke this at module scope with the type's documentation, visibility, error type, and
-/// validator. The validator receives `(&str, &'static str)`: the supplied text and the
-/// generated type name for diagnostics. It must return `Result<(), E>` for the declared
-/// error type `E`, which must implement [`fmt::Display`] for Serde error conversion.
-/// The caller chooses length, character, namespace, and other rules; no rule is implicit.
+/// Use it for domain identities whose accepted text must be preserved exactly. The
+/// supplied validator receives the text and generated type name as `(&str, &'static str)`
+/// and returns `Result<(), E>`. `E` must implement [`fmt::Display`] for Serde errors.
 ///
-/// The generated type stores an owned `String` in a private field. `new` validates without
-/// changing the text, and `as_str` borrows it. Display and serialization expose the text;
-/// deserialization reads a string and calls `new`, reporting validation errors through
-/// Serde. Equality, hashing, and ordering use the stored string. This is unsuitable for
-/// secrets requiring redacted Display or Debug. Add domain-specific conversions separately;
-/// the macro does not implement `FromStr` or `TryFrom`.
+/// The wrapper owns a private `String`, exposes `new` and `as_str`, and compares, hashes,
+/// displays, and serializes the stored text. Display and Debug are unredacted, so do not
+/// use it for secret values. Add domain-specific `FromStr` or `TryFrom` implementations
+/// separately when callers need them.
 ///
-/// The invoking package needs a dependency named `serde`, which the expansion references.
-/// Define real domain identities in their owning package, as capability does for its IDs.
+/// Invoke at module scope in the domain owner, with a dependency named `serde`.
 ///
 /// ```
 /// use milkdrift_contracts::validated_string_type;
@@ -166,10 +158,8 @@ macro_rules! validated_string_type {
 /// return `Result<Target, E>`, where `E` implements [`fmt::Display`]. Wire decoding errors
 /// stop before conversion; conversion errors become custom Serde errors.
 ///
-/// Invoke at module scope in the target type's owner. The package must depend on `serde`
-/// under that name. This macro implements only `Deserialize`: serialization, field policy,
-/// and semantic validation remain with the caller. It does not reject arbitrary duplicate
-/// object keys or impose document bounds; document readers use the JSON helpers separately.
+/// Invoke at module scope with a dependency named `serde`. The macro implements only
+/// `Deserialize`; use the document reader's JSON checks for byte bounds and duplicate keys.
 ///
 /// ```
 /// use milkdrift_contracts::deserialize_via;
@@ -236,11 +226,7 @@ pub struct JsonLimits {
     pub maximum_container_items: usize,
 }
 
-/// Identify which [`JsonLimits`] maximum caused a [`JsonBoundViolation`].
-///
-/// Owners can match this category to produce their own error vocabulary, using the
-/// violation's path and maximum for detail. Byte counts depend on whether the check
-/// ran before parsing or on decoded values; see [`JsonLimits`].
+/// Which [`JsonLimits`] maximum caused a refusal, for mapping into the owner's error type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum JsonBoundKind {
     /// Value depth, or container-opening depth during preflight.
@@ -356,9 +342,7 @@ pub fn parse_json_without_duplicates(bytes: &[u8]) -> Result<Value, serde_json::
 /// Check an existing JSON tree against the caller's [`JsonLimits`], without changing it.
 ///
 /// Depth includes scalar children; string and key sizes count decoded UTF-8 bytes.
-/// Each container's size is checked before visiting its children, and each object key's
-/// size is checked before its value. Arrays are visited in index order and objects in
-/// their map iteration order. The first violation stops traversal.
+/// The first violation stops traversal and supplies a diagnostic path.
 ///
 /// Use this after duplicate-checked parsing or before encoding. It cannot detect duplicate
 /// keys already discarded by another parser, and does not check document size, schema
@@ -526,8 +510,7 @@ pub fn preflight_json_structure(
 
 /// Distinguish serialization failures from structural-limit refusals during encoding.
 ///
-/// [`canonical_json_bytes`] returns this for the document owner to map into its own error
-/// type. It is an inspectable enum with Debug output, not a shared Display/error policy.
+/// [`canonical_json_bytes`] returns this for the document owner to map into its own error type.
 #[derive(Debug)]
 pub enum CanonicalJsonError {
     /// Conversion to a JSON value or encoding of that value failed; retains Serde's error.

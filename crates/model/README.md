@@ -1,25 +1,24 @@
 # milkdrift-model
 
-This library defines the messages and generation choices sent to an external model, the result
-reported back, and the context selected for a task attempt. Workflow authors and adapters use the
-same typed documents without making workflow definitions depend on a provider's HTTP shape.
-The package contains no model runner, network client, credentials, or durable store.
+A workflow review task needs both a request to send and evidence to review. This library describes
+the model messages and generation choices, the response returned by the endpoint, and the manifest
+of context selected by runtime. These are distinct documents: the request expresses what to ask,
+the manifest records the selected evidence, and the response preserves what the endpoint reported.
 
 ## Construct a request
 
 The [crate introduction](src/lib.rs) has a runnable example that builds a `Message`, creates a
 `ModelTaskRequest` with a fresh session and a 512-unit output allowance, and round-trips it through
-`ModelTaskRequestDocument`. Supply that document under `MODEL_TASK_INPUT_NAME` in a model task's
-invocation inputs. The resolved endpoint profile supplies the model identity. The
-[model-provider adapter](../../adapters/model-provider/src/adapter.rs) reads the request and maps
-it through its OpenAI-compatible or native Anthropic implementation.
+`ModelTaskRequestDocument`. Supply the encoded document as inline JSON or an immutable artifact
+under `MODEL_TASK_INPUT_NAME` in the invocation inputs. A workspace-value reference is not accepted
+for this reserved input by the current adapter. The resolved endpoint profile supplies the model
+identity. The [model-provider adapter](../../adapters/model-provider/src/adapter.rs) reads the
+request and maps it through its OpenAI-compatible or native Anthropic implementation.
 
-[`ModelTaskRequest::new`](src/task.rs) rejects zero output units or more than
-`MAX_MODEL_OUTPUT_UNITS` (4,000,000) with `ModelContractError::Invalid`. Current mappings send the
-allowance as `max_tokens`: it limits requested generated tokens according to the endpoint's
-accounting, not input tokens or bytes. It is an allowance, not a prediction or actual usage count.
-Input text and [endpoint request/response/stream bytes](../../adapters/model-provider/src/profile.rs)
-have separate limits.
+Choose an output allowance for the work. Current mappings send it as `max_tokens`; it limits
+generated tokens according to the endpoint's accounting.
+[`ModelTaskRequest::new`](src/task.rs) owns the shared count/text bounds. Endpoint request, response,
+and stream byte limits are separate [profile choices](../../adapters/model-provider/src/profile.rs).
 
 Shared validation does not establish endpoint support. The adapter checks configured features
 and protocol mappings before HTTP, including roles, images, tools, structured output, reasoning,
@@ -49,12 +48,14 @@ facts distinguish results from different executions or capability generations. T
 content that contradicts the saved selection. A digest does not grant read access or prove
 the content's claims. Retries retain the selection and omissions while recording a new attempt.
 
-Read saved bytes with `ContextManifestDocument::from_json`, then inspect `body()`. The outer
-document envelope uses schema version 1; the manifest body uses version 2. The body reader refuses
-v1 and unknown versions and verifies the digest, entries, order, and totals. It does not infer
-the materialization or producer facts absent from v1. The
-[golden fixture](tests/fixtures/context-manifest-v2.json) shows the two version fields, and
-[ADR 0011](../../docs/decisions/0011-causal-context-manifests.md) explains the durable selection boundary.
+Read saved bytes with `ContextManifestDocument::from_json`, then inspect `body()`. Entries explain
+included evidence; omissions explain losses. The omission API documents a current gap where
+reason precedence can bypass metadata redaction, so retained references are not proof of read
+permission. The [manifest API](src/context.rs) owns version, digest, ordinal, and total checks. The
+[golden fixture](tests/fixtures/context-manifest-v2.json) shows the envelope and body, and
+[ADR 0011](../../docs/decisions/0011-causal-context-manifests.md) explains why selection is saved
+before dispatch. Blueprint's [policy API](../blueprint/src/context.rs) discloses the current session
+and required-evidence limitations; reading a manifest does not rerun policy selection.
 
 ## API detail and verification
 

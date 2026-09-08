@@ -1,3 +1,9 @@
+//! Routing, parallel ownership, and bounded child calls within an ordinary blueprint.
+//!
+//! Branch chooses a route; fork/join owns parallel lifetimes; reducer chooses how values
+//! combine. Subworkflow and repeat pin the child definition so later edits cannot change
+//! an already declared call. The graph validator checks how these configurations connect.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -10,7 +16,11 @@ use super::{ModelError, SchemaRef, WorkflowInterface};
 
 const MAX_REPEAT_ITERATIONS: u32 = 10_000;
 
-/// Typed conditional branch configuration keyed by outgoing control port.
+/// Chooses one outgoing control port from conditions on declared input values.
+///
+/// Runtime evaluates arms in port-key order and takes the first true condition. If none
+/// matches, it takes `fallback`; without one, the branch fails. Every referenced
+/// non-literal condition source must also be declared as an exact node input binding.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BranchConfig {
@@ -74,7 +84,11 @@ impl BranchConfig {
     }
 }
 
-/// Structured fork configuration keyed by isolated branch control ports.
+/// Starts one isolated child scope per named branch control port.
+///
+/// Declare the same ports on the fork node. To synchronize their routes, use a join
+/// that names this fork; branches may also end at terminals. Branches keep their local
+/// workspace values separate, and consumers receive only explicitly exposed results.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ForkConfig {
@@ -127,7 +141,11 @@ pub enum JoinPolicy {
     Quorum(u16),
 }
 
-/// Join configuration. Reduction is represented by a separate reducer node.
+/// Decides when work owned by one fork can continue beyond its join.
+///
+/// [`JoinPolicy`] determines which branch outcomes satisfy the wait. Use a separate
+/// [`ReducerConfig`] to combine values; synchronization alone is not a data reduction.
+/// Graph validation checks fork ownership, branch convergence, and quorum feasibility.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct JoinConfig {
@@ -137,6 +155,9 @@ pub struct JoinConfig {
 
 impl JoinConfig {
     /// Creates a join owned by one fork.
+    ///
+    /// The fork must exist in the completed graph. A quorum must be nonzero and no
+    /// greater than that fork's branch count; those checks require revision validation.
     #[must_use]
     pub const fn new(fork: NodeId, policy: JoinPolicy) -> Self {
         Self { fork, policy }
@@ -172,7 +193,12 @@ pub enum ReducerStrategy {
     Capability(OperationId),
 }
 
-/// Reducer input shape and strategy.
+/// Combines multiple explicitly connected values at a named data input.
+///
+/// `Collect` keeps the ordered values, `First` picks the first in deterministic branch
+/// order, and `Capability` delegates composition to an external operation. Unlike an
+/// ordinary input, the reducer input can have multiple incoming data edges. Declare
+/// their common item schema and a minimum count that the graph can supply.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReducerConfig {
@@ -242,7 +268,12 @@ impl ReducerConfig {
     }
 }
 
-/// Exact immutable subworkflow target and expected interface.
+/// Calls a reusable workflow at an exact revision with an expected interface.
+///
+/// Copy the interface from the target revision and declare matching ports on the calling
+/// node. The reference does not load the child. Runtime resolves the stored target,
+/// creates the child execution, and imports its declared results. Upgrading the
+/// target is an explicit mutation rather than following a moving workflow name.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PinnedSubworkflow {
@@ -320,7 +351,11 @@ impl Serialize for CostCurrencyCode {
 
 milkdrift_contracts::deserialize_via!(CostCurrencyCode, String, |value| Self::new(value));
 
-/// Additional hard limits for a bounded repeat.
+/// Optional time and observed-cost limits in addition to the repeat's iteration ceiling.
+///
+/// `None` leaves that dimension unset. Nonzero cost and its currency must be supplied
+/// together. These are repeat-level limits checked by runtime; they do not reserve a
+/// provider budget or predict the cost of the next invocation.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepeatBudget {
@@ -378,7 +413,11 @@ pub enum RepeatTermination {
     AwaitApproval,
 }
 
-/// Explicit repetition of a pinned acyclic body.
+/// Repeats an exact child workflow while its post-iteration condition remains true.
+///
+/// This keeps the graph acyclic: repetition creates runtime occurrences of a pinned
+/// body. Choose a hard iteration ceiling and decide what reaching a limit means through
+/// [`RepeatTermination`]. Optional [`RepeatBudget`] limits can stop repetition earlier.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepeatConfig {
@@ -409,6 +448,10 @@ milkdrift_contracts::deserialize_via!(RepeatConfig, RepeatConfigWire, |wire| Sel
 
 impl RepeatConfig {
     /// Constructs a repeat with a hard iteration limit and optional tighter budgets.
+    ///
+    /// `maximum_iterations` must be in 1..=10,000. Zero durations/costs, an unpaired
+    /// cost/currency, and an oversized condition are refused. The calling node's ports
+    /// must match the pinned body's interface when the revision is validated.
     pub fn new(
         body: PinnedSubworkflow,
         condition: Condition,

@@ -18,29 +18,45 @@
 //! [`TaskConfig::direct_inputs`] for direct inputs only, or follow the executable
 //! example on [`TaskContextPolicy`] to request bounded ancestor evidence.
 //!
-//! The example below publishes a minimal revision with a success terminal. Larger
-//! revisions use the same mutation/validation path; creating one does not start a run.
+//! The example defines a review task that reads a workflow input and then reaches a
+//! success terminal. No capability needs to be running to author this revision.
 //!
 //! ```
 //! use milkdrift_blueprint::{
-//!     AuthorRef, BlueprintRevision, FieldId, InterfaceField, Mutation, MutationBatch,
-//!     Node, NodeId, NodeKind, PortId, SchemaRef, TerminalOutcome, WorkflowId,
-//!     WorkflowInterface,
+//!     AuthorRef, BindingSource, BlueprintRevision, DataPort, Edge, EdgeId, EdgeKind,
+//!     FieldId, InterfaceField, Mutation, MutationBatch, Node, NodeId, NodeKind, PortId,
+//!     SchemaRef, TerminalOutcome, WorkflowId, WorkflowInterface,
 //! };
-//! use milkdrift_capability::SchemaId;
+//! use milkdrift_capability::{CapabilityRequirement, OperationId, SchemaId};
 //!
-//! let schema = SchemaRef::new(SchemaId::new("milkdrift.unit")?, 1)?;
+//! let schema = SchemaRef::new(SchemaId::new("example.review_request")?, 1)?;
 //! let interface = WorkflowInterface::new(
-//!     [(FieldId::new("input")?, InterfaceField::required(schema))],
+//!     [(FieldId::new("request")?, InterfaceField::required(schema.clone()))],
 //!     [],
 //! )?;
-//! let node = Node::new(
+//! let review = Node::new(
+//!     NodeId::new("review")?,
+//!     NodeKind::task_direct_inputs(CapabilityRequirement::new(
+//!         OperationId::new("process.execute")?,
+//!     ))?,
+//! )?
+//! .with_data_input(PortId::new("request")?, DataPort::input(
+//!     schema, true, Some(BindingSource::WorkflowInput { field: FieldId::new("request")? }),
+//! )?)?
+//! .with_control_output(PortId::new("out")?)?;
+//! let done = Node::new(
 //!     NodeId::new("done")?,
 //!     NodeKind::Terminal { outcome: TerminalOutcome::Success },
-//! )?;
+//! )?.with_control_input(PortId::new("in")?)?;
 //! let batch = MutationBatch::new(vec![
 //!     Mutation::SetInterface { interface },
-//!     Mutation::AddNode { node },
+//!     Mutation::AddNode { node: review },
+//!     Mutation::AddNode { node: done },
+//!     Mutation::AddEdge { edge: Edge::new(
+//!         EdgeId::new("review-done")?, EdgeKind::Control,
+//!         NodeId::new("review")?, PortId::new("out")?,
+//!         NodeId::new("done")?, PortId::new("in")?,
+//!     ) },
 //! ])?;
 //! let revision = BlueprintRevision::genesis(
 //!     WorkflowId::new("example")?,

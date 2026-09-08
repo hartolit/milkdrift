@@ -32,7 +32,10 @@ pub enum PathSegment {
     Index(u16),
 }
 
-/// Safe, bounded structured-value selector.
+/// Selects object fields or array elements without evaluating source code.
+///
+/// An empty selector refers to the whole value. Segments describe a path, not a
+/// filesystem location or query expression; runtime evaluates it against the bound value.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct PathSelector(Vec<PathSegment>);
@@ -94,7 +97,13 @@ pub enum ConditionOperand {
     },
 }
 
-/// Non-executable condition abstract syntax tree.
+/// A branch or repeat decision expressed as data over declared inputs.
+///
+/// Use `Exists` when absence is a meaningful result, such as a verifier's optional
+/// success artifact. Use `Compare` for values that must resolve. Attach non-literal
+/// sources as node input bindings so revision validation can check their dependencies.
+/// Branch/repeat constructors bound condition depth and size; runtime supplies the
+/// values and evaluates the fixed operators.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum Condition {

@@ -7,7 +7,13 @@ use crate::{
 
 const MAX_REASON_BYTES: usize = 2_048;
 
-/// Immutable validated workflow revision.
+/// A validated definition that runs can keep referring to after the workflow changes.
+///
+/// Create the first revision with [`Self::genesis`] and edits with [`Self::revise`].
+/// Both return a new value; persistence saves it and runtime/control decide whether
+/// a live run may adopt it. `content_digest` identifies the semantic graph, including
+/// metadata. `id` also binds sequence, exact parents, author, and reason, so identical
+/// content can occur in different revision histories.
 ///
 /// Fields are private and no mutable accessor exists:
 ///
@@ -29,7 +35,10 @@ pub struct BlueprintRevision {
 }
 
 impl BlueprintRevision {
-    /// Atomically creates the first immutable revision through a validated mutation batch.
+    /// Creates sequence one by applying a complete batch to an empty workflow.
+    ///
+    /// The candidate must pass graph validation, have no merge parents, and carry a
+    /// reason of 1..=2,048 UTF-8 bytes. Failure returns no partially built revision.
     pub fn genesis(
         workflow: WorkflowId,
         batch: MutationBatch,
@@ -48,6 +57,14 @@ impl BlueprintRevision {
     }
 
     /// Applies a batch to exactly the expected base and publishes a new immutable revision.
+    ///
+    /// A stale `expected_base` returns [`MutationError::BaseRevisionConflict`]. Operations
+    /// run in order on a private candidate, then the final graph is validated. This
+    /// allows related ports and edges to change together while preserving `self` on error.
+    ///
+    /// Ordinarily this revision becomes the sole parent. [`crate::Mutation::SetMergeParents`]
+    /// records a caller-resolved merge and must include this exact base; it does not load
+    /// other parents or merge their graphs. The sequence advances along this base lineage.
     pub fn revise(
         &self,
         expected_base: &RevisionId,

@@ -30,6 +30,9 @@ pub struct Edge {
 
 impl Edge {
     /// Constructs an explicit port-to-port edge.
+    ///
+    /// Both endpoints must be declared on their nodes. Revision validation checks their
+    /// direction and kind, exact data schemas, and whether the edge introduces a cycle.
     #[must_use]
     pub const fn new(
         id: EdgeId,

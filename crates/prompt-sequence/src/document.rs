@@ -1,3 +1,9 @@
+//! Operator import data and the production readers that validate it.
+//!
+//! Public fields support assembly and inspection. The readers establish the complete
+//! schema-v2 constraints before compilation; Serde's derived shape checks alone do not.
+//! Repository and verification declarations remain data for configured capabilities.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use milkdrift_capability::{
@@ -34,7 +40,7 @@ pub enum PromptSequenceError {
     /// JSON syntax, duplicates, or typed shape were invalid.
     #[error("invalid prompt-sequence document: {0}")]
     Json(String),
-    /// A future schema cannot be interpreted safely.
+    /// An earlier or future schema is not supported by this reader.
     #[error("unsupported prompt-sequence schema version {found}; supported version is 2")]
     UnsupportedVersion {
         /// Observed schema version.
@@ -48,7 +54,7 @@ pub enum PromptSequenceError {
         /// Stable bound summary.
         reason: String,
     },
-    /// A private product invariant was violated.
+    /// The import contradicts a sequence rule, such as required repository evidence.
     #[error("invalid prompt sequence: {0}")]
     Invalid(String),
     /// Markdown envelope or prompt sections were invalid.
@@ -59,18 +65,26 @@ pub enum PromptSequenceError {
     Compilation(String),
 }
 
-/// Fresh versus explicit continuation behavior for one stage.
+/// The stage author's session intent, retained in task data and blueprint policy.
+///
+/// The compiler declares this choice; it does not manage an external process session or
+/// select a continuation artifact. Runtime does not currently enforce the blueprint
+/// session declaration against an adapter request.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionPolicy {
-    /// Start a new external process/provider context for the stage.
+    /// Request a fresh context for the stage.
     #[default]
     Fresh,
-    /// Continue only through an exact context artifact selected by policy.
+    /// Request continuation through explicit prior evidence.
     ExplicitContinuation,
 }
 
-/// Reference to one preconfigured capability/profile generation selector.
+/// Selects the preconfigured capability that should perform a stage operation.
+///
+/// The schema-v2 reader requires `process.execute`, `TrustedHostProcess`, and no
+/// `provider_profile`. The exact capability ID becomes a blueprint requirement; live
+/// resolution chooses its generation and checks the advertised side-effect ceiling.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapabilityProfileRef {
@@ -102,7 +116,12 @@ pub enum PromptSource {
     },
 }
 
-/// Named declarative verification checks interpreted only by the configured verifier.
+/// Tells a configured verifier which checks to perform and which evidence to publish.
+///
+/// The compiled gate tests for `success_artifact` after the verifier task completes.
+/// Publish it only for a passed check; a completed check without it follows the failure
+/// route. A failed verifier invocation is distinct from this artifact-absence result.
+/// Check names are data, never shell source; the configured verifier owns their meaning.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct VerificationContract {
@@ -128,7 +147,8 @@ pub enum FailurePolicy {
     FailRun,
 }
 
-/// Authority path required before work may continue after review.
+/// Declares use of the existing control path for a reviewed continuation.
+/// The compiler retains this choice in review inputs; the declaration grants no authority.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalPolicy {
@@ -136,7 +156,11 @@ pub enum ApprovalPolicy {
     SharedControlPath,
 }
 
-/// One declared coding-agent output artifact.
+/// Describes an output expected from the configured coding process.
+///
+/// The compiler declares an artifact-valued port and passes this contract to the task.
+/// Match its media type and requiredness to the configured process profile; blueprint
+/// output ports alone do not enforce these output-file requirements.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeclaredOutput {
@@ -144,11 +168,16 @@ pub struct DeclaredOutput {
     pub name: String,
     /// Exact media type expected from the capability contract.
     pub media_type: String,
-    /// Whether absence makes the capability invocation fail.
+    /// Whether the process contract requires this output to be produced.
     pub required: bool,
 }
 
-/// One ordered implementation prompt and its exact execution policy.
+/// One implementation step with a separate verifier and an explicit failure route.
+///
+/// [`crate::compile`] turns this into ordinary blueprint nodes. The prompt and contracts
+/// are supplied as inputs, while capability requirements and context policy become task
+/// definitions. Reviewer and approval fields are still required in the import shape when
+/// `failure` is `FailRun`, although that route creates no review or approval nodes.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StageDefinition {
@@ -158,7 +187,7 @@ pub struct StageDefinition {
     pub title: String,
     /// Exact prompt content/reference.
     pub prompt: PromptSource,
-    /// Fresh or exact explicit continuation behavior.
+    /// Session intent, subject to [`SessionPolicy`]'s current limitations.
     pub session: SessionPolicy,
     /// Preconfigured coding-agent capability/profile.
     pub coding: CapabilityProfileRef,
@@ -170,7 +199,7 @@ pub struct StageDefinition {
     pub reviewer: CapabilityProfileRef,
     /// Shared control-plane approval requirement.
     pub approval: ApprovalPolicy,
-    /// Named context policy reference retained in provenance.
+    /// Descriptive context policy reference retained in stage data; not a policy lookup.
     pub context_policy_ref: String,
     /// Optional capability output declarations.
     pub outputs: Vec<DeclaredOutput>,
@@ -234,7 +263,13 @@ pub struct RepositoryArtifactPolicy {
     pub require_verification_evidence: bool,
 }
 
-/// Operator-facing persistent repository workspace profile reference and policy.
+/// Repository policy passed as input to configured coding and verification processes.
+///
+/// The import validates relative paths, operation declarations, and evidence requirements.
+/// It does not inspect a working tree or enforce these fields as OS access controls.
+/// Configured capabilities must interpret the declarations under their existing process
+/// profiles and authority. `IsolatedWorktrees`, for example, declares the desired strategy
+/// and requires `VersionControl`; it does not itself create a worktree.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepositoryWorkspaceProfile {
@@ -270,7 +305,8 @@ pub struct PromptSequenceBudget {
     pub max_review_loops: u16,
 }
 
-/// Fully decoded bounded sequence body.
+/// Ordered stages and repository declarations in an import.
+/// Read through [`PromptSequenceDocument`] to check the complete sequence before compiling it.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PromptSequence {
@@ -284,13 +320,18 @@ pub struct PromptSequence {
     pub repository: RepositoryWorkspaceProfile,
     /// Ordered implementation stages.
     pub stages: Vec<StageDefinition>,
-    /// Sequence-wide controller/revision/evidence limits.
+    /// Limit on the generation supplied to the remediation proposal builder.
     pub budget: PromptSequenceBudget,
     /// Bounded namespaced data-only extensions.
     pub extensions: BTreeMap<String, Value>,
 }
 
-/// Versioned portable prompt-sequence envelope.
+/// JSON or Markdown import that can be compiled into a blueprint revision.
+///
+/// Use [`Self::from_bytes`] or [`Self::from_json`] to validate external input. Because the
+/// fields are public, a struct literal, mutation, or direct Serde decoding can bypass
+/// sequence-level checks. Re-read canonical bytes through `from_json` after assembling or
+/// changing a document in Rust and before passing it to [`crate::compile`].
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PromptSequenceDocument {
@@ -301,7 +342,13 @@ pub struct PromptSequenceDocument {
 }
 
 impl PromptSequenceDocument {
-    /// Reads JSON or the bounded Markdown envelope, then validates all private invariants.
+    /// Reads JSON or a Markdown header plus named prompt sections.
+    ///
+    /// A first non-whitespace `{` selects JSON; otherwise the first nonempty line must
+    /// open a `milkdrift-sequence` fence containing JSON stages without `prompt` fields.
+    /// Each stage needs one `## Prompt: STAGE` section. Markdown normalizes line endings
+    /// and retains one trailing newline per prompt; missing, duplicate, extra, and empty
+    /// sections fail. Both formats apply the import byte and sequence validation bounds.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PromptSequenceError> {
         if bytes.len() > MAX_PROMPT_SEQUENCE_DOCUMENT_BYTES {
             return Err(PromptSequenceError::Bounds {
@@ -321,6 +368,12 @@ impl PromptSequenceDocument {
     }
 
     /// Reads duplicate-safe bounded JSON and validates semantic constraints.
+    ///
+    /// Only schema v2 is accepted. Stage IDs must be unique, profiles must satisfy
+    /// [`CapabilityProfileRef`]'s process restrictions, repository declarations must
+    /// require starting-state/diff/verification evidence, and each stage must declare a
+    /// `diff` output. Invalid identities, paths, counts, and inline prompt bounds fail
+    /// before compilation. Capability availability and artifact bytes are checked later.
     pub fn from_json(bytes: &[u8]) -> Result<Self, PromptSequenceError> {
         if bytes.len() > MAX_PROMPT_SEQUENCE_DOCUMENT_BYTES {
             return Err(PromptSequenceError::Bounds {
@@ -356,7 +409,8 @@ impl PromptSequenceDocument {
         milkdrift_contracts::preflight_json_structure(bytes, DOCUMENT_LIMITS).map_err(map_bound)
     }
 
-    /// Recursively key-sorted canonical JSON used for import provenance.
+    /// Encodes key-sorted JSON used for import provenance, subject to document bounds.
+    /// This does not rerun semantic validation of public fields; see the type's construction path.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, PromptSequenceError> {
         let bytes = milkdrift_contracts::canonical_json_bytes(self, DOCUMENT_LIMITS)
             .map_err(|error| PromptSequenceError::Json(format!("{error:?}")))?;
@@ -369,7 +423,7 @@ impl PromptSequenceDocument {
         Ok(bytes)
     }
 
-    /// Exact validated sequence body.
+    /// Sequence body; the production readers establish its validity.
     #[must_use]
     pub const fn sequence(&self) -> &PromptSequence {
         &self.sequence

@@ -10,15 +10,7 @@ use milkdrift_workspace::{
 
 use crate::{ModelContractError, document::encode};
 
-/// Version of the saved selection inside [`ContextManifestDocument`](crate::ContextManifestDocument).
-///
-/// Version 2 records the inputs selected for an attempt, their content digests and sizes,
-/// and the known execution/capability identities that produced them. Materialization uses
-/// those byte facts to detect changed or corrupt content; producer facts let a reader
-/// trace the evidence back to its source. `ContextManifest` deserialization accepts only
-/// this version and verifies its digest. Version 1 is refused because it lacks those
-/// materialization/provenance facts; unknown versions are also refused, not guessed or
-/// migrated. The enclosing model-document version is independent; see [`ContextManifest`].
+/// Version of the saved selection body, independent of the enclosing model document.
 const CONTEXT_MANIFEST_SCHEMA_VERSION_V2: u32 = 2;
 const MAX_ENTRIES: usize = 4_096;
 const MAX_OMISSIONS: usize = 4_096;
@@ -30,7 +22,8 @@ const MAX_EVIDENCE: usize = 256;
 pub struct ContextManifestDigest(String);
 
 impl ContextManifestDigest {
-    /// Validates a domain-separated digest string.
+    /// Checks the `b3_` plus 64 lowercase hexadecimal spelling of a manifest digest.
+    /// The [`ContextManifest`] reader separately recomputes it from the saved selection.
     pub fn new(value: impl Into<String>) -> Result<Self, ModelContractError> {
         let value = value.into();
         if !milkdrift_contracts::is_canonical_blake3_digest(&value) {
@@ -49,7 +42,12 @@ impl ContextManifestDigest {
     }
 }
 
-/// Exact immutable reference persisted and bound to an invocation.
+/// Connects an invocation to the saved selection and the artifact that contains it.
+///
+/// `digest` identifies the canonical manifest body under its digest domain. The artifact
+/// reference has a separate content digest for the encoded document bytes. Consumers
+/// must load the document and verify these facts against the exact invocation attempt;
+/// this public record does not itself perform that comparison.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextManifestReference {
@@ -211,6 +209,7 @@ pub enum ContextEvidenceReference {
 }
 
 /// Authority facts recorded without embedding grants, tokens, or secret values.
+/// They preserve the selector's decision for inspection; constructing them cannot grant access.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorityFact {
@@ -318,7 +317,14 @@ pub enum ContextOmissionReason {
     SelectionStopped,
 }
 
-/// One exact selected item. It contains references and small facts, never secret values.
+/// Identifies selected evidence and the bytes expected when it is materialized.
+///
+/// The source says where to retrieve it; revision, execution, attempt, and producer facts
+/// distinguish repeated work under the same node name. Unknown producer details remain
+/// absent. Selected byte counts and the content digest bind what the adapter should
+/// receive, while authority records why selection was allowed. Runtime constructs these
+/// entries after resolving the sources; callers inspecting a saved manifest read them
+/// through [`ContextManifest::entries`].
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextManifestEntry {
@@ -346,7 +352,13 @@ pub struct ContextManifestEntry {
 }
 
 impl ContextManifestEntry {
-    /// Constructs a validated selected entry.
+    /// Checks consistency among source, materialization, accounting, and authority facts.
+    ///
+    /// Ordinals start at one. Artifact sources must agree with the supplied digest and
+    /// artifact byte count; attempt provenance needs an execution, and required authority
+    /// must be marked authorized. An empty artifact still sets `selected_artifact = true`
+    /// so it counts against the artifact limit. This checks supplied facts, not stored
+    /// source existence or the validity of an authority decision.
     #[allow(clippy::too_many_arguments)] // An entry validates exact source provenance against selected content, byte accounting, authority, and inclusion reason.
     pub fn new(
         ordinal: u32,
@@ -605,11 +617,19 @@ milkdrift_contracts::deserialize_via!(ContextManifestEntry, ContextManifestEntry
     )
 });
 
-/// One non-selected candidate summary, kept bounded and deterministic.
+/// Explains why a candidate did not enter the frozen selection.
+///
+/// `AuthorityDenied` and `BranchIsolated` reasons carry a redacted source and sizes.
+/// A missing source or zero byte count therefore need not mean empty content.
+///
+/// Current limitation: redaction depends on the chosen reason. Selection stopping or
+/// category exclusion can take precedence over an access/isolation reason and retain
+/// candidate reference metadata. Do not treat every recorded omission source as proof
+/// of permission to disclose it. This is an implementation gap, not the intended rule.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextOmission {
-    /// Exact source when it could be resolved.
+    /// Recorded source, when retained; see the type's redaction limitation.
     pub source: Option<ContextSource>,
     /// Semantic category.
     pub kind: ContextSemanticKind,
@@ -623,7 +643,7 @@ pub struct ContextOmission {
     pub omitted_artifact_bytes: u64,
 }
 
-/// Exact totals checked incrementally by the builder.
+/// Totals derived from entries and checked by [`ContextManifest::new`].
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextTotals {
@@ -641,28 +661,23 @@ pub struct ContextTotals {
 
 /// Records which context was selected for one task attempt and what was omitted.
 ///
-/// The runtime applies a blueprint [`TaskContextPolicy`](milkdrift_blueprint::TaskContextPolicy)
-/// and constructs this record before dispatching a model/process task. Each
-/// [`ContextManifestEntry`] identifies the source, content digest and byte counts,
-/// semantic roles, governing revision, and known producer execution, attempt, actor,
-/// capability generation, profile, or peer. These identities distinguish evidence from
-/// different attempts even when the task name is the same. Optional producer fields
-/// remain absent when the source did not record them.
+/// Runtime turns a blueprint [`TaskContextPolicy`](milkdrift_blueprint::TaskContextPolicy)
+/// into this record before model/process dispatch. Inspect entries for selected evidence,
+/// omissions for losses, and the policy digest to identify the request that governed them.
+/// The consuming attempt and the producers of its evidence have separate identities.
 ///
-/// The manifest also carries the consuming run/revision/node/execution/attempt, policy
-/// version and digest, omission reasons, totals, and applied budget. It contains
-/// references and bounded metadata rather than copying every source's content. The
-/// runtime saves its canonical document as a restricted artifact. Materialization loads
-/// selected non-direct sources and checks their digest, size, and media facts before
-/// supplying them to the adapter. A digest detects bytes that contradict the saved
-/// record; it does not grant read authority or establish that the evidence is trustworthy.
+/// Runtime saves the manifest as a restricted artifact before dispatch; the host and
+/// adapter check selected content against its byte facts. A retry uses
+/// [`Self::rebind_attempt`] to preserve the selection without gathering newer history.
+/// This record describes selection, not proof that the adapter completed or that the
+/// evidence's claims are true.
 ///
 /// # Reading a saved manifest
 ///
 /// Use [`ContextManifestDocument::from_json`](crate::ContextManifestDocument::from_json)
 /// and then `body()`. There are two independent `schema_version` fields: the outer model
 /// document envelope is version 1; its `manifest` body is version 2. The body reader
-/// rejects version 1 and every unknown version, validates entries/order/totals, and
+/// rejects version 1 and every unknown version, validates entries/ordinals/totals, and
 /// recomputes the manifest digest. It never upgrades missing provenance or repairs a
 /// contradictory digest. Invalid body versions surface as decoding errors; unsupported
 /// outer document versions return [`ModelContractError::UnsupportedVersion`].
@@ -701,7 +716,12 @@ struct DigestInput<'a> {
 }
 
 impl ContextManifest {
-    /// Validates exact totals/order and computes a deterministic manifest digest.
+    /// Checks contiguous entry ordinals and aggregate totals, then computes the digest.
+    ///
+    /// `policy_version` must be nonzero. Entries and omissions are each limited to 4,096;
+    /// totals must exactly match entries and fit the aggregate budget. The selector owns
+    /// causal ordering, per-item/discovery checks, and the policy's manifest-byte ceiling.
+    /// This constructor does not rerun those checks or prove that sources were accessible.
     #[allow(clippy::too_many_arguments)] // The manifest binds one attempt and frozen policy to entries, omissions, and budget-checked aggregate totals.
     pub fn new(
         run: RunId,
@@ -851,6 +871,8 @@ impl ContextManifest {
     }
 
     /// Rebinds the exact frozen selection to a deliberate new attempt without consulting history.
+    /// Entries, omissions, totals, and policy remain unchanged; the new attempt identity
+    /// produces a new digest. Runtime persists the resulting document for the retry.
     pub fn rebind_attempt(&self, attempt: AttemptId) -> Result<Self, ModelContractError> {
         Self::new(
             self.run.clone(),

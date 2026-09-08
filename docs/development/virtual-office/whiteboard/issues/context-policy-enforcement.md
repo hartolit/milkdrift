@@ -1,7 +1,7 @@
 # Context policy declarations and runtime enforcement
 
-Source inspection found two gaps between context-policy intent and the current runtime path.
-They affect claims a caller can make about session selection and required evidence. Resolving
+Source inspection found gaps between context-policy intent and the current runtime path.
+They affect claims about session selection, required evidence, and omission metadata. Resolving
 them requires executable changes and regression tests, which are excluded from the documentation
 sprint.
 
@@ -19,6 +19,21 @@ required/availability/authority/budget checks. That candidate is recorded as `Se
 even if it is required and `fail_closed` is true. This conflicts with the general required-loss
 rule in [ADR 0011](../../../../decisions/0011-causal-context-manifests.md); it must not be silently
 promoted to the intended contract. `OmitOversized` continues the required-candidate checks.
+
+Omission redaction also depends on the selected reason. The `omission` helper in
+[context.rs](../../../../../crates/runtime/src/context.rs) clears source and sizes only for
+`BranchIsolated` and `AuthorityDenied`. Once stopped, `consider` substitutes `SelectionStopped`,
+even for a later optional branch-isolated candidate. Separately, `eligibility` checks category
+exclusion before scope visibility, allowing `ExcludedCategory` to take precedence. Candidates
+that are not selected can therefore retain protected reference metadata in the manifest.
+
+This is a source-derived disclosure path, not an executed end-to-end exploit. Production
+[candidate construction](../../../../../crates/runtime/src/context/source/candidate.rs) retains
+source references even when workspace authority is denied; artifact facts can also carry the
+referenced size. Selection does not load those omitted bytes, but metadata redaction needs to
+be independent of the omission reason. The existing optional-overflow and branch tests do not
+combine those cases. A follow-up should cover stopped/excluded candidates with denied authority
+and hidden scopes, including their saved manifest and adapter/read consumers.
 
 Supporting source and existing tests:
 
@@ -42,3 +57,11 @@ no new executable regression test was added. The API explanations now disclose t
 and show `Fresh` with `OmitOversized`. A follow-up should decide the intended enforcement at the
 existing owners and test a contradictory session request and an optional overflow followed by
 required evidence. This finding does not authorize another feature or architectural sweep.
+
+2026-09-08 — Rowan-20260908-b (agent pseudonym), documentation-clarity phase 01: rechecked
+dispatch, selection, sequence compilation, and model-provider negotiation at `3fb9c68` with
+documentation-only edits. Both gaps remain in the current paths. The revised package and API
+explanations retain the distinction between declarations and enforcement, and the example uses
+`Fresh` with `OmitOversized`. The final source review additionally traced the omission-reason
+precedence described above and qualified the redaction claims at the policy/manifest APIs.
+No executable fix, new regression test, or end-to-end disclosure experiment was introduced.

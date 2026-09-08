@@ -84,6 +84,8 @@ impl TaskConfig {
     }
 
     /// Declares the canonical semantic roles of this task's published outputs.
+    /// Later tasks can request these roles as context. They tag every output occurrence;
+    /// runtime does not infer roles from a port name or from the output's prose.
     pub fn with_output_context_roles(
         mut self,
         roles: BTreeSet<ContextSemanticRole>,
@@ -126,7 +128,12 @@ impl TaskConfig {
     }
 }
 
-/// Complete semantic behavior of one definition-time node.
+/// What a node should do when the runtime reaches it.
+///
+/// Tasks invoke external capabilities. Branch/fork/join/reducer nodes describe routing
+/// and structured work in the same graph; repeat calls a pinned body without creating
+/// a graph cycle. Each variant needs its matching ports on [`Node`], checked when the
+/// complete revision is validated.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum NodeKind {
@@ -201,7 +208,13 @@ impl NodeKind {
     }
 }
 
-/// Definition-time node with declared control/data ports and immutable configuration.
+/// A named operation and its declared input/output ports in a workflow definition.
+///
+/// Start with [`Self::new`], add ports, then add the node and its edges to a mutation
+/// batch. These builders check local shape: port direction, duplicate names within each
+/// port collection, and a total of at most 256 ports. Revision validation checks the
+/// relationships to other nodes. A node may have many runtime executions; their state
+/// belongs to the run history rather than this definition.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Node {
     id: NodeId,

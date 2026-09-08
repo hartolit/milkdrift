@@ -108,7 +108,11 @@ pub enum ContextProvenanceClass {
     External,
 }
 
-/// Declarative artifact metadata filter. Empty sets are wildcards.
+/// Narrows artifact candidates by their recorded metadata.
+///
+/// Empty sets accept every value in that dimension. A filter does not include an
+/// artifact on its own: another [`TaskContextPolicy`] selector must request it, and
+/// authority and branch visibility still apply.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextArtifactSelector {
@@ -292,7 +296,10 @@ milkdrift_contracts::deserialize_via!(ContextBudget, ContextBudgetWire, |wire| {
 });
 
 impl ContextBudget {
-    /// Creates nonzero, defensively bounded budgets.
+    /// Sets selected item/byte limits, retaining the default discovery limits.
+    ///
+    /// Items must be in 1..=65,536; byte allowances and a supplied unit allowance must
+    /// be nonzero. The artifact-count limit is reduced to fit `max_items` if necessary.
     pub fn new(
         max_items: u32,
         max_bytes: u64,
@@ -321,6 +328,10 @@ impl ContextBudget {
     }
 
     /// Replaces discovery, per-item, artifact-count, event, and manifest bounds.
+    ///
+    /// Candidate records must be in 1..=65,536, artifacts in 1..=`max_items`, and manifest
+    /// bytes in 1..=2,097,152. Per-item bytes must be nonzero. Event summaries may be zero
+    /// but cannot exceed candidate records. Invalid combinations return [`ModelError`].
     pub fn with_discovery_limits(
         mut self,
         max_candidate_records: u32,
@@ -422,7 +433,7 @@ impl Default for ContextBudget {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextOrdering {
-    /// Causal depth, semantic category, source node, execution, then source identity.
+    /// Causal depth, semantic category, source node, then serialized exact source reference.
     #[default]
     CausalKindSource,
 }
@@ -435,6 +446,7 @@ pub enum ContextTruncation {
     #[default]
     OmitOversized,
     /// Stop selection at the first candidate that crosses a budget.
+    /// See [`TaskContextPolicy::fail_closed`] for the current required-candidate gap.
     StopAtFirstOverflow,
 }
 
@@ -459,14 +471,12 @@ pub enum ContextSessionPolicy {
 
 /// Chooses which inputs and earlier results the runtime may consider for a task.
 ///
-/// Attach this policy through [`crate::TaskConfig::new`]. When the runtime prepares a
-/// task resolved to a model or process capability, it discovers candidates from bounded
-/// durable history and workspace metadata, applies selection and access checks, and
-/// saves the result as a `milkdrift_model::ContextManifest` before dispatch. The manifest
-/// records selected sources, omissions and their reasons, byte totals, and this policy's
-/// digest. A retry reuses that selection and those omissions under its new attempt ID;
-/// it does not gather newer history. Other capability categories currently skip this
-/// context-building path.
+/// A review task might need its direct request plus the implementation and verification
+/// results that led to it. Attach this request through [`crate::TaskConfig::new`]. For
+/// model/process tasks, runtime selects from available inputs and bounded history under
+/// access and budget checks, then saves a `milkdrift_model::ContextManifest` before
+/// dispatch. The policy asks; the manifest records what was actually selected or omitted.
+/// Retries keep that selection instead of gathering newer history.
 ///
 /// # Defaults and selection
 ///
@@ -483,22 +493,18 @@ pub enum ContextSessionPolicy {
 /// artifacts; it does not itself include them. A role selects recorded semantic tags,
 /// such as [`ContextSemanticRole::Verification`], rather than words in a task's output.
 ///
-/// Requesting a source never grants access to it. Branch-private evidence stays private
-/// unless an explicit data/join/import boundary exposes that result; naming the node or
-/// execution cannot expose a sibling's workspace. Authority and isolation omissions
-/// redact the protected source identity and byte counts. The policy governs context
+/// Requesting a source never grants access to it. Branch-private content needs an
+/// explicit data/join/import boundary before selection; naming the node or execution
+/// cannot select a sibling's private workspace content. Omissions labelled
+/// `AuthorityDenied` or `BranchIsolated` redact source identity and byte counts, but the
+/// current selector can choose another reason first and retain candidate metadata.
+/// This omission-redaction gap does not authorize disclosure. The policy governs context
 /// selection, not task input bindings: omitting a direct input from the manifest does
 /// not remove that input from the invocation.
 ///
-/// # Budgets and failures
-///
-/// The runtime orders candidates by causal distance, semantic kind, source node, and
-/// serialized source reference, then applies [`ContextBudget`]. With `OmitOversized`,
-/// an optional item that does not fit is omitted and later items are still considered.
-/// [`Self::fail_closed`] describes required-source failures and the current limitation
-/// of `StopAtFirstOverflow`. Discovery errors or an oversized manifest can prevent
-/// dispatch even when selected content fits. Session intent has separate limitations;
-/// see [`ContextSessionPolicy`].
+/// [`ContextBudget`] bounds discovery and selection. [`Self::fail_closed`] explains what
+/// happens when required evidence is lost, including the current `StopAtFirstOverflow`
+/// gap. Session declarations have a separate limitation; see [`ContextSessionPolicy`].
 ///
 /// # Example
 ///
@@ -651,11 +657,8 @@ impl TaskContextPolicy {
     ///
     /// Returns [`ModelError`] for `ancestor_depth = Some(0)`, more than 256 entries in a
     /// selector set, overlapping included/excluded categories, or invalid budgets.
-    /// Budget validation rejects zero required bounds, more than 65,536 items or candidate
-    /// records, an artifact count above the item limit, an event-summary count above the
-    /// candidate limit, or a manifest limit above 2,097,152 bytes. `Some(0)` is not a valid
-    /// model-input-unit limit. Node existence is checked when the graph is validated;
-    /// source availability and authority are checked during runtime preparation.
+    /// [`ContextBudget`] owns the numeric constraints. Node existence is checked when
+    /// the graph is validated; source availability and authority during preparation.
     #[allow(clippy::too_many_arguments)] // Selection, ordering, omission, and budget policies are validated together as one immutable selector.
     pub fn new(
         include_direct_inputs: bool,
@@ -829,8 +832,10 @@ impl TaskContextPolicy {
     ///
     /// Current limitation: after [`ContextTruncation::StopAtFirstOverflow`] stops
     /// selection, later eligible candidates are omitted without checking whether they
-    /// are required. Use [`ContextTruncation::OmitOversized`] when relying on required-item
-    /// checks; do not treat the stop mode as an all-required-sources guarantee.
+    /// are required. Its `SelectionStopped` reason can also replace an access/isolation
+    /// reason that would have redacted candidate metadata. Use
+    /// [`ContextTruncation::OmitOversized`] when relying on required-item checks; the
+    /// type documentation describes the separate omission-redaction limitation.
     #[must_use]
     pub const fn fail_closed(&self) -> bool {
         self.fail_closed

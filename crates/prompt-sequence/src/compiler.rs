@@ -1,3 +1,8 @@
+//! Lower a validated sequence into the blueprint operations used by every workflow author.
+//!
+//! Stage construction is shared by initial imports and prospective remediation, so
+//! verification contracts and their artifact-presence gates keep the same meaning.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use milkdrift_blueprint::{
@@ -31,7 +36,7 @@ const SEQUENCE_SUCCEEDED: &str = "sequence-succeeded";
 pub struct StageBlueprintSummary {
     /// Imported stage identity.
     pub stage_id: String,
-    /// Fresh coding task.
+    /// Coding task for the imported prompt.
     pub coding_node: String,
     /// Distinct verification task.
     pub verification_node: String,
@@ -92,6 +97,9 @@ impl CompiledPromptSequence {
 ///
 /// The import layer owns this association, including remediation generations. Consumers must not
 /// infer it from generated node-name prefixes.
+/// Missing or unsupported import provenance, an absent stage, or references to absent
+/// declared nodes are refused. Results are deterministic node IDs for this revision,
+/// not evidence that any of those nodes have executed.
 pub fn stage_node_ids(
     revision_document: &[u8],
     stage_id: &str,
@@ -175,6 +183,15 @@ fn declared_stage_nodes(stage: &StageBlueprintSummary) -> BTreeSet<String> {
 }
 
 /// Compiles one bounded sequence into ordinary task, branch, signal-wait, and terminal nodes.
+///
+/// Pass an unchanged document from [`PromptSequenceDocument::from_bytes`] or `from_json`.
+/// This builds and validates the blueprint but does not repeat all import-reader checks.
+/// The revision retains import/profile digests and stage association for later inspection
+/// and remediation. No capability is resolved and no revision is persisted here.
+///
+/// Artifact prompts need an exact size and media type in addition to identity and digest.
+/// Port/identifier conflicts, blueprint bounds, and invalid topology return a compilation
+/// error. Import bounds are separate from the limits of the resulting graph and batch.
 pub fn compile(
     document: &PromptSequenceDocument,
     author: AuthorRef,
@@ -232,6 +249,8 @@ pub fn compile(
                     &ids.hold,
                     CONTROL_IN,
                 )?);
+                // Signalling the original hold cannot bypass failed verification. An
+                // approved remediation revision must first replace this future route.
                 operations.push(control_edge(
                     &format!("{}-hold-failure", stage.id),
                     &ids.hold,

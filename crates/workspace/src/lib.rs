@@ -1,16 +1,18 @@
-//! Immutable contracts for Milkdrift's durable, scoped workspace.
+//! Pass exact values between tasks while keeping branch-owned changes separate.
 //!
-//! A workspace is a set of immutable value versions. Every value reference names an
-//! exact run, scope, key, and version; there is no shared mutable map hidden behind
-//! these types. [`ScopeLineage`] makes the visibility rule explicit: a scope can read
-//! exact values from its ancestors, while new versions belong only to its leaf scope.
-//! Sibling branches therefore cannot observe or overwrite one another's local values.
+//! A workspace is logical state, independent of a process's files. Each
+//! [`WorkspaceValueReference`] names a run, scope, key, and immutable version.
+//! [`ScopeLineage`] checks which ancestor values a branch can read. A branch starts
+//! its own stream to change an inherited value, leaving the parent version available
+//! to other branches. Runtime and persistence enforce these relationships on use.
 //!
-//! Large values are represented by [`ArtifactReference`] rather than embedded bytes.
-//! [`ArtifactMetadata`] records a BLAKE3 digest, exact size, media type, sensitivity,
-//! retention, and causal provenance. This crate defines those portable facts and
-//! budget calculations only. It deliberately owns no storage, filesystem paths,
-//! scheduler, clock, asynchronous runtime, or artifact I/O.
+//! [`WorkspaceValue`] holds small JSON or an [`ArtifactReference`] to separately stored
+//! content. [`ArtifactMetadata`] adds sensitivity, retention, and provenance; persistence
+//! owns publication and reads. [`WorkspaceBudget`] computes usage for the owner to commit
+//! with each accepted change. Constructing these values performs no storage or file I/O.
+//!
+//! Here a branch inherits an input and advances its own stream. The root still names
+//! the original input, and a sibling lineage cannot read the branch's new version.
 //!
 //! ```
 //! use milkdrift_capability::BoundedJson;
@@ -26,13 +28,28 @@
 //!     &root,
 //!     BranchId::new("branch-a")?,
 //! )?;
-//! let lineage = ScopeLineage::new(vec![root, branch])?;
-//! let value = WorkspaceValueEntry::initial(
-//!     lineage.leaf().reference().clone(),
-//!     ValueKey::new("answer")?,
-//!     WorkspaceValue::Json(BoundedJson::new(json!(42))?),
+//! let sibling = WorkspaceScope::branch(
+//!     ScopeId::new("scope-b")?, &root, BranchId::new("branch-b")?,
+//! )?;
+//! let lineage = ScopeLineage::new(vec![root.clone(), branch])?;
+//! let sibling_lineage = ScopeLineage::new(vec![root.clone(), sibling])?;
+//! let input = WorkspaceValueEntry::initial(
+//!     root.reference().clone(), ValueKey::new("request")?,
+//!     WorkspaceValue::Json(BoundedJson::new(json!("review this change"))?),
 //! );
-//! assert!(lineage.owns_value_stream(value.reference()));
+//! assert!(lineage.can_read(input.reference()));
+//! let local = WorkspaceValueEntry::inherited(
+//!     lineage.leaf().reference().clone(), ValueKey::new("request")?,
+//!     input.reference().clone(), input.value().clone(),
+//! )?;
+//! let revised = WorkspaceValueEntry::successor(
+//!     local.reference().clone(),
+//!     WorkspaceValue::Json(BoundedJson::new(json!("also check the failure path"))?),
+//! )?;
+//! assert_eq!(revised.reference().version().get(), 2);
+//! assert!(lineage.owns_value_stream(revised.reference()));
+//! assert!(!sibling_lineage.can_read(revised.reference()));
+//! assert!(sibling_lineage.can_read(input.reference()));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 

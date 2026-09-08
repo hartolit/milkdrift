@@ -185,6 +185,24 @@ impl Serialize for MediaType {
 milkdrift_contracts::deserialize_via!(MediaType, String, |value| Self::new(value));
 
 /// Immutable reference to separately stored content-addressed artifact bytes.
+///
+/// The logical ID identifies a metadata record; digest and size identify the expected
+/// bytes. Constructing a reference does not publish content or establish read authority.
+/// A reader uses [`Self::verifies`] after obtaining complete bytes through the artifact
+/// owner. Media type is a declared interpretation, not something this check detects.
+///
+/// ```
+/// use milkdrift_workspace::{ArtifactId, ArtifactReference, ContentDigest, MediaType};
+///
+/// let bytes = b"review complete\n";
+/// let reference = ArtifactReference::new(
+///     ArtifactId::new("review/report")?, ContentDigest::for_bytes(bytes),
+///     MediaType::new("text/plain")?, u64::try_from(bytes.len())?,
+/// );
+/// assert!(reference.verifies(bytes));
+/// assert!(!reference.verifies(b"review pending\n"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactReference {
@@ -271,6 +289,10 @@ milkdrift_contracts::deserialize_via!(RetentionDeadline, u64, |value| Self::from
 ));
 
 /// Sensitivity classification controlling default artifact export.
+///
+/// Persistence's read policy uses this classification; external daemon reads still
+/// require their authenticated, scoped command path. `Restricted` is the default when
+/// metadata omits a classification.
 #[derive(
     Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize,
 )]
@@ -350,7 +372,12 @@ impl CausalReference {
     }
 }
 
-/// Bounded immutable producer and causal-input facts for an artifact.
+/// Records how an artifact was produced and which exact inputs contributed to it.
+///
+/// For a task output, use the invocation as producer and its selected input references
+/// as causes. This keeps later inspection tied to actual versions rather than a moving
+/// task name. Construction checks bounded shape; the publishing owner establishes the
+/// referenced facts and supplies this provenance with [`ArtifactMetadata`].
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactProvenance {
@@ -373,6 +400,7 @@ milkdrift_contracts::deserialize_via!(
 
 impl ArtifactProvenance {
     /// Constructs bounded provenance and rejects duplicate causal references.
+    /// Causes preserve caller order and may contain at most 128 distinct references.
     pub fn new(
         producer: CausalReference,
         causes: Vec<CausalReference>,
@@ -404,7 +432,12 @@ impl ArtifactProvenance {
     }
 }
 
-/// Immutable metadata required to publish and later authorize an artifact.
+/// Publication facts used to verify content, govern reads, and trace its origin.
+///
+/// Combine an exact reference with sensitivity, retention, and provenance, then give
+/// it to the persistence artifact port with the bytes. Metadata alone does not prove
+/// the content was committed. Direct self-reference is refused here; broader source
+/// existence and publication checks belong to that owner.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactMetadata {
