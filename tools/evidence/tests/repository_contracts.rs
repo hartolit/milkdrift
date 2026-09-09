@@ -26,32 +26,22 @@ struct CohesionException {
 const PRODUCTION_COHESION_EXCEPTIONS: &[CohesionException] = &[
     CohesionException {
         path: "adapters/local-process/src/config.rs",
-        ceiling: 1_145,
+        ceiling: 1_006,
         rationale: "profile decoding checks executable identity, substitution/input references, filesystem access, stream secrecy, and aggregate output bounds before registration",
     },
     CohesionException {
         path: "adapters/model-provider/src/adapter.rs",
-        ceiling: 1_191,
+        ceiling: 1_155,
         rationale: "exact endpoint entry binds selected context materialization to bounded HTTP observations and refuses successful publication after incomplete provider responses",
     },
     CohesionException {
         path: "crates/blueprint/src/validation.rs",
-        ceiling: 1_158,
+        ceiling: 1_090,
         rationale: "graph validation combines bounded diagnostics with acyclic reachability, schema-compatible edges, and exact fork/join and subworkflow interface ownership",
     },
     CohesionException {
-        path: "crates/capability/src/descriptor.rs",
-        ceiling: 1_166,
-        rationale: "descriptor validation binds operation schemas, side-effect/idempotency compatibility, admission limits, and provenance before canonical generation identity is computed",
-    },
-    CohesionException {
-        path: "crates/capability/src/invocation.rs",
-        ceiling: 1_224,
-        rationale: "invocation wire constructors reject contradictory request references, terminal status/failure/usage facts, and cancellation acknowledgement identity boundaries",
-    },
-    CohesionException {
         path: "crates/control/src/service.rs",
-        ceiling: 1_346,
+        ceiling: 1_290,
         rationale: "proposal submission and approval preserve candidate validation, actor authority, controller assessment, revision storage, and prospective runtime acceptance ordering",
     },
 ];
@@ -595,11 +585,14 @@ fn rust_modules_use_named_file_children_and_respect_the_size_backstop() -> TestR
             "module ownership must use file.rs with file/ children: {}",
             source.display()
         );
-        let lines = read(&source)?.lines().count();
+        let size = source_size::source_size(&read(&source)?)
+            .map_err(|error| format!("{}: {error}", source.display()))?;
         assert!(
-            lines < MAXIMUM_SOURCE_LINES,
-            "{} has {lines} lines; perform the required cohesion review before crossing the {MAXIMUM_SOURCE_LINES}-line backstop",
-            source.display()
+            size.implementation < MAXIMUM_SOURCE_LINES,
+            "{} has {} implementation lines ({} physical); perform the required cohesion review before crossing the {MAXIMUM_SOURCE_LINES}-line backstop",
+            source.display(),
+            size.implementation,
+            size.physical
         );
     }
     Ok(())
@@ -625,13 +618,25 @@ fn production_sources_over_the_review_threshold_have_exact_bounded_exceptions() 
                 })?
                 .to_string_lossy()
                 .replace('\\', "/");
+            let size = source_size::source_size(&read(path)?)
+                .map_err(|error| format!("{relative}: {error}"))?;
             Ok(SourceLineCount {
                 production: is_production_source(&relative),
                 path: relative,
-                lines: read(path)?.lines().count(),
+                lines: size.implementation,
+                physical_lines: size.physical,
             })
         })
         .collect::<TestResult<Vec<_>>>()?;
+    for source in sources
+        .iter()
+        .filter(|source| source.production && source.lines > COHESION_REVIEW_LINES)
+    {
+        println!(
+            "cohesion review: {} has {} implementation lines ({} physical)",
+            source.path, source.lines, source.physical_lines
+        );
+    }
     let errors = cohesion_policy_errors(PRODUCTION_COHESION_EXCEPTIONS, &sources);
     assert!(
         errors.is_empty(),
@@ -652,6 +657,7 @@ fn cohesion_policy_rejects_missing_stale_duplicate_over_broad_and_exceeded_excep
         SourceLineCount {
             path: "crates/example/tests/large.rs".to_owned(),
             lines: 1_500,
+            physical_lines: 1_500,
             production: false,
         },
     ];
@@ -760,6 +766,7 @@ fn collect_files(
 struct SourceLineCount {
     path: String,
     lines: usize,
+    physical_lines: usize,
     production: bool,
 }
 
@@ -768,6 +775,7 @@ impl SourceLineCount {
         Self {
             path: path.to_owned(),
             lines,
+            physical_lines: lines,
             production: true,
         }
     }
@@ -842,12 +850,12 @@ fn cohesion_policy_errors(
             None => errors.push(format!("stale exception path: {}", exception.path)),
             Some(source) if !source.production || source.lines <= COHESION_REVIEW_LINES => errors
                 .push(format!(
-                    "stale exception below review threshold: {} has {} lines",
-                    exception.path, source.lines
+                    "stale exception below review threshold: {} has {} implementation lines ({} physical)",
+                    exception.path, source.lines, source.physical_lines
                 )),
             Some(source) if source.lines > exception.ceiling => errors.push(format!(
-                "exceeded exception ceiling: {} has {} lines above {}",
-                exception.path, source.lines, exception.ceiling
+                "exceeded exception ceiling: {} has {} implementation lines ({} physical) above {}",
+                exception.path, source.lines, source.physical_lines, exception.ceiling
             )),
             Some(_) => {}
         }
@@ -858,8 +866,8 @@ fn cohesion_policy_errors(
     {
         if !exception_by_path.contains_key(source.path.as_str()) {
             errors.push(format!(
-                "missing exception: {} has {} production lines",
-                source.path, source.lines
+                "missing exception: {} has {} implementation lines ({} physical)",
+                source.path, source.lines, source.physical_lines
             ));
         }
     }
@@ -868,3 +876,6 @@ fn cohesion_policy_errors(
 
 #[path = "repository_contracts/documentation.rs"]
 mod documentation;
+
+#[path = "repository_contracts/source_size.rs"]
+mod source_size;

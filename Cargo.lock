@@ -1140,6 +1140,7 @@ dependencies = [
  "milkdrift-redb-store",
  "milkdrift-runtime",
  "milkdrift-workspace",
+ "proc-macro2",
  "serde",
  "serde_json",
  "tempfile",

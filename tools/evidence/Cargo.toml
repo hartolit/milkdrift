@@ -42,6 +42,7 @@ url.workspace = true
 
 [dev-dependencies]
 divan = "=0.1.21"
+proc-macro2 = { version = "=1.0.107", features = ["span-locations"] }
 
 [lints]
 workspace = true

@@ -325,7 +325,14 @@ Do not distribute the same boilerplate across several smaller files.
 
 ### 3.3 Review large files
 
-A production file approaching roughly 1,000 lines requires a cohesion review. It may remain large only when it still owns one clear responsibility, proximity improves understanding, and repeated mechanics have already been removed.
+A production file approaching roughly 1,000 implementation lines requires a cohesion review. It may remain large only when it still owns one clear responsibility, proximity improves understanding, and repeated mechanics have already been removed.
+
+The repository checks count lines containing Rust tokens, excluding comments, blank lines, and
+`doc` attributes. Multiline literals still count as implementation. They report physical length
+separately and apply the 1,500-line backstop and reviewed exception ceilings to implementation
+lines. Growing an explanation does not consume that allowance. Review documentation for usefulness
+under section 7; do not delete it, compress its formatting, or relocate it merely to satisfy a
+source-size check. A file can need a readability or cohesion review below either numeric threshold.
 
 A successful module split leaves:
 
@@ -403,7 +410,7 @@ A change is incomplete when the new and old designs both remain valid paths for 
 ### Before editing
 
 1. Read the relevant implementation, tests, configuration, composition roots, and owning documentation.
-2. Identify the responsibility being changed and its intended owner.
+2. Identify the responsibility being changed, its intended owner, and the existing explanation of how callers use it.
 3. Search the whole workspace for equivalent implementations, callers, defaults, and bypasses.
 4. Define the responsibility, expected result, exclusions, checks, and stop condition. Identify likely files to coordinate edits; use the [virtual office](virtual-office/README.md) for sprint assignments.
 5. Choose the simplest complete design and the smallest suitable Rust mechanism.
@@ -416,6 +423,10 @@ A change is incomplete when the new and old designs both remain valid paths for 
 4. Make bypasses private or remove them.
 5. Remove duplicated policy and boilerplate through appropriate abstractions.
 6. Delete the superseded implementation rather than preserving speculative compatibility.
+7. Update the explanation of the affected operation in the same change. Capture the reason for a
+   non-obvious design choice while making it, and follow changed relationships into the relevant
+   API docs, package introduction, or guide. Apply section 7 to the operation as a whole; a new
+   symbol does not automatically need a new walkthrough, and clear existing explanations may remain.
 
 ### Before finishing
 
@@ -423,7 +434,9 @@ A change is incomplete when the new and old designs both remain valid paths for 
 2. Confirm that the new design is used throughout its declared scope.
 3. Confirm that no production-local implementation competes with an adopted adapter.
 4. Run all relevant quality, contract, failure, and architecture checks.
-5. Review the final structure from the perspective of a new contributor.
+5. Review the final structure and explanation from the perspective of a new contributor. Follow
+   the affected operation through the docs before checking it against source; correct missing
+   connections and stale guidance as well as inaccurate descriptions of individual symbols.
 6. Report what became canonical, what was removed, and what evidence proves completion.
 
 Do not finish merely because the requested edit exists. Finish when one clear, complete, and extensible implementation remains.

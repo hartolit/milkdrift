@@ -11,7 +11,7 @@ what belongs here; [the office procedure](../README.md) handles sprint coordinat
 | --- | --- | --- | --- | --- |
 | [Context policy enforcement](issues/context-policy-enforcement.md) | issue | open | Investigate session intent, required evidence after selection stops, and omission-reason precedence bypassing metadata redaction; implement and test corrections at the policy/runtime owners. | 2026-09-08 |
 | [Prompt-sequence import version label](issues/prompt-sequence-version-label.md) | issue | open | Correct the generated revision reason in a focused executable change, reviewing its effect on revision identity and exact-byte evidence. | 2026-09-08 |
-| [Process reporting cleanup](issues/process-reporting-cleanup.md) | issue | open | Ensure child termination and I/O joining on every post-spawn reporting failure in the local-process adapter, with bounded lifecycle regression evidence. | 2026-09-08 |
+| [Process reporting cleanup](issues/process-reporting-cleanup.md) | issue | open | Prepared [execution prompt](../process-reporting-cleanup.md) for child termination and I/O joining on post-spawn reporting failure. No execution is assigned yet. | 2026-09-08 |
 
 This overview alone owns planning state, next actions, assignment links, and last-evaluation dates.
 Topic files hold evidence, current technical assessment, and dated contributions. Keep execution
