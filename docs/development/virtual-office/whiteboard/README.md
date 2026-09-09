@@ -2,7 +2,7 @@
 
 Keep broader implementation issues and improvement discussions here while they need investigation.
 Topics may remain through many sprints. Use the
-[scope and findings policy](../../engineering-rules.md#findings-beyond-the-assignment) to decide
+[scope and findings policy](../../workflow.md#findings-beyond-the-assignment) to decide
 what belongs here; [the office procedure](../README.md) handles sprint coordination and cleanup.
 
 ## Overview

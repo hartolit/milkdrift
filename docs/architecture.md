@@ -9,7 +9,7 @@ This document explains which component owns each part of that operation and the 
 connect them. The terminology and package map below support the detailed lifecycle sections.
 Read [vision](product/vision.md) for intent, [status](product/status.md) for exact current versions
 and qualification, and [the source-learning route](README.md#learning-the-implementation) to trace
-the executable system. Engineering policy belongs in [engineering rules](development/engineering-rules.md).
+the executable system. Development methods belong in the [practices](development/practices/README.md).
 
 ## Terminology
 

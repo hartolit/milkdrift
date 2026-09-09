@@ -3,8 +3,8 @@
 Sprint directories hold temporary plans and handoffs for work that needs several assignments.
 The [whiteboard](whiteboard/README.md) retains broader issues and discussions across sprints.
 
-[Engineering rules](../engineering-rules.md#findings-beyond-the-assignment) govern assignment scope
-and findings. [Workflow](../workflow.md#choose-verification-for-the-change) owns verification.
+[Workflow](../workflow.md) governs assignment scope, findings, completion, and verification.
+[Practices](../practices/README.md) provide the development guidance selected for each assignment.
 [AGENTS.md](../../../AGENTS.md) identifies the owners of lasting product facts and decisions.
 
 ## Current sprints
@@ -26,6 +26,8 @@ current assignments. Each assignment needs an owner, a coherent responsibility, 
 relevant sources, checks, and a stop condition. Likely files help coordinate edits. Use ordinary
 prose or a small table; derive routine details from the user's request instead of requiring a
 completed form. Add phase prompts only where they make repeated assignments easier to execute.
+Reference the applicable practice files directly in each assignment. Choose their combination and
+order for the work; a practice does not require its own phase or a separate agent.
 
 Give an assignment enough scope to finish a useful outcome across its related packages or documents.
 Treat internal iterations as work steps, not separate assignments that each require a fresh setup
@@ -51,8 +53,8 @@ If a session ends before the assignment is complete, record completed coverage a
 so the next session can continue the same work. Link to broader findings on the whiteboard.
 Raw logs and generated inventories belong under ignored
 `target/` or in CI artifacts. Reviews assess the result against its acceptance criteria and the
-applicable engineering rules. If review stalls, state the unresolved question and seek a concrete
-decision or a better-scoped assignment; do not continue an open-ended polishing loop.
+applicable practices and workflow requirements. If review stalls, state the unresolved question
+and seek a concrete decision or a better-scoped assignment; do not continue an open-ended polishing loop.
 
 ## Close and remove a sprint
 

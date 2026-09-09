@@ -7,7 +7,7 @@ freeze. Use [the implementation reading path](docs/README.md#learning-the-implem
 an operator action to its source and independent tests.
 
 Keep each fact with its [architectural owner](docs/architecture.md). Follow the
-[engineering rules](docs/development/engineering-rules.md), including the documentation standard,
+[development practices](docs/development/practices/README.md) relevant to the work,
 and choose checks using the [verification policy](docs/development/workflow.md#choose-verification-for-the-change).
 Executable changes require the full gate; documentation-only changes have their own checks.
 Tests should establish observable invariants, and schema changes need explicit compatibility

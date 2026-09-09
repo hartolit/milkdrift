@@ -12,7 +12,9 @@ const CANONICAL: &[&str] = &[
     "docs/product/status.md",
     "docs/product/roadmap.md",
     "docs/development/workflow.md",
-    "docs/development/engineering-rules.md",
+    "docs/development/practices/README.md",
+    "docs/development/practices/implementation.md",
+    "docs/development/practices/documentation.md",
     "docs/development/verification-evidence.md",
     "docs/reference/public-api-policy.md",
 ];

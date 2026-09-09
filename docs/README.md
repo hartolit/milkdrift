@@ -17,10 +17,10 @@ Use the references when you need an exact command, field, or compatibility rule.
 
 ## Develop and verify
 
-- [Development workflow](development/workflow.md) contains build, test, lint, fixture, and focused
-  evidence commands.
-- [Engineering rules](development/engineering-rules.md) define standing implementation-quality
-  and documentation policy.
+- [Development workflow](development/workflow.md) owns assignment procedure, scope, completion,
+  and build, test, lint, fixture, and focused evidence commands.
+- [Development practices](development/practices/README.md) help select and combine implementation
+  and documentation guidance for an assignment.
 - [Virtual office](development/virtual-office/README.md) holds temporary sprint assignments and
   handoffs, with a [whiteboard](development/virtual-office/whiteboard/README.md) for broader issues
   and discussions that may span sprints. Completed sprint files are removed after useful outcomes

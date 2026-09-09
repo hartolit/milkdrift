@@ -1,11 +1,93 @@
 # Development workflow
 
-This document owns build, test, lint, fixture, and focused verification commands.
+This document owns assignment procedure, scope and findings policy, completion requirements,
+and build, test, lint, fixture, and focused verification commands.
 Use the exact toolchain in [rust-toolchain.toml](../../rust-toolchain.toml).
-[Engineering rules](engineering-rules.md) owns implementation and documentation policy.
+[Development practices](practices/README.md) own implementation and documentation guidance.
 [Virtual office](virtual-office/README.md) explains how to divide long-running work into temporary,
 coherent assignments and remove sprint coordination files after completion. Its
 [whiteboard](virtual-office/whiteboard/README.md) carries broader topics into sprint preparation.
+
+## Carry out an assignment
+
+Read the [practices](practices/README.md) relevant to the assigned work. The procedure below applies
+within that scope; code-specific steps apply to implementation changes, and documentation work
+follows the [explanation procedure](practices/documentation.md#5-work-on-an-explanation).
+Implementation and documentation can inform each other as findings change the design. A final
+reader review can be an internal pass in the same assignment; it does not require another agent
+or a fixed sequence of practices.
+
+### Before editing
+
+1. Read the relevant implementation, tests, configuration, composition roots, and owning documentation.
+2. Identify the responsibility being changed, its intended owner, and the existing explanation of how callers use it.
+3. Search the whole workspace for equivalent implementations, callers, defaults, and bypasses.
+4. Define the responsibility, expected result, exclusions, checks, and stop condition. Identify likely files to coordinate edits; use the [virtual office](virtual-office/README.md) for sprint assignments.
+
+### During the work
+
+Apply the selected practices, including the [implementation steps](practices/implementation.md#5-apply-an-implementation-change)
+when changing code. Revisit the design and explanation when evidence changes; preserve the
+assignment's responsibility and exclusions.
+
+### Before finishing
+
+1. Search again for old types, helpers, literals, factories, readers, call paths, and terminology.
+2. Confirm that the new design is used throughout its declared scope.
+3. Confirm that no production-local implementation competes with an adopted adapter.
+4. Run all relevant quality, contract, failure, and architecture checks.
+5. Once the affected behavior and structure have settled, review the final structure and
+   explanation from the perspective of a new contributor. Follow the affected operation through
+   the docs before checking it against source; correct missing connections and stale guidance as
+   well as inaccurate descriptions of individual symbols. Complete necessary documentation in
+   the same change; capture local reasons during implementation and compose the broader account
+   from the finished design.
+6. Report what became canonical, what was removed, and what evidence proves completion.
+
+## Findings beyond the assignment
+
+Scope follows an assigned responsibility and its acceptance criteria, not a file count. Complete
+necessary corrections, callers, tests, and documentation within that responsibility even when
+the plan did not anticipate them. Update the file list as they are discovered. Coordinate shared
+files with other workers; respect explicit user exclusions and separately assigned ownership.
+A genuine conflict needs a narrow scope decision, not an unfinished result disguised as a new issue.
+
+Use the [whiteboard](virtual-office/whiteboard/README.md) for problems or ideas requiring a broader
+decision, another responsibility, or work excluded by the assignment. Explain the evidence or
+opportunity and why separate attention is useful. Fix ordinary in-scope findings directly.
+Whiteboard contributions are optional; never invent an entry or weaken a deliverable to create one.
+
+An entry is not an established defect, approved design, or automatic dependency. Continue the
+assignment unless a demonstrated problem prevents its correctness or acceptance, and report that
+specific impact. Recording a topic does not lift the product scope freeze. The whiteboard procedure
+owns investigation and carryover; the [office procedure](virtual-office/README.md) owns sprint cleanup.
+
+## Definition of done
+
+A task is not complete because a diff exists or tests pass. It is complete when the intended
+design is applied throughout its scope, the previous design is removed, and the result is
+demonstrably better. Leave code that works and an explanation that lets the next contributor
+understand and use it.
+
+A change is complete only when every applicable row is true.
+
+| Check | Required result |
+| --- | --- |
+| Intent | The problem, intended rule, owner, and scope are clear. |
+| Correctness | Required behavior and failure behavior are implemented. |
+| Simplicity | No simpler complete design is being avoided to reduce the diff. |
+| Ownership | Each concept and policy has one owner. |
+| Coherence | One canonical representation and operation path remain. |
+| Abstraction | Shared rules use the smallest suitable abstraction. |
+| Adoption | Every applicable producer, consumer, and composition path uses it. |
+| Removal | Superseded code, aliases, fallbacks, configuration, and tests are deleted. |
+| Interface | Public APIs are minimal, typed, and do not leak unrelated mechanisms. |
+| Lifecycle | Resources, cancellation, shutdown, and bounds have explicit outcomes. |
+| Evidence | Tests and checks prove the rule and important failure cases. |
+| Documentation | A new reader can explain the purpose, follow a supported use, and understand important limits from the maintained prose, package README, and API docs. Claims match source and tests; links and examples work. See the [documentation practice](practices/documentation.md). |
+| Final search | No conflicting implementation remains in the declared scope. |
+
+A change is incomplete when the new and old designs both remain valid paths for the same responsibility.
 
 ## Choose verification for the change
 

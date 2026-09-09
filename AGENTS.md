@@ -12,6 +12,9 @@ rules remain with their canonical owners; do not copy them into task notes or ne
 5. `docs/product/roadmap.md`
 6. Relevant ADRs, references, source, and tests
 
+Before planning a change, use the [practice guide](docs/development/practices/README.md) to select
+and read the practices relevant to the actual work, even when the assignment omits their links.
+
 ## Source-of-truth map
 
 | Question | Owner |
@@ -23,6 +26,8 @@ rules remain with their canonical owners; do not copy them into task notes or ne
 | Durable design decisions and tradeoffs | `docs/decisions/` |
 | Schema and protocol contracts | Owning code constants/readers, fixtures, then `docs/reference/` |
 | Verified behavior and evidence | Tests, CI workflows, `docs/development/verification-evidence.md` |
+| Development methods and review guidance | The relevant files in `docs/development/practices/` |
+| Assignment scope, completion, and verification procedure | `docs/development/workflow.md` |
 | Historical chronology | Git history, commits, CI runs, release notes, and external audits |
 
 When prose and executable behavior disagree, establish whether code or documentation drifted; do
@@ -56,10 +61,10 @@ implementation evidence for current versions.
 - Keep current facts in canonical docs. Temporary sprint plans, assignments, and progress notes
   belong in the [virtual office](docs/development/virtual-office/README.md); broader issues and
   discussions may persist across sprints on its whiteboard. Follow the
-  [scope and findings policy](docs/development/engineering-rules.md#findings-beyond-the-assignment).
+  [scope and findings policy](docs/development/workflow.md#findings-beyond-the-assignment).
   Elsewhere, do not add pass diaries, prompt histories, duplicated status pages, or generated inventories.
 - Write documentation to explain purpose, use, and consequences in plain language. Follow the
-  [documentation standard](docs/development/engineering-rules.md#7-documentation) for prose,
+  [documentation practice](docs/development/practices/documentation.md) for prose,
   code comments, and package READMEs; naming technical properties is not an explanation.
 - Preserve the current scope freeze: no UI, new provider family, or new workflow primitive until an
   independently reviewed task explicitly authorizes it.
@@ -69,5 +74,5 @@ implementation evidence for current versions.
   Executable changes require the full gate. Prose, planning, and documentation-only changes use
   the checks specified there; report the checks actually run and any limits on the evidence.
 
-Use `docs/development/workflow.md` for focused suites, evidence lanes, fixture rules, and public-API
-review. `docs/development/engineering-rules.md` owns standing implementation-quality policy.
+Use `docs/development/workflow.md` for assignment procedure, completion, focused suites, evidence
+lanes, fixture rules, and public-API review. Individual practices own the detailed development rules.
