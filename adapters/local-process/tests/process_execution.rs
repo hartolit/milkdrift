@@ -895,3 +895,6 @@ mod identity;
 
 #[path = "process_execution/lifecycle.rs"]
 mod lifecycle;
+
+#[path = "process_execution/reporting_cleanup.rs"]
+mod reporting_cleanup;

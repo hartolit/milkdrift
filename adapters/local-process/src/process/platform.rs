@@ -88,8 +88,13 @@ impl ActiveRegistration {
         let mut owners = active
             .lock()
             .map_err(|_error| "process ownership state is unavailable".to_owned())?;
-        if owners.insert(invocation.clone(), control).is_some() {
-            return Err("invocation already owns a live local process".to_owned());
+        match owners.entry(invocation.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(control);
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {
+                return Err("invocation already owns a live local process".to_owned());
+            }
         }
         drop(owners);
         Ok(Self { active, invocation })

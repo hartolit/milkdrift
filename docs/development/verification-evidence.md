@@ -6,6 +6,22 @@ lanes below exercise application use, mutation sensitivity, sustained load, and 
 The [evidence package guide](../../tools/evidence/README.md) compares the tools and their entry points.
 [Status](../product/status.md#current-validationevidence-snapshot) owns the latest executed state.
 
+## Local process reporting cleanup
+
+Run `cargo test -p milkdrift-local-process --all-features` for adapter conformance and lifecycle
+regressions. The [reporting cases](../../adapters/local-process/tests/process_execution/reporting_cleanup.rs)
+reject initial, stdout/stderr progress, and heartbeat reports while a real helper keeps its pipes
+open. They observe child exit, propagated post-entry errors, and absence of a fabricated terminal
+report. Deadline failures invoke fixture cleanup. Reporter panic, cancellation, timeout, output-limit
+termination, and shutdown use the same child observation.
+
+The [private ownership tests](../../adapters/local-process/src/process/lifecycle/tests.rs) hold stdin,
+stdout, and stderr workers at completion. They establish that cleanup joins each started worker
+before removing registration, including partial startup and unwinding, and that a duplicate
+registration leaves the original cancellation control intact. Windows execution qualifies the
+immediate child; the Unix-only reporting cases additionally check owned descendants when run there.
+See [status](../product/status.md) for executed evidence and platform limits.
+
 ## Actual-binary scenarios
 
 Build and run the headless operator scenario:

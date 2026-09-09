@@ -27,7 +27,9 @@ This document owns current implementation, limitations, exact versions, and qual
   content-addressed artifacts, application receipts/layouts/proposals/audit, peer records and
   tombstones, bounded retention, and resumable administrative integrity scans.
 - Local processes support byte-pinned argv profiles, isolated materialization, explicit inputs and
-  outputs, bounded streams, cancellation, and platform ownership. Model adapters implement
+  outputs, bounded streams, cancellation, and platform ownership. Post-spawn reporting and setup
+  failures retain child/I/O ownership through termination and joining, including unwinding;
+  reporting errors propagate without manufacturing terminal evidence. Model adapters implement
   OpenAI-compatible chat and native Anthropic mappings through bounded HTTP/SSE.
 - Prompt sequences compile trusted-process coding, verification, review, and remediation stages
   into ordinary revisions on the same daemon/control path.
@@ -80,10 +82,7 @@ values; repository contracts check the version cells against source.
 - Trusted processes have daemon-account privileges. No sandbox, network isolation, CPU/memory
   quotas, malicious-descendant containment, universal atomic hashed-handle execution, directory
   artifacts, writable shared mounts, or complete non-Unix process-tree cancellation is claimed.
-  Source inspection also found incomplete cleanup when durable reporting fails after process spawn:
-  an early report can bypass termination/joining, and monitor errors join I/O before terminating the
-  child. The [cleanup finding](../development/virtual-office/whiteboard/issues/process-reporting-cleanup.md)
-  records the paths; existing ordinary cancellation tests do not establish this combined case.
+  Unowned descendants can retain inherited pipes and delay I/O joining during cleanup.
 - Peers require operator connectivity; the daemon listener is loopback-only. There is no discovery,
   NAT traversal, coordinator, automatic CA/internal mTLS mapper, consensus, shared database,
   model synchronization, or automatic transfer of every artifact. Grants/profiles/relationships
@@ -122,6 +121,15 @@ exact replay/conflict, settled restart, and failure path pass through actual bin
 headless daemon/CLI evidence and deterministic multiline model evidence also pass. Portable process
 fixtures retain explicit Python/Git prerequisites. These software checks do not qualify filesystem
 power loss or real coding-agent interoperability.
+
+The reporting-cleanup implementation passes the complete local Windows/MSVC gate with 713 tests
+and all 24 repository contracts; the five manual longevity tests remain ignored in that run.
+Focused regressions establish immediate-child termination after initial,
+stdout/stderr progress, and heartbeat rejection, including an unread stdin pipe and reporter panic.
+Private lifecycle tests observe completion of every started I/O worker and retained cancellation
+registration during partial startup and unwinding. Cancellation, timeout, output-limit termination,
+and shutdown regressions also pass. New Unix owned-descendant reporting cases are present but have
+not been executed for this change; earlier hosted process evidence does not qualify them.
 
 The ordinary model scenario passes against separately managed LM Studio with
 `google/gemma-4-12b-qat`, explicit response/idle bounds, and a 4,096-unit output allowance. Evidence

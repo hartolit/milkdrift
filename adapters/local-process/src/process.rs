@@ -5,9 +5,8 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicU8, Ordering},
-        mpsc::sync_channel,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use milkdrift_authority::{
@@ -29,6 +28,7 @@ use crate::config::{
 };
 
 mod identity;
+mod lifecycle;
 mod monitor;
 mod outputs;
 mod platform;
@@ -38,16 +38,11 @@ mod spawn;
 mod streams;
 
 use identity::{ExecutableBinding, IdentityFailure};
-use monitor::monitor_process;
-use platform::{ActiveRegistration, ProcessControl, terminate_child_immediately};
+use lifecycle::RunningProcess;
+use platform::ProcessControl;
 use prepare::{materialize_arguments, prepare_working_directory, stdin_bytes};
 use reporting::{TerminalReportContext, exit_failure, report_rejected, usage};
-use streams::{
-    Stream, join_io, join_reader, os_bytes_len, redact_capture, secret_os_string, spawn_reader,
-    spawn_stdin_writer,
-};
-
-const STREAM_CHANNEL_MESSAGES: usize = 16;
+use streams::{os_bytes_len, redact_capture, secret_os_string};
 
 /// Production local-process adapter for one immutable validated profile generation.
 ///
@@ -55,9 +50,9 @@ const STREAM_CHANNEL_MESSAGES: usize = 16;
 /// adapter together. The invocation worker owns preparation, child monitoring, and publication.
 /// Health and final pre-spawn checks latch identity failures until a new generation is registered.
 ///
-/// Current reporting-failure cleanup is incomplete: the initial post-spawn report can return before
-/// child termination/I/O joining, and monitor errors reach joins before termination. The package
-/// README links the source finding; ordinary cancellation behavior does not cover these paths.
+/// After spawn, reporting or setup failure requests termination and joins every started I/O
+/// worker before releasing cancellation registration. Reporting errors still leave the runtime
+/// without terminal evidence; local cleanup does not resolve the external operation's outcome.
 pub struct LocalProcessAdapter {
     profile: ProcessProfile,
     descriptor: CapabilityDescriptor,
@@ -436,7 +431,7 @@ impl LocalProcessAdapter {
         };
 
         let spawn_started = Instant::now();
-        let mut child = match spawn::spawn(
+        let child = match spawn::spawn(
             &self.executable,
             &working_directory,
             &arguments,
@@ -455,50 +450,16 @@ impl LocalProcessAdapter {
                 );
             }
         };
-        let control = Arc::new(ProcessControl::new(&child));
-        let _registration = match ActiveRegistration::insert(
-            self.active.clone(),
-            request.invocation().clone(),
-            control.clone(),
-        ) {
-            Ok(registration) => registration,
-            Err(error) => {
-                terminate_child_immediately(&mut child, &control);
-                return Err(AdapterError::external_failure(error));
-            }
-        };
-        let stdin_thread = spawn_stdin_writer(child.stdin.take(), stdin_bytes);
-        let stdout = match child.stdout.take() {
-            Some(stdout) => stdout,
-            None => {
-                terminate_child_immediately(&mut child, &control);
-                return Err(AdapterError::external_failure(
-                    "spawned process has no owned stdout pipe",
-                ));
-            }
-        };
-        let stderr = match child.stderr.take() {
-            Some(stderr) => stderr,
-            None => {
-                terminate_child_immediately(&mut child, &control);
-                return Err(AdapterError::external_failure(
-                    "spawned process has no owned stderr pipe",
-                ));
-            }
-        };
-        let (stream_sender, stream_receiver) = sync_channel(STREAM_CHANNEL_MESSAGES);
-        let stdout_thread = spawn_reader(
-            Stream::Stdout,
-            stdout,
+        let mut process = RunningProcess::new(
+            child,
+            Duration::from_millis(self.profile.limits.forced_termination_ms),
+        );
+        process.register(self.active.clone(), request.invocation().clone())?;
+        process.start_io(
+            stdin_bytes,
             self.profile.stdout.max_capture_bytes,
-            stream_sender.clone(),
-        );
-        let stderr_thread = spawn_reader(
-            Stream::Stderr,
-            stderr,
             self.profile.stderr.max_capture_bytes,
-            stream_sender,
-        );
+        )?;
         drop(environment);
 
         let mut reports = TerminalReportContext::new(
@@ -517,26 +478,8 @@ impl LocalProcessAdapter {
             total_units: None,
         })?;
 
-        let lifecycle = monitor_process(
-            &mut child,
-            &control,
-            stream_receiver,
-            &mut reports,
-            &self.profile,
-            spawn_started,
-        );
-        let stdin_result = join_io(stdin_thread, "stdin writer");
-        let stdout_result = join_reader(stdout_thread, "stdout reader");
-        let stderr_result = join_reader(stderr_thread, "stderr reader");
-        let mut observed = match lifecycle {
-            Ok(observed) => observed,
-            Err(error) => {
-                terminate_child_immediately(&mut child, &control);
-                let _ = child.wait();
-                return Err(error);
-            }
-        };
-        if let Err(message) = stdin_result.and(stdout_result).and(stderr_result) {
+        let mut observed = process.monitor(&mut reports, &self.profile, spawn_started)?;
+        if let Err(message) = process.finish_io(&observed) {
             return reports.failure(ErrorClass::Adapter, "process_io_failed", &message);
         }
         redact_capture(&mut observed.stdout, &resolved_secrets);

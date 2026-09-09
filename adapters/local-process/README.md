@@ -44,10 +44,14 @@ owned process group and tears down remaining descendants when the immediate chil
 ownership covers the immediate child only. A PID is not recoverable process identity after daemon
 restart; `RestartPolicy` describes whether the external program can safely accept the same stable key.
 
-Current cleanup is incomplete when durable reporting fails after spawn: the first progress report
-can return before termination/joining, and a monitor reporting error reaches I/O joins before child
-termination. See the [source finding](../../docs/development/virtual-office/whiteboard/issues/process-reporting-cleanup.md).
-Ordinary cancellation tests do not establish those combined failure paths.
+If reporting fails after spawn, the invocation owner disconnects the stream channel, requests
+forced termination, reaps the child, and joins every started I/O worker before releasing cancellation
+registration. This also covers partial worker startup and unwinding into the host's panic boundary.
+Disconnecting the channel releases readers blocked on a full queue; terminating first releases pipes
+the child holds open. The original reporting error propagates without a synthetic terminal report,
+so runtime still retains uncertainty about the external operation.
+Cleanup depends on OS termination and pipe closure. Descendants outside the owned process group
+(or any descendant on non-Unix platforms) can retain inherited pipes and delay I/O joins.
 
 This is a trusted host process with the daemon account's privileges. Staging checks do not provide
 a sandbox, CPU/memory quotas, network isolation, or containment of malicious descendants. Byte
@@ -57,10 +61,14 @@ verification also leaves a check-to-spawn race; see the platform qualifications 
 ## Change the implementation
 
 [`process.rs`](src/process.rs) connects preparation, spawn, monitoring, and publication. Its private
-children keep byte identity, platform ownership, streams, and result reporting close to the mechanism
-they enforce. Health rechecks byte identity and latches failure: restoring old bytes does not revive
-an invalidated generation. Deploy a changed executable with a new profile/descriptor revision.
+children keep byte identity, [child and worker lifetime](src/process/lifecycle.rs), platform ownership,
+streams, and result reporting close to the mechanism they enforce. Health rechecks byte identity
+and latches failure: restoring old bytes does not revive an invalidated generation. Deploy a changed
+executable with a new profile/descriptor revision.
 
 The [process execution suite](tests/process_execution.rs) uses a byte-pinned Rust helper to exercise
 literal arguments, materialization, output limits, identity replacement, lifecycle, and shared adapter
-conformance. Unix descendant tests run only on Unix; passing the Windows suite does not qualify them.
+conformance. Reporting regressions hold a child and its pipes open, inject initial/progress/heartbeat
+failure, and check child exit under a deadline with fallback fixture cleanup. Private lifecycle tests
+hold I/O workers at completion to verify registration persists until all joins finish. Unix descendant
+tests run only on Unix; passing the Windows suite does not qualify them.

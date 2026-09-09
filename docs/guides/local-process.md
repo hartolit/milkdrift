@@ -131,6 +131,9 @@ but a malicious descendant can escape into another session/group. Non-Unix build
 complete process-tree cancellation. Child-count and resource limits remain observations unless an
 external host sandbox enforces them.
 
-Current cleanup after a durable reporting failure is also incomplete: the source paths are
-recorded in [status](../product/status.md#limitations-now). Ordinary cancellation evidence does
-not establish cleanup when reporting itself fails after spawn.
+If durable reporting fails after spawn, the adapter requests forced termination and joins its I/O
+workers before releasing local execution capacity. It propagates the reporting error without
+inventing a terminal observation. A stopped local child cannot establish whether its earlier
+external effects completed; inspect the retained uncertain attempt before authorizing recovery.
+The [adapter lifecycle explanation](../../adapters/local-process/README.md#results-and-interruptions)
+describes ownership and the [status](../product/status.md) qualifies executed platform evidence.

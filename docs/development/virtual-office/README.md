@@ -13,9 +13,7 @@ No active sprints.
 
 ## Prepared assignments
 
-- [Repair process cleanup after reporting failure](process-reporting-cleanup.md): ready to execute;
-  work has not started. Remove the prompt after the completed fix and issue disposition are retained
-  in their maintained owners and Git.
+No prepared assignments.
 
 ## Start a sprint
 

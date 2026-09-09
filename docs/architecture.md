@@ -363,6 +363,10 @@ Canonical roots, isolated materialization, bounded regular files, traversal/syml
 refusal, and declared output imports mediate access. `TrustedHostProcess` still has daemon-account
 privileges; `SandboxedProcess` requires a distinct enforcing adapter. On Unix, immediate-child exit
 with a live owned group initiates bounded group teardown even if descendants retain output pipes.
+One invocation owner keeps the spawned child, started I/O workers, and cancellation registration
+together. Reporting/setup failure or unwinding disconnects the stream channel and requests forced
+termination before joining workers; registration and the outer host permit outlive that cleanup.
+The original reporting failure still reaches runtime without invented terminal evidence.
 [Process operations](guides/local-process.md) owns platform and profile details.
 
 Model adapters reject unadvertised roles, parts, tools, schemas, reasoning, streaming, sessions, and

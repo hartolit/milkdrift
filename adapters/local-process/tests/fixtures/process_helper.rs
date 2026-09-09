@@ -94,6 +94,17 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
             thread::sleep(Duration::from_millis(millis));
             Ok(0)
         }
+        "reporting-probe" => {
+            let pid_file = arguments.next().ok_or("missing pid file")?;
+            append_pid(&pid_file)?;
+            writeln!(std::io::stdout(), "reporting probe stdout")?;
+            std::io::stdout().flush()?;
+            writeln!(std::io::stderr(), "reporting probe stderr")?;
+            std::io::stderr().flush()?;
+            // Keep both output pipes and unread stdin open beyond the test deadline.
+            thread::sleep(Duration::from_secs(30));
+            Ok(0)
+        }
         "mark" => {
             let path = arguments.next().ok_or("missing marker path")?;
             std::fs::write(path, b"entered")?;

@@ -27,58 +27,65 @@ pub(super) fn spawn_reader<R: Read + Send + 'static>(
     mut reader: R,
     maximum: u64,
     sender: SyncSender<StreamMessage>,
-) -> JoinHandle<Result<(), String>> {
-    thread::spawn(move || {
-        let mut accepted = 0_u64;
-        let mut overflow_sent = false;
-        let mut buffer = [0_u8; STREAM_READ_BYTES];
-        loop {
-            let count = match reader.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(count) => count,
-                Err(error) => {
-                    let _ = sender.send(StreamMessage::Failed(stream, error.kind()));
-                    return Err(format!("stream read failed: {:?}", error.kind()));
+) -> Result<JoinHandle<Result<(), String>>, String> {
+    thread::Builder::new()
+        .spawn(move || {
+            let mut accepted = 0_u64;
+            let mut overflow_sent = false;
+            let mut buffer = [0_u8; STREAM_READ_BYTES];
+            loop {
+                let count = match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => count,
+                    Err(error) => {
+                        let _ = sender.send(StreamMessage::Failed(stream, error.kind()));
+                        return Err(format!("stream read failed: {:?}", error.kind()));
+                    }
+                };
+                let remaining = maximum.saturating_sub(accepted);
+                let take = usize::try_from(remaining).unwrap_or(usize::MAX).min(count);
+                if take != 0 {
+                    sender
+                        .send(StreamMessage::Data(stream, buffer[..take].to_vec()))
+                        .map_err(|_error| "stream receiver disconnected".to_owned())?;
+                    accepted = accepted.saturating_add(u64::try_from(take).unwrap_or(u64::MAX));
                 }
-            };
-            let remaining = maximum.saturating_sub(accepted);
-            let take = usize::try_from(remaining).unwrap_or(usize::MAX).min(count);
-            if take != 0 {
-                sender
-                    .send(StreamMessage::Data(stream, buffer[..take].to_vec()))
-                    .map_err(|_error| "stream receiver disconnected".to_owned())?;
-                accepted = accepted.saturating_add(u64::try_from(take).unwrap_or(u64::MAX));
+                if take < count && !overflow_sent {
+                    // Report overflow once, then keep draining so a full OS pipe cannot stall
+                    // a child that the profile allows to continue with truncated capture.
+                    sender
+                        .send(StreamMessage::Overflow(stream))
+                        .map_err(|_error| "stream receiver disconnected".to_owned())?;
+                    overflow_sent = true;
+                }
             }
-            if take < count && !overflow_sent {
-                // Report overflow once, then keep draining so a full OS pipe cannot stall
-                // a child that the profile allows to continue with truncated capture.
-                sender
-                    .send(StreamMessage::Overflow(stream))
-                    .map_err(|_error| "stream receiver disconnected".to_owned())?;
-                overflow_sent = true;
-            }
-        }
-        sender
-            .send(StreamMessage::Closed(stream))
-            .map_err(|_error| "stream receiver disconnected".to_owned())?;
-        Ok(())
-    })
+            sender
+                .send(StreamMessage::Closed(stream))
+                .map_err(|_error| "stream receiver disconnected".to_owned())?;
+            Ok(())
+        })
+        .map_err(|error| format!("stream worker spawn failed: {:?}", error.kind()))
 }
 
-pub(super) fn spawn_stdin_writer(
-    stdin: Option<std::process::ChildStdin>,
+pub(super) fn spawn_stdin_writer<W: Write + Send + 'static>(
+    stdin: Option<W>,
     bytes: Option<Vec<u8>>,
-) -> Option<JoinHandle<Result<(), String>>> {
-    stdin.zip(bytes).map(|(mut stdin, bytes)| {
-        thread::spawn(move || {
-            stdin
-                .write_all(&bytes)
-                .map_err(|error| format!("stdin write failed: {:?}", error.kind()))?;
-            stdin
-                .flush()
-                .map_err(|error| format!("stdin flush failed: {:?}", error.kind()))
+) -> Result<Option<JoinHandle<Result<(), String>>>, String> {
+    stdin
+        .zip(bytes)
+        .map(|(mut stdin, bytes)| {
+            thread::Builder::new()
+                .spawn(move || {
+                    stdin
+                        .write_all(&bytes)
+                        .map_err(|error| format!("stdin write failed: {:?}", error.kind()))?;
+                    stdin
+                        .flush()
+                        .map_err(|error| format!("stdin flush failed: {:?}", error.kind()))
+                })
+                .map_err(|error| format!("stdin worker spawn failed: {:?}", error.kind()))
         })
-    })
+        .transpose()
 }
 
 pub(super) fn join_io(
@@ -89,13 +96,6 @@ pub(super) fn join_io(
         Some(thread) => thread.join().map_err(|_panic| format!("{name} panicked"))?,
         None => Ok(()),
     }
-}
-
-pub(super) fn join_reader(
-    thread: JoinHandle<Result<(), String>>,
-    name: &str,
-) -> Result<(), String> {
-    thread.join().map_err(|_panic| format!("{name} panicked"))?
 }
 
 pub(super) fn progress_message(stream: Stream, bytes: &[u8]) -> String {
