@@ -628,7 +628,7 @@ milkdrift_contracts::deserialize_via!(ContextManifestEntry, ContextManifestEntry
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextOmission {
-    /// Recorded source, when its disclosure is permitted by the selecting policy.
+    /// Source retained by the writer; older selection rules may have retained it without permission.
     pub source: Option<ContextSource>,
     /// Semantic category.
     pub kind: ContextSemanticKind,
@@ -680,6 +680,11 @@ pub struct ContextTotals {
 /// recomputes the manifest digest. It never upgrades missing provenance or repairs a
 /// contradictory digest. Invalid body versions surface as decoding errors; unsupported
 /// outer document versions return [`ModelContractError::UnsupportedVersion`].
+///
+/// The separate `policy_version` identifies the selector's rules, not the document
+/// format. Reading accepts any nonzero policy version as historical data. Runtime
+/// decides whether the saved selection is safe to reuse before rebinding a retry;
+/// successful decoding alone does not authorize another execution.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextManifest {
@@ -870,8 +875,11 @@ impl ContextManifest {
     }
 
     /// Rebinds the exact frozen selection to a deliberate new attempt without consulting history.
+    ///
     /// Entries, omissions, totals, and policy remain unchanged; the new attempt identity
-    /// produces a new digest. Runtime persists the resulting document for the retry.
+    /// produces a new digest. This operation does not evaluate the governing task or
+    /// validate omission disclosure. Runtime checks retained evidence before calling it
+    /// and persists the resulting document for the retry.
     pub fn rebind_attempt(&self, attempt: AttemptId) -> Result<Self, ModelContractError> {
         Self::new(
             self.run.clone(),

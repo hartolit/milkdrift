@@ -31,6 +31,14 @@ it never becomes ready. Once serving, `daemon readiness` is the coarse readiness
 `daemon health` supplies separately authorized queue, worker, and retention details. Ready means
 commands can be considered, not that every capability is available or every request is authorized.
 
+An active lease with an unsafe older context selection also prevents startup. The saved manifest
+remains readable, but its omissions may lack proof that required evidence was supplied or protected
+metadata was hidden. Recovery refuses to forward it, leaving HTTP unavailable; there is no CLI/API
+repair command that can run against that failed startup. See the
+[retained-context decision](../decisions/0031-context-enforcement-and-retained-evidence.md) and
+[store-generation procedure](#backup-compatibility-and-repair). Starting an empty generation does
+not settle any outstanding effects in the preserved old root.
+
 Requests enter one bounded owner queue. Saturation returns overload; it does not create an
 unbounded backlog. After a timeout, a queued command may still have been accepted. Preserve its
 exact request for [command replay](../reference/control-api.md#commands). The

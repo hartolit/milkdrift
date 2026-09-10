@@ -182,6 +182,9 @@ fn declared_stage_nodes(stage: &StageBlueprintSummary) -> BTreeSet<String> {
 /// Pass an unchanged document from [`PromptSequenceDocument::from_bytes`] or `from_json`.
 /// This builds and validates the blueprint but does not repeat all import-reader checks.
 /// Import/profile digests and stage association support later inspection and remediation.
+/// The generated reason names the validated import schema. Recompiling an import whose
+/// historical reason incorrectly named v1 produces a different revision ID, even when
+/// its semantic content is identical. Load the saved revision to retain its exact identity.
 ///
 /// Artifact prompts need an exact size and media type in addition to identity and digest.
 /// Port/identifier conflicts, blueprint bounds, and invalid topology return a compilation

@@ -7,10 +7,7 @@ what belongs here; [the office procedure](../README.md) handles sprint coordinat
 
 ## Overview
 
-| Topic | Kind | State | Next action or assigned sprint/task | Last evaluation |
-| --- | --- | --- | --- | --- |
-| [Context policy enforcement](issues/context-policy-enforcement.md) | issue | assigned | [Context and import corrections, phase 02](../context-and-import-corrections/02-review-and-close.md): review the completed implementation and topic disposition. | 2026-09-10 |
-| [Prompt-sequence import version label](issues/prompt-sequence-version-label.md) | issue | assigned | [Context and import corrections, phase 02](../context-and-import-corrections/02-review-and-close.md): review the identity evidence and topic disposition. | 2026-09-10 |
+No open topics.
 
 This overview alone owns planning state, next actions, assignment links, and last-evaluation dates.
 Topic files hold evidence, current technical assessment, and dated contributions. Keep execution

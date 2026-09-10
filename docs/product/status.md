@@ -22,7 +22,9 @@ This document owns current implementation, limitations, exact versions, and qual
   fresh-directory setup and ordinary process/model workflows.
 - Causal context uses bounded historical discovery, explicit branch/join/subworkflow visibility,
   exact provenance, authority/sensitivity checks, deterministic budgets and omissions, and
-  selected-only materialization. Retries retain the frozen selection.
+  selected-only materialization. Required-evidence checks continue after selection stops, and
+  protected omission identities and sizes are redacted regardless of the reported reason.
+  Model session declarations must agree before work is claimed. Retries retain the frozen selection.
 - Redb implements journal/index/workspace/account transactions, optional verified snapshots,
   content-addressed artifacts, application receipts/layouts/proposals/audit, peer records and
   tombstones, bounded retention, and resumable administrative integrity scans.
@@ -32,7 +34,8 @@ This document owns current implementation, limitations, exact versions, and qual
   reporting errors propagate without manufacturing terminal evidence. Model adapters implement
   OpenAI-compatible chat and native Anthropic mappings through bounded HTTP/SSE.
 - Prompt sequences compile trusted-process coding, verification, review, and remediation stages
-  into ordinary revisions on the same daemon/control path.
+  into ordinary revisions on the same daemon/control path. New revision reasons name the accepted
+  import schema; historical reasons and revision identities remain unchanged.
 - Controller libraries implement durable policy assessment and cumulative accounts across runs and
   descendants. Establishment binds the declared originating run. Final-entry reservations and
   entry intent commit atomically; artifact publication
@@ -69,8 +72,11 @@ values; repository contracts check the version cells against source.
 ## Limitations now
 
 - Earlier selection-policy-version-1 manifests remain readable, but omissions retaining ambiguous
-  identities or sizes and stopped required evidence cannot authorize reuse. Retry and startup refuse those
-  retained records without rewriting their bytes. The corrected selector emits policy version 2;
+  identities or sizes and stopped required evidence cannot authorize reuse. Retry and startup refuse
+  those retained records without rewriting their bytes. An unsafe active lease prevents daemon
+  startup and HTTP service; no automatic repair is available through the CLI/API. See
+  [daemon operations](../operations/daemon.md#startup-and-readiness). The corrected selector emits
+  policy version 2;
   [ADR 0031](../decisions/0031-context-enforcement-and-retained-evidence.md) explains this distinction
   from the unchanged manifest schema. Model session agreement is checked before claiming work;
   supported provider mappings still accept only `Fresh`. Process session intent remains
@@ -132,13 +138,17 @@ registration during partial startup and unwinding. Cancellation, timeout, output
 and shutdown regressions also pass. New Unix owned-descendant reporting cases are present but have
 not been executed for this change; earlier hosted process evidence does not qualify them.
 
-The context/import correction passes the complete local Windows/MSVC gate with 725 tests and all
-24 repository contracts; five manual longevity tests remain ignored. Production regressions cover
-stopped required evidence, serialized protected omissions, legacy retry/reopen refusal, model
+The context-policy enforcement and import-label findings are resolved by `a24671a`. Its complete
+local Windows/MSVC gate passes with 725 tests and all 24 repository contracts; five manual longevity
+tests remain ignored. Production regressions cover stopped required evidence, serialized protected
+omissions, legacy retry/reopen refusal, model
 session agreement for inline/artifact requests and category-free historical snapshots, and exact
 import revision identity. A bounded runtime/host/HTTP matrix proves Fresh completion and no request
 for contradictory or unsupported continuation declarations. All 42 default/all-feature library API
 inventories are reviewed; the sole added export shares the model document byte ceiling with runtime.
+Focused revalidation passes 28 context/session/import tests, five affected doctests, formatting,
+warning-denying rustdoc, and documentation contracts. The full gate is reused for unchanged
+executable code; subsequent changes clarify explanations and remove resolved office topics.
 These checks do not add real-provider, process-session, or cross-platform qualification.
 
 The ordinary model scenario passes against separately managed LM Studio with

@@ -260,8 +260,8 @@ untrusted evidence; negotiation includes injected features. Unsupported roles/im
 fail before HTTP. Runtime compares a model task's session declaration with its inline or
 artifact-backed request before claiming work, including retries and recovered leases. Agreement
 does not supply an unsupported provider protocol. Processes explicitly map reserved manifest/context
-inputs through existing
-input-file policy; no ambient global context file appears. Outputs retain manifest/input provenance.
+inputs through existing input-file policy; no ambient global context file appears. Outputs retain
+manifest/input provenance.
 
 Artifact publication uses bounded resumable chunks, exact offsets, digest/size checks, and atomic
 metadata/accounting acceptance after content publication. Read authority, integrity verification,

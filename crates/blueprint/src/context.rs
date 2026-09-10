@@ -497,9 +497,8 @@ pub enum ContextSessionPolicy {
 /// explicit data/join/import boundary before selection; naming the node or execution
 /// cannot select a sibling's private workspace content. Restricted omissions redact source
 /// identity and byte counts even when stopping or exclusion determines the reason.
-/// The policy governs context
-/// selection, not task input bindings: omitting a direct input from the manifest does
-/// not remove that input from the invocation.
+/// The policy governs context selection, not task input bindings: omitting a direct
+/// input from the manifest does not remove that input from the invocation.
 ///
 /// [`ContextBudget`] bounds discovery and selection. [`Self::fail_closed`] explains what
 /// happens when required evidence is lost. Session declarations and capability support

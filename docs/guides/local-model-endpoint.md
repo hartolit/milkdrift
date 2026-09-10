@@ -36,6 +36,11 @@ cross-origin redirects are never followed, and the default redirect policy follo
 local server requires a token, put only an opaque `SecretRef` in the profile and resolve it through
 the host secret boundary; never place a token in the URL.
 
+For a workflow model task, use `Fresh` in both its blueprint context policy and its model request.
+Runtime compares those declarations before claiming work, including artifact requests, retries,
+and recovered leases. Matching declarations still need a supported provider mapping; see the
+[adapter's session rules](../../adapters/model-provider/README.md#choose-features-the-endpoint-actually-supports).
+
 The adapter uses chat-completions semantics. Tools, image parts, developer roles, reasoning
 controls, structured output, and streaming must be advertised by the exact profile or the request
 is rejected before connection. For Fresh requests, it verifies the persisted schema-v2 causal

@@ -88,8 +88,14 @@ projection's frozen sequence, using recent events and exact historical anchors. 
 the host materializes only selected content and verifies it against that manifest. A retry rebinds
 the previous selection to its new attempt rather than selecting from newer history.
 
-Stopping selection still refuses eligible required losses under `fail_closed`. Omission reasons
-explain selection decisions while independent scope and authority facts control metadata redaction.
+For example, suppose an optional input larger than a 100-byte budget sorts before a required
+one-byte input. `StopAtFirstOverflow` stops adding inputs at the first one. With `fail_closed`,
+the later required loss fails preparation even though that input would fit by itself. With
+`OmitOversized`, selection skips the optional input and can include the required one. Turning off
+`fail_closed` permits omissions; it grants no additional read access.
+
+An omission's reason explains why selection skipped it. Its source and sizes are redacted whenever
+scope or authority prevents disclosure, including when the reason is stopping or category exclusion.
 New manifests record selection policy version 2. Older manifests remain readable, but a retry or
 recovered lease is refused when saved omissions cannot establish required-evidence or disclosure
 safety; runtime never rewrites that evidence or selects from newer history to repair it.
@@ -99,7 +105,9 @@ explains which old selections remain usable.
 When claiming a model invocation, runtime compares its inline or immutable artifact request's
 session with the governing task policy. A mismatch is durably rejected before the host receives
 work. Agreement still faces the adapter's feature checks; both current model mappings require
-`Fresh`. Process stages carry their own declared intent without implementing a continuation protocol.
+`Fresh`. A matching continuation request reaches that refusal without HTTP, but the host's current
+error path records the started attempt as uncertain. Process stages carry their own declared intent
+without implementing a continuation protocol.
 
 ## Inspect, revise, and reopen
 

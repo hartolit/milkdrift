@@ -9,12 +9,11 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-- [Context and import corrections](context-and-import-corrections/README.md): phase 01 implementation
-  is complete with a passing full gate; phase 02 is ready for final review.
+No active sprints.
 
 ## Prepared assignments
 
-No standalone prepared assignments; the prepared sprint contains its own prompts.
+No prepared assignments.
 
 ## Start a sprint
 

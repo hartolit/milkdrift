@@ -41,9 +41,11 @@ new version 2 selections retain ordinary optional omission behavior through retr
 Recovered leased work faces the same retained-manifest check before startup opens admission. Work
 already entered keeps its existing recovery classification; any subsequent retry must pass the
 reuse check. Refusal leaves accepted history and saved bytes unchanged. Runtime neither rescans
-newer history nor removes omission metadata to make the old decision appear safe. An operator must
-resolve the retained obligation through the existing control path and use a distinct execution
-when different evidence is needed.
+newer history nor removes omission metadata to make the old decision appear safe. Different evidence
+requires a distinct execution. A daemon blocked during startup cannot serve a CLI/API resolution
+command, and no automatic repair of these manifests is implemented. The
+[daemon operations guide](../operations/daemon.md#backup-compatibility-and-repair) owns the available
+store-generation procedure; it does not resolve outstanding effects in the old generation.
 
 When claiming a `model.generate` invocation of a model capability, runtime reads its supplied
 provider-neutral request and compares the session variant with the immutable governing task policy.
@@ -84,7 +86,10 @@ may require an operator decision even when its reference happened to be safe; gr
 policy version would invent proof. No schema migration, provider session support, or process-session
 continuation is claimed.
 
-Builder tests, production discovery and persisted-manifest tests, old-writer schedule fixtures,
-store-reopen retries, and runtime/host/local-HTTP tests establish these boundaries. Exact sequence
-tests isolate the label's identity effect and preserve historical decoding. These are deterministic
+[Builder tests](../../crates/runtime/tests/causal_context.rs) and
+[production context tests](../../crates/runtime/tests/structured_runtime/context_enforcement.rs)
+cover selection, persisted omissions, old-writer schedules, and store-reopen retries. The
+[runtime/host/local-HTTP matrix](../../adapters/model-provider/tests/mock_endpoints/runtime_session.rs)
+checks session agreement and provider refusal. [Sequence tests](../../crates/prompt-sequence/tests/sequence.rs)
+isolate the label's identity effect and preserve historical decoding. These are deterministic
 software checks, not real-provider interoperability evidence.
