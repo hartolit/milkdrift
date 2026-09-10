@@ -72,9 +72,9 @@ context therefore requires a distinct attempt/policy path and remains visibly di
 
 ## Consequences
 
-These are the required selection rules. [Current status](../product/status.md#limitations-now)
-records known enforcement gaps in session intent, required-evidence checks, and omission redaction;
-the decision does not establish that every combined case is implemented or tested.
+These are the required selection rules. [ADR 0031](0031-context-enforcement-and-retained-evidence.md)
+records the corrected selection policy version, model session agreement boundary, and refusal
+of older retained evidence that cannot safely authorize another execution.
 
 Context selection is inspectable, bounded, and provider-neutral. The authorized attempt read model
 returns bounded manifest policy, entries, omissions, accounting, schema/digest, and exact

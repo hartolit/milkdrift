@@ -513,6 +513,69 @@ impl RuntimeService {
             let Some(request) = attempt.request() else {
                 continue;
             };
+            if attempt.state() == &AttemptState::Leased
+                && let Some(reference) = request.context_manifest()
+            {
+                let basis = projection.execution_authority().ok_or_else(|| {
+                    Self::active_recovery_invalid(
+                        run,
+                        "retained context",
+                        "missing execution authority",
+                    )
+                })?;
+                let revision_id = projection
+                    .revision_for_attempt(attempt.attempt())
+                    .ok_or_else(|| {
+                        Self::active_recovery_invalid(
+                            run,
+                            "retained context",
+                            "missing governing revision",
+                        )
+                    })?;
+                let revision = self.load_validated_revision(revision_id, None)?;
+                let execution = projection
+                    .node_executions()
+                    .get(attempt.execution())
+                    .ok_or_else(|| {
+                        Self::active_recovery_invalid(run, "retained context", "missing execution")
+                    })?;
+                if let Some(milkdrift_blueprint::NodeKind::Task { config }) = revision
+                    .semantic()
+                    .nodes()
+                    .get(execution.node())
+                    .map(|node| node.kind())
+                {
+                    let manifest = crate::read_context_manifest(
+                        self.store.as_ref(),
+                        reference,
+                        milkdrift_persistence::ArtifactReadAuthority::Authorized {
+                            actor: basis.actor().clone(),
+                            evidence: milkdrift_persistence::EvidenceId::new(format!(
+                                "context-recovery:{}",
+                                attempt.attempt()
+                            ))?,
+                        },
+                    )
+                    .map_err(|error| {
+                        Self::active_recovery_invalid(run, "retained context", error.to_string())
+                    })?;
+                    let identity = crate::ContextBuildIdentity {
+                        run: run.clone(),
+                        revision: revision_id.clone(),
+                        node: execution.node().clone(),
+                        execution: execution.execution().clone(),
+                        attempt: attempt.attempt().clone(),
+                    };
+                    crate::context::validate_retained_manifest(
+                        &manifest,
+                        &identity,
+                        config.context_policy(),
+                    )
+                    .map_err(|error| {
+                        Self::active_recovery_invalid(run, "retained context", error.to_string())
+                    })?;
+                }
+            }
             for input in request.inputs() {
                 match input.value() {
                     InvocationValueReference::WorkspaceValue { identity, version } => {

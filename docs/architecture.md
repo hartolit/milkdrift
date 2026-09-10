@@ -240,9 +240,8 @@ reveal protected identities or sizes. Ordering is causal depth, semantic kind, n
 canonical reference bytes. Scan/depth/event-summary/item/artifact/per-item/byte/manifest/unit
 bounds apply deterministically. Optional losses retain policy/budget/authority/missing/corrupt/
 unsupported/superseded/isolation reasons; fail-closed policy requires required losses to fail before
-dispatch. Current enforcement gaps in required checks, omission redaction, and session intent are
-recorded in [status](product/status.md#limitations-now) and the
-[runtime builder](../crates/runtime/src/context.rs); the declared policy is not proof of enforcement.
+dispatch, including after selection stops. Scope and authority facts redact omission metadata
+independently of the reported reason. Selection policy version 2 records these corrected rules.
 
 The canonical manifest binds run/revision/execution/attempt and policy digest. Each selection binds
 content digest/size, semantic tags, governing revision, scope/sequence/time, producer actor,
@@ -250,12 +249,18 @@ capability/generation/profile/peer/invocation, causal evidence, sensitivity, aut
 Omissions, totals, budget, and a domain-separated digest complete the record. Its restricted
 artifact is committed and journal-published before scheduling can reach an adapter; invocation
 carries the compact reference. A retry rebinds the prior selection to its new attempt without
-rescanning later history. A different selection requires a distinct manifest/attempt.
+rescanning later history. Before reuse, runtime refuses older omissions that cannot establish
+required-evidence or disclosure safety; recovered leases face the same check with admission closed.
+Historical bytes remain readable and unchanged. [ADR 0031](decisions/0031-context-enforcement-and-retained-evidence.md)
+owns this compatibility boundary. A different selection requires a distinct manifest/attempt.
 
 The host materializes only selected non-direct content after authorization and verifies digest,
 size, and media facts. Model requests receive the manifest as system context and delimited
 untrusted evidence; negotiation includes injected features. Unsupported roles/images/binary parts
-fail before HTTP. Processes explicitly map reserved manifest/context inputs through existing
+fail before HTTP. Runtime compares a model task's session declaration with its inline or
+artifact-backed request before claiming work, including retries and recovered leases. Agreement
+does not supply an unsupported provider protocol. Processes explicitly map reserved manifest/context
+inputs through existing
 input-file policy; no ambient global context file appears. Outputs retain manifest/input provenance.
 
 Artifact publication uses bounded resumable chunks, exact offsets, digest/size checks, and atomic

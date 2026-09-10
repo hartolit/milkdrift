@@ -68,8 +68,8 @@ pub enum PromptSequenceError {
 /// The stage author's session intent, retained in task data and blueprint policy.
 ///
 /// The compiler declares this choice; it does not manage an external process session or
-/// select a continuation artifact. Runtime does not currently enforce the blueprint
-/// session declaration against an adapter request.
+/// select a continuation artifact. Generated stages use `process.execute`; the model
+/// request's separate session-agreement check does not implement process continuation.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionPolicy {

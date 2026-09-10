@@ -110,7 +110,21 @@ pub fn read_context_manifest(
     reference: &CapabilityArtifactReference,
     authority: ArtifactReadAuthority,
 ) -> Result<ContextManifest, ContextBuildError> {
+    let bytes = read_model_document_bytes(store, reference, authority)?;
+    ContextManifestDocument::from_json(&bytes)
+        .map(|document| document.body().clone())
+        .map_err(Into::into)
+}
+
+pub(crate) fn read_model_document_bytes(
+    store: &dyn crate::RuntimeStore,
+    reference: &CapabilityArtifactReference,
+    authority: ArtifactReadAuthority,
+) -> Result<Vec<u8>, ContextBuildError> {
     let reference = workspace_artifact(reference)?;
+    if reference.size_bytes() > milkdrift_model::MAX_MODEL_DOCUMENT_BYTES as u64 {
+        return Err(ContextBuildError::RequiredBudget("model document byte"));
+    }
     let capacity = usize::try_from(reference.size_bytes())
         .map_err(|_| ContextBuildError::AccountingOverflow)?;
     let mut bytes = Vec::with_capacity(capacity);
@@ -127,9 +141,10 @@ pub fn read_context_manifest(
                     .map_err(persistence)?,
             )
             .map_err(persistence)?;
-        if chunk.offset != offset || chunk.bytes.is_empty() {
+        if chunk.offset != offset || chunk.bytes.is_empty() || chunk.bytes.len() > maximum as usize
+        {
             return Err(ContextBuildError::Persistence(
-                "manifest reader made no exact progress".to_owned(),
+                "model document reader made no bounded exact progress".to_owned(),
             ));
         }
         offset = offset
@@ -142,12 +157,10 @@ pub fn read_context_manifest(
     }
     if !reference.verifies(&bytes) {
         return Err(ContextBuildError::Persistence(
-            "manifest content contradicts its reference".to_owned(),
+            "model document content contradicts its reference".to_owned(),
         ));
     }
-    ContextManifestDocument::from_json(&bytes)
-        .map(|document| document.body().clone())
-        .map_err(Into::into)
+    Ok(bytes)
 }
 
 fn verify_materialized(

@@ -38,7 +38,8 @@ processes interpret those declarations; importing them does not create worktrees
 configure credentials, or enforce a filesystem allowlist. `context_policy_ref` is descriptive
 data; the compiler builds the task's context policy itself. It requests relevant ancestor evidence
 and records output roles for later tasks. A session declaration alone does not arrange external
-continuation; see the [blueprint policy API](../blueprint/src/context.rs).
+continuation. Generated stages use `process.execute`, so the model request's session-agreement
+check does not interpret their stage contract; see the [blueprint policy API](../blueprint/src/context.rs).
 
 ## Read imports and associate results
 
@@ -51,7 +52,9 @@ retain their supplied text; artifact prompts need exact digest, size, and media 
 These readers validate the complete import. Public document fields permit Rust assembly, so
 direct Serde decoding or a struct literal is not a substitute for the production reader before
 compilation. `CompiledPromptSequence` exposes the revision, import/profile digests, and stage
-summaries. Use `stage_node_ids` on a saved revision to associate executions with a stage, including
+summaries. The revision reason names the validated import schema version; changing that reason
+changes new revision identity without relabeling stored imports. Use `stage_node_ids` on a saved
+revision to associate executions with a stage, including
 inserted remediation nodes; do not infer ownership from a node-name prefix.
 
 ## Propose a repair

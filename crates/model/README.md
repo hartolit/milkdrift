@@ -49,13 +49,14 @@ content that contradicts the saved selection. A digest does not grant read acces
 the content's claims. Retries retain the selection and omissions while recording a new attempt.
 
 Read saved bytes with `ContextManifestDocument::from_json`, then inspect `body()`. Entries explain
-included evidence; omissions explain losses. The omission API documents a current gap where
-reason precedence can bypass metadata redaction, so retained references are not proof of read
-permission. The [manifest API](src/context.rs) owns version, digest, ordinal, and total checks. The
+included evidence; omissions explain losses. Selection policy version 2 protects omission metadata
+independently of the reason. Earlier manifests remain historical evidence, and their retained
+references are not proof of read permission. The [manifest API](src/context.rs) owns version,
+digest, ordinal, and total checks. The
 [golden fixture](tests/fixtures/context-manifest-v2.json) shows the envelope and body, and
 [ADR 0011](../../docs/decisions/0011-causal-context-manifests.md) explains why selection is saved
-before dispatch. Blueprint's [policy API](../blueprint/src/context.rs) discloses the current session
-and required-evidence limitations; reading a manifest does not rerun policy selection.
+before dispatch. Blueprint's [policy API](../blueprint/src/context.rs) explains required-evidence
+refusal and model session agreement; reading a manifest does not rerun policy selection.
 
 ## API detail and verification
 

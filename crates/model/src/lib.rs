@@ -51,7 +51,8 @@ pub use context::{
     ContextOmissionReason, ContextProducerFact, ContextSemanticKind, ContextSource, ContextTotals,
 };
 pub use document::{
-    ContextManifestDocument, ModelContractError, ModelResponseDocument, ModelTaskRequestDocument,
+    ContextManifestDocument, MAX_MODEL_DOCUMENT_BYTES, ModelContractError, ModelResponseDocument,
+    ModelTaskRequestDocument,
 };
 pub use task::{
     ContentPart, FinishReason, MAX_MODEL_OUTPUT_UNITS, Message, MessageRole, ModelResponse,

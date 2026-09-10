@@ -674,7 +674,7 @@ fn successful_executor_terminal() -> Result<InvocationTerminal, ExecutorError> {
     )?)
 }
 
-fn durable_artifact(
+pub(super) fn durable_artifact(
     reference: &InvocationArtifactReference,
 ) -> Result<milkdrift_workspace::ArtifactReference, Box<dyn std::error::Error>> {
     Ok(milkdrift_workspace::ArtifactReference::new(

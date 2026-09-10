@@ -556,6 +556,16 @@ pub(super) fn publish_artifact_in_store(
     suffix: &str,
     bytes: &[u8],
 ) -> TestResult<InvocationArtifactReference> {
+    publish_artifact_with_sensitivity(store, owner, suffix, bytes, ArtifactSensitivity::Public)
+}
+
+pub(super) fn publish_artifact_with_sensitivity(
+    store: &RedbStore,
+    owner: &RunId,
+    suffix: &str,
+    bytes: &[u8],
+    sensitivity: ArtifactSensitivity,
+) -> TestResult<InvocationArtifactReference> {
     let digest = ContentDigest::for_bytes(bytes);
     let artifact = ArtifactId::new(format!("artifact-{suffix}"))?;
     let reference = milkdrift_workspace::ArtifactReference::new(
@@ -566,7 +576,7 @@ pub(super) fn publish_artifact_in_store(
     );
     let metadata = ArtifactMetadata::new(
         reference,
-        ArtifactSensitivity::Public,
+        sensitivity,
         ArtifactRetention::WhileReferenced,
         ArtifactProvenance::new(
             CausalReference::External {

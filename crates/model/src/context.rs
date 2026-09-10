@@ -619,17 +619,16 @@ milkdrift_contracts::deserialize_via!(ContextManifestEntry, ContextManifestEntry
 
 /// Explains why a candidate did not enter the frozen selection.
 ///
-/// `AuthorityDenied` and `BranchIsolated` reasons carry a redacted source and sizes.
-/// A missing source or zero byte count therefore need not mean empty content.
-///
-/// Current limitation: redaction depends on the chosen reason. Selection stopping or
-/// category exclusion can take precedence over an access/isolation reason and retain
-/// candidate reference metadata. Do not treat every recorded omission source as proof
-/// of permission to disclose it. This is an implementation gap, not the intended rule.
+/// Selection policy version 2 redacts source and sizes whenever scope or authority
+/// restricts disclosure, independently of the reported reason. A missing source or zero
+/// byte count therefore need not mean empty content. Earlier policy-version-1 manifests
+/// remain exactly readable but may retain protected metadata under another reason;
+/// runtime refuses ambiguous retained omissions before reuse. Reading this type grants
+/// no permission to disclose historical metadata.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextOmission {
-    /// Recorded source, when retained; see the type's redaction limitation.
+    /// Recorded source, when its disclosure is permitted by the selecting policy.
     pub source: Option<ContextSource>,
     /// Semantic category.
     pub kind: ContextSemanticKind,
@@ -829,7 +828,7 @@ impl ContextManifest {
     pub const fn attempt(&self) -> &AttemptId {
         &self.attempt
     }
-    /// Context policy schema.
+    /// Version of the selection rules that produced this manifest, separate from its document schema.
     #[must_use]
     pub const fn policy_version(&self) -> u32 {
         self.policy_version

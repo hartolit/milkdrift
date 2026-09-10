@@ -73,10 +73,10 @@ task policy + available inputs and historical evidence
 
 The [manifest](../model/README.md#follow-the-selected-context) records the actual selection for a
 model/process attempt. It supplements declared input bindings, and retries preserve its selection.
-The policy APIs document current limitations: session intent is not enforced against the adapter
-request, `StopAtFirstOverflow` can skip later required-candidate checks, and omission-reason
-precedence can bypass metadata redaction. Use the default `OmitOversized` when relying on required
-checks; retained omission references still do not prove permission to disclose them.
+Required-evidence checks survive `StopAtFirstOverflow`, and omission redaction follows independent
+access facts. Runtime checks a model request's session against the task declaration before claiming
+work; provider support remains separate. Older saved manifests are subject to the runtime's
+[reuse checks](../runtime/README.md#run-structured-work-and-select-its-inputs), not silently upgraded declarations.
 
 Definition construction needs no daemon or endpoint and has no feature flags. The kernel tests
 cover graph construction, refusal, revision identity, and document round trips. Use the

@@ -6,6 +6,7 @@
 
 mod entry;
 mod reporter;
+mod session;
 
 use reporter::{stable_effect_command_id, terminal_report_identity};
 
@@ -241,11 +242,30 @@ impl RuntimeService {
         ))?;
         entry_request.evaluated_at = BoundaryTimeMillis::new(now.get());
         let entry_authorization = self.authority.evaluate(&entry_request)?;
-        if !entry_authorization.is_allowed() {
-            let detail = milkdrift_persistence::BoundedDetail::new(format!(
-                "authority decision {} denied capability entry",
-                entry_authorization.digest(),
-            ))?;
+        let refusal = if !entry_authorization.is_allowed() {
+            Some((
+                ErrorClass::Authorization,
+                format!(
+                    "authority decision {} denied capability entry",
+                    entry_authorization.digest(),
+                ),
+            ))
+        } else if capability.snapshot().category().is_none_or(|category| {
+            // Historical snapshots lack category; the model operation must still
+            // enforce its request contract instead of treating absence as an exemption.
+            category == &milkdrift_capability::CapabilityCategory::Model
+        }) && request.operation().as_str() == milkdrift_model::MODEL_GENERATE_OPERATION
+        {
+            match self.validate_model_session(revision, execution.node(), request, basis, now) {
+                Ok(()) => None,
+                Err(RuntimeError::Scheduling(detail)) => Some((ErrorClass::InvalidRequest, detail)),
+                Err(error) => return Err(error),
+            }
+        } else {
+            None
+        };
+        if let Some((error_class, detail)) = refusal {
+            let detail = milkdrift_persistence::BoundedDetail::new(detail)?;
             let plan = CommandPlan {
                 events: vec![
                     RunEventKind::CapabilityEntryDecisionRecorded {
@@ -257,7 +277,7 @@ impl RuntimeService {
                         attempt: attempt.clone(),
                         report_sequence: 1,
                         outcome: milkdrift_persistence::NodeOutcome::Rejected,
-                        error_class: Some(ErrorClass::Authorization),
+                        error_class: Some(error_class),
                         detail: Some(detail),
                     },
                 ],

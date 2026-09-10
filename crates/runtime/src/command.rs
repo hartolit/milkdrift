@@ -128,7 +128,7 @@ pub enum SystemTransition {
     },
     /// A structured child inherited its parent's frozen execution authority.
     InheritExecutionAuthority,
-    /// Current authority denied one exact leased attempt before adapter entry.
+    /// Authority or request validation refused one exact leased attempt before adapter entry.
     DenyCapabilityEntry {
         /// Immutable denied attempt.
         attempt: AttemptId,

@@ -42,6 +42,7 @@ mod discovery;
 mod explicit;
 mod materialize;
 
+pub(crate) use materialize::read_model_document_bytes;
 pub use materialize::{materialize_selected_context, read_context_manifest};
 
 /// Frozen facts used by the canonical runtime candidate source.

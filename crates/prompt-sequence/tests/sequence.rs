@@ -92,6 +92,13 @@ fn json_import_compiles_to_only_ordinary_blueprint_primitives() -> TestResult {
     let document = document()?;
     let compiled = compile(&document, AuthorRef::new("human:sequence-test")?)?;
     let revision = compiled.revision();
+    assert_eq!(
+        revision.reason(),
+        format!(
+            "import prompt sequence dogfood-sequence schema v{}",
+            document.schema_version
+        )
+    );
     assert_eq!(compiled.stages().len(), 2);
     assert_eq!(
         stage_node_ids(
@@ -130,7 +137,33 @@ fn json_import_compiles_to_only_ordinary_blueprint_primitives() -> TestResult {
     );
     assert_eq!(
         revision.id().as_str(),
-        "rev_2e89086b94e50070158aa771beda3d09fe44ab6f39797100a88ac263bc5304cb"
+        "rev_6bfe94ac55d6950ae351d156baf23ad34f98f5b58e916b6f89ec0bf8eb229557"
+    );
+    // Only the reason and its derived revision identity changed. Existing stored
+    // imports retain their canonical bytes; decoding never relabels their history.
+    let current_bytes = BlueprintRevisionDocument::new(revision).to_canonical_json()?;
+    let historical_bytes = String::from_utf8(current_bytes.clone())?
+        .replace(
+            "import prompt sequence dogfood-sequence schema v2",
+            "import prompt sequence dogfood-sequence schema v1",
+        )
+        .replace(
+            revision.id().as_str(),
+            "rev_2e89086b94e50070158aa771beda3d09fe44ab6f39797100a88ac263bc5304cb",
+        )
+        .into_bytes();
+    let (historical_document, historical) =
+        BlueprintRevisionDocument::from_json(&historical_bytes)?;
+    assert_eq!(historical_document.to_canonical_json()?, historical_bytes);
+    assert_eq!(historical.semantic(), revision.semantic());
+    assert_ne!(historical.id(), revision.id());
+    assert!(
+        BlueprintRevisionDocument::from_json(
+            &String::from_utf8(current_bytes)?
+                .replace("schema v2", "schema v1")
+                .into_bytes()
+        )
+        .is_err()
     );
     assert!(revision.semantic().nodes().values().all(|node| {
         matches!(
@@ -340,7 +373,7 @@ fn remediation_is_a_digest_bound_prospective_ordinary_revision() -> TestResult {
     );
     assert_eq!(
         prospective.id().as_str(),
-        "rev_ff0f4cf43247434e096eb4ad18d5367e78de15c08991cd4a4248a445d0ed4951"
+        "rev_0d9a5e37e0ea86cdea711c347e6e181e9c13505adad829d923260bb518328c42"
     );
     assert_eq!(
         proposal.proposal().mutation().id().as_str(),

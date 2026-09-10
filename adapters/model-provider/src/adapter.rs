@@ -873,7 +873,8 @@ impl ModelEndpointAdapter {
                 }
             }
         }
-        // Blueprint session intent is not compared here; Fresh validates only the model request.
+        // Runtime checks policy agreement before claiming the invocation. Agreement
+        // cannot supply a provider protocol mapping that this adapter does not support.
         match task.session() {
             SessionSelection::Fresh => {}
             SessionSelection::ExplicitContinuation { .. } => {

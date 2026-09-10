@@ -308,6 +308,124 @@ fn selection_is_deterministic_across_candidate_page_order() -> TestResult {
 }
 
 #[test]
+fn stopped_selection_still_refuses_every_eligible_required_loss() -> TestResult {
+    for fail_closed in [true, false] {
+        let mut policy_json = serde_json::to_value(policy_with_fail_closed(
+            ContextBudget::new(8, 10, 100, None)?,
+            fail_closed,
+        )?)?;
+        policy_json["truncation"] = json!("stop_at_first_overflow");
+        let policy: TaskContextPolicy = serde_json::from_value(policy_json)?;
+        let revision = revision(policy.clone())?;
+        for availability in [
+            ContextCandidateAvailability::Available,
+            ContextCandidateAvailability::MissingOrCorrupt,
+            ContextCandidateAvailability::Unsupported,
+        ] {
+            for authorized in [true, false] {
+                let mut later =
+                    candidate("zzz-required", ContextSemanticKind::DirectInput, None, 1)?;
+                later.required = true;
+                later.availability = availability;
+                later.authority.required = true;
+                later.authority.authorized = authorized;
+                let result = CausalContextBuilder::build(ContextBuildRequest {
+                    identity: identity(&revision)?,
+                    semantic: revision.semantic(),
+                    policy: &policy,
+                    visible_scopes: BTreeSet::new(),
+                    candidates: vec![
+                        candidate("aaa-overflow", ContextSemanticKind::DirectInput, None, 11)?,
+                        later,
+                    ],
+                });
+                assert_eq!(
+                    result.is_err(),
+                    fail_closed,
+                    "{availability:?}, authorized={authorized}"
+                );
+                if !fail_closed {
+                    let manifest = result?;
+                    assert!(manifest.entries().is_empty());
+                    assert_eq!(
+                        manifest.omissions()[1].reason,
+                        ContextOmissionReason::SelectionStopped
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn omission_disclosure_does_not_depend_on_stopping_or_exclusion_reason() -> TestResult {
+    for stopped in [true, false] {
+        for hidden_scope in [true, false] {
+            let mut policy_json =
+                serde_json::to_value(policy(ContextBudget::new(8, 10, 100, None)?)?)?;
+            policy_json["truncation"] = json!("stop_at_first_overflow");
+            if !stopped {
+                policy_json["exclude_categories"] = json!(["direct_input"]);
+                policy_json["include_categories"] = json!(["successful_output"]);
+            }
+            let policy: TaskContextPolicy = serde_json::from_value(policy_json)?;
+            let revision = revision(policy.clone())?;
+            let mut protected = candidate(
+                "zzz-protected-identity",
+                ContextSemanticKind::DirectInput,
+                None,
+                7,
+            )?;
+            protected.selected_artifact_bytes = 23;
+            if hidden_scope {
+                protected.scope = Some(ScopeReference::new(
+                    RunId::new("hidden-run")?,
+                    ScopeId::new("hidden-scope")?,
+                ));
+            } else {
+                protected.authority.required = true;
+                protected.authority.authorized = false;
+            }
+            let mut candidates = vec![protected];
+            if stopped {
+                candidates.push(candidate(
+                    "aaa-overflow",
+                    ContextSemanticKind::DirectInput,
+                    None,
+                    11,
+                )?);
+            }
+            let manifest = CausalContextBuilder::build(ContextBuildRequest {
+                identity: identity(&revision)?,
+                semantic: revision.semantic(),
+                policy: &policy,
+                visible_scopes: BTreeSet::new(),
+                candidates,
+            })?;
+            let bytes = ContextManifestDocument::new(manifest.clone()).to_canonical_json()?;
+            let text = std::str::from_utf8(&bytes)?;
+            assert!(!text.contains("zzz-protected-identity"), "{text}");
+            let omitted = manifest.omissions().last().ok_or("missing omission")?;
+            assert!(omitted.source.is_none());
+            assert_eq!(
+                (omitted.omitted_bytes, omitted.omitted_artifact_bytes),
+                (0, 0)
+            );
+            assert_eq!(
+                omitted.reason,
+                if stopped {
+                    ContextOmissionReason::SelectionStopped
+                } else {
+                    ContextOmissionReason::ExcludedCategory
+                }
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn branch_siblings_are_omitted_until_explicitly_exposed() -> TestResult {
     let policy = policy(ContextBudget::new(8, 1_024, 1_024, None)?)?;
     let revision = revision(policy.clone())?;

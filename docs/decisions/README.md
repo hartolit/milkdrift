@@ -40,3 +40,4 @@ their existence does not establish that continuous controllers are installed.
 - [0028 — TOML daemon configuration compiles into narrow plans](0028-toml-compiled-daemon-configuration.md)
 - [0029 — One daemon clock with durable rollback evidence](0029-durable-daemon-clock-boundary.md)
 - [0030 — Bounded headless operator contract](0030-bounded-headless-operator-contract.md)
+- [0031 — Enforce context decisions before future execution](0031-context-enforcement-and-retained-evidence.md)

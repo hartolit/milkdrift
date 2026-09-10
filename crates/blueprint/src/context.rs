@@ -446,17 +446,17 @@ pub enum ContextTruncation {
     #[default]
     OmitOversized,
     /// Stop selection at the first candidate that crosses a budget.
-    /// See [`TaskContextPolicy::fail_closed`] for the current required-candidate gap.
+    /// Required-evidence checks still run under [`TaskContextPolicy::fail_closed`].
     StopAtFirstOverflow,
 }
 
 /// Declares the task author's intended session behavior.
 ///
-/// This choice is part of the policy digest. The current runtime does not translate or
-/// enforce it against an adapter request. For a model task, the separately supplied
-/// `milkdrift_model::SessionSelection` controls the actual request; both current model
-/// endpoint mappings accept only its `Fresh` variant. Selecting continuation here alone
-/// therefore does not arrange a continued session.
+/// This choice is part of the policy digest. Before claiming a model invocation, runtime
+/// compares it with the inline or artifact-backed `milkdrift_model::SessionSelection`.
+/// Agreement does not establish provider support: current endpoint mappings accept only
+/// `Fresh`. Process stages retain this declaration as capability-specific intent; it does
+/// not create a process session or select continuation references.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextSessionPolicy {
@@ -495,16 +495,15 @@ pub enum ContextSessionPolicy {
 ///
 /// Requesting a source never grants access to it. Branch-private content needs an
 /// explicit data/join/import boundary before selection; naming the node or execution
-/// cannot select a sibling's private workspace content. Omissions labelled
-/// `AuthorityDenied` or `BranchIsolated` redact source identity and byte counts, but the
-/// current selector can choose another reason first and retain candidate metadata.
-/// This omission-redaction gap does not authorize disclosure. The policy governs context
+/// cannot select a sibling's private workspace content. Restricted omissions redact source
+/// identity and byte counts even when stopping or exclusion determines the reason.
+/// The policy governs context
 /// selection, not task input bindings: omitting a direct input from the manifest does
 /// not remove that input from the invocation.
 ///
 /// [`ContextBudget`] bounds discovery and selection. [`Self::fail_closed`] explains what
-/// happens when required evidence is lost, including the current `StopAtFirstOverflow`
-/// gap. Session declarations have a separate limitation; see [`ContextSessionPolicy`].
+/// happens when required evidence is lost. Session declarations and capability support
+/// are distinct; see [`ContextSessionPolicy`].
 ///
 /// # Example
 ///
@@ -822,7 +821,7 @@ impl TaskContextPolicy {
 
     /// Whether a required candidate fails preparation when it cannot be included.
     ///
-    /// While selection is active, `true` rejects required eligible candidates that are
+    /// Even after selection stops, `true` rejects required eligible candidates that are
     /// unavailable, denied authority, or over budget. A required exact-source candidate
     /// also fails if excluded or branch-isolated. Required direct inputs come from task
     /// port declarations; exact-source discovery can also add required candidates.
@@ -830,12 +829,9 @@ impl TaskContextPolicy {
     /// With `false`, those selection failures become omissions, not permission to read
     /// denied content. Discovery, decoding, and later integrity failures can still stop work.
     ///
-    /// Current limitation: after [`ContextTruncation::StopAtFirstOverflow`] stops
-    /// selection, later eligible candidates are omitted without checking whether they
-    /// are required. Its `SelectionStopped` reason can also replace an access/isolation
-    /// reason that would have redacted candidate metadata. Use
-    /// [`ContextTruncation::OmitOversized`] when relying on required-item checks; the
-    /// type documentation describes the separate omission-redaction limitation.
+    /// After [`ContextTruncation::StopAtFirstOverflow`], eligible required evidence
+    /// fails preparation even if it would fit by itself. Optional later evidence remains
+    /// omitted with `SelectionStopped`; its disclosure restrictions still apply.
     #[must_use]
     pub const fn fail_closed(&self) -> bool {
         self.fail_closed

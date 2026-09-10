@@ -305,8 +305,9 @@ pub fn compile(
         batch,
         author,
         format!(
-            "import prompt sequence {} schema v1",
-            document.sequence().id
+            "import prompt sequence {} schema v{}",
+            document.sequence().id,
+            document.schema_version
         ),
     )
     .map_err(|error| compilation(format!("{error:?}")))?;

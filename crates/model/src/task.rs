@@ -297,8 +297,8 @@ milkdrift_contracts::deserialize_via!(StructuredOutput, StructuredOutputWire, |w
 ///
 /// Current endpoint mappings accept only `Fresh`. The continuation variants preserve
 /// intent in the contract but are refused before HTTP until a mapping supports them.
-/// This request field is separate from the blueprint context-session declaration;
-/// runtime currently does not compare the two.
+/// Runtime compares this request field with the governing blueprint context-session
+/// declaration before claiming the invocation, including on retry and recovery.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum SessionSelection {

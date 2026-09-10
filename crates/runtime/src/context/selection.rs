@@ -1,8 +1,7 @@
 //! Rank metadata candidates and turn the actual selection into a manifest.
 //!
-//! Budget overflow either omits one candidate or stops later selection. The stopped
-//! branch currently precedes eligible required-candidate checks, so a saved manifest
-//! can omit required evidence without a build error. The builder documents this gap.
+//! Budget overflow either omits one candidate or stops later selection. Stopping never
+//! suppresses required-evidence checks; omission disclosure uses independent access facts.
 
 use milkdrift_blueprint::{ContextTruncation, NodeId};
 use milkdrift_model::{
@@ -110,7 +109,8 @@ impl<'a> SelectionState<'a> {
         inclusion_reason: Option<ContextInclusionReason>,
         omission_reason: Option<ContextOmissionReason>,
     ) -> Result<(), ContextBuildError> {
-        if !eligible || self.stopped {
+        let required = candidate.required && self.request.policy.fail_closed();
+        if !eligible || (self.stopped && !required) {
             if !eligible
                 && candidate.required
                 && self.request.policy.fail_closed()
@@ -125,7 +125,7 @@ impl<'a> SelectionState<'a> {
             } else {
                 omission_reason.unwrap_or(ContextOmissionReason::NotSelected)
             };
-            self.omissions.push(omission(&candidate, reason));
+            self.omit(&candidate, reason);
             return Ok(());
         }
         if candidate.availability != ContextCandidateAvailability::Available {
@@ -135,9 +135,11 @@ impl<'a> SelectionState<'a> {
             if candidate.required && self.request.policy.fail_closed() {
                 return Err(ContextBuildError::AuthorityDenied);
             }
-            self.omissions
-                .push(omission(&candidate, ContextOmissionReason::AuthorityDenied));
+            self.omit(&candidate, ContextOmissionReason::AuthorityDenied);
             return Ok(());
+        }
+        if self.stopped {
+            return Err(ContextBuildError::RequiredBudget("stopped selection"));
         }
         if let Some((reason, budget_name)) =
             budget_overflow(self.request.policy.budget(), self.totals, &candidate)?
@@ -145,7 +147,7 @@ impl<'a> SelectionState<'a> {
             if candidate.required && self.request.policy.fail_closed() {
                 return Err(ContextBuildError::RequiredBudget(budget_name));
             }
-            self.omissions.push(omission(&candidate, reason));
+            self.omit(&candidate, reason);
             self.stopped =
                 self.request.policy.truncation() == ContextTruncation::StopAtFirstOverflow;
             return Ok(());
@@ -167,8 +169,13 @@ impl<'a> SelectionState<'a> {
             ContextCandidateAvailability::Unsupported => ContextOmissionReason::Unsupported,
             ContextCandidateAvailability::Superseded => ContextOmissionReason::Superseded,
         };
-        self.omissions.push(omission(candidate, reason));
+        self.omit(candidate, reason);
         Ok(())
+    }
+
+    fn omit(&mut self, candidate: &ContextCandidate, reason: ContextOmissionReason) {
+        self.omissions
+            .push(omission(candidate, reason, &self.request.visible_scopes));
     }
 
     fn include(
@@ -256,7 +263,7 @@ impl<'a> SelectionState<'a> {
             identity.node,
             identity.execution,
             identity.attempt,
-            1,
+            super::CONTEXT_SELECTION_POLICY_VERSION,
             digest,
             self.entries,
             self.omissions,

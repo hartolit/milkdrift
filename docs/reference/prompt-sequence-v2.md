@@ -113,10 +113,10 @@ mapping, prompt digests, and verification artifact names. Remediation rejects a 
 document unless its canonical import digest, repository digest, and stage mapping exactly match
 that frozen metadata.
 
-Use the import schema and provenance fields to identify the format. The generated revision reason
-currently says schema v1 despite the v2 import; the
-[version-label finding](../development/virtual-office/whiteboard/issues/prompt-sequence-version-label.md)
-tracks that executable correction and its effect on newly generated revision identities.
+The generated revision reason names the validated import schema version. Correcting the old v1
+label changes new revision identities and their descendants, while semantic content and import
+digests remain the same. Stored revision reasons retain their original bytes and identity;
+[ADR 0031](../decisions/0031-context-enforcement-and-retained-evidence.md) records the compatibility choice.
 
 Validation/import use the existing `validate_blueprint`/`import_blueprint` authority operations and
 ordinary immutable revision store. Execution and remediation use the existing run, proposal,

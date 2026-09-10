@@ -41,10 +41,11 @@ Both send the requested output allowance as `max_tokens`; the model contract's u
 prove that a particular server accepts that allowance. Provider options use the mapping's explicit
 extension namespace and cannot overwrite already emitted request fields.
 
-Only `ModelTaskRequest::session() == Fresh` is accepted. This check does **not** compare the blueprint's
-context-session declaration with the model request. The runtime's session/selection enforcement
-limits are described in [current status](../../docs/product/status.md#limitations-now); consuming
-a valid manifest does not repair those upstream gaps.
+Only `ModelTaskRequest::session() == Fresh` is accepted. Runtime first compares the request with the
+governing blueprint declaration when claiming the invocation, including inline/artifact requests,
+retries, and recovered leases. Matching continuation still fails this adapter's protocol check;
+neither boundary replaces continuation with a fresh session. Standalone adapter callers supply
+their own governing-policy enforcement because this adapter has no workflow revision store.
 
 ## Observe a result or a lost response
 

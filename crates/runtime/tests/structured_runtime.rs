@@ -619,6 +619,8 @@ use builders::*;
 
 #[path = "structured_runtime/causal_context_production.rs"]
 mod causal_context_production;
+#[path = "structured_runtime/context_enforcement.rs"]
+mod context_enforcement;
 #[path = "structured_runtime/data_integrity.rs"]
 mod data_integrity;
 #[path = "structured_runtime/fixtures.rs"]

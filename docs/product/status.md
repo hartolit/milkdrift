@@ -68,12 +68,13 @@ values; repository contracts check the version cells against source.
 
 ## Limitations now
 
-- Context policy session intent is not compared with the model request's session. With
-  `StopAtFirstOverflow`, an optional overflow can skip later eligible required-evidence checks.
-  Omission-reason precedence can also retain protected reference metadata. The
-  [runtime builder](../../crates/runtime/src/context.rs) describes these implementation gaps;
-  [the source finding](../development/virtual-office/whiteboard/issues/context-policy-enforcement.md)
-  records the follow-up. Existing tests do not establish the missing combined cases.
+- Earlier selection-policy-version-1 manifests remain readable, but omissions retaining ambiguous
+  identities or sizes and stopped required evidence cannot authorize reuse. Retry and startup refuse those
+  retained records without rewriting their bytes. The corrected selector emits policy version 2;
+  [ADR 0031](../decisions/0031-context-enforcement-and-retained-evidence.md) explains this distinction
+  from the unchanged manifest schema. Model session agreement is checked before claiming work;
+  supported provider mappings still accept only `Fresh`. Process session intent remains
+  capability-specific and does not implement continuation.
 - Combined real coding-agent/model interoperability remains unqualified: no operator-supplied
   byte-pinned real coding-agent profile is available. A separately managed supported model has
   passed the ordinary model scenario, but a clean strict combined report is still required.
@@ -130,6 +131,15 @@ Private lifecycle tests observe completion of every started I/O worker and retai
 registration during partial startup and unwinding. Cancellation, timeout, output-limit termination,
 and shutdown regressions also pass. New Unix owned-descendant reporting cases are present but have
 not been executed for this change; earlier hosted process evidence does not qualify them.
+
+The context/import correction passes the complete local Windows/MSVC gate with 725 tests and all
+24 repository contracts; five manual longevity tests remain ignored. Production regressions cover
+stopped required evidence, serialized protected omissions, legacy retry/reopen refusal, model
+session agreement for inline/artifact requests and category-free historical snapshots, and exact
+import revision identity. A bounded runtime/host/HTTP matrix proves Fresh completion and no request
+for contradictory or unsupported continuation declarations. All 42 default/all-feature library API
+inventories are reviewed; the sole added export shares the model document byte ceiling with runtime.
+These checks do not add real-provider, process-session, or cross-platform qualification.
 
 The ordinary model scenario passes against separately managed LM Studio with
 `google/gemma-4-12b-qat`, explicit response/idle bounds, and a 4,096-unit output allowance. Evidence

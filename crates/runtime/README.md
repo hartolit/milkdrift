@@ -88,11 +88,18 @@ projection's frozen sequence, using recent events and exact historical anchors. 
 the host materializes only selected content and verifies it against that manifest. A retry rebinds
 the previous selection to its new attempt rather than selecting from newer history.
 
-Current policy enforcement has known gaps: blueprint session declarations are not checked against
-model request sessions; stopping selection at the first optional overflow can skip later required
-checks; omission-reason precedence can retain protected reference metadata. See `CausalContextBuilder`
-for the affected choices. The manifest records the selection actually made, not proof that every
-declared policy intent was enforced.
+Stopping selection still refuses eligible required losses under `fail_closed`. Omission reasons
+explain selection decisions while independent scope and authority facts control metadata redaction.
+New manifests record selection policy version 2. Older manifests remain readable, but a retry or
+recovered lease is refused when saved omissions cannot establish required-evidence or disclosure
+safety; runtime never rewrites that evidence or selects from newer history to repair it.
+The [compatibility decision](../../docs/decisions/0031-context-enforcement-and-retained-evidence.md)
+explains which old selections remain usable.
+
+When claiming a model invocation, runtime compares its inline or immutable artifact request's
+session with the governing task policy. A mismatch is durably rejected before the host receives
+work. Agreement still faces the adapter's feature checks; both current model mappings require
+`Fresh`. Process stages carry their own declared intent without implementing a continuation protocol.
 
 ## Inspect, revise, and reopen
 

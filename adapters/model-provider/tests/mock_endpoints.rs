@@ -53,6 +53,9 @@ use milkdrift_workspace::{
 };
 use serde_json::{Value, json};
 
+#[path = "mock_endpoints/runtime_session.rs"]
+mod runtime_session;
+
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Default)]

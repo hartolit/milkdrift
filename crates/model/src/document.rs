@@ -14,7 +14,9 @@ use crate::{ContextManifest, ModelResponse, ModelTaskRequest};
 
 /// Current provider-neutral model contract schema.
 const MODEL_CONTRACT_SCHEMA_VERSION_V1: u32 = 1;
-const MAX_DOCUMENT_BYTES: usize = 2_097_152;
+/// Maximum encoded bytes in a model request, response, or manifest document.
+/// Readers of artifact-backed documents must enforce this before allocating their buffer.
+pub const MAX_MODEL_DOCUMENT_BYTES: usize = 2_097_152;
 const LIMITS: JsonLimits = JsonLimits {
     maximum_depth: 48,
     maximum_string_bytes: 1_048_576,
@@ -53,10 +55,10 @@ pub enum ModelContractError {
 
 pub(crate) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, ModelContractError> {
     let bytes = canonical_json_bytes(value, LIMITS).map_err(map_canonical)?;
-    if bytes.len() > MAX_DOCUMENT_BYTES {
+    if bytes.len() > MAX_MODEL_DOCUMENT_BYTES {
         return Err(ModelContractError::Bounds {
             location: "$".to_owned(),
-            reason: format!("document exceeds {MAX_DOCUMENT_BYTES} bytes"),
+            reason: format!("document exceeds {MAX_MODEL_DOCUMENT_BYTES} bytes"),
         });
     }
     Ok(bytes)
@@ -66,10 +68,10 @@ fn read<T: DeserializeOwned>(
     bytes: &[u8],
     document: &'static str,
 ) -> Result<T, ModelContractError> {
-    if bytes.len() > MAX_DOCUMENT_BYTES {
+    if bytes.len() > MAX_MODEL_DOCUMENT_BYTES {
         return Err(ModelContractError::Bounds {
             location: "$".to_owned(),
-            reason: format!("document exceeds {MAX_DOCUMENT_BYTES} bytes"),
+            reason: format!("document exceeds {MAX_MODEL_DOCUMENT_BYTES} bytes"),
         });
     }
     milkdrift_contracts::preflight_json_structure(bytes, LIMITS).map_err(map_bound)?;

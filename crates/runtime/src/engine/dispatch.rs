@@ -212,6 +212,15 @@ impl RuntimeService {
             now,
         ) {
             Ok(request) => request,
+            Err(RuntimeError::Scheduling(detail))
+                if matches!(execution.state(), NodeExecutionState::RetryPending(_)) =>
+            {
+                // A retry already owns an attempt. The attempt-free pre-dispatch
+                // terminal cannot discard that obligation or replace its frozen inputs.
+                return Err(RuntimeError::InvalidHistory(format!(
+                    "retry invocation cannot reuse frozen evidence: {detail}"
+                )));
+            }
             Err(RuntimeError::Scheduling(_)) => {
                 self.commit_pre_dispatch_failure(
                     &entry.run,
@@ -236,37 +245,34 @@ impl RuntimeService {
         }
         let lease = self.next_lease_id()?;
         let expires_at = checked_timestamp_add(now, self.config.lease_duration_ms)?;
+        let scheduled = RunEventKind::NodeScheduled {
+            node: node.id().clone(),
+            execution: execution.execution().clone(),
+            attempt: attempt.clone(),
+            invocation: invocation.clone(),
+            idempotency_key: idempotency_key.clone(),
+            request: request.clone(),
+        };
         let mut schedule_events = Vec::new();
-        if let Some(manifest) = request.context_manifest() {
-            let artifact = milkdrift_workspace::ArtifactId::new(manifest.identity())
-                .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
-            if !projection.artifacts().contains_key(&artifact) {
-                let metadata = self.store.metadata(&artifact)?.ok_or_else(|| {
-                    RuntimeError::InvalidHistory(
-                        "persisted context manifest metadata is absent".to_owned(),
-                    )
-                })?;
-                if manifest.digest() != metadata.reference().digest().to_hex()
-                    || manifest.size_bytes() != Some(metadata.reference().size_bytes())
-                    || manifest.media_type() != Some(metadata.reference().media_type().as_str())
-                {
-                    return Err(RuntimeError::InvalidHistory(
-                        "persisted context manifest metadata contradicts its request reference"
-                            .to_owned(),
-                    ));
-                }
+        // The journal owns artifact reference discovery and accounting. Introduce each
+        // exact input/manifest before output provenance can cite it, including direct
+        // artifact bindings that were never supplied as initial workspace values.
+        for artifact in scheduled
+            .required_artifacts()?
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+        {
+            if !projection.artifacts().contains_key(artifact.artifact()) {
+                let metadata = self.store.metadata(artifact.artifact())?
+                    .filter(|metadata| metadata.reference() == &artifact)
+                    .ok_or_else(|| RuntimeError::InvalidHistory(
+                        "scheduled artifact metadata is absent or contradicts its exact reference".to_owned(),
+                    ))?;
                 schedule_events.push(RunEventKind::ArtifactPublished { metadata });
             }
         }
         schedule_events.extend([
-            RunEventKind::NodeScheduled {
-                node: node.id().clone(),
-                execution: execution.execution().clone(),
-                attempt: attempt.clone(),
-                invocation: invocation.clone(),
-                idempotency_key: idempotency_key.clone(),
-                request: request.clone(),
-            },
+            scheduled,
             RunEventKind::CapabilityResolutionDecisionRecorded {
                 execution: execution.execution().clone(),
                 attempt: attempt.clone(),
@@ -521,9 +527,13 @@ impl RuntimeService {
             .values()
             .find(|retry| retry.next_attempt() == attempt)
             .and_then(|retry| projection.attempts().get(retry.previous_attempt()))
-            .and_then(|attempt| attempt.request())
-            .and_then(InvocationRequest::context_manifest);
-        let manifest = if let Some(previous) = previous_manifest {
+            .and_then(|attempt| {
+                attempt
+                    .request()
+                    .and_then(InvocationRequest::context_manifest)
+                    .map(|manifest| (attempt.attempt(), manifest))
+            });
+        let manifest = if let Some((previous_attempt, previous)) = previous_manifest {
             let basis = projection.execution_authority().ok_or_else(|| {
                 RuntimeError::InvalidHistory("retry has no execution-authority basis".to_owned())
             })?;
@@ -536,15 +546,16 @@ impl RuntimeService {
                 },
             )
             .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
-            if old.run() != run
-                || old.revision() != revision.id()
-                || old.node() != node.id()
-                || old.execution() != execution
-            {
-                return Err(RuntimeError::InvalidHistory(
-                    "retry context manifest contradicts its logical execution".to_owned(),
-                ));
-            }
+            let previous_identity = crate::ContextBuildIdentity {
+                attempt: previous_attempt.clone(),
+                ..identity
+            };
+            crate::context::validate_retained_manifest(
+                &old,
+                &previous_identity,
+                config.context_policy(),
+            )
+            .map_err(|error| RuntimeError::InvalidHistory(error.to_string()))?;
             old.rebind_attempt(attempt.clone())
                 .map_err(|error| RuntimeError::Scheduling(error.to_string()))?
         } else {

@@ -24,8 +24,15 @@ use milkdrift_workspace::{
 };
 use thiserror::Error;
 
+mod retained;
 mod selection;
 mod source;
+pub(crate) use retained::validate_retained_manifest;
+pub(crate) use source::read_model_document_bytes;
+
+// The manifest already records which selection rules produced its omissions. Version 1
+// cannot establish disclosure when another reason masked the candidate's access facts.
+const CONTEXT_SELECTION_POLICY_VERSION: u32 = 2;
 
 pub use source::{
     ContextCandidateSource, ContextSourceRequest, DurableContextCandidateSource,
@@ -175,14 +182,10 @@ pub enum ContextBuildError {
 /// orders candidates, checks active availability/authority/budget rules, and records both
 /// selected evidence and omissions. Publish the manifest before materializing content.
 ///
-/// Current enforcement has limits callers must account for. With `StopAtFirstOverflow`,
-/// an optional overflow stops subsequent eligible candidates before their required checks;
-/// `OmitOversized` continues those checks. Omission redaction currently depends on the
-/// reported reason: `SelectionStopped` or `ExcludedCategory` can retain protected source
-/// references and sizes. A manifest is not proof of complete omission-metadata redaction.
-/// Task session policy is also not enforced against the model request's session; dispatch
-/// and provider negotiation use separate fields. These are implementation gaps, not
-/// permission to weaken required-evidence or disclosure rules.
+/// Stopping selection never skips eligible required-evidence checks under `fail_closed`.
+/// Hidden scopes and denied authority redact omission references and sizes independently
+/// of the reported selection reason. New manifests record selection policy version 2;
+/// runtime checks older retained evidence before allowing a retry or recovered lease.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CausalContextBuilder;
 
@@ -350,12 +353,7 @@ fn eligibility(
     if policy.exclude_categories().contains(&category) {
         return (false, None, Some(ContextOmissionReason::ExcludedCategory));
     }
-    if candidate
-        .scope
-        .as_ref()
-        .is_some_and(|scope| !visible.contains(scope))
-        && !candidate.exposed_across_scope
-    {
+    if scope_is_hidden(candidate, visible) {
         return (false, None, Some(ContextOmissionReason::BranchIsolated));
     }
     if candidate.kind == ContextSemanticKind::Artifact && !artifact_matches(policy, candidate) {
@@ -563,14 +561,22 @@ fn candidate_is_artifact(candidate: &ContextCandidate) -> bool {
         )
 }
 
-fn omission(candidate: &ContextCandidate, reason: ContextOmissionReason) -> ContextOmission {
-    // Redaction follows the chosen reason rather than independent visibility facts.
-    // Earlier stopping/exclusion can mask a branch/authority reason and leave protected
-    // references and sizes in the omission.
-    let redacted = matches!(
-        reason,
-        ContextOmissionReason::BranchIsolated | ContextOmissionReason::AuthorityDenied
-    );
+fn scope_is_hidden(candidate: &ContextCandidate, visible: &BTreeSet<ScopeReference>) -> bool {
+    candidate
+        .scope
+        .as_ref()
+        .is_some_and(|scope| !visible.contains(scope))
+        && !candidate.exposed_across_scope
+}
+
+fn omission(
+    candidate: &ContextCandidate,
+    reason: ContextOmissionReason,
+    visible: &BTreeSet<ScopeReference>,
+) -> ContextOmission {
+    // Selection reasons explain policy and budget losses without granting disclosure.
+    let redacted = scope_is_hidden(candidate, visible)
+        || (candidate.authority.required && !candidate.authority.authorized);
     ContextOmission {
         source: (!redacted).then(|| candidate.source.clone()).flatten(),
         kind: candidate.kind,
