@@ -82,6 +82,10 @@
                 "required": [
                   "repository_initial_commit",
                   "repository_final_commit",
+                  "repository_initial_tree",
+                  "repository_final_tree",
+                  "dirty_diff_digest",
+                  "dirty_diff_bytes",
                   "distinct_process_invocations",
                   "process_invocations",
                   "terminal_sequence"
@@ -89,6 +93,10 @@
                 "properties": {
                   "repository_initial_commit": { "pattern": "^[0-9a-f]{40}$" },
                   "repository_final_commit": { "pattern": "^[0-9a-f]{40}$" },
+                  "repository_initial_tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+                  "repository_final_tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+                  "dirty_diff_digest": { "type": "string", "pattern": "^b3_[0-9a-f]{64}$" },
+                  "dirty_diff_bytes": { "type": "integer", "minimum": 1 },
                   "distinct_process_invocations": { "type": "integer", "minimum": 5 },
                   "process_invocations": { "type": "array", "minItems": 5, "maxItems": 4096 },
                   "terminal_sequence": { "type": "integer", "minimum": 1 }

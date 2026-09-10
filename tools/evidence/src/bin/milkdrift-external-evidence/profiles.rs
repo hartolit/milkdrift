@@ -26,6 +26,7 @@ pub struct AgentProfile {
 }
 
 pub struct GeneratedProfiles {
+    pub canonical_executable: PathBuf,
     pub weak_verifier: PathBuf,
     pub good_verifier: PathBuf,
     pub reviewer: PathBuf,
@@ -254,6 +255,7 @@ pub fn generated_profiles(
         true,
     )?;
     Ok(GeneratedProfiles {
+        canonical_executable: python,
         weak_verifier,
         good_verifier,
         reviewer,

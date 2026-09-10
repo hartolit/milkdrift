@@ -257,7 +257,7 @@ impl ScenarioEvidence {
         Ok(())
     }
 
-    fn validate_process_semantics(&self) -> Result<(), String> {
+    pub(super) fn validate_process_semantics(&self) -> Result<(), String> {
         let profile = &self.profile;
         let facts = &self.facts;
         if bounded_string(profile, "executable_content_digest")
@@ -272,17 +272,30 @@ impl ScenarioEvidence {
         {
             return Err("qualifying process profile facts are malformed".to_owned());
         }
-        let initial =
-            bounded_string(facts, "repository_initial_commit").filter(|value| is_git_object(value));
-        let final_commit =
-            bounded_string(facts, "repository_final_commit").filter(|value| is_git_object(value));
+        // The scenario requests an uncommitted repair, preserving the starting history.
+        let history_preserved = [
+            ("repository_initial_commit", "repository_final_commit"),
+            ("repository_initial_tree", "repository_final_tree"),
+        ]
+        .into_iter()
+        .all(|(initial, final_value)| {
+            bounded_string(facts, initial).is_some_and(|value| {
+                is_git_object(value) && bounded_string(facts, final_value) == Some(value)
+            })
+        });
+        let nonempty_diff = facts
+            .get("dirty_diff_bytes")
+            .and_then(Value::as_u64)
+            .is_some_and(|bytes| bytes > 0)
+            && bounded_string(facts, "dirty_diff_digest").is_some_and(|digest| {
+                is_blake3_digest(digest) && digest != format!("b3_{}", blake3::hash(b""))
+            });
         let count = facts
             .get("distinct_process_invocations")
             .and_then(Value::as_u64);
         let invocations = facts.get("process_invocations").and_then(Value::as_array);
-        if initial.is_none()
-            || final_commit.is_none()
-            || initial == final_commit
+        if !history_preserved
+            || !nonempty_diff
             || count.is_none_or(|value| value < 5)
             || invocations.is_none_or(|items| u64::try_from(items.len()).ok() != count)
             || facts
@@ -482,6 +495,64 @@ mod tests {
         model.outcome = "succeeded".to_owned();
         model.failure_reason = None;
         assert!(report(process, model).validate().is_err());
+    }
+
+    fn repaired_process() -> ScenarioEvidence {
+        let mut process = ScenarioEvidence::pending("test report validation only");
+        process.profile = serde_json::json!({
+            "executable_content_digest":format!("b3_{}", "a".repeat(64)),
+            "executable_size_bytes":1,
+            "version_output":"test-agent-version",
+            "profile_digest":format!("b3_{}", "b".repeat(64)),
+        });
+        let roles = [
+            "initial_coding",
+            "controlled_verification",
+            "independent_review",
+            "remediation_coding",
+            "final_verification",
+        ];
+        process.facts = serde_json::json!({
+            "repository_initial_commit":"a".repeat(40),
+            "repository_final_commit":"a".repeat(40),
+            "repository_initial_tree":"b".repeat(40),
+            "repository_final_tree":"b".repeat(40),
+            "dirty_diff_digest":format!("b3_{}", blake3::hash(b"test diff")),
+            "dirty_diff_bytes":9,
+            "distinct_process_invocations":5,
+            "process_invocations":roles.map(|role| serde_json::json!({
+                "role":role,"invocation_id":format!("invocation-{role}"),
+                "terminal":"succeeded","uncertain":false,
+            })),
+            "terminal_sequence":100,
+        });
+        process
+    }
+
+    #[test]
+    fn process_validation_accepts_an_uncommitted_repair() {
+        assert!(repaired_process().validate_process_semantics().is_ok());
+    }
+
+    #[test]
+    fn process_validation_refuses_changed_history_or_missing_diff_evidence() {
+        for (field, value) in [
+            ("repository_final_commit", Value::String("c".repeat(40))),
+            ("repository_final_tree", Value::String("c".repeat(40))),
+            ("repository_initial_tree", Value::Null),
+            ("dirty_diff_bytes", serde_json::json!(0)),
+            ("dirty_diff_bytes", Value::Null),
+            ("dirty_diff_digest", Value::String("invalid".to_owned())),
+            ("dirty_diff_digest", Value::Null),
+            (
+                "dirty_diff_digest",
+                Value::String(format!("b3_{}", blake3::hash(b""))),
+            ),
+        ] {
+            let mut process = repaired_process();
+            process.facts[field] = value;
+            assert!(process.validate_process_semantics().is_err(), "{field}");
+        }
     }
 
     #[test]

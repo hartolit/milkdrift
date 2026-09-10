@@ -335,11 +335,8 @@ pub(super) async fn run_process_scenario(
     let final_commit = workflows::git(repository, &["rev-parse", "HEAD"])?;
     let final_tree = workflows::git(repository, &["rev-parse", "HEAD^{tree}"])?;
     let dirty_diff = workflows::git(repository, &["diff", "--binary", "HEAD"])?;
-    if final_commit == initial_commit && dirty_diff.is_empty() {
-        return Err("real coding agent produced neither a commit nor a dirty diff".to_owned());
-    }
     daemon.terminate().map_err(|error| error.to_string())?;
-    Ok(ScenarioEvidence {
+    let evidence = ScenarioEvidence {
         qualifying: !fixture,
         outcome: "succeeded".to_owned(),
         profile: json!({
@@ -395,7 +392,9 @@ pub(super) async fn run_process_scenario(
             "terminal_sequence":completed.sequence,
         }),
         failure_reason: None,
-    })
+    };
+    evidence.validate_process_semantics()?;
+    Ok(evidence)
 }
 
 pub(super) async fn run_model_scenario(

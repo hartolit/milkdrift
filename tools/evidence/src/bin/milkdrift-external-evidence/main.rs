@@ -416,6 +416,7 @@ fn configuration(
                 session_root,
                 repository,
                 agent,
+                helpers,
                 model,
                 &secret_sources,
             )?,
@@ -493,6 +494,7 @@ fn explicit_grant(
     session_root: &Path,
     repository: &Path,
     agent: &AgentProfile,
+    helpers: &GeneratedProfiles,
     model: &workflows::ModelProfileFacts,
     configured_secrets: &BTreeMap<String, SecretSourceConfig>,
 ) -> HarnessResult<ActorGrantConfig> {
@@ -522,7 +524,7 @@ fn explicit_grant(
     let repository = repository
         .canonicalize()
         .map_err(|error| format!("repository root canonicalization: {error}"))?;
-    let filesystem = vec![
+    let mut filesystem = vec![
         FilesystemScope::from_canonical_host_path(
             &session_root,
             BTreeSet::from([AccessMode::Read, AccessMode::Write, AccessMode::Execute]),
@@ -533,15 +535,20 @@ fn explicit_grant(
             BTreeSet::from([AccessMode::Read, AccessMode::Write, AccessMode::Execute]),
         )
         .map_err(|error| error.to_string())?,
-        FilesystemScope::from_canonical_host_path(
-            agent
-                .canonical_executable
+    ];
+    // A real agent need not share the interpreter used by the generated evidence helpers.
+    for executable in [&agent.canonical_executable, &helpers.canonical_executable] {
+        let scope = FilesystemScope::from_canonical_host_path(
+            executable
                 .parent()
-                .ok_or_else(|| "agent executable has no parent".to_owned())?,
+                .ok_or_else(|| "process executable has no parent".to_owned())?,
             BTreeSet::from([AccessMode::Execute]),
         )
-        .map_err(|error| error.to_string())?,
-    ];
+        .map_err(|error| error.to_string())?;
+        if !filesystem.contains(&scope) {
+            filesystem.push(scope);
+        }
+    }
     let network = if model_profile.is_some() {
         let destination = model
             .endpoint_origin
@@ -901,3 +908,79 @@ fn unix_millis() -> HarnessResult<u64> {
 mod scenarios;
 
 use scenarios::{run_model_scenario, run_process_scenario};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grants_cover_separate_helper_executables_without_extra_access() -> HarnessResult {
+        let root = tempfile::tempdir().map_err(|error| error.to_string())?;
+        for directory in ["agent", "python", "session", "repository"] {
+            fs::create_dir(root.path().join(directory)).map_err(|error| error.to_string())?;
+        }
+        let root = root
+            .path()
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        let agent = AgentProfile {
+            path: root.join("agent-profile.json"),
+            capability: "test-agent".to_owned(),
+            canonical_executable: root.join("agent/agent.exe"),
+            content_digest: String::new(),
+            size_bytes: 1,
+            version_output: String::new(),
+            output_names: vec!["diff".to_owned()],
+            secret_refs: BTreeSet::new(),
+        };
+        let mut helpers = GeneratedProfiles {
+            canonical_executable: root.join("python/python.exe"),
+            weak_verifier: root.join("weak.json"),
+            good_verifier: root.join("good.json"),
+            reviewer: root.join("reviewer.json"),
+            evidence_source: root.join("source.json"),
+        };
+        let model = workflows::ModelProfileFacts {
+            profile_id: "test-model".to_owned(),
+            revision: 1,
+            protocol: "open_ai_compatible".to_owned(),
+            model_alias: "test-model".to_owned(),
+            endpoint_origin: "http://127.0.0.1:8080".to_owned(),
+            streaming: true,
+            structured_output: false,
+            secret_refs: BTreeSet::new(),
+        };
+        let execute = BTreeSet::from([AccessMode::Execute]);
+        let helper_scope = FilesystemScope::from_canonical_host_path(&root.join("python"), execute)
+            .map_err(|error| error.to_string())?;
+        for same_executable in [false, true] {
+            if same_executable {
+                helpers
+                    .canonical_executable
+                    .clone_from(&agent.canonical_executable);
+            }
+            for model_profile in [None, Some(model.profile_id.as_str())] {
+                let grant = explicit_grant(
+                    PROCESS_WORKFLOW,
+                    &BTreeSet::from([agent.capability.clone()]),
+                    model_profile,
+                    &root.join("session"),
+                    &root.join("repository"),
+                    &agent,
+                    &helpers,
+                    &model,
+                    &BTreeMap::new(),
+                )?;
+                assert_eq!(
+                    grant.resources.filesystem.len(),
+                    if same_executable { 3 } else { 4 }
+                );
+                assert_eq!(
+                    grant.resources.filesystem.contains(&helper_scope),
+                    !same_executable
+                );
+            }
+        }
+        Ok(())
+    }
+}

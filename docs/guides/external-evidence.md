@@ -41,6 +41,10 @@ stat -c '%s' /absolute/path/to/agent
 /absolute/path/to/agent --version
 ```
 
+The generated grants include exact execute scopes for the coding agent and the Python interpreter
+used by the verifier, reviewer, and model-evidence producer. They need not be installed in the same
+directory; sharing a directory does not add duplicate authority or grant write access there.
+
 The harness revalidates the source document, rejects known deterministic/test helpers, replaces
 only its working directory with the disposable repository, appends only its isolated
 session/repository roots, validates the rendered profile, rehashes the executable, and runs the
@@ -92,7 +96,10 @@ and reaps the daemon at the settled approval boundary, and a new daemon recovers
 approves, and applies an ordinary digest-bound remediation proposal, signals and resumes the run,
 starts a second fresh agent process, and runs the good verifier. It checks distinct invocation IDs,
 attempt provenance, output artifacts, no duplicate attempts, and the exact initial/final
-commit/tree plus dirty-diff digest.
+commit/tree plus dirty-diff digest and size. The agent must leave the initial commit and its tree
+unchanged and retain a nonempty working-tree diff. Process evidence is validated before the model
+scenario begins, including in fixture mode, so a committed or missing repair cannot consume a model
+request and fail only when the combined report is written.
 
 The model scenario publishes two selected evidence artifacts and one intentionally unselected
 artifact, then stops at a durable signal wait before adapter entry. After terminating and reopening the daemon it
@@ -174,7 +181,9 @@ clean and exact, requires scenario-specific command/run/attempt/artifact/restart
 every reported artifact digest, and scans the complete encoded bytes for generated and
 operator-mapped secret values before creating the file. These checks make malformed or leaked
 reports non-writable; they do not sign a report or make self-reported evidence independently
-attested.
+attested. The consumer schema requires the recorded repository trees and nonempty diff evidence;
+the Rust validator additionally checks that the initial and final commit/tree pairs are equal.
+These are checks on existing v1 fields, not a new report format.
 Interpret the top level first:
 
 - `qualifying: true` requires `fixture_mode: false` and both scenario `qualifying` fields true.

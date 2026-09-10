@@ -90,6 +90,24 @@ fn fixture_proves_the_harness_without_claiming_external_qualification() -> TestR
             .is_some_and(|count| count >= 1)
     );
     assert_eq!(report["model"]["facts"]["usage"]["input_units"], 19);
+    let repository_facts = &report["process"]["facts"];
+    assert_eq!(
+        repository_facts["repository_initial_commit"],
+        repository_facts["repository_final_commit"]
+    );
+    assert_eq!(
+        repository_facts["repository_initial_tree"],
+        repository_facts["repository_final_tree"]
+    );
+    assert!(
+        repository_facts["dirty_diff_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes > 0)
+    );
+    assert_ne!(
+        repository_facts["dirty_diff_digest"],
+        format!("b3_{}", blake3::hash(b""))
+    );
     assert!(output.join("session/data").is_dir());
 
     let lower = text.to_ascii_lowercase();
@@ -202,6 +220,24 @@ fn committed_report_schema_is_strict_and_versioned() -> TestResult {
     assert_eq!(schema["additionalProperties"], false);
     assert_eq!(schema["properties"]["validation"]["maxItems"], 4096);
     assert_eq!(schema["properties"]["redactions"]["maxItems"], 64);
+    let process_facts = &schema["allOf"][0]["then"]["properties"]["process"]["properties"]["facts"];
+    for field in [
+        "repository_initial_tree",
+        "repository_final_tree",
+        "dirty_diff_digest",
+        "dirty_diff_bytes",
+    ] {
+        assert!(
+            process_facts["required"]
+                .as_array()
+                .is_some_and(|required| required.iter().any(|value| value == field)),
+            "{field}"
+        );
+    }
+    assert_eq!(
+        process_facts["properties"]["dirty_diff_bytes"]["minimum"],
+        1
+    );
     assert_eq!(
         schema["$defs"]["scenario"]["properties"]["facts"]["maxProperties"],
         64
