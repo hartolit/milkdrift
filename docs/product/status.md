@@ -81,9 +81,9 @@ values; repository contracts check the version cells against source.
   from the unchanged manifest schema. Model session agreement is checked before claiming work;
   supported provider mappings still accept only `Fresh`. Process session intent remains
   capability-specific and does not implement continuation.
-- Combined real coding-agent/model interoperability remains unqualified: no operator-supplied
-  byte-pinned real coding-agent profile is available. A separately managed supported model has
-  passed the ordinary model scenario, but a clean strict combined report is still required.
+- Combined real coding-agent/model interoperability remains unqualified pending acceptance of a
+  clean strict combined report. A local Codex/Bonsai run has produced a qualifying report with
+  executor checks complete; independent review and acceptance remain pending.
   Deterministic helpers and mock endpoints do not qualify. Continuous controllers therefore remain unavailable in production;
   library stop behavior is fail-at-bound, and ambiguous multiple proposer occurrences are refused.
 - Trusted processes have daemon-account privileges. No sandbox, network isolation, CPU/memory

@@ -42,7 +42,14 @@ fn fixture_proves_the_harness_without_claiming_external_qualification() -> TestR
     let secret = "external-evidence-test-secret-9f8f623a";
     let result = run_command(
         evidence_command(&output)
-            .args(["--fixture", "--allow-fixture"])
+            .args([
+                "--fixture",
+                "--allow-fixture",
+                "--max-output-units",
+                "2048",
+                "--timeout-secs",
+                "45",
+            ])
             .arg("--secret-source")
             .arg("secret:test-only=env:MILKDRIFT_EVIDENCE_TEST_SECRET")
             .env("MILKDRIFT_EVIDENCE_TEST_SECRET", secret),
@@ -90,6 +97,9 @@ fn fixture_proves_the_harness_without_claiming_external_qualification() -> TestR
             .is_some_and(|count| count >= 1)
     );
     assert_eq!(report["model"]["facts"]["usage"]["input_units"], 19);
+    assert_eq!(report["model"]["facts"]["max_output_units"], 2048);
+    assert_eq!(report["model"]["facts"]["wait_timeout_secs"], 45);
+    assert_eq!(report["process"]["facts"]["wait_timeout_secs"], 45);
     let repository_facts = &report["process"]["facts"];
     assert_eq!(
         repository_facts["repository_initial_commit"],
@@ -147,7 +157,7 @@ fn missing_real_resources_are_non_qualifying_and_fail_closed() -> TestResult {
 fn fixture_process_and_model_scenario_failures_exit_nonzero() -> TestResult {
     let _harness = serialize_harness_process();
     let root = tempfile::tempdir()?;
-    for fault in ["process", "model"] {
+    for fault in ["process", "model", "model-truncated"] {
         let output = root.path().join(format!("{fault}-failure"));
         let result = run_command(
             evidence_command(&output).args([
@@ -162,13 +172,23 @@ fn fixture_process_and_model_scenario_failures_exit_nonzero() -> TestResult {
         assert!(!result.status.success());
         let (_, report) = read_report(&output)?;
         assert_eq!(report["qualifying"], false);
-        assert_eq!(report[fault]["outcome"], "failed", "{fault}: {report}");
+        let scenario = if fault == "process" {
+            "process"
+        } else {
+            "model"
+        };
+        assert_eq!(report[scenario]["outcome"], "failed", "{fault}: {report}");
+        let expected_reason = if fault == "model-truncated" {
+            "did not finish normally"
+        } else {
+            "fixture-injected"
+        };
         assert!(
-            report[fault]["failure_reason"]
+            report[scenario]["failure_reason"]
                 .as_str()
-                .is_some_and(|reason| reason.contains("fixture-injected"))
+                .is_some_and(|reason| reason.contains(expected_reason))
         );
-        if fault == "model" {
+        if scenario == "model" {
             assert_eq!(report["process"]["outcome"], "succeeded");
         }
     }
@@ -220,6 +240,13 @@ fn committed_report_schema_is_strict_and_versioned() -> TestResult {
     assert_eq!(schema["additionalProperties"], false);
     assert_eq!(schema["properties"]["validation"]["maxItems"], 4096);
     assert_eq!(schema["properties"]["redactions"]["maxItems"], 64);
+    let model_facts = &schema["allOf"][0]["then"]["properties"]["model"]["properties"]["facts"];
+    assert_eq!(model_facts["properties"]["finish_reason"]["const"], "stop");
+    assert!(
+        model_facts["required"]
+            .as_array()
+            .is_some_and(|required| required.iter().any(|field| field == "finish_reason"))
+    );
     let process_facts = &schema["allOf"][0]["then"]["properties"]["process"]["properties"]["facts"];
     for field in [
         "repository_initial_tree",

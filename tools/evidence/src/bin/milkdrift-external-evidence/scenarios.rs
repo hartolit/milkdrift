@@ -11,6 +11,7 @@ use super::{
     Value, build_remediation_proposal, client_error, decode_json, json, workflows,
 };
 
+#[allow(clippy::too_many_arguments)] // Scenario inputs keep source provenance and the wait bound explicit.
 pub(super) async fn run_process_scenario(
     config: &DaemonLaunch,
     token: &str,
@@ -19,6 +20,7 @@ pub(super) async fn run_process_scenario(
     initial_tree: &str,
     repository: &Path,
     fixture: bool,
+    timeout: Duration,
 ) -> HarnessResult<ScenarioEvidence> {
     let sequence = workflows::process_sequence(&agent.capability, &agent.output_names)?;
     let sequence_value = serde_json::to_value(&sequence).map_err(|error| error.to_string())?;
@@ -50,7 +52,7 @@ pub(super) async fn run_process_scenario(
         ))
         .await
         .map_err(client_error)?;
-    let before_restart = wait_for_run(&client, PROCESS_RUN, |state| {
+    let before_restart = wait_for_run(&client, PROCESS_RUN, timeout, |state| {
         [
             "stage-repair-coding",
             "stage-repair-verification",
@@ -227,7 +229,7 @@ pub(super) async fn run_process_scenario(
         ))
         .await
         .map_err(|error| error.to_string())?;
-    let completed = wait_for_run(&client, PROCESS_RUN, |state| {
+    let completed = wait_for_run(&client, PROCESS_RUN, timeout, |state| {
         state.terminal.as_deref() == Some("succeeded")
     })
     .await?;
@@ -390,6 +392,7 @@ pub(super) async fn run_process_scenario(
             "distinct_process_invocations":invocation_ids.len(),
             "process_invocations":invocations,
             "terminal_sequence":completed.sequence,
+            "wait_timeout_secs":timeout.as_secs(),
         }),
         failure_reason: None,
     };
@@ -397,6 +400,7 @@ pub(super) async fn run_process_scenario(
     Ok(evidence)
 }
 
+#[allow(clippy::too_many_arguments)] // Exact profile, fixture observations, and operator bounds have separate owners.
 pub(super) async fn run_model_scenario(
     config: &DaemonLaunch,
     token: &str,
@@ -405,12 +409,14 @@ pub(super) async fn run_model_scenario(
     fixture_requests: Option<Arc<AtomicUsize>>,
     fixture_request_lines: Option<Arc<Mutex<Vec<String>>>>,
     fixture: bool,
+    timeout: Duration,
+    max_output_units: u64,
 ) -> HarnessResult<ScenarioEvidence> {
     let (mut daemon, client) = config
         .start(token)
         .await
         .map_err(|error| error.to_string())?;
-    let blueprint = workflows::model_revision(model_capability, profile)?;
+    let blueprint = workflows::model_revision(model_capability, profile, max_output_units)?;
     let imported = client
         .submit(&request(
             "external-model-import",
@@ -434,7 +440,7 @@ pub(super) async fn run_model_scenario(
         ))
         .await
         .map_err(client_error)?;
-    let before_restart = wait_for_run(&client, MODEL_RUN, |state| {
+    let before_restart = wait_for_run(&client, MODEL_RUN, timeout, |state| {
         state
             .nodes
             .iter()
@@ -480,7 +486,7 @@ pub(super) async fn run_model_scenario(
         ))
         .await
         .map_err(|error| error.to_string())?;
-    let completed = wait_for_run(&client, MODEL_RUN, |state| {
+    let completed = wait_for_run(&client, MODEL_RUN, timeout, |state| {
         state.terminal.as_deref() == Some("succeeded")
             || state.nodes.iter().any(|node| {
                 node.node_id == "model"
@@ -659,8 +665,8 @@ pub(super) async fn run_model_scenario(
         })
         .collect::<Vec<_>>();
     let finish_reason = format!("{:?}", response.finish_reason()).to_lowercase();
-    if finish_reason == "unknown" {
-        return Err("provider response omitted a recognized finish reason".to_owned());
+    if response.finish_reason() != milkdrift_model::FinishReason::Stop {
+        return Err("provider response did not finish normally; truncated or incomplete output cannot qualify".to_owned());
     }
     let usage = response.usage();
     if usage.input_units.is_none()
@@ -713,6 +719,8 @@ pub(super) async fn run_model_scenario(
         }],
         facts: json!({
             "context_manifest_digest":context_digest,
+            "max_output_units":max_output_units,
+            "wait_timeout_secs":timeout.as_secs(),
             "selected_count":selected_count,
             "omitted_count":omitted_count,
             "denied_context_artifact_digest":denied_artifact.artifact.digest,
@@ -733,11 +741,16 @@ pub(super) async fn run_model_scenario(
 async fn wait_for_run(
     client: &ControlClient,
     run: &str,
+    timeout: Duration,
     predicate: impl Fn(&milkdrift_control_protocol::RunRead) -> bool,
 ) -> HarnessResult<milkdrift_control_protocol::RunRead> {
     let mut last = None;
-    for _ in 0..1_200 {
-        let state = client.run(run).await.map_err(|error| error.to_string())?;
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let Ok(state) = tokio::time::timeout_at(deadline, client.run(run)).await else {
+            break;
+        };
+        let state = state.map_err(|error| error.to_string())?;
         if predicate(&state) {
             return Ok(state);
         }
@@ -748,10 +761,16 @@ async fn wait_for_run(
             ));
         }
         last = Some(state);
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        if tokio::time::timeout_at(deadline, tokio::time::sleep(Duration::from_millis(25)))
+            .await
+            .is_err()
+        {
+            break;
+        }
     }
     Err(format!(
-        "run {run} did not reach the expected bounded state; last={}",
+        "run {run} did not reach the expected state within {} seconds; last={}",
+        timeout.as_secs(),
         serde_json::to_string(&last).map_err(|error| error.to_string())?
     ))
 }
@@ -785,4 +804,36 @@ fn json_string(value: &Value, name: &str) -> HarnessResult<String> {
         .and_then(Value::as_str)
         .map(str::to_owned)
         .ok_or_else(|| format!("command response omitted {name}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use milkdrift_control_client::{BearerCredential, ClientConfig};
+
+    #[tokio::test]
+    async fn workflow_deadline_includes_a_stalled_daemon_read()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let endpoint = url::Url::parse(&format!("http://{}/", listener.local_addr()?))?;
+        let server = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await?;
+            std::future::pending::<std::io::Result<()>>().await
+        });
+        let mut config = ClientConfig::new(endpoint);
+        config.request_timeout = Duration::from_secs(10);
+        config.safe_query_retries = 0;
+        let client = ControlClient::new(config, BearerCredential::new("deadline-test")?)?;
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            wait_for_run(&client, "test-run", Duration::from_millis(50), |_| true),
+        )
+        .await;
+        server.abort();
+        let Err(error) = result? else {
+            return Err("a stalled read cannot establish workflow completion".into());
+        };
+        assert!(error.contains("did not reach the expected state"));
+        Ok(())
+    }
 }

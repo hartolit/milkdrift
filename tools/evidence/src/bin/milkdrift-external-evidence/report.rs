@@ -353,6 +353,7 @@ impl ScenarioEvidence {
                 .and_then(Value::as_u64)
                 .is_none_or(|value| value == 0)
             || facts.get("terminal").and_then(Value::as_str) != Some("succeeded")
+            || facts.get("finish_reason").and_then(Value::as_str) != Some("stop")
             || facts.get("uncertain").and_then(Value::as_bool) != Some(false)
             || bounded_string(facts, "invocation_id").is_none()
             || usage.is_none_or(|value| {
@@ -446,6 +447,16 @@ pub fn write_report(
     {
         return Err("redaction validation found a secret value in the report".to_owned());
     }
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|error| error.to_string())?
+        .to_ascii_lowercase();
+    for forbidden_key in ["authorization", "full_prompt", "full_output", "environment"] {
+        if text.contains(&format!("\"{forbidden_key}\"")) {
+            return Err(format!(
+                "redaction validation found forbidden key {forbidden_key}"
+            ));
+        }
+    }
     let temporary = path.with_extension("json.tmp");
     fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
     fs::rename(&temporary, path).map_err(|error| error.to_string())
@@ -534,6 +545,37 @@ mod tests {
         assert!(repaired_process().validate_process_semantics().is_ok());
     }
 
+    fn normal_model() -> ScenarioEvidence {
+        let mut model = ScenarioEvidence::pending("model validation only");
+        model.profile = serde_json::json!({
+            "profile_digest":format!("b3_{}", "a".repeat(64)),
+            "profile_revision":1,"provider_protocol":"open_ai_compatible","model_alias":"model"
+        });
+        model.facts = serde_json::json!({
+            "context_manifest_digest":format!("b3_{}", "b".repeat(64)),
+            "streaming_observations":1,"terminal":"succeeded","uncertain":false,
+            "invocation_id":"model-invocation","usage":{"input_units":10,"output_units":3},
+            "finish_reason":"stop"
+        });
+        model
+    }
+
+    #[test]
+    fn model_validation_refuses_truncated_or_incomplete_finish() {
+        let mut model = normal_model();
+        assert!(model.validate_model_semantics().is_ok());
+        for finish in [
+            Value::Null,
+            serde_json::json!("length"),
+            serde_json::json!("unknown"),
+            serde_json::json!("toolcalls"),
+            serde_json::json!("contentfilter"),
+        ] {
+            model.facts["finish_reason"] = finish;
+            assert!(model.validate_model_semantics().is_err());
+        }
+    }
+
     #[test]
     fn process_validation_refuses_changed_history_or_missing_diff_evidence() {
         for (field, value) in [
@@ -570,6 +612,69 @@ mod tests {
         };
         assert!(error.contains("secret value"));
         assert!(!path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn completed_scenarios_are_qualified_before_the_only_report_write()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut process = repaired_process();
+        let mut model = normal_model();
+        for scenario in [&mut process, &mut model] {
+            scenario.qualifying = true;
+            scenario.outcome = "succeeded".to_owned();
+            scenario.failure_reason = None;
+            scenario.commands.push("test-command".to_owned());
+            scenario.runs.push("test-run".to_owned());
+            scenario.revisions.push("test-revision".to_owned());
+            scenario.attempts.push("test-attempt".to_owned());
+            scenario.proposals.push("test-proposal".to_owned());
+            scenario.artifacts.push(ArtifactEvidence {
+                artifact_id: "test-artifact".to_owned(),
+                digest: "d".repeat(64),
+                size: 1,
+                content_type: "text/plain".to_owned(),
+                role: "test-output".to_owned(),
+            });
+            scenario.restart_boundaries.push(RestartEvidence {
+                boundary: "test-settled-boundary".to_owned(),
+                sequence_before: 10,
+                sequence_after: 10,
+                recovered_state: "test-settled-state".to_owned(),
+                duplicate_attempts: false,
+            });
+        }
+        let mut report = report(process, model);
+        report.qualifying = false;
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("report.json");
+        // The removed preflight tried to write this inconsistent intermediate report.
+        assert!(write_report(&path, &report, &[]).is_err());
+        assert!(!path.exists());
+        super::super::finish_report(&path, &mut report, &[])?;
+        let decoded: EvidenceReport = serde_json::from_slice(&fs::read(path)?)?;
+        assert!(decoded.qualifying);
+        decoded.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn forbidden_fields_are_refused_before_creating_a_report()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut report = report(
+            ScenarioEvidence::pending("not run"),
+            ScenarioEvidence::pending("not run"),
+        );
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("report.json");
+        for key in ["authorization", "full_prompt", "full_output", "environment"] {
+            report.process.profile = serde_json::json!({key:"private data"});
+            let Err(error) = super::super::finish_report(&path, &mut report, &[]) else {
+                return Err("report exposed a forbidden field".into());
+            };
+            assert!(error.contains("forbidden key"));
+            assert!(!path.exists());
+        }
         Ok(())
     }
 

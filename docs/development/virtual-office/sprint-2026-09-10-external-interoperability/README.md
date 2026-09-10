@@ -31,15 +31,17 @@ qualify model quality, filesystem power loss, or additional platform guarantees.
 
 ## Assignments and order
 
-Execution started on 2026-09-10. `Cedar-20260910-a` is the current coordinator/executor's
-agent pseudonym in the task assigned to execute `00-coordinate.md`. The final reviewer remains
-unassigned and must be a separate session that did not implement the candidate or produce its
-report. Acceptance is pending.
+Execution started on 2026-09-10. `Cedar-20260910-a` is the coordinator's agent pseudonym in the
+task assigned to execute `00-coordinate.md`. Execution has resumed in the task assigned
+`01-execute.md`, which prepared the supplied local Bonsai resources, corrected and verified the
+harness, and produced an inspected qualifying combined report from a clean candidate. The final
+reviewer remains unassigned and must be a separate session that did not implement the candidate
+or produce its report. Acceptance is pending.
 
 | Assignment | Current owner | Responsibility and expected result | Dependency |
 | --- | --- | --- | --- |
-| [00: Coordinate and close](00-coordinate.md) | Cedar-20260910-a; awaiting operator inputs | Own shared edits, candidate identity, accepted coverage, evidence disposition, and office cleanup. | Closure waits for accepted review. |
-| [01: Execute and qualify](01-execute.md) | Cedar-20260910-a; local corrections verified, real run blocked | Complete setup, necessary integration fixes, verification, and the qualifying real run; hand off reproducible evidence. | Operator profile and credential-source references are pending; the clean candidate contains the discovered harness corrections. |
+| [00: Coordinate and close](00-coordinate.md) | Cedar-20260910-a; execution handoff ready | Own shared edits, candidate identity, accepted coverage, evidence disposition, and office cleanup. | Closure waits for accepted review and evidence retention. |
+| [01: Execute and qualify](01-execute.md) | Current 01 task; execution complete, ready for review | Complete setup, necessary integration fixes, verification, and the qualifying real run; hand off reproducible evidence. | Candidate `8c6cdb9` passed the full local gate; `real-bonsai-03/report.json` qualifies and passed executor inspection. |
 | [02: Independently review](02-review.md) | Unassigned; acceptance pending | Review the candidate and report, then give a supported acceptance or specific correction request. | Separate assignment, execution handoff, and access to the cited evidence. |
 
 The numbers describe coordination and dependencies, not three required agent launches. Preparation
@@ -48,9 +50,10 @@ assigned. Keep workspace Cargo jobs with one owner, including during review.
 
 ## Inputs to resolve at execution
 
-No real profiles or credential-source references were supplied with execution. The executor has
-requested their paths or names while preparing the current source. Use existing session
-authorization and ask only for missing resource information:
+The operator supplied two Bonsai instances at local LM Studio. The executor prepared private
+model and byte-pinned Codex profiles; the endpoint needs no authentication. Exact references,
+preflight results, sandbox requirements, and the current run live in the [handoff](handoff.md).
+Resource preparation must establish:
 
 - The real non-interactive coding-agent profile path, exact executable identity and version
   arguments, authentication source references, and bounded execution settings. The agent must
@@ -66,14 +69,10 @@ Missing resources leave qualification blocked. Complete useful local preparation
 in-scope corrections, then record the exact missing input and where execution resumes. Do not
 substitute fixtures or weaken checks to turn that state into completion.
 
-Startup reconfirmed the preparation commit and tree
-`80a69564424e1ac7d577de8d2b12d189754e9b8b`. The existing uncommitted changes were this sprint
-directory and its office entry; no executable changes were present. Preserve those documents in
-the main checkout and prepare a detached worktree of the current commit for qualification.
-The proposed private evidence destination is ignored `target/external-interop-20260910/`.
-The whiteboard remains empty. The coordinator owns all shared documentation edits and Cargo jobs.
-The [current coordinator/execution handoff](handoff.md) records the corrected candidate, verification,
-remaining inputs, and resume point.
+The clean candidate and complete private evidence remain under ignored
+`target/external-interop-20260910/`; the coordinator owns final evidence retention and acceptance.
+The whiteboard remains empty. The [current coordinator/execution handoff](handoff.md) records
+the exact candidate, verification, report digest, and independent review requirements.
 
 ## Work areas and edit ownership
 

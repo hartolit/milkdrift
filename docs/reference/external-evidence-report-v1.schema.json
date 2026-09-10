@@ -126,6 +126,7 @@
                 "required": [
                   "context_manifest_digest",
                   "streaming_observations",
+                  "finish_reason",
                   "usage",
                   "terminal",
                   "uncertain",
@@ -134,6 +135,7 @@
                 "properties": {
                   "context_manifest_digest": { "pattern": "^b3_[0-9a-f]{64}$" },
                   "streaming_observations": { "type": "integer", "minimum": 1 },
+                  "finish_reason": { "const": "stop" },
                   "usage": {
                     "type": "object",
                     "required": ["input_units", "output_units"],

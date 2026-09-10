@@ -67,6 +67,8 @@ cargo external-evidence \
   --agent-version-arg=--version \
   --model-profile /operator/private/model-profile.json \
   --model-capability external-evidence-model \
+  --timeout-secs 900 \
+  --max-output-units 4096 \
   --secret-source secret:coding-agent-token=env:MILKDRIFT_AGENT_TOKEN \
   --secret-source secret:model-token=env:MILKDRIFT_MODEL_TOKEN \
   --output target/milkdrift-external-evidence
@@ -75,6 +77,15 @@ cargo external-evidence \
 The unpublished `milkdrift-evidence` package owns the executable and shared bounded child harness.
 The alias selects the built sibling daemon; `--daemon PATH` selects an explicit binary. Restarts
 terminate and reap that child, then reopen its durable state through a fresh daemon process.
+
+Choose bounds for the selected resources before starting. `--timeout-secs` accepts 1–3,600 seconds
+and defaults to 180 for each workflow wait, including daemon reads. It does not change the process
+profile's wall limit or the model profile's HTTP limits; those must also allow the work to finish.
+`--max-output-units` accepts 1–65,536 and defaults to 64. Reasoning models may consume that small
+default before producing any final text. The example allows 4,096 units while retaining the exact
+response assertion. Reports record both bounds in scenario facts; the model allowance is also
+part of the immutable task revision. A timeout preserves the private session for diagnosis and
+does not authorize replay of entered work.
 
 For a private credential file, use
 `--secret-source secret:model-token=file:/absolute/private/model.token`; Unix file sources must be
@@ -109,6 +120,8 @@ either strict JSON `{ "ok": true }` or the exact text `MILKDRIFT_EVIDENCE_OK`. S
 selected/omitted artifact identity, durable fragment counts, response/finish/usage facts, nonempty
 provider metadata, exact profile/protocol/model/origin provenance, committed output artifacts, and
 one attempt with no uncertainty.
+The response must finish normally (`stop`); reaching the output limit cannot qualify even if the
+retained text happens to match the requested answer.
 
 These are controlled abrupt process restarts at settled workflow boundaries. They do not exercise
 graceful OS-signal shutdown or filesystem power loss. The separate
@@ -184,6 +197,12 @@ reports non-writable; they do not sign a report or make self-reported evidence i
 attested. The consumer schema requires the recorded repository trees and nonempty diff evidence;
 the Rust validator additionally checks that the initial and final commit/tree pairs are equal.
 These are checks on existing v1 fields, not a new report format.
+The consumer schema and Rust validator also require the existing model `finish_reason` fact to
+be `stop`, so a truncated response cannot be presented as qualifying evidence.
+The harness sets the final qualification flags before writing the report once. Its writer checks
+both operator credentials and generated daemon tokens, and refuses forbidden fields before any
+report bytes reach disk. If final validation fails, retain the private session and command log;
+they do not substitute for a valid report.
 Interpret the top level first:
 
 - `qualifying: true` requires `fixture_mode: false` and both scenario `qualifying` fields true.

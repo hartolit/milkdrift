@@ -211,6 +211,7 @@ pub fn model_profile_facts(bytes: &[u8]) -> Result<ModelProfileFacts, String> {
 pub fn model_revision(
     model_capability: &str,
     profile: &ModelProfileFacts,
+    max_output_units: u64,
 ) -> Result<Value, String> {
     let mut operations = vec![
         Mutation::AddNode {
@@ -250,7 +251,7 @@ pub fn model_revision(
             .map_err(|e| e.to_string())?,
         },
         Mutation::AddNode {
-            node: model_node(model_capability, profile)?
+            node: model_node(model_capability, profile, max_output_units)?
                 .with_control_input(port("in")?)
                 .map_err(|e| e.to_string())?,
         },
@@ -328,7 +329,11 @@ fn evidence_node(identity: &str, payload: &str) -> Result<Node, String> {
         .map_err(|e| e.to_string())
 }
 
-fn model_node(model_capability: &str, profile: &ModelProfileFacts) -> Result<Node, String> {
+fn model_node(
+    model_capability: &str,
+    profile: &ModelProfileFacts,
+    max_output_units: u64,
+) -> Result<Node, String> {
     let mut requirement =
         CapabilityRequirement::new(OperationId::new("model.generate").map_err(|e| e.to_string())?)
             .exact(CapabilityId::new(model_capability).map_err(|e| e.to_string())?)
@@ -360,7 +365,7 @@ fn model_node(model_capability: &str, profile: &ModelProfileFacts) -> Result<Nod
     )
     .map_err(|e| e.to_string())?;
     let config = TaskConfig::new(requirement, policy).map_err(|e| e.to_string())?;
-    let task = model_task(profile)?;
+    let task = model_task(profile, max_output_units)?;
     let task_value: Value = serde_json::from_slice(
         &ModelTaskRequestDocument::new(task)
             .to_canonical_json()
@@ -400,7 +405,10 @@ fn model_node(model_capability: &str, profile: &ModelProfileFacts) -> Result<Nod
     Ok(result)
 }
 
-fn model_task(profile: &ModelProfileFacts) -> Result<ModelTaskRequest, String> {
+fn model_task(
+    profile: &ModelProfileFacts,
+    max_output_units: u64,
+) -> Result<ModelTaskRequest, String> {
     let structured = profile
         .structured_output
         .then(|| {
@@ -437,7 +445,7 @@ fn model_task(profile: &ModelProfileFacts) -> Result<ModelTaskRequest, String> {
         structured,
         SessionSelection::Fresh,
         None,
-        64,
+        max_output_units,
         profile.streaming,
         BTreeMap::new(),
     )

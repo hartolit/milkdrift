@@ -10,18 +10,18 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 ## Current sprints
 
 The [external interoperability sprint](sprint-2026-09-10-external-interoperability/README.md)
-has verified local harness corrections. Real qualification awaits operator resource profiles;
-independent review remains unassigned. Its
+has a verified candidate and a qualifying combined real report ready for independent review;
+that review remains unassigned. Its
 [current handoff](sprint-2026-09-10-external-interoperability/handoff.md) records the candidate and
 resume point.
 
 ## Prepared assignments
 
-The coordinator owns the sprint's
-[coordination](sprint-2026-09-10-external-interoperability/00-coordinate.md) and
-[execution](sprint-2026-09-10-external-interoperability/01-execute.md) assignments. The
+The sprint's [coordination](sprint-2026-09-10-external-interoperability/00-coordinate.md)
+assignment remains with its coordinator; the current task has completed
+[execution](sprint-2026-09-10-external-interoperability/01-execute.md). The
 [independent review prompt](sprint-2026-09-10-external-interoperability/02-review.md)
-awaits a real evidence handoff and a separate reviewer assignment. Owners, dependencies, and
+has a real evidence handoff and awaits a separate reviewer assignment. Owners, dependencies, and
 acceptance live in the sprint README.
 
 ## Start a sprint

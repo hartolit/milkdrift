@@ -83,6 +83,12 @@ struct Arguments {
     /// Capability identity to register for the endpoint profile.
     #[arg(long, default_value = "external-evidence-model")]
     model_capability: String,
+    /// Deadline for each workflow wait, including time spent reading daemon state.
+    #[arg(long, default_value_t = 180, value_parser = clap::value_parser!(u64).range(1..=3600))]
+    timeout_secs: u64,
+    /// Model output allowance; reasoning must finish within this explicit bound.
+    #[arg(long, default_value_t = 64, value_parser = clap::value_parser!(u64).range(1..=65536))]
+    max_output_units: u64,
     /// Selected evidence output directory; repository target/ is allowed.
     #[arg(long)]
     output: PathBuf,
@@ -107,6 +113,7 @@ struct Arguments {
 enum FixtureFailure {
     Process,
     Model,
+    ModelTruncated,
 }
 
 struct MockEndpoint {
@@ -156,7 +163,7 @@ async fn execute(arguments: Arguments) -> HarnessResult {
     let repository = session_root.join("repository");
     fs::create_dir_all(&session_root).map_err(|error| error.to_string())?;
     let now = unix_millis()?;
-    let operator_secrets = forbidden_secret_values(&arguments.secret_source)?;
+    let mut forbidden = forbidden_secret_values(&arguments.secret_source)?;
     let (milkdrift_commit, milkdrift_tree, dirty) = milkdrift_git_facts()?;
     let mut report = EvidenceReport {
         schema_version: REPORT_SCHEMA_VERSION,
@@ -188,29 +195,30 @@ async fn execute(arguments: Arguments) -> HarnessResult {
     };
     let result = run_scenarios(
         &arguments,
-        &output,
         &session_root,
         &repository,
         &mut report,
-        &operator_secrets,
+        &mut forbidden,
     )
     .await;
     if let Err(error) = &result {
         report.failure_reason = Some(error.clone());
     }
-    report.qualifying = report.process.qualifying && report.model.qualifying;
-    write_report(&report_path, &report, &operator_secrets)?;
-    redaction_check(&report_path, &operator_secrets)?;
+    finish_report(&report_path, &mut report, &forbidden)?;
     result
+}
+
+fn finish_report(path: &Path, report: &mut EvidenceReport, forbidden: &[Vec<u8>]) -> HarnessResult {
+    report.qualifying = report.process.qualifying && report.model.qualifying;
+    write_report(path, report, forbidden)
 }
 
 async fn run_scenarios(
     arguments: &Arguments,
-    output: &Path,
     session_root: &Path,
     repository: &Path,
     report: &mut EvidenceReport,
-    operator_secrets: &[Vec<u8>],
+    forbidden: &mut Vec<Vec<u8>>,
 ) -> HarnessResult {
     let (repository_initial_commit, repository_initial_tree) =
         workflows::initialize_repository(repository)?;
@@ -223,7 +231,13 @@ async fn run_scenarios(
     )?;
     let helpers = generated_profiles(repository, session_root)?;
     let mock = if arguments.fixture {
-        Some(start_mock_endpoint().await?)
+        Some(
+            start_mock_endpoint(
+                arguments.max_output_units,
+                arguments.fixture_failure == Some(FixtureFailure::ModelTruncated),
+            )
+            .await?,
+        )
     } else {
         None
     };
@@ -255,6 +269,8 @@ async fn run_scenarios(
         &model_facts,
         sources,
     )?;
+    forbidden.push(process_token.as_bytes().to_vec());
+    forbidden.push(model_token.as_bytes().to_vec());
     report.configuration_digest = Some(configuration_digest);
     if !arguments.fixture && report.milkdrift.dirty_at_start {
         return Err(
@@ -291,6 +307,7 @@ async fn run_scenarios(
         &repository_initial_tree,
         repository,
         arguments.fixture,
+        Duration::from_secs(arguments.timeout_secs),
     )
     .await
     {
@@ -324,6 +341,8 @@ async fn run_scenarios(
         mock.as_ref().map(|value| value.requests.clone()),
         mock.as_ref().map(|value| value.request_lines.clone()),
         arguments.fixture,
+        Duration::from_secs(arguments.timeout_secs),
+        arguments.max_output_units,
     )
     .await
     {
@@ -340,13 +359,6 @@ async fn run_scenarios(
                 .map_err(|_| "fixture model endpoint thread panicked".to_owned())?;
         }
     }
-    let mut forbidden = operator_secrets.to_vec();
-    forbidden.push(process_token.as_bytes().to_vec());
-    forbidden.push(model_token.as_bytes().to_vec());
-    let temporary = output.join("report.preflight.json");
-    write_report(&temporary, report, &forbidden)?;
-    redaction_check(&temporary, &forbidden)?;
-    fs::remove_file(temporary).map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -674,7 +686,10 @@ fn secret_sources(
     Ok(result)
 }
 
-async fn start_mock_endpoint() -> HarnessResult<MockEndpoint> {
+async fn start_mock_endpoint(
+    max_output_units: u64,
+    truncated: bool,
+) -> HarnessResult<MockEndpoint> {
     let requests = Arc::new(AtomicUsize::new(0));
     let request_lines = Arc::new(Mutex::new(Vec::new()));
     let listener =
@@ -691,8 +706,13 @@ async fn start_mock_endpoint() -> HarnessResult<MockEndpoint> {
         while !thread_stop.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((mut stream, _)) => {
-                    let _ =
-                        serve_mock_connection(&mut stream, &thread_requests, &thread_request_lines);
+                    let _ = serve_mock_connection(
+                        &mut stream,
+                        &thread_requests,
+                        &thread_request_lines,
+                        max_output_units,
+                        truncated,
+                    );
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(Duration::from_millis(5));
@@ -714,6 +734,8 @@ fn serve_mock_connection(
     stream: &mut std::net::TcpStream,
     requests: &AtomicUsize,
     request_lines: &Mutex<Vec<String>>,
+    max_output_units: u64,
+    truncated: bool,
 ) -> std::io::Result<()> {
     let request = milkdrift_evidence::http_fixture::read_request(stream)?;
     let request_line = request.lines().next().unwrap_or_default().to_owned();
@@ -734,10 +756,25 @@ fn serve_mock_connection(
         return Ok(());
     }
     requests.fetch_add(1, Ordering::SeqCst);
+    let body: Value =
+        serde_json::from_str(request.split_once("\r\n\r\n").map_or("", |(_, body)| body))?;
+    if body.get("max_tokens").and_then(Value::as_u64) != Some(max_output_units) {
+        return Err(std::io::Error::other(
+            "model output allowance was not delivered",
+        ));
+    }
     let body = concat!(
         "data: {\"id\":\"fixture-response\",\"model\":\"fixture-model\",\"choices\":[{\"delta\":{\"content\":\"{\\\"ok\\\":\"},\"finish_reason\":null}]}\n\n",
         "data: {\"id\":\"fixture-response\",\"model\":\"fixture-model\",\"choices\":[{\"delta\":{\"content\":\"true}\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":19,\"completion_tokens\":4}}\n\n",
         "data: [DONE]\n\n"
+    );
+    let body = body.replace(
+        "\"finish_reason\":\"stop\"",
+        if truncated {
+            "\"finish_reason\":\"length\""
+        } else {
+            "\"finish_reason\":\"stop\""
+        },
     );
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -847,29 +884,6 @@ fn rust_build_target() -> HarnessResult<String> {
         .ok_or_else(|| "rustc build-target query omitted the host triple".to_owned())
 }
 
-fn redaction_check(path: &Path, forbidden: &[Vec<u8>]) -> HarnessResult {
-    let bytes = fs::read(path).map_err(|error| error.to_string())?;
-    if forbidden
-        .iter()
-        .any(|value| !value.is_empty() && bytes.windows(value.len()).any(|window| window == value))
-    {
-        return Err("redaction validation found a secret value in the report".to_owned());
-    }
-    let text = String::from_utf8(bytes).map_err(|error| error.to_string())?;
-    for forbidden_key in ["authorization", "full_prompt", "full_output", "environment"] {
-        if text
-            .to_ascii_lowercase()
-            .contains(&format!("\"{forbidden_key}\""))
-        {
-            return Err(format!(
-                "redaction validation found forbidden key {forbidden_key}"
-            ));
-        }
-    }
-    serde_json::from_str::<Value>(&text).map_err(|error| error.to_string())?;
-    Ok(())
-}
-
 fn forbidden_secret_values(mappings: &[String]) -> HarnessResult<Vec<Vec<u8>>> {
     let mut values = Vec::new();
     for mapping in mappings {
@@ -912,6 +926,39 @@ use scenarios::{run_model_scenario, run_process_scenario};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_bounds_are_explicit_and_reject_out_of_range_values() {
+        for (option, accepted, refused) in [
+            ("--timeout-secs", ["1", "3600"], ["0", "3601"]),
+            ("--max-output-units", ["1", "65536"], ["0", "65537"]),
+        ] {
+            for value in accepted {
+                assert!(
+                    Arguments::try_parse_from([
+                        "evidence",
+                        "--output",
+                        "target/test",
+                        option,
+                        value
+                    ])
+                    .is_ok()
+                );
+            }
+            for value in refused {
+                assert!(
+                    Arguments::try_parse_from([
+                        "evidence",
+                        "--output",
+                        "target/test",
+                        option,
+                        value
+                    ])
+                    .is_err()
+                );
+            }
+        }
+    }
 
     #[test]
     fn grants_cover_separate_helper_executables_without_extra_access() -> HarnessResult {
