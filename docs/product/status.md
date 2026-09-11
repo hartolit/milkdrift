@@ -83,7 +83,9 @@ values; repository contracts check the version cells against source.
   capability-specific and does not implement continuation.
 - Combined real coding-agent/model interoperability remains unqualified pending acceptance of a
   clean strict combined report. A local Codex/Bonsai run has produced a qualifying report with
-  executor checks complete; independent review and acceptance remain pending.
+  executor checks and independent review complete; coordinator closure and evidence retention
+  remain pending. This run does not qualify thinking mode: the operator subsequently reported
+  disabling it, and effective server settings were not captured per request.
   Deterministic helpers and mock endpoints do not qualify. Continuous controllers therefore remain unavailable in production;
   library stop behavior is fail-at-bound, and ambiguous multiple proposer occurrences are refused.
 - Trusted processes have daemon-account privileges. No sandbox, network isolation, CPU/memory
@@ -95,7 +97,9 @@ values; repository contracts check the version cells against source.
   model synchronization, or automatic transfer of every artifact. Grants/profiles/relationships
   generally require validated restart; no dynamic local reload exists.
 - Models have no provider discovery, tokenizer/pricing service, generic file parts, managed
-  sessions, or OpenAI Responses mapping. Cancellation cannot prove remote termination. Post-entry
+  sessions, or OpenAI Responses mapping. Reasoning controls have only the limited mappings in the
+  [adapter feature matrix](../../adapters/model-provider/README.md#choose-features-the-endpoint-actually-supports);
+  there is no explicit thinking on/off task control. Cancellation cannot prove remote termination. Post-entry
   timeout, response loss, and malformed/truncated streams preserve uncertainty rather than successful
   partial artifacts or automatic unsafe retry. Sequence stages are process-only; checkpoint
   capabilities and automatic distributed dogfood are absent.
@@ -135,8 +139,11 @@ Focused regressions establish immediate-child termination after initial,
 stdout/stderr progress, and heartbeat rejection, including an unread stdin pipe and reporter panic.
 Private lifecycle tests observe completion of every started I/O worker and retained cancellation
 registration during partial startup and unwinding. Cancellation, timeout, output-limit termination,
-and shutdown regressions also pass. New Unix owned-descendant reporting cases are present but have
-not been executed for this change; earlier hosted process evidence does not qualify them.
+and shutdown regressions also pass. The later
+[platform run at `005ccb2`](https://github.com/hartolit/milkdrift/actions/runs/34544490423)
+passes Ubuntu and Windows, but macOS fails two private lifecycle tests that inspect child absence
+immediately after worker gate arrival. The local test correction waits for absence with the gates
+held; confirmation on macOS remains pending. That run's Unix owned-descendant reporting cases pass.
 
 The context-policy enforcement and import-label findings are resolved by `a24671a`. Its complete
 local Windows/MSVC gate passes with 725 tests and all 24 repository contracts; five manual longevity

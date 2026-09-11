@@ -7,7 +7,10 @@ what belongs here; [the office procedure](../README.md) handles sprint coordinat
 
 ## Overview
 
-No open topics.
+| Topic | State | Next action | Assignment | Last evaluated |
+| --- | --- | --- | --- | --- |
+| [Configurable generation and thinking policy](discussions/model-generation-policy.md) | open | Decide the task/profile ownership and supported wire mappings for thinking mode, effort, and budgets; distinguish deployment limits from necessary hard ceilings. | Unassigned | 2026-09-11 |
+| [External model configuration provenance](issues/external-model-configuration-provenance.md) | open | Define how evidence captures or verifies server-side thinking/context settings and run controlled thinking-on/off cases with recorded budgets. | Unassigned | 2026-09-11 |
 
 This overview alone owns planning state, next actions, assignment links, and last-evaluation dates.
 Topic files hold evidence, current technical assessment, and dated contributions. Keep execution
@@ -34,6 +37,27 @@ crate has too many responsibilities needs concrete examples of difficult changes
 ownership. A label such as “god crate” does not establish the problem. Large logs and generated
 reports belong under ignored `target/` or in CI artifacts; retain enough explanation here to
 understand the finding without them.
+
+## Challenge purpose before choosing a solution
+
+Every new or substantially revised topic must include questions of purpose that invite a reasoned
+challenge. Explain whose problem it addresses, which Milkdrift outcome matters, and why the current
+design may be insufficient. A recorded finding or preferred proposal is not a decision to implement
+it. Do not infer agreement from earlier agents' confidence or from the topic's presence here.
+
+Make the questions specific to the topic rather than copying a checklist. Useful challenges ask:
+
+- What supported workflow or operator need would improve, and what observation establishes that need?
+- Could the current design, a smaller correction, or a change in usage meet it well enough?
+- Does the proposal belong in Milkdrift, in an external capability, or with its operator? What
+  complexity, authority, compatibility, or maintenance cost would Milkdrift take on?
+- What evidence would favor the proposal, and what result would make us reject, narrow, or defer it?
+
+Develop the strongest case for retaining the current design as well as changing it. Contributors
+should answer or sharpen the unresolved questions with evidence, counterexamples, and consequences
+for the project. Repeating agreement does not advance a topic; disagreement needs reasons too.
+Friction should expose assumptions and improve the decision, not manufacture objections or force
+every proposal into implementation. Reviewers may conclude that no change is warranted.
 
 ## Contributions and agent pseudonyms
 

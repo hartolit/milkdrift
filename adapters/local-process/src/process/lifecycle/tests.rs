@@ -42,7 +42,9 @@ struct Completion {
 impl Drop for Completion {
     fn drop(&mut self) {
         let _ = self.waiting.send(self.index);
-        let _ = self.release.recv_timeout(DEADLINE);
+        // The test owns the sender, so both explicit release and failure unwinding
+        // unblock this worker without expiring the gate during child observation.
+        let _ = self.release.recv();
         self.completed.fetch_add(1, Ordering::SeqCst);
     }
 }
@@ -156,10 +158,17 @@ fn cleanup_workers(worker_count: usize, unwind: bool) -> TestResult {
         for _ in 0..worker_count {
             waiting.recv_timeout(DEADLINE)?;
         }
-        assert!(
-            !process_alive(pid)?,
-            "child must exit before I/O joins finish"
-        );
+        // Pipe completion can precede the cleanup thread's child.wait(), leaving
+        // a briefly observable zombie on Unix. Keep every worker gated while
+        // observing child absence; gate arrival alone does not establish reaping.
+        let exit_deadline = Instant::now() + DEADLINE;
+        while process_alive(pid)? {
+            assert!(
+                Instant::now() < exit_deadline,
+                "child must exit before I/O joins finish"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
         assert!(finished.try_recv().is_err(), "cleanup detached I/O workers");
         assert_eq!(completed.load(Ordering::SeqCst), 0);
         assert!(

@@ -16,7 +16,9 @@ report. Deadline failures invoke fixture cleanup. Reporter panic, cancellation, 
 termination, and shutdown use the same child observation.
 
 The [private ownership tests](../../adapters/local-process/src/process/lifecycle/tests.rs) hold stdin,
-stdout, and stderr workers at completion. They establish that cleanup joins each started worker
+stdout, and stderr workers at completion while separately waiting for child absence. A worker
+reaching its gate does not prove the cleanup thread has already reaped the child. The tests
+establish that cleanup joins each started worker
 before removing registration, including partial startup and unwinding, and that a duplicate
 registration leaves the original cancellation control intact. Windows execution qualifies the
 immediate child; the Unix-only reporting cases additionally check owned descendants when run there.
@@ -52,6 +54,12 @@ never falls back to a mock.
 agent and a supported real model endpoint with operator-owned resources. Only its complete
 validated report can qualify that interoperability boundary. Hermetic external mode tests the
 harness. It cannot authorize production controller activation.
+
+The local Bonsai evidence does not qualify thinking mode. The operator subsequently reported
+disabling thinking after the initial attempt; the retained endpoint profile does not bind that
+server setting to each request. The truncated 64-unit probe and successful 4,096-unit probe
+therefore do not isolate the effect of the larger budget. See the
+[configuration evidence finding](virtual-office/whiteboard/issues/external-model-configuration-provenance.md).
 
 The development-only evidence package shares one child lifecycle owner for deadlines, bounded
 captured output, readiness, restart, CLI JSON decoding, and cleanup. Production configuration and

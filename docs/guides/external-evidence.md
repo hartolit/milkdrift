@@ -82,10 +82,25 @@ Choose bounds for the selected resources before starting. `--timeout-secs` accep
 and defaults to 180 for each workflow wait, including daemon reads. It does not change the process
 profile's wall limit or the model profile's HTTP limits; those must also allow the work to finish.
 `--max-output-units` accepts 1–65,536 and defaults to 64. Reasoning models may consume that small
-default before producing any final text. The example allows 4,096 units while retaining the exact
-response assertion. Reports record both bounds in scenario facts; the model allowance is also
-part of the immutable task revision. A timeout preserves the private session for diagnosis and
-does not authorize replay of entered work.
+default before producing any final text. The example's 4,096 units are an operator choice, not a
+product-wide limit or a tested budget for every model. The harness does not discover the model's
+context window or choose its budget automatically. Reports record both bounds in scenario facts;
+the model allowance is also part of the immutable task revision. A timeout preserves the private
+session for diagnosis and does not authorize replay of entered work.
+
+Output budgets bound the requested generation work; profile byte and time limits bound the local
+resources used to handle it. A workflow can select a different output allowance in each model task,
+within the [model request contract](../../crates/model/src/task.rs) and granted authority. Choose
+effective values before accepting the task; changing future requests must not rewrite an entered
+attempt's recorded settings.
+
+Thinking is not prohibited by the exact final-answer assertion. However, this harness currently
+omits reasoning controls, which leaves the endpoint's default in effect and does not mean thinking
+is disabled. The [adapter feature matrix](../../adapters/model-provider/README.md#choose-features-the-endpoint-actually-supports)
+describes the limited mappings available to ordinary model tasks. Record the server's effective
+thinking mode and context configuration with private resource provenance, identifying operator
+declarations separately from settings verified by the endpoint. Changing either mode or budget
+between probes does not establish which change caused a successful final answer.
 
 For a private credential file, use
 `--secret-source secret:model-token=file:/absolute/private/model.token`; Unix file sources must be
