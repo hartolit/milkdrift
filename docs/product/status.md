@@ -81,12 +81,10 @@ values; repository contracts check the version cells against source.
   from the unchanged manifest schema. Model session agreement is checked before claiming work;
   supported provider mappings still accept only `Fresh`. Process session intent remains
   capability-specific and does not implement continuation.
-- Combined real coding-agent/model interoperability remains unqualified pending acceptance of a
-  clean strict combined report. A local Codex/Bonsai run has produced a qualifying report with
-  executor checks and independent review complete; coordinator closure and evidence retention
-  remain pending. This run does not qualify thinking mode: the operator subsequently reported
-  disabling it, and effective server settings were not captured per request.
-  Deterministic helpers and mock endpoints do not qualify. Continuous controllers therefore remain unavailable in production;
+- Combined real coding-agent/model interoperability is qualified for the exercised local Windows
+  Codex/Bonsai configuration. This run does not qualify thinking mode: the operator subsequently
+  reported disabling it, and effective server settings were not captured per request.
+  Continuous controller activation has separate prerequisites and remains unavailable in production;
   library stop behavior is fail-at-bound, and ambiguous multiple proposer occurrences are refused.
 - Trusted processes have daemon-account privileges. No sandbox, network isolation, CPU/memory
   quotas, malicious-descendant containment, universal atomic hashed-handle execution, directory
@@ -157,6 +155,18 @@ Focused revalidation passes 28 context/session/import tests, five affected docte
 warning-denying rustdoc, and documentation contracts. The full gate is reused for unchanged
 executable code; subsequent changes clarify explanations and remove resolved office topics.
 These checks do not add real-provider, process-session, or cross-platform qualification.
+
+Independently accepted combined real external evidence qualifies clean candidate
+`8c6cdb9137bc8f688fd6cc800d3adf416d4f4625` on Windows x86_64/MSVC with Rust 1.95.0.
+Byte-pinned `codex-cli 0.153.4` used LM Studio's `prism-ml/bonsai-27b:2`; the direct model task used
+`prism-ml/bonsai-27b`. Both scenarios qualify: fresh coding-agent work, separate verification and
+prospective remediation, selected causal context, final model text and usage, linked artifacts,
+and settled-boundary restarts without duplicate entry. The candidate passed the complete local
+gate with 709 tests, 24 doctests, and all 24 repository contracts; five manual longevity cases
+remained ignored. This establishes no model-quality, thinking-mode, peer, new-platform,
+graceful-signal, or filesystem power-loss claim. The
+[retained evidence](../development/verification-evidence.md#actual-binary-scenarios) identifies the
+accepted report, independent inspection, and private session. Controller activation remains separate.
 
 The ordinary model scenario passes against separately managed LM Studio with
 `google/gemma-4-12b-qat`, explicit response/idle bounds, and a 4,096-unit output allowance. Evidence

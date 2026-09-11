@@ -55,6 +55,18 @@ agent and a supported real model endpoint with operator-owned resources. Only it
 validated report can qualify that interoperability boundary. Hermetic external mode tests the
 harness. It cannot authorize production controller activation.
 
+The accepted local combined report and its supporting evidence are retained under ignored
+`target/external-interop-20260910/`. `acceptance.json` identifies clean candidate
+`8c6cdb9137bc8f688fd6cc800d3adf416d4f4625`, its binary/build/run provenance, and the private session.
+The report is `real-bonsai-03/report.json`, with BLAKE3 digest
+`b3_182a6602a7276cee5e6daac4ae842fcc3612d0dd1891315392e08e89bd11a1bf`.
+`review/accepted-handoff.md` retains the independent acceptance; `review/verification.json` and
+`review/contract-validation.log` retain the artifact, journal, production-reader, and redaction
+inspection. The exact binaries, full-gate logs, session, failed attempts, and private resource
+profiles remain available at the paths in that record and handoff. Preserve this evidence before
+clearing build output; Git retains source history, not these private files. Accepted coverage and
+its limits live in [status](../product/status.md#current-validationevidence-snapshot).
+
 The local Bonsai evidence does not qualify thinking mode. The operator subsequently reported
 disabling thinking after the initial attempt; the retained endpoint profile does not bind that
 server setting to each request. The truncated 64-unit probe and successful 4,096-unit probe

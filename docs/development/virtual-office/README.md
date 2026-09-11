@@ -9,20 +9,12 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-The [external interoperability sprint](sprint-2026-09-10-external-interoperability/README.md)
-has a verified candidate and a qualifying combined real report ready for independent review;
-that review remains unassigned. Its
-[current handoff](sprint-2026-09-10-external-interoperability/handoff.md) records the candidate and
-resume point.
+No active sprints. The [whiteboard](whiteboard/README.md) holds open questions for future planning.
 
 ## Prepared assignments
 
-The sprint's [coordination](sprint-2026-09-10-external-interoperability/00-coordinate.md)
-assignment remains with its coordinator; the current task has completed
-[execution](sprint-2026-09-10-external-interoperability/01-execute.md). The
-[independent review prompt](sprint-2026-09-10-external-interoperability/02-review.md)
-has a real evidence handoff and awaits a separate reviewer assignment. Owners, dependencies, and
-acceptance live in the sprint README.
+No prepared assignments. Use the [roadmap](../../product/roadmap.md) and whiteboard to choose the
+next sprint's purpose before creating assignments.
 
 ## Start a sprint
 
