@@ -690,6 +690,8 @@ fn command(
     )?)
 }
 
+#[path = "control_service/activation.rs"]
+mod activation;
 #[path = "control_service/admission.rs"]
 mod admission;
 #[path = "control_service/revision_and_lifecycle.rs"]

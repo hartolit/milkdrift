@@ -4,7 +4,7 @@ mod redaction;
 mod wire;
 pub use wire::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, DaemonConfig, ModelProfileConfig, PeerHostConfig,
+    AuthorityPresetConfig, ControllerActivation, DaemonConfig, ModelProfileConfig, PeerHostConfig,
     PeerRelationshipConfig, PeerServingConfig, PeerSideEffectConfig, RuntimeHostConfig,
     SecretSourceConfig, ShutdownConfig, ShutdownEffectPolicy,
 };

@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+# Builds the real composition for isolated development evidence; not production qualification.
+controller-qualification = []
+
 [dependencies]
 async-stream.workspace = true
 axum.workspace = true

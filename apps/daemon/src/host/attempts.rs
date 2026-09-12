@@ -47,7 +47,7 @@ impl Owner {
         let ControlResult::RunInspection { value } = result else {
             return Err(internal());
         };
-        Ok(public_run(value))
+        public_run(value)
     }
 
     pub(super) fn node_read(

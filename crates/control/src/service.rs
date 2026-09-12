@@ -20,13 +20,15 @@ use milkdrift_workspace::RunId;
 
 use crate::{
     AttemptInspection, ControlCommand, ControlCommandDocument, ControlError, ControlResult,
-    ControllerLifecycleOwner, NodeExecutionRead, OptimisticGuard, PolicyClassification,
-    ProposalApplicationPolicy, ProposalProvenance, ProposalStatusRead, ProposalSubmission,
-    ReconciliationStatusRead, RequestedRunAction, RevisionInspection, RiskClass, RunInspection,
-    TimelinePage, WorkflowProposal, classify_proposal,
+    ControllerLifecycleOwner, OptimisticGuard, PolicyClassification, ProposalApplicationPolicy,
+    ProposalProvenance, ProposalStatusRead, ProposalSubmission, ReconciliationStatusRead,
+    RequestedRunAction, RevisionInspection, RiskClass, TimelinePage, WorkflowProposal,
+    classify_proposal,
 };
 
 const MAX_PROPOSAL_AUTHORITY_REVISION_WALK: usize = 512;
+
+mod inspection;
 
 /// Shared workflow control through the injected runtime. Calls may span multiple commits;
 /// recover errors using the original identities rather than assuming all steps rolled back.
@@ -55,7 +57,8 @@ impl ControlService {
     }
 
     /// Returns the owner to install explicitly before runtime admission.
-    /// The production daemon leaves installation disabled pending qualification.
+    /// The daemon installs this owner before recovery in explicit development qualification mode;
+    /// production activation remains refused pending external qualification.
     #[must_use]
     pub fn controller_lifecycle_owner(&self) -> Arc<ControllerLifecycleOwner> {
         self.controller.clone()
@@ -68,16 +71,9 @@ impl ControlService {
         document: &ControlCommandDocument,
     ) -> Result<ControlResult, ControlError> {
         match document.command() {
-            ControlCommand::InspectRun { run } => {
-                let value = self.inspect_run(run, document.guard())?;
-                self.authorize_simple(
-                    document,
-                    AuthorityOperation::InspectRun,
-                    value.workflow.as_ref(),
-                    Some(run),
-                )?;
-                Ok(ControlResult::RunInspection { value })
-            }
+            ControlCommand::InspectRun { run } => Ok(ControlResult::RunInspection {
+                value: self.inspect_run_authorized(document, run)?,
+            }),
             ControlCommand::InspectRevision { revision } => {
                 let value = self
                     .revisions
@@ -768,93 +764,6 @@ impl ControlService {
                 ));
             }
         }
-    }
-
-    fn inspect_run(
-        &self,
-        run: &RunId,
-        guard: &OptimisticGuard,
-    ) -> Result<RunInspection, ControlError> {
-        let projection = self.runtime.projection(run)?;
-        if let Some(expected) = guard.expected_run_sequence
-            && expected != projection.sequence()
-        {
-            return Err(ControlError::StaleRunSequence {
-                expected,
-                actual: projection.sequence(),
-            });
-        }
-        let mut executions = projection
-            .node_executions()
-            .values()
-            .map(|execution| {
-                let latest_attempt_id = execution.attempts().last().cloned();
-                let latest_attempt = latest_attempt_id
-                    .as_ref()
-                    .and_then(|attempt| projection.attempts().get(attempt))
-                    .map(|attempt| attempt_inspection(attempt, projection.execution_authority()));
-                let side_effect = latest_attempt
-                    .as_ref()
-                    .and_then(|attempt| attempt.side_effect.as_ref())
-                    .map(|classification| classification.side_effect());
-                NodeExecutionRead {
-                    execution: execution.execution().clone(),
-                    node: execution.node().clone(),
-                    revision: execution.revision().clone(),
-                    state: execution.state().clone(),
-                    attempt_count: execution.attempt_count(),
-                    latest_attempt_id,
-                    latest_attempt,
-                    side_effect,
-                    outputs: execution.outputs().to_vec(),
-                }
-            })
-            .collect::<Vec<_>>();
-        executions.extend(
-            projection
-                .settled_node_executions()
-                .values()
-                .map(|execution| {
-                    let latest_attempt_id = execution.latest_attempt().cloned();
-                    let latest_attempt = latest_attempt_id
-                        .as_ref()
-                        .and_then(|attempt| projection.attempts().get(attempt))
-                        .map(|attempt| {
-                            attempt_inspection(attempt, projection.execution_authority())
-                        });
-                    NodeExecutionRead {
-                        execution: execution.execution().clone(),
-                        node: execution.node().clone(),
-                        revision: execution.revision().clone(),
-                        state: execution.state().clone(),
-                        attempt_count: execution.attempt_count(),
-                        latest_attempt_id,
-                        latest_attempt,
-                        side_effect: Some(execution.side_effect()),
-                        outputs: execution.outputs().to_vec(),
-                    }
-                }),
-        );
-        executions.sort_by(|left, right| left.execution.cmp(&right.execution));
-        let reconciliation = projection
-            .reconciliation()
-            .current()
-            .map(|request| status_from_projection(&projection, request));
-        Ok(RunInspection {
-            run: run.clone(),
-            sequence: projection.sequence(),
-            lifecycle: projection.lifecycle(),
-            workflow: projection.workflow().cloned(),
-            revision: projection.revision().cloned(),
-            revision_digest: projection.revision_digest().cloned(),
-            workspace_budget: projection.workspace_budget().cloned(),
-            executions,
-            reconciliation,
-            input_units: projection.resource_usage().input_units(),
-            output_units: projection.resource_usage().output_units(),
-            duration_ms: projection.resource_usage().duration_ms(),
-            artifact_bytes: projection.resource_usage().artifact_bytes(),
-        })
     }
 
     fn timeline(

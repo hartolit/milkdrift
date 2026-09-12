@@ -136,6 +136,11 @@ pub(super) fn exercise_starter(examples: &Path, daemon: &Path, cli: &Path) -> Ev
         "--terminal",
         "succeeded",
     ])?;
+    ensure(
+        runner.success(&["run", "show", "starter"])?["value"]["controller_accounting"]["state"]
+            == "inactive",
+        "ordinary workflow acquired controller accounting",
+    )?;
     child.terminate()?;
     Ok(())
 }

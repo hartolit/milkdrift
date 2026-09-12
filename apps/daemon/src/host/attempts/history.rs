@@ -239,11 +239,16 @@ impl HistoricalAttemptState {
                 }
             }
             RunEventKind::NodeTerminal {
-                attempt, outcome, ..
+                attempt,
+                outcome,
+                detail,
+                ..
             } if attempt == &self.attempt => {
                 if let Some(located) = self.located.as_mut() {
                     located.value.state = "terminal".to_owned();
                     located.value.terminal = Some(snake_debug(outcome));
+                    located.value.terminal_detail =
+                        detail.as_ref().map(|detail| detail.as_str().to_owned());
                 }
             }
             RunEventKind::ExternalOutcomeUncertain { attempt, .. } if attempt == &self.attempt => {

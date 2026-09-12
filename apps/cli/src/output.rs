@@ -147,15 +147,25 @@ fn human_value(value: &Value) {
                 "attempt_id",
                 "lifecycle",
                 "terminal",
+                "terminal_detail",
                 "state",
                 "sequence",
                 "uncertainty_count",
                 "next_cursor",
                 "output",
                 "destination",
+                "reached_bound",
+                "cycle_eligible",
+                "last_assessment_sequence",
+                "checkpoint_id",
             ] {
                 if let Some(value) = fields.get(key).filter(|value| !value.is_null()) {
                     println!("  {key}: {value}");
+                }
+            }
+            for key in ["controller_accounting", "accounting"] {
+                if let Some(accounting) = fields.get(key) {
+                    println!("  cumulative controller accounting: {accounting}");
                 }
             }
             for key in ["summary", "value", "items"] {

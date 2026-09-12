@@ -9,6 +9,44 @@ fn fixture_document() -> Result<DaemonConfig, Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn controller_activation_is_explicit_and_production_qualification_cannot_be_claimed()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = fixture_document()?;
+    let path = fixture_path();
+    let base = path.parent().ok_or("fixture parent absent")?;
+    assert_eq!(
+        config.runtime.controller_activation,
+        ControllerActivation::Disabled
+    );
+    config.runtime.controller_activation = ControllerActivation::Enabled;
+    let error = config
+        .clone()
+        .validate(base)
+        .err()
+        .ok_or("production activation was admitted")?;
+    assert!(error.to_string().contains("real external controller loop"));
+    config.runtime.controller_activation = ControllerActivation::Qualification;
+    let result = config.validate(base);
+    if cfg!(feature = "controller-qualification") {
+        let plan = result?;
+        assert!(plan.redacted_toml().contains("qualification"));
+        assert!(
+            plan.redacted_toml()
+                .contains("per-command/per-request permission")
+        );
+    } else {
+        assert!(
+            result
+                .err()
+                .ok_or("qualification feature was bypassed")?
+                .to_string()
+                .contains("controller-qualification build feature")
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn maintained_operator_configuration_uses_the_production_reader()
 -> Result<(), Box<dyn std::error::Error>> {
     let path =

@@ -19,7 +19,8 @@ Startup establishes what can continue before it admits new work:
 2. Open the [current storage formats](../product/status.md) and durable clock boundary. Legacy
    `control-state-v1.json`, `peer-executions-v1`, and `peer-artifacts-v1` paths are refused because
    their old ownership cannot be silently imported or ignored. No conversion tool is implemented.
-3. Recover active runtime work with admission closed and construct the control service. Check
+3. Construct the control service and install its single lifecycle owner when development
+   qualification is explicitly configured, then recover active runtime work with admission closed. Check
    bounded application-receipt and layout reads; this is not a complete historical integrity scan.
 4. Register and health-check workflow-control and configured process/model adapters, then build
    relationships and recover serving-peer work if peers are enabled.
@@ -46,10 +47,27 @@ exact request for [command replay](../reference/control-api.md#commands). The
 
 ## Controller activation
 
-Continuous controller activation is refused by this daemon. Neither a CLI command nor a
-configuration change bypasses the [qualification gate](../product/status.md#limitations-now).
-[Architecture](../architecture.md#controller-resource-accounting) defines the implemented library
-accounting boundary.
+`runtime.controller_activation` defaults to `disabled`. Ordinary workflows run normally; marked
+controllers cannot start without their lifecycle and cumulative account. Reopening active accounted
+work with activation disabled fails before admission, including descendants whose own revisions
+have no controller marker. Preserve that data root and use its compatible activation configuration.
+
+`qualification` installs the existing control-owned lifecycle before recovery, using the same store,
+authority service, and clock as other work. It requires a daemon built with the non-default
+`controller-qualification` Cargo feature and is intended for isolated development evidence.
+Installation is one-shot while admission is closed. A marked task cannot enter before its account
+has been established, even if it precedes the repeat in the graph.
+The child-creation transaction enforces the same rule for subworkflows: a child preceding
+activation cannot enter under its own unmarked revision. The normal first controller child and
+account establishment commit together.
+
+`enabled` requests production activation and currently fails configuration validation with the
+missing prerequisite: a qualifying bounded real external controller loop. The model adapter cannot
+yet bound hard input/output/cost obligations, so controlled model entry remains refused. A model's
+requested output limit is not proof of those obligations. Neither the development feature nor a
+CLI command satisfies the [qualification gate](../product/status.md#limitations-now).
+See [accounting architecture](../architecture.md#controller-resource-accounting) and
+[budget scope](authority.md#budget-scope).
 
 ## Application receipts and retention
 

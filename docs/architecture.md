@@ -341,6 +341,25 @@ checks authority, prepares local request data under the exact generation permit,
 then atomically commits entry intent and account admission before external work. Frozen descriptor
 category determines process/model entry counts.
 
+After local preparation, entry refreshes unrelated sibling journal changes and verifies that its
+own attempt, lease, execution, authority, revision pin, and cancellation boundary still match.
+This preserves the prepared handle across sibling writes made during preparation. The entry/account
+transaction still checks the current run head and account revision; a later conflict retries within
+the existing bound, and a changed or expired ticket is refused.
+
+The daemon installs that one lifecycle before recovery only under explicit development
+qualification configuration. Active account bindings require installation during recovery;
+marked revisions also require account establishment before any external task entry. Production
+activation has a separate qualification refusal, not a fallback to unaccounted repeats.
+Child creation in a marked revision also requires an account, established earlier or atomically
+in the same transaction. An unmarked child placed before activation cannot escape that account.
+Authorized run/controller reads project this account with committed and remaining totals. They
+do not maintain another ledger, and a descendant read requires inspection of the account origin.
+
+A parent's pinned child revision binds the immutable child creation event. Authorized prospective
+reconciliation may change the child's current revision while the original creation pin, inputs,
+workspace, inherited authority, and account binding remain enforced.
+
 Unit, cost, and artifact obligations reserve before entry. Unknown bounds, currency mismatch,
 blocked state, overflow, or ceiling violation produces durable denial. Terminal evidence settles
 only authoritative use; missing bounded observations retain remainders and block future admission.
@@ -382,8 +401,9 @@ oversized encoded requests before entry. Output/tool calls remain artifacts, not
 execution. The two provider mappings preserve their own response/stream semantics and truthful
 usage, cancellation, idempotency, and side-effect limits.
 Local preparation owns the exact encoded request and ephemeral headers under the host's generation
-permit. Runtime rechecks authority afterward and commits against the run head checked before
-preparation. A durable local refusal precedes entry intent and creates no account reservation;
+permit. Runtime rechecks authority afterward, refreshes unrelated journal writes while validating
+the exact prepared ticket, and commits against that checked run head. A durable local refusal
+precedes entry intent and creates no account reservation;
 an intent without terminal proof remains uncertain across restart. The
 [adapter guide](../adapters/model-provider/README.md#prepare-once-before-external-entry) explains
 the distinction between local refusal, possible submission, complete response, and reporting loss.

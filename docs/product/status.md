@@ -47,8 +47,13 @@ This document owns current implementation, limitations, exact versions, and qual
   descendants. Establishment binds the declared originating run. Final-entry reservations and
   entry intent commit atomically; artifact publication
   and logical-byte charges also commit atomically. Account revisions retain replayable predecessor
-  evidence. **The production daemon leaves the controller lifecycle uninstalled** pending a current
-  qualifying real external-evidence run.
+  evidence. The daemon composition installs the single control-owned lifecycle before recovery
+  when explicitly configured for an isolated `controller-qualification` build. Production
+  activation remains default-disabled and an `enabled` request is refused pending a current
+  bounded real external controller loop. Unknown hard model input/output/cost bounds still refuse
+  entry. Run/controller reads expose the same canonical cumulative account; ordinary runs report
+  inactive accounting. [Daemon operation](../operations/daemon.md#controller-activation) explains
+  configuration and recovery consequences.
 
 Current exact versions follow. Owning constants, strict readers, and golden tests determine these
 values; repository contracts check the version cells against source.
@@ -72,7 +77,7 @@ values; repository contracts check the version cells against source.
 | Redb internal document format / physical schema | 14 / 11 | Older/future stores refused; no migration. |
 | Application command receipt / layout record | 1 / 1 | Exact supported contracts. |
 | Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
-| External control / authenticated cursor | 2.4 / 2 | Earlier major/cursor forms refused. |
+| External control / authenticated cursor | 2.5 / 2 | Earlier major/cursor forms refused. |
 | Peer protocol and catalog messages | 1.2 | Earlier minors refused. |
 | Daemon configuration | 9 | TOML; JSON and earlier versions refused. |
 | Layout document / CLI JSON output | 1 / 2 | CLI schema 1 refused. |
@@ -208,6 +213,20 @@ retained paths and the exact scope of these local observations.
 The model-preparation implementation passes the local Windows/MSVC full gate: 727 workspace tests,
 24 doctests, all 24 repository contracts, formatting, checking, warning-denying Clippy/rustdoc,
 dependency audits, and test discovery. Five manual longevity tests remain ignored in this run.
+
+The reviewed controller integration based on `741b230` passes the current Windows/MSVC full gate: 737
+workspace tests, 24 doctests, and all 24 repository contracts, with five manual tests ignored in
+the ordinary gate. Both required release controller longevity lanes also pass. Rebuilt operator,
+deterministic-model, and installed-controller scenarios pass. The installed loop retains rejection,
+requires separate approval, prospectively repairs and accepts the result, then stops at its
+cumulative process bound; concurrency, replay, compaction, and entered-process crash recovery
+preserve the account. Review also closes an unmarked child preceding controller activation:
+the child-creation transaction refuses that route, and both disabled and qualification daemon
+scenarios verify it. The focused 46-mutant result and an additional exact child-creation fault
+have no unresolved case; they are not a new full controller-shard campaign. Both supplied Bonsai profiles refuse unknown hard model bounds before
+controlled entry. Production activation remains disabled/refused because the bounded real external
+controller loop is unqualified. [Retained evidence](../development/verification-evidence.md#actual-binary-scenarios)
+records the exact source and binary scope; no live host configuration was changed.
 
 Release receipt, peer, controller-lifecycle, controller-admission, historical-frontier longevity,
 projection stress, and effect-worker shutdown proofs pass. Hosted Linux

@@ -63,6 +63,36 @@ inspection.
 
 ## Set bounds and validate
 
+### Budget scope
+
+These limits answer different questions. `--print-effective-config` labels their scopes;
+raising one does not raise the others.
+
+| Owner | Meaning |
+| --- | --- |
+| Grant `AuthorityBudget` | Permission ceiling for one command/request. It does not record lifetime spending. |
+| Adapter profile and request | Limits on one attempt, such as time, bytes, concurrency, or requested model output. Provider observations and estimates do not become hard guarantees. |
+| Runtime workers and queues | Capacity for concurrent work and pending commands. Slots become reusable; cumulative usage does not. |
+| Controller account | One cumulative allowance shared by the controller and every descendant, across retries, revisions, and restarts. Committed equals settled plus outstanding reservations. |
+| Storage retention | Hot operational detail, archival batches, and retained bytes; independent of permission and cumulative admissions. |
+
+`run show` reports `controller_accounting`; `controller status` includes the same account as
+`accounting`. An ordinary run reports `state: inactive`. An active account exposes its exact
+identity, declaration origin, policy digest, revision/digest, currency, reservations, settled use,
+outstanding obligations, committed totals, and remaining allowance. Cost is in millionths of the
+declared currency, artifacts in logical bytes, process/model admissions in entry counts, and
+input/output in the adapter's supported units. A bound that cannot be expressed conservatively
+is refused before entry; unsupported currencies/units are not converted.
+
+Do not add outstanding reservations to committed again. Missing terminal unit/cost observations
+retain their reserved remainder and block further admission. An unresolved external effect keeps
+its outstanding obligations reserved. `remaining: null` means allowance
+cannot safely be offered while blocked, even if a subtraction would be positive. Inspect the block
+reason and exact attempt evidence; missing cost or units are not zero. Reading a descendant's
+shared totals also requires permission to inspect the originating controller run.
+
+### Grant ceilings
+
 Every numeric ceiling must be present for a safe grant, including provider-neutral `units`. Use a
 finite `valid_until`, declare the strongest side effect the actor may cause, and grant only the
 filesystem, network, secret, locality, trust zone, and peer facts required by registered adapters.

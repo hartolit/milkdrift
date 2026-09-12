@@ -12,9 +12,9 @@ use crate::projection::{RunLifecycle, RunProjection, SubworkflowState};
 use crate::{RunCommand, RunCommandDocument, RuntimeError, SystemTransition};
 use milkdrift_blueprint::{Node, NodeKind, PortId, RevisionId};
 use milkdrift_persistence::{
-    BoundedDetail, CommandDisposition, NodeExecutionId, NodeOutcome, PageSize, Reason,
-    RunEventKind, RunSequence, SubworkflowOwnership, SubworkflowResourceUsage, TimestampMillis,
-    WorkspaceMutation,
+    BoundedDetail, CommandDisposition, EventPageQuery, NodeExecutionId, NodeOutcome, PageSize,
+    Reason, RunEventKind, RunSequence, SubworkflowOwnership, SubworkflowResourceUsage,
+    TimestampMillis, WorkspaceMutation,
 };
 use milkdrift_workspace::{
     RunId, ScopeId, ScopeReference, SubworkflowId, ValueKey, WorkspaceScope, WorkspaceValueEntry,
@@ -123,13 +123,24 @@ impl RuntimeService {
         })?;
         if child_head != RunSequence::ZERO {
             let existing = self.projection(&child.run)?;
+            // The parent's pin binds creation, not every later authorized prospective revision.
+            // Read the single immutable creation fact so a reconciled child is neither rejected
+            // nor confused with an unrelated run that happens to have the expected current pin.
+            let creation = self.store.events(&EventPageQuery::new(
+                child.run.clone(),
+                None,
+                PageSize::new(1)?,
+            )?)?;
+            let creation_matches = matches!(creation.events.as_slice(), [event]
+                if matches!(event.kind(), RunEventKind::RunCreated { revision, .. }
+                    if revision == &child.revision));
             let expected_references: Vec<_> = inputs
                 .iter()
                 .map(|entry| entry.reference().clone())
                 .collect();
             if existing.run_id() != Some(&child.run)
                 || existing.workflow() != Some(child_blueprint.semantic().workflow())
-                || existing.revision() != Some(&child.revision)
+                || !creation_matches
                 || existing.root_scope() != Some(&root_scope)
                 || existing.workspace_budget() != Some(budget)
                 || existing.inputs() != expected_references

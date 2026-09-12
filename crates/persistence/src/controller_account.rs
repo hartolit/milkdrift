@@ -496,6 +496,29 @@ impl ControllerAccountState {
         self.settled.checked_add(self.outstanding)
     }
 
+    /// Allowance still available after settled use and every unresolved reservation.
+    ///
+    /// A blocked account has no knowable spendable remainder. In particular, missing
+    /// external usage must not appear as zero spend or a renewed allowance.
+    pub fn remaining_allowance(
+        &self,
+    ) -> Result<Option<ControllerResourceTotals>, PersistenceError> {
+        self.validate()?;
+        if self.blocked.is_some() {
+            return Ok(None);
+        }
+        let committed = self.committed_totals()?;
+        let budget = self.declaration.budget();
+        Ok(Some(ControllerResourceTotals {
+            cost_micros: budget.cost_micros - committed.cost_micros,
+            input_units: budget.input_units - committed.input_units,
+            output_units: budget.output_units - committed.output_units,
+            artifact_bytes: budget.artifact_bytes - committed.artifact_bytes,
+            process_admissions: budget.process_admissions - committed.process_admissions,
+            model_admissions: budget.model_admissions - committed.model_admissions,
+        }))
+    }
+
     fn calculate_digest(&self) -> Result<IntegrityDigest, PersistenceError> {
         Ok(IntegrityDigest::hash(&canonical_json_bytes(
             &StateDigestInput {

@@ -74,7 +74,8 @@ pub struct ActorBindingConfig {
 pub struct ActorGrantConfig {
     /// Exact workflow/run, capability, filesystem, network, and secret scope.
     pub resources: ResourceScope,
-    /// Explicit numeric ceilings. `None` means the resource is not granted.
+    /// Per-command/per-request permission ceilings, not cumulative consumption.
+    /// `None` means the resource is not granted. Controller accounts own lifetime usage.
     pub budget: AuthorityBudget,
     /// Inclusive grant validity start.
     pub valid_from: BoundaryTimeMillis,
@@ -123,10 +124,26 @@ impl ActorGrantConfig {
     }
 }
 
+/// Selects ordinary execution or an explicitly isolated controller qualification installation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControllerActivation {
+    /// Ordinary workflows only; marked controllers and active controller recovery are refused.
+    #[default]
+    Disabled,
+    /// Isolated evidence using the `controller-qualification` build feature.
+    Qualification,
+    /// Production activation, refused until the external qualification prerequisite is met.
+    Enabled,
+}
+
 /// Fixed runtime-owner, scheduler, and effect-worker bounds.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeHostConfig {
+    /// Explicit lifecycle installation policy, independent of actor permission and worker capacity.
+    #[serde(default)]
+    pub controller_activation: ControllerActivation,
     /// Bounded synchronous owner queue.
     pub request_queue: u32,
     /// Scheduler/effect notification maintenance maximum interval.
@@ -156,6 +173,7 @@ pub struct RuntimeHostConfig {
 impl Default for RuntimeHostConfig {
     fn default() -> Self {
         Self {
+            controller_activation: ControllerActivation::Disabled,
             request_queue: 128,
             maintenance_interval_ms: 100,
             maximum_tick_items: 128,

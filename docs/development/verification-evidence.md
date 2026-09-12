@@ -44,6 +44,41 @@ replay/conflict, inspection, pause/signal/resume, guarded proposal adoption, art
 abrupt-restart uncertainty resolution, durable reads, stable failure exits, and model provenance.
 Every CLI action is a real process; no CLI receives the database path.
 
+The installed controller scenario uses the same daemon composition with explicit development
+activation. Build the daemon with `--all-features` (or `--features controller-qualification`), then
+run `headless-cli-evidence` with the same `--daemon` and `--cli` paths plus
+`--controller-qualification`. Optional `--controller-output NEW_DIRECTORY` retains the private
+fixture configuration, pinned process profiles, exact proposals, accounting reads, and reports.
+CI runs this deterministic scenario after building the real applications.
+
+It composes ordinary process, verification, acceptance, proposal, approval, reconciliation, repeat,
+and signal nodes. Failed work remains rejected; an ordinary workflow-control invocation submits
+the artifact-linked repair, a distinct authorized actor approves it, the child adopts a new
+revision prospectively, and independent verification accepts the repair. The next cycle stops at
+four cumulative process entries. Separate concurrent workers compete for two entries; both active
+reservations and the denied third attempt are inspected. Process/model entry counts are charged
+at admission, while unit/cost/artifact remainders stay reserved until their owning evidence settles.
+
+The scenario checks disabled start, refused production enablement, disabled recovery of an active
+account, revoked approval, exact command replay after receipt archival, retained proposal/acceptance
+artifacts after compaction, settled restart, and crash/reopen of an entered process with a retained
+artifact obligation. These are process-kill boundaries, not power-loss or escaped-descendant proof.
+Both disabled and qualification modes refuse an unmarked subworkflow placed before the marked
+repeat: its parent remains created and no child is admitted outside the cumulative account.
+The process fixture emits bounded entry progress, lives at most ten seconds, and has a thirty-second
+adapter deadline; concurrent verification uses a sixty-second execution lease.
+The separate crash case uses a thirty-second lease and reopens after expiry; an unexpired lease
+does not yet establish the recovery classification. Its non-idempotent process effect remains
+uncertain with the same reservation through another reopen.
+
+Its counting model fixture proves zero endpoint calls on unknown hard input-unit bounds. Up to
+three explicitly supplied `--controller-model-profile PATH` options exercise the same negative
+path against operator-selected profiles. Registration and local preparation must succeed before
+the exact admission refusal is accepted as evidence. A refusal is not a qualifying model/controller
+loop. Requested output units, endpoint/profile provenance, unknown effective server settings, and
+the unchanged model-admission count are retained separately. Production activation remains refused
+as described in [daemon operation](../operations/daemon.md#controller-activation).
+
 The separate [local-model lane](../guides/local-model-endpoint.md#run-the-maintained-daemoncli-lane)
 checks wait/restart/release, selected/omitted context, streaming/usage/artifact provenance,
 nonduplication, post-entry response loss, unsafe-retry refusal, and explicit retain. Its deterministic
@@ -101,6 +136,31 @@ directory's `recovered-run.json`, `recovered-attempt.json`, and `recovery-summar
 reopens with one uncertain attempt and no replacement attempt. Both requests declare 4,096 output
 units; effective thinking settings remain unknown. Only the first real lane completes, and neither
 model-only observation qualifies the combined external-agent boundary or remote cancellation.
+
+The reviewed September 12 controller integration based on `741b230` passes the Windows/MSVC full gate
+(737 workspace tests, 24 doctests, all 24 repository contracts) and both required release controller
+longevity lanes. Five manual tests remain ignored in the ordinary gate. Its rebuilt installed
+scenario passes in `target/controller-review-scenario/report.json`; the ordinary operator log is
+`target/controller-review-operator.log` and the deterministic model report is
+`target/controller-review-model/report.json`. The installed report covers accepted prospective
+repair followed by the exact cumulative stop, concurrent descendant admission, revoked approval,
+cold replay, charged-artifact preservation, and an entered non-idempotent process remaining
+uncertain through two reopens, plus the unaccounted-child refusal in both activation modes. The
+counting model fixture proves conservative unknown-bound refusal. The prior supplied Bonsai profile
+refusals remain scoped to `target/controller-scenario-final/`; review used deterministic fixtures
+only. No qualifying real controller loop or thinking-mode claim is made. Production activation
+stays refused.
+
+`target/controller-review-verification.json` records the reviewed source hashes, base commit,
+executable hashes, and checks. Exact binaries are preserved under `target/controller-review-binaries/`.
+Gate results and logs are `target/controller-review-final-gate-results.json` and
+`target/controller-review-final-gate-*.log`. Release logs are
+`target/controller-review-lifecycle-longevity.log` and `target/controller-review-admission-longevity.log`.
+Default/all-feature API inventories are under `target/public-api/controller/`; review introduces
+no further exports. The verification command sequence is retained in
+`target/controller-review-final.ps1` and `target/controller-review-final-gate.ps1`.
+These local process-kill observations do not qualify power loss,
+another platform, or an independently reviewed production operating decision.
 
 [Strict external evidence](../guides/external-evidence.md) requires both a real byte-pinned coding
 agent and a supported real model endpoint with operator-owned resources. Only its complete
@@ -196,6 +256,31 @@ classifications are only equivalent behavior, unreachable under a validated publ
 mutation-tool limitation. The runner rejects duplicate identities and validates its classification
 policy. A healthy benchmark cannot justify a survivor. Historical counts do not qualify new source.
 
+The September 12 controller integration based on `741b230` has a focused changed-line campaign,
+not a new full controller-shard qualification. Across 46 exact mutants, 36 are caught, five are
+classified under validated contract invariants, and five are ill-typed `Default` substitutions.
+`target/controller-mutation-summary.json` maps every selected identity to its retained outcomes
+and classification; `target/controller-mutation-failure-review.json` identifies the failing tests.
+The main all-feature run selects control, daemon, persistence, and runtime libraries plus
+`control_service`, `structured_runtime`, and `durable_runtime`. Default-feature configuration and
+exact runtime follow-ups close feature-dependent and child-pin coverage. An initial entry-test
+timeout is preserved; after adding a bounded wait, that exact mutant is caught, not classified
+from its timeout. A diagnostic run that also selected unchanged struct fields is excluded from
+the changed-line result and retained separately. No unresolved selected mutant remains.
+
+Commands and lists are retained in `target/controller-mutation.ps1`,
+`target/controller-default-mutation.ps1`, `target/controller-mutation-exact-closeout.ps1`, and
+`target/controller-mutants-selected.json`. Runs use cargo-mutants 27.1.0, one mutation worker,
+two compiler jobs, and zero dev/test debug symbols with assertions retained. The main build/test
+deadlines are 600/120 seconds; exact runtime follow-ups use 600/60 seconds. Raw outcomes remain
+under the corresponding `target/controller-mutation-*/mutants.out/` directories.
+
+Review's additional child-creation regression observes one unaccounted adapter entry on the
+original implementation (`target/controller-review-child-baseline.log`). Inverting the new exact
+controller-marker comparison is independently caught in `target/controller-review-child-mutant.log`.
+The original source was restored before final verification. The prior 46-mutant results apply to
+their unchanged production functions; this additional fault is separate from that campaign.
+
 ## Benchmarks and operations
 
 Divan is pinned in the evidence [manifest](../../tools/evidence/Cargo.toml). The process fixture
@@ -249,7 +334,7 @@ prompts, provider payloads, artifact bytes, and environment values are excluded.
 
 | Workflow | Configured evidence |
 | --- | --- |
-| [quality](../../.github/workflows/quality.yml) | Linux full gate, actual CLI/daemon operator scenario with controlled capabilities, deterministic local model. |
+| [quality](../../.github/workflows/quality.yml) | Linux full gate, actual CLI/daemon operator scenario, deterministic local model, and installed controller qualification/refusal scenario. |
 | [platform](../../.github/workflows/platform.yml) | Pinned Ubuntu, Windows, macOS checks and selected domain/protocol/client/process tests. |
 | [mutation](../../.github/workflows/mutation.yml) | Seven weekly/manual shards and complete mutation artifacts. |
 | [benchmarks](../../.github/workflows/benchmarks.yml) | Smoke/full distributions, operational reports, worker saturation. |

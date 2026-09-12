@@ -19,10 +19,48 @@ use crate::{
 };
 use crate::{PolicyClassification, ProposalDigest, ProposalId};
 
+/// Cumulative accounting is separate from per-request permission and worker capacity.
+///
+/// The active form projects the canonical persistence account, including its origin,
+/// exact revision, currency, reservations and blocked reason. `committed` already includes
+/// settled use plus outstanding reservations; never add reservations to it again.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "state")]
+pub enum ControllerAccountingRead {
+    /// This run has no cumulative controller account.
+    Inactive,
+    /// All descendants consume this same immutable declaration and current account revision.
+    Active {
+        /// Exact persistence-owned state, not a second ledger.
+        account: Box<milkdrift_persistence::ControllerAccountState>,
+        /// Settled use plus reserved remainders.
+        committed: milkdrift_persistence::ControllerResourceTotals,
+        /// Spendable allowance, absent while the account is blocked.
+        remaining: Option<milkdrift_persistence::ControllerResourceTotals>,
+    },
+}
+
+impl ControllerAccountingRead {
+    pub(crate) fn from_account(
+        account: Option<&milkdrift_persistence::ControllerAccountState>,
+    ) -> Result<Self, crate::ControlError> {
+        Ok(match account {
+            None => Self::Inactive,
+            Some(account) => Self::Active {
+                committed: account.committed_totals()?,
+                remaining: account.remaining_allowance()?,
+                account: Box::new(account.clone()),
+            },
+        })
+    }
+}
+
 /// Current deterministic lifecycle state of one controller occurrence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ControllerLifecycleState {
+    /// No cumulative account has been established, so controller work is not admitted.
+    NotActivated,
     /// Another explicit cycle is currently eligible.
     Eligible,
     /// A durable checkpoint awaits an authorized decision.
@@ -37,6 +75,8 @@ pub enum ControllerLifecycleState {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControllerStatusRead {
+    /// Exact cumulative account shared by this controller and its descendants.
+    pub accounting: ControllerAccountingRead,
     /// Stable controller policy identity.
     pub controller: ControllerId,
     /// Digest binding every executable policy field.
@@ -135,6 +175,8 @@ pub struct AttemptInspection {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunInspection {
+    /// Explicitly inactive for ordinary runs; otherwise the canonical cumulative account.
+    pub controller_accounting: ControllerAccountingRead,
     /// Exact aggregate.
     pub run: RunId,
     /// Current authoritative sequence.

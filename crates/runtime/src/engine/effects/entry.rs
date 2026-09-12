@@ -28,7 +28,31 @@ impl RuntimeService {
         dispatch: &ExecutionDispatch,
         now: TimestampMillis,
     ) -> Result<Option<FinalEntry<'a>>, RuntimeError> {
-        let projection = self.projection(dispatch.run())?;
+        if self.controller_account_for_run(dispatch.run())?.is_some()
+            && self.controller_lifecycle()?.is_none()
+        {
+            return Err(RuntimeError::Scheduling(
+                "controlled external entry requires an installed controller lifecycle".to_owned(),
+            ));
+        }
+        let mut projection = self.projection(dispatch.run())?;
+        let revision = self
+            .store
+            .revision(dispatch.revision())?
+            .ok_or_else(|| RuntimeError::InvalidHistory("entry revision is absent".to_owned()))?;
+        if revision
+            .semantic()
+            .metadata()
+            .extensions()
+            .keys()
+            .any(|key| key.as_str() == crate::CONTROLLER_POLICY_EXTENSION_KEY)
+            && self.controller_account_for_run(dispatch.run())?.is_none()
+        {
+            return Err(RuntimeError::Scheduling(
+                "marked controller work requires account establishment before any external entry"
+                    .to_owned(),
+            ));
+        }
         let attempt = projection
             .attempts()
             .get(dispatch.attempt())
@@ -164,6 +188,32 @@ impl RuntimeService {
         if !authorization.is_allowed() {
             prepared = None;
         }
+        // Preparation can be slower than sibling heartbeats. Refresh their unrelated journal
+        // changes without discarding the prepared handle, but never refresh away a change to
+        // this attempt, lease, execution, authority, or cancellation boundary.
+        let latest = self.projection(dispatch.run())?;
+        if latest.attempts().get(dispatch.attempt())
+            != projection.attempts().get(dispatch.attempt())
+            || latest.node_executions().get(dispatch.execution())
+                != projection.node_executions().get(dispatch.execution())
+            || latest.leases().get(dispatch.lease()) != projection.leases().get(dispatch.lease())
+            || latest.execution_authority() != projection.execution_authority()
+            || latest.revision_for_attempt(dispatch.attempt()) != Some(dispatch.revision())
+        {
+            return Err(RuntimeError::InvalidTransition(
+                "effect ticket changed during local preparation".to_owned(),
+            ));
+        }
+        if cancellation_reason_for_execution(
+            &latest,
+            dispatch.execution(),
+            run_drain_reason(&latest),
+        )
+        .is_some()
+        {
+            return Ok(None);
+        }
+        projection = latest;
         let mut controller_actions = Vec::new();
         let mut expected_controller_revision = None;
         let controller_admission = if let (Some(prepared), Some(account)) = (
@@ -288,6 +338,11 @@ impl RuntimeService {
             next_sequence,
         }) = retry_final_entry(self.clock.as_ref(), |now| {
             self.prepare_final_entry(dispatch, now)
+        })
+        .inspect_err(|error| {
+            warn!(run = %dispatch.run(), attempt = %dispatch.attempt(),
+                reason = %milkdrift_contracts::truncate_utf8(&error.to_string(), 512),
+                "final adapter entry failed before a new entry decision");
         })?
         else {
             return Ok(EffectExecutionResult::Completed { observations: 0 });

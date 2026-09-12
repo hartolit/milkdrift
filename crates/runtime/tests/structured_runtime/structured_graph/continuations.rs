@@ -295,6 +295,167 @@ fn attached_subworkflow_refuses_a_preexisting_foreign_child_run() -> TestResult 
 }
 
 #[test]
+fn attached_child_refuses_a_different_creation_pin_in_the_same_workflow() -> TestResult {
+    let original = wait_revision("workflow-child-collision-pin", 5_000)?;
+    let different = original.revise(
+        original.id(),
+        MutationBatch::new(vec![Mutation::SetMetadata {
+            metadata: milkdrift_blueprint::BlueprintMetadata::new(
+                "Different creation pin",
+                "Same workflow and executable shape",
+                BTreeSet::new(),
+                BTreeMap::new(),
+            )?,
+        }])?,
+        AuthorRef::new("human:structured-runtime-test")?,
+        "A different immutable creation revision",
+    )?;
+    let parent = subworkflow_revision("workflow-parent-collision-pin", &original)?;
+    let run = RunId::new("run-parent-collision-pin")?;
+    // A separate valid materialization supplies the exact workspace identity. The refusal
+    // fixture must differ only in creation revision, not workflow, budget, inputs, or scope.
+    let (expected_child, expected_root) = {
+        let reference = Harness::new("child-collision-pin")?;
+        reference.put_revision(&original)?;
+        reference.put_revision(&parent)?;
+        reference.create_and_start(&run, &parent)?;
+        reference.runtime.scheduler_tick()?;
+        let projection = reference.runtime.projection(&run)?;
+        let child = projection
+            .subworkflows()
+            .values()
+            .next()
+            .ok_or("reference child link absent")?
+            .child_run()
+            .clone();
+        let root = reference
+            .runtime
+            .projection(&child)?
+            .root_scope()
+            .ok_or("reference child root absent")?
+            .clone();
+        (child, root)
+    };
+    let harness = Harness::new("child-collision-pin")?;
+    for revision in [&original, &different, &parent] {
+        harness.put_revision(revision)?;
+    }
+    harness.create_and_start(&run, &parent)?;
+    let projection = harness.runtime.projection(&run)?;
+    let child = projection
+        .subworkflows()
+        .values()
+        .next()
+        .ok_or("child link absent")?;
+    assert_eq!(child.child_run(), &expected_child);
+    assert_eq!(
+        harness.command(
+            &expected_child,
+            RunCommand::CreateRun {
+                workflow: different.semantic().workflow().clone(),
+                revision: different.id().clone(),
+                root_scope: expected_root,
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?,
+        CommandDisposition::Accepted
+    );
+    let before = harness.store.head(&expected_child)?;
+    assert!(matches!(
+        harness.runtime.scheduler_tick(),
+        Err(RuntimeError::InvalidHistory(_))
+    ));
+    assert_eq!(harness.store.head(&expected_child)?, before);
+    assert_eq!(
+        harness.runtime.projection(&expected_child)?.revision(),
+        Some(different.id())
+    );
+    Ok(())
+}
+
+#[test]
+fn attached_child_keeps_its_creation_pin_after_authorized_prospective_revision() -> TestResult {
+    let harness = Harness::new("child-prospective-pin")?;
+    let original = wait_revision("workflow-child-prospective", 5_000)?;
+    let revised = original.revise(
+        original.id(),
+        MutationBatch::new(vec![Mutation::SetMetadata {
+            metadata: milkdrift_blueprint::BlueprintMetadata::new(
+                "Revised child",
+                "The entered wait is unchanged",
+                BTreeSet::new(),
+                BTreeMap::new(),
+            )?,
+        }])?,
+        AuthorRef::new("human:structured-runtime-test")?,
+        "Prospective metadata revision",
+    )?;
+    let parent = subworkflow_revision("workflow-parent-prospective", &original)?;
+    for revision in [&original, &revised, &parent] {
+        harness.put_revision(revision)?;
+    }
+    let run = RunId::new("run-parent-prospective")?;
+    harness.create_and_start(&run, &parent)?;
+    harness.runtime.scheduler_tick()?;
+    let projection = harness.runtime.projection(&run)?;
+    let child = projection
+        .subworkflows()
+        .values()
+        .next()
+        .ok_or("child link absent")?
+        .child_run()
+        .clone();
+    assert_eq!(
+        harness.command(
+            &child,
+            RunCommand::RequestRevisionAdoption {
+                reconciliation: ReconciliationId::new("child-prospective")?,
+                revision: revised.id().clone(),
+                policy: ReconciliationPolicy::FinishCurrentThenAdopt,
+            }
+        )?,
+        CommandDisposition::Accepted
+    );
+    let projection = harness.runtime.projection(&child)?;
+    let plan = projection
+        .reconciliation()
+        .plans()
+        .values()
+        .next()
+        .ok_or("child plan absent")?
+        .plan()
+        .clone();
+    assert_eq!(
+        harness.command(
+            &child,
+            RunCommand::DecideReconciliation {
+                plan: plan.clone(),
+                decision: ReconciliationDecisionId::new("approve-child-prospective")?,
+                outcome: AuthorityDecision::Approve,
+            }
+        )?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        harness.command(&child, RunCommand::ApplyReconciliation { plan })?,
+        CommandDisposition::Accepted
+    );
+    assert_eq!(
+        harness.runtime.projection(&child)?.revision(),
+        Some(revised.id())
+    );
+    harness.runtime.scheduler_tick()?;
+    harness.clock.advance(5_000)?;
+    harness.drive(&run, 12)?;
+    assert!(harness.runtime.projection(&run)?.is_completed());
+    assert!(
+        matches!(harness.runtime.history(&child)?.first().map(RunEventEnvelope::kind), Some(RunEventKind::RunCreated { revision, .. }) if revision == original.id())
+    );
+    Ok(())
+}
+
+#[test]
 fn repeat_runs_each_pinned_child_in_an_isolated_scope_and_stops_at_the_bound() -> TestResult {
     let harness = Harness::new("repeat")?;
     install_child_output_script(&harness)?;

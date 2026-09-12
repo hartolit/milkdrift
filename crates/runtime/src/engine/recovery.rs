@@ -320,6 +320,12 @@ impl RuntimeService {
         projection: &RunProjection,
     ) -> Result<(), RuntimeError> {
         let run = &summary.run;
+        if self.controller_account_for_run(run)?.is_some() && self.controller_lifecycle()?.is_none()
+        {
+            return Err(RuntimeError::Scheduling(format!(
+                "active controller account for run {run} requires lifecycle installation before recovery"
+            )));
+        }
         if projection.run_id() != Some(run) {
             return Err(Self::active_recovery_invalid(
                 run,

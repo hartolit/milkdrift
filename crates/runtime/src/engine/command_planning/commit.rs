@@ -43,7 +43,7 @@ impl RuntimeService {
                 &mut plan.workspace,
             )?;
         }
-        self.extend_controller_actions(document, &envelopes, &mut plan)?;
+        self.extend_controller_actions(document, &candidate, &envelopes, &mut plan)?;
 
         let event_ids = envelopes
             .iter()
@@ -193,6 +193,7 @@ impl RuntimeService {
     fn extend_controller_actions(
         &self,
         document: &RunCommandDocument,
+        candidate: &RunProjection,
         envelopes: &[RunEventEnvelope],
         plan: &mut CommandPlan,
     ) -> Result<(), RuntimeError> {
@@ -246,8 +247,12 @@ impl RuntimeService {
                         "current controller assessment omitted its account declaration".to_owned(),
                     ));
                 }
-                RunEventKind::SubworkflowCreated { child_run, .. } => {
-                    child_runs.push(child_run.clone());
+                RunEventKind::SubworkflowCreated {
+                    child_run,
+                    parent_execution,
+                    ..
+                } => {
+                    child_runs.push((child_run, parent_execution));
                 }
                 _ => {}
             }
@@ -257,11 +262,30 @@ impl RuntimeService {
                 .extend(
                     child_runs
                         .into_iter()
-                        .map(|run| ControllerAccountAction::BindRun {
+                        .map(|(run, _)| ControllerAccountAction::BindRun {
                             account: account.clone(),
-                            run,
+                            run: run.clone(),
                         }),
                 );
+        } else {
+            // Activation and the first child can share this transaction. Check after all
+            // assessments so that case binds atomically, while a prelude child cannot escape
+            // accounting through its own unmarked revision.
+            for (_, execution) in child_runs {
+                let revision = self.revision_for_execution(candidate, execution)?;
+                if revision
+                    .semantic()
+                    .metadata()
+                    .extensions()
+                    .keys()
+                    .any(|key| key.as_str() == crate::CONTROLLER_POLICY_EXTENSION_KEY)
+                {
+                    return Err(RuntimeError::Scheduling(
+                        "marked controller work requires account establishment before child creation"
+                            .to_owned(),
+                    ));
+                }
+            }
         }
         Ok(())
     }

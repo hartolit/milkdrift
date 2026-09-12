@@ -167,6 +167,12 @@ pub struct RevisionChange {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunRead {
+    /// Cumulative controller accounting: explicit `inactive`, or the authorized canonical
+    /// account with declaration, lineage, revision, settled/reserved/committed use and remainder.
+    /// The persistence/control owners define this bounded document; permission budgets and
+    /// worker capacity are independent. Missing legacy output is explicitly unavailable.
+    #[serde(default)]
+    pub controller_accounting: Value,
     /// Run aggregate.
     pub run_id: String,
     /// Authoritative sequence.
@@ -259,6 +265,10 @@ pub struct AttemptRead {
     pub outputs: Vec<AttemptOutputRead>,
     /// Stable terminal summary.
     pub terminal: Option<String>,
+    /// Bounded durable terminal explanation, including the final-entry budget refusal.
+    /// Missing evidence stays absent; an allowed authority decision alone does not prove entry.
+    #[serde(default)]
+    pub terminal_detail: Option<String>,
     /// Whether external outcome remains unresolved.
     pub uncertain: bool,
     /// Separately authorized output-acceptance decision for a workflow acceptance task.

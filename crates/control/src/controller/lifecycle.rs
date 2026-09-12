@@ -27,8 +27,8 @@ use crate::ControlError;
 /// a checkpoint continuation. The account's final-entry and artifact transactions own
 /// cumulative resource changes; assessment does not reserve resources a second time.
 ///
-/// Final-entry accounting is implemented, but the production daemon still leaves this
-/// lifecycle uninstalled pending the qualification recorded in the product status/roadmap.
+/// The daemon installs this owner before recovery in explicit development qualification mode.
+/// Production activation remains refused pending the evidence recorded in product status.
 pub struct ControllerLifecycleOwner {
     revisions: Arc<dyn RevisionStore>,
 }
@@ -209,7 +209,9 @@ impl ControllerLifecycleOwner {
                 ControllerStop::Continue => (None, None),
             },
         };
-        let state = if reached_bound.is_some() {
+        let state = if account.is_none() {
+            crate::ControllerLifecycleState::NotActivated
+        } else if reached_bound.is_some() {
             crate::ControllerLifecycleState::BoundReached
         } else if checkpoint_id.is_some() {
             crate::ControllerLifecycleState::AwaitingHumanCheckpoint
@@ -219,6 +221,7 @@ impl ControllerLifecycleOwner {
             crate::ControllerLifecycleState::Eligible
         };
         Ok(crate::ControllerStatusRead {
+            accounting: crate::ControllerAccountingRead::from_account(account)?,
             controller: document.policy().identity().clone(),
             policy_digest: document.digest().clone(),
             run: run.clone(),
@@ -261,7 +264,9 @@ impl ControllerLifecycleOwner {
                 .revisions
                 .revision(execution.revision())?
                 .ok_or(ControlError::BaseRevisionNotFound)?;
-            if ControllerPolicyDocument::from_revision(&revision, execution.node())?.is_some() {
+            if ControllerPolicyDocument::from_controller_revision(&revision)?
+                .is_some_and(|(node, _)| &node == execution.node())
+            {
                 controllers.push(execution.execution().clone());
             }
         }
@@ -355,7 +360,9 @@ impl ControllerLifecycleOwner {
                 .revisions
                 .revision(execution.revision())?
                 .ok_or(ControlError::BaseRevisionNotFound)?;
-            if ControllerPolicyDocument::from_revision(&revision, execution.node())?.is_some() {
+            if ControllerPolicyDocument::from_controller_revision(&revision)?
+                .is_some_and(|(node, _)| &node == execution.node())
+            {
                 controllers.push((
                     execution.execution().clone(),
                     revision,

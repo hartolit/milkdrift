@@ -36,6 +36,9 @@ use milkdrift_evidence::EvidenceResult;
 #[path = "headless-cli-evidence/setup.rs"]
 mod setup;
 
+#[path = "headless-cli-evidence/controller.rs"]
+mod controller;
+
 const TOKEN: &str = "headless-cli-evidence-token";
 const WRONG_TOKEN: &str = "headless-cli-evidence-wrong-token";
 const ACTOR: &str = "human:headless-cli-evidence";
@@ -43,6 +46,15 @@ const ACTOR: &str = "human:headless-cli-evidence";
 #[derive(Parser)]
 #[command(name = "headless-cli-evidence")]
 struct Arguments {
+    /// Exercise the installed controller in an isolated development qualification build.
+    #[arg(long)]
+    controller_qualification: bool,
+    /// Retain the controller scenario's private configuration, artifacts and reads in a new directory.
+    #[arg(long, requires = "controller_qualification")]
+    controller_output: Option<PathBuf>,
+    /// Explicit operator profiles used only to prove conservative pre-entry model refusal.
+    #[arg(long, requires = "controller_qualification")]
+    controller_model_profile: Vec<PathBuf>,
     /// Built `milkdrift-daemon` executable.
     #[arg(long)]
     daemon: PathBuf,
@@ -68,6 +80,37 @@ fn main() {
                 thread::sleep(Duration::from_secs(5));
                 return;
             }
+            "--fixture-controller-work" => {
+                println!("unsatisfactory");
+                return;
+            }
+            "--fixture-controller-repair" => {
+                println!("correct");
+                return;
+            }
+            "--fixture-controller-race" => {
+                println!("entered bounded concurrent process");
+                thread::sleep(Duration::from_secs(10));
+                return;
+            }
+            "--fixture-controller-crash" => {
+                if let Err(error) = fs::write("effect.txt", b"one external fixture effect") {
+                    eprintln!("cannot record fixture effect: {error}");
+                    std::process::exit(1);
+                }
+                println!("recorded non-idempotent fixture effect");
+                thread::sleep(Duration::from_secs(10));
+                return;
+            }
+            "--fixture-controller-verify" => {
+                let correct =
+                    fs::read_to_string("work.txt").is_ok_and(|text| text.trim() == "correct");
+                println!(
+                    "{}",
+                    serde_json::json!({"checkpoint":"fixture-v1", "checked_checkpoint":"fixture-v1", "checks":{"correct":correct}, "coding":{"type":"changed"}})
+                );
+                return;
+            }
             _ => {}
         }
     }
@@ -80,6 +123,9 @@ fn main() {
 fn run(arguments: Arguments) -> EvidenceResult {
     require_executable(&arguments.daemon)?;
     require_executable(&arguments.cli)?;
+    if arguments.controller_qualification {
+        return controller::run(&arguments);
+    }
     setup::exercise_starter(&arguments.examples, &arguments.daemon, &arguments.cli)?;
     let directory = tempfile::tempdir()?;
     let endpoint = reserve_endpoint()?;

@@ -176,11 +176,21 @@ fn revocation_after_adapter_entry_preserves_success_and_blocks_later_work() -> T
     let thread = std::thread::spawn(move || effect_runtime.execute_effect(action));
     {
         let (lock, changed) = &*gate;
-        let mut state = lock.lock().map_err(|_error| "entry gate poisoned")?;
-        while !state.entered {
-            state = changed
-                .wait(state)
-                .map_err(|_error| "entry gate wait poisoned")?;
+        let state = lock.lock().map_err(|_error| "entry gate poisoned")?;
+        let (mut state, _) = changed
+            .wait_timeout_while(state, std::time::Duration::from_secs(5), |state| {
+                !state.entered
+            })
+            .map_err(|_error| "entry gate wait poisoned")?;
+        if !state.entered {
+            // Release even a late entrant before joining the failed scenario's worker.
+            state.release = true;
+            changed.notify_all();
+            drop(state);
+            let result = thread.join().map_err(|_panic| "effect thread panicked")?;
+            return Err(
+                format!("adapter entry was not observed before deadline: {result:?}").into(),
+            );
         }
     }
     authority.revoke();

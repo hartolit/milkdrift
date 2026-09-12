@@ -39,15 +39,19 @@ task. Use the repository as the handoff; do not rely on another agent's chat his
 | 07 | [Trusted-process cleanup bounds](07-trusted-process-cleanup-bounds.md) | Owned I/O cleanup is interruptible and bounded without false descendant-containment claims. |
 | 08 | [Integrated operational acceptance](08-integrated-operational-acceptance.md) | Combined behavior, measured query costs, and current evidence support a precise operating decision. |
 
-Assignment 01 is committed as `bf8cbd5`. Assignment 02, based on that commit, is reviewed and
-accepted in this change. Assignments 03–08 have not started.
+Assignment 01 is committed as `bf8cbd5`; Assignment 02 is accepted at `741b230`. Assignment 03
+has completed local implementation, review corrections, and verification. Its
+[handoff](03-handoff.md) owns the finite activation decision and evidence. Production activation
+remains blocked by the missing bounded real external controller loop. Assignments 04–08 have
+not started; advancing requires coordinator acceptance.
 
 The canonical acceptance owner is `crates/control/src/acceptance.rs`, exposed through the existing
 `workflow.accept_result` operation. Assignment 03 should compose `result_acceptance_task` and
 `result_acceptance_gate` at its stage boundary and continue only from the gate's `pass` arm.
 `acceptance_result` records the decision; `accepted_result` aliases that exact artifact only when
 the requirement passes. Compiled sequence associations identify `acceptance_node`; use saved
-associations rather than guessing node names. The controller lifecycle remains uninstalled.
+associations rather than guessing node names. Assignment 03 installs the existing lifecycle before
+recovery when explicit development qualification is configured; ordinary startup stays disabled.
 The [acceptance guide](../../../guides/result-acceptance.md) and
 [ADR 0032](../../../decisions/0032-purpose-specific-result-acceptance.md) own the durable explanation.
 
@@ -56,7 +60,7 @@ checkpoint/check/coding report. Schemas 1/2 are refused on import; stored revisi
 behavior, and schema-2 stage associations remain readable. Both initial and remediation paths
 gate verification and review. The existing remediation builder targets the original verification
 failure hold; an unusable reviewer has a separate rejection hold requiring an explicitly authored
-prospective proposal. Control protocol is 2.4, CLI JSON remains 2, and acceptance contract/result
+prospective proposal. Assignment 03 advances control protocol to 2.5; CLI JSON remains 2, and acceptance contract/result
 schemas are 1. Model, blueprint, event, and storage schemas are unchanged.
 
 Assignment 02 makes the model adapter's private preparation path the owner of validation,
@@ -69,7 +73,7 @@ readers, result acceptance, and account reservation/settlement policy are unchan
 [model adapter guide](../../../../adapters/model-provider/README.md#prepare-once-before-external-entry),
 [architecture](../../../architecture.md), and ADRs 0012/0019 own the lasting explanation.
 
-Verification passes: the full workflow gate (727 workspace tests, 24 doctests, five manual tests
+Assignment 02 verification passes: the full workflow gate (727 workspace tests, 24 doctests, five manual tests
 ignored), all 24 repository contracts, dependency audits, test discovery, affected default/all-feature
 API review, and both actual-binary operator/deterministic-model lanes. Nine new model tests cover
 zero-request refusal, exact prepared entry, authority revocation, duplicate delivery, transport loss,
@@ -80,7 +84,7 @@ The first Bonsai alias passes; the second reaches its 180-second limit and remai
 attempt through two reopens. Thinking settings remain unknown. No new combined external qualification
 or controller activation is claimed. Coordinator review found no blocking implementation issues.
 
-Assignment 03 must preserve the preparation boundary and acceptance routing above. Model admission
+Assignment 03 preserves the preparation boundary and acceptance routing above. Model admission
 still reports unknown unit/cost bounds, so preparation does not make a controlled model reservation
 admissible. Any reservation, settlement, or controller activation change belongs to Assignment 03.
 

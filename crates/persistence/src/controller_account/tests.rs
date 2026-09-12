@@ -83,6 +83,39 @@ fn reservation_identity_is_derived_before_account_mutation() -> TestResult {
 }
 
 #[test]
+fn remaining_allowance_subtracts_every_committed_dimension_once() -> TestResult {
+    let mut state = account(3, 4)?;
+    let (model, model_attempt) = reservation(&state, "remaining-model")?;
+    let _ = state.admit(
+        model.clone(),
+        model_attempt,
+        CapabilityCategory::Model,
+        &bounded_envelope(3)?,
+    )?;
+    let (process, process_attempt) = reservation(&state, "remaining-process")?;
+    let _ = state.admit(
+        process,
+        process_attempt,
+        CapabilityCategory::Process,
+        &InvocationAdmissionEnvelope::not_applicable(),
+    )?;
+    assert_eq!(
+        state.remaining_allowance()?,
+        Some(ControllerResourceTotals {
+            cost_micros: 5,
+            input_units: 5,
+            output_units: 5,
+            artifact_bytes: 5,
+            process_admissions: 2,
+            model_admissions: 3,
+        })
+    );
+    state.settle_terminal(&model, None)?;
+    assert!(state.remaining_allowance()?.is_none());
+    Ok(())
+}
+
+#[test]
 fn exact_process_ceiling_accepts_n_and_denies_n_plus_one() -> TestResult {
     let mut state = account(2, 2)?;
     for suffix in ["one", "two"] {
@@ -294,6 +327,13 @@ fn unknown_currency_and_overflow_are_distinct_fail_closed_denials() -> TestResul
 #[test]
 fn uncertainty_retains_remainder_blocks_retry_and_roundtrips() -> TestResult {
     let mut state = account(4, 4)?;
+    assert_eq!(
+        state
+            .remaining_allowance()?
+            .ok_or("unblocked allowance absent")?
+            .input_units(),
+        8
+    );
     let (first, first_attempt) = reservation(&state, "uncertain-first")?;
     state.admit(
         first.clone(),
@@ -309,6 +349,13 @@ fn uncertainty_retains_remainder_blocks_retry_and_roundtrips() -> TestResult {
         &bounded_envelope(4)?,
     )?;
     let (third, third_attempt) = reservation(&state, "uncertain-over")?;
+    assert_eq!(
+        state
+            .remaining_allowance()?
+            .ok_or("reserved allowance absent")?
+            .input_units(),
+        0
+    );
     assert!(matches!(
         state.admit(
             third,
@@ -327,6 +374,7 @@ fn uncertainty_retains_remainder_blocks_retry_and_roundtrips() -> TestResult {
         Some(ControllerAccountBlock::UnknownUsage { .. })
     ));
     assert_eq!(state.committed_totals()?.input_units(), 8);
+    assert!(state.remaining_allowance()?.is_none());
     let stored = serde_json::to_vec(&state)?;
     let reopened: ControllerAccountState = serde_json::from_slice(&stored)?;
     reopened.validate()?;

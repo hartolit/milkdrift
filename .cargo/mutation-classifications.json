@@ -25,6 +25,31 @@
       "mutant": "adapters/peer-http/src/remote.rs:224:17: delete field health from struct PeerRegistryStatus expression in PeerRegistry::status",
       "classification": "unreachable_by_valid_contract",
       "explanation": "This fallback requires poisoning the private status mutex. Every holder only moves or clones owned validated identifiers, strings, and primitive diagnostic fields; no caller callback, clock, adapter, network operation, or fallible formatter runs while this guard is held. Allocation failure aborts rather than unwinding. Supported registry operations therefore cannot poison this mutex; ordinary disconnected and failed-connection health remain independently tested."
+    },
+    {
+      "mutant": "crates/runtime/src/engine/effects/entry.rs:201:13: replace || with && in RuntimeService::prepare_final_entry",
+      "classification": "unreachable_by_valid_contract",
+      "explanation": "The mutation joins only the authority and attempt-revision comparisons. ExecutionAuthorityEstablished is one-shot before start, so the authority basis cannot change here. revision_for_attempt is derived from the current node-execution projection; a changed or retired revision therefore also changes the independently compared execution (or attempt), and that earlier disjunction still rejects the ticket."
+    },
+    {
+      "mutant": "crates/runtime/src/engine/effects/entry.rs:200:13: replace || with && in RuntimeService::prepare_final_entry",
+      "classification": "unreachable_by_valid_contract",
+      "explanation": "The mutation joins only the lease and authority comparisons. Authority is immutable after start. Under the supported worker protocol, a heartbeat is reported only after the adapter-entry decision, so a concurrent renewal also changes the independently compared attempt. Recovery expires a lease together with recovery classification of its attempt, and replacement changes attempt admission facts. A lease-only change during pre-entry preparation has no supported reporting path; the defensive original guard is retained."
+    },
+    {
+      "mutant": "crates/runtime/src/engine/effects/entry.rs:199:13: replace || with && in RuntimeService::prepare_final_entry",
+      "classification": "unreachable_by_valid_contract",
+      "explanation": "The mutation joins only the execution and lease comparisons. A cancellation-only execution change is also refused by cancellation_reason_for_execution on the refreshed head. Revision changes are independently checked through revision_for_attempt; output/terminal/recovery transitions also change the independently compared attempt. An otherwise isolated execution change that could authorize a new entry cannot be produced by a valid active-attempt history."
+    },
+    {
+      "mutant": "crates/runtime/src/engine/effects/entry.rs:197:13: replace || with && in RuntimeService::prepare_final_entry",
+      "classification": "unreachable_by_valid_contract",
+      "explanation": "The mutation joins only the attempt and execution comparisons. An execution-only cancellation still meets the following refreshed cancellation check. An attempt-only observation requires an already recorded adapter-entry decision, or terminal/recovery state; folding the final CapabilityAdapterEntryDecisionRecorded rejects a duplicate, terminal, or retired candidate before the prepared handle can enter. Immutable request coordinates cannot change independently under a valid history; lease, authority, and revision comparisons remain disjunctions."
+    },
+    {
+      "mutant": "crates/runtime/src/engine/structured/subworkflow.rs:142:17: replace || with && in RuntimeService::ensure_child_created",
+      "classification": "unreachable_by_valid_contract",
+      "explanation": "The loaded projection's run identity is fixed by its keyed journal. A valid RunCreated binds its workflow to its exact stored revision, and no later event can change that workflow. The separate immutable creation-revision comparison therefore already rejects a foreign workflow. An existing child with the expected creation revision but a different workflow cannot arise through valid creation or prospective reconciliation. The independent same-workflow/different-creation-pin refusal test catches weakening the adjacent creation check."
     }
   ]
 }

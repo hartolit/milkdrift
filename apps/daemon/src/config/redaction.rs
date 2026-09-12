@@ -8,6 +8,16 @@ pub(super) fn redacted_value(config: &DaemonConfig) -> Result<serde_json::Value,
         .as_object_mut()
         .ok_or_else(|| ConfigError::Invalid("configuration root is not an object".to_owned()))?;
     sources.insert(
+        "budget_scopes".to_owned(),
+        serde_json::json!({
+            "actors_authority_budget": "per-command/per-request permission ceiling; not lifetime consumption",
+            "adapter_profiles": "per-attempt enforceable limits; provider estimates and missing metering are separate",
+            "runtime_concurrency_and_queues": "worker capacity; not cumulative usage",
+            "controller_accounting": "immutable cumulative account: committed = settled + outstanding reservations; remaining is unknown when blocked",
+            "application_receipts_and_audits": "retained storage bounds; cold exact-replay history can grow"
+        }),
+    );
+    sources.insert(
         "secret_sources".to_owned(),
         serde_json::json!({
             "configured_references": config.secret_sources.len(),

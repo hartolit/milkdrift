@@ -64,6 +64,21 @@ impl DaemonConfig {
             ));
         }
         validate_runtime(&self.runtime)?;
+        match self.runtime.controller_activation {
+            super::ControllerActivation::Disabled => {}
+            super::ControllerActivation::Qualification
+                if cfg!(feature = "controller-qualification") => {}
+            super::ControllerActivation::Qualification => {
+                return Err(ConfigError::Invalid(
+                    "controller qualification requires the development-only controller-qualification build feature and an isolated test installation".to_owned(),
+                ));
+            }
+            super::ControllerActivation::Enabled => {
+                return Err(ConfigError::Invalid(
+                    "production controller activation is unqualified: a current bounded real external controller loop is required; model input/output/cost admission bounds remain unknown".to_owned(),
+                ));
+            }
+        }
         if self.shutdown.deadline_ms == 0 || self.shutdown.deadline_ms > 300_000 {
             return Err(ConfigError::Invalid(
                 "shutdown deadline must be in 1..=300000 milliseconds".to_owned(),

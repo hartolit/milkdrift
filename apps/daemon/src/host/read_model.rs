@@ -53,7 +53,9 @@ pub(super) fn public_revision_summary(
     }
 }
 
-pub(super) fn public_run(value: milkdrift_control::RunInspection) -> RunRead {
+pub(super) fn public_run(
+    value: milkdrift_control::RunInspection,
+) -> Result<RunRead, PublicFailure> {
     let (lifecycle, terminal) = match value.lifecycle {
         milkdrift_runtime::RunLifecycle::Uncreated => ("uncreated".to_owned(), None),
         milkdrift_runtime::RunLifecycle::Created => ("created".to_owned(), None),
@@ -90,7 +92,9 @@ pub(super) fn public_run(value: milkdrift_control::RunInspection) -> RunRead {
             .count(),
     )
     .unwrap_or(u32::MAX);
-    RunRead {
+    Ok(RunRead {
+        controller_accounting: serde_json::to_value(value.controller_accounting)
+            .map_err(|_| internal())?,
         run_id: value.run.as_str().to_owned(),
         sequence: value.sequence.get(),
         lifecycle,
@@ -102,7 +106,7 @@ pub(super) fn public_run(value: milkdrift_control::RunInspection) -> RunRead {
             .map(|digest| digest.as_str().to_owned()),
         nodes,
         uncertainty_count,
-    }
+    })
 }
 
 pub(super) fn empty_attempt_read(attempt: &str, state: &str) -> AttemptRead {
@@ -129,6 +133,7 @@ pub(super) fn empty_attempt_read(attempt: &str, state: &str) -> AttemptRead {
         usage: None,
         outputs: Vec::new(),
         terminal: None,
+        terminal_detail: None,
         uncertain: false,
         result_acceptance: None,
         model_generation: None,
@@ -230,6 +235,11 @@ pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> Att
         usage,
         outputs,
         terminal: value.terminal.as_ref().map(snake_debug),
+        terminal_detail: value
+            .terminal
+            .as_ref()
+            .and_then(|terminal| terminal.detail())
+            .map(|detail| detail.as_str().to_owned()),
         uncertain: value.external_outcome.is_some(),
         result_acceptance: None,
         model_generation: None,

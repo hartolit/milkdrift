@@ -3,6 +3,9 @@
 - Status: accepted
 - Date: 2026-09-01
 
+[ADR 0033](0033-explicit-controller-qualification.md) adds an isolated development installation
+path through the real daemon composition. The production qualification requirements below remain.
+
 ## Context
 
 ADR 0026 defined one durable controller policy, projection-derived progress, and atomic cycle

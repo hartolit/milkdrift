@@ -55,9 +55,9 @@ pub use policy::{
 };
 pub use preset::{AuthorityPreset, GrantTemplate};
 pub use read::{
-    AttemptInspection, ControllerLifecycleState, ControllerStatusRead, NodeExecutionRead,
-    ProposalStatusRead, ProposalSubmission, ReconciliationStatusRead, RevisionInspection,
-    RunInspection, TimelinePage,
+    AttemptInspection, ControllerAccountingRead, ControllerLifecycleState, ControllerStatusRead,
+    NodeExecutionRead, ProposalStatusRead, ProposalSubmission, ReconciliationStatusRead,
+    RevisionInspection, RunInspection, TimelinePage,
 };
 pub use service::ControlService;
 

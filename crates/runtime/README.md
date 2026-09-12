@@ -132,8 +132,10 @@ reports, and recovery while its workers drain. [Daemon operations](../../docs/op
 owns the production procedure.
 
 Controller policy enters through `ControllerLifecycle`; persistence owns its cumulative account.
-The production lifecycle remains uninstalled pending the qualification in
-[status](../../docs/product/status.md). Ordinary structured repeats use their own declared bounds.
+Install it before recovery when reopening accounted runs. The daemon exercises that composition
+through explicit [development qualification](../../docs/operations/daemon.md#controller-activation);
+production activation remains refused pending the evidence in [status](../../docs/product/status.md).
+Ordinary structured repeats use their own declared bounds.
 
 The `test-support` feature exposes deterministic fixtures. Run
 `cargo test -p milkdrift-runtime --all-features` for command, scheduling, structured execution,

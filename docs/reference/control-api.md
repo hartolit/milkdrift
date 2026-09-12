@@ -1,4 +1,4 @@
-# Local control API 2.4
+# Local control API 2.5
 
 Use this reference for exact requests, replies, routes, and CLI machine output. For setup, begin
 with the [operator examples](../../examples/operator/README.md); for Rust integration, use the
@@ -12,11 +12,11 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":4}}
+{"protocol":{"major":2,"minor":5}}
 ```
 
 Major 2 is required; protocol 1 is refused. For that major, the current implementation returns
-minor 4 rather than selecting the lower offered minor or downgrading response fields. Clients
+minor 5 rather than selecting the lower offered minor or downgrading response fields. Clients
 must accept the current response shape; older strict readers are not qualified by this exchange.
 Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
@@ -24,7 +24,7 @@ the negotiated envelope version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 4},
+  "protocol": {"major": 2, "minor": 5},
   "request_id": "req-1",
   "value": {}
 }
@@ -38,7 +38,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 4},
+  "protocol": {"major": 2, "minor": 5},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -56,7 +56,7 @@ administration uses the separate routes below. A command envelope has no actor f
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 4},
+  "protocol": {"major": 2, "minor": 5},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -92,16 +92,26 @@ The closed command types are:
 Evidence kinds accepted by the daemon are `authority_decision`, `worker_observation`, `external_receipt`, `artifact`, and `recovery_observation`. A success returns `CommandAccepted`: `command_id`, `replayed`, optional `resulting_sequence`, stable `result_type`, and a bounded command-specific `value`.
 
 Acceptance is not task completion. Read the run and exact attempts to establish execution outcome.
-Controller commands describe the library contract; the production daemon still refuses continuous
-controller activation under the [qualification gate](../product/status.md#limitations-now).
+Controller commands use the installed lifecycle in the daemon's explicit development qualification
+mode. Production activation remains refused under the [qualification gate](../product/status.md#limitations-now).
 
 Controller status contains the policy controller identity/digest; exact run, governing revision,
 node, and execution; lifecycle state; every progress and limit field; last assessment
-sequence/time/identity; current checkpoint or reached bound; and `cycle_eligible`. It contains no
+sequence/time/identity; current checkpoint or reached bound; `accounting`; and `cycle_eligible`. A
+marked run without an established account reports `not_activated` and cannot be cycle eligible. It contains no
 prompt, secret, model transcript, or sibling evidence. `continue_controller` is valid only for the
 pending digest-derived checkpoint on that execution. Duplicate use of the same external command and
 decision identity replays exactly; a stale/different decision, revoked grant, reached bound, or
 changed optimistic sequence cannot create another cycle.
+
+Protocol 2.5 adds `RunRead.controller_accounting` and `AttemptRead.terminal_detail`. The former
+is the bounded control-owned account projection described in
+[budget scope](../operations/authority.md#budget-scope); the latter preserves the durable terminal
+reason, including final-entry budget refusal, after operational attempt compaction. Ordinary runs
+return `{"state":"inactive"}`. Readers of older responses treat a missing accounting field as
+`null` (unavailable), not inactive or unlimited, and a missing terminal detail as absent. CLI JSON
+remains schema 2. Controller status carries the same account under `accounting`; `committed`
+already includes outstanding reservations and `remaining` is `null` while blocked.
 
 The wire command carries the decoded prompt-sequence JSON document. Markdown parsing is owned by
 the CLI/library before submission, and the daemon independently performs strict schema validation

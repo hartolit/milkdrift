@@ -17,8 +17,8 @@ mod http;
 
 pub use config::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, DAEMON_CONFIG_SCHEMA_VERSION, DaemonConfig, DaemonPlan,
-    ModelProfileConfig, PeerHostConfig, PeerRelationshipConfig, PeerServingConfig,
+    AuthorityPresetConfig, ControllerActivation, DAEMON_CONFIG_SCHEMA_VERSION, DaemonConfig,
+    DaemonPlan, ModelProfileConfig, PeerHostConfig, PeerRelationshipConfig, PeerServingConfig,
     PeerSideEffectConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
     ShutdownEffectPolicy,
 };
