@@ -38,13 +38,12 @@ use milkdrift_capability_host::{
     },
 };
 use milkdrift_control::{
-    ActorAuthorityContext, AuthorityPreset, ClaimedStopCondition, ControlCommand,
-    ControlCommandDocument, ControlError, ControlId, ControlResult, ControlResultSink,
-    ControlService, ControllerBlueprintSpec, ControllerLimits, ControllerPolicyDocument,
-    MAX_CONTROL_RESULT_BYTES, OptimisticGuard, ProposalApplicationPolicy, ProposalId,
-    ProposalProvenance, RequestedRunAction, RiskClass, WORKFLOW_PROPOSE_OPERATION,
-    WorkflowControlAdapter, WorkflowProposal, WorkflowProposalDocument, build_controller_blueprint,
-    workflow_control_descriptor,
+    ActorAuthorityContext, AuthorityPreset, ClaimedStopCondition, ControlArtifactAccess,
+    ControlCommand, ControlCommandDocument, ControlError, ControlId, ControlResult, ControlService,
+    ControllerBlueprintSpec, ControllerLimits, ControllerPolicyDocument, MAX_CONTROL_RESULT_BYTES,
+    OptimisticGuard, ProposalApplicationPolicy, ProposalId, ProposalProvenance, RequestedRunAction,
+    RiskClass, WORKFLOW_PROPOSE_OPERATION, WorkflowControlAdapter, WorkflowProposal,
+    WorkflowProposalDocument, build_controller_blueprint, workflow_control_descriptor,
 };
 use milkdrift_persistence::{
     ArtifactPublicationId, ArtifactStore, AttemptUsage, BeginArtifactPublication,
@@ -303,10 +302,20 @@ fn assert_complete_integrity(store: &RedbStore) -> TestResult {
 
 struct UnusedResultSink;
 
-impl ControlResultSink for UnusedResultSink {
+impl ControlArtifactAccess for UnusedResultSink {
+    fn read(
+        &self,
+        _invocation: &AdapterInvocation<'_>,
+        _input: &InputReference,
+    ) -> Result<(ArtifactReference, Vec<u8>), ControlError> {
+        Err(ControlError::InvalidContract(
+            "unexpected artifact read".to_owned(),
+        ))
+    }
     fn publish(
         &self,
         _invocation: &AdapterInvocation<'_>,
+        _output_name: &str,
         _bytes: &[u8],
     ) -> Result<ArtifactReference, ControlError> {
         Err(ControlError::InvalidContract(

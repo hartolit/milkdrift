@@ -34,8 +34,11 @@ This document owns current implementation, limitations, exact versions, and qual
   reporting errors propagate without manufacturing terminal evidence. Model adapters implement
   OpenAI-compatible chat and native Anthropic mappings through bounded HTTP/SSE.
 - Prompt sequences compile trusted-process coding, verification, review, and remediation stages
-  into ordinary revisions on the same daemon/control path. New revision reasons name the accepted
-  import schema; historical reasons and revision identities remain unchanged.
+  into ordinary revisions on the same daemon/control path. Separate control-capability acceptance
+  tasks check verifier checkpoint reports and usable reviews before branches permit continuation.
+  Invocation completion, accepted result, and workflow terminal remain distinct in inspection.
+  [Result acceptance](../guides/result-acceptance.md) explains the supported purpose contracts and
+  their limits. Historical reasons and revision identities remain unchanged.
 - Controller libraries implement durable policy assessment and cumulative accounts across runs and
   descendants. Establishment binds the declared originating run. Final-entry reservations and
   entry intent commit atomically; artifact publication
@@ -54,7 +57,8 @@ values; repository contracts check the version cells against source.
 | Context manifest | 2 | v1 refused; model envelope remains independent. |
 | Model document / task / response / endpoint profile | 1 / 1 / 1 / 1 | Exact supported contracts. |
 | Proposal / workflow-control command / risk policy / controller policy | 1 / 1 / 1 / 1 | Exact supported contracts. |
-| Prompt-sequence import | 2 | v1 refused. |
+| Prompt-sequence import | 3 | v1/v2 refused; existing blueprint history unchanged. |
+| Result acceptance contract / decision | 1 / 1 | Explicit purpose; no implicit policy on generic model tasks. |
 | Run command / run event | 1 / 3 | Exact event v1/v2 remains readable. |
 | Authority grant / authorization decision | 4 / 2 | Earlier grants refused. |
 | Authorized-command wrapper / command result | 1 / 2 | Result v1 reads only closed internal records. |
@@ -64,7 +68,7 @@ values; repository contracts check the version cells against source.
 | Redb internal document format / physical schema | 14 / 11 | Older/future stores refused; no migration. |
 | Application command receipt / layout record | 1 / 1 | Exact supported contracts. |
 | Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
-| External control / authenticated cursor | 2.3 / 2 | Earlier major/cursor forms refused. |
+| External control / authenticated cursor | 2.4 / 2 | Earlier major/cursor forms refused. |
 | Peer protocol and catalog messages | 1.2 | Earlier minors refused. |
 | Daemon configuration | 9 | TOML; JSON and earlier versions refused. |
 | Layout document / CLI JSON output | 1 / 2 | CLI schema 1 refused. |
@@ -181,6 +185,21 @@ replay/restart. Its Bonsai reviewer reports a length finish at 2,048 output unit
 the stronger useful-review check therefore fails. The deterministic actual-binary counterpart
 verifies that both distinct author texts reach the reviewer while private response metadata remains
 excluded. Workflow success is not evidence that a model produced a useful review.
+
+Purpose-specific acceptance now closes that continuation gap in maintained model and sequence
+workflows. The deterministic actual-daemon/CLI scenario rejects an empty exhausted review while
+retaining its successful invocation, keeps the dependent endpoint unentered, and continues only
+after an authorized repair passes acceptance. Three restarts preserve the decisions and exact
+release replay. This proves mechanical requirements and routing, not semantic review quality.
+The current local LM Studio smoke with `prism-ml/bonsai-27b` passes at a declared 4,096-unit request
+allowance. The separate `prism-ml/bonsai-27b:2` request produces no terminal within its 180-second
+bound; recovery retains one uncertain attempt with unknown finish reason and usage. Neither
+observation verifies server thinking settings or qualifies the combined external-agent boundary.
+The [evidence guide](../development/verification-evidence.md#actual-binary-scenarios) records the
+retained paths and the exact scope of these local observations.
+The acceptance implementation passes the local Windows/MSVC full gate: 717 workspace tests,
+24 doctests, all 24 repository contracts, formatting, checking, warning-denying Clippy/rustdoc,
+dependency audits, and test discovery. Five manual longevity tests remain ignored in this run.
 
 Release receipt, peer, controller-lifecycle, controller-admission, historical-frontier longevity,
 projection stress, and effect-worker shutdown proofs pass. Hosted Linux

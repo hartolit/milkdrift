@@ -5,7 +5,7 @@
 //! nodes. [`CompiledPromptSequence`] exposes the immutable revision and its stage mapping.
 //! The daemon admits that revision through the ordinary control path before starting work.
 //!
-//! Schema v2 uses configured trusted process capabilities. Prompts and repository policies
+//! Schema v3 uses configured trusted process capabilities. Prompts and repository policies
 //! become task inputs; configured processes carry them out under the run's authority.
 //! Compilation performs no process launch, repository operation, or storage write.
 //!

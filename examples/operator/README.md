@@ -109,12 +109,17 @@ capability_id = "operator-model"
 profile = "model-profile.json"
 ```
 
-Update the existing capability authority selectors to identities `["operator-model"]`,
-operations `["model.generate"]`, provider profiles `["local-model-loopback"]`,
-trust zones `["operator-configured-local-model"]`, and
+Update the existing capability authority selectors to identities
+`["operator-model", "milkdrift-workflow-control"]`, operations
+`["model.generate", "workflow.accept_result"]`, provider profiles `type = "any"`,
+trust zones `["operator-configured-local-model", "milkdrift-control"]`, and
 maximum side effect `"unknown"`. Keep the finite 4,000,000-unit grant ceiling: current generation-level resolution checks the model contract maximum even though this task requests only 64 output units. Retain the explicit dangerous acknowledgement: external model
 effects and cancellation cannot be proven absent. Use the workspace and artifact scopes above.
 Add exactly this network scope (adjust both fields when the endpoint/profile changes):
+
+The provider selector also admits the built-in control capability, which has no provider profile.
+The model task itself remains pinned to `local-model-loopback`, and acceptance can only use the
+named control operation. Both tasks use the same frozen run authority.
 
 ```toml
 [actors.authority.resources.network]
@@ -138,6 +143,11 @@ milkdrift --json artifact get ARTIFACT_ID --output response.json
 ```
 
 Take the revision, attempt and artifact IDs from the preceding JSON. Attempt inspection retains
+the model's immutable invocation outcome. This example separately requires a complete, non-whitespace
+final response before reaching success; inspect its acceptance task for `accepted` and `reason`.
+An exhausted response remains a completed model invocation but takes the workflow's rejection
+terminal. [Result acceptance](../../docs/guides/result-acceptance.md) covers other output purposes.
+Attempt inspection also retains
 exact capability/profile generation, context-manifest provenance, usage when supplied, bounded
 progress counts and output metadata. Inspect output files explicitly; ordinary CLI JSON does not
 print generated prose. A post-entry timeout, truncated response, lost server or cancellation may

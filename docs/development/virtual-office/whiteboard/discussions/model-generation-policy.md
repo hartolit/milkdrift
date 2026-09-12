@@ -50,6 +50,13 @@ need and a reliable mapping; supporting a popular model feature is not sufficien
 
 ## Proposed direction
 
+Assignment 01 implements the narrower output boundary described in
+[result acceptance](../../../../guides/result-acceptance.md): required complete prose rejects
+output-limit exhaustion, while explicit structured and tool requirements preserve valid empty-text
+results. Requested allowances and supported reasoning choices remain inspectable; this adds no
+thinking toggle, adaptive allowance, or new provider mapping. The generation-policy choices below
+remain proposals.
+
 Keep model inference external. Let a task choose thinking mode, supported effort, and generation
 budgets under validated endpoint capabilities and operator authority. Resolve any model/task
 defaults before execution and retain the effective choices with provenance. Changes apply to future

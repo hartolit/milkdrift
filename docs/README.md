@@ -34,6 +34,7 @@ Use the references when you need an exact command, field, or compatibility rule.
 - [CLI command families and scripting](../apps/cli/README.md)
 - [Rust client requests, pages, and reconnect](../crates/control-client/README.md)
 - [Headless prompt-sequence dogfood](guides/headless-dogfood.md)
+- [Accept workflow results before continuing](guides/result-acceptance.md)
 - [Local process operator guide](guides/local-process.md)
 - [Local model endpoint guide](guides/local-model-endpoint.md)
 - [External interoperability evidence](guides/external-evidence.md)
@@ -49,7 +50,7 @@ Use the references when you need an exact command, field, or compatibility rule.
 
 - [Local control API](reference/control-api.md)
 - [Peer protocol](reference/peer-protocol.md)
-- [Prompt-sequence schema](reference/prompt-sequence-v2.md)
+- [Prompt-sequence schema](reference/prompt-sequence-v3.md)
 - [Public API policy](reference/public-api-policy.md)
 
 Executable schema constants, readers, and golden fixtures remain the primary evidence for current

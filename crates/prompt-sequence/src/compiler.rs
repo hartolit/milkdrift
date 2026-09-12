@@ -2,11 +2,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+mod acceptance;
+use acceptance::install_review_acceptance;
+
 use milkdrift_blueprint::{
-    AuthorRef, BindingSource, BlueprintMetadata, BlueprintRevision, BranchConfig, Condition,
-    ContextCategory, ContextOrdering, ContextSemanticRole, ContextSessionPolicy, ContextTruncation,
-    DataPort, Edge, EdgeId, EdgeKind, Mutation, MutationBatch, Node, NodeId, NodeKind,
-    PathSelector, PortId, SchemaRef, TaskConfig, TaskContextPolicy, TerminalOutcome, WorkflowId,
+    AuthorRef, BindingSource, BlueprintMetadata, BlueprintRevision, ContextCategory,
+    ContextOrdering, ContextSemanticRole, ContextSessionPolicy, ContextTruncation, DataPort, Edge,
+    EdgeId, EdgeKind, Mutation, MutationBatch, Node, NodeId, NodeKind, PortId, SchemaRef,
+    TaskConfig, TaskContextPolicy, TerminalOutcome, WorkflowId,
 };
 use milkdrift_capability::{BoundedJson, CapabilityRequirement, ExtensionKey, SchemaId};
 use milkdrift_workspace::{
@@ -37,6 +40,9 @@ pub struct StageBlueprintSummary {
     pub coding_node: String,
     /// Distinct verification task.
     pub verification_node: String,
+    /// Explicit output-acceptance task, absent in historical imports compiled before acceptance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acceptance_node: Option<String>,
     /// Safe result-artifact branch.
     pub gate_node: String,
     /// Reviewer task on the failure route, when configured.
@@ -113,7 +119,10 @@ pub fn stage_node_ids(
         .ok_or_else(|| {
             PromptSequenceError::Invalid("revision has no prompt-sequence provenance".to_owned())
         })?;
-    if provenance.get("schema_version").and_then(Value::as_u64) != Some(2) {
+    if !matches!(
+        provenance.get("schema_version").and_then(Value::as_u64),
+        Some(2 | 3)
+    ) {
         return Err(PromptSequenceError::Invalid(
             "revision has unsupported prompt-sequence provenance".to_owned(),
         ));
@@ -173,6 +182,7 @@ fn declared_stage_nodes(stage: &StageBlueprintSummary) -> BTreeSet<String> {
         stage.gate_node.clone(),
     ]);
     nodes.extend(stage.reviewer_node.iter().cloned());
+    nodes.extend(stage.acceptance_node.iter().cloned());
     nodes.extend(stage.approval_wait_node.iter().cloned());
     nodes
 }
@@ -255,6 +265,7 @@ pub fn compile(
                     &ids.failure_terminal,
                     CONTROL_IN,
                 )?);
+                install_review_acceptance(&mut operations, &ids.reviewer)?;
                 (Some(ids.reviewer.to_string()), Some(ids.hold.to_string()))
             }
             FailurePolicy::FailRun => {
@@ -275,11 +286,12 @@ pub fn compile(
             stage_id: stage.id.clone(),
             coding_node: ids.coding.to_string(),
             verification_node: ids.verification.to_string(),
+            acceptance_node: Some(ids.acceptance.to_string()),
             gate_node: ids.gate.to_string(),
             reviewer_node,
             approval_wait_node,
             prompt_digest: prompt_digest(&stage.prompt)?,
-            checkpoint_artifact: stage.verification.success_artifact.clone(),
+            checkpoint_artifact: stage.verification.result_artifact.clone(),
         });
     }
 
@@ -325,6 +337,7 @@ pub fn compile(
 struct StageTopologyIds {
     coding: NodeId,
     verification: NodeId,
+    acceptance: NodeId,
     gate: NodeId,
     reviewer: NodeId,
     hold: NodeId,
@@ -363,6 +376,7 @@ impl StageTopologyIds {
         Ok(Self {
             coding: node_id(format!("{prefix}-coding"))?,
             verification: node_id(format!("{prefix}-verification"))?,
+            acceptance: node_id(format!("{prefix}-acceptance"))?,
             gate: node_id(format!("{prefix}-gate"))?,
             reviewer: node_id(format!("{prefix}-review"))?,
             hold: node_id(format!("{prefix}-approval"))?,
@@ -501,12 +515,14 @@ pub(crate) fn remediation_mutation(
             CONTROL_IN,
         )?,
     ]);
+    install_review_acceptance(&mut operations, &ids.reviewer)?;
+    install_review_acceptance(&mut operations, &failure_review)?;
     MutationBatch::new(operations).map_err(|error| compilation(format!("{error:?}")))
 }
 
 struct StagePipelineMutations {
-    nodes: [Mutation; 3],
-    edges: [Mutation; 3],
+    nodes: Vec<Mutation>,
+    edges: Vec<Mutation>,
 }
 
 fn stage_pipeline(
@@ -516,7 +532,7 @@ fn stage_pipeline(
     repository_profile: Value,
 ) -> Result<StagePipelineMutations, PromptSequenceError> {
     Ok(StagePipelineMutations {
-        nodes: [
+        nodes: vec![
             Mutation::AddNode {
                 node: coding_node(
                     stage,
@@ -529,10 +545,24 @@ fn stage_pipeline(
                 node: verification_node(stage, &ids.verification, repository_profile)?,
             },
             Mutation::AddNode {
-                node: gate_node(stage, &ids.verification, &ids.gate)?,
+                node: milkdrift_control::result_acceptance_task(
+                    ids.acceptance.clone(),
+                    milkdrift_control::ResultAcceptanceContract::new(
+                        milkdrift_control::ResultRequirement::Verification {
+                            checks: stage.verification.checks.iter().cloned().collect(),
+                        },
+                        BTreeSet::new(),
+                    )
+                    .map_err(|error| compilation(error.to_string()))?,
+                    artifact_schema()?,
+                )
+                .map_err(|error| compilation(error.to_string()))?,
+            },
+            Mutation::AddNode {
+                node: gate_node(&ids.acceptance, &ids.gate)?,
             },
         ],
-        edges: [
+        edges: vec![
             control_edge(
                 ids.coding_verification.as_str(),
                 &ids.coding,
@@ -544,16 +574,31 @@ fn stage_pipeline(
                 ids.verification_gate.as_str(),
                 &ids.verification,
                 CONTROL_OUT,
+                &ids.acceptance,
+                CONTROL_IN,
+            )?,
+            control_edge(
+                &format!("{}-acceptance-gate", ids.acceptance),
+                &ids.acceptance,
+                CONTROL_OUT,
                 &ids.gate,
                 CONTROL_IN,
             )?,
             add_edge(
-                ids.verification_result_gate.as_str(),
+                &format!("{}-result-acceptance", ids.verification),
                 EdgeKind::Data,
                 &ids.verification,
-                &stage.verification.success_artifact,
+                &stage.verification.result_artifact,
+                &ids.acceptance,
+                "result",
+            )?,
+            add_edge(
+                ids.verification_result_gate.as_str(),
+                EdgeKind::Data,
+                &ids.acceptance,
+                milkdrift_control::ACCEPTED_RESULT_OUTPUT,
                 &ids.gate,
-                &stage.verification.success_artifact,
+                milkdrift_control::ACCEPTED_RESULT_OUTPUT,
             )?,
         ],
     })
@@ -636,10 +681,6 @@ fn verification_node(
             )?,
         )?
         .with_data_output(
-            port(&stage.verification.success_artifact)?,
-            DataPort::output(artifact_schema()?),
-        )?
-        .with_data_output(
             port(&stage.verification.result_artifact)?,
             DataPort::output(artifact_schema()?),
         )?;
@@ -649,41 +690,14 @@ fn verification_node(
     Ok(node)
 }
 
-fn gate_node(
-    stage: &StageDefinition,
-    verification: &NodeId,
-    identity: &NodeId,
-) -> Result<Node, PromptSequenceError> {
-    let success = port(PASS)?;
-    let failure = port(FAIL)?;
-    let source = BindingSource::NodeOutput {
-        node: verification.clone(),
-        port: port(&stage.verification.success_artifact)?,
-        path: PathSelector::new(Vec::new()).map_err(|error| compilation(error.to_string()))?,
-    };
-    Ok(Node::new(
+fn gate_node(verification: &NodeId, identity: &NodeId) -> Result<Node, PromptSequenceError> {
+    milkdrift_control::result_acceptance_gate(
         identity.clone(),
-        NodeKind::Branch {
-            config: BranchConfig::new(
-                BTreeMap::from([(
-                    success.clone(),
-                    Condition::Exists {
-                        source: source.clone(),
-                    },
-                )]),
-                Some(failure.clone()),
-            )?,
-        },
-    )?
-    .with_control_input(port(CONTROL_IN)?)?
-    .with_control_output(success)?
-    .with_control_output(failure)?
-    .with_data_input(
-        port(&stage.verification.success_artifact)?,
-        DataPort::input(artifact_schema()?, false, Some(source))?,
-    )?)
+        verification.clone(),
+        artifact_schema()?,
+    )
+    .map_err(|error| compilation(error.to_string()))
 }
-
 fn reviewer_node(stage: &StageDefinition, identity: &NodeId) -> Result<Node, PromptSequenceError> {
     reviewer_node_named(stage, identity)
 }
@@ -849,7 +863,7 @@ fn metadata(
     stages: &[StageBlueprintSummary],
 ) -> Result<BlueprintMetadata, PromptSequenceError> {
     let extension = BoundedJson::new(json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "sequence_id": document.sequence().id,
         "import_digest": import_digest,
         "repository_profile_id": document.sequence().repository.id,
@@ -865,7 +879,7 @@ fn metadata(
         BTreeSet::from([
             "headless".to_owned(),
             "prompt-sequence".to_owned(),
-            "schema-v2".to_owned(),
+            "schema-v3".to_owned(),
         ]),
         BTreeMap::from([(
             ExtensionKey::new("org.milkdrift/prompt-sequence")

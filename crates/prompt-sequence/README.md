@@ -8,7 +8,7 @@ the existing control path; the sequence has no separate executor.
 The [maintained Markdown example](../../examples/headless-dogfood-sequence.md) supplies a complete
 import, and the [crate example](src/lib.rs) parses and compiles it without starting work. For an
 actual run, the named coding, verification, and reviewer capabilities must already be configured.
-Schema v2 accepts `process.execute` with `trusted_host_process` and no provider-profile selector.
+Schema v3 accepts `process.execute` with `trusted_host_process` and no provider-profile selector.
 The [headless workflow guide](../../docs/guides/headless-dogfood.md) owns operator setup.
 
 ## Follow one stage
@@ -17,21 +17,28 @@ Each stage supplies a prompt, capability requirements, and a verification contra
 produces this control flow:
 
 ```text
-coding --> verification --> success artifact present? -- yes --> next stage / success
+coding --> verification --> acceptance --> accepted? -- yes --> next stage / success
                                       |
                                       no
                                       |
                          failure terminal, or review --> approval wait
 ```
 
-The gate tests for the configured success artifact after verification completes; it does not
-interpret prose such as “tests passed.” A verifier should publish result evidence for a completed
-check and publish the success artifact only on success. A failed verifier invocation does not
-itself become this artifact-absence branch.
+The configured verifier publishes a typed checkpoint report. The control capability checks each
+required check, the before/after checkpoint, and the verified change or justified no-change result.
+Only its accepted marker opens the gate. A completed verifier invocation can therefore produce a
+rejected result. An invocation failure still uses ordinary runtime failure handling. Review tasks
+also require a usable review artifact before taking their accepted route; unusable review enters
+a separate rejection hold. See [result acceptance](../../docs/guides/result-acceptance.md) for the
+wire contracts and the boundary between mechanical checks and semantic review.
 
 With `PauseForReview`, the initial approval wait leads to a failure terminal. To continue with a
 repair, apply an approved prospective remediation revision before delivering the signal. A signal
 alone does not invent repair work or turn failed verification into success.
+
+The remediation builder targets that original verification-failure hold. An unusable reviewer
+stops at its separate rejection hold; repairing the review itself requires an explicitly authored
+prospective proposal at that boundary. Releasing either failure hold alone cannot imply acceptance.
 
 The repository profile, stage contract, and verification contract become task inputs. Configured
 processes interpret those declarations; importing them does not create worktrees, inspect Git,

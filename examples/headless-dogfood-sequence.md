@@ -1,6 +1,6 @@
 ```milkdrift-sequence
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "sequence": {
     "id": "milkdrift-core-convergence",
     "title": "Milkdrift core convergence",
@@ -43,7 +43,6 @@
             "maximum_side_effect": "read_only"
           },
           "checks": ["rust.complete_quality_gate"],
-          "success_artifact": "verification_pass",
           "result_artifact": "verification_result",
           "log_artifact": "verification_logs"
         },

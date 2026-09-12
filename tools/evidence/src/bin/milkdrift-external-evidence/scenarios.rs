@@ -234,13 +234,9 @@ pub(super) async fn run_process_scenario(
     })
     .await?;
     for node in &completed.nodes {
-        if (node.node_id.contains("coding")
-            || node.node_id.contains("verification")
-            || node.node_id.contains("review"))
-            && node.attempt_count != 1
-        {
+        if node.latest_attempt_id.is_some() && node.attempt_count != 1 {
             return Err(format!(
-                "process node {} executed more than once",
+                "task {} did not retain exactly one attempt",
                 node.node_id
             ));
         }
@@ -281,16 +277,12 @@ pub(super) async fn run_process_scenario(
         .attempt(PROCESS_RUN, &remediation_attempt)
         .await
         .map_err(client_error)?;
-    let required_artifacts = [
-        "verification_result",
-        "verification_logs",
-        "verification_pass",
-    ];
+    let required_artifacts = ["verification_result", "verification_logs"];
     if required_artifacts
         .iter()
         .any(|name| !good_read.outputs.iter().any(|output| output.name == *name))
     {
-        return Err("good verification omitted exact diff/test/log/pass artifacts".to_owned());
+        return Err("good verification omitted checkpoint/check and log artifacts".to_owned());
     }
     let process_reads = [
         ("initial_coding", &agent_read),
@@ -343,6 +335,7 @@ pub(super) async fn run_process_scenario(
         outcome: "succeeded".to_owned(),
         profile: json!({
             "capability":agent.capability,
+            "server_settings":{"status":"unknown","scope":"endpoint_inside_coding_agent","thinking":null,"model_identity":null},
             "executable_configured_path_digest":agent_provenance.configured_path_digest,
             "executable_canonical_path_digest":agent_provenance.canonical_path_digest,
             "executable_content_digest":agent.content_digest,
@@ -387,7 +380,7 @@ pub(super) async fn run_process_scenario(
             "repository_final_tree":final_tree,
             "dirty_diff_digest":format!("b3_{}",blake3::hash(dirty_diff.as_bytes())),
             "dirty_diff_bytes":dirty_diff.len(),
-            "controlled_failure":"orchestration verifier gate intentionally omitted verification_pass",
+            "controlled_failure":"orchestration verifier report deliberately failed a required check",
             "fresh_agent_attempts":2,
             "distinct_process_invocations":invocation_ids.len(),
             "process_invocations":invocations,
@@ -487,7 +480,7 @@ pub(super) async fn run_model_scenario(
         .await
         .map_err(|error| error.to_string())?;
     let completed = wait_for_run(&client, MODEL_RUN, timeout, |state| {
-        state.terminal.as_deref() == Some("succeeded")
+        state.terminal.is_some()
             || state.nodes.iter().any(|node| {
                 node.node_id == "model"
                     && (node.state.contains("uncertain")
@@ -503,6 +496,21 @@ pub(super) async fn run_model_scenario(
             .attempt(MODEL_RUN, &failed_attempt)
             .await
             .map_err(client_error)?;
+        if let Ok(acceptance_attempt) = attempt_for_node(&completed, "model-acceptance") {
+            let acceptance = client
+                .attempt(MODEL_RUN, &acceptance_attempt)
+                .await
+                .map_err(client_error)?;
+            if let Some(decision) = acceptance.result_acceptance
+                && !decision.accepted
+            {
+                return Err(format!(
+                    "model result not accepted: {}; invocation terminal={}",
+                    decision.reason,
+                    failed_read.terminal.as_deref().unwrap_or("unobserved")
+                ));
+            }
+        }
         return Err(format!(
             "model attempt did not complete; fixture_requests={}; fixture_request_lines={:?}; worker_failure={:?}; attempt_state={}; progress={}; terminal={:?}; outputs={:?}",
             fixture_requests
@@ -697,6 +705,8 @@ pub(super) async fn run_model_scenario(
             "profile_revision":profile.revision,
             "provider_protocol":profile.protocol,
             "model_alias":profile.model_alias,
+            "server_settings":{"status":"unknown","scope":"direct_endpoint","thinking":null},
+            "generation_limits":{"requested_output_units":max_output_units,"reasoning_request":null,"profile_token_limit":null,"contract_ceiling":milkdrift_model::MAX_MODEL_OUTPUT_UNITS,"harness_default":64,"harness_ceiling":65536},
             "endpoint_origin":profile.endpoint_origin,
             "fixture_rejected_for_qualification":fixture,
         }),

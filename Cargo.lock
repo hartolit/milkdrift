@@ -1091,6 +1091,7 @@ dependencies = [
  "milkdrift-control-protocol",
  "milkdrift-local-process",
  "milkdrift-local-secret",
+ "milkdrift-model",
  "milkdrift-model-provider",
  "milkdrift-peer-http",
  "milkdrift-peer-protocol",

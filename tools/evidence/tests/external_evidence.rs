@@ -179,7 +179,7 @@ fn fixture_process_and_model_scenario_failures_exit_nonzero() -> TestResult {
         };
         assert_eq!(report[scenario]["outcome"], "failed", "{fault}: {report}");
         let expected_reason = if fault == "model-truncated" {
-            "did not finish normally"
+            "model result not accepted: output_allowance_exhausted; invocation terminal=succeeded"
         } else {
             "fixture-injected"
         };

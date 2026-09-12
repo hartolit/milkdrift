@@ -261,6 +261,43 @@ pub struct AttemptRead {
     pub terminal: Option<String>,
     /// Whether external outcome remains unresolved.
     pub uncertain: bool,
+    /// Separately authorized output-acceptance decision for a workflow acceptance task.
+    /// Absent for ordinary invocations, pending decisions, or unreadable artifacts.
+    #[serde(default)]
+    pub result_acceptance: Option<ResultAcceptanceRead>,
+    /// Authorized generation choices and returned finish reason for a model invocation.
+    #[serde(default)]
+    pub model_generation: Option<ModelGenerationRead>,
+}
+
+/// Request allowances are not discovered deployment limits or observed usage.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelGenerationRead {
+    /// Requested output allowance when the exact task document is inspectable.
+    pub requested_output_units: Option<u64>,
+    /// Requested supported reasoning effort. Absence leaves provider defaults in effect.
+    pub reasoning_effort: Option<String>,
+    /// Requested reasoning cap, when declared; endpoint mappings may refuse it.
+    pub reasoning_maximum_units: Option<u64>,
+    /// Returned finish reason when the canonical response artifact is readable.
+    pub finish_reason: Option<String>,
+}
+
+/// Stage output acceptance does not alter the source provider invocation or complete the project.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResultAcceptanceRead {
+    /// Whether the declared output requirement passed.
+    pub accepted: bool,
+    /// Closed safe acceptance reason.
+    pub reason: String,
+    /// Purpose-specific output contract as bounded data.
+    pub requirement: Option<Value>,
+    /// Provider finish reason, independently of invocation completion.
+    pub finish_reason: Option<String>,
+    /// Repository checkpoint that the configured verifier checked.
+    pub checkpoint: Option<String>,
 }
 
 /// Redacted provider-neutral contract for one capability operation.

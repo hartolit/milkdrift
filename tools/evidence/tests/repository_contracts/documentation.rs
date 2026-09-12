@@ -257,7 +257,7 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
             "Prompt-sequence import",
             vec![(
                 "crates/prompt-sequence/src/document.rs",
-                "PROMPT_SEQUENCE_SCHEMA_VERSION_V2",
+                "PROMPT_SEQUENCE_SCHEMA_VERSION_V3",
             )],
         ),
         (
@@ -416,6 +416,14 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
         "Peer protocol and catalog messages".to_owned(),
         peer.clone(),
     );
+    let acceptance = numeric_const(
+        "crates/control/src/acceptance.rs",
+        "RESULT_ACCEPTANCE_SCHEMA_VERSION",
+    )?;
+    expected.insert(
+        "Result acceptance contract / decision".to_owned(),
+        format!("{acceptance} / {acceptance}"),
+    );
     let status = read(root()?.join("docs/product/status.md"))?;
     let mut documented = BTreeMap::new();
     for line in status.lines().filter(|line| line.starts_with("| ")) {
@@ -507,9 +515,7 @@ fn every_maintained_example_has_a_production_reader() -> TestResult {
 fn operator_task_requirements_fit_the_documented_grants() -> TestResult {
     use milkdrift_authority::{CapabilityAuthorityScope, CapabilityAuthorityScopeBuilder};
     use milkdrift_blueprint::{BlueprintRevisionDocument, NodeKind};
-    use milkdrift_capability::{
-        CapabilityId, OperationId, ProviderProfileRef, SideEffectClass, TrustZone,
-    };
+    use milkdrift_capability::{CapabilityId, OperationId, SideEffectClass, TrustZone};
 
     let examples = root()?.join("examples/operator");
     let configuration: milkdrift_daemon::DaemonConfig =
@@ -517,14 +523,18 @@ fn operator_task_requirements_fit_the_documented_grants() -> TestResult {
     let process_grant = &configuration.actors[0].authority.resources.capability;
     // These are the explicit model overrides in the operator guide, independent of the blueprint.
     let model_grant = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
-        .only_capabilities(BTreeSet::from([CapabilityId::new("operator-model")?]))?
-        .only_operations(BTreeSet::from([OperationId::new("model.generate")?]))?
-        .only_provider_profiles(BTreeSet::from([ProviderProfileRef::new(
-            "local-model-loopback",
-        )?]))?
-        .only_trust_zones(BTreeSet::from([TrustZone::new(
-            "operator-configured-local-model",
-        )?]))?
+        .only_capabilities(BTreeSet::from([
+            CapabilityId::new("operator-model")?,
+            CapabilityId::new("milkdrift-workflow-control")?,
+        ]))?
+        .only_operations(BTreeSet::from([
+            OperationId::new("model.generate")?,
+            OperationId::new("workflow.accept_result")?,
+        ]))?
+        .only_trust_zones(BTreeSet::from([
+            TrustZone::new("operator-configured-local-model")?,
+            TrustZone::new("milkdrift-control")?,
+        ]))?
         .build();
     for (name, grant) in [("process", process_grant), ("model", &model_grant)] {
         let (_, revision) = BlueprintRevisionDocument::from_json(&fs::read(
@@ -545,8 +555,9 @@ fn operator_task_requirements_fit_the_documented_grants() -> TestResult {
             }
         }
         assert_eq!(
-            tasks, 1,
-            "operator example must have one ordinary external task"
+            tasks,
+            if name == "model" { 2 } else { 1 },
+            "operator example must retain its external task and declared acceptance task"
         );
     }
     Ok(())

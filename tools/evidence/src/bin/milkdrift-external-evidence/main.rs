@@ -518,6 +518,8 @@ fn explicit_grant(
     let mut operations = BTreeSet::from([
         OperationId::new("process.execute").map_err(|error| error.to_string())?,
         OperationId::new("workflow.inspect").map_err(|error| error.to_string())?,
+        OperationId::new(milkdrift_control::WORKFLOW_ACCEPT_RESULT_OPERATION)
+            .map_err(|error| error.to_string())?,
     ]);
     if model_profile.is_some() {
         operations.insert(OperationId::new("model.generate").map_err(|error| error.to_string())?);

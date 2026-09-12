@@ -1,5 +1,11 @@
 # Model endpoint adapter
 
+Provider completion does not establish a usable workflow result. A length-limited response and a
+tool-only response remain valid generation observations. Workflows requiring a complete review
+must use [result acceptance](../../docs/guides/result-acceptance.md) before continuing. It preserves
+the raw response, finish reason, usage, and selected context while evaluating the declared output
+shape separately. Generic model tasks acquire no review-specific policy.
+
 This adapter sends a provider-neutral model task to an explicitly configured endpoint and publishes
 the response as workflow artifacts. It supports OpenAI-compatible chat completions and native
 Anthropic Messages mappings. Milkdrift does not load a model or discover providers here.

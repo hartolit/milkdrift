@@ -41,3 +41,4 @@ their existence does not establish that continuous controllers are installed.
 - [0029 — One daemon clock with durable rollback evidence](0029-durable-daemon-clock-boundary.md)
 - [0030 — Bounded headless operator contract](0030-bounded-headless-operator-contract.md)
 - [0031 — Enforce context decisions before future execution](0031-context-enforcement-and-retained-evidence.md)
+- [0032 — Accept stage results through ordinary workflow composition](0032-purpose-specific-result-acceptance.md)

@@ -528,3 +528,132 @@ fn malformed_control_capability_input_is_a_normal_rejected_terminal() -> TestRes
     assert!(terminal.failure().is_some());
     Ok(())
 }
+
+#[test]
+fn acceptance_publication_failure_never_reports_an_accepted_marker() -> TestResult {
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let actor = ActorRef::new("ai:acceptance-publication")?;
+    let run = RunId::new("run-acceptance-publication")?;
+    let grant = GrantId::new("grant:acceptance-publication")?;
+    let (_, service, _) = services(store, &actor, &run, &grant, "acceptance-publication")?;
+    let descriptor = workflow_control_descriptor()?;
+    let operation = OperationId::new(milkdrift_control::WORKFLOW_ACCEPT_RESULT_OPERATION)?;
+    let resolution = ResolvedCapabilitySnapshot::from_descriptor(&descriptor, &operation)?;
+    let request = InvocationRequest::new(
+        InvocationId::new("invocation-acceptance-publication")?,
+        descriptor.identity().clone(),
+        operation,
+        None,
+        None,
+        Vec::new(),
+        BTreeMap::new(),
+    )?;
+    let adapter = WorkflowControlAdapter::new(service, Arc::new(UnusedResultSink));
+    let reporter = RecordingReporter::default();
+    let error = adapter
+        .execute(&AdapterInvocation::new(&resolution, &request), &reporter)
+        .err()
+        .ok_or("publication failure was hidden")?;
+    assert!(
+        error
+            .to_string()
+            .contains("acceptance result publication failed")
+    );
+    assert!(
+        reporter.events()?.is_empty(),
+        "publication failure emitted acceptance or terminal evidence"
+    );
+    Ok(())
+}
+
+#[test]
+fn acceptance_without_execution_authority_does_not_read_or_echo_source_data() -> TestResult {
+    struct Sink(Mutex<Vec<u8>>);
+    impl ControlArtifactAccess for Sink {
+        fn read(
+            &self,
+            _: &AdapterInvocation<'_>,
+            _: &InputReference,
+        ) -> Result<(ArtifactReference, Vec<u8>), ControlError> {
+            Err(ControlError::InvalidContract(
+                "protected-artifact-content-must-not-leak".to_owned(),
+            ))
+        }
+        fn publish(
+            &self,
+            _: &AdapterInvocation<'_>,
+            _: &str,
+            bytes: &[u8],
+        ) -> Result<ArtifactReference, ControlError> {
+            *self
+                .0
+                .lock()
+                .map_err(|_| ControlError::InvalidContract("sink lock".to_owned()))? =
+                bytes.to_vec();
+            Ok(ArtifactReference::new(
+                "acceptance:result",
+                "a".repeat(64),
+                Some("application/json".to_owned()),
+                Some(bytes.len() as u64),
+            )?)
+        }
+    }
+    let directory = TempDir::new()?;
+    let actor = ActorRef::new("ai:acceptance-denied")?;
+    let run = RunId::new("run-acceptance-denied")?;
+    let grant = GrantId::new("grant:acceptance-denied")?;
+    let (_, service, _) = services(
+        Arc::new(RedbStore::open(directory.path())?),
+        &actor,
+        &run,
+        &grant,
+        "acceptance-denied",
+    )?;
+    let descriptor = workflow_control_descriptor()?;
+    let operation = OperationId::new(milkdrift_control::WORKFLOW_ACCEPT_RESULT_OPERATION)?;
+    let resolution = ResolvedCapabilitySnapshot::from_descriptor(&descriptor, &operation)?;
+    let request = InvocationRequest::new(
+        InvocationId::new("invocation-acceptance-denied")?,
+        descriptor.identity().clone(),
+        operation,
+        None,
+        None,
+        vec![
+            InputReference::new(
+                milkdrift_control::RESULT_ACCEPTANCE_INPUT,
+                InvocationValueReference::Inline {
+                    value: BoundedJson::new(
+                        serde_json::json!({"schema_version":1,"requirement":{"type":"model_prose"},"evidence_inputs":[]}),
+                    )?,
+                },
+            )?,
+            InputReference::new(
+                "result",
+                InvocationValueReference::Artifact {
+                    reference: ArtifactReference::new(
+                        "protected-artifact-identity",
+                        "b".repeat(64),
+                        Some("text/plain".to_owned()),
+                        Some(1),
+                    )?,
+                },
+            )?,
+        ],
+        BTreeMap::new(),
+    )?;
+    let sink = Arc::new(Sink(Mutex::new(Vec::new())));
+    let adapter = WorkflowControlAdapter::new(service, sink.clone());
+    let reporter = RecordingReporter::default();
+    adapter.execute(&AdapterInvocation::new(&resolution, &request), &reporter)?;
+    let bytes = sink.0.lock().map_err(|_| "sink lock")?.clone();
+    let decision: milkdrift_control::ResultAcceptance = serde_json::from_slice(&bytes)?;
+    assert!(!decision.accepted);
+    assert_eq!(
+        decision.reason,
+        milkdrift_control::AcceptanceReason::EvidenceUnavailable
+    );
+    assert!(!String::from_utf8(bytes)?.contains("protected-artifact"));
+    assert!(!reporter.events()?.iter().any(|event| matches!(event.kind(), InvocationEventKind::Output { name, .. } if name == milkdrift_control::ACCEPTED_RESULT_OUTPUT)));
+    Ok(())
+}

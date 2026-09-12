@@ -211,6 +211,17 @@ fn seed_invocation(
         vec![created.event_id().clone(), event.event_id().clone()],
         BoundedJson::new(json!({"accepted": true}))?,
     )?;
+    let required_artifacts: Vec<_> = event
+        .kind()
+        .required_artifacts()?
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let mut resulting_usage = WorkspaceUsage::EMPTY;
+    for reference in &required_artifacts {
+        resulting_usage = budget.admit_artifact_reference(&resulting_usage, reference)?;
+    }
     let commit = AtomicRunCommitRequest::new(
         receipt,
         vec![created, event],
@@ -218,10 +229,10 @@ fn seed_invocation(
         Some(WorkspaceAccounting {
             budget: budget.clone(),
             expected_usage: WorkspaceUsage::EMPTY,
-            resulting_usage: WorkspaceUsage::EMPTY,
+            resulting_usage,
         }),
-        Vec::new(),
-        Vec::new(),
+        required_artifacts.clone(),
+        required_artifacts,
         None,
         result,
         RunIndexUpdate::new(
@@ -340,6 +351,94 @@ fn configured_process_input_can_materialize_the_exact_context_manifest() -> Test
         .input_path(milkdrift_capability::CONTEXT_MANIFEST_INPUT_NAME)
         .ok_or("missing context manifest path")?;
     assert_eq!(fs::read(path)?, manifest_bytes);
+    Ok(())
+}
+
+#[test]
+fn output_publication_preserves_aliased_inputs_as_one_exact_causal_parent() -> TestResult {
+    let store_owner = tempfile::tempdir()?;
+    let execution_owner = tempfile::tempdir()?;
+    let store = Arc::new(RedbStore::open(store_owner.path())?);
+    let context = context()?;
+    let source = milkdrift_capability::ArtifactReference::new(
+        "evidence:accepted-decision",
+        ContentDigest::for_bytes(b"accepted").to_hex(),
+        Some("text/plain".to_owned()),
+        Some(8),
+    )?;
+    let durable = ArtifactReference::new(
+        ArtifactId::new(source.identity())?,
+        ContentDigest::for_bytes(b"accepted"),
+        MediaType::new("text/plain")?,
+        8,
+    );
+    let metadata = milkdrift_workspace::ArtifactMetadata::new(
+        durable,
+        milkdrift_workspace::ArtifactSensitivity::Public,
+        milkdrift_workspace::ArtifactRetention::WhileReferenced,
+        milkdrift_workspace::ArtifactProvenance::new(
+            milkdrift_workspace::CausalReference::External {
+                source: milkdrift_workspace::CausalId::new("acceptance-fixture")?,
+            },
+            Vec::new(),
+        )?,
+    )?;
+    let publication = milkdrift_persistence::BeginArtifactPublication::new(
+        milkdrift_persistence::ArtifactPublicationId::new("publication:acceptance-fixture")?,
+        RunId::new("run-input-fixture")?,
+        metadata,
+        WorkspaceBudget::new(0, 0, 0, 1, 64, 64)?,
+        WorkspaceUsage::EMPTY,
+    )?;
+    store.begin_publication(&publication)?;
+    store.write_chunk(publication.publication(), 0, b"accepted")?;
+    store.commit_publication(publication.publication())?;
+    let base = request()?;
+    let request = InvocationRequest::new(
+        base.invocation().clone(),
+        base.capability().clone(),
+        base.operation().clone(),
+        None,
+        None,
+        ["acceptance_result", "accepted_result"]
+            .into_iter()
+            .map(|name| {
+                InputReference::new(
+                    name,
+                    InvocationValueReference::Artifact {
+                        reference: source.clone(),
+                    },
+                )
+            })
+            .collect::<Result<_, _>>()?,
+        BTreeMap::new(),
+    )?;
+    seed_invocation(
+        store.as_ref(),
+        &context,
+        &request,
+        WorkspaceBudget::new(16, 1024, 4096, 16, 1024, 4096)?,
+    )?;
+    let access = StoreInvocationDataAccess::new(
+        store.clone(),
+        execution_owner.path(),
+        ArtifactReadAuthority::PublicOnly,
+    )?;
+    let first = access.publish_bytes(
+        &context,
+        &request,
+        "next-result",
+        "text/plain",
+        b"derived",
+        limits(),
+    )?;
+    let metadata = store
+        .metadata(&ArtifactId::new(first.identity())?)?
+        .ok_or("output metadata absent")?;
+    assert_eq!(request.inputs().len(), 2, "named bindings remain distinct");
+    assert_eq!(metadata.provenance().causes().iter().filter(|cause| matches!(cause,
+        milkdrift_workspace::CausalReference::Artifact { reference } if reference.artifact().as_str() == source.identity()
+    )).count(), 1);
     Ok(())
 }
 

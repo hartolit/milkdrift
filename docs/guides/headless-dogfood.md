@@ -11,17 +11,20 @@ Its capability identities are placeholders for operator-configured trusted-host 
 
 ## What the import creates
 
-For each stage `S`, schema 2 creates only existing blueprint primitives:
+For each stage `S`, schema 3 creates only existing blueprint primitives:
 
 ```text
-stage-S-coding -> stage-S-verification -> stage-S-gate
+stage-S-coding -> stage-S-verification -> stage-S-acceptance -> stage-S-gate
                                              | pass -> next stage / sequence-succeeded
                                              | fail -> stage-S-review -> stage-S-approval
 ```
 
-Coding and verification are distinct `Task` nodes. The gate is a `Branch` over the presence of the
-declared verification-success artifact. Review is another fresh-context `Task`; approval is an
-ordinary durable `SignalWait` for `sequence.approved`. The final outcome is an explicit `Terminal`.
+Coding, verification, and acceptance are distinct `Task` nodes. Acceptance checks the configured
+verifier's exact checkpoint report; its accepted marker opens the `Branch`. Review is another
+fresh-context task whose output also passes acceptance before reaching the approval hold. An
+unusable review reaches a separate rejection hold. Approval is an ordinary durable `SignalWait`
+for `sequence.approved`. The final outcome is an explicit `Terminal`. Configure the report shape
+and understand its limits using [result acceptance](result-acceptance.md).
 There is no dogfood node kind, scheduler, hidden retry loop, Git implementation, or UI state.
 
 The maintained example requests `fresh` context for each coding task. The schema also accepts
@@ -63,7 +66,7 @@ the persistent repository. This is an authority boundary and provenance fact, no
 
 The repository section of the import is a bounded policy/reference document. `root_ref`, starting
 revision, credentials, and remote profile references are opaque identifiers interpreted by the
-configured capabilities, never executable prompt data. Schema 2 requires explicit read, write,
+configured capabilities, never executable prompt data. Schema 3 requires explicit read, write,
 and execute operations plus starting-state, diff, and verification evidence policies.
 
 ## CLI connection and output contract
@@ -151,9 +154,9 @@ Query and retain do not claim a terminal outcome.
 
 ## Failure and remediation
 
-If a verifier completes but omits the declared success artifact, the `pause_for_review` failure
+If a verifier completes but its checkpoint report fails acceptance, the `pause_for_review` failure
 arm runs the independent reviewer and waits durably for approval. A verifier invocation that
-itself fails does not become this artifact-absence branch; inspect its attempt first. Imports
+itself fails does not become this rejection branch; inspect its attempt first. Imports
 using `fail_run` instead go to a failure terminal. For the review path, first pause the aggregate using
 the shared run command, then create a bounded proposal from the exact original sequence and current
 revision:

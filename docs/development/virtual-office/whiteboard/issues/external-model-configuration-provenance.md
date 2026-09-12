@@ -28,6 +28,14 @@ records it; the historical execution and independent review did not have the lat
 
 ## Questions of purpose
 
+Assignment 01 now makes the missing provenance explicit: local-model reports separate the request
+allowance, contract ceiling, harness default, and unknown profile token limit; combined evidence
+reports label direct-endpoint and coding-agent endpoint settings independently as unknown.
+Attempt inspection preserves supported requested reasoning choices without interpreting omission
+as disabled thinking. [Result acceptance](../../../../guides/result-acceptance.md) separately
+blocks incomplete output. These changes do not attest to mutable server settings or isolate a
+thinking-mode effect; the broader questions below remain open.
+
 - Which claim needs stronger configuration evidence: successful orchestration, reproducible model
   behavior, or thinking-mode compatibility? Would an explicit scope limit and operator declaration
   be enough for the first, without expanding the report for claims it was never meant to make?

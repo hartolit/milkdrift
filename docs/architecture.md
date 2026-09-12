@@ -209,8 +209,11 @@ limits, and terminal limit policy. Wait/timer and authenticated correlated signa
 Subworkflow pins a revision and interface rather than copying mutable definitions. Explicit
 success/failure/cancellation terminals cannot complete a scope with unaccounted owned work.
 
-Prompt-sequence compilation emits fresh/explicitly continued coding tasks, distinct verification,
-artifact-presence branches, review/signal holds, and ordinary prospective remediation. It owns
+Prompt-sequence compilation emits fresh/explicitly continued coding tasks, distinct verification
+and result-acceptance tasks, branches over accepted results, review/signal holds, and ordinary
+prospective remediation. `milkdrift-control` owns the fixed purpose checks; the installed control
+adapter reads exact evidence through the daemon's authorized artifact port and publishes an
+immutable decision. Runtime continues to own ordinary task and branch execution. The compiler owns
 import bounds, canonical digests, identifiers, and template policy only. Repository ownership,
 authority, scheduling, and effects stay with existing owners.
 

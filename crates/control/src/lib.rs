@@ -10,6 +10,7 @@
 //! accounts and history. It is available for library integration; the production daemon
 //! leaves it uninstalled pending external-evidence qualification.
 
+mod acceptance;
 mod adapter;
 mod command;
 mod controller;
@@ -21,8 +22,14 @@ mod preset;
 mod read;
 mod service;
 
+pub use acceptance::{
+    ACCEPTED_RESULT_OUTPUT, AcceptanceModelDiagnostics, AcceptanceReason, CodingResult,
+    MAX_ACCEPTANCE_INPUT_BYTES, RESULT_ACCEPTANCE_INPUT, RESULT_ACCEPTANCE_OUTPUT,
+    RESULT_ACCEPTANCE_SCHEMA_VERSION, ResultAcceptance, ResultAcceptanceContract,
+    ResultRequirement, VerifiedCheckpoint, result_acceptance_gate, result_acceptance_task,
+};
 pub use adapter::{
-    ControlResultSink, MAX_CONTROL_RESULT_BYTES, WorkflowControlAdapter,
+    ControlArtifactAccess, MAX_CONTROL_RESULT_BYTES, WorkflowControlAdapter,
     workflow_control_descriptor,
 };
 pub use command::{
@@ -56,6 +63,8 @@ pub use service::ControlService;
 
 /// Namespaced capability operation for bounded inspection.
 pub const WORKFLOW_INSPECT_OPERATION: &str = "workflow.inspect";
+/// Evaluates purpose-specific immutable output evidence without invoking an external validator.
+pub const WORKFLOW_ACCEPT_RESULT_OPERATION: &str = "workflow.accept_result";
 /// Namespaced capability operation for untrusted proposal submission.
 pub const WORKFLOW_PROPOSE_OPERATION: &str = "workflow.propose_revision";
 /// Namespaced capability operation for pausing a run.

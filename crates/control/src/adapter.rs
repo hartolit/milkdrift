@@ -29,18 +29,28 @@ use crate::{
 const CONTROL_CAPABILITY_ID: &str = "milkdrift-workflow-control";
 const CONTROL_REQUEST_INPUT: &str = "milkdrift.control_request";
 
+mod acceptance;
+
 /// Maximum canonical bytes published by one workflow-control invocation.
 ///
 /// The production result sink enforces this same limit before artifact publication, so the
 /// adapter can expose it as a truthful pre-entry controller reservation.
 pub const MAX_CONTROL_RESULT_BYTES: u64 = 1_310_720;
 
-/// Application port that publishes canonical control results as ordinary artifacts.
-pub trait ControlResultSink: Send + Sync {
+/// Application port for authorized evidence reads and canonical control-result publication.
+pub trait ControlArtifactAccess: Send + Sync {
+    /// Reads an exact artifact after authorizing its content under the invocation's frozen
+    /// actor basis and fresh entry time. Errors must not disclose artifact facts.
+    fn read(
+        &self,
+        invocation: &AdapterInvocation<'_>,
+        input: &milkdrift_capability::InputReference,
+    ) -> Result<(ArtifactReference, Vec<u8>), ControlError>;
     /// Publishes exact canonical result bytes and returns their immutable reference.
     fn publish(
         &self,
         invocation: &AdapterInvocation<'_>,
+        output_name: &str,
         bytes: &[u8],
     ) -> Result<ArtifactReference, ControlError>;
 }
@@ -48,13 +58,13 @@ pub trait ControlResultSink: Send + Sync {
 /// Concrete in-process workflow-control adapter for `milkdrift-capability-host`.
 pub struct WorkflowControlAdapter {
     service: Arc<ControlService>,
-    results: Arc<dyn ControlResultSink>,
+    results: Arc<dyn ControlArtifactAccess>,
 }
 
 impl WorkflowControlAdapter {
     /// Constructs an adapter with an explicit artifact-publication port.
     #[must_use]
-    pub fn new(service: Arc<ControlService>, results: Arc<dyn ControlResultSink>) -> Self {
+    pub fn new(service: Arc<ControlService>, results: Arc<dyn ControlArtifactAccess>) -> Self {
         Self { service, results }
     }
 
@@ -171,6 +181,9 @@ impl CapabilityAdapter for WorkflowControlAdapter {
         invocation: &AdapterInvocation<'_>,
         reporter: &dyn AdapterReporter,
     ) -> Result<(), AdapterError> {
+        if invocation.request().operation().as_str() == crate::WORKFLOW_ACCEPT_RESULT_OPERATION {
+            return self.execute_acceptance(invocation, reporter);
+        }
         let result = match self.execute_control(invocation) {
             Ok(result) => result,
             Err(error) => {
@@ -194,7 +207,7 @@ impl CapabilityAdapter for WorkflowControlAdapter {
         }
         let reference = self
             .results
-            .publish(invocation, &bytes)
+            .publish(invocation, "control_result", &bytes)
             .map_err(|error| AdapterError::rejected(error.to_string()))?;
         reporter.invocation(
             InvocationEvent::new(
@@ -291,6 +304,7 @@ pub fn workflow_control_descriptor() -> Result<CapabilityDescriptor, ControlErro
         }))?,
     )?;
     let operations = [
+        (crate::WORKFLOW_ACCEPT_RESULT_OPERATION, SideEffectClass::ReadOnly),
         (WORKFLOW_INSPECT_OPERATION, SideEffectClass::ReadOnly),
         (WORKFLOW_PROPOSE_OPERATION, SideEffectClass::IdempotentWrite),
         (WORKFLOW_PAUSE_OPERATION, SideEffectClass::IdempotentWrite),
@@ -309,8 +323,14 @@ pub fn workflow_control_descriptor() -> Result<CapabilityDescriptor, ControlErro
         Ok((
             OperationId::new(name)?,
             OperationContract::new(
-                input_schema.clone(),
-                output_schema.clone(),
+                if name == crate::WORKFLOW_ACCEPT_RESULT_OPERATION {
+                    SchemaContract::new(SchemaId::new("workflow.result_acceptance")?, 1,
+                        BoundedJson::new(serde_json::json!({"type":"object","required":[crate::RESULT_ACCEPTANCE_INPUT],"properties":{crate::RESULT_ACCEPTANCE_INPUT:{"type":"object"},"result":{"type":"string"}}}))?)?
+                } else { input_schema.clone() },
+                if name == crate::WORKFLOW_ACCEPT_RESULT_OPERATION {
+                    SchemaContract::new(SchemaId::new("workflow.result_acceptance_result")?, 1,
+                        BoundedJson::new(serde_json::json!({"type":"object","required":[crate::RESULT_ACCEPTANCE_OUTPUT],"properties":{crate::RESULT_ACCEPTANCE_OUTPUT:{"type":"string"},crate::ACCEPTED_RESULT_OUTPUT:{"type":"string"}}}))?)?
+                } else { output_schema.clone() },
                 BTreeSet::from([StreamingMode::OutputFragments]),
                 CancellationBehavior::Unsupported,
                 IdempotencyBehavior::CapabilityScoped,
@@ -327,6 +347,7 @@ pub fn workflow_control_descriptor() -> Result<CapabilityDescriptor, ControlErro
     })
     .collect::<Result<BTreeMap<_, _>, ControlError>>()?;
     let authority_map = BoundedJson::new(serde_json::json!({
+        crate::WORKFLOW_ACCEPT_RESULT_OPERATION: "inspect_run",
         WORKFLOW_INSPECT_OPERATION: "inspect",
         WORKFLOW_PROPOSE_OPERATION: "propose",
         WORKFLOW_PAUSE_OPERATION: "pause",
@@ -339,7 +360,7 @@ pub fn workflow_control_descriptor() -> Result<CapabilityDescriptor, ControlErro
     }))?;
     Ok(DescriptorBuilder::new(
         CapabilityId::new(CONTROL_CAPABILITY_ID)?,
-        1,
+        2,
         CapabilityCategory::Custom(FeatureId::new("workflow.control")?),
         AdmissionConstraints::new(16, 64)?,
         Locality::Local,

@@ -1,4 +1,4 @@
-# Local control API 2.3
+# Local control API 2.4
 
 Use this reference for exact requests, replies, routes, and CLI machine output. For setup, begin
 with the [operator examples](../../examples/operator/README.md); for Rust integration, use the
@@ -12,11 +12,11 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":3}}
+{"protocol":{"major":2,"minor":4}}
 ```
 
 Major 2 is required; protocol 1 is refused. For that major, the current implementation returns
-minor 3 rather than selecting the lower offered minor or downgrading response fields. Clients
+minor 4 rather than selecting the lower offered minor or downgrading response fields. Clients
 must accept the current response shape; older strict readers are not qualified by this exchange.
 Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
@@ -24,7 +24,7 @@ the negotiated envelope version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 3},
+  "protocol": {"major": 2, "minor": 4},
   "request_id": "req-1",
   "value": {}
 }
@@ -38,7 +38,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 3},
+  "protocol": {"major": 2, "minor": 4},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -56,7 +56,7 @@ administration uses the separate routes below. A command envelope has no actor f
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 3},
+  "protocol": {"major": 2, "minor": 4},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -76,7 +76,7 @@ The closed command types are:
 | --- | --- | --- | --- |
 | `import_blueprint` | `document` | `import_blueprint` | Validate and store an exact immutable workflow/revision. |
 | `validate_blueprint` | `document` | `validate_blueprint` | Validate one exact workflow/revision without storing it. |
-| `import_prompt_sequence` | `document` | `import_blueprint` | Compile bounded schema-2 JSON/Markdown-derived data and store the ordinary immutable revision. |
+| `import_prompt_sequence` | `document` | `import_blueprint` | Compile bounded schema-3 JSON/Markdown-derived data and store the ordinary immutable revision. |
 | `validate_prompt_sequence` | `document` | `validate_blueprint` | Compile and validate a prompt sequence without storing its generated revision. |
 | `start_run` | `run_id`, `workflow_id`, `revision_id` | `create_run`, then `start_run` | Atomically create then start at an exact revision through ordinary control authority. |
 | `pause_run`, `resume_run`, `cancel_run` | `run_id` | `pause`, `resume`, `cancel` | Durable exact-run lifecycle control. |
@@ -107,7 +107,7 @@ The wire command carries the decoded prompt-sequence JSON document. Markdown par
 the CLI/library before submission, and the daemon independently performs strict schema validation
 and ordinary blueprint compilation. Validate/import responses include schema/sequence/workflow,
 revision and semantic identity, import and repository-profile digests, and ordered stage-node
-summaries. The full schema is documented in [`prompt-sequence-v2.md`](prompt-sequence-v2.md).
+summaries. The full schema is documented in [`prompt-sequence-v3.md`](prompt-sequence-v3.md).
 
 ## Query routes
 
@@ -149,7 +149,16 @@ Run models carry aggregate sequence, stable lifecycle, optional terminal outcome
 
 When a manifest exists, the daemon separately evaluates `read_artifact_content` for that exact restricted artifact. An allowed read verifies its schema, digest, size, and attempt binding, then returns a bounded context object containing the immutable task policy, selected causal/provenance metadata, stable omissions, totals, applied budget, and a truncation flag. A denial sets `context_access` to `denied` and returns neither policy nor entry/omission detail; `metadata_only` means only the compact manifest reference was disclosed. Artifact bytes remain available only through the separately authorized bounded range route. Complete lifetime history remains the paged journal-backed timeline.
 
+Exact attempt inspection also exposes `result_acceptance` for the built-in acceptance operation:
+its Boolean decision, closed reason, requirement, finish reason, and checkpoint come only from an
+authorized decision artifact. The invocation's own terminal remains unchanged. Model attempts
+expose `model_generation` with literal request output allowance and supported reasoning choices
+when revision inspection is authorized, plus finish reason from an authorized response artifact.
+Missing fields mean unavailable evidence, not zero usage or disabled reasoning. See
+[result acceptance](../guides/result-acceptance.md) for workflow composition and recovery.
+
 ## Cursors and SSE
+
 
 Cursors are opaque bounded Base64url schema-2 values. They bind an exact feed and position/key to the authenticated actor, grant identity/revision/digest, authority decision, and a domain-separated digest of the complete resource/filter scope. A credential-derived keyed MAC prevents modification or reuse after credential rotation. A malformed, stale, cross-actor, cross-grant, cross-resource, or cross-filter cursor fails as bounded `invalid_input`; a broader replacement grant does not reinterpret an old continuation. Clients must store only a successfully observed cursor and resume after it.
 

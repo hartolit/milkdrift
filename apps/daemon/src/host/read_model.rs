@@ -130,6 +130,8 @@ pub(super) fn empty_attempt_read(attempt: &str, state: &str) -> AttemptRead {
         outputs: Vec::new(),
         terminal: None,
         uncertain: false,
+        result_acceptance: None,
+        model_generation: None,
     }
 }
 
@@ -229,6 +231,8 @@ pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> Att
         outputs,
         terminal: value.terminal.as_ref().map(snake_debug),
         uncertain: value.external_outcome.is_some(),
+        result_acceptance: None,
+        model_generation: None,
     }
 }
 

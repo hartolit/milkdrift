@@ -115,14 +115,18 @@ struct ControlledEndpoint {
 
 impl ControlledEndpoint {
     fn success() -> EvidenceResult<Self> {
-        Self::start(true)
+        Self::response("MILKDRIFT_\nMODEL\tOK", "stop")
+    }
+
+    fn response(text: &str, finish: &str) -> EvidenceResult<Self> {
+        Self::start(Some((text.to_owned(), finish.to_owned())))
     }
 
     fn close_after_request() -> EvidenceResult<Self> {
-        Self::start(false)
+        Self::start(None)
     }
 
-    fn start(success: bool) -> EvidenceResult<Self> {
+    fn start(response: Option<(String, String)>) -> EvidenceResult<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let address = listener.local_addr()?;
         let requests = Arc::new(AtomicUsize::new(0));
@@ -132,15 +136,15 @@ impl ControlledEndpoint {
             stream.set_read_timeout(Some(Duration::from_secs(10)))?;
             let request = read_request(&mut stream)?;
             observed.fetch_add(1, Ordering::SeqCst);
-            if success {
+            if let Some((text, finish)) = response {
                 let body = [
                     format!(
                         "data: {}\n\n",
-                        json!({"id":"fixture-response-1","model":"fixture-local-model","choices":[{"delta":{"content":"MILKDRIFT_"},"finish_reason":null}]})
+                        json!({"id":"fixture-response-1","model":"fixture-local-model","choices":[{"delta":{"content":text},"finish_reason":null}]})
                     ),
                     format!(
                         "data: {}\n\n",
-                        json!({"id":"fixture-response-1","model":"fixture-local-model","choices":[{"delta":{"content":"\nMODEL\tOK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":19,"completion_tokens":4}})
+                        json!({"id":"fixture-response-1","model":"fixture-local-model","choices":[{"delta":{},"finish_reason":finish}],"usage":{"prompt_tokens":19,"completion_tokens":4}})
                     ),
                     "data: [DONE]\n\n".to_owned(),
                 ]
@@ -157,6 +161,10 @@ impl ControlledEndpoint {
     }
 
     fn join(&mut self) -> EvidenceResult<String> {
+        ensure(
+            self.requests.load(Ordering::SeqCst) == 1,
+            "controlled endpoint was never entered",
+        )?;
         self.task
             .take()
             .ok_or("controlled endpoint already joined")?
@@ -490,11 +498,17 @@ fn run(arguments: Arguments) -> EvidenceResult {
     )?;
     daemon.terminate()?;
 
+    let acceptance_evidence = if arguments.mode == Mode::Deterministic {
+        Some(acceptance::scenario(&arguments, &output)?)
+    } else {
+        None
+    };
     let report = json!({
         "schema_version": 1,
         "kind": "local_model_smoke",
         "qualifying": false,
         "mode": match arguments.mode { Mode::Deterministic => "deterministic", Mode::OperatorRealEndpoint => "operator_real_endpoint" },
+        "workflow_acceptance": acceptance_evidence,
         "model": {
             "capability": arguments.model_capability,
             "profile": success_facts.profile_id,
@@ -502,6 +516,10 @@ fn run(arguments: Arguments) -> EvidenceResult {
             "protocol": success_facts.protocol,
             "model_alias": success_facts.model_alias,
             "endpoint_origin": success_facts.endpoint_origin,
+            "requested_output_units": arguments.max_output_units,
+            "requested_reasoning": null,
+            "server_settings": {"status":"unknown","scope":"direct_endpoint","thinking":null},
+            "limits": {"request":arguments.max_output_units,"profile_token_limit":null,"contract_ceiling":milkdrift_model::MAX_MODEL_OUTPUT_UNITS,"harness_default":64,"harness_ceiling":65536},
         },
         "success": {
             "run": SUCCESS_RUN,
@@ -611,7 +629,7 @@ fn model_revision(
         },
     )?
     .with_control_input(PortId::new("in")?)?;
-    let mutations = if with_evidence_and_wait {
+    let mut mutations = if with_evidence_and_wait {
         let selected = evidence_node("selected-evidence", "local-model-selected-evidence")?;
         let omitted = evidence_node("omitted-evidence", "local-model-omitted-evidence")?
             .with_control_input(PortId::new("in")?)?;
@@ -634,15 +652,17 @@ fn model_revision(
             edge("selected-omitted", "selected-evidence", "omitted-evidence")?,
             edge("omitted-release", "omitted-evidence", "model-release")?,
             edge("release-model", "model-release", "model")?,
-            edge("model-done", "model", "done")?,
+            edge("model-acceptance", "model", "model-acceptance")?,
         ]
     } else {
         vec![
             Mutation::AddNode { node: model },
             Mutation::AddNode { node: done },
-            edge("model-done", "model", "done")?,
+            edge("model-acceptance", "model", "model-acceptance")?,
         ]
     };
+    mutations.extend(acceptance::path("model", "model", "done", "rejected")?);
+    mutations.push(acceptance::terminal("rejected", TerminalOutcome::Failure)?);
     BlueprintRevision::genesis(
         WorkflowId::new(workflow)?,
         MutationBatch::new(mutations)?,
@@ -1037,6 +1057,8 @@ fn require_file(path: &Path, label: &str) -> EvidenceResult {
 
 use milkdrift_evidence::http_fixture::read_request;
 
+#[path = "local-model-evidence/acceptance.rs"]
+mod acceptance;
 #[path = "local-model-evidence/profiles.rs"]
 mod profiles;
 

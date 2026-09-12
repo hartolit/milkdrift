@@ -29,7 +29,6 @@ fn stage(identity: &str, prompt: &str) -> Value {
         "verification": {
             "profile": profile("fixture-verifier", "read_only"),
             "checks": ["rust.workspace_tests"],
-            "success_artifact": "verification_pass",
             "result_artifact": "verification_result",
             "log_artifact": "verification_logs"
         },
@@ -47,7 +46,7 @@ fn stage(identity: &str, prompt: &str) -> Value {
 
 fn document_value() -> Value {
     json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "sequence": {
             "id": "dogfood-sequence",
             "title": "Headless dogfood sequence",
@@ -106,11 +105,16 @@ fn json_import_compiles_to_only_ordinary_blueprint_primitives() -> TestResult {
             "one"
         )?,
         vec![
+            "stage-one-acceptance",
             "stage-one-approval",
             "stage-one-coding",
             "stage-one-failed",
             "stage-one-gate",
             "stage-one-review",
+            "stage-one-review-acceptance",
+            "stage-one-review-gate",
+            "stage-one-review-rejected",
+            "stage-one-review-rejected-stop",
             "stage-one-verification",
         ]
     );
@@ -121,11 +125,11 @@ fn json_import_compiles_to_only_ordinary_blueprint_primitives() -> TestResult {
         )
         .is_err()
     );
-    assert_eq!(revision.semantic().nodes().len(), 13);
-    assert_eq!(revision.semantic().edges().len(), 14);
+    assert_eq!(revision.semantic().nodes().len(), 23);
+    assert_eq!(revision.semantic().edges().len(), 30);
     assert_eq!(
         compiled.import_digest(),
-        "b3_3479af944d962848d8879d2964e3ce07ca6b6ece62bf1d4e6d59a4cdec2b737f"
+        "b3_f74afcc22d5610904439ca665e387fc7c9f109d1f5559e444ad392b9d0d7a8b3"
     );
     assert_eq!(
         compiled.repository_profile_digest(),
@@ -133,24 +137,29 @@ fn json_import_compiles_to_only_ordinary_blueprint_primitives() -> TestResult {
     );
     assert_eq!(
         revision.content_digest().to_string(),
-        "b3_0e3a0aa28167457932ee5b89cf154c4dae0402a0f316374780984cb6eec8c4d6"
+        "b3_e4c818e619fafe6e5cd714bbaccdcd53a5432b81cc00d5d903e8f537782c863b"
     );
     assert_eq!(
         revision.id().as_str(),
-        "rev_6bfe94ac55d6950ae351d156baf23ad34f98f5b58e916b6f89ec0bf8eb229557"
+        "rev_2e15bc701bee8eee10507ff2c740ed967ad2f3b426fe17f4aa1c5c5e5b5946f3"
     );
-    // Only the reason and its derived revision identity changed. Existing stored
-    // imports retain their canonical bytes; decoding never relabels their history.
+    // A stored revision's authored label is part of its identity. The blueprint reader
+    // must preserve it, even when a current compiler would supply another import label.
     let current_bytes = BlueprintRevisionDocument::new(revision).to_canonical_json()?;
+    let historical_id = format!(
+        "rev_{}",
+        blake3::hash(&serde_json::to_vec(&json!({
+            "sequence": revision.sequence(), "content_digest": revision.content_digest(),
+            "parents": revision.parents(), "author": revision.author(),
+            "reason": "import prompt sequence dogfood-sequence schema v1",
+        }))?)
+    );
     let historical_bytes = String::from_utf8(current_bytes.clone())?
         .replace(
-            "import prompt sequence dogfood-sequence schema v2",
+            "import prompt sequence dogfood-sequence schema v3",
             "import prompt sequence dogfood-sequence schema v1",
         )
-        .replace(
-            revision.id().as_str(),
-            "rev_2e89086b94e50070158aa771beda3d09fe44ab6f39797100a88ac263bc5304cb",
-        )
+        .replace(revision.id().as_str(), &historical_id)
         .into_bytes();
     let (historical_document, historical) =
         BlueprintRevisionDocument::from_json(&historical_bytes)?;
@@ -160,7 +169,7 @@ fn json_import_compiles_to_only_ordinary_blueprint_primitives() -> TestResult {
     assert!(
         BlueprintRevisionDocument::from_json(
             &String::from_utf8(current_bytes)?
-                .replace("schema v2", "schema v1")
+                .replace("schema v3", "schema v1")
                 .into_bytes()
         )
         .is_err()
@@ -211,8 +220,8 @@ fn fail_run_stage_has_one_direct_failure_route_without_review_state() -> TestRes
     let compiled = compile(&document, AuthorRef::new("human:sequence-test")?)?;
     let semantic = compiled.revision().semantic();
 
-    assert_eq!(semantic.nodes().len(), 11);
-    assert_eq!(semantic.edges().len(), 12);
+    assert_eq!(semantic.nodes().len(), 17);
+    assert_eq!(semantic.edges().len(), 22);
     assert!(
         semantic
             .nodes()
@@ -279,8 +288,8 @@ fn prompt_documents_cannot_smuggle_shell_or_unbounded_content() -> TestResult {
     let encoded = serde_json::to_vec(&document_value())?;
     let text = String::from_utf8(encoded)?;
     let duplicate = text.replacen(
-        "\"schema_version\":2",
-        "\"schema_version\":2,\"schema_version\":2",
+        "\"schema_version\":3",
+        "\"schema_version\":3,\"schema_version\":3",
         1,
     );
     assert!(PromptSequenceDocument::from_json(duplicate.as_bytes()).is_err());
@@ -294,6 +303,11 @@ fn portable_paths_and_process_profile_contract_fail_closed() -> TestResult {
     assert!(matches!(
         PromptSequenceDocument::from_json(&serde_json::to_vec(&legacy)?),
         Err(PromptSequenceError::UnsupportedVersion { found: 1 })
+    ));
+    legacy["schema_version"] = json!(2);
+    assert!(matches!(
+        PromptSequenceDocument::from_json(&serde_json::to_vec(&legacy)?),
+        Err(PromptSequenceError::UnsupportedVersion { found: 2 })
     ));
 
     for path in [
@@ -324,7 +338,7 @@ fn portable_paths_and_process_profile_contract_fail_closed() -> TestResult {
 #[test]
 fn markdown_header_receives_lexical_bounds_before_value_allocation() -> TestResult {
     let header = json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "sequence": {
             "stages": [],
             "oversized": (0..4097).collect::<Vec<_>>()
@@ -369,15 +383,15 @@ fn remediation_is_a_digest_bound_prospective_ordinary_revision() -> TestResult {
     )?;
     assert_eq!(
         prospective.content_digest().to_string(),
-        "b3_c871a8c4cd945e358932d4cd318bd3f1f7ca8c06fec80e38ef1143502933a731"
+        "b3_d0e69459ddfc3f9820ae6fe2e66f346a4bb42d3cd3727c366737354fbd1aece9"
     );
     assert_eq!(
         prospective.id().as_str(),
-        "rev_0d9a5e37e0ea86cdea711c347e6e181e9c13505adad829d923260bb518328c42"
+        "rev_d6574e9156797b99852a8b62bb0c938fccd5d109f44cdcaa07645ea72ceec651"
     );
     assert_eq!(
         proposal.proposal().mutation().id().as_str(),
-        "batch_7c77e104721ced1460758c05b602f4f603af0df1ed2d63c8b5ec44acefcfb385"
+        "batch_268250d1825b80f0e6c41a4f494361f6a2bb1e4b83eccc0324df5ffb7f8bbb71"
     );
     assert!(
         prospective

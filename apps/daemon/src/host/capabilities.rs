@@ -126,11 +126,19 @@ pub(super) fn register_control(
     host: &CapabilityHost,
     control: Arc<ControlService>,
     data: Arc<dyn InvocationDataAccess>,
+    store: Arc<dyn milkdrift_persistence::ArtifactStore>,
+    workspace: Arc<dyn milkdrift_persistence::WorkspaceStore>,
+    authority: Arc<dyn milkdrift_authority::AuthorityEvaluator>,
     observed_at_unix_ms: u64,
 ) -> Result<(), String> {
     let adapter = Arc::new(WorkflowControlAdapter::new(
         control,
-        Arc::new(ResultSink { data }),
+        Arc::new(ResultSink {
+            data,
+            store,
+            workspace,
+            authority,
+        }),
     ));
     let descriptor = workflow_control_descriptor().map_err(|error| error.to_string())?;
     let capability = descriptor.identity().clone();
@@ -190,16 +198,160 @@ pub(super) fn register_configured(
 }
 
 use milkdrift_capability_host::{AdapterInvocation, MaterializationLimits};
-use milkdrift_control::{ControlError, ControlResultSink, MAX_CONTROL_RESULT_BYTES};
+use milkdrift_control::{ControlArtifactAccess, ControlError, MAX_CONTROL_RESULT_BYTES};
 
 struct ResultSink {
     data: Arc<dyn InvocationDataAccess>,
+    store: Arc<dyn milkdrift_persistence::ArtifactStore>,
+    workspace: Arc<dyn milkdrift_persistence::WorkspaceStore>,
+    authority: Arc<dyn milkdrift_authority::AuthorityEvaluator>,
 }
 
-impl ControlResultSink for ResultSink {
+impl ControlArtifactAccess for ResultSink {
+    fn read(
+        &self,
+        invocation: &AdapterInvocation<'_>,
+        input: &milkdrift_capability::InputReference,
+    ) -> Result<(milkdrift_capability::ArtifactReference, Vec<u8>), ControlError> {
+        use milkdrift_authority::{AuthorityBudget, AuthorityExecutionProvenance, DecisionId};
+        use milkdrift_workspace::ArtifactId;
+        let unavailable =
+            || ControlError::InvalidContract("acceptance evidence unavailable".to_owned());
+        let context = invocation.context().ok_or_else(unavailable)?;
+        let basis = context.authority().ok_or_else(unavailable)?;
+        let entry = context.entry_authorization().ok_or_else(unavailable)?;
+        let reference = match input.value() {
+            milkdrift_capability::InvocationValueReference::Artifact { reference } => {
+                reference.clone()
+            }
+            milkdrift_capability::InvocationValueReference::WorkspaceValue {
+                identity,
+                version,
+            } => {
+                let reference: milkdrift_workspace::WorkspaceValueReference =
+                    serde_json::from_str(identity).map_err(|_| unavailable())?;
+                if reference.scope().run() != context.run()
+                    || version != &reference.version().get().to_string()
+                {
+                    return Err(unavailable());
+                }
+                let mut resources = RequestedResourceFacts::empty();
+                resources.workspace_scope = Some(reference.scope().scope().clone());
+                let decision = self
+                    .authority
+                    .evaluate(&basis.request(
+                        DecisionId::new(format!(
+                                "decision:{}",
+                                blake3::hash(
+                                    format!(
+                                        "{}:{}:acceptance-workspace",
+                                        invocation.request().invocation(),
+                                        input.name()
+                                    )
+                                    .as_bytes()
+                                )
+                            ))?,
+                        AuthorityOperation::ReadWorkspaceValue,
+                        resources,
+                        AuthorityBudget::default(),
+                        entry.request().evaluated_at,
+                        AuthorityExecutionProvenance {
+                            revision: Some(context.revision().clone()),
+                            node: Some(context.node().clone()),
+                            ..AuthorityExecutionProvenance::default()
+                        },
+                    ))
+                    .map_err(|_| unavailable())?;
+                if !decision.is_allowed() {
+                    return Err(unavailable());
+                }
+                let value = self
+                    .workspace
+                    .value(&reference)
+                    .map_err(|_| unavailable())?
+                    .ok_or_else(unavailable)?;
+                let milkdrift_workspace::WorkspaceValue::Artifact(reference) = value.value() else {
+                    return Err(unavailable());
+                };
+                milkdrift_capability::ArtifactReference::new(
+                    reference.artifact().as_str(),
+                    reference.digest().to_hex(),
+                    Some(reference.media_type().as_str().to_owned()),
+                    Some(reference.size_bytes()),
+                )
+                .map_err(|_| unavailable())?
+            }
+            _ => return Err(unavailable()),
+        };
+        let identity = ArtifactId::new(reference.identity()).map_err(|_| unavailable())?;
+        let metadata = self
+            .store
+            .metadata(&identity)
+            .map_err(|_| unavailable())?
+            .ok_or_else(unavailable)?;
+        if reference.digest() != metadata.reference().digest().to_hex()
+            || reference.size_bytes() != Some(metadata.reference().size_bytes())
+            || reference.media_type() != Some(metadata.reference().media_type().as_str())
+        {
+            return Err(unavailable());
+        }
+        let mut resources = RequestedResourceFacts::empty();
+        resources.revision = Some(context.revision().clone());
+        resources.artifact = Some(identity);
+        resources.artifact_sensitivity = Some(metadata.sensitivity());
+        let decision = self
+            .authority
+            .evaluate(&basis.request(
+                DecisionId::new(format!(
+                        "decision:{}",
+                        blake3::hash(
+                            format!(
+                                "{}:{}:acceptance-read",
+                                invocation.request().invocation(),
+                                reference.identity()
+                            )
+                            .as_bytes()
+                        )
+                    ))?,
+                AuthorityOperation::ReadArtifactContent,
+                resources,
+                AuthorityBudget {
+                    artifact_bytes: reference.size_bytes(),
+                    ..AuthorityBudget::default()
+                },
+                entry.request().evaluated_at,
+                AuthorityExecutionProvenance {
+                    revision: Some(context.revision().clone()),
+                    node: Some(context.node().clone()),
+                    ..AuthorityExecutionProvenance::default()
+                },
+            ))
+            .map_err(|_| unavailable())?;
+        if !decision.is_allowed() {
+            return Err(unavailable());
+        }
+        let bytes = self
+            .data
+            .read_artifact_bytes(
+                context,
+                &reference,
+                MaterializationLimits {
+                    max_files: 1,
+                    max_file_bytes: milkdrift_control::MAX_ACCEPTANCE_INPUT_BYTES,
+                    max_total_bytes: milkdrift_control::MAX_ACCEPTANCE_INPUT_BYTES,
+                    max_path_bytes: 256,
+                    max_directory_depth: 8,
+                    chunk_bytes: 262_144,
+                },
+            )
+            .map_err(|_| unavailable())?;
+        Ok((reference, bytes))
+    }
+
     fn publish(
         &self,
         invocation: &AdapterInvocation<'_>,
+        output_name: &str,
         bytes: &[u8],
     ) -> Result<milkdrift_capability::ArtifactReference, ControlError> {
         let context = invocation.context().ok_or_else(|| {
@@ -211,7 +363,7 @@ impl ControlResultSink for ResultSink {
             .publish_bytes(
                 context,
                 invocation.request(),
-                "control_result",
+                output_name,
                 "application/vnd.milkdrift.control-result+json",
                 bytes,
                 MaterializationLimits {

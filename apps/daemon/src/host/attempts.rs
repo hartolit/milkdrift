@@ -14,9 +14,11 @@ use milkdrift_control::{ControlCommand, ControlResult};
 use milkdrift_control_protocol::{AttemptRead, ErrorCode, NodeRead, RunRead};
 use milkdrift_workspace::RunId;
 
+mod acceptance;
 mod authorization;
 mod context;
 mod history;
+mod model;
 mod projection;
 
 struct LocatedAttempt {
@@ -89,6 +91,8 @@ impl Owner {
             None => self.historical_attempt_read(run, attempt)?,
         };
         self.attach_context(session, attempt, &mut located)?;
+        self.attach_acceptance(session, &mut located)?;
+        self.attach_model_generation(session, &mut located)?;
         Ok(located.value)
     }
 }

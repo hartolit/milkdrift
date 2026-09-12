@@ -294,6 +294,9 @@ impl Owner {
             &capability_host,
             control.clone(),
             data.clone(),
+            store.clone(),
+            store.clone(),
+            authority.clone(),
             startup_now,
         )?;
         capabilities::register_configured(

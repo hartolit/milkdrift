@@ -46,7 +46,7 @@ async fn prompt_sequence_validate_import_inspect_and_restart_are_one_control_pat
     );
     let read = daemon.client.revision(&revision).await?;
     assert_eq!(read.summary.workflow_id, "milkdrift-core-convergence");
-    assert_eq!(read.node_count, 7);
+    assert_eq!(read.node_count, 12);
     assert!(read.document.is_some());
 
     let duplicate = daemon
@@ -62,7 +62,7 @@ async fn prompt_sequence_validate_import_inspect_and_restart_are_one_control_pat
 
     let restarted = start(config, CONTROLLER_TOKEN).await?;
     let reopened = restarted.client.revision(&revision).await?;
-    assert_eq!(reopened.node_count, 7);
+    assert_eq!(reopened.node_count, 12);
     assert_eq!(
         reopened.summary.semantic_digest,
         read.summary.semantic_digest
@@ -294,10 +294,7 @@ async fn headless_dogfood_failure_remediation_and_restart_are_durable() -> TestR
     .await?;
     assert_eq!(completed.lifecycle, "terminal");
     for node in &completed.nodes {
-        if node.node_id.contains("coding")
-            || node.node_id.contains("verification")
-            || node.node_id.contains("review")
-        {
+        if node.latest_attempt_id.is_some() {
             assert_eq!(
                 node.attempt_count, 1,
                 "{} executed more than once",

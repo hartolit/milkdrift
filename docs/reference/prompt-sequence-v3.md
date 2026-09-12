@@ -1,11 +1,12 @@
-# Prompt-sequence import schema 2
+# Prompt-sequence import schema 3
 
-Prompt-sequence schema 2 is an operator document compiled into a normal immutable blueprint
+Prompt-sequence schema 3 is an operator document compiled into a normal immutable blueprint
 revision. The accepted encodings are strict JSON and a Markdown envelope. Both produce the same
 validated `PromptSequenceDocument`; unknown fields, duplicate JSON keys, unsupported versions,
-invalid identities, unsafe paths, and exceeded bounds fail closed. Schema 1 is deliberately
-unsupported because it admitted checkpoint, stage-budget, and profile shapes that did not all map
-to executable enforcement boundaries.
+invalid identities, unsafe paths, and exceeded bounds fail closed. Schemas 1 and 2 are refused.
+Schema 3 replaces the verifier's arbitrary success marker with a typed checkpoint report checked
+by a separate acceptance task. Existing blueprint revisions keep their original semantics;
+reimporting an older sequence requires an explicit updated document and verifier configuration.
 
 ## Markdown envelope
 
@@ -17,7 +18,7 @@ The first nonempty line must open a fenced JSON header:
 
 ````text
 ```milkdrift-sequence
-{"schema_version":2,"sequence":{"stages":[...]}}
+{"schema_version":3,"sequence":{"stages":[...]}}
 ```
 
 ## Prompt: stage-id
@@ -31,7 +32,7 @@ JSON documents instead include each `prompt` directly.
 
 ## Closed document shape
 
-The envelope contains `schema_version: 2` and one `sequence` with:
+The envelope contains `schema_version: 3` and one `sequence` with:
 
 | Field | Contract |
 | --- | --- |
@@ -43,7 +44,7 @@ The envelope contains `schema_version: 2` and one `sequence` with:
 
 A repository profile contains `id`, opaque `root_ref`, optional `starting_revision`, relative
 `allowed_paths`, `allowed_operations`, `dirty_tree`, `isolation`, `cleanup`, required artifact
-policy, and bounded opaque credential/remote-profile references. Schema 2 requires `read`, `write`,
+policy, and bounded opaque credential/remote-profile references. Schema 3 requires `read`, `write`,
 and `execute`; `isolated_worktrees` also requires `version_control`. Its artifact policy must
 require starting-state, diff, and verification evidence.
 
@@ -55,7 +56,7 @@ Each stage contains:
 | `prompt` | Inline Markdown or a digest/media-type/size-bound artifact reference. |
 | `session` | `fresh` or `explicit_continuation`; generated coding nodes preserve it exactly. |
 | `coding` | Preconfigured exact capability/profile requirement. |
-| `verification` | Preconfigured verifier, safe check identities, and distinct success/result/log artifact names. |
+| `verification` | Preconfigured verifier, safe check identities, required result and optional distinct log artifact names. |
 | `failure` | `pause_for_review` or `fail_run`. |
 | `reviewer` | Preconfigured reviewer/controller capability requirement. |
 | `approval` | `shared_control_path`. |
@@ -63,7 +64,7 @@ Each stage contains:
 | `outputs` | Bounded distinct coding output names, media types, and required flags. |
 
 A capability/profile requirement contains exact `capability`, `operation`, `provider_profile`,
-`execution_trust`, and `maximum_side_effect`. Schema 2 accepts only `process.execute`, a null
+`execution_trust`, and `maximum_side_effect`. Schema 3 accepts only `process.execute`, a null
 provider profile, and `trusted_host_process`, matching the generated direct-input contract. It
 names a configured capability; the host resolves its exact generation when preparing an attempt.
 No import field can define executable argv, a network destination, a secret value, or ambient
@@ -91,11 +92,15 @@ domain-separated import digest. Prompt and repository-profile digests are domain
 
 ## Generated semantics
 
-Each stage generates coding and verification `Task` nodes, a safe `Branch`, and either a failure
-`Terminal` or review `Task` plus approval `SignalWait` and failure `Terminal`. A final success
-`Terminal` is shared. Coding receives prompt, repository profile, and stage contract as typed direct
-inputs. Verification receives repository and verification contracts. The gate's optional data edge
-tests only whether the exact success artifact exists.
+Each stage generates coding, verification, and acceptance `Task` nodes and a `Branch` over the
+acceptance task's `accepted_result`. The verifier's `result_artifact` must contain the
+[`VerifiedCheckpoint` report](../guides/result-acceptance.md#verify-repository-work): every configured
+check must pass on the same observed repository state, with a verified change or justified no-change.
+Rejection routes to the configured failure terminal or reviewer and approval hold. Review output
+also passes a separate prose acceptance task; unusable review reaches its own rejection hold and
+cannot take the accepted review route. Remediation applies the same rules. The final success
+terminal is reachable only through accepted stages. Coding receives prompt, repository profile,
+and stage contract as typed direct inputs. Verification receives repository and verification contracts.
 
 The compiler requests causal implementation/requirement evidence for coding and records the
 declared session intent. Verification and review request fresh sessions; the configured processes
@@ -113,10 +118,11 @@ mapping, prompt digests, and verification artifact names. Remediation rejects a 
 document unless its canonical import digest, repository digest, and stage mapping exactly match
 that frozen metadata.
 
-The generated revision reason names the validated import schema version. Correcting the old v1
-label changes new revision identities and their descendants, while semantic content and import
-digests remain the same. Stored revision reasons retain their original bytes and identity;
-[ADR 0031](../decisions/0031-context-enforcement-and-retained-evidence.md) records the compatibility choice.
+The generated revision reason and provenance name schema 3. Import digests, generated semantics,
+and revision identities change with the new acceptance contract. Stored revisions retain their
+bytes and identities; schema-2 provenance remains readable for historical stage association but
+cannot be used to build schema-3 remediation. [ADR 0032](../decisions/0032-purpose-specific-result-acceptance.md)
+records this compatibility choice.
 
 Validation/import use the existing `validate_blueprint`/`import_blueprint` authority operations and
 ordinary immutable revision store. Execution and remediation use the existing run, proposal,

@@ -50,6 +50,35 @@ nonduplication, post-entry response loss, unsafe-retry refusal, and explicit ret
 mode is non-qualifying. Real mode requires an explicit separately managed loopback profile and
 never falls back to a mock.
 
+The deterministic lane also exercises production result acceptance with actual daemon/client
+binaries: an empty exhausted model response retains a successful invocation, acceptance rejects
+it, and a dependent endpoint stays unentered until an authorized repair produces usable review.
+It restarts before evaluation, after rejection, and after acceptance before dependent dispatch.
+Retained decisions, exact release-command replay, and endpoint entry counters check that restart
+does not replace history or repeat work. The control tests cover structured-only and tool-only
+contracts, whitespace, malformed decisions, checkpoint mismatch, justified no-change, unavailable
+evidence, and failed publication. These mechanical checks do not qualify semantic review quality.
+
+The September 12 acceptance change in the checkout based on `48fc896` passes the Windows/MSVC full
+gate and both maintained actual-binary lanes. Its final deterministic report is
+`target/result-acceptance-model-06/report.json`; the operator log is
+`target/result-acceptance-final-headless.log`. Full-gate results and test counts are retained in
+`target/result-acceptance-final-gate.json` and `target/result-acceptance-final-test-counts.json`,
+with the corresponding `target/result-acceptance-final-*.log` files. The dependency audit logs are
+`target/result-acceptance-deny.log`, `target/result-acceptance-machete.log`, and
+`target/result-acceptance-duplicates.log`; affected public API inventories are under
+`target/public-api/result-acceptance/`. The source and final binary hashes are recorded in
+`target/result-acceptance-verification.json`.
+
+Real model observations made during this change are retained separately. The first Bonsai alias
+passes in `target/result-acceptance-real-bonsai-a/report.json`. The second alias times out at the
+declared 180-second bound; `target/result-acceptance-real-bonsai-b.log` and that directory's
+`recovered-run.json` and `recovered-attempt.json` retain the single uncertain attempt. Both requests
+declare 4,096 output units and leave effective server thinking settings unknown. These earlier
+observations cover the unchanged model/request path only; the final deterministic report covers
+the finished acceptance and publication implementation. They are model-only observations, not a
+new combined external-agent qualification or evidence of remote cancellation.
+
 [Strict external evidence](../guides/external-evidence.md) requires both a real byte-pinned coding
 agent and a supported real model endpoint with operator-owned resources. Only its complete
 validated report can qualify that interoperability boundary. Hermetic external mode tests the

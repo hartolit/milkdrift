@@ -326,25 +326,14 @@ pub(super) fn dogfood_process_profiles(
         "dogfood-verification-good",
         "dogfood-verifier-good",
         &executable,
-        serde_json::json!([
-            "copy",
-            "progress.md",
-            std::path::Path::new("{{execution_root}}").join("verification-pass.json")
-        ]),
-        serde_json::json!({
-            "execution_root": {"type": "execution_root"}
-        }),
+        serde_json::json!(["verify-progress", "progress.md", "good"]),
+        serde_json::json!({}),
         host_directory.clone(),
         serde_json::json!([]),
         serde_json::json!({"type": "disabled"}),
         "verification_result",
         "verification_logs",
-        serde_json::json!([{
-            "name": "verification_pass",
-            "relative_path": "verification-pass.json",
-            "media_type": "application/json",
-            "required": true
-        }]),
+        serde_json::json!([]),
         "read_only",
     )?;
     let weak_verification = write_dogfood_process_profile(
@@ -353,14 +342,8 @@ pub(super) fn dogfood_process_profiles(
         "dogfood-verification-weak",
         "dogfood-verifier-weak",
         &executable,
-        serde_json::json!([
-            "copy",
-            "progress.md",
-            std::path::Path::new("{{execution_root}}").join("weak-verification-result.json")
-        ]),
-        serde_json::json!({
-            "execution_root": {"type": "execution_root"}
-        }),
+        serde_json::json!(["verify-progress", "progress.md", "weak"]),
+        serde_json::json!({}),
         host_directory.clone(),
         serde_json::json!([]),
         serde_json::json!({"type": "disabled"}),
@@ -376,13 +359,10 @@ pub(super) fn dogfood_process_profiles(
         "dogfood-reviewer",
         &executable,
         serde_json::json!([
-            "copy",
-            "progress.md",
-            std::path::Path::new("{{execution_root}}").join("review.json")
+            "echo",
+            "Independent fixture review requires the verified repository-progress check."
         ]),
-        serde_json::json!({
-            "execution_root": {"type": "execution_root"}
-        }),
+        serde_json::json!({}),
         host_directory,
         serde_json::json!([]),
         serde_json::json!({"type": "disabled"}),
@@ -539,7 +519,6 @@ pub(super) fn dogfood_stage(identity: &str, prompt: &str, verifier: &str) -> ser
         "verification": {
             "profile": dogfood_profile_reference(verifier, "read_only"),
             "checks": ["fixture.repository_progress"],
-            "success_artifact": "verification_pass",
             "result_artifact": "verification_result",
             "log_artifact": "verification_logs"
         },
@@ -556,7 +535,7 @@ pub(super) fn dogfood_stage(identity: &str, prompt: &str, verifier: &str) -> ser
 
 pub(super) fn executable_dogfood_sequence() -> TestResult<PromptSequenceDocument> {
     let value = serde_json::json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "sequence": {
             "id": "daemon-headless-dogfood",
             "title": "Daemon headless dogfood",
@@ -612,6 +591,23 @@ where
         let state = client.run(run).await?;
         if predicate(&state) {
             return Ok(state);
+        }
+        if state.terminal.is_some() {
+            let timeline = client
+                .timeline(
+                    run,
+                    &PageRequest {
+                        cursor: None,
+                        limit: 100,
+                    },
+                )
+                .await?;
+            return Err(format!(
+                "unexpected workflow terminal {:?}; recent evidence={}",
+                state.terminal,
+                serde_json::to_string(&timeline.items.iter().rev().take(8).collect::<Vec<_>>())?
+            )
+            .into());
         }
         last = Some(state);
         tokio::time::sleep(Duration::from_millis(10)).await;

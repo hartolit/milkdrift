@@ -5,6 +5,12 @@ authorized operations. `ControlService` translates those requests into immutable
 [runtime commands](../runtime/README.md). It is the place to work on proposal handling, risk
 classification, or controller policy; scheduling and event commits remain with runtime.
 
+The same installed adapter exposes `workflow.accept_result`. Use an ordinary acceptance task and
+branch to distinguish an invocation's completion from the output required by its workflow.
+[Result acceptance](../../docs/guides/result-acceptance.md) explains the typed contracts, verifier
+reports, authorization, and rejection routes. The operation reads immutable evidence and performs
+no external validation work; the configured producer owns the checks it reports.
+
 ## Change a running workflow
 
 Suppose a review step must be added after existing work. A caller submits a

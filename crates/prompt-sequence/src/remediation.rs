@@ -89,7 +89,7 @@ pub fn build_remediation_proposal(
     let provenance_matches = metadata
         .get("schema_version")
         .and_then(serde_json::Value::as_u64)
-        == Some(2)
+        == Some(3)
         && metadata
             .get("sequence_id")
             .and_then(serde_json::Value::as_str)

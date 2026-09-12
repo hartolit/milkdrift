@@ -1,7 +1,7 @@
 //! Operator import data and the production readers that validate it.
 //!
 //! Public fields support assembly and inspection. The readers establish the complete
-//! schema-v2 constraints before compilation; Serde's derived shape checks alone do not.
+//! schema-v3 constraints before compilation; Serde's derived shape checks alone do not.
 //! Repository and verification declarations remain data for configured capabilities.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -20,7 +20,7 @@ use crate::{
 };
 
 /// Current prompt-sequence import schema.
-const PROMPT_SEQUENCE_SCHEMA_VERSION_V2: u32 = 2;
+const PROMPT_SEQUENCE_SCHEMA_VERSION_V3: u32 = 3;
 const MAX_DOCUMENT_DEPTH: usize = 48;
 const MAX_CONTAINER_ITEMS: usize = 4_096;
 const MAX_EXTENSIONS: usize = 32;
@@ -41,7 +41,7 @@ pub enum PromptSequenceError {
     #[error("invalid prompt-sequence document: {0}")]
     Json(String),
     /// An earlier or future schema is not supported by this reader.
-    #[error("unsupported prompt-sequence schema version {found}; supported version is 2")]
+    #[error("unsupported prompt-sequence schema version {found}; supported version is 3")]
     UnsupportedVersion {
         /// Observed schema version.
         found: u32,
@@ -82,7 +82,7 @@ pub enum SessionPolicy {
 
 /// Selects the preconfigured capability that should perform a stage operation.
 ///
-/// The schema-v2 reader requires `process.execute`, `TrustedHostProcess`, and no
+/// The schema-v3 reader requires `process.execute`, `TrustedHostProcess`, and no
 /// `provider_profile`. The exact capability ID becomes a blueprint requirement; live
 /// resolution chooses its generation and checks the advertised side-effect ceiling.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -118,10 +118,10 @@ pub enum PromptSource {
 
 /// Tells a configured verifier which checks to perform and which evidence to publish.
 ///
-/// The compiled gate tests for `success_artifact` after the verifier task completes.
-/// Publish it only for a passed check; a completed check without it follows the failure
-/// route. A failed verifier invocation is distinct from this artifact-absence result.
-/// Check names are data, never shell source; the configured verifier owns their meaning.
+/// The separate acceptance task reads a `milkdrift_control::VerifiedCheckpoint` from
+/// `result_artifact`. Every configured check must pass on the same before/after checkpoint.
+/// The verifier owns running those checks against the repository; artifact presence alone
+/// cannot open the gate. A failed verifier invocation remains a separate failure.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct VerificationContract {
@@ -129,15 +129,13 @@ pub struct VerificationContract {
     pub profile: CapabilityProfileRef,
     /// Bounded safe check identities, never shell source.
     pub checks: Vec<String>,
-    /// Artifact name whose presence is the success fact.
-    pub success_artifact: String,
     /// Required structured evidence artifact name.
     pub result_artifact: String,
     /// Optional bounded log artifact name.
     pub log_artifact: Option<String>,
 }
 
-/// Action after verification does not publish its declared success artifact.
+/// Action after the verifier's checkpoint report does not satisfy stage acceptance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailurePolicy {
@@ -369,7 +367,7 @@ impl PromptSequenceDocument {
 
     /// Reads duplicate-safe bounded JSON and validates semantic constraints.
     ///
-    /// Only schema v2 is accepted. Stage IDs must be unique, profiles must satisfy
+    /// Only schema v3 is accepted. Stage IDs must be unique, profiles must satisfy
     /// [`CapabilityProfileRef`]'s process restrictions, repository declarations must
     /// require starting-state/diff/verification evidence, and each stage must declare a
     /// `diff` output. Invalid identities, paths, counts, and inline prompt bounds fail
@@ -396,7 +394,7 @@ impl PromptSequenceDocument {
             .ok_or_else(|| {
                 PromptSequenceError::Json("missing numeric schema_version".to_owned())
             })?;
-        if version != PROMPT_SEQUENCE_SCHEMA_VERSION_V2 {
+        if version != PROMPT_SEQUENCE_SCHEMA_VERSION_V3 {
             return Err(PromptSequenceError::UnsupportedVersion { found: version });
         }
         let document: Self = serde_json::from_value(value)
@@ -430,7 +428,7 @@ impl PromptSequenceDocument {
     }
 
     fn validate(&self) -> Result<(), PromptSequenceError> {
-        if self.schema_version != PROMPT_SEQUENCE_SCHEMA_VERSION_V2 {
+        if self.schema_version != PROMPT_SEQUENCE_SCHEMA_VERSION_V3 {
             return Err(PromptSequenceError::UnsupportedVersion {
                 found: self.schema_version,
             });
@@ -512,18 +510,9 @@ fn validate_stage(stage: &StageDefinition, index: usize) -> Result<(), PromptSeq
         validate_namespaced_data_id("verification.check", check, 128)?;
     }
     validate_safe_name(
-        "verification.success_artifact",
-        &stage.verification.success_artifact,
-    )?;
-    validate_safe_name(
         "verification.result_artifact",
         &stage.verification.result_artifact,
     )?;
-    if stage.verification.success_artifact == stage.verification.result_artifact {
-        return Err(PromptSequenceError::Invalid(
-            "verification success and result artifacts must be distinct".to_owned(),
-        ));
-    }
     if let Some(log) = &stage.verification.log_artifact {
         validate_safe_name("verification.log_artifact", log)?;
     }
@@ -554,7 +543,7 @@ fn validate_profile(profile: &CapabilityProfileRef) -> Result<(), PromptSequence
         || profile.execution_trust != ExecutionTrustClass::TrustedHostProcess
     {
         return Err(PromptSequenceError::Invalid(
-            "schema-v2 sequence profiles must select process.execute without a provider_profile and require trusted_host_process execution"
+            "schema-v3 sequence profiles must select process.execute without a provider_profile and require trusted_host_process execution"
                 .to_owned(),
         ));
     }
@@ -601,7 +590,7 @@ fn validate_repository(profile: &RepositoryWorkspaceProfile) -> Result<(), Promp
         || !profile.artifacts.require_verification_evidence
     {
         return Err(PromptSequenceError::Invalid(
-            "schema-v2 repository artifact policy must require starting state, diff, and verification evidence"
+            "schema-v3 repository artifact policy must require starting state, diff, and verification evidence"
                 .to_owned(),
         ));
     }

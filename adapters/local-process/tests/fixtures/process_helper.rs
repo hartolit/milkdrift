@@ -52,6 +52,21 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
             std::fs::copy(source, destination)?;
             Ok(0)
         }
+        "verify-progress" => {
+            let path = arguments.next().ok_or("missing progress path")?;
+            let mode = arguments.next().ok_or("missing verifier mode")?;
+            let before = std::fs::read(&path)?;
+            let passed = mode == "good" && !before.is_empty();
+            let after = std::fs::read(&path)?;
+            let report = serde_json::json!({
+                "checkpoint": format!("b3_{}", blake3::hash(&before)),
+                "checked_checkpoint": format!("b3_{}", blake3::hash(&after)),
+                "checks": {"fixture.repository_progress": passed},
+                "coding": {"type":"changed"}
+            });
+            writeln!(std::io::stdout(), "{report}")?;
+            Ok(0)
+        }
         "inspect" => {
             let output = arguments.next().ok_or("missing output path")?;
             let environment_name = arguments.next().ok_or("missing environment name")?;

@@ -777,7 +777,12 @@ fn publication_causes(
                 inline_cause(input.name(), &bytes)?
             }
         };
-        causes.push(cause);
+        // Distinct input names may intentionally select the same immutable artifact (for
+        // example a decision and its accepted marker). Preserve the bindings in the request,
+        // while the artifact's causal parent list names each exact source only once.
+        if !causes.contains(&cause) {
+            causes.push(cause);
+        }
     }
     Ok(causes)
 }

@@ -54,7 +54,9 @@ if the worker later fails.
 artifacts through persistence ports. `StoreInvocationDataAccess` verifies references and content,
 uses the run's accepted workspace budget, and attaches invocation/input provenance to restricted
 outputs. Callers supply authorized selections and artifact-read authority; this bridge is not a
-fresh actor/grant evaluator. Dropping the materialization releases temporary files. Models can read
+fresh actor/grant evaluator. Distinct input names may reference the same exact artifact; produced
+artifacts record that causal parent once while the invocation retains both bindings.
+Dropping the materialization releases temporary files. Models can read
 bounded bytes directly without creating a process directory. `SecretResolver` resolves explicit
 references at the authorized adapter boundary; its production implementation is
 [local-secret](../../adapters/local-secret/README.md).

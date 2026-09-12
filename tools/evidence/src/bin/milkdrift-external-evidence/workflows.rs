@@ -100,7 +100,7 @@ pub fn process_sequence(
         .map(|name| json!({"name":name,"media_type":"application/octet-stream","required":name == "diff"}))
         .collect::<Vec<_>>();
     let value = json!({
-        "schema_version":2,
+        "schema_version":3,
         "sequence":{
             "id":PROCESS_WORKFLOW,
             "title":"External process interoperability evidence",
@@ -126,7 +126,6 @@ pub fn process_sequence(
                 "verification":{
                     "profile":{"capability":"evidence-verifier-weak","operation":"process.execute","provider_profile":null,"execution_trust":"trusted_host_process","maximum_side_effect":"read_only"},
                     "checks":["python.unittest","git.diff"],
-                    "success_artifact":"verification_pass",
                     "result_artifact":"verification_result",
                     "log_artifact":"verification_logs"
                 },
@@ -272,7 +271,7 @@ pub fn model_revision(
         ("b-denied", "evidence-b", "evidence-denied"),
         ("denied-release", "evidence-denied", "model-release"),
         ("release-model", "model-release", "model"),
-        ("model-done", "model", "done"),
+        ("model-accept", "model", "model-acceptance"),
     ] {
         operations.push(Mutation::AddEdge {
             edge: Edge::new(
@@ -282,6 +281,93 @@ pub fn model_revision(
                 port("next")?,
                 node(target)?,
                 port("in")?,
+            ),
+        });
+    }
+    let artifact_schema = schema("milkdrift.artifact-reference")?;
+    operations.extend([
+        Mutation::AddNode {
+            node: milkdrift_control::result_acceptance_task(
+                node("model-acceptance")?,
+                milkdrift_control::ResultAcceptanceContract::new(
+                    milkdrift_control::ResultRequirement::ModelProse,
+                    BTreeSet::new(),
+                )
+                .map_err(|error| error.to_string())?,
+                artifact_schema.clone(),
+            )
+            .map_err(|error| error.to_string())?,
+        },
+        Mutation::AddNode {
+            node: milkdrift_control::result_acceptance_gate(
+                node("model-gate")?,
+                node("model-acceptance")?,
+                artifact_schema,
+            )
+            .map_err(|error| error.to_string())?,
+        },
+        Mutation::AddNode {
+            node: Node::new(
+                node("model-rejected")?,
+                NodeKind::Terminal {
+                    outcome: TerminalOutcome::Failure,
+                },
+            )
+            .map_err(|error| error.to_string())?
+            .with_control_input(port("in")?)
+            .map_err(|error| error.to_string())?,
+        },
+    ]);
+    for (id, kind, source, output, target, input) in [
+        (
+            "model-response-accept",
+            EdgeKind::Data,
+            "model",
+            "model_response",
+            "model-acceptance",
+            "result",
+        ),
+        (
+            "model-assessed",
+            EdgeKind::Control,
+            "model-acceptance",
+            "out",
+            "model-gate",
+            "in",
+        ),
+        (
+            "model-accepted",
+            EdgeKind::Data,
+            "model-acceptance",
+            "accepted_result",
+            "model-gate",
+            "accepted_result",
+        ),
+        (
+            "model-pass",
+            EdgeKind::Control,
+            "model-gate",
+            "pass",
+            "done",
+            "in",
+        ),
+        (
+            "model-fail",
+            EdgeKind::Control,
+            "model-gate",
+            "fail",
+            "model-rejected",
+            "in",
+        ),
+    ] {
+        operations.push(Mutation::AddEdge {
+            edge: Edge::new(
+                EdgeId::new(id).map_err(|error| error.to_string())?,
+                kind,
+                node(source)?,
+                port(output)?,
+                node(target)?,
+                port(input)?,
             ),
         });
     }

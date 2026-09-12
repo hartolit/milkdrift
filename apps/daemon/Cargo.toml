@@ -21,6 +21,7 @@ milkdrift-control.workspace = true
 milkdrift-control-protocol.workspace = true
 milkdrift-local-process.workspace = true
 milkdrift-local-secret.workspace = true
+milkdrift-model.workspace = true
 milkdrift-model-provider.workspace = true
 milkdrift-peer-http.workspace = true
 milkdrift-peer-protocol.workspace = true

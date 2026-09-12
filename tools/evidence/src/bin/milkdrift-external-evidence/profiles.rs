@@ -210,12 +210,6 @@ pub fn generated_profiles(
                 true,
             ),
             ("verification_logs", "verification.log", "text/plain", true),
-            (
-                "verification_pass",
-                "verification-pass.json",
-                "application/json",
-                true,
-            ),
         ],
         "read_only",
         true,
@@ -521,16 +515,22 @@ sys.stdin.read()
 }
 
 fn verifier_code() -> &'static str {
-    r#"import json, pathlib, subprocess, sys
+    r#"import hashlib, json, pathlib, subprocess, sys
 mode=sys.argv[1]
 root=pathlib.Path(sys.argv[3])
+def checkpoint():
+    files=subprocess.run([sys.argv[2],'ls-files','--cached','--others','--exclude-standard','-z'],check=True,capture_output=True).stdout.split(b'\0')
+    state=[(name.decode(),hashlib.sha256(pathlib.Path(name.decode()).read_bytes()).hexdigest()) for name in sorted(set(files)) if name]
+    return 'sha256:'+hashlib.sha256(json.dumps(state,separators=(',',':')).encode()).hexdigest()
+before=checkpoint()
 diff=subprocess.run([sys.argv[2],'diff','--binary','HEAD'],check=False,capture_output=True,text=True)
-tests=subprocess.run([sys.executable,'-m','unittest','-v'],check=False,capture_output=True,text=True)
+tests=subprocess.run([sys.executable,'-B','-m','unittest','-v'],check=False,capture_output=True,text=True)
+after=checkpoint()
 log='ORCHESTRATION_FAULT_INJECTION='+str(mode=='weak')+'\n'+tests.stdout+tests.stderr
 (root/'verification.log').write_text(log)
-(root/'verification-result.json').write_text(json.dumps({'schema_version':1,'mode':mode,'test_exit':tests.returncode,'diff_digest_pending':True,'diff':diff.stdout}))
-if mode=='good' and tests.returncode==0 and diff.returncode==0:
-    (root/'verification-pass.json').write_text(json.dumps({'schema_version':1,'passed':True}))
+coding={'type':'changed'} if diff.stdout else {'type':'no_change','justification':'Independent unittest verifies the requested calculator behavior at the unchanged checkpoint.'}
+report={'checkpoint':before,'checked_checkpoint':after,'checks':{'python.unittest':mode=='good' and tests.returncode==0,'git.diff':diff.returncode==0},'coding':coding}
+(root/'verification-result.json').write_text(json.dumps(report))
 sys.exit(0 if diff.returncode==0 and tests.returncode==0 else 1)
 "#
 }

@@ -39,6 +39,39 @@ task. Use the repository as the handoff; do not rely on another agent's chat his
 | 07 | [Trusted-process cleanup bounds](07-trusted-process-cleanup-bounds.md) | Owned I/O cleanup is interruptible and bounded without false descendant-containment claims. |
 | 08 | [Integrated operational acceptance](08-integrated-operational-acceptance.md) | Combined behavior, measured query costs, and current evidence support a precise operating decision. |
 
+Assignment 01 is implemented by Codex in the current checkout, based on `48fc896`; the result is
+the uncommitted diff, ready for coordinator review. Later assignments have not started.
+
+The canonical acceptance owner is `crates/control/src/acceptance.rs`, exposed through the existing
+`workflow.accept_result` operation. Assignment 03 should compose `result_acceptance_task` and
+`result_acceptance_gate` at its stage boundary and continue only from the gate's `pass` arm.
+`acceptance_result` records the decision; `accepted_result` aliases that exact artifact only when
+the requirement passes. Compiled sequence associations identify `acceptance_node`; use saved
+associations rather than guessing node names. The controller lifecycle remains uninstalled.
+The [acceptance guide](../../../guides/result-acceptance.md) and
+[ADR 0032](../../../decisions/0032-purpose-specific-result-acceptance.md) own the durable explanation.
+
+Prompt-sequence schema 3 removes the optional success artifact and requires a typed verifier
+checkpoint/check/coding report. Schemas 1/2 are refused on import; stored revisions keep their
+behavior, and schema-2 stage associations remain readable. Both initial and remediation paths
+gate verification and review. The existing remediation builder targets the original verification
+failure hold; an unusable reviewer has a separate rejection hold requiring an explicitly authored
+prospective proposal. Control protocol is 2.4, CLI JSON remains 2, and acceptance contract/result
+schemas are 1. Model, blueprint, event, and storage schemas are unchanged.
+
+Verification passes: the full workflow gate (717 workspace tests, 24 doctests, five manual tests
+ignored), all 24 repository contracts, dependency audits, test discovery, affected default/all
+feature API review, and both actual-binary operator/model lanes. The final model lane proves empty
+exhausted review rejection, zero dependent entries before accepted repair, one afterward, three
+restart boundaries, and exact release replay. Focused contracts cover structured-only/tool-only
+results, whitespace, malformed decisions, stale checkpoints, justified no-change, unavailable
+evidence, and publication failure. The host now records aliased inputs as one exact causal parent
+without removing their distinct input bindings. Logs, final source/binary hashes, and real-model
+limits are recorded in the [evidence guide](../../../development/verification-evidence.md#actual-binary-scenarios).
+The first real Bonsai alias passes its model smoke; the second remains a single uncertain attempt
+after the 180-second bound. Thinking settings are unknown. No new combined external qualification
+or controller activation is claimed; there is no implementation blocker to coordinator review.
+
 Keep one short current handoff per active assignment here, only when needed. Record actual owner,
 base/result commit, accepted coverage, checks, and any remaining blocker; update rather than append
 progress diaries. Raw logs, measurements, and temporary fixtures belong under ignored `target/` or

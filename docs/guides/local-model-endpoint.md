@@ -67,6 +67,11 @@ work nor treats a successful response as proof that the provider had no external
 
 ## Run the maintained daemon/CLI lane
 
+The maintained workflow evaluates `model_response` through the built-in acceptance task before
+its success terminal. A successful invocation with `length` or unusable final text takes the
+rejection route. Generic model tasks still permit tool-only and structured-only results; choose
+the corresponding [acceptance requirement](result-acceptance.md) when that is the intended output.
+
 Build the actual applications and the byte-pinned evidence producer:
 
 ```sh
