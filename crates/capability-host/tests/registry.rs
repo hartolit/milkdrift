@@ -269,6 +269,9 @@ impl CapabilityAdapter for FailingAdapter {
             AdapterFailureKind::ExternalFailure => {
                 AdapterError::external_failure("planned external failure")
             }
+            AdapterFailureKind::ResponseObservedFailure => {
+                AdapterError::response_observed_failure("planned reporting failure")
+            }
         })
     }
 
@@ -563,6 +566,11 @@ fn adapter_failures_preserve_pre_entry_and_post_entry_uncertainty() -> TestResul
     for (identity, kind, expected_after_entry) in [
         ("cap-rejected", AdapterFailureKind::Rejected, false),
         (
+            "cap-response-observed",
+            AdapterFailureKind::ResponseObservedFailure,
+            true,
+        ),
+        (
             "cap-external-failure",
             AdapterFailureKind::ExternalFailure,
             true,
@@ -594,7 +602,10 @@ fn adapter_failures_preserve_pre_entry_and_post_entry_uncertainty() -> TestResul
             Err(error) => error,
         };
         assert_eq!(
-            matches!(&error, ExecutorError::BoundaryAfterEntry(_)),
+            matches!(
+                &error,
+                ExecutorError::BoundaryAfterEntry(_) | ExecutorError::BoundaryAfterResponse(_)
+            ),
             expected_after_entry
         );
         assert_eq!(

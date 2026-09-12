@@ -48,7 +48,10 @@ The separate [local-model lane](../guides/local-model-endpoint.md#run-the-mainta
 checks wait/restart/release, selected/omitted context, streaming/usage/artifact provenance,
 nonduplication, post-entry response loss, unsafe-retry refusal, and explicit retain. Its deterministic
 mode is non-qualifying. Real mode requires an explicit separately managed loopback profile and
-never falls back to a mock.
+never falls back to a mock. Both modes also run an isolated local-preparation refusal through
+actual daemon/client binaries. A request-body limit rejects the attempt before entry intent;
+the counting listener observes zero connections, and restart preserves that rejected attempt
+without uncertainty or another request.
 
 The deterministic lane also exercises production result acceptance with actual daemon/client
 binaries: an empty exhausted model response retains a successful invocation, acceptance rejects
@@ -78,6 +81,26 @@ declare 4,096 output units and leave effective server thinking settings unknown.
 observations cover the unchanged model/request path only; the final deterministic report covers
 the finished acceptance and publication implementation. They are model-only observations, not a
 new combined external-agent qualification or evidence of remote cancellation.
+
+The model-preparation change based on `bf8cbd5` retains its actual-binary deterministic report at
+`target/model-stages-deterministic-02/report.json` and its operator log at
+`target/model-stages-headless.log`. The report covers zero-request refusal and restart, the existing
+lost-response/unsafe-retry boundary, and result acceptance before dependent entry. The full suite
+passes 727 workspace tests and 24 doctests; five manual longevity tests remain ignored. Gate results
+are in `target/model-stages-gate.json` with corresponding `target/model-stages-*.log` files and
+`target/model-stages-test-counts.json`. The initial duplicate-worker regression and its successful
+correction are retained in `target/model-stages-initial-tests.log` and
+`target/model-stages-duplicate-worker.log`. API inventories are under
+`target/public-api/model-stages/`; `target/model-stages-verification.json` records source and binary
+hashes. Preserved evidence binaries are under `target/model-stages-binaries/`.
+
+Its real model smoke passes for `prism-ml/bonsai-27b` in
+`target/model-stages-real-bonsai-a/report.json`. The separate `prism-ml/bonsai-27b:2` request reaches
+the 180-second limit without a terminal. `target/model-stages-real-bonsai-b.log` and that output
+directory's `recovered-run.json`, `recovered-attempt.json`, and `recovery-summary.json` retain two
+reopens with one uncertain attempt and no replacement attempt. Both requests declare 4,096 output
+units; effective thinking settings remain unknown. Only the first real lane completes, and neither
+model-only observation qualifies the combined external-agent boundary or remote cancellation.
 
 [Strict external evidence](../guides/external-evidence.md) requires both a real byte-pinned coding
 agent and a supported real model endpoint with operator-owned resources. Only its complete

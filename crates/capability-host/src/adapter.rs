@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use milkdrift_authority::{
     AuthorityDecisionSnapshot, CapabilityExecutionRequirements, ExecutionAuthorityBasis,
 };
@@ -13,12 +15,14 @@ use thiserror::Error;
 /// Stable class of a bounded adapter failure summary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AdapterFailureKind {
-    /// Adapter rejected the exact request before starting provider work.
+    /// Adapter rejected local validation or state; the execution stage determines entry proof.
     Rejected,
     /// Adapter's external dependency was unavailable.
     Unavailable,
     /// Adapter entered its external boundary and could not prove an outcome.
     ExternalFailure,
+    /// A complete provider response was parsed, but local publication/reporting failed.
+    ResponseObservedFailure,
 }
 
 /// Bounded adapter-owned error that contains no database or provider-client type.
@@ -54,7 +58,8 @@ impl AdapterError {
         &self.summary
     }
 
-    /// Constructs a bounded deterministic pre-provider rejection.
+    /// Describes a bounded local rejection. Runtime treats this as no-entry proof only
+    /// when it comes from preparation before durable entry intent, never from error text alone.
     #[must_use]
     pub fn rejected(summary: impl Into<String>) -> Self {
         Self::bounded(
@@ -64,7 +69,8 @@ impl AdapterError {
         )
     }
 
-    /// Constructs a bounded failure proving provider work was not entered.
+    /// Describes a bounded unavailable dependency. A post-intent return still requires
+    /// conservative recovery when no terminal observation became durable.
     #[must_use]
     pub fn unavailable(summary: impl Into<String>) -> Self {
         Self::bounded(
@@ -81,6 +87,17 @@ impl AdapterError {
             AdapterFailureKind::ExternalFailure,
             summary,
             "adapter external failure",
+        )
+    }
+
+    /// Preserves response completion when subsequent local work loses durable reporting.
+    /// This is not terminal proof and must never authorize replay of the provider request.
+    #[must_use]
+    pub fn response_observed_failure(summary: impl Into<String>) -> Self {
+        Self::bounded(
+            AdapterFailureKind::ResponseObservedFailure,
+            summary,
+            "local failure after complete provider response",
         )
     }
 
@@ -300,7 +317,24 @@ pub trait AdapterReporter: Send + Sync {
 /// Lifecycle hooks deliberately have no defaults. Stateless implementations must spell out their
 /// idempotent no-resource behavior; resource-owning implementations must make replay, drain, and
 /// shutdown behavior explicit in their own state machine.
-pub trait CapabilityAdapter: Send + Sync {
+pub trait CapabilityAdapter: Send + Sync + 'static {
+    /// Prepares local request data without contacting an external capability.
+    ///
+    /// The host holds the exact generation permit while this runs. Local reads must be
+    /// bounded and authorized. The returned closure owns the prepared bytes until the
+    /// final authority/account transaction permits its single entry. The default only
+    /// freezes admission facts; adapters with local request validation should override it.
+    fn prepare(
+        self: Arc<Self>,
+        invocation: &AdapterInvocation<'_>,
+    ) -> Result<PreparedAdapterExecution, AdapterError> {
+        let envelope = self.admission_envelope(invocation)?;
+        Ok(PreparedAdapterExecution::new(
+            envelope,
+            move |invocation, reporter| self.execute(invocation, reporter),
+        ))
+    }
+
     /// Derives enforceable bounds for this exact immutable request and generation.
     /// This hook runs before durable entry intent; it must not start external work. Return
     /// unknown resource dimensions honestly so runtime can refuse unsupported reservations.
@@ -352,4 +386,45 @@ pub trait CapabilityAdapter: Send + Sync {
     /// everything they own, while stateless implementations explicitly return the no-resource
     /// outcome.
     fn shutdown(&self) -> Result<(), AdapterError>;
+}
+
+type AdapterEntry = Box<
+    dyn FnOnce(&AdapterInvocation<'_>, &dyn AdapterReporter) -> Result<(), AdapterError> + Send,
+>;
+
+/// Adapter-owned request preparation retained by the host's exact one-shot dispatch.
+///
+/// Only the host can consume this handle. Its runtime dispatch binds request, context,
+/// generation, and authority; the closure receives the final context including any committed
+/// controller reservation. Dropping an unentered handle releases its ephemeral data.
+pub struct PreparedAdapterExecution {
+    envelope: InvocationAdmissionEnvelope,
+    entry: AdapterEntry,
+}
+
+impl PreparedAdapterExecution {
+    /// Captures bounded local preparation and the only operation that may submit it.
+    pub fn new(
+        envelope: InvocationAdmissionEnvelope,
+        entry: impl FnOnce(&AdapterInvocation<'_>, &dyn AdapterReporter) -> Result<(), AdapterError>
+        + Send
+        + 'static,
+    ) -> Self {
+        Self {
+            envelope,
+            entry: Box::new(entry),
+        }
+    }
+
+    pub(crate) fn envelope(&self) -> &InvocationAdmissionEnvelope {
+        &self.envelope
+    }
+
+    pub(crate) fn enter(
+        self,
+        invocation: &AdapterInvocation<'_>,
+        reporter: &dyn AdapterReporter,
+    ) -> Result<(), AdapterError> {
+        (self.entry)(invocation, reporter)
+    }
 }

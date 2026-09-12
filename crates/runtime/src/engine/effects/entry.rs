@@ -60,6 +60,7 @@ impl RuntimeService {
         }
         let exact_ticket_coordinates = [
             attempt.state() == &AttemptState::Running,
+            attempt.adapter_entry_authorization().is_none(),
             attempt.execution() == dispatch.execution(),
             attempt.request() == Some(dispatch.request()),
             attempt.capability().map(|value| value.snapshot()) == Some(dispatch.resolution()),
@@ -94,15 +95,75 @@ impl RuntimeService {
         request.decision =
             DecisionId::new(format!("decision:{}", blake3::hash(identity.as_bytes())))?;
         request.evaluated_at = BoundaryTimeMillis::new(now.get());
-        let authorization = self.authority.evaluate(&request)?;
-        let adapter_dispatch = authorization
+        let mut authorization = self.authority.evaluate(&request)?;
+        let mut adapter_dispatch = authorization
             .is_allowed()
             .then(|| dispatch.with_entry_authorization(authorization.clone()))
             .transpose()?;
-        let prepared = adapter_dispatch
+        let preparation = adapter_dispatch
             .as_ref()
             .map(|exact| self.executor.prepare_exact_entry(exact))
-            .transpose()?;
+            .transpose();
+        let mut prepared = match preparation {
+            Ok(prepared) => prepared,
+            Err(
+                error @ (ExecutorError::BoundaryBeforeEntry(_)
+                | ExecutorError::UnavailableGeneration { .. }
+                | ExecutorError::Unavailable(_)
+                | ExecutorError::AdmissionClosed
+                | ExecutorError::InvalidDispatch(_)
+                | ExecutorError::Contract(_)
+                | ExecutorError::AdapterPanicked { after_entry: false }),
+            ) => {
+                // No entry intent or reservation exists for this attempt. This terminal
+                // records a live local refusal; recovery never infers it from missing send flags.
+                self.commit_internal_plan_from_projection(
+                    dispatch.run(),
+                    projection,
+                    self.clock.now()?,
+                    SystemTransition::DecideCapabilityAdapterEntry {
+                        attempt: dispatch.attempt().clone(),
+                    },
+                    CommandPlan::one(RunEventKind::NodeTerminal {
+                        execution: dispatch.execution().clone(),
+                        attempt: dispatch.attempt().clone(),
+                        report_sequence: next_sequence,
+                        outcome: milkdrift_persistence::NodeOutcome::Rejected,
+                        error_class: Some(ErrorClass::Adapter),
+                        detail: Some(milkdrift_persistence::BoundedDetail::new(format!(
+                            "local preparation refused before external entry: {error}"
+                        ))?),
+                    }),
+                )?;
+                return Ok(None);
+            }
+            // Overload may mean another worker owns this very invocation. This caller's
+            // non-entry cannot prove that the attempt as a whole has not entered.
+            Err(error) => return Err(error.into()),
+        };
+        let now = if prepared.is_some() {
+            self.clock.now()?
+        } else {
+            now
+        };
+        if prepared.is_some() {
+            if dispatch.lease_expires_at() <= now {
+                return Err(RuntimeError::InvalidTransition(
+                    "effect lease expired during local preparation".to_owned(),
+                ));
+            }
+            request.evaluated_at = BoundaryTimeMillis::new(now.get());
+            authorization = self.authority.evaluate(&request)?;
+            adapter_dispatch = if authorization.is_allowed() {
+                Some(dispatch.with_entry_authorization(authorization.clone())?)
+            } else {
+                None
+            };
+        }
+        // A denied final check must release preparation without reserving account resources.
+        if !authorization.is_allowed() {
+            prepared = None;
+        }
         let mut controller_actions = Vec::new();
         let mut expected_controller_revision = None;
         let controller_admission = if let (Some(prepared), Some(account)) = (
@@ -170,8 +231,9 @@ impl RuntimeService {
                 ))?),
             });
         }
-        let decision_commit = self.commit_internal_plan(
+        let decision_commit = self.commit_internal_plan_from_projection(
             dispatch.run(),
+            projection,
             now,
             SystemTransition::DecideCapabilityAdapterEntry {
                 attempt: dispatch.attempt().clone(),
@@ -260,10 +322,15 @@ impl RuntimeService {
         }
         if let Some(failure) = outcome.take_failure() {
             let error = failure.into_runtime_error();
+            let stage = if matches!(boundary, Err(ExecutorError::BoundaryAfterResponse(_))) {
+                "complete provider response observed; local reporting failed"
+            } else {
+                "executor report rejected after adapter entry"
+            };
             self.record_effect_uncertainty(
                 adapter_dispatch.run(),
                 adapter_dispatch.attempt(),
-                &format!("executor report rejected after adapter entry: {error}"),
+                &format!("{stage}: {error}"),
             )?;
             return Err(error);
         }

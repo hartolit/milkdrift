@@ -196,21 +196,20 @@ impl TaskExecutor for CapabilityHost {
         let context = AdapterExecutionContext::from_dispatch(dispatch, None);
         let invocation =
             AdapterInvocation::with_context(dispatch.resolution(), dispatch.request(), &context);
-        let envelope =
-            match catch_unwind(AssertUnwindSafe(|| adapter.admission_envelope(&invocation))) {
-                Ok(Ok(envelope)) => envelope,
-                Ok(Err(error)) => {
-                    permit.mark_failure(error.summary());
-                    return Err(executor_error_from_adapter(&error));
-                }
-                Err(_panic) => {
-                    permit.mark_failure("adapter panicked while deriving admission envelope");
-                    return Err(ExecutorError::AdapterPanicked { after_entry: false });
-                }
-            };
+        let prepared = match catch_unwind(AssertUnwindSafe(|| adapter.prepare(&invocation))) {
+            Ok(Ok(prepared)) => prepared,
+            Ok(Err(error)) => {
+                permit.mark_failure(error.summary());
+                return Err(executor_error_from_adapter(&error));
+            }
+            Err(_panic) => {
+                permit.mark_failure("adapter panicked during local preparation");
+                return Err(ExecutorError::AdapterPanicked { after_entry: false });
+            }
+        };
         Ok(PreparedExecution::new_with_controller_reservation(
             dispatch,
-            envelope,
+            prepared.envelope().clone(),
             move |dispatch, reservation, reporter| {
                 let bridge = ReporterBridge { reporter };
                 let context = AdapterExecutionContext::from_dispatch(dispatch, reservation);
@@ -219,7 +218,7 @@ impl TaskExecutor for CapabilityHost {
                     dispatch.request(),
                     &context,
                 );
-                match catch_unwind(AssertUnwindSafe(|| adapter.execute(&invocation, &bridge))) {
+                match catch_unwind(AssertUnwindSafe(|| prepared.enter(&invocation, &bridge))) {
                     Ok(Ok(())) => Ok(()),
                     Ok(Err(error)) => {
                         permit.mark_failure(error.summary());
@@ -397,6 +396,9 @@ fn executor_error_from_adapter(error: &AdapterError) -> ExecutorError {
         }
         AdapterFailureKind::ExternalFailure => {
             ExecutorError::BoundaryAfterEntry(error.summary().to_owned())
+        }
+        AdapterFailureKind::ResponseObservedFailure => {
+            ExecutorError::BoundaryAfterResponse(error.summary().to_owned())
         }
     }
 }

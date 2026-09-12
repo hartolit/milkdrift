@@ -20,7 +20,7 @@ mod worker;
 
 pub use adapter::{
     AdapterError, AdapterExecutionContext, AdapterFailureKind, AdapterInvocation, AdapterReporter,
-    CapabilityAdapter, HostAdapterContractError,
+    CapabilityAdapter, HostAdapterContractError, PreparedAdapterExecution,
 };
 pub use materialization::{
     InputMaterialization, InvocationDataAccess, InvocationDataError,

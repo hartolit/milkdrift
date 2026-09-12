@@ -30,7 +30,7 @@ milkdrift-blueprint.workspace = true
 milkdrift-capability-host = { workspace = true, features = ["test-support"] }
 milkdrift-persistence.workspace = true
 milkdrift-redb-store = { workspace = true, features = ["test-admin"] }
-milkdrift-runtime.workspace = true
+milkdrift-runtime = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 
 [lints]

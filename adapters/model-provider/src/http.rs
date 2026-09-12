@@ -54,6 +54,7 @@ pub(crate) fn client(profile: &EndpointProfile) -> Result<Client, HttpError> {
             limits.request_timeout_ms.min(limits.idle_timeout_ms),
         ))
         .redirect(redirect)
+        .retry(reqwest::retry::never())
         .user_agent("milkdrift-model-provider/0.1");
     if profile.proxy() == ProxyPolicy::Disabled {
         builder = builder.no_proxy();
@@ -81,16 +82,18 @@ pub(crate) fn headers(
             let bytes = secret.ok_or(HttpError::Policy("authorization secret unavailable"))?;
             let text = std::str::from_utf8(bytes)
                 .map_err(|_| HttpError::Policy("authorization secret is not UTF-8"))?;
-            let value = HeaderValue::from_str(&format!("Bearer {text}")).map_err(|_| {
+            let mut value = HeaderValue::from_str(&format!("Bearer {text}")).map_err(|_| {
                 HttpError::Policy("authorization secret is not a valid header value")
             })?;
+            value.set_sensitive(true);
             headers.insert(AUTHORIZATION, value);
         }
         AuthMode::AnthropicApiKey { .. } => {
             let bytes = secret.ok_or(HttpError::Policy("authorization secret unavailable"))?;
-            let value = HeaderValue::from_bytes(bytes).map_err(|_| {
+            let mut value = HeaderValue::from_bytes(bytes).map_err(|_| {
                 HttpError::Policy("authorization secret is not a valid header value")
             })?;
+            value.set_sensitive(true);
             headers.insert(HeaderName::from_static("x-api-key"), value);
         }
     }

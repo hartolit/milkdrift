@@ -39,8 +39,8 @@ task. Use the repository as the handoff; do not rely on another agent's chat his
 | 07 | [Trusted-process cleanup bounds](07-trusted-process-cleanup-bounds.md) | Owned I/O cleanup is interruptible and bounded without false descendant-containment claims. |
 | 08 | [Integrated operational acceptance](08-integrated-operational-acceptance.md) | Combined behavior, measured query costs, and current evidence support a precise operating decision. |
 
-Assignment 01 is implemented by Codex in the current checkout, based on `48fc896`; the result is
-the uncommitted diff, ready for coordinator review. Later assignments have not started.
+Assignment 01 is committed as `bf8cbd5`. Assignment 02, based on that commit, is reviewed and
+accepted in this change. Assignments 03–08 have not started.
 
 The canonical acceptance owner is `crates/control/src/acceptance.rs`, exposed through the existing
 `workflow.accept_result` operation. Assignment 03 should compose `result_acceptance_task` and
@@ -59,18 +59,30 @@ failure hold; an unusable reviewer has a separate rejection hold requiring an ex
 prospective proposal. Control protocol is 2.4, CLI JSON remains 2, and acceptance contract/result
 schemas are 1. Model, blueprint, event, and storage schemas are unchanged.
 
-Verification passes: the full workflow gate (717 workspace tests, 24 doctests, five manual tests
-ignored), all 24 repository contracts, dependency audits, test discovery, affected default/all
-feature API review, and both actual-binary operator/model lanes. The final model lane proves empty
-exhausted review rejection, zero dependent entries before accepted repair, one afterward, three
-restart boundaries, and exact release replay. Focused contracts cover structured-only/tool-only
-results, whitespace, malformed decisions, stale checkpoints, justified no-change, unavailable
-evidence, and publication failure. The host now records aliased inputs as one exact causal parent
-without removing their distinct input bindings. Logs, final source/binary hashes, and real-model
-limits are recorded in the [evidence guide](../../../development/verification-evidence.md#actual-binary-scenarios).
-The first real Bonsai alias passes its model smoke; the second remains a single uncertain attempt
-after the 180-second bound. Thinking settings are unknown. No new combined external qualification
-or controller activation is claimed; there is no implementation blocker to coordinator review.
+Assignment 02 makes the model adapter's private preparation path the owner of validation,
+materialization, and exact HTTP request construction. Entry consumes that retained request;
+the former late construction path is removed. The host keeps its exact generation permit while
+runtime rechecks authority and commits entry intent/account admission against the checked run head.
+Only a durably recorded pre-intent refusal proves no request. Complete-response reporting failure
+has a typed stage, while missing terminal evidence remains uncertain. Existing schemas, historical
+readers, result acceptance, and account reservation/settlement policy are unchanged. The
+[model adapter guide](../../../../adapters/model-provider/README.md#prepare-once-before-external-entry),
+[architecture](../../../architecture.md), and ADRs 0012/0019 own the lasting explanation.
+
+Verification passes: the full workflow gate (727 workspace tests, 24 doctests, five manual tests
+ignored), all 24 repository contracts, dependency audits, test discovery, affected default/all-feature
+API review, and both actual-binary operator/deterministic-model lanes. Nine new model tests cover
+zero-request refusal, exact prepared entry, authority revocation, duplicate delivery, transport loss,
+publication/report faults, and crash/reopen. The controller regression proves unchanged account
+state after preparation refusal. Logs, source/binary hashes, and real-model limits are recorded in
+the [evidence guide](../../verification-evidence.md#actual-binary-scenarios).
+The first Bonsai alias passes; the second reaches its 180-second limit and remains one uncertain
+attempt through two reopens. Thinking settings remain unknown. No new combined external qualification
+or controller activation is claimed. Coordinator review found no blocking implementation issues.
+
+Assignment 03 must preserve the preparation boundary and acceptance routing above. Model admission
+still reports unknown unit/cost bounds, so preparation does not make a controlled model reservation
+admissible. Any reservation, settlement, or controller activation change belongs to Assignment 03.
 
 Keep one short current handoff per active assignment here, only when needed. Record actual owner,
 base/result commit, accepted coverage, checks, and any remaining blocker; update rather than append

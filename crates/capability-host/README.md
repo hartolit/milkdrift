@@ -22,9 +22,10 @@ task requirement
   -> host: match current descriptors, evaluate authority, check health/capacity
   -> runtime: persist selection and frozen context, claim the invocation effect
   -> runtime: recheck the exact attempt/lease and current authority
-  -> host: acquire exact-generation permit and derive request resource bounds
+  -> host: acquire exact-generation permit, prepare local data, derive resource bounds
+  -> runtime: recheck authority after preparation
   -> runtime: commit entry decision and any controller reservation atomically
-  -> adapter: prepare inputs, enter external work, report observations
+  -> adapter: consume prepared entry, enter external work, report observations
   -> runtime reporter: durably accept observations and update run state
 ```
 
@@ -42,11 +43,20 @@ such as [local process](../../adapters/local-process/README.md). One instance re
 generation. Declare its filesystem, network, secret, and budget requirements before registration.
 `admission_envelope` describes enforceable bounds for the exact request; an unavailable bound stays
 unknown. It runs before durable entry, so it must not start the external operation.
+Override `prepare` when local task checks and request construction can happen before that boundary.
+Return an owned `PreparedAdapterExecution`; its closure receives the final execution context and
+controller reservation. The default freezes the envelope and defers execution to `execute`.
+Preparation may use bounded authorized local reads, but must never contact a provider, create a
+remote session, or start another external effect. The host contains preparation panics and releases
+the same generation permit when preparation or final admission fails.
 
 `execute` receives the selected request and durable provenance. Send incremental observations through
 `AdapterReporter`; a successful report has crossed the caller's durable boundary. Propagate reporter
 failures. Return `Rejected`/`Unavailable` only when external work was not entered; use
-`ExternalFailure` if the outcome cannot be proven after entry. Returning `Ok(())` without terminal
+`ExternalFailure` if the outcome cannot be proven after entry. `ResponseObservedFailure` records
+local publication/reporting loss after a complete provider response. Only pre-intent preparation
+refusals become deterministic rejected attempts. After intent, error classifications alone cannot
+erase uncertainty. Returning `Ok(())` without terminal
 evidence does not complete the workflow. Runtime preserves an already durable terminal report even
 if the worker later fails.
 

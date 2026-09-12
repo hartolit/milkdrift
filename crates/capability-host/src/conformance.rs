@@ -295,7 +295,12 @@ where
     case.adapter.start().map_err(adapter_failure)?;
     if reject_reports {
         let reporter = RejectingReporter;
-        let error = match case.adapter.execute(&case.invocation(), &reporter) {
+        let prepared = case
+            .adapter
+            .clone()
+            .prepare(&case.invocation())
+            .map_err(adapter_failure)?;
+        let error = match prepared.enter(&case.invocation(), &reporter) {
             Ok(()) => {
                 return Err(AdapterConformanceError::new(
                     "adapter ignored a durable reporter failure",
@@ -304,14 +309,19 @@ where
             Err(error) => error,
         };
         require(
-            error.kind() == AdapterFailureKind::ExternalFailure
-                && error.summary().contains("durable reporter rejection"),
-            "adapter obscured or reclassified a durable reporter failure",
+            matches!(
+                error.kind(),
+                AdapterFailureKind::ExternalFailure | AdapterFailureKind::ResponseObservedFailure
+            ) && error.summary().contains("durable reporter rejection"),
+            "adapter obscured a durable reporter failure or classified it as pre-entry",
         )?;
     } else {
         let reporter = RecordingReporter::default();
         case.adapter
-            .execute(&case.invocation(), &reporter)
+            .clone()
+            .prepare(&case.invocation())
+            .map_err(adapter_failure)?
+            .enter(&case.invocation(), &reporter)
             .map_err(adapter_failure)?;
         reporter.assert_complete(case.request.invocation())?;
     }

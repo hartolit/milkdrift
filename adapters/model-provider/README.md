@@ -53,6 +53,35 @@ retries, and recovered leases. Matching continuation still fails this adapter's 
 neither boundary replaces continuation with a fresh session. Standalone adapter callers supply
 their own governing-policy enforcement because this adapter has no workflow revision store.
 
+## Prepare once before external entry
+
+The host acquires the exact generation permit, then calls the adapter's local `prepare` hook.
+It verifies the task and frozen manifest, materializes bounded selected inputs, negotiates features,
+encodes the complete HTTP body, and resolves authentication headers. This step never contacts the
+provider. The returned one-shot handle retains those exact bytes and the profile's endpoint; entry
+does not reload inputs or build a second request. Authentication values remain ephemeral and headers
+are marked sensitive. No header or secret bytes enter stored proof or diagnostics.
+
+Runtime checks authority before those reads and again after preparation. Its final transaction
+binds the checked run head, entry intent, and any controller reservation. Revocation, a changed run,
+an expired lease, or a missing generation cannot turn preparation into permission to send. Dropping
+the handle releases its permit. Request equality binds all invocation inputs and the context reference,
+generation, execution coordinates, and frozen authority; only a fresh decision for the same authority
+request may replace the earlier entry decision.
+
+| Observed boundary | Result |
+| --- | --- |
+| Local preparation refuses before entry intent | Durable rejected attempt, no provider request or account reservation, no automatic retry. |
+| Entry intent exists; send or response completion is unproven | Uncertain until durable terminal evidence or authorized reconciliation resolves it. |
+| Complete parsed response and durable terminal | Preserve provider success/failure, usage, and output semantics; result acceptance remains separate. |
+| Complete response, followed by local artifact/publication failure | Failed terminal if reporting succeeds; `ResponseObservedFailure` otherwise preserves the stage while runtime retains uncertainty. |
+
+A crash can occur between durable intent and network transmission. Missing send flags cannot prove
+that nothing happened. Even a locally observed refusal cannot survive restart as negative proof if
+its terminal commit failed. Existing histories are replayed unchanged; no schema migration or event
+rewrite is needed. Controller envelope and settlement policy remain unchanged: unknown model usage
+bounds can still deny controlled admission.
+
 ## Observe a result or a lost response
 
 HTTP enforces request/response, header, SSE line/event, and reported-fragment bounds. The current
@@ -71,6 +100,7 @@ remote computation stopped; non-streaming reads remain bounded by the HTTP timeo
 truncated/malformed stream, or post-entry timeout retains uncertainty without publishing successful
 partial output. The descriptor advertises unsupported idempotency and unknown effects, so an HTTP
 retry hint alone does not authorize another model request.
+The HTTP client has automatic retries disabled; configured redirect policy remains independent.
 
 For implementation work, [`adapter.rs`](src/adapter.rs) owns negotiation, context consumption, and
 publication; [`http.rs`](src/http.rs) and [`stream.rs`](src/stream.rs) own transport/framing bounds.

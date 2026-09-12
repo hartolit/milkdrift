@@ -65,6 +65,14 @@ provider even when the response is lost, so a post-entry close, malformed/trunca
 timeout, or cancellation is retained as uncertain. Milkdrift neither automatically retries that
 work nor treats a successful response as proof that the provider had no external effects.
 
+Unsupported features, sessions, and encoded request bounds are checked by local preparation before
+durable entry intent. A successfully recorded refusal is a rejected attempt with no HTTP request;
+it does not enter automatic retry. Preparation retains the exact body and ephemeral headers while
+runtime rechecks authority before entry. A crash after intent, or failure to durably record the
+refusal itself, still requires conservative recovery. The
+[adapter's stage table](../../adapters/model-provider/README.md#prepare-once-before-external-entry)
+explains the resulting inspection and publication behavior.
+
 ## Run the maintained daemon/CLI lane
 
 The maintained workflow evaluates `model_response` through the built-in acceptance task before
@@ -141,6 +149,8 @@ an unsafe retry, explicit retain through `attempt resolve`, and restart visibili
 `report.json` records only identities, counts, boolean structural facts, safe endpoint origin, and
 the reason `qualifying` is false. Session state includes prompts and generated artifacts, so treat
 the complete output directory as sensitive scratch data.
+Both modes additionally exercise a controlled local request-bound refusal through actual binaries.
+The rejected attempt remains identical after restart and its loopback listener observes no connection.
 
 Expected success is structural: exactly one attempt and endpoint entry, exact profile/model/context
 provenance, selected and omitted evidence identities, ordered bounded fragments when streaming,

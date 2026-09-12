@@ -20,7 +20,7 @@ use milkdrift_capability::{
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, InvocationDataAccess,
-    MaterializationLimits, SecretResolver,
+    MaterializationLimits, PreparedAdapterExecution, SecretResolver,
 };
 use milkdrift_model::{
     ContentPart, ContextManifest, ContextManifestDocument, ContextSource, MAX_MODEL_OUTPUT_UNITS,
@@ -79,17 +79,10 @@ pub(crate) enum MaterializedContextPart {
     },
 }
 
-struct ModelExecution<'a> {
-    context: &'a milkdrift_capability_host::AdapterExecutionContext,
-    request: &'a InvocationRequest,
-    task: &'a ModelTaskRequest,
-    context_manifest: &'a str,
-    context_parts: &'a [MaterializedContextPart],
-    secret: Option<&'a [u8]>,
-    cancelled: &'a AtomicBool,
-    reporter: &'a dyn AdapterReporter,
-    started: Instant,
-    materialization: &'a RefCell<MaterializationLedger>,
+// Owns the exact encoded body and ephemeral authentication headers. Construction never sends.
+struct PreparedModelRequest {
+    http: reqwest::blocking::Request,
+    task: ModelTaskRequest,
 }
 
 struct MaterializationLedger {
@@ -215,11 +208,10 @@ impl ModelEndpointAdapter {
         })
     }
 
-    fn execute_inner(
+    fn prepare_request(
         &self,
         invocation: &AdapterInvocation<'_>,
-        reporter: &dyn AdapterReporter,
-    ) -> Result<(), AdapterError> {
+    ) -> Result<PreparedModelRequest, AdapterError> {
         let lifecycle = self.lifecycle.load(Ordering::SeqCst);
         if lifecycle != Lifecycle::Started as u8 && lifecycle != Lifecycle::Draining as u8 {
             return Err(AdapterError::unavailable(
@@ -275,75 +267,7 @@ impl ModelEndpointAdapter {
         )?;
         let task = self.load_task(context, request, limits, &mut materialization)?;
         self.negotiate(&task, &context_parts)?;
-        let cancelled = Arc::new(AtomicBool::new(false));
-        {
-            let mut active = self.active.lock().map_err(|_| {
-                AdapterError::unavailable("model cancellation state is unavailable")
-            })?;
-            if active.contains_key(request.invocation()) {
-                return Err(AdapterError::rejected("duplicate active model invocation"));
-            }
-            active.insert(request.invocation().clone(), cancelled.clone());
-        }
-        let _active_guard = ActiveInvocationGuard {
-            active: &self.active,
-            invocation: request.invocation().clone(),
-        };
         let materialization = RefCell::new(materialization);
-        let started = Instant::now();
-        match self.profile.auth() {
-            AuthMode::NoAuth => self.perform(ModelExecution {
-                context,
-                request,
-                task: &task,
-                context_manifest: manifest_text,
-                context_parts: &context_parts,
-                secret: None,
-                cancelled: &cancelled,
-                reporter,
-                started,
-                materialization: &materialization,
-            }),
-            AuthMode::Bearer { secret } | AuthMode::AnthropicApiKey { secret } => {
-                match self.secrets.resolve(secret) {
-                    Err(_) => Err(AdapterError::rejected(
-                        "model endpoint secret reference is unavailable",
-                    )),
-                    Ok(secret) if secret.is_empty() => {
-                        Err(AdapterError::rejected("model endpoint secret is empty"))
-                    }
-                    Ok(secret) => secret.expose(|bytes| {
-                        self.perform(ModelExecution {
-                            context,
-                            request,
-                            task: &task,
-                            context_manifest: manifest_text,
-                            context_parts: &context_parts,
-                            secret: Some(bytes),
-                            cancelled: &cancelled,
-                            reporter,
-                            started,
-                            materialization: &materialization,
-                        })
-                    }),
-                }
-            }
-        }
-    }
-
-    fn perform(&self, execution: ModelExecution<'_>) -> Result<(), AdapterError> {
-        let ModelExecution {
-            context,
-            request,
-            task,
-            context_manifest,
-            context_parts,
-            secret,
-            cancelled,
-            reporter,
-            started,
-            materialization,
-        } = execution;
         let load = |reference: &milkdrift_capability::ArtifactReference| {
             let bytes = self
                 .data
@@ -359,18 +283,18 @@ impl ModelEndpointAdapter {
         };
         let wire = match self.profile.protocol() {
             ProviderProtocol::OpenAiCompatible { .. } => openai_compatible::request(
-                task,
+                &task,
                 self.profile.model(),
-                context_manifest,
-                context_parts,
+                manifest_text,
+                &context_parts,
                 self.profile.provider_options(),
                 load,
             ),
             ProviderProtocol::Anthropic { .. } => anthropic::request(
-                task,
+                &task,
                 self.profile.model(),
-                context_manifest,
-                context_parts,
+                manifest_text,
+                &context_parts,
                 self.profile.provider_options(),
                 load,
             ),
@@ -389,8 +313,19 @@ impl ModelEndpointAdapter {
             .profile
             .endpoint_url()
             .map_err(|_| AdapterError::rejected("endpoint URL is invalid"))?;
-        let mut headers = http::headers(&self.profile, secret)
-            .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        let mut headers = match self.profile.auth() {
+            AuthMode::NoAuth => http::headers(&self.profile, None),
+            AuthMode::Bearer { secret } | AuthMode::AnthropicApiKey { secret } => {
+                let secret = self.secrets.resolve(secret).map_err(|_| {
+                    AdapterError::rejected("model endpoint secret reference is unavailable")
+                })?;
+                if secret.is_empty() {
+                    return Err(AdapterError::rejected("model endpoint secret is empty"));
+                }
+                secret.expose(|bytes| http::headers(&self.profile, Some(bytes)))
+            }
+        }
+        .map_err(|error| AdapterError::rejected(error.to_string()))?;
         if let ProviderProtocol::Anthropic { version, .. } = self.profile.protocol() {
             headers.insert(
                 HeaderName::from_static("anthropic-version"),
@@ -399,7 +334,50 @@ impl ModelEndpointAdapter {
                 })?,
             );
         }
-        let response = self.client.post(url).headers(headers).body(wire).send();
+        let http = self
+            .client
+            .post(url)
+            .headers(headers)
+            .body(wire)
+            .build()
+            .map_err(|_| AdapterError::rejected("model HTTP request construction failed"))?;
+        Ok(PreparedModelRequest { http, task })
+    }
+
+    fn execute_prepared(
+        &self,
+        invocation: &AdapterInvocation<'_>,
+        prepared: PreparedModelRequest,
+        reporter: &dyn AdapterReporter,
+    ) -> Result<(), AdapterError> {
+        let context = invocation.context().ok_or_else(|| {
+            AdapterError::rejected("model invocation requires durable execution context")
+        })?;
+        let request = invocation.request();
+        let task = prepared.task;
+        let lifecycle = self.lifecycle.load(Ordering::SeqCst);
+        if lifecycle != Lifecycle::Started as u8 && lifecycle != Lifecycle::Draining as u8 {
+            return Err(AdapterError::unavailable(
+                "model endpoint is stopped before send",
+            ));
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        {
+            let mut active = self.active.lock().map_err(|_| {
+                AdapterError::unavailable("model cancellation state is unavailable")
+            })?;
+            if active.contains_key(request.invocation()) {
+                return Err(AdapterError::rejected("duplicate active model invocation"));
+            }
+            active.insert(request.invocation().clone(), cancelled.clone());
+        }
+        let _active_guard = ActiveInvocationGuard {
+            active: &self.active,
+            invocation: request.invocation().clone(),
+        };
+        let started = Instant::now();
+        // No retry or reconstruction: this consumes the request frozen by preparation.
+        let response = self.client.execute(prepared.http);
         let response = match response {
             Ok(response) => response,
             Err(_) => {
@@ -442,7 +420,7 @@ impl ModelEndpointAdapter {
             match self.profile.protocol() {
                 ProviderProtocol::OpenAiCompatible { .. } => {
                     let mut state = openai_compatible::StreamState::new();
-                    let result = http::read_sse(&self.profile, response, cancelled, |data| {
+                    let result = http::read_sse(&self.profile, response, &cancelled, |data| {
                         state.event(data, |fragment| {
                             report_fragment(
                                 request,
@@ -457,7 +435,7 @@ impl ModelEndpointAdapter {
                 }
                 ProviderProtocol::Anthropic { .. } => {
                     let mut state = anthropic::StreamState::new();
-                    let result = http::read_sse(&self.profile, response, cancelled, |data| {
+                    let result = http::read_sse(&self.profile, response, &cancelled, |data| {
                         state.event(data, |fragment| {
                             report_fragment(
                                 request,
@@ -513,6 +491,7 @@ impl ModelEndpointAdapter {
             }
         };
         self.publish_response(context, request, reporter, response, sequence, started)
+            .map_err(|error| AdapterError::response_observed_failure(error.summary()))
     }
 
     fn load_context_parts(
@@ -904,6 +883,18 @@ impl ModelEndpointAdapter {
 }
 
 impl CapabilityAdapter for ModelEndpointAdapter {
+    fn prepare(
+        self: Arc<Self>,
+        invocation: &AdapterInvocation<'_>,
+    ) -> Result<PreparedAdapterExecution, AdapterError> {
+        let prepared = self.prepare_request(invocation)?;
+        let envelope = self.admission_envelope(invocation)?;
+        Ok(PreparedAdapterExecution::new(
+            envelope,
+            move |invocation, reporter| self.execute_prepared(invocation, prepared, reporter),
+        ))
+    }
+
     fn authority_requirements(&self) -> CapabilityExecutionRequirements {
         self.authority_requirements.clone()
     }
@@ -950,7 +941,8 @@ impl CapabilityAdapter for ModelEndpointAdapter {
         invocation: &AdapterInvocation<'_>,
         reporter: &dyn AdapterReporter,
     ) -> Result<(), AdapterError> {
-        self.execute_inner(invocation, reporter)
+        let prepared = self.prepare_request(invocation)?;
+        self.execute_prepared(invocation, prepared, reporter)
     }
     fn cancel(
         &self,

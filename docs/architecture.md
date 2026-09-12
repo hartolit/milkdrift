@@ -337,8 +337,8 @@ Persistence owns account declaration/state, reservations, optimistic revision di
 run binding. Its six ceilings are cost, input units, output units, artifact bytes, process entries,
 and model entries. Redb changes these only in existing journal/artifact transactions. Descendants inherit
 the exact account; nested policies in an already bound descendant are refused. Final entry
-revalidates authority, prepares the exact generation/permit and request-specific admission envelope,
-then atomically commits entry intent and account admission before adapter code. Frozen descriptor
+checks authority, prepares local request data under the exact generation permit, rechecks authority,
+then atomically commits entry intent and account admission before external work. Frozen descriptor
 category determines process/model entry counts.
 
 Unit, cost, and artifact obligations reserve before entry. Unknown bounds, currency mismatch,
@@ -381,6 +381,12 @@ Model adapters reject unadvertised roles, parts, tools, schemas, reasoning, stre
 oversized encoded requests before entry. Output/tool calls remain artifacts, not automatic tool
 execution. The two provider mappings preserve their own response/stream semantics and truthful
 usage, cancellation, idempotency, and side-effect limits.
+Local preparation owns the exact encoded request and ephemeral headers under the host's generation
+permit. Runtime rechecks authority afterward and commits against the run head checked before
+preparation. A durable local refusal precedes entry intent and creates no account reservation;
+an intent without terminal proof remains uncertain across restart. The
+[adapter guide](../adapters/model-provider/README.md#prepare-once-before-external-entry) explains
+the distinction between local refusal, possible submission, complete response, and reporting loss.
 
 Peers consume expiring authority-filtered catalogs. Exact remote identities/generations map to
 collision-resistant local capability identities with typed peer, locality, trust, and catalog

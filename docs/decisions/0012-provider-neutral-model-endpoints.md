@@ -29,7 +29,8 @@ rejected before HTTP.
 The HTTP implementation uses reqwest with rustls roots, disables decompression by feature choice,
 defaults to no ambient proxy and no redirects, rejects cross-origin redirects even when same-origin
 redirects are enabled, requires HTTPS remotely, and allows plaintext only on explicit loopback
-development profiles. Secrets exist only during header construction. Streaming fragments are
+development profiles. Resolved secret values are confined to header construction; sensitive headers
+remain in the ephemeral prepared request through transmission. Streaming fragments are
 bounded observations; canonical response/text/structured/tool-call/provider-metadata outputs are
 committed artifacts before success. Tool calls remain data.
 
@@ -62,6 +63,15 @@ effects, unsupported idempotency, and best-effort cancellation. A malformed/trun
 response failure after entry, response loss, timeout, or cancellation therefore reports retained
 uncertainty and never commits a partial response as success. A complete response settles the local
 attempt but does not retroactively claim the provider had no other effect.
+
+The host's local preparation hook now owns model validation, context materialization, and complete
+request construction before runtime commits external entry intent. Its one-shot closure consumes
+that exact request after a fresh authority check and the account transaction. A preparation refusal
+records an ordinary rejected terminal before intent, with no reservation or automatic retry. A
+complete response followed by failed local reporting has its own typed adapter/executor failure;
+without a durable terminal it still becomes uncertainty. No send-completion flag can make recovery
+erase an existing intent. These changes reuse current terminal/uncertainty events and alter no
+document, descriptor, request, event, or storage schema or historical reader behavior.
 
 Endpoint-profile schema 1 is unchanged: these facts are derived adapter operation semantics, not
 operator claims. Exact resolved snapshots already persisted before this correction retain their

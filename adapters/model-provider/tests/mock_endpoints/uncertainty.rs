@@ -205,7 +205,7 @@ fn connection_close_after_request_entry_is_a_bounded_external_failure() -> TestR
     Ok(())
 }
 
-fn ordinary_task(streaming: bool) -> TestResult<ModelTaskRequest> {
+pub(super) fn ordinary_task(streaming: bool) -> TestResult<ModelTaskRequest> {
     Ok(ModelTaskRequest::new(
         vec![Message::new(
             MessageRole::User,

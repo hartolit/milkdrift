@@ -619,6 +619,19 @@ impl RuntimeService {
         plan: CommandPlan,
     ) -> Result<CommandExecution, RuntimeError> {
         let projection = self.projection(run)?;
+        self.commit_internal_plan_from_projection(run, projection, occurred_at, transition, plan)
+    }
+
+    // Preparation may perform bounded reads while other commands advance the run. Final
+    // entry and local refusal must commit against the head whose ownership they checked.
+    pub(super) fn commit_internal_plan_from_projection(
+        &self,
+        run: &RunId,
+        projection: crate::projection::RunProjection,
+        occurred_at: TimestampMillis,
+        transition: SystemTransition,
+        plan: CommandPlan,
+    ) -> Result<CommandExecution, RuntimeError> {
         let reason = Reason::new(format!("internal runtime action: {}", transition.label()))?;
         let document = RunCommandDocument::new(
             self.next_command_id()?,

@@ -226,6 +226,15 @@ fn controller_process_ceiling_denies_n_plus_one_before_executor_entry() -> TestR
 #[test]
 fn cancellation_after_effect_claim_creates_no_controller_reservation_or_adapter_entry() -> TestResult
 {
+    no_entry_preserves_account(false)
+}
+
+#[test]
+fn preparation_refusal_creates_no_controller_reservation_or_adapter_entry() -> TestResult {
+    no_entry_preserves_account(true)
+}
+
+fn no_entry_preserves_account(preparation_refusal: bool) -> TestResult {
     let directory = TempDir::new()?;
     let store = Arc::new(RedbStore::open(
         directory.path().join("controller-cancel-after-claim.redb"),
@@ -323,17 +332,21 @@ fn cancellation_after_effect_claim_creates_no_controller_reservation_or_adapter_
         .controller_account(&account)?
         .ok_or("controller account is absent before cancellation")?;
 
-    let projection = runtime.projection(&child)?;
-    service.execute(&command(
-        "controller-cancel-after-claim-request",
-        &context,
-        OptimisticGuard {
-            expected_run_sequence: Some(projection.sequence()),
-            expected_revision: projection.revision().cloned(),
-            expected_proposal_digest: None,
-        },
-        ControlCommand::RequestCancellation { run: child.clone() },
-    )?)?;
+    if preparation_refusal {
+        adapter.1.store(true, Ordering::SeqCst);
+    } else {
+        let projection = runtime.projection(&child)?;
+        service.execute(&command(
+            "controller-cancel-after-claim-request",
+            &context,
+            OptimisticGuard {
+                expected_run_sequence: Some(projection.sequence()),
+                expected_revision: projection.revision().cloned(),
+                expected_proposal_digest: None,
+            },
+            ControlCommand::RequestCancellation { run: child.clone() },
+        )?)?;
+    }
     assert_eq!(
         runtime.execute_effect(action)?,
         milkdrift_runtime::EffectExecutionResult::Completed { observations: 0 }

@@ -25,12 +25,13 @@ capability requirement envelopes under the frozen basis. This semantic check doe
 currently healthy provider. At scheduling, the host constructs an exact request for each candidate
 from its immutable descriptor plus adapter-declared resource requirements. It evaluates authority
 before health and capacity, then the runtime durably records the chosen generation and decision.
-The exact candidate is evaluated again at effect claim and immediately before adapter code. These
-decisions and requests are durable attempt provenance.
+The exact candidate is evaluated again at effect claim, before bounded local preparation, and
+after preparation before external entry. Claim and final entry decisions and requests are durable
+attempt provenance; the preliminary preparation check does not grant permission to send.
 
 The run basis can be inherited or explicitly narrowed, never implicitly replaced or widened.
 Current revocation and grant policy affect future resolution and entry. A denial releases the
-lease and does not call adapter code. Authority changes after actual entry do not rewrite accepted
+lease and does not enter external work. Authority changes after actual entry do not rewrite accepted
 history or the capability's eventual terminal evidence.
 
 Process, model, workflow-control, and peer adapters use this same path. A peer relationship proves

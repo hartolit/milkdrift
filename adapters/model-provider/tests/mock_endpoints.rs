@@ -53,6 +53,8 @@ use milkdrift_workspace::{
 };
 use serde_json::{Value, json};
 
+#[path = "mock_endpoints/effect_stages.rs"]
+mod effect_stages;
 #[path = "mock_endpoints/runtime_session.rs"]
 mod runtime_session;
 

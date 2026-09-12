@@ -93,7 +93,7 @@ fn runtime_tick(runtime: &RuntimeService) -> Result<SchedulerTickResult, Runtime
 }
 
 #[derive(Default)]
-struct CountingProcessAdapter(AtomicU64);
+struct CountingProcessAdapter(AtomicU64, std::sync::atomic::AtomicBool);
 
 struct TerminalCancellationExecutor {
     resolver: DeterministicExecutor,
@@ -210,6 +210,9 @@ impl CapabilityAdapter for CountingProcessAdapter {
         &self,
         _invocation: &AdapterInvocation<'_>,
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        if self.1.load(Ordering::SeqCst) {
+            return Err(AdapterError::rejected("injected local preparation refusal"));
+        }
         Ok(InvocationAdmissionEnvelope::not_applicable())
     }
 

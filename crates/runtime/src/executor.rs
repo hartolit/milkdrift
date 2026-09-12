@@ -62,7 +62,7 @@ pub enum ExecutorError {
     /// A generation is unhealthy, stale, draining for resolution, or otherwise unavailable.
     #[error("capability unavailable: {0}")]
     Unavailable(String),
-    /// Admission was refused without entering adapter code.
+    /// This worker's admission was refused; another worker may own the same invocation.
     #[error("capability generation overloaded: {0}")]
     Overloaded(String),
     /// Host shutdown closed new admission before adapter entry.
@@ -74,6 +74,10 @@ pub enum ExecutorError {
     /// Adapter code was entered and returned without a terminal durable observation.
     #[error("executor outcome is unknown after adapter entry: {0}")]
     BoundaryAfterEntry(String),
+    /// A complete provider response was observed, but local publication or reporting failed.
+    /// Without a durable terminal observation this remains uncertain and cannot prove no effect.
+    #[error("executor local failure after complete provider response: {0}")]
+    BoundaryAfterResponse(String),
     /// Adapter code panicked; `after_entry` distinguishes uncertainty classification.
     #[error("adapter panicked (after_entry={after_entry})")]
     AdapterPanicked {
@@ -334,8 +338,8 @@ impl ExecutionDispatch {
         })
     }
 
-    /// Replaces the claim-time decision with the final durable decision made at the
-    /// last boundary before adapter code is called.
+    /// Replaces the entry decision with a fresh check of the same frozen authority request.
+    /// Runtime commits the final decision before consuming prepared external work.
     pub(crate) fn with_entry_authorization(
         &self,
         entry_authorization: AuthorityDecisionSnapshot,
@@ -532,7 +536,7 @@ type PreparedEntry<'a> = Box<
 /// One-shot exact-generation entry prepared before the durable final-entry commit.
 ///
 /// The executor captures the exact generation/permit and request-specific resource
-/// envelope without entering adapter code. Runtime commits final authority and account
+/// envelope through local-only preparation. Runtime rechecks authority and commits account
 /// admission, then consumes this handle. Dropping it before entry releases captured
 /// ownership. The in-memory one-shot closure complements the durable entry guard; it
 /// cannot by itself prevent another invocation after a process restart.
@@ -543,6 +547,15 @@ pub struct PreparedExecution<'a> {
 }
 
 impl<'a> PreparedExecution<'a> {
+    // Local preparation can take time. Only runtime may replace the entry decision after
+    // reevaluation; every request, generation, context, lease, and frozen authority fact stays bound.
+    fn matches_final_dispatch(&self, dispatch: &ExecutionDispatch) -> Result<bool, ExecutorError> {
+        let exact = self
+            .dispatch
+            .with_entry_authorization(dispatch.entry_authorization().clone())?;
+        Ok(dispatch == &exact)
+    }
+
     /// Constructs a prepared handle around one exact dispatch and one entry closure.
     pub fn new(
         dispatch: &ExecutionDispatch,
@@ -591,7 +604,7 @@ impl<'a> PreparedExecution<'a> {
         dispatch: &ExecutionDispatch,
         reporter: &dyn ExecutionReporter,
     ) -> Result<(), ExecutorError> {
-        if dispatch != &self.dispatch {
+        if !self.matches_final_dispatch(dispatch)? {
             return Err(ExecutorError::InvalidDispatch(
                 "final dispatch differs from the exact prepared entry".to_owned(),
             ));
@@ -609,7 +622,7 @@ impl<'a> PreparedExecution<'a> {
         reservation: Option<&ControllerReservationId>,
         reporter: &dyn ExecutionReporter,
     ) -> Result<(), ExecutorError> {
-        if dispatch != &self.dispatch {
+        if !self.matches_final_dispatch(dispatch)? {
             return Err(ExecutorError::InvalidDispatch(
                 "final dispatch differs from the exact prepared entry".to_owned(),
             ));
@@ -624,7 +637,7 @@ impl<'a> PreparedExecution<'a> {
 /// Connect runtime scheduling to an external capability host.
 ///
 /// Resolution chooses an immutable generation; preparation retains that exact generation
-/// without entering adapter code. Runtime then commits the final entry decision and
+/// without entering external work. Runtime then commits the final entry decision and
 /// consumes the prepared handle. Implementations report through [`ExecutionReporter`]
 /// and distinguish failure before entry from loss of an outcome after entry. They must
 /// not append run events, retry effects independently, or substitute a newer generation.
@@ -668,7 +681,7 @@ pub trait TaskExecutor: Send + Sync {
         ResolvedCapability::new_authorized(resolved.descriptor, resolved.snapshot, decision)
     }
 
-    /// Acquires one exact generation and envelope without entering external adapter code.
+    /// Acquires one exact generation, prepared request, and envelope without external work.
     fn prepare_exact_entry<'a>(
         &'a self,
         dispatch: &ExecutionDispatch,

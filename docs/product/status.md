@@ -33,6 +33,10 @@ This document owns current implementation, limitations, exact versions, and qual
   failures retain child/I/O ownership through termination and joining, including unwinding;
   reporting errors propagate without manufacturing terminal evidence. Model adapters implement
   OpenAI-compatible chat and native Anthropic mappings through bounded HTTP/SSE.
+  Model preparation freezes the exact encoded request before durable entry intent and rechecks
+  authority afterward. Proven local refusals end as rejected attempts without a provider request
+  or controller reservation. Complete-response reporting loss remains distinguishable from
+  preparation refusal while retaining conservative uncertainty when no terminal is durable.
 - Prompt sequences compile trusted-process coding, verification, review, and remediation stages
   into ordinary revisions on the same daemon/control path. Separate control-capability acceptance
   tasks check verifier checkpoint reports and usable reviews before branches permit continuation.
@@ -191,13 +195,17 @@ workflows. The deterministic actual-daemon/CLI scenario rejects an empty exhaust
 retaining its successful invocation, keeps the dependent endpoint unentered, and continues only
 after an authorized repair passes acceptance. Three restarts preserve the decisions and exact
 release replay. This proves mechanical requirements and routing, not semantic review quality.
-The current local LM Studio smoke with `prism-ml/bonsai-27b` passes at a declared 4,096-unit request
+The model-preparation implementation passes its actual-daemon/CLI zero-request refusal scenario:
+the rejected attempt has no entry intent or uncertainty, and restart leaves it unchanged. Fault
+tests preserve uncertainty after possible submission and reporting loss after a complete response;
+controller tests prove that preparation refusal creates no reservation or entry charge.
+The rebuilt local LM Studio smoke with `prism-ml/bonsai-27b` passes at a declared 4,096-unit request
 allowance. The separate `prism-ml/bonsai-27b:2` request produces no terminal within its 180-second
-bound; recovery retains one uncertain attempt with unknown finish reason and usage. Neither
+bound; two reopens retain one uncertain attempt with unknown finish reason and usage. Neither
 observation verifies server thinking settings or qualifies the combined external-agent boundary.
 The [evidence guide](../development/verification-evidence.md#actual-binary-scenarios) records the
 retained paths and the exact scope of these local observations.
-The acceptance implementation passes the local Windows/MSVC full gate: 717 workspace tests,
+The model-preparation implementation passes the local Windows/MSVC full gate: 727 workspace tests,
 24 doctests, all 24 repository contracts, formatting, checking, warning-denying Clippy/rustdoc,
 dependency audits, and test discovery. Five manual longevity tests remain ignored in this run.
 

@@ -449,7 +449,7 @@ impl NodeAttemptProjection {
         self.entry_authorization.as_ref()
     }
 
-    /// Final decision recorded directly before adapter code was entered or denied.
+    /// Final decision recorded before external entry was permitted or denied.
     #[must_use]
     pub const fn adapter_entry_authorization(&self) -> Option<&AuthorityDecisionSnapshot> {
         self.adapter_entry_authorization.as_ref()
