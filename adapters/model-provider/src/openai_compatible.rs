@@ -21,6 +21,7 @@ pub(crate) fn request(
     context_manifest: &str,
     context_parts: &[MaterializedContextPart],
     profile_options: &BTreeMap<ExtensionKey, BoundedJson>,
+    output_control: crate::OutputTokenControl,
     mut load: impl FnMut(&ArtifactReference) -> Result<Vec<u8>, HttpError>,
 ) -> Result<Value, HttpError> {
     let mut messages = task.messages().iter().map(|message| {
@@ -95,7 +96,7 @@ pub(crate) fn request(
         ("model".to_owned(), Value::String(model.to_owned())),
         ("messages".to_owned(), Value::Array(messages)),
         (
-            "max_tokens".to_owned(),
+            output_control.field().to_owned(),
             Value::from(task.maximum_output_units()),
         ),
         ("stream".to_owned(), Value::Bool(task.streaming())),
@@ -147,6 +148,7 @@ pub(crate) fn response(
     let choice = value
         .get("choices")
         .and_then(Value::as_array)
+        .filter(|values| values.len() == 1)
         .and_then(|values| values.first())
         .ok_or(HttpError::MalformedResponse)?;
     let message = choice
@@ -160,7 +162,7 @@ pub(crate) fn response(
         .to_owned();
     let tool_calls = parse_tool_calls(message.get("tool_calls"))?;
     let finish = finish(choice.get("finish_reason").and_then(Value::as_str));
-    let usage = parse_usage(value.get("usage"));
+    let usage = parse_usage(value.get("usage"))?;
     let structured = if structured_requested && !text.is_empty() {
         Some(
             BoundedJson::new(
@@ -174,8 +176,10 @@ pub(crate) fn response(
     let metadata = BTreeMap::from([(
         ExtensionKey::new("org.milkdrift.openai/response")
             .map_err(|_| HttpError::MalformedResponse)?,
-        BoundedJson::new(json!({"id":value.get("id"),"model":value.get("model")}))
-            .map_err(|_| HttpError::MalformedResponse)?,
+        BoundedJson::new(
+            json!({"id":value.get("id"),"model":value.get("model"),"usage":value.get("usage")}),
+        )
+        .map_err(|_| HttpError::MalformedResponse)?,
     )]);
     ModelResponse::new(text, structured, tool_calls, finish, usage, metadata)
         .map_err(|_| HttpError::MalformedResponse)
@@ -186,6 +190,7 @@ pub(crate) struct StreamState {
     tools: BTreeMap<u64, ToolAccumulator>,
     finish: FinishReason,
     usage: Usage,
+    raw_usage: Option<Value>,
     response_id: Option<Value>,
     response_model: Option<Value>,
     done: bool,
@@ -211,6 +216,7 @@ impl StreamState {
                 cost_micros: None,
                 currency: None,
             },
+            raw_usage: None,
             response_id: None,
             response_model: None,
             done: false,
@@ -233,8 +239,25 @@ impl StreamState {
         self.saw_payload = true;
         retain_consistent_metadata(&mut self.response_id, value.get("id"))?;
         retain_consistent_metadata(&mut self.response_model, value.get("model"))?;
-        if let Some(usage) = value.get("usage") {
-            self.usage = parse_usage(Some(usage));
+        if let Some(usage) = value.get("usage").filter(|usage| !usage.is_null()) {
+            let parsed = parse_usage(Some(usage))?;
+            // Usage is a final aggregate, not a replaceable delta. Even a partial earlier
+            // report may contain a charge or excessive output that cannot be erased later.
+            retain_consistent_metadata(&mut self.raw_usage, Some(usage))?;
+            self.usage = parsed;
+        }
+        if value
+            .get("choices")
+            .and_then(Value::as_array)
+            .is_some_and(|choices| {
+                choices.len() > 1
+                    || choices
+                        .first()
+                        .and_then(|choice| choice.get("index"))
+                        .is_some_and(|index| index.as_u64() != Some(0))
+            })
+        {
+            return Err(HttpError::MalformedResponse);
         }
         let Some(choice) = value
             .get("choices")
@@ -323,13 +346,17 @@ impl StreamState {
         } else {
             None
         };
-        let metadata = if self.response_id.is_some() || self.response_model.is_some() {
+        let metadata = if self.response_id.is_some()
+            || self.response_model.is_some()
+            || self.raw_usage.is_some()
+        {
             BTreeMap::from([(
                 ExtensionKey::new("org.milkdrift.openai/response")
                     .map_err(|_| HttpError::MalformedResponse)?,
                 BoundedJson::new(json!({
                     "id": self.response_id,
                     "model": self.response_model,
+                    "usage": self.raw_usage,
                 }))
                 .map_err(|_| HttpError::MalformedResponse)?,
             )])
@@ -402,8 +429,8 @@ fn parse_tool_calls(value: Option<&Value>) -> Result<Vec<ToolCall>, HttpError> {
         .unwrap_or(Ok(Vec::new()))
 }
 
-fn parse_usage(value: Option<&Value>) -> Usage {
-    Usage {
+fn parse_usage(value: Option<&Value>) -> Result<Usage, HttpError> {
+    let usage = Usage {
         input_units: value
             .and_then(|v| v.get("prompt_tokens"))
             .and_then(Value::as_u64),
@@ -414,9 +441,84 @@ fn parse_usage(value: Option<&Value>) -> Usage {
             .and_then(|v| v.get("prompt_tokens_details"))
             .and_then(|v| v.get("cached_tokens"))
             .and_then(Value::as_u64),
-        cost_micros: None,
-        currency: None,
+        cost_micros: value
+            .and_then(|v| v.get("cost_micros"))
+            .and_then(Value::as_u64),
+        currency: value
+            .and_then(|v| v.get("currency"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    };
+    if let Some(value) = value.filter(|value| !value.is_null()) {
+        if !value.is_object() {
+            return Err(HttpError::MalformedResponse);
+        }
+        for field in [
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "cost_micros",
+        ] {
+            if value
+                .get(field)
+                .is_some_and(|v| !v.is_null() && !v.is_u64())
+            {
+                return Err(HttpError::MalformedResponse);
+            }
+        }
+        if value
+            .get("currency")
+            .is_some_and(|v| !v.is_null() && !v.is_string())
+            || usage.cost_micros.is_some() != usage.currency.is_some()
+            || usage
+                .cached_input_units
+                .zip(usage.input_units)
+                .is_some_and(|(cached, input)| cached > input)
+        {
+            return Err(HttpError::MalformedResponse);
+        }
+        if let Some(total) = value.get("total_tokens").and_then(Value::as_u64)
+            && usage
+                .input_units
+                .zip(usage.output_units)
+                .is_some_and(|(input, output)| input.checked_add(output) != Some(total))
+        {
+            return Err(HttpError::MalformedResponse);
+        }
+        for (details, fields, maximum) in [
+            (
+                "prompt_tokens_details",
+                &["cached_tokens", "audio_tokens"][..],
+                usage.input_units,
+            ),
+            (
+                "completion_tokens_details",
+                &[
+                    "reasoning_tokens",
+                    "audio_tokens",
+                    "accepted_prediction_tokens",
+                    "rejected_prediction_tokens",
+                ][..],
+                usage.output_units,
+            ),
+        ] {
+            let Some(details) = value.get(details).filter(|v| !v.is_null()) else {
+                continue;
+            };
+            if !details.is_object() {
+                return Err(HttpError::MalformedResponse);
+            }
+            for field in fields {
+                if let Some(v) = details.get(*field).filter(|v| !v.is_null()) {
+                    let n = v.as_u64().ok_or(HttpError::MalformedResponse)?;
+                    if maximum.is_some_and(|max| n > max) || (*field == "audio_tokens" && n > 0) {
+                        return Err(HttpError::MalformedResponse);
+                    }
+                }
+            }
+        }
     }
+    Ok(usage)
 }
 fn finish(value: Option<&str>) -> FinishReason {
     match value {
@@ -504,7 +606,8 @@ mod tests {
         assert_eq!(response.usage().input_units, Some(19));
         assert_eq!(response.usage().output_units, Some(4));
         let key = ExtensionKey::new("org.milkdrift.openai/response")?;
-        let expected = json!({"id":"fixture-response","model":"fixture-model"});
+        let expected = json!({"id":"fixture-response","model":"fixture-model",
+            "usage":{"prompt_tokens":19,"completion_tokens":4}});
         assert_eq!(
             response
                 .provider_metadata()

@@ -257,6 +257,7 @@ fn final_entry_integrity_distinguishes_denied_uncontrolled_and_reserved_links() 
         let attempt = AttemptId::new("attempt-reserved-link")?;
         let reservation = ControllerReservationId::for_attempt(origin.account(), &attempt)?;
         let reservation_envelope = InvocationAdmissionEnvelope::new(
+            milkdrift_capability::AdmissionUnit::ModelTokens,
             AdmissionBound::Bounded(8),
             AdmissionBound::NotApplicable,
             AdmissionBound::NotApplicable,

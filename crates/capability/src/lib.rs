@@ -29,7 +29,9 @@ mod identity;
 mod invocation;
 mod resolved;
 
-pub use admission::{AdmissionBound, AdmissionMonetaryBound, InvocationAdmissionEnvelope};
+pub use admission::{
+    AdmissionBound, AdmissionMonetaryBound, AdmissionUnit, InvocationAdmissionEnvelope,
+};
 pub use bounded::{BoundedJson, ContractError, MAX_DOCUMENT_BYTES};
 pub use descriptor::{
     AdmissionConstraints, CancellationBehavior, CapabilityCategory, CapabilityDescriptor,

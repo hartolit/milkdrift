@@ -40,9 +40,11 @@ task. Use the repository as the handoff; do not rely on another agent's chat his
 | 08 | [Integrated operational acceptance](08-integrated-operational-acceptance.md) | Combined behavior, measured query costs, and current evidence support a precise operating decision. |
 
 Assignment 01 is committed as `bf8cbd5`; Assignment 02 is accepted at `741b230`. Assignment 03
-has completed local implementation, review corrections, and verification. Its
+has completed corrective 03A model-budget implementation and integration review, including fixes
+for streamed usage evidence, nullable details and billed-call monetary permission. It has demonstrated two zero-spend local
+model calls, accepted repair, and refusal of a third model request before transmission. Its
 [handoff](03-handoff.md) owns the finite activation decision and evidence. Production activation
-remains blocked by the missing bounded real external controller loop. Assignments 04–08 have
+remains blocked pending coordinator acceptance of the corrective qualification. Assignments 04–08 have
 not started; advancing requires coordinator acceptance.
 
 The canonical acceptance owner is `crates/control/src/acceptance.rs`, exposed through the existing
@@ -61,7 +63,8 @@ behavior, and schema-2 stage associations remain readable. Both initial and reme
 gate verification and review. The existing remediation builder targets the original verification
 failure hold; an unusable reviewer has a separate rejection hold requiring an explicitly authored
 prospective proposal. Assignment 03 advances control protocol to 2.5; CLI JSON remains 2, and acceptance contract/result
-schemas are 1. Model, blueprint, event, and storage schemas are unchanged.
+schemas are 1. The corrective work advances endpoint/controller policy to schema 2 and redb internal
+document format to 16; [ADR 0033](../../../decisions/0033-explicit-controller-qualification.md) owns compatibility.
 
 Assignment 02 makes the model adapter's private preparation path the owner of validation,
 materialization, and exact HTTP request construction. Entry consumes that retained request;
@@ -84,9 +87,11 @@ The first Bonsai alias passes; the second reaches its 180-second limit and remai
 attempt through two reopens. Thinking settings remain unknown. No new combined external qualification
 or controller activation is claimed. Coordinator review found no blocking implementation issues.
 
-Assignment 03 preserves the preparation boundary and acceptance routing above. Model admission
-still reports unknown unit/cost bounds, so preparation does not make a controlled model reservation
-admissible. Any reservation, settlement, or controller activation change belongs to Assignment 03.
+Assignment 03 preserves the preparation boundary and acceptance routing above. Supported explicit
+text counting and billing contracts now produce request-specific reservations and settle from
+frozen usage facts. Unknown profiles remain refused. The existing installed scenario connects model
+review to prospective repair, separate approval, acceptance, cumulative stopping and restart; its
+[handoff](03-handoff.md) distinguishes implementation, demonstrated operation and coordinator acceptance.
 
 Keep one short current handoff per active assignment here, only when needed. Record actual owner,
 base/result commit, accepted coverage, checks, and any remaining blocker; update rather than append

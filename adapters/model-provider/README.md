@@ -43,9 +43,73 @@ then reject features they cannot encode rather than silently dropping them.
 | Generic files or managed sessions | Refused | Refused |
 
 These are Milkdrift mapping choices, not claims about every endpoint implementing either API.
-Both send the requested output allowance as `max_tokens`; the model contract's upper limit does not
-prove that a particular server accepts that allowance. Provider options use the mapping's explicit
+Anthropic and unqualified OpenAI-compatible profiles send `max_tokens`. A qualified text profile
+explicitly selects `max_tokens` or `max_completion_tokens`; its server contract must cover all
+generated tokens, including reasoning. Provider options use the mapping's explicit
 extension namespace and cannot overwrite already emitted request fields.
+
+## Reserve and settle supported model usage
+
+Endpoint schema 2 requires explicit `billing` and `token_limits`. `unknown` preserves ordinary
+execution but cannot satisfy a controlled request's applicable unknown allowance. No reader
+turns a loopback URL, missing field, or old profile into free service. An operator's `unbilled`
+declaration makes provider charge non-applicable; tokens, artifacts and call counts still apply.
+
+The `byte_bpe` contract supports fresh system/user/developer text on OpenAI-compatible chat.
+After context injection, preparation counts the entire encoded UTF-8 body plus bounded template
+overhead. Byte BPE can only merge its initial byte tokens. The operator must establish that
+normalization does not expand input, the exact template stays within its declared overhead,
+the server reports logical prompt tokens once, and it caps one complete generation even if disconnected.
+The configured input ceiling is a local refusal threshold, not proof from a context-window size.
+Tools, images, assistant history, extra choices, reasoning controls, structured output and other
+provider extensions are refused for this accounting path. Other ordinary mappings keep their
+existing feature rules.
+
+Prepared envelopes explicitly name `model_tokens`. The shared account refuses unspecified units
+instead of adding bytes or other provider quantities to tokens. Input means the complete submitted
+prompt after templating; output includes every generated token, including reasoning. Re-evaluating
+a cache during context shifting is computation, not another submitted prompt. This allowance does
+not measure GPU work. A billed contract is unsupported if that work adds charges outside its tariff.
+
+`text_tariff` declares exact currency and rates in currency millionths per million input, cached
+input and output tokens. These must cover every charge. Reservation uses the larger input rate,
+checked arithmetic and rounds the total upward to a currency millionth. Settlement uses observed
+token categories and the same frozen tariff. Different cached rates require cached-token evidence.
+Missing applicable usage, overflow, contradictory totals or charge evidence remain unresolved.
+Nullable usage details remain unknown. Both response modes retain the raw usage breakdown;
+streamed usage is a final aggregate, so a later packet cannot replace an earlier non-null report.
+An unbilled response reporting a nonzero charge is uncertain, not silently free.
+Conflicts retain the raw provider amount and mark the accounting basis `unresolved`; they never
+label that amount as a calculated charge or release the reservation.
+
+For a billed profile, the adapter also declares the maximum permitted call's charge to the
+ordinary authority evaluator, rounding upward to its existing hundredth-currency permission unit.
+A grant below that profile-wide ceiling cannot select the generation, even for a smaller request.
+The cumulative account still reserves the exact prepared request in millionths; permission does
+not reserve or spend allowance. Unbilled calls need no monetary permission amount.
+
+For example, a fixture tariff of EUR 1 per million input tokens, EUR 0.50 per million cached input
+tokens and EUR 2 per million output tokens is encoded as follows. These are illustrative rates;
+an operator must replace them and the source with the approved service's complete tariff.
+
+```json
+{
+  "type": "text_tariff",
+  "currency": "EUR",
+  "input_micros_per_million": 1000000,
+  "cached_input_micros_per_million": 500000,
+  "output_micros_per_million": 2000000,
+  "source": "Illustrative text-only fixture tariff v1; no additional billable categories"
+}
+```
+
+The frozen descriptor records the profile generation and contracts. The `model_response` artifact
+keeps raw provider usage separately from `org.milkdrift/model-accounting`, which records the
+prepared request digest, envelope, accounting basis and calculated charge. Terminal account usage
+uses that basis. A tariff calculation is never presented as a provider invoice. A failed report or
+lost response retains the existing reservation and uncertainty behavior; timeout and byte cutoff
+do not establish that remote generation stopped. See the
+[local setup guide](../../docs/guides/local-model-endpoint.md#controlled-local-text-requests).
 
 Only `ModelTaskRequest::session() == Fresh` is accepted. Runtime first compares the request with the
 governing blueprint declaration when claiming the invocation, including inline/artifact requests,
@@ -78,9 +142,9 @@ request may replace the earlier entry decision.
 
 A crash can occur between durable intent and network transmission. Missing send flags cannot prove
 that nothing happened. Even a locally observed refusal cannot survive restart as negative proof if
-its terminal commit failed. Existing histories are replayed unchanged; no schema migration or event
-rewrite is needed. Controller envelope and settlement policy remain unchanged: unknown model usage
-bounds can still deny controlled admission.
+its terminal commit failed. These effect stages preserve historical events. Controlled admission
+also requires the supported accounting contract described above; unknown model usage bounds still
+deny entry.
 
 ## Observe a result or a lost response
 

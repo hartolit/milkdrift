@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "identity": "external-evidence-openai-compatible",
   "revision": 1,
   "protocol": {
@@ -40,5 +40,11 @@
   "trust_zones": [
     "operator-configured-hosted-model"
   ],
-  "provider_options": {}
+  "provider_options": {},
+  "billing": {
+    "type": "unknown"
+  },
+  "token_limits": {
+    "type": "unknown"
+  }
 }

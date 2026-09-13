@@ -28,6 +28,10 @@ pub(super) struct MockModel {
 
 impl MockModel {
     pub(super) fn start() -> EvidenceResult<Self> {
+        Self::with_text("ack".to_owned())
+    }
+
+    pub(super) fn with_text(text: String) -> EvidenceResult<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let address = listener.local_addr()?;
         listener.set_nonblocking(true)?;
@@ -47,10 +51,10 @@ impl MockModel {
                 };
                 read_request(&mut stream)?;
                 entered.fetch_add(1, Ordering::SeqCst);
-                let body = concat!(
-                    "data: {\"id\":\"operator-response-1\",\"model\":\"operator-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ack\"},\"finish_reason\":null}]}\n\n",
-                    "data: {\"id\":\"operator-response-1\",\"model\":\"operator-model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":1,\"total_tokens\":6}}\n\n",
-                    "data: [DONE]\n\n"
+                let body = format!(
+                    "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+                    json!({"id":"operator-response-1","model":"operator-model","choices":[{"index":0,"delta":{"role":"assistant","content":text},"finish_reason":null}]}),
+                    json!({"id":"operator-response-1","model":"operator-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}})
                 );
                 write!(
                     stream,

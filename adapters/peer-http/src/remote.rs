@@ -749,6 +749,7 @@ enum Lifecycle {
 // resource reservation for work running on another host.
 fn remote_admission_envelope() -> InvocationAdmissionEnvelope {
     InvocationAdmissionEnvelope::new(
+        milkdrift_capability::AdmissionUnit::Unknown,
         AdmissionBound::Unknown,
         AdmissionBound::Unknown,
         AdmissionBound::Unknown,

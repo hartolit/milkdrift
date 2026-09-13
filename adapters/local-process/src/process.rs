@@ -584,6 +584,7 @@ impl CapabilityAdapter for LocalProcessAdapter {
         _invocation: &AdapterInvocation<'_>,
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
         Ok(InvocationAdmissionEnvelope::new(
+            milkdrift_capability::AdmissionUnit::Unknown,
             AdmissionBound::NotApplicable,
             AdmissionBound::NotApplicable,
             AdmissionBound::Bounded(self.profile.limits.max_total_output_bytes),

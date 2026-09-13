@@ -17,6 +17,7 @@ fn wrapper(store: &RedbStore) -> TestResult<BlueprintRevision> {
     )?;
     store.put_revision(&body)?;
     Ok(build_controller_blueprint(ControllerBlueprintSpec {
+        cost_currency: Some(milkdrift_blueprint::CostCurrencyCode::new("USD")?),
         workflow: WorkflowId::new("activation-wrapper")?,
         body: PinnedSubworkflow::new(
             body.semantic().workflow().clone(),

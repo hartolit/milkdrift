@@ -31,9 +31,10 @@ fn installed_runtime_assesses_and_stops_a_controller_at_exact_cycle_bound() -> T
     )?;
     store.put_revision(&body)?;
     let limits = ControllerLimits::new(
-        2, 2, 8, 4, 60_000, 1_000_000, 10_000, 10_000, 1_000_000, 2, 2, 2, 2, 2, 2, None,
+        2, 2, 8, 4, 60_000, 0, 10_000, 10_000, 1_000_000, 2, 2, 2, 2, 2, 2, None,
     )?;
     let wrapper = build_controller_blueprint(ControllerBlueprintSpec {
+        cost_currency: None,
         workflow: WorkflowId::new("controller-wrapper")?,
         body: PinnedSubworkflow::new(
             body.semantic().workflow().clone(),
@@ -121,6 +122,7 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
     let body = base_revision("controller-progress-body")?;
     store.put_revision(&body)?;
     let wrapper = build_controller_blueprint(ControllerBlueprintSpec {
+        cost_currency: Some(milkdrift_blueprint::CostCurrencyCode::new("USD")?),
         workflow: WorkflowId::new("controller-progress-wrapper")?,
         body: PinnedSubworkflow::new(
             body.semantic().workflow().clone(),
@@ -174,7 +176,12 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
         document.digest().as_str(),
         ControllerResourceBudget::new(
             limits.max_cost_micros(),
-            CurrencyCode::new(document.policy().cost_currency().as_str())?,
+            document
+                .policy()
+                .cost_currency()
+                .as_ref()
+                .map(|currency| CurrencyCode::new(currency.as_str()))
+                .transpose()?,
             limits.max_input_units(),
             limits.max_output_units(),
             limits.max_artifact_bytes(),
@@ -191,6 +198,7 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
             attempt,
             CapabilityCategory::Process,
             &InvocationAdmissionEnvelope::new(
+                milkdrift_capability::AdmissionUnit::ModelTokens,
                 AdmissionBound::Bounded(11),
                 AdmissionBound::Bounded(13),
                 AdmissionBound::Bounded(17),
@@ -266,6 +274,7 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
             attempt,
             CapabilityCategory::Model,
             &InvocationAdmissionEnvelope::new(
+                milkdrift_capability::AdmissionUnit::ModelTokens,
                 AdmissionBound::NotApplicable,
                 output_bound,
                 AdmissionBound::NotApplicable,
@@ -333,6 +342,7 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
         contract_attempt,
         CapabilityCategory::Process,
         &InvocationAdmissionEnvelope::new(
+            milkdrift_capability::AdmissionUnit::ModelTokens,
             AdmissionBound::Bounded(5),
             AdmissionBound::NotApplicable,
             AdmissionBound::NotApplicable,
@@ -374,6 +384,7 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
         integrity_attempt,
         CapabilityCategory::Model,
         &InvocationAdmissionEnvelope::new(
+            milkdrift_capability::AdmissionUnit::ModelTokens,
             AdmissionBound::NotApplicable,
             AdmissionBound::NotApplicable,
             AdmissionBound::NotApplicable,

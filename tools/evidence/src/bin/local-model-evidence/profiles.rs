@@ -83,7 +83,7 @@ pub(super) fn write_model_profile(
     model: &str,
 ) -> EvidenceResult<PathBuf> {
     let value = json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "identity": identity,
         "revision": 1,
         "protocol": {"type":"open_ai_compatible","path":"v1/chat/completions"},
@@ -110,7 +110,9 @@ pub(super) fn write_model_profile(
         "local_development": true,
         "allowed_hosts": ["127.0.0.1"],
         "trust_zones": ["local-model-evidence"],
-        "provider_options": {}
+        "billing": {"type":"unknown"},
+            "token_limits": {"type":"unknown"},
+            "provider_options": {}
     });
     let bytes = serde_json::to_vec(&value)?;
     EndpointProfile::from_json(&bytes)?;

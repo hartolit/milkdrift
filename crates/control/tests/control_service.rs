@@ -154,6 +154,7 @@ impl TaskExecutor for TerminalCancellationExecutor {
         Ok(PreparedExecution::new(
             dispatch,
             InvocationAdmissionEnvelope::new(
+                milkdrift_capability::AdmissionUnit::ModelTokens,
                 AdmissionBound::Bounded(4),
                 AdmissionBound::NotApplicable,
                 AdmissionBound::NotApplicable,

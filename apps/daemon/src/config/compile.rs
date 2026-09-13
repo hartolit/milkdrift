@@ -75,7 +75,7 @@ impl DaemonConfig {
             }
             super::ControllerActivation::Enabled => {
                 return Err(ConfigError::Invalid(
-                    "production controller activation is unqualified: a current bounded real external controller loop is required; model input/output/cost admission bounds remain unknown".to_owned(),
+                    "production controller activation is unqualified: coordinator acceptance of the bounded real external controller loop and current verification is required".to_owned(),
                 ));
             }
         }

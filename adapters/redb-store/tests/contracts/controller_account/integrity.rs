@@ -51,6 +51,7 @@ fn integrity_rejects_a_checksum_correct_account_totals_rewrite() -> TestResult {
         let attempt = AttemptId::new("attempt-controller-account-rollback")?;
         let reservation = ControllerReservationId::for_attempt(declaration.account(), &attempt)?;
         let envelope = InvocationAdmissionEnvelope::new(
+            milkdrift_capability::AdmissionUnit::ModelTokens,
             AdmissionBound::Bounded(9),
             AdmissionBound::Bounded(7),
             AdmissionBound::NotApplicable,
@@ -106,6 +107,7 @@ fn integrity_rejects_a_checksum_correct_account_totals_rewrite() -> TestResult {
         attempt,
         CapabilityCategory::Tool,
         &InvocationAdmissionEnvelope::new(
+            milkdrift_capability::AdmissionUnit::ModelTokens,
             AdmissionBound::Bounded(1),
             AdmissionBound::Bounded(1),
             AdmissionBound::NotApplicable,

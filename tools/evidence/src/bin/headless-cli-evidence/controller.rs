@@ -23,6 +23,8 @@ use serde_json::{Value, json};
 
 #[path = "controller/refusals.rs"]
 mod refusals;
+#[path = "controller/review.rs"]
+mod review;
 #[path = "controller/workflow.rs"]
 mod workflow;
 
@@ -63,6 +65,8 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         if name == "verify" {
             let mut profile: Value = serde_json::from_slice(&fs::read(&path)?)?;
             profile["profile"]["inputs"] = json!([{"input":"work","relative_path":"work.txt"}]);
+            profile["profile"]["stdout"]["artifact_name"] = Value::Null;
+            profile["profile"]["outputs"] = json!([{"name":"stdout","relative_path":"verification.json","media_type":"application/json","required":true}]);
             fs::write(&path, serde_json::to_vec(&profile)?)?;
         }
         if name == "race" || name == "crash" {
@@ -96,6 +100,8 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
     )?;
     let mut config: DaemonConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
     let models = refusals::Models::configure(arguments, &directory, &mut config)?;
+    let review = review::Review::configure(arguments, &directory, &mut config)?;
+    let real_agent = review::configure_agent(arguments, &directory, &mut config)?;
     config.runtime.effect_threads = 4;
     config.application_receipts.hot_receipt_bound = 8;
     config.application_receipts.archive_batch_size = 4;
@@ -123,7 +129,8 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         token_file: human_token,
         forbidden_storage_path: directory.join("data"),
     };
-    let body = workflow::body().map_err(|error| format!("controller body: {error:?}"))?;
+    let body = workflow::body(&review, real_agent)
+        .map_err(|error| format!("controller body: {error:?}"))?;
     let root = workflow::root(&body).map_err(|error| format!("controller wrapper: {error:?}"))?;
 
     // Disabled production composition is exercised before any qualification installation.
@@ -135,7 +142,7 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         &runner,
         &directory,
         "base-wrapper",
-        &workflow::wrapper(&body, "controller-evidence", 4)?,
+        &workflow::wrapper(&body, "controller-evidence", 8, 2)?,
     )?;
     import(&runner, &directory, "root", &root)?;
     let started = runner.run(
@@ -195,7 +202,13 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         root.id().as_str(),
     ])?;
     let child = wait_for_child(&runner, body.semantic().workflow().as_str())?;
-    let rejected = wait_node(&runner, &child, "repair-release")?;
+    let rejected = wait_for_run(&runner, &child, Duration::from_secs(540), |read| {
+        node(read, "repair-release").is_some() || !read["value"]["terminal"].is_null()
+    })?;
+    fs::write(
+        directory.join("initial-review-boundary.json"),
+        serde_json::to_vec_pretty(&rejected)?,
+    )?;
     let original_account = rejected["value"]["controller_accounting"].clone();
     ensure(
         original_account["state"] == "active"
@@ -212,6 +225,7 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         serde_json::to_vec_pretty(&rejection)?,
     )?;
     let source = inspect_node(&runner, &child, &rejected, "verify")?;
+    let reviewed = review.inspect(&runner, &directory, &child, &rejected, "review")?;
     let authority = &source["value"]["execution_authority"];
     let claim = milkdrift_runtime::CommandAuthorityClaim::new(
         milkdrift_authority::GrantId::new(required_text(authority, &["grant_id"])?)?,
@@ -226,11 +240,12 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         &body,
         required_u64(&rejected, &["value", "sequence"])?,
         vec![Mutation::ReplaceNode {
-            node: workflow::process("repair", "controller-repair", true, false)?,
+            node: workflow::work("repair", "controller-repair", true, real_agent, true)?,
         }],
         artifact_references(&source)?
             .into_iter()
             .chain(artifact_references(&rejection)?)
+            .chain(artifact_references(&reviewed)?)
             .collect(),
     )?;
     let control = ControlCommandDocument::new(
@@ -387,14 +402,59 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
             && released["value"]["command_id"] == replayed["value"]["command_id"],
         "lost signal reply did not recover by exact replay",
     )?;
-    let child_done = wait_for_run(&runner, &child, Duration::from_secs(20), |run| {
-        run["value"]["terminal"] == "succeeded"
+    let child_done = wait_for_run(&runner, &child, Duration::from_secs(540), |run| {
+        !run["value"]["terminal"].is_null()
+            || node(run, "failed-again").is_some()
+            || node(run, "model-budget-release").is_some()
     })?;
+    fs::write(
+        directory.join("final-review-boundary.json"),
+        serde_json::to_vec_pretty(&child_done)?,
+    )?;
+    ensure(
+        node(&child_done, "model-budget-release").is_some(),
+        "repair did not pass independent verification, acceptance and final review",
+    )?;
+    let _final_review = review.inspect(&runner, &directory, &child, &child_done, "final-review")?;
+    review.verify_count()?;
     let accepted = inspect_node(&runner, &child, &child_done, "second-acceptance")?;
     ensure(
         accepted["value"]["result_acceptance"]["accepted"] == true,
         "remediation did not pass independent acceptance",
     )?;
+    let completed_account = child_done["value"]["controller_accounting"].clone();
+    daemon.terminate()?;
+    daemon = start_daemon(&arguments.daemon, &config_path)?;
+    wait_for_readiness(&runner, &mut daemon)?;
+    let completed_reopen = runner.success(&["run", "show", &child])?;
+    ensure(
+        completed_reopen["value"]["controller_accounting"] == completed_account,
+        "restart after completed reviews changed accounting",
+    )?;
+    signal(
+        &approver,
+        &child,
+        "model-budget-release",
+        "exhaust-model-budget",
+        required_u64(&completed_reopen, &["value", "sequence"])?,
+    )?;
+    let refused_run = wait_for_run(&runner, &child, Duration::from_secs(30), |run| {
+        !run["value"]["terminal"].is_null()
+    })?;
+    let refused = inspect_node(&runner, &child, &refused_run, "excess-review")?;
+    ensure(
+        refused["value"]["uncertain"] == false
+            && refused["value"]["terminal_detail"]
+                .as_str()
+                .is_some_and(|detail| detail.contains("model_admissions"))
+            && refused_run["value"]["controller_accounting"]["committed"]["model_admissions"] == 2,
+        "excess model request was not refused at account admission",
+    )?;
+    fs::write(
+        directory.join("excess-model-refusal.json"),
+        serde_json::to_vec_pretty(&refused)?,
+    )?;
+    review.verify_count()?;
     let stopped = wait_for_run(&runner, ROOT, Duration::from_secs(20), |run| {
         node(run, "controller-repeat").is_some_and(|node| node["state"] == "terminal(_failed)")
     })?;
@@ -404,8 +464,8 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
     )?;
     let status = runner.success(&["controller", "status", ROOT, &execution])?;
     ensure(
-        status["value"]["value"]["reached_bound"] == "process_invocations",
-        "second cycle did not stop at cumulative process ceiling",
+        status["value"]["value"]["cycle_eligible"] == false,
+        "controller remained eligible after a refused model request",
     )?;
     ensure(
         children(&runner, body.semantic().workflow().as_str())?.len() == 1,
@@ -414,7 +474,9 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
     let accounting = &stopped["value"]["controller_accounting"];
     ensure(
         accounting["committed"]["process_admissions"] == 4
-            && accounting["remaining"]["process_admissions"] == 0
+            && accounting["committed"]["model_admissions"] == 2
+            && accounting["remaining"]["model_admissions"] == 0
+            && accounting["committed"]["cost_micros"] == 0
             && accounting["account"]["reservations"]
                 .as_object()
                 .is_some_and(|values| values.is_empty()),
@@ -503,9 +565,12 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         runner.success(&["run", "show", ROOT])?["value"]["controller_accounting"] == *accounting,
         "cold replay changed the cumulative account",
     )?;
-    let report = json!({"production_activation":"blocked", "reason":"bounded real external controller loop remains unqualified",
+    let report = json!({"production_activation":"pending_coordinator_acceptance", "reason":"qualification does not change a running installation or accept production activation",
+        "real_coding_agent":real_agent,"real_model_review":arguments.controller_review_profile.is_some(),
+        "model_profile":review.profile, "identities":review::identities(arguments, &directory)?,
         "installed_qualification_loop":"passed", "initial_account":original_account, "final_account":accounting,
-        "accepted":accepted, "status":status, "receipt_health":health, "external_model_settings":"unknown"});
+        "accepted":accepted, "status":status, "receipt_health":health, "external_model_settings":review.settings,
+        "refused_model_request":refused});
     models.exercise(arguments, &runner, &directory)?;
     refusals::race(&runner, &directory)?;
     daemon.terminate()?;

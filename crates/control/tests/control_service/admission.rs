@@ -14,6 +14,7 @@ fn controller_model_usage_is_descriptor_classified_and_unknown_units_fail_closed
     let body = base_revision("controller-usage-body")?;
     store.put_revision(&body)?;
     let wrapper = build_controller_blueprint(ControllerBlueprintSpec {
+        cost_currency: Some(milkdrift_blueprint::CostCurrencyCode::new("USD")?),
         workflow: WorkflowId::new("controller-usage-wrapper")?,
         body: PinnedSubworkflow::new(
             body.semantic().workflow().clone(),
@@ -128,6 +129,7 @@ fn controller_process_ceiling_denies_n_plus_one_before_executor_entry() -> TestR
     let body = three_process_body("controller-process-admission-body")?;
     store.put_revision(&body)?;
     let wrapper = build_controller_blueprint(ControllerBlueprintSpec {
+        cost_currency: Some(milkdrift_blueprint::CostCurrencyCode::new("USD")?),
         workflow: WorkflowId::new("controller-process-admission-wrapper")?,
         body: PinnedSubworkflow::new(
             body.semantic().workflow().clone(),
@@ -293,6 +295,7 @@ fn no_entry_preserves_account(preparation_refusal: bool) -> TestResult {
     let body = base_revision("controller-cancel-after-claim-body")?;
     store.put_revision(&body)?;
     let wrapper = build_controller_blueprint(ControllerBlueprintSpec {
+        cost_currency: Some(milkdrift_blueprint::CostCurrencyCode::new("USD")?),
         workflow: WorkflowId::new("controller-cancel-after-claim-wrapper")?,
         body: PinnedSubworkflow::new(
             body.semantic().workflow().clone(),
@@ -408,6 +411,7 @@ fn terminal_cancellation_retains_missing_bounded_usage_and_blocks_the_account() 
     let body = base_revision("controller-terminal-cancellation-body")?;
     store.put_revision(&body)?;
     let wrapper = build_controller_blueprint(ControllerBlueprintSpec {
+        cost_currency: Some(milkdrift_blueprint::CostCurrencyCode::new("USD")?),
         workflow: WorkflowId::new("controller-terminal-cancellation-wrapper")?,
         body: PinnedSubworkflow::new(
             body.semantic().workflow().clone(),
@@ -526,6 +530,7 @@ fn controller_artifact_charge_is_exact_replay_safe_abort_safe_and_restart_durabl
         )?;
         store.put_revision(&body)?;
         let wrapper = build_controller_blueprint(ControllerBlueprintSpec {
+            cost_currency: Some(milkdrift_blueprint::CostCurrencyCode::new("USD")?),
             workflow: WorkflowId::new("controller-artifact-admission-wrapper")?,
             body: PinnedSubworkflow::new(
                 body.semantic().workflow().clone(),
@@ -674,6 +679,7 @@ fn release_controller_admission_longevity_turns_over_reservations_artifacts_and_
         let body = base_revision("controller-admission-longevity-body")?;
         store.put_revision(&body)?;
         let wrapper = build_controller_blueprint(ControllerBlueprintSpec {
+            cost_currency: Some(milkdrift_blueprint::CostCurrencyCode::new("USD")?),
             workflow: WorkflowId::new("controller-admission-longevity-wrapper")?,
             body: PinnedSubworkflow::new(
                 body.semantic().workflow().clone(),

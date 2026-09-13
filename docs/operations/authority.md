@@ -76,13 +76,29 @@ raising one does not raise the others.
 | Controller account | One cumulative allowance shared by the controller and every descendant, across retries, revisions, and restarts. Committed equals settled plus outstanding reservations. |
 | Storage retention | Hot operational detail, archival batches, and retained bytes; independent of permission and cumulative admissions. |
 
+A billed model profile declares its largest permitted call in the per-request monetary permission
+check, rounded upward to whole hundredths of its currency. This conservative check happens before
+request preparation; the cumulative account then reserves the smaller bound for the exact prepared
+request. An explicitly unbilled profile needs no monetary permission amount.
+
 `run show` reports `controller_accounting`; `controller status` includes the same account as
 `accounting`. An ordinary run reports `state: inactive`. An active account exposes its exact
 identity, declaration origin, policy digest, revision/digest, currency, reservations, settled use,
 outstanding obligations, committed totals, and remaining allowance. Cost is in millionths of the
 declared currency, artifacts in logical bytes, process/model admissions in entry counts, and
-input/output in the adapter's supported units. A bound that cannot be expressed conservatively
+input/output in logical model tokens, including generated reasoning. An envelope must explicitly
+declare that unit; byte counts and unspecified provider units cannot enter the token account.
+Cache re-evaluation and model calls inside an agent process are not direct input/output tokens.
+A bound that cannot be expressed conservatively
 is refused before entry; unsupported currencies/units are not converted.
+
+A controller may explicitly use no currency with a zero monetary allowance for unbilled work.
+This refuses all currency-bearing requests; unknown charge is still refused. Endpoint billing is
+an operator declaration, independent of location or authentication. Direct model tasks reserve
+input/output tokens, artifacts and model admissions using the frozen prepared contract. Local
+coding agents reserve process admissions and artifacts and have launch deadlines; their internal
+API calls do not become metered direct model calls. See the
+[supported local contract](../guides/local-model-endpoint.md#controlled-local-text-requests).
 
 Do not add outstanding reservations to committed again. Missing terminal unit/cost observations
 retain their reserved remainder and block further admission. An unresolved external effect keeps

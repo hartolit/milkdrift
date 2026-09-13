@@ -62,9 +62,9 @@ activation cannot enter under its own unmarked revision. The normal first contro
 account establishment commit together.
 
 `enabled` requests production activation and currently fails configuration validation with the
-missing prerequisite: a qualifying bounded real external controller loop. The model adapter cannot
-yet bound hard input/output/cost obligations, so controlled model entry remains refused. A model's
-requested output limit is not proof of those obligations. Neither the development feature nor a
+missing prerequisite: coordinator acceptance of the bounded real external loop and current checks.
+Supported model profiles can now bound prepared text and settle declared billing; unknown and
+unsupported configurations remain refused. Neither the development feature nor a
 CLI command satisfies the [qualification gate](../product/status.md#limitations-now).
 See [accounting architecture](../architecture.md#controller-resource-accounting) and
 [budget scope](authority.md#budget-scope).

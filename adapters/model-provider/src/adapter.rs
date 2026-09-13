@@ -10,13 +10,12 @@ use std::{
 
 use milkdrift_authority::{AuthorityBudget, CapabilityExecutionRequirements, NetworkProfileRef};
 use milkdrift_capability::{
-    AdmissionBound, AdmissionConstraints, BoundedJson, CancellationAcknowledgement,
-    CancellationBehavior, CancellationRequest, CapabilityCategory, CapabilityDescriptor,
-    CapabilityId, CapabilityObservation, DescriptorBuilder, ErrorClass, FeatureContract, FeatureId,
+    AdmissionConstraints, BoundedJson, CancellationAcknowledgement, CancellationBehavior,
+    CancellationRequest, CapabilityCategory, CapabilityDescriptor, CapabilityId,
+    CapabilityObservation, DescriptorBuilder, ErrorClass, FeatureContract, FeatureId,
     IdempotencyBehavior, InvocationAdmissionEnvelope, InvocationEvent, InvocationEventKind,
-    InvocationRequest, InvocationTerminal, InvocationValueReference, Locality, OperationContract,
-    OperationId, SchemaContract, SchemaId, SideEffectClass, StreamingMode, TerminalStatus,
-    TrustZone, UsageObservation,
+    InvocationRequest, InvocationValueReference, Locality, OperationContract, OperationId,
+    SchemaContract, SchemaId, SideEffectClass, StreamingMode, TrustZone,
 };
 use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, InvocationDataAccess,
@@ -24,8 +23,8 @@ use milkdrift_capability_host::{
 };
 use milkdrift_model::{
     ContentPart, ContextManifest, ContextManifestDocument, ContextSource, MAX_MODEL_OUTPUT_UNITS,
-    MODEL_GENERATE_OPERATION, MODEL_TASK_INPUT_NAME, ModelResponse, ModelResponseDocument,
-    ModelTaskRequest, ModelTaskRequestDocument, SessionSelection,
+    MODEL_GENERATE_OPERATION, MODEL_TASK_INPUT_NAME, ModelTaskRequest, ModelTaskRequestDocument,
+    SessionSelection,
 };
 use milkdrift_workspace::ContentDigest;
 use reqwest::header::{HeaderName, HeaderValue};
@@ -83,6 +82,8 @@ pub(crate) enum MaterializedContextPart {
 struct PreparedModelRequest {
     http: reqwest::blocking::Request,
     task: ModelTaskRequest,
+    envelope: InvocationAdmissionEnvelope,
+    request_digest: String,
 }
 
 struct MaterializationLedger {
@@ -187,12 +188,14 @@ impl ModelEndpointAdapter {
             network_destinations: BTreeSet::from([destination]),
             secrets: required_secrets,
             budget: AuthorityBudget {
+                cost_minor: profile
+                    .authority_cost_minor()
+                    .map_err(AdapterError::rejected)?,
                 duration_ms: Some(limits.request_timeout_ms),
                 invocations: Some(1),
                 artifact_bytes: Some(artifact_bytes),
                 units: Some(MAX_MODEL_OUTPUT_UNITS),
                 concurrency: Some(1),
-                ..AuthorityBudget::default()
             },
             ..CapabilityExecutionRequirements::default()
         };
@@ -288,6 +291,7 @@ impl ModelEndpointAdapter {
                 manifest_text,
                 &context_parts,
                 self.profile.provider_options(),
+                self.profile.output_control(),
                 load,
             ),
             ProviderProtocol::Anthropic { .. } => anthropic::request(
@@ -300,15 +304,20 @@ impl ModelEndpointAdapter {
             ),
         }
         .map_err(|error| AdapterError::rejected(error.to_string()))?;
-        let wire = serde_json::to_vec(&wire)
+        let wire_bytes = serde_json::to_vec(&wire)
             .map_err(|_| AdapterError::rejected("model request encoding failed"))?;
-        if u64::try_from(wire.len())
+        if u64::try_from(wire_bytes.len())
             .map_or(true, |size| size > self.profile.limits().max_request_bytes)
         {
             return Err(AdapterError::rejected(
                 "encoded model request exceeds the endpoint request-body bound",
             ));
         }
+        let envelope = self
+            .profile
+            .prepared_envelope(&wire, &wire_bytes)
+            .map_err(AdapterError::rejected)?;
+        let request_digest = format!("b3_{}", blake3::hash(&wire_bytes));
         let url = self
             .profile
             .endpoint_url()
@@ -338,10 +347,15 @@ impl ModelEndpointAdapter {
             .client
             .post(url)
             .headers(headers)
-            .body(wire)
+            .body(wire_bytes)
             .build()
             .map_err(|_| AdapterError::rejected("model HTTP request construction failed"))?;
-        Ok(PreparedModelRequest { http, task })
+        Ok(PreparedModelRequest {
+            http,
+            task,
+            envelope,
+            request_digest,
+        })
     }
 
     fn execute_prepared(
@@ -490,8 +504,17 @@ impl ModelEndpointAdapter {
                 );
             }
         };
-        self.publish_response(context, request, reporter, response, sequence, started)
-            .map_err(|error| AdapterError::response_observed_failure(error.summary()))
+        self.publish_response(
+            context,
+            request,
+            reporter,
+            response,
+            sequence,
+            started,
+            &prepared.envelope,
+            &prepared.request_digest,
+        )
+        .map_err(|error| AdapterError::response_observed_failure(error.summary()))
     }
 
     fn load_context_parts(
@@ -587,156 +610,6 @@ impl ModelEndpointAdapter {
             ));
         }
         Ok(parts)
-    }
-
-    fn publish_response(
-        &self,
-        context: &milkdrift_capability_host::AdapterExecutionContext,
-        request: &InvocationRequest,
-        reporter: &dyn AdapterReporter,
-        response: ModelResponse,
-        mut sequence: u64,
-        started: Instant,
-    ) -> Result<(), AdapterError> {
-        let limits = self.materialization_limits();
-        let canonical = ModelResponseDocument::new(response.clone())
-            .to_canonical_json()
-            .map_err(|_| {
-                AdapterError::external_failure("canonical model response encoding failed")
-            })?;
-        let mut outputs = vec![PreparedOutput {
-            name: "model_response",
-            media_type: RESPONSE_MEDIA,
-            bytes: canonical,
-        }];
-        if !response.text().is_empty() {
-            outputs.push(PreparedOutput {
-                name: "final_text",
-                media_type: "text/plain",
-                bytes: response.text().as_bytes().to_vec(),
-            });
-        }
-        if let Some(structured) = response.structured() {
-            let bytes = serde_json::to_vec(structured.value())
-                .map_err(|_| AdapterError::external_failure("structured output encoding failed"))?;
-            outputs.push(PreparedOutput {
-                name: "structured_output",
-                media_type: STRUCTURED_MEDIA,
-                bytes,
-            });
-        }
-        if !response.tool_calls().is_empty() {
-            let bytes = serde_json::to_vec(response.tool_calls())
-                .map_err(|_| AdapterError::external_failure("tool call encoding failed"))?;
-            outputs.push(PreparedOutput {
-                name: "tool_calls",
-                media_type: TOOL_CALLS_MEDIA,
-                bytes,
-            });
-        }
-        if !response.provider_metadata().is_empty() {
-            let bytes = serde_json::to_vec(response.provider_metadata())
-                .map_err(|_| AdapterError::external_failure("provider metadata encoding failed"))?;
-            outputs.push(PreparedOutput {
-                name: "provider_metadata",
-                media_type: PROVIDER_METADATA_MEDIA,
-                bytes,
-            });
-        }
-        let mut output_ledger = MaterializationLedger::new(limits);
-        if outputs
-            .iter()
-            .try_for_each(|output| output_ledger.record(output.bytes.len()))
-            .is_err()
-        {
-            return report_failure(
-                request,
-                reporter,
-                sequence,
-                ProviderFailure {
-                    class: ErrorClass::Adapter,
-                    retryable: false,
-                    code: "artifact_output_bounds",
-                    message: "aggregate model output artifacts exceed the configured bound",
-                },
-                started,
-            );
-        }
-        let mut published = Vec::with_capacity(outputs.len());
-        for output in outputs {
-            let reference = match self.data.publish_bytes(
-                context,
-                request,
-                output.name,
-                output.media_type,
-                &output.bytes,
-                limits,
-            ) {
-                Ok(value) => value,
-                Err(_) => {
-                    return report_failure(
-                        request,
-                        reporter,
-                        sequence,
-                        ProviderFailure {
-                            class: ErrorClass::Adapter,
-                            retryable: false,
-                            code: "artifact_publication",
-                            message: "model output artifact publication failed",
-                        },
-                        started,
-                    );
-                }
-            };
-            published.push((output.name, reference));
-        }
-        let output_refs = published
-            .iter()
-            .map(|(_, reference)| reference.clone())
-            .collect::<Vec<_>>();
-        for (name, reference) in published {
-            reporter.invocation(
-                InvocationEvent::new(
-                    request.invocation().clone(),
-                    sequence,
-                    InvocationEventKind::Output {
-                        name: name.to_owned(),
-                        reference,
-                    },
-                )
-                .map_err(|_| AdapterError::external_failure("invalid model output event"))?,
-            )?;
-            sequence = sequence
-                .checked_add(1)
-                .ok_or_else(|| AdapterError::external_failure("model report sequence overflow"))?;
-        }
-        let duration = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let usage = response.usage();
-        let observed = UsageObservation::new(
-            usage.input_units,
-            usage.output_units,
-            Some(duration),
-            usage.cost_micros,
-            usage.currency.clone(),
-            BTreeMap::new(),
-        )
-        .map_err(|_| AdapterError::external_failure("invalid model usage observation"))?;
-        let terminal = InvocationTerminal::new(
-            TerminalStatus::Success,
-            output_refs,
-            None,
-            Some(observed),
-            SideEffectClass::Unknown,
-        )
-        .map_err(|_| AdapterError::external_failure("invalid model terminal event"))?;
-        reporter.invocation(
-            InvocationEvent::new(
-                request.invocation().clone(),
-                sequence,
-                InvocationEventKind::Terminal { terminal },
-            )
-            .map_err(|_| AdapterError::external_failure("invalid model terminal event"))?,
-        )
     }
 
     fn load_task(
@@ -888,7 +761,7 @@ impl CapabilityAdapter for ModelEndpointAdapter {
         invocation: &AdapterInvocation<'_>,
     ) -> Result<PreparedAdapterExecution, AdapterError> {
         let prepared = self.prepare_request(invocation)?;
-        let envelope = self.admission_envelope(invocation)?;
+        let envelope = prepared.envelope.clone();
         Ok(PreparedAdapterExecution::new(
             envelope,
             move |invocation, reporter| self.execute_prepared(invocation, prepared, reporter),
@@ -903,11 +776,15 @@ impl CapabilityAdapter for ModelEndpointAdapter {
         &self,
         _invocation: &AdapterInvocation<'_>,
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
+        // Only prepare can establish request-specific facts after materialization.
         Ok(InvocationAdmissionEnvelope::new(
-            AdmissionBound::Unknown,
-            AdmissionBound::Unknown,
-            AdmissionBound::Bounded(self.profile.limits().max_response_bytes.saturating_mul(4)),
-            AdmissionBound::Unknown,
+            milkdrift_capability::AdmissionUnit::Unknown,
+            milkdrift_capability::AdmissionBound::Unknown,
+            milkdrift_capability::AdmissionBound::Unknown,
+            milkdrift_capability::AdmissionBound::Bounded(
+                self.materialization_limits().max_total_bytes,
+            ),
+            milkdrift_capability::AdmissionBound::Unknown,
         ))
     }
 
@@ -1070,6 +947,8 @@ pub fn descriptor_for_profile(
         "protocol_family": protocol_family,
         "model_alias": profile.model(),
         "endpoint_origin": endpoint_origin,
+        "billing": profile.billing(),
+        "token_limits": profile.token_limits(),
     }))?;
     let input = SchemaContract::new(
         SchemaId::new("milkdrift.model-task")?,

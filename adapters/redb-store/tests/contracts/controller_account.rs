@@ -18,7 +18,7 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 fn controller_budget() -> TestResult<ControllerResourceBudget> {
     Ok(ControllerResourceBudget::new(
         1_000_000,
-        CurrencyCode::new("USD")?,
+        Some(CurrencyCode::new("USD")?),
         1_000_000,
         1_000_000,
         1_000_000,
@@ -609,7 +609,7 @@ fn same_account_identity_with_an_altered_budget_is_not_idempotent() -> TestResul
         expected.policy_digest().to_owned(),
         ControllerResourceBudget::new(
             1_000_001,
-            CurrencyCode::new("USD")?,
+            Some(CurrencyCode::new("USD")?),
             1_000_000,
             1_000_000,
             1_000_000,
@@ -770,6 +770,7 @@ fn invocation_artifact_above_reservation_blocks_account_without_charging_metadat
     let attempt = AttemptId::new("attempt-controller-artifact-envelope")?;
     let reservation = ControllerReservationId::for_attempt(declaration.account(), &attempt)?;
     let envelope = InvocationAdmissionEnvelope::new(
+        milkdrift_capability::AdmissionUnit::ModelTokens,
         AdmissionBound::NotApplicable,
         AdmissionBound::NotApplicable,
         AdmissionBound::Bounded(1),

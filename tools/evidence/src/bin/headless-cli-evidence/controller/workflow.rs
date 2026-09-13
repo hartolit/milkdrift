@@ -32,7 +32,7 @@ pub(super) fn process(
         NodeKind::task_direct_inputs(
             CapabilityRequirement::new(OperationId::new("process.execute")?)
                 .exact(CapabilityId::new(capability)?)
-                .maximum_side_effect(SideEffectClass::ReadOnly),
+                .maximum_side_effect(SideEffectClass::NonIdempotentWrite),
         )?,
     )?
     .with_control_output(PortId::new("next")?)?
@@ -77,12 +77,37 @@ fn data(id: &str, from: &str, output: &str, to: &str, input: &str) -> EvidenceRe
     })
 }
 
-pub(super) fn body() -> EvidenceResult<BlueprintRevision> {
+pub(super) fn work(
+    id: &str,
+    capability: &str,
+    predecessor: bool,
+    real_agent: bool,
+    repair: bool,
+) -> EvidenceResult<Node> {
+    let mut node = process(id, capability, predecessor, false)?;
+    if real_agent {
+        node=node.with_data_input(PortId::new("prompt")?, DataPort::input(schema()?,true,
+            Some(BindingSource::Literal { value:BoundedJson::new(serde_json::json!({"instruction":
+                if repair {"Repair only future work in this isolated repository: change answer.txt to contain exactly 42 followed by a newline. Read README.md first. Verify the file. Do not alter README.md. Do not use network, spawn agents, or modify anything outside this repository. Briefly report what changed."}
+                else {"In this isolated verification fixture repository, create answer.txt containing exactly 41 followed by a newline. This initial implementation is deliberately incorrect so independent verification will reject it. Do not repair it to 42 yet. Read README.md. Do not use network, spawn agents, or modify anything outside this repository. Briefly report what you wrote."}
+            }))? }))?)?;
+    }
+    Ok(node)
+}
+
+pub(super) fn body(
+    review: &super::review::Review,
+    real_agent: bool,
+) -> EvidenceResult<BlueprintRevision> {
     let mut nodes = vec![
-        process("work", "controller-work", false, false)?,
+        work("work", "controller-work", false, real_agent, false)?,
         process("verify", "controller-verify", true, true)?,
         wait("repair-release", true)?,
-        process("repair", "controller-work", true, false)?,
+        review.task("review", "verify")?,
+        review.task("final-review", "reverify")?,
+        wait("model-budget-release", true)?,
+        review.task("excess-review", "reverify")?,
+        work("repair", "controller-work", true, real_agent, false)?,
         process("reverify", "controller-verify", true, true)?,
         wait("failed-again", true)?,
         terminal_node("done", TerminalOutcome::Success, true)?,
@@ -91,8 +116,8 @@ pub(super) fn body() -> EvidenceResult<BlueprintRevision> {
     ];
     let mut operations = Vec::new();
     for (prefix, source, pass, fail) in [
-        ("first", "verify", "unexpected", "repair-release"),
-        ("second", "reverify", "done", "failed-again"),
+        ("first", "verify", "unexpected", "review"),
+        ("second", "reverify", "final-review", "failed-again"),
     ] {
         let acceptance = format!("{prefix}-acceptance");
         let gate = format!("{prefix}-gate");
@@ -146,6 +171,22 @@ pub(super) fn body() -> EvidenceResult<BlueprintRevision> {
         ]);
     }
     operations.extend([
+        control_edge("review-release", "review", "next", "repair-release", "in")?,
+        control_edge(
+            "review-finish",
+            "final-review",
+            "next",
+            "model-budget-release",
+            "in",
+        )?,
+        control_edge(
+            "excess-release",
+            "model-budget-release",
+            "next",
+            "excess-review",
+            "in",
+        )?,
+        control_edge("excess-finish", "excess-review", "next", "done", "in")?,
         control_edge("failed-again-stop", "failed-again", "next", "failed", "in")?,
         control_edge("work-verify", "work", "next", "verify", "in")?,
         data("work-input", "work", "stdout", "verify", "work")?,
@@ -170,8 +211,10 @@ pub(super) fn wrapper(
     body: &BlueprintRevision,
     identity: &str,
     processes: u32,
+    models: u32,
 ) -> EvidenceResult<BlueprintRevision> {
     Ok(build_controller_blueprint(ControllerBlueprintSpec {
+        cost_currency: None,
         workflow: WorkflowId::new(identity)?,
         body: PinnedSubworkflow::new(
             body.semantic().workflow().clone(),
@@ -180,7 +223,7 @@ pub(super) fn wrapper(
         ),
         continue_condition: Condition::Constant { value: true },
         limits: ControllerLimits::new(
-            8, 8, 16, 8, 300_000, 1_000_000, 32_768, 32_768, 32_000_000, processes, 8, 2, 4, 2, 2,
+            8, 8, 16, 8, 900_000, 0, 65_536, 32_768, 32_000_000, processes, models, 2, 4, 2, 2,
             None,
         )?,
         author: AuthorRef::new(super::HUMAN)?,
@@ -188,7 +231,7 @@ pub(super) fn wrapper(
 }
 
 pub(super) fn root(body: &BlueprintRevision) -> EvidenceResult<BlueprintRevision> {
-    let wrapper = wrapper(body, "controller-evidence", 4)?;
+    let wrapper = wrapper(body, "controller-evidence", 8, 2)?;
     let repeat = wrapper
         .semantic()
         .nodes()
@@ -277,7 +320,7 @@ pub(super) fn root(body: &BlueprintRevision) -> EvidenceResult<BlueprintRevision
 pub(super) fn prelude_root(
     body: &BlueprintRevision,
 ) -> EvidenceResult<(BlueprintRevision, BlueprintRevision)> {
-    let base = wrapper(body, "controller-unaccounted-prelude", 4)?;
+    let base = wrapper(body, "controller-unaccounted-prelude", 4, 8)?;
     let repeat = base.semantic().nodes()[&NodeId::new("controller-repeat")?]
         .clone()
         .with_control_input(PortId::new("in")?)?;

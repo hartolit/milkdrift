@@ -167,6 +167,14 @@ when revision inspection is authorized, plus finish reason from an authorized re
 Missing fields mean unavailable evidence, not zero usage or disabled reasoning. See
 [result acceptance](../guides/result-acceptance.md) for workflow composition and recovery.
 
+For supported model accounting, terminal `usage` is the amount used by the cumulative account.
+It may include a charge calculated from the frozen operator tariff. Read the authorized
+`model_response` artifact to distinguish its raw provider `usage` from
+`provider_metadata["org.milkdrift/model-accounting"]`: that object records billing terms, token
+contract, request digest, reservation envelope, accounting basis and any conflict. An unbilled
+attempt has no monetary observation or invented currency. A reservation is an upper bound, not
+observed consumption. These artifact facts stay tied to the generation used by the attempt.
+
 ## Cursors and SSE
 
 

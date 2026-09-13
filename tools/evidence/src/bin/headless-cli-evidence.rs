@@ -55,6 +55,15 @@ struct Arguments {
     /// Explicit operator profiles used only to prove conservative pre-entry model refusal.
     #[arg(long, requires = "controller_qualification")]
     controller_model_profile: Vec<PathBuf>,
+    /// Approved loopback profile for the connected controller review; omitted uses a fixture.
+    #[arg(long, requires = "controller_qualification")]
+    controller_review_profile: Option<PathBuf>,
+    /// Bounded inspected server facts and operator declarations for the selected real profile.
+    #[arg(long, requires = "controller_review_profile")]
+    controller_server_facts: Option<PathBuf>,
+    /// Approved byte-pinned coding-agent profile, run only in the scenario's isolated repository.
+    #[arg(long, requires = "controller_review_profile")]
+    controller_agent_profile: Option<PathBuf>,
     /// Built `milkdrift-daemon` executable.
     #[arg(long)]
     daemon: PathBuf,
@@ -105,9 +114,19 @@ fn main() {
             "--fixture-controller-verify" => {
                 let correct =
                     fs::read_to_string("work.txt").is_ok_and(|text| text.trim() == "correct");
-                println!(
-                    "{}",
-                    serde_json::json!({"checkpoint":"fixture-v1", "checked_checkpoint":"fixture-v1", "checks":{"correct":correct}, "coding":{"type":"changed"}})
+                record_verification(
+                    serde_json::json!({"checkpoint":"fixture-v1", "checked_checkpoint":"fixture-v1", "checks":{"correct":correct}, "coding":{"type":"changed"}}),
+                );
+                return;
+            }
+            "--fixture-controller-verify-repository" => {
+                let repository = std::env::args_os().nth(2).map(PathBuf::from);
+                let actual = repository
+                    .and_then(|path| fs::read_to_string(path.join("answer.txt")).ok())
+                    .unwrap_or_default();
+                let correct = actual.trim() == "42";
+                record_verification(
+                    serde_json::json!({"checkpoint":"fixture-v1","checked_checkpoint":"fixture-v1","checks":{"correct":correct},"coding":{"type":"changed"}}),
                 );
                 return;
             }
@@ -116,6 +135,13 @@ fn main() {
     }
     if let Err(error) = run(Arguments::parse()) {
         eprintln!("headless CLI evidence failed: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn record_verification(value: serde_json::Value) {
+    if let Err(error) = fs::write("verification.json", value.to_string()) {
+        eprintln!("cannot record independent verification: {error}");
         std::process::exit(1);
     }
 }

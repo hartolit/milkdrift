@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::{BillingTerms, ModelTokenLimits};
 use milkdrift_authority::SecretRef;
 use milkdrift_capability::{BoundedJson, ExtensionKey, ProviderProfileRef};
 use serde::{Deserialize, Serialize};
@@ -7,7 +8,7 @@ use thiserror::Error;
 use url::Url;
 
 /// Current non-secret model endpoint profile schema.
-const MODEL_ENDPOINT_PROFILE_SCHEMA_VERSION_V1: u32 = 1;
+const MODEL_ENDPOINT_PROFILE_SCHEMA_VERSION_V2: u32 = 2;
 const MAX_PROFILE_BYTES: usize = 262_144;
 const PROFILE_JSON_LIMITS: milkdrift_contracts::JsonLimits = milkdrift_contracts::JsonLimits {
     maximum_depth: 24,
@@ -192,6 +193,8 @@ pub struct EndpointProfile {
     allowed_hosts: BTreeSet<String>,
     trust_zones: BTreeSet<String>,
     provider_options: BTreeMap<ExtensionKey, BoundedJson>,
+    billing: BillingTerms,
+    token_limits: ModelTokenLimits,
 }
 
 impl EndpointProfile {
@@ -214,9 +217,11 @@ impl EndpointProfile {
         allowed_hosts: BTreeSet<String>,
         trust_zones: BTreeSet<String>,
         provider_options: BTreeMap<ExtensionKey, BoundedJson>,
+        billing: BillingTerms,
+        token_limits: ModelTokenLimits,
     ) -> Result<Self, ProfileError> {
         let value = Self {
-            schema_version: MODEL_ENDPOINT_PROFILE_SCHEMA_VERSION_V1,
+            schema_version: MODEL_ENDPOINT_PROFILE_SCHEMA_VERSION_V2,
             identity,
             revision,
             protocol,
@@ -233,6 +238,8 @@ impl EndpointProfile {
             allowed_hosts,
             trust_zones,
             provider_options,
+            billing,
+            token_limits,
         };
         value.validate()?;
         Ok(value)
@@ -250,7 +257,7 @@ impl EndpointProfile {
         Ok(bytes)
     }
 
-    /// Bounds-checks, duplicate-checks, parses, and validates one exact v1 profile.
+    /// Bounds-checks, duplicate-checks, parses, and validates one exact v2 profile.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ProfileError> {
         if bytes.len() > MAX_PROFILE_BYTES {
             return Err(ProfileError::Invalid(
@@ -266,6 +273,7 @@ impl EndpointProfile {
         serde_json::from_value(value).map_err(|error| ProfileError::Invalid(error.to_string()))
     }
     fn validate(&self) -> Result<(), ProfileError> {
+        self.validate_accounting()?;
         if self.revision == 0
             || self.model.is_empty()
             || self.model.len() > 512
@@ -442,6 +450,16 @@ impl EndpointProfile {
     pub(crate) const fn provider_options(&self) -> &BTreeMap<ExtensionKey, BoundedJson> {
         &self.provider_options
     }
+    /// Frozen operator billing terms; network locality never selects these.
+    #[must_use]
+    pub const fn billing(&self) -> &BillingTerms {
+        &self.billing
+    }
+    /// Frozen counting and server enforcement contract for controlled text requests.
+    #[must_use]
+    pub const fn token_limits(&self) -> &ModelTokenLimits {
+        &self.token_limits
+    }
     pub(crate) fn endpoint_url(&self) -> Result<Url, ProfileError> {
         let mut url = Url::parse(&self.base_url)
             .map_err(|_| ProfileError::Invalid("invalid endpoint URL".to_owned()))?;
@@ -483,9 +501,11 @@ impl<'de> Deserialize<'de> for EndpointProfile {
             allowed_hosts: BTreeSet<String>,
             trust_zones: BTreeSet<String>,
             provider_options: BTreeMap<ExtensionKey, BoundedJson>,
+            billing: BillingTerms,
+            token_limits: ModelTokenLimits,
         }
         let w = Wire::deserialize(deserializer)?;
-        if w.schema_version != MODEL_ENDPOINT_PROFILE_SCHEMA_VERSION_V1 {
+        if w.schema_version != MODEL_ENDPOINT_PROFILE_SCHEMA_VERSION_V2 {
             return Err(serde::de::Error::custom(
                 "unsupported endpoint profile version",
             ));
@@ -507,6 +527,8 @@ impl<'de> Deserialize<'de> for EndpointProfile {
             w.allowed_hosts,
             w.trust_zones,
             w.provider_options,
+            w.billing,
+            w.token_limits,
         )
         .map_err(serde::de::Error::custom)
     }

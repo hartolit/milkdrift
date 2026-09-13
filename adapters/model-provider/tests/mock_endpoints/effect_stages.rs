@@ -19,7 +19,7 @@ fn endpoint(address: &str, streaming: bool) -> TestResult<EndpointProfile> {
     if streaming {
         features.insert(ModelFeature::Streaming);
     }
-    profile(
+    let mut value = serde_json::to_value(profile(
         address,
         "session-profile",
         ProviderProtocol::OpenAiCompatible {
@@ -27,7 +27,12 @@ fn endpoint(address: &str, streaming: bool) -> TestResult<EndpointProfile> {
         },
         AuthMode::NoAuth,
         features,
-    )
+    )?)?;
+    value["billing"] = json!({"type":"unbilled","source":"operator controlled fault fixture v1"});
+    value["token_limits"] = json!({"type":"byte_bpe","template_tokens_per_message":64,
+        "template_tokens_per_request":64,"maximum_input_tokens":32768,"maximum_output_tokens":65536,
+        "output_control":"max_tokens","source":"fault fixture v1; single-choice total generation bound"});
+    Ok(serde_json::from_value(value)?)
 }
 
 fn document(streaming: bool) -> TestResult<Vec<u8>> {
@@ -77,6 +82,121 @@ fn assert_released(fixture: &ModelFixture) -> TestResult {
             .iter()
             .all(|generation| generation.active_permits == 0)
     );
+    Ok(())
+}
+
+struct CostCeiling(u64);
+
+impl AuthorityEvaluator for CostCeiling {
+    fn evaluate(
+        &self,
+        request: &AuthorityRequest,
+    ) -> Result<AuthorityDecisionSnapshot, AuthorityError> {
+        let allowed = Allow.evaluate(request)?;
+        if request.budget.cost_minor.unwrap_or(0) > self.0 {
+            return AuthorityDecisionSnapshot::from_evaluation(
+                allowed.policy().clone(),
+                allowed.policy_version(),
+                request.clone(),
+                vec![DecisionReasonCode::BudgetExcess],
+                AuthorityBudget::default(),
+                SideEffectClass::Unknown,
+            );
+        }
+        Ok(allowed)
+    }
+}
+
+#[test]
+fn billed_profile_declares_rounded_permission_cost_and_refuses_insufficient_authority() -> TestResult
+{
+    for ceiling in [6, 7] {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let mut profile =
+            serde_json::to_value(endpoint(&listener.local_addr()?.to_string(), false)?)?;
+        profile["token_limits"]["maximum_output_tokens"] = json!(64);
+        profile["billing"] = json!({"type":"text_tariff","currency":"EUR",
+            "input_micros_per_million":1_000_000,"cached_input_micros_per_million":2_000_000,
+            "output_micros_per_million":3_000_000,"source":"fixture v1, all text charges"});
+        let fixture = ModelFixture::new(
+            serde_json::from_value(profile)?,
+            "fresh",
+            document(false)?,
+            false,
+            Arc::new(CostCeiling(ceiling)),
+            Arc::new(NoFaults),
+        )?;
+        // At most 32,768 input tokens at the larger rate plus 64 output tokens costs
+        // 65,728 millionths: seven permission units after upward rounding to hundredths.
+        assert_eq!(
+            fixture.adapter.authority_requirements().budget.cost_minor,
+            Some(7)
+        );
+        if ceiling == 6 {
+            fixture.runtime.scheduler_tick()?;
+            assert!(
+                fixture
+                    .runtime
+                    .claim_execution_effects(PageSize::new(1)?)?
+                    .is_empty()
+            );
+            assert!(
+                fixture
+                    .runtime
+                    .history(&fixture.run)?
+                    .iter()
+                    .all(|event| !matches!(
+                        event.kind(),
+                        RunEventKind::CapabilityAdapterEntryDecisionRecorded { .. }
+                            | RunEventKind::ExternalOutcomeUncertain { .. }
+                    ))
+            );
+            assert_released(&fixture)?;
+            no_connections(&listener)?;
+        } else {
+            let dispatch = claim(&fixture)?;
+            assert_eq!(
+                dispatch
+                    .resolution_authorization()
+                    .request()
+                    .budget
+                    .cost_minor,
+                Some(7)
+            );
+            let server = thread::spawn(move || -> std::io::Result<()> {
+                let (mut stream, _) = listener.accept()?;
+                stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+                read_request(&mut stream)?;
+                let body = json!({"choices":[{"message":{"content":"complete"},"finish_reason":"stop"}],
+                    "usage":{"prompt_tokens":1,"completion_tokens":1,"prompt_tokens_details":{"cached_tokens":0}}}).to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )?;
+                Ok(())
+            });
+            fixture
+                .runtime
+                .execute_effect(EffectAction::Execute(Box::new(dispatch)))?;
+            server.join().map_err(|_| "server panic")??;
+            assert!(
+                fixture
+                    .runtime
+                    .history(&fixture.run)?
+                    .iter()
+                    .any(|event| matches!(
+                        event.kind(),
+                        RunEventKind::NodeTerminal {
+                            outcome: NodeOutcome::Succeeded,
+                            ..
+                        }
+                    ))
+            );
+            assert_released(&fixture)?;
+        }
+    }
     Ok(())
 }
 

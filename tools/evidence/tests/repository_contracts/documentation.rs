@@ -228,7 +228,7 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
                 ),
                 (
                     "adapters/model-provider/src/profile.rs",
-                    "MODEL_ENDPOINT_PROFILE_SCHEMA_VERSION_V1",
+                    "MODEL_ENDPOINT_PROFILE_SCHEMA_VERSION_V2",
                 ),
             ],
         ),
@@ -249,7 +249,7 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
                 ),
                 (
                     "crates/control/src/controller/policy.rs",
-                    "CONTROLLER_POLICY_SCHEMA_VERSION_V1",
+                    "CONTROLLER_POLICY_SCHEMA_VERSION_V2",
                 ),
             ],
         ),

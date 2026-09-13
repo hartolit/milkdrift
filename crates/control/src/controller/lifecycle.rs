@@ -48,7 +48,12 @@ impl ControllerLifecycleOwner {
         let limits = document.policy().limits();
         let budget = ControllerResourceBudget::new(
             limits.max_cost_micros(),
-            CurrencyCode::new(document.policy().cost_currency().as_str())?,
+            document
+                .policy()
+                .cost_currency()
+                .as_ref()
+                .map(|currency| CurrencyCode::new(currency.as_str()))
+                .transpose()?,
             limits.max_input_units(),
             limits.max_output_units(),
             limits.max_artifact_bytes(),

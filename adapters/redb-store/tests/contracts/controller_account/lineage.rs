@@ -296,7 +296,7 @@ fn controller_lineage_actions_require_exact_activation_and_child_events() -> Tes
         declaration.policy_digest().to_owned(),
         ControllerResourceBudget::new(
             1_000_001,
-            CurrencyCode::new("USD")?,
+            Some(CurrencyCode::new("USD")?),
             1_000_000,
             1_000_000,
             1_000_000,
@@ -603,7 +603,7 @@ fn controller_assessment_integrity_requires_the_exact_durable_declaration() -> T
         declaration.policy_digest().to_owned(),
         ControllerResourceBudget::new(
             1_000_001,
-            CurrencyCode::new("USD")?,
+            Some(CurrencyCode::new("USD")?),
             1_000_000,
             1_000_000,
             1_000_000,

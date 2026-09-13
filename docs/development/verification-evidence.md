@@ -51,11 +51,11 @@ run `headless-cli-evidence` with the same `--daemon` and `--cli` paths plus
 fixture configuration, pinned process profiles, exact proposals, accounting reads, and reports.
 CI runs this deterministic scenario after building the real applications.
 
-It composes ordinary process, verification, acceptance, proposal, approval, reconciliation, repeat,
+It composes ordinary process, verification, model review, acceptance, proposal, approval, reconciliation, repeat,
 and signal nodes. Failed work remains rejected; an ordinary workflow-control invocation submits
 the artifact-linked repair, a distinct authorized actor approves it, the child adopts a new
-revision prospectively, and independent verification accepts the repair. The next cycle stops at
-four cumulative process entries. Separate concurrent workers compete for two entries; both active
+revision prospectively, and independent verification accepts the repair. Two model calls complete;
+the next model task is refused by their cumulative allowance. Separate concurrent workers compete for two process entries; both active
 reservations and the denied third attempt are inspected. Process/model entry counts are charged
 at admission, while unit/cost/artifact remainders stay reserved until their owning evidence settles.
 
@@ -78,6 +78,70 @@ the exact admission refusal is accepted as evidence. A refusal is not a qualifyi
 loop. Requested output units, endpoint/profile provenance, unknown effective server settings, and
 the unchanged model-admission count are retained separately. Production activation remains refused
 as described in [daemon operation](../operations/daemon.md#controller-activation).
+
+The same scenario's `--controller-review-profile PATH` selects an explicitly approved loopback
+model for two connected review stages. Real mode also requires `--controller-server-facts PATH`,
+with bounded inspected settings and operator declarations matching that model and endpoint.
+`--controller-agent-profile PATH` supplies a byte-pinned
+local Codex/LM Studio launcher and creates a fresh disposable repository. The first agent writes
+the deliberately incorrect 41; a separate JSON checker requires 42. A stopped or malformed model
+decision prevents proposal submission. A supported decision is evidence for the ordinary proposal,
+separate approval and future-only repair; the second checker and acceptance must pass. Restart
+holds and final accounting prove that completed calls are not repeated. The two-call model
+allowance then refuses a third task before transmission, retaining successful repair evidence;
+the workflow stops failed on that deliberate refusal. Omitting the real-resource options runs
+the same deterministic fixture lane. Process-ceiling evidence runs separately.
+
+The corrective contract reserves the complete prepared body under the supported byte-BPE/template
+contract. Unbilled final tokens settle without an invented monetary report. Billed fixtures cover
+exact currency, cached/input/output rates and conservative rounding; unknown charge remains a
+different refusal. Missing/contradictory final usage, over-envelope tokens, reporting failure,
+revoked preparation and lost-stream restart are covered by adapter/account/host contracts. The
+[local guide](../guides/local-model-endpoint.md#controlled-local-text-requests) owns reproduction,
+server-contract obligations and the distinction between direct model calls and agent launches.
+
+Current review evidence is retained under `target/review-03a-*`: gate/focused logs,
+installed reports, selected profiles and server facts, source patches, and binary identities.
+The successful real loop is `target/review-03a-real/report.json`: two direct model reviews
+settle 6661 input and 102 output tokens, four process entries and 45487 logical artifact bytes.
+Provider spend is zero, currency is absent, reservations are empty, and the repair is accepted.
+An additional model task is rejected with `Limit { dimension: "model_admissions" }`, without
+uncertainty or another admission. The workflow stops failed on that deliberate refusal; its
+completed controller status has no `reached_bound` value. Recorded restart, replay, compaction,
+concurrent entry and entered-process crash assertions pass. This single bounded run takes 477
+seconds; the repair attempt succeeds, with no retry or allowance increase. The original corrective
+reports remain under `target/corrective-03a-*` as evidence for their own source and binaries.
+
+The reviewed deterministic controller report is `target/review-03a-controller/report.json`; the
+ordinary operator log is `target/review-03a-operator.log` and the ordinary deterministic model
+report is `target/review-03a-local-deterministic/report.json`. The scenario explicitly places the
+third task after the completed-review restart hold. Earlier corrective fixture assertion failures
+remain in their original evidence directories rather than being replaced by the passing runs.
+The reviewed full gate passes 750 tests, 24 doctests and all 24 repository contracts, with five
+manual tests ignored in the ordinary gate. Both required release controller longevity lanes pass
+again. Four review faults in streamed usage overwrite, nullable detail parsing, raw usage retention
+and permission-cost rounding are caught by assertions and restored. The model suite passes again.
+Prior unspecified-unit, conflicting-charge and zero-spend-repeat faults remain applicable to those
+unchanged owners in `target/corrective-03a-mutation-results.json`.
+Exact commands and results are in `target/review-03a-final-gate-results.json`,
+`review-03a-binary-results.json`, `review-03a-mutation-results.json`,
+`review-03a-permission-mutation.json` and `review-03a-extra-results.json`. The final gate's initial
+Clippy diagnostic identifies a redundant default initializer; after its removal, formatting,
+full workspace checking/Clippy and the model suite pass. Eight default/all-feature inventories for
+capability, model-provider, persistence and control under `target/public-api/review-03a/` match the
+corrective inventories; the review fixes add no public surface.
+
+Read-only configuration and bounded template/tokenization observations are retained in
+`target/corrective-03a-server/observed.json` and `probes.json`. The one-token HTTP probe reports one
+completion token; the oversized prompt is refused at the inspected 8192-token context. The SDK
+process hit a Windows shutdown assertion after saving the probe results; these are retained
+request observations, not a clean SDK lifecycle test. Before the reviewed real run, a fresh read-only
+inspection confirmed the same accounting-relevant settings; its observations, comparison and copied
+facts are under `target/review-03a-server/`. That inspection performs no loading or generation and
+does not repeat the prior probes. No running server was reconfigured.
+Earlier `target/model-budgets-*` reports remain evidence for their own source and settings, including
+a stopped review and a 300-second agent timeout. Windows process termination/reopen does not
+qualify power-loss durability or escaped descendants. Cloud testing was not authorized or performed.
 
 The separate [local-model lane](../guides/local-model-endpoint.md#run-the-maintained-daemoncli-lane)
 checks wait/restart/release, selected/omitted context, streaming/usage/artifact provenance,

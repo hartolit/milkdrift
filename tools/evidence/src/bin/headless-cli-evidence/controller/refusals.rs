@@ -134,7 +134,7 @@ impl Models {
                 AuthorRef::new(super::HUMAN)?,
                 "Unknown metering must refuse before transport entry",
             )?;
-            let root = workflow::wrapper(&body, &identity, 4)?;
+            let root = workflow::wrapper(&body, &identity, 4, 8)?;
             import(runner, directory, &format!("{identity}-body"), &body)?;
             import(runner, directory, &identity, &root)?;
             runner.success(&[
@@ -226,7 +226,7 @@ pub(super) fn race(runner: &CliRunner, directory: &Path) -> EvidenceResult {
         AuthorRef::new(super::HUMAN)?,
         "Three concurrent descendants compete for two process admissions",
     )?;
-    let root = workflow::wrapper(&body, "controller-race", 2)?;
+    let root = workflow::wrapper(&body, "controller-race", 2, 8)?;
     import(runner, directory, "race-body", &body)?;
     import(runner, directory, "race-root", &root)?;
     runner.success(&[
@@ -312,7 +312,7 @@ pub(super) fn entered_process(runner: &CliRunner, directory: &Path) -> EvidenceR
         AuthorRef::new(super::HUMAN)?,
         "Crash an entered process while its artifact obligation is reserved",
     )?;
-    let root = workflow::wrapper(&body, "controller-crash", 1)?;
+    let root = workflow::wrapper(&body, "controller-crash", 1, 8)?;
     import(runner, directory, "crash-body", &body)?;
     import(runner, directory, "crash-root", &root)?;
     runner.success(&[

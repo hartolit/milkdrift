@@ -28,6 +28,7 @@ fn controller_checkpoint_survives_restart_and_duplicate_approval() -> TestResult
         )?;
         store.put_revision(&body)?;
         let wrapper = build_controller_blueprint(ControllerBlueprintSpec {
+            cost_currency: Some(milkdrift_blueprint::CostCurrencyCode::new("USD")?),
             workflow: WorkflowId::new("checkpoint-wrapper")?,
             body: PinnedSubworkflow::new(
                 body.semantic().workflow().clone(),
@@ -199,6 +200,7 @@ fn controller_oversized_proposal_is_rejected_before_revision_persistence() -> Te
     )?;
     store.put_revision(&body)?;
     let wrapper = build_controller_blueprint(ControllerBlueprintSpec {
+        cost_currency: Some(milkdrift_blueprint::CostCurrencyCode::new("USD")?),
         workflow: WorkflowId::new("controller-proposal-wrapper")?,
         body: PinnedSubworkflow::new(
             body.semantic().workflow().clone(),
@@ -295,6 +297,7 @@ fn controller_oversized_proposal_is_rejected_before_revision_persistence() -> Te
     assert_eq!(runtime.projection(&run)?.sequence(), observed);
 
     let wider = build_controller_blueprint(ControllerBlueprintSpec {
+        cost_currency: Some(milkdrift_blueprint::CostCurrencyCode::new("USD")?),
         workflow: wrapper.semantic().workflow().clone(),
         body: PinnedSubworkflow::new(
             body.semantic().workflow().clone(),
@@ -397,6 +400,7 @@ fn release_controller_longevity_stops_once_across_checkpoints_and_restart() -> T
         )?;
         store.put_revision(&body)?;
         let wrapper = build_controller_blueprint(ControllerBlueprintSpec {
+            cost_currency: Some(milkdrift_blueprint::CostCurrencyCode::new("USD")?),
             workflow: WorkflowId::new("longevity-wrapper")?,
             body: PinnedSubworkflow::new(
                 body.semantic().workflow().clone(),

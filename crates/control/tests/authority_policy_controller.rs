@@ -215,6 +215,52 @@ fn body_revision() -> TestResult<milkdrift_blueprint::BlueprintRevision> {
 }
 
 #[test]
+fn zero_spend_allows_initial_and_later_controller_assessment_but_never_positive_cost() -> TestResult
+{
+    let limits = ControllerLimits::new(
+        4, 4, 8, 8, 60_000, 0, 100_000, 100_000, 1_000_000, 4, 3, 3, 3, 2, 2, None,
+    )?;
+    for cycles in [0, 1, 2] {
+        let progress = ControllerProgress {
+            invocations: cycles,
+            model_invocations: cycles,
+            input_units: u64::from(cycles) * 10,
+            output_units: u64::from(cycles) * 2,
+            ..ControllerProgress::default()
+        };
+        assert_eq!(limits.assess(&progress), ControllerStop::Continue);
+        assert_eq!(
+            limits.assess(&ControllerProgress {
+                cost_micros: 1,
+                ..progress.clone()
+            }),
+            ControllerStop::BoundReached {
+                bound: ControllerBound::Cost
+            }
+        );
+        assert_eq!(
+            limits.assess(&ControllerProgress {
+                unknown_cost_observations: 1,
+                ..progress
+            }),
+            ControllerStop::BoundReached {
+                bound: ControllerBound::Cost
+            }
+        );
+    }
+    assert_eq!(
+        limits.assess(&ControllerProgress {
+            model_invocations: 3,
+            ..ControllerProgress::default()
+        }),
+        ControllerStop::BoundReached {
+            bound: ControllerBound::ModelInvocations
+        }
+    );
+    Ok(())
+}
+
+#[test]
 fn controller_pattern_is_explicit_bounded_repeat() -> TestResult {
     let body = body_revision()?;
     let limits = ControllerLimits::new(
@@ -236,6 +282,7 @@ fn controller_pattern_is_explicit_bounded_repeat() -> TestResult {
         Some(5),
     )?;
     let wrapper = build_controller_blueprint(ControllerBlueprintSpec {
+        cost_currency: Some(milkdrift_blueprint::CostCurrencyCode::new("USD")?),
         workflow: WorkflowId::new("bounded-controller")?,
         body: PinnedSubworkflow::new(
             body.semantic().workflow().clone(),
@@ -423,8 +470,11 @@ fn controller_pattern_is_explicit_bounded_repeat() -> TestResult {
     tampered["policy"]["limits"]["max_invocations"] = serde_json::json!(9);
     assert!(serde_json::from_value::<ControllerPolicyDocument>(tampered).is_err());
     let mut future = serde_json::to_value(&policy.1)?;
-    future["schema_version"] = serde_json::json!(2);
+    future["schema_version"] = serde_json::json!(3);
     assert!(serde_json::from_value::<ControllerPolicyDocument>(future).is_err());
+    let mut legacy = serde_json::to_value(&policy.1)?;
+    legacy["schema_version"] = serde_json::json!(1);
+    assert!(serde_json::from_value::<ControllerPolicyDocument>(legacy).is_err());
     assert_eq!(BTreeSet::from([wrapper.id().clone()]).len(), 1);
     Ok(())
 }

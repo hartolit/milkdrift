@@ -7,11 +7,97 @@ use crate::{AttemptUsage, MonetaryUsage};
 
 mod applicability;
 
+#[test]
+fn unbilled_models_settle_successively_without_currency_and_never_bypass_token_limits() -> TestResult
+{
+    let budget = ControllerResourceBudget::new(0, None, 8, 8, 8, 2, 3)?;
+    let mut state = ControllerAccountState::establish(ControllerAccountDeclaration::new(
+        RunId::new("run-unbilled")?,
+        NodeExecutionId::new("execution-unbilled")?,
+        "policy:unbilled",
+        budget,
+    )?)?;
+    let envelope = InvocationAdmissionEnvelope::new(
+        milkdrift_capability::AdmissionUnit::ModelTokens,
+        AdmissionBound::Bounded(4),
+        AdmissionBound::Bounded(4),
+        AdmissionBound::Bounded(0),
+        AdmissionBound::NotApplicable,
+    );
+    for suffix in ["one", "two"] {
+        let (id, attempt) = reservation(&state, suffix)?;
+        assert!(matches!(
+            state.admit(id.clone(), attempt, CapabilityCategory::Model, &envelope)?,
+            ControllerAdmissionOutcome::Reserved { .. }
+        ));
+        state.settle_terminal(
+            &id,
+            Some(&AttemptUsage {
+                input_units: Some(3),
+                output_units: Some(3),
+                duration_ms: Some(1),
+                cost: None,
+            }),
+        )?;
+        assert!(state.blocked().is_none());
+        assert!(state.reservations().is_empty());
+        let bytes = serde_json::to_vec(&state)?;
+        state = serde_json::from_slice(&bytes)?;
+        state.validate()?;
+    }
+    let (id, attempt) = reservation(&state, "third")?;
+    assert!(
+        matches!(state.admit(id,attempt,CapabilityCategory::Model,&envelope)?,
+        ControllerAdmissionOutcome::Denied { reason:ControllerAdmissionDenial::Limit { dimension }, .. } if dimension=="input_units")
+    );
+    assert_eq!(state.settled().model_admissions(), 2);
+    assert_eq!(state.settled().cost_micros(), 0);
+    let (id, attempt) = reservation(&state, "billed")?;
+    let billed = InvocationAdmissionEnvelope::new(
+        milkdrift_capability::AdmissionUnit::ModelTokens,
+        AdmissionBound::Bounded(1),
+        AdmissionBound::Bounded(1),
+        AdmissionBound::Bounded(0),
+        AdmissionBound::Bounded(AdmissionMonetaryBound::new(0, "USD")?),
+    );
+    assert!(matches!(
+        state.admit(id, attempt, CapabilityCategory::Model, &billed)?,
+        ControllerAdmissionOutcome::Denied {
+            reason: ControllerAdmissionDenial::CurrencyMismatch,
+            ..
+        }
+    ));
+    assert!(ControllerResourceBudget::new(1, None, 1, 1, 1, 1, 1).is_err());
+    Ok(())
+}
+
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+#[test]
+fn an_account_refuses_unspecified_units_without_changing_its_allowance() -> TestResult {
+    let mut state = account(2, 2)?;
+    let before = state.clone();
+    let mut wire = serde_json::to_value(bounded_envelope(2)?)?;
+    wire.as_object_mut()
+        .ok_or("envelope missing")?
+        .remove("unit");
+    let historical: InvocationAdmissionEnvelope = serde_json::from_value(wire.clone())?;
+    assert_eq!(serde_json::to_value(&historical)?, wire);
+    let (id, attempt) = reservation(&state, "unlike-units")?;
+    assert!(
+        matches!(state.admit(id, attempt, CapabilityCategory::Model, &historical)?,
+        ControllerAdmissionOutcome::Denied { reason: ControllerAdmissionDenial::Unknown { dimension }, .. }
+        if dimension == "model_token_units")
+    );
+    assert_eq!(state, before);
+    wire["unit"] = serde_json::json!("bytes");
+    assert!(serde_json::from_value::<InvocationAdmissionEnvelope>(wire).is_err());
+    Ok(())
+}
 
 fn account(process: u64, model: u64) -> TestResult<ControllerAccountState> {
     let budget =
-        ControllerResourceBudget::new(8, CurrencyCode::new("USD")?, 8, 8, 8, process, model)?;
+        ControllerResourceBudget::new(8, Some(CurrencyCode::new("USD")?), 8, 8, 8, process, model)?;
     Ok(ControllerAccountState::establish(
         ControllerAccountDeclaration::new(
             RunId::new("run-controller-account-test")?,
@@ -34,6 +120,7 @@ fn reservation(
 
 fn bounded_envelope(maximum: u64) -> TestResult<InvocationAdmissionEnvelope> {
     Ok(InvocationAdmissionEnvelope::new(
+        milkdrift_capability::AdmissionUnit::ModelTokens,
         AdmissionBound::Bounded(maximum),
         AdmissionBound::Bounded(maximum),
         AdmissionBound::Bounded(maximum),
@@ -59,7 +146,11 @@ fn single_dimension_envelope(
         _ => return Err(format!("unsupported test dimension {dimension}").into()),
     }
     Ok(InvocationAdmissionEnvelope::new(
-        input, output, artifact, cost,
+        milkdrift_capability::AdmissionUnit::ModelTokens,
+        input,
+        output,
+        artifact,
+        cost,
     ))
 }
 
@@ -226,6 +317,7 @@ fn unknown_currency_and_overflow_are_distinct_fail_closed_denials() -> TestResul
         (
             "input_units",
             InvocationAdmissionEnvelope::new(
+                milkdrift_capability::AdmissionUnit::ModelTokens,
                 AdmissionBound::Unknown,
                 AdmissionBound::NotApplicable,
                 AdmissionBound::NotApplicable,
@@ -235,6 +327,7 @@ fn unknown_currency_and_overflow_are_distinct_fail_closed_denials() -> TestResul
         (
             "output_units",
             InvocationAdmissionEnvelope::new(
+                milkdrift_capability::AdmissionUnit::ModelTokens,
                 AdmissionBound::NotApplicable,
                 AdmissionBound::Unknown,
                 AdmissionBound::NotApplicable,
@@ -244,6 +337,7 @@ fn unknown_currency_and_overflow_are_distinct_fail_closed_denials() -> TestResul
         (
             "artifact_bytes",
             InvocationAdmissionEnvelope::new(
+                milkdrift_capability::AdmissionUnit::ModelTokens,
                 AdmissionBound::NotApplicable,
                 AdmissionBound::NotApplicable,
                 AdmissionBound::Unknown,
@@ -253,6 +347,7 @@ fn unknown_currency_and_overflow_are_distinct_fail_closed_denials() -> TestResul
         (
             "monetary_cost",
             InvocationAdmissionEnvelope::new(
+                milkdrift_capability::AdmissionUnit::ModelTokens,
                 AdmissionBound::NotApplicable,
                 AdmissionBound::NotApplicable,
                 AdmissionBound::NotApplicable,
@@ -273,6 +368,7 @@ fn unknown_currency_and_overflow_are_distinct_fail_closed_denials() -> TestResul
     }
     let (currency_reservation, currency_attempt) = reservation(&state, "currency")?;
     let currency = InvocationAdmissionEnvelope::new(
+        milkdrift_capability::AdmissionUnit::ModelTokens,
         AdmissionBound::NotApplicable,
         AdmissionBound::NotApplicable,
         AdmissionBound::NotApplicable,
@@ -291,7 +387,8 @@ fn unknown_currency_and_overflow_are_distinct_fail_closed_denials() -> TestResul
         }
     ));
 
-    let budget = ControllerResourceBudget::new(1, CurrencyCode::new("USD")?, u64::MAX, 1, 1, 1, 1)?;
+    let budget =
+        ControllerResourceBudget::new(1, Some(CurrencyCode::new("USD")?), u64::MAX, 1, 1, 1, 1)?;
     let mut overflow = ControllerAccountState::establish(ControllerAccountDeclaration::new(
         RunId::new("run-controller-overflow")?,
         NodeExecutionId::new("execution-controller-overflow")?,
@@ -423,6 +520,7 @@ fn missing_usage_blocks_and_late_evidence_settles_the_original_reservation_once(
 #[test]
 fn terminal_cost_currency_and_partial_dimension_retention_are_exact() -> TestResult {
     let cost_envelope = InvocationAdmissionEnvelope::new(
+        milkdrift_capability::AdmissionUnit::ModelTokens,
         AdmissionBound::NotApplicable,
         AdmissionBound::NotApplicable,
         AdmissionBound::NotApplicable,
@@ -494,6 +592,7 @@ fn terminal_cost_currency_and_partial_dimension_retention_are_exact() -> TestRes
         partial_attempt,
         CapabilityCategory::Tool,
         &InvocationAdmissionEnvelope::new(
+            milkdrift_capability::AdmissionUnit::ModelTokens,
             AdmissionBound::Bounded(4),
             AdmissionBound::Bounded(4),
             AdmissionBound::NotApplicable,

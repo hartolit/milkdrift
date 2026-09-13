@@ -787,7 +787,7 @@ fn serve_mock_connection(
 
 fn write_fixture_model_profile(session_root: &Path, address: SocketAddr) -> HarnessResult<PathBuf> {
     let value = json!({
-        "schema_version":1,
+        "schema_version":2,
         "identity":"fixture-external-model",
         "revision":1,
         "protocol":{"type":"open_ai_compatible","path":"v1/chat/completions"},
@@ -798,7 +798,9 @@ fn write_fixture_model_profile(session_root: &Path, address: SocketAddr) -> Harn
         "redirect":"deny","tls":"web_pki_roots","proxy":"disabled",
         "features":["streaming","structured_output","system_role"],
         "max_concurrent":1,"local_development":true,"allowed_hosts":["127.0.0.1"],
-        "trust_zones":["external-evidence-fixture"],"provider_options":{}
+        "trust_zones":["external-evidence-fixture"],"billing": {"type":"unknown"},
+            "token_limits": {"type":"unknown"},
+            "provider_options":{}
     });
     let path = session_root.join("model-profile.fixture.json");
     fs::write(

@@ -76,7 +76,7 @@ struct Arguments {
     /// Deterministic parser fixture or an explicitly supplied real endpoint profile.
     #[arg(long, value_enum, default_value_t = Mode::Deterministic)]
     mode: Mode,
-    /// Real endpoint-profile schema-v1 document. Required only in real mode.
+    /// Real endpoint-profile schema-v2 document. Required only in real mode.
     #[arg(long)]
     model_profile: Option<PathBuf>,
     /// Capability identity assigned to the real profile.

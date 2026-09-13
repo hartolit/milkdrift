@@ -330,12 +330,16 @@ a checkpoint.
 The control lifecycle parses immutable digest-bound controller policy in an ordinary pinned repeat
 wrapper. Policy binds identity, wrapper/body/interface, all cumulative ceilings, checkpoints,
 fail-closed unknown-usage behavior, stop behavior, currency, labels, and provenance. Unknown policy,
-digest mismatch, contradictory wrapper, zero limits, or legacy metadata-only patterns fail. A
+digest mismatch, contradictory wrapper, zero resource limits, or legacy metadata-only patterns fail.
+Monetary allowance may be zero; an absent currency requires zero and forbids billed admission. A
 controller cannot modify its own policy; another authorized actor needs a new reconciled revision.
 
 Persistence owns account declaration/state, reservations, optimistic revision digest, and immutable
 run binding. Its six ceilings are cost, input units, output units, artifact bytes, process entries,
-and model entries. Redb changes these only in existing journal/artifact transactions. Descendants inherit
+and model entries. Input/output are logical model tokens, including generated reasoning, rather than
+bytes or cache-evaluation work. A bounded envelope must explicitly declare `model_tokens` to enter
+this account; omitted or incompatible units cannot be combined. Process adapters declare these
+dimensions non-applicable. Redb changes totals only in existing journal/artifact transactions. Descendants inherit
 the exact account; nested policies in an already bound descendant are refused. Final entry
 checks authority, prepares local request data under the exact generation permit, rechecks authority,
 then atomically commits entry intent and account admission before external work. Frozen descriptor
@@ -366,6 +370,13 @@ only authoritative use; missing bounded observations retain remainders and block
 Uncertainty retains every remainder; over-envelope use blocks the account. Logical artifact
 publication charges its exact reservation or run binding in the metadata transaction. Immutable
 account revisions replay each change from its predecessor and exact transition/publication source.
+
+The model adapter owns operator billing and request counting. Its supported text contract computes
+the envelope after injecting context and retains it with the exact prepared body. Unbilled charge
+is non-applicable; token units still reserve and settle. Explicit text tariffs reserve conservative
+charges and calculate observed accounting from final tokens, retaining raw provider amounts
+separately. Frozen profile generation facts prevent later edits from repricing an attempt. The
+runtime and account do not implement tokenizers, price catalogues or local inference.
 
 Lifecycle assessment consumes settled totals plus outstanding reservations; it separately owns
 cycles, revisions, proposals, elapsed time, failures, rejections, and depth. Repeat's structural

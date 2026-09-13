@@ -4,7 +4,7 @@ use super::{
     ControllerAdmissionOutcome, ControllerArtifactChargeOutcome, ControllerReservation,
     ControllerReservationDimension, ControllerReservationId, checked_add,
 };
-use crate::{AttemptId, PersistenceError};
+use crate::{AttemptId, CurrencyCode, PersistenceError};
 use milkdrift_capability::{AdmissionBound, CapabilityCategory, InvocationAdmissionEnvelope};
 
 impl ControllerAccountState {
@@ -51,10 +51,27 @@ impl ControllerAccountState {
         }
         let input = admission_value(envelope.input_units());
         let output = admission_value(envelope.output_units());
+        if (input.is_some() || output.is_some())
+            && envelope.unit() != milkdrift_capability::AdmissionUnit::ModelTokens
+        {
+            return Ok(ControllerAdmissionOutcome::Denied {
+                account: self.declaration.account.clone(),
+                reason: ControllerAdmissionDenial::Unknown {
+                    dimension: "model_token_units".to_owned(),
+                },
+            });
+        }
         let artifact = admission_value(envelope.artifact_bytes());
         let cost = match envelope.monetary_cost() {
             AdmissionBound::Bounded(value) => {
-                if value.currency() != self.declaration.budget.currency.as_str() {
+                if Some(value.currency())
+                    != self
+                        .declaration
+                        .budget
+                        .currency
+                        .as_ref()
+                        .map(CurrencyCode::as_str)
+                {
                     return Ok(ControllerAdmissionOutcome::Denied {
                         account: self.declaration.account.clone(),
                         reason: ControllerAdmissionDenial::CurrencyMismatch,
@@ -229,11 +246,12 @@ impl ControllerAccountState {
         let observed_cost = usage
             .and_then(|value| value.cost.as_ref())
             .and_then(|cost| {
-                (cost.currency == self.declaration.budget.currency).then_some(cost.micros)
+                (Some(&cost.currency) == self.declaration.budget.currency.as_ref())
+                    .then_some(cost.micros)
             });
         if usage
             .and_then(|value| value.cost.as_ref())
-            .is_some_and(|cost| cost.currency != self.declaration.budget.currency)
+            .is_some_and(|cost| Some(&cost.currency) != self.declaration.budget.currency.as_ref())
             && self.blocked.is_none()
         {
             self.blocked = Some(ControllerAccountBlock::Integrity {

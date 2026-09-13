@@ -21,7 +21,7 @@ unless that exact server/model supports chat-completions SSE. Add a bearer `Secr
 the server requires one; keep the resolved token in a private file rather than the profile.
 
 For a llama.cpp server using its OpenAI-compatible chat endpoint, create endpoint-profile schema
-v1 with:
+v2 with:
 
 - protocol `open_ai_compatible` and path `v1/chat/completions`;
 - a loopback base URL such as `http://127.0.0.1:8080`;
@@ -29,6 +29,114 @@ v1 with:
 - `no_auth`, `local_development: true`, and an allowlist containing only `127.0.0.1`;
 - explicit outbound request-body, request-time, idle, header, response, SSE, and fragment bounds;
 - only features the selected server/model configuration actually implements.
+
+## Controlled local text requests
+
+The maintained example deliberately says `unknown` for billing and counting. Ordinary operation
+can use it; controlled operation requires an explicit operator contract. For the inspected Bonsai
+GGUF `Q1_0` using LM Studio chat completions, the tokenizer is byte BPE (`gpt2`, `qwen35` pretokenizer).
+Its observed Jinja template emits each supported system/user text once, with fewer than 64 extra
+UTF-8 bytes per message and 64 fixed bytes. No expanding normalization or hidden prompt prefill
+is permitted by this contract. Recheck the effective template and prediction settings after any
+model/server configuration change. Merely copying these numbers to another model is unsupported.
+
+After confirming those facts and declaring no provider charge for the selected service, copy the
+example into an untracked operator directory and set these fields (PowerShell):
+
+```powershell
+New-Item -ItemType Directory -Force target | Out-Null
+$profile = Get-Content examples/local-model/openai-compatible-loopback.example.json -Raw | ConvertFrom-Json
+$profile.base_url = 'http://127.0.0.1:1234'
+$profile.model = 'prism-ml/bonsai-27b:2'
+$profile.revision = 2
+$profile.billing = @{ type='unbilled'; source='Operator declaration: selected local service has no provider charge, 2026-09-13' }
+$profile.token_limits = @{
+  type='byte_bpe'; template_tokens_per_message=64; template_tokens_per_request=64
+  maximum_input_tokens=32768; maximum_output_tokens=4096; output_control='max_tokens'
+  source='Inspected Bonsai Q1_0 gpt2/qwen35 tokenizer and Jinja template; no expanding normalization/prefill; logical prompt tokens counted once; one generation capped including reasoning even on disconnect, 2026-09-13'
+}
+$profile | ConvertTo-Json -Depth 30 | Set-Content target/bonsai-controller-profile.json
+```
+
+The 32768 value refuses a prepared byte bound above that size; it is not the loaded context size
+(8192 in the inspected configuration). Template overhead and injected context count before entry.
+The server must enforce `max_tokens` over the whole generated sequence, including hidden reasoning.
+The retained one-token boundary probe ended with `finish_reason: length`, one completion token
+and no usable answer. This confirms the observed cap boundary; enforcement outside that probe,
+including disconnect behavior, remains an explicit server contract rather than a timeout claim.
+LM Studio applies the model template automatically; its
+[chat-completions documentation](https://lmstudio.ai/docs/developer/openai-compat/chat-completions)
+describes the parameter and input-log inspection. Client timeout does not enforce a generation cap.
+The operator owns these server facts; Milkdrift owns exact request construction, unsupported-option
+refusal, final authority checking, reservation and observed settlement. It does not manage the server.
+
+The selected configuration uses `truncateMiddle`. LM Studio's
+[overflow contract](https://beta.lmstudio.ai/docs/typescript/api-reference/llm-prediction-config-input)
+allows generation to continue while old context is discarded, so 8192 is not a bound on total
+generation or cache work. The account counts logical prompt and generated tokens. It reserves
+the complete prepared byte-BPE upper bound even if the server later rejects an oversized prompt;
+it never uses the smaller context size as a substitute. The inspected 8220-token template probe
+exceeded that context and returned HTTP 400; the one-token generation probe returned one output
+token. These observations do not turn byte counts into exact token counts or qualify GPU usage.
+
+Real qualification also requires a bounded server-facts JSON document. Record settings from the
+already loaded model using read-only `getLoadConfig` and `getBasePredictionConfig` SDK calls;
+do not load, reconfigure, or generate during inspection. Limit this inspection to 20 seconds and
+256 KiB. Template/tokenization probes operate on test text, with the same byte/time limits; they
+are separate authorized server operations, never part of Milkdrift's local preparation hook.
+After checking the actual values, a facts document for this inspected configuration is:
+
+```json
+{
+  "model": "prism-ml/bonsai-27b:2",
+  "base_url": "http://127.0.0.1:1234",
+  "inspected": {
+    "source": "SDK observation of the already loaded alias, 2026-09-13",
+    "context_window_tokens": 8192,
+    "context_overflow_policy": "truncateMiddle",
+    "base_thinking_enabled": true,
+    "request_output_control": "max_tokens"
+  },
+  "operator_declared": {"provider_charge": "unbilled", "token_contract": "byte_bpe"},
+  "unknown": ["GPU work", "remote termination after client disconnect"]
+}
+```
+
+Save it as `target/bonsai-server-facts.json`, retaining the full observation and template privately.
+Replace the example values when the inspected configuration differs. The harness checks the model
+and endpoint against the profile and retains the declaration; it does not attest server settings.
+
+Use a currency-free controller policy with monetary ceiling zero for exclusively unbilled work.
+That account refuses any currency-bearing charge, even a zero-priced billed request. Direct model
+calls consume model entries and input/output units. Coding agents consume process entries, time and
+artifact allowances; their internal model requests are not metered as direct Milkdrift model calls.
+
+To run the existing installed qualification loop, supply a separately approved byte-pinned local
+Codex process profile. The tool copies it into an isolated repository and selects only local
+`--oss --local-provider lmstudio` execution. It intentionally asks the first agent to write 41
+where the independent verifier requires 42. The local review must return a valid repair decision
+before the normal proposal and separate approval path can release future repair work.
+
+```powershell
+cargo build -p milkdrift-daemon -p milkdrift-cli -p milkdrift-evidence --bins --all-features
+target/debug/headless-cli-evidence.exe --daemon target/debug/milkdrift-daemon.exe --cli target/debug/milkdrift.exe --examples examples/operator --controller-qualification --controller-output target/controller-local --controller-review-profile target/bonsai-controller-profile.json --controller-server-facts target/bonsai-server-facts.json --controller-agent-profile target/approved-local-agent-profile.json
+```
+
+Choose a new output directory. The finite scenario declares eight process entries, two direct
+model entries, 65536 input units, 32768 output units, 32 MB logical artifacts and fifteen minutes
+before starting. Each agent launch has five minutes and each review at most 4096 output tokens.
+It expects two useful direct reviews, persists token usage without a currency, restarts at recorded
+holds and verifies acceptance. It then releases a third model task, which the same account refuses
+before transmission. The child and parent end failed because the deliberately excessive task is
+refused; the successful repair and its accepted verification remain in history. No further cycle
+is created. Separate deterministic lanes exercise process limits and the remaining dimensions.
+This does not claim
+to limit an agent's internal API spending; use the explicitly unbilled local agent only. Controlled
+fixtures cover billed behavior without a cloud key or live cloud spend.
+
+Schema-1 endpoint profiles and controller policies are refused. Redb document format 16 refuses
+older stores rather than guessing their billing meaning; use a fresh isolated store. See
+[ADR 0033](../decisions/0033-explicit-controller-qualification.md) for the compatibility decision.
 
 Plain HTTP is accepted only for an explicit loopback development profile. Remote endpoints require
 HTTPS. Ambient proxies are disabled unless the profile explicitly chooses system proxy behavior,

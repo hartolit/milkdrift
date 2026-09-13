@@ -15,8 +15,26 @@ transactional reservations, immutable lineage, and conservative unknown-usage ru
 The child-creation transaction likewise refuses unaccounted children of marked revisions,
 including ordinary subworkflows preceding activation. Account establishment in that same
 transaction permits the normal first controller child and binds it atomically.
-The model adapter's requested output limit does not establish enforceable input/output/cost bounds.
-It therefore still refuses controlled model entry; this negative evidence cannot qualify production.
+The requested output limit alone does not establish an enforceable envelope. Endpoint schema 2
+adds operator-owned billing and token contracts. Supported fresh text requests count the complete
+prepared UTF-8 body under an attested byte-BPE/template contract and select the server's total-output
+parameter. Unknown or unsupported contracts still refuse controlled entry. Completion uses the
+same frozen generation and keeps raw provider usage separate from tariff-calculated accounting.
+
+Controller policy schema 2 permits an absent currency only with zero monetary allowance. This
+means no currency-bearing request may enter; it does not authorize unknown cost. Old policy and
+endpoint schemas are explicitly refused, with no unbilled defaults. Redb internal document format
+advances from 14 to 16 (physical schema 11), refusing older stores; no migration is claimed. Existing
+event version 3 keeps the same owner and tagged event shape: historical currency strings retain
+their meaning, while current account budgets may encode null. Account readers validate that null
+cannot carry a positive monetary budget. No existing event or historical decision is rewritten.
+
+Admission envelopes now explicitly declare logical `model_tokens`; the shared account refuses
+bounded quantities with unspecified units. Missing historical envelope units remain unknown and
+re-encode without a new unit field. Format 16 prevents reopening a format-15 account under the new
+admission rule. This preserves historical decoding without silently relabelling old quantities.
+The unit is a capability-owned adapter contract, not workflow-controlled configuration. No token
+conversion, GPU-work meter, or second account is introduced.
 
 Protocol 2.5 adds cumulative accounting to authorized run/controller reads and durable terminal
 detail to attempt reads. Committed equals settled plus outstanding; blocked accounts expose no

@@ -50,8 +50,13 @@ This document owns current implementation, limitations, exact versions, and qual
   evidence. The daemon composition installs the single control-owned lifecycle before recovery
   when explicitly configured for an isolated `controller-qualification` build. Production
   activation remains default-disabled and an `enabled` request is refused pending a current
-  bounded real external controller loop. Unknown hard model input/output/cost bounds still refuse
-  entry. Run/controller reads expose the same canonical cumulative account; ordinary runs report
+  accepted qualification review. Supported text profiles now freeze operator billing, byte-BPE
+  input bounds and the selected total-output control with the prepared request. Explicitly unbilled
+  completions settle tokens without a monetary report; text tariffs retain calculated and reported
+  cost separately. The shared account accepts explicitly declared logical model tokens; unspecified
+  units and unsupported bounds refuse entry. Conflicting charges retain unresolved raw evidence.
+  Run/controller reads expose
+  the same canonical cumulative account; ordinary runs report
   inactive accounting. [Daemon operation](../operations/daemon.md#controller-activation) explains
   configuration and recovery consequences.
 
@@ -64,8 +69,8 @@ values; repository contracts check the version cells against source.
 | Invocation request | 2 | Context-free v1 migrates unambiguously. |
 | Blueprint revision and mutation | 2 | v1 refused. |
 | Context manifest | 2 | v1 refused; model envelope remains independent. |
-| Model document / task / response / endpoint profile | 1 / 1 / 1 / 1 | Exact supported contracts. |
-| Proposal / workflow-control command / risk policy / controller policy | 1 / 1 / 1 / 1 | Exact supported contracts. |
+| Model document / task / response / endpoint profile | 1 / 1 / 1 / 2 | Endpoint v1 refused; explicit billing and counting required. |
+| Proposal / workflow-control command / risk policy / controller policy | 1 / 1 / 1 / 2 | Controller policy v1 refused; currency is explicit or absent. |
 | Prompt-sequence import | 3 | v1/v2 refused; existing blueprint history unchanged. |
 | Result acceptance contract / decision | 1 / 1 | Explicit purpose; no implicit policy on generic model tasks. |
 | Run command / run event | 1 / 3 | Exact event v1/v2 remains readable. |
@@ -74,7 +79,7 @@ values; repository contracts check the version cells against source.
 | Projection snapshot envelope / runtime payload | 2 / 4 | Old/invalid optional checkpoints replay from journal. |
 | Administrative integrity cursor | 2 | Exact supported cursor. |
 | Peer hot record / compact tombstone | 3 / 1 | Hot v2 upgraded on next append. |
-| Redb internal document format / physical schema | 14 / 11 | Older/future stores refused; no migration. |
+| Redb internal document format / physical schema | 16 / 11 | Older/future stores refused; no migration. |
 | Application command receipt / layout record | 1 / 1 | Exact supported contracts. |
 | Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
 | External control / authenticated cursor | 2.5 / 2 | Earlier major/cursor forms refused. |
@@ -214,19 +219,27 @@ The model-preparation implementation passes the local Windows/MSVC full gate: 72
 24 doctests, all 24 repository contracts, formatting, checking, warning-denying Clippy/rustdoc,
 dependency audits, and test discovery. Five manual longevity tests remain ignored in this run.
 
-The reviewed controller integration based on `741b230` passes the current Windows/MSVC full gate: 737
-workspace tests, 24 doctests, and all 24 repository contracts, with five manual tests ignored in
-the ordinary gate. Both required release controller longevity lanes also pass. Rebuilt operator,
-deterministic-model, and installed-controller scenarios pass. The installed loop retains rejection,
-requires separate approval, prospectively repairs and accepts the result, then stops at its
-cumulative process bound; concurrency, replay, compaction, and entered-process crash recovery
-preserve the account. Review also closes an unmarked child preceding controller activation:
-the child-creation transaction refuses that route, and both disabled and qualification daemon
-scenarios verify it. The focused 46-mutant result and an additional exact child-creation fault
-have no unresolved case; they are not a new full controller-shard campaign. Both supplied Bonsai profiles refuse unknown hard model bounds before
-controlled entry. Production activation remains disabled/refused because the bounded real external
-controller loop is unqualified. [Retained evidence](../development/verification-evidence.md#actual-binary-scenarios)
-records the exact source and binary scope; no live host configuration was changed.
+The reviewed corrective model-accounting implementation passes the Windows/MSVC full gate: 750 workspace
+tests, 24 doctests and all 24 repository contracts; five manual tests remain ignored in the ordinary
+gate. Both required release controller longevity lanes pass. Review fixes prevent streamed usage
+from erasing earlier evidence, accept nullable usage details, retain raw streamed usage, and enforce
+billed profiles' per-request monetary permission. Four corresponding faults are caught and restored;
+prior unit-admission, conflicting-charge and zero-spend-repeat fault evidence still applies to those
+unchanged owners. Default/all-feature API inventories are reviewed for capability, model-provider,
+persistence and control; the review fixes add no public surface.
+
+The actual-binary local controller loop passes with Bonsai `prism-ml/bonsai-27b:2` on the approved
+loopback LM Studio endpoint and byte-pinned Codex CLI `0.154.0-alpha.6.2`. Independent verification
+rejects deliberately incorrect work, the model informs a repair proposal, a separate actor approves,
+future work repairs the file, and verification plus acceptance pass. Two direct model calls settle
+6661 input and 102 output tokens with zero provider spend, no currency and no outstanding reservations.
+The shared two-call allowance refuses a third model request before transmission. Four process entries
+remain within their separate allowance; the workflow stops failed on the deliberate model refusal,
+preserving accepted repair history. Recorded restarts, cold replay, compaction and the concurrent-entry/crash
+fixtures preserve the account. The reviewed successful report is `target/review-03a-real/report.json`.
+Production activation remains default-disabled/refused pending coordinator acceptance. No live host
+or model-server configuration changed. [Retained evidence](../development/verification-evidence.md#actual-binary-scenarios)
+records exact source, binary, profile and server-observation scope.
 
 Release receipt, peer, controller-lifecycle, controller-admission, historical-frontier longevity,
 projection stress, and effect-worker shutdown proofs pass. Hosted Linux

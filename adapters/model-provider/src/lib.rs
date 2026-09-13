@@ -10,6 +10,7 @@
 //! their own request and completion semantics. Returned tool calls remain data. Cancellation
 //! can interrupt local observation but cannot prove that remote computation stopped.
 
+mod accounting;
 mod adapter;
 mod anthropic;
 mod http;
@@ -20,6 +21,7 @@ mod stream;
 #[cfg(feature = "operational-evidence")]
 mod operational_evidence;
 
+pub use accounting::{BillingTerms, ModelTokenLimits, OutputTokenControl};
 pub use adapter::{ModelEndpointAdapter, descriptor_for_profile};
 pub use profile::{
     AuthMode, EndpointLimits, EndpointProfile, ModelFeature, ProfileError, ProviderProtocol,

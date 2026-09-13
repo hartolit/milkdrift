@@ -28,11 +28,14 @@ use crate::{
 const MAX_CONTROLLER_ACCOUNT_ACTIONS: usize = 256;
 
 /// Immutable resource ceilings owned by one controller account.
+/// Input/output units are logical model tokens across direct calls: the complete prompt and
+/// generated sequence, including reasoning. They do not meter bytes, cache evaluation, or an
+/// agent process's internal calls. Admission refuses envelopes lacking this unit contract.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControllerResourceBudget {
     cost_micros: u64,
-    currency: CurrencyCode,
+    currency: Option<CurrencyCode>,
     input_units: u64,
     output_units: u64,
     artifact_bytes: u64,
@@ -41,10 +44,10 @@ pub struct ControllerResourceBudget {
 }
 
 impl ControllerResourceBudget {
-    /// Constructs nonzero immutable ceilings for every ledger-owned dimension.
+    /// Constructs resource ceilings. With no currency, cost must be zero and billed entry is refused.
     pub fn new(
         cost_micros: u64,
-        currency: CurrencyCode,
+        currency: Option<CurrencyCode>,
         input_units: u64,
         output_units: u64,
         artifact_bytes: u64,
@@ -52,7 +55,6 @@ impl ControllerResourceBudget {
         model_admissions: u64,
     ) -> Result<Self, PersistenceError> {
         if [
-            cost_micros,
             input_units,
             output_units,
             artifact_bytes,
@@ -60,6 +62,7 @@ impl ControllerResourceBudget {
             model_admissions,
         ]
         .contains(&0)
+            || (currency.is_none() && cost_micros != 0)
         {
             return Err(PersistenceError::InvalidDocument(
                 "controller resource ceilings must be nonzero".to_owned(),
@@ -83,15 +86,15 @@ impl ControllerResourceBudget {
     }
     /// Exact currency shared by every monetary reservation.
     #[must_use]
-    pub const fn currency(&self) -> &CurrencyCode {
+    pub const fn currency(&self) -> &Option<CurrencyCode> {
         &self.currency
     }
-    /// Maximum provider-defined input units.
+    /// Maximum logical input model tokens.
     #[must_use]
     pub const fn input_units(&self) -> u64 {
         self.input_units
     }
-    /// Maximum provider-defined output units.
+    /// Maximum generated model tokens, including reasoning.
     #[must_use]
     pub const fn output_units(&self) -> u64 {
         self.output_units
@@ -143,6 +146,7 @@ impl ControllerAccountDeclaration {
         policy_digest: impl Into<String>,
         budget: ControllerResourceBudget,
     ) -> Result<Self, PersistenceError> {
+        Self::validate_budget(&budget)?;
         let policy_digest = policy_digest.into();
         if policy_digest.len() < 4 || policy_digest.len() > 192 || !policy_digest.is_ascii() {
             return Err(PersistenceError::InvalidDocument(
@@ -173,6 +177,19 @@ impl ControllerAccountDeclaration {
             budget,
             declaration_digest,
         })
+    }
+
+    fn validate_budget(budget: &ControllerResourceBudget) -> Result<(), PersistenceError> {
+        ControllerResourceBudget::new(
+            budget.cost_micros,
+            budget.currency.clone(),
+            budget.input_units,
+            budget.output_units,
+            budget.artifact_bytes,
+            budget.process_admissions,
+            budget.model_admissions,
+        )?;
+        Ok(())
     }
 
     /// Revalidates an untrusted stored declaration.

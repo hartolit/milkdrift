@@ -6,8 +6,10 @@ Ordered unfinished work; [status](status.md) owns implementation and evidence fa
    hostile-concurrency, crash/reopen, artifact, compaction, mutation, longevity, operational,
    full-gate, and qualifying real external evidence, accept production activation of the installed
    lifecycle. The daemon's explicit development qualification path exercises that composition;
-   production remains refused. Resolve the currently unknown hard model usage/cost bounds and
-   demonstrate the authorized external controller loop without weakening conservative admission.
+   production remains refused pending coordinator acceptance. Supported operator-declared unbilled
+   text counting and explicit text tariffs now use the existing prepared request/account path with
+   explicit model-token units. Accept the current local repair and cumulative model-refusal evidence
+   without weakening unknown-usage refusal; a cloud run is not an additional prerequisite.
 
 Broad architectural cleanup is frozen. Future architectural changes must begin with a measured
 defect, a public operator need, or a violated invariant. Source study and ordinary operation should

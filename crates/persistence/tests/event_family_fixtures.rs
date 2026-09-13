@@ -139,7 +139,7 @@ fn current_fixtures() -> TestResult<[(&'static str, RunEventEnvelope, &'static [
         RunId::new("run-family-fixture")?,
         controller_execution.clone(),
         "policy-family",
-        ControllerResourceBudget::new(100, currency.clone(), 100, 100, 100, 100, 100)?,
+        ControllerResourceBudget::new(100, Some(currency.clone()), 100, 100, 100, 100, 100)?,
     )?;
     let usage = SubworkflowResourceUsage {
         input_units: Some(11),

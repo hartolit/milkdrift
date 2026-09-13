@@ -83,6 +83,24 @@ impl AdmissionMonetaryBound {
     }
 }
 
+/// Meaning shared by input and output quantities in an admission envelope.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdmissionUnit {
+    /// No compatible unit contract, including historical envelopes without a unit.
+    #[default]
+    Unknown,
+    /// Tokens in the complete submitted prompt and generated sequence, including reasoning.
+    /// Counts are logical model tokens, not bytes, GPU work, or repeated cache evaluation.
+    ModelTokens,
+}
+
+impl AdmissionUnit {
+    fn is_unknown(&self) -> bool {
+        *self == Self::Unknown
+    }
+}
+
 /// Resource maxima an adapter can enforce for one request before external entry.
 ///
 /// Runtime uses these facts to reserve controller resources before committing entry intent.
@@ -91,6 +109,8 @@ impl AdmissionMonetaryBound {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InvocationAdmissionEnvelope {
+    #[serde(default, skip_serializing_if = "AdmissionUnit::is_unknown")]
+    unit: AdmissionUnit,
     input_units: AdmissionBound<u64>,
     output_units: AdmissionBound<u64>,
     artifact_bytes: AdmissionBound<u64>,
@@ -101,12 +121,14 @@ impl InvocationAdmissionEnvelope {
     /// Constructs the complete four-dimensional admission contract.
     #[must_use]
     pub const fn new(
+        unit: AdmissionUnit,
         input_units: AdmissionBound<u64>,
         output_units: AdmissionBound<u64>,
         artifact_bytes: AdmissionBound<u64>,
         monetary_cost: AdmissionBound<AdmissionMonetaryBound>,
     ) -> Self {
         Self {
+            unit,
             input_units,
             output_units,
             artifact_bytes,
@@ -118,6 +140,7 @@ impl InvocationAdmissionEnvelope {
     #[must_use]
     pub const fn not_applicable() -> Self {
         Self::new(
+            AdmissionUnit::Unknown,
             AdmissionBound::NotApplicable,
             AdmissionBound::NotApplicable,
             AdmissionBound::NotApplicable,
@@ -129,6 +152,7 @@ impl InvocationAdmissionEnvelope {
     #[must_use]
     pub const fn unknown() -> Self {
         Self::new(
+            AdmissionUnit::Unknown,
             AdmissionBound::Unknown,
             AdmissionBound::Unknown,
             AdmissionBound::Unknown,
@@ -136,13 +160,19 @@ impl InvocationAdmissionEnvelope {
         )
     }
 
-    /// Provider-defined input-unit maximum.
+    /// Unit contract for input and output. Unknown units cannot enter a token account.
+    #[must_use]
+    pub const fn unit(&self) -> AdmissionUnit {
+        self.unit
+    }
+
+    /// Input maximum in the declared unit.
     #[must_use]
     pub const fn input_units(&self) -> &AdmissionBound<u64> {
         &self.input_units
     }
 
-    /// Provider-defined output-unit maximum.
+    /// Output maximum in the declared unit.
     #[must_use]
     pub const fn output_units(&self) -> &AdmissionBound<u64> {
         &self.output_units
@@ -197,6 +227,7 @@ mod tests {
     fn common_envelope_contract_preserves_every_explicit_bound_kind()
     -> Result<(), Box<dyn std::error::Error>> {
         let envelope = InvocationAdmissionEnvelope::new(
+            AdmissionUnit::ModelTokens,
             AdmissionBound::Bounded(7),
             AdmissionBound::NotApplicable,
             AdmissionBound::Unknown,

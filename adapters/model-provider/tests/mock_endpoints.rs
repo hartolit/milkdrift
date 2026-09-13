@@ -231,6 +231,8 @@ fn profile_with_limits(
         BTreeSet::from([address.split(':').next().ok_or("host")?.to_owned()]),
         BTreeSet::from(["local-test".to_owned()]),
         BTreeMap::new(),
+        milkdrift_model_provider::BillingTerms::Unknown,
+        milkdrift_model_provider::ModelTokenLimits::Unknown,
     )?)
 }
 
@@ -582,6 +584,8 @@ fn endpoint_policy_rejects_remote_plaintext_and_cross_origin_redirects_by_defaul
             BTreeSet::from(["example.com".to_owned()]),
             BTreeSet::new(),
             BTreeMap::new(),
+            milkdrift_model_provider::BillingTerms::Unknown,
+            milkdrift_model_provider::ModelTokenLimits::Unknown,
         )
         .is_err()
     );
@@ -605,6 +609,8 @@ fn endpoint_policy_rejects_remote_plaintext_and_cross_origin_redirects_by_defaul
             BTreeSet::from(["example.com".to_owned()]),
             BTreeSet::new(),
             BTreeMap::new(),
+            milkdrift_model_provider::BillingTerms::Unknown,
+            milkdrift_model_provider::ModelTokenLimits::Unknown,
         )
         .is_err()
     );
@@ -627,7 +633,7 @@ fn endpoint_policy_rejects_remote_plaintext_and_cross_origin_redirects_by_defaul
     let bytes = canonical.to_canonical_json()?;
     assert_eq!(EndpointProfile::from_json(&bytes)?, canonical);
     let mut hostile: Value = serde_json::from_slice(&bytes)?;
-    hostile["schema_version"] = json!(2);
+    hostile["schema_version"] = json!(1);
     assert!(EndpointProfile::from_json(&serde_json::to_vec(&hostile)?).is_err());
     hostile["schema_version"] = json!(1);
     hostile["surprise"] = json!(true);
@@ -654,6 +660,8 @@ fn endpoint_policy_rejects_remote_plaintext_and_cross_origin_redirects_by_defaul
         BTreeSet::from(["127.0.0.1".to_owned()]),
         BTreeSet::new(),
         BTreeMap::new(),
+        milkdrift_model_provider::BillingTerms::Unknown,
+        milkdrift_model_provider::ModelTokenLimits::Unknown,
     )?;
     let bounded_task = ModelTaskRequest::new(
         vec![Message::new(
@@ -781,6 +789,8 @@ mod context;
 #[path = "mock_endpoints/providers.rs"]
 mod providers;
 
+#[path = "mock_endpoints/accounting.rs"]
+mod accounting;
 #[path = "mock_endpoints/uncertainty.rs"]
 mod uncertainty;
 

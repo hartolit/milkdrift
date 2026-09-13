@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::{ControlError, ControllerId, ControllerPolicyDigest};
 
 /// Current strict controller-policy schema.
-pub const CONTROLLER_POLICY_SCHEMA_VERSION_V1: u32 = 1;
+pub const CONTROLLER_POLICY_SCHEMA_VERSION_V2: u32 = 2;
 const CONTROLLER_POLICY_JSON_LIMITS: JsonLimits = JsonLimits {
     maximum_depth: 48,
     maximum_string_bytes: 8_192,
@@ -38,9 +38,9 @@ pub enum ControllerBound {
     ElapsedTime,
     /// Observed cost.
     Cost,
-    /// Model/process input units.
+    /// Logical input model tokens from calls declaring the shared token unit.
     InputUnits,
-    /// Model/process output units.
+    /// Generated model tokens, including reasoning, from calls declaring the shared token unit.
     OutputUnits,
     /// Artifact bytes.
     ArtifactBytes,
@@ -126,7 +126,6 @@ impl ControllerLimits {
             u64::from(max_mutations_per_proposal),
             u64::from(max_nodes_per_proposal),
             max_elapsed_ms,
-            max_cost_micros,
             max_input_units,
             max_output_units,
             max_artifact_bytes,
@@ -300,7 +299,8 @@ impl ControllerLimits {
             ),
             (
                 progress.unknown_cost_observations > 0
-                    || progress.cost_micros >= self.max_cost_micros,
+                    || (self.max_cost_micros > 0 && progress.cost_micros >= self.max_cost_micros)
+                    || (self.max_cost_micros == 0 && progress.cost_micros > 0),
                 ControllerBound::Cost,
             ),
             (
@@ -587,7 +587,7 @@ pub struct ControllerPolicy {
     checkpoint_interval: Option<u32>,
     stop_behavior: ControllerStopBehavior,
     unknown_usage: UnknownUsagePolicy,
-    cost_currency: CostCurrencyCode,
+    cost_currency: Option<CostCurrencyCode>,
     operations: ControllerOperationRequirements,
     labels: BTreeSet<String>,
     provenance: BTreeMap<String, String>,
@@ -626,12 +626,13 @@ impl ControllerPolicy {
 
     /// Exact cost ledger used for `max_cost_micros`.
     #[must_use]
-    pub const fn cost_currency(&self) -> &CostCurrencyCode {
+    pub const fn cost_currency(&self) -> &Option<CostCurrencyCode> {
         &self.cost_currency
     }
 
     fn validate(&self) -> Result<(), ControlError> {
-        if !self.wrapper.containing_revision
+        if (self.cost_currency.is_none() && self.limits.max_cost_micros() != 0)
+            || !self.wrapper.containing_revision
             || self.checkpoint_interval != self.limits.human_checkpoint_interval()
             || self.operations != ControllerOperationRequirements::default()
             || self.labels.len() > 32
@@ -676,18 +677,18 @@ impl ControllerPolicyDocument {
         let bytes = canonical_json_bytes(&policy, CONTROLLER_POLICY_JSON_LIMITS)
             .map_err(|error| ControlError::InvalidContract(format!("{error:?}")))?;
         Ok(Self {
-            schema_version: CONTROLLER_POLICY_SCHEMA_VERSION_V1,
+            schema_version: CONTROLLER_POLICY_SCHEMA_VERSION_V2,
             policy,
             digest: ControllerPolicyDigest::for_bytes(&bytes),
         })
     }
 
     fn from_wire(wire: ControllerPolicyDocumentWire) -> Result<Self, ControlError> {
-        if wire.schema_version != CONTROLLER_POLICY_SCHEMA_VERSION_V1 {
+        if wire.schema_version != CONTROLLER_POLICY_SCHEMA_VERSION_V2 {
             return Err(ControlError::UnsupportedVersion {
                 document: "controller_policy",
                 found: wire.schema_version,
-                supported: CONTROLLER_POLICY_SCHEMA_VERSION_V1,
+                supported: CONTROLLER_POLICY_SCHEMA_VERSION_V2,
             });
         }
         let expected = wire.digest;
@@ -798,13 +799,15 @@ pub struct ControllerBlueprintSpec {
     pub continue_condition: Condition,
     /// Hard cross-cycle ceilings.
     pub limits: ControllerLimits,
+    /// Exact monetary allowance currency, or None with zero cost to forbid all billed entry.
+    pub cost_currency: Option<CostCurrencyCode>,
     /// Revision author provenance.
     pub author: AuthorRef,
 }
 
 /// Builds an acyclic wrapper containing one explicit bounded `Repeat` and terminal.
 ///
-/// The returned immutable revision carries controller-policy schema 1 in semantic
+/// The returned immutable revision carries controller-policy schema 2 in semantic
 /// metadata. Its repeat maximum is only a structural backstop; the installed
 /// [`crate::ControllerLifecycleOwner`] owns every cumulative ceiling and must assess a
 /// marked controller before runtime can create a cycle.
@@ -813,7 +816,7 @@ pub struct ControllerBlueprintSpec {
 ///
 /// ```
 /// use milkdrift_blueprint::{
-///     AuthorRef, BlueprintRevision, Condition, Mutation, MutationBatch, Node, NodeId,
+///     AuthorRef, BlueprintRevision, Condition, CostCurrencyCode, Mutation, MutationBatch, Node, NodeId,
 ///     NodeKind, PinnedSubworkflow, TerminalOutcome, WorkflowId, WorkflowInterface,
 /// };
 /// use milkdrift_control::{
@@ -842,6 +845,7 @@ pub struct ControllerBlueprintSpec {
 ///     16_777_216, 20, 20, 4, 4, 3, 3, Some(5),
 /// )?;
 /// Ok(build_controller_blueprint(ControllerBlueprintSpec {
+///     cost_currency: Some(CostCurrencyCode::new("USD")?),
 ///     workflow: WorkflowId::new("bounded-review-controller")?,
 ///     body: body_ref,
 ///     continue_condition: Condition::Constant { value: true },
@@ -868,7 +872,7 @@ pub fn build_controller_blueprint(
         checkpoint_interval: spec.limits.human_checkpoint_interval(),
         stop_behavior: ControllerStopBehavior::FailController,
         unknown_usage: UnknownUsagePolicy::FailClosed,
-        cost_currency: CostCurrencyCode::new("USD")?,
+        cost_currency: spec.cost_currency,
         operations: ControllerOperationRequirements::default(),
         labels: BTreeSet::from(["bounded-controller".to_owned()]),
         provenance: BTreeMap::from([(

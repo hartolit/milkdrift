@@ -163,6 +163,7 @@ impl CapabilityAdapter for WorkflowControlAdapter {
         _invocation: &AdapterInvocation<'_>,
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
         Ok(InvocationAdmissionEnvelope::new(
+            milkdrift_capability::AdmissionUnit::Unknown,
             AdmissionBound::NotApplicable,
             AdmissionBound::NotApplicable,
             AdmissionBound::Bounded(MAX_CONTROL_RESULT_BYTES),
