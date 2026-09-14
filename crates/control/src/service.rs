@@ -430,14 +430,34 @@ impl ControlService {
         }
 
         let _put = self.revisions.put_revision(&candidate)?;
+        let mut recovery_plan = false;
         let reconciliation = if let Some(run) = proposal.run() {
-            let policy = if classification.risk == RiskClass::Low
+            let reconciliation = reconciliation_id_from_parts(proposal.identity(), candidate.id())?;
+            // A lost outer reply may be retried after a different host mode starts. The
+            // recorded request owns its policy; mode only selects policy for new intent.
+            let recorded = self
+                .runtime
+                .projection(run)?
+                .reconciliation()
+                .requests()
+                .get(&reconciliation)
+                .map(milkdrift_runtime::ReconciliationRequestProjection::policy);
+            let policy = if let Some(policy) = recorded {
+                policy
+            } else if self.runtime.startup_state()
+                == milkdrift_runtime::RuntimeStartupState::RecoveryControls
+            {
+                // Recovery cannot finish an unsafe retained invocation. Use the existing
+                // prospective safe-restart plan; application below still requires approval.
+                ReconciliationPolicy::CancelAndRestartSafeWork
+            } else if classification.risk == RiskClass::Low
                 && proposal.application_policy() != ProposalApplicationPolicy::RequireApproval
             {
                 ReconciliationPolicy::FinishCurrentThenAdopt
             } else {
                 ReconciliationPolicy::RequireAuthority
             };
+            recovery_plan = policy == ReconciliationPolicy::CancelAndRestartSafeWork;
             let evidence = merged_evidence(document.evidence(), proposal.evidence());
             let reason = proposal_command_reason(document, proposal, &classification)?;
             let execution = self.runtime_command(
@@ -450,10 +470,7 @@ impl ControlService {
                 reason,
                 evidence,
                 RunCommand::RequestRevisionAdoption {
-                    reconciliation: reconciliation_id_from_parts(
-                        proposal.identity(),
-                        candidate.id(),
-                    )?,
+                    reconciliation,
                     revision: candidate.id().clone(),
                     policy,
                 },
@@ -467,6 +484,9 @@ impl ControlService {
         let mut applied = false;
         let mut reconciliation = reconciliation;
         if let Some(run) = proposal.run()
+            && !recovery_plan
+            && self.runtime.startup_state()
+                != milkdrift_runtime::RuntimeStartupState::RecoveryControls
             && proposal.application_policy() == ProposalApplicationPolicy::AutoApplyLowRisk
             && classification.risk == RiskClass::Low
             && self.revision_delta_is_authorized(
@@ -613,6 +633,25 @@ impl ControlService {
             .reconciliation
             .plan
             .ok_or_else(|| ControlError::ProposalState("proposal plan is absent".to_owned()))?;
+        if projection
+            .reconciliation()
+            .plans()
+            .get(&plan)
+            .and_then(|plan| {
+                projection
+                    .reconciliation()
+                    .requests()
+                    .get(plan.reconciliation())
+            })
+            .is_some_and(|request| {
+                request.policy() == ReconciliationPolicy::CancelAndRestartSafeWork
+            })
+            && !status.reconciliation.approved
+        {
+            return Err(ControlError::ProposalState(
+                "safe-restart proposal requires an explicit approval".to_owned(),
+            ));
+        }
         let execution = self.runtime_command(
             document,
             run,

@@ -1,6 +1,106 @@
 use super::*;
 
 #[test]
+fn recovery_proposal_keeps_its_recorded_policy_after_normal_restart() -> TestResult {
+    let directory = TempDir::new()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let actor = ActorRef::new("human:recovery-replay")?;
+    let run = RunId::new("run-recovery-replay")?;
+    let grant_id = GrantId::new("grant:recovery-replay")?;
+    let base = base_revision("workflow-recovery-replay")?;
+    store.put_revision(&base)?;
+    let (normal, normal_control, context) =
+        services(store.clone(), &actor, &run, &grant_id, "initial")?;
+    create_and_start(&normal_control, &normal, &context, &run, &base)?;
+    let authority = Arc::new(GrantSetEvaluator::new(
+        PolicyId::new("test.control-service")?,
+        1,
+        [grant(&actor, &run, &grant_id)?],
+        BTreeMap::new(),
+    )?);
+    let descriptor = CapabilityDescriptorDocument::from_json(include_bytes!(
+        "../../../../capability/tests/fixtures/descriptor-v1.json"
+    ))?
+    .body()
+    .clone();
+    let recovery = Arc::new(RuntimeService::open_closed_with_authority(
+        store.clone(),
+        Arc::new(DeterministicExecutor::new(descriptor)),
+        authority.clone(),
+        Arc::new(ManualClock::new(NOW)),
+        Arc::new(SequentialIdGenerator::new("recovery", 1)?),
+        RuntimeConfig::new(
+            WorkerId::new("recovery-worker")?,
+            ActorRef::new("service:recovery")?,
+            30_000,
+            32,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(1, Vec::new(), 1, 100, 0)?,
+        )?,
+    )?);
+    recovery.enable_recovery_controls()?;
+    let service = ControlService::new(store.clone(), recovery.clone(), authority);
+    let boundary = recovery.projection(&run)?.sequence();
+    let proposal = WorkflowProposalDocument::new(WorkflowProposal::new(
+        ProposalId::new("recovery-replay-proposal")?,
+        actor.clone(),
+        ProposalProvenance::Direct,
+        base.semantic().workflow().clone(),
+        Some(run.clone()),
+        base.id().clone(),
+        base.content_digest().clone(),
+        Some(boundary),
+        MutationBatch::new(vec![Mutation::ReplaceNode {
+            node: Node::new(
+                NodeId::new("done")?,
+                NodeKind::Terminal {
+                    outcome: TerminalOutcome::Failure,
+                },
+            )?
+            .with_control_input(PortId::new("in")?)?,
+        }])?,
+        "review a prospective terminal change",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        ProposalApplicationPolicy::RequireApproval,
+        None,
+        ClaimedStopCondition::Continue,
+    )?);
+    let submit = command(
+        "submit-recovery-replay",
+        &context,
+        OptimisticGuard {
+            expected_run_sequence: Some(boundary),
+            expected_revision: Some(base.id().clone()),
+            expected_proposal_digest: Some(proposal.proposal().digest().clone()),
+        },
+        ControlCommand::SubmitProposal { proposal },
+    )?;
+    service.execute(&submit)?;
+    let recorded = recovery.projection(&run)?;
+    assert!(
+        recorded
+            .reconciliation()
+            .requests()
+            .values()
+            .all(|request| request.policy()
+                == milkdrift_persistence::ReconciliationPolicy::CancelAndRestartSafeWork)
+    );
+    let head = recorded.sequence();
+    drop(service);
+    drop(recovery);
+    drop(normal_control);
+    drop(normal);
+    let (runtime, service, _) = services(store, &actor, &run, &grant_id, "normal-replay")?;
+    service.execute(&submit)?;
+    assert_eq!(runtime.projection(&run)?.sequence(), head);
+    Ok(())
+}
+
+#[test]
 fn low_risk_live_proposal_applies_pauses_replays_and_survives_restart() -> TestResult {
     let directory = TempDir::new()?;
     let store = Arc::new(RedbStore::open(directory.path())?);

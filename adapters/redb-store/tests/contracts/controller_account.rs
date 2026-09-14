@@ -859,6 +859,39 @@ fn invocation_artifact_above_reservation_blocks_account_without_charging_metadat
         }) if dimension == "artifact_bytes"
     ));
     assert!(!has_integrity_failure(&store)?);
+    let watermark = store.clock_watermark()?;
+    drop(store);
+    let private = milkdrift_redb_store::testing::private_offline_directory()?;
+    let offline =
+        milkdrift_redb_store::offline::OfflineStore::open(directory.path(), private.path())?;
+    let page = offline.inspect(
+        milkdrift_redb_store::offline::InspectionFamily::Accounts,
+        PageSize::new(1)?,
+        None,
+        false,
+    )?;
+    assert!(serde_json::to_string(&page)?.contains("\"blocked\":true"));
+    let backup = private.path().join("backup");
+    offline.backup(
+        &backup,
+        private.path(),
+        milkdrift_redb_store::offline::BackupProducer {
+            version: "test".into(),
+            binary_digest: "a".repeat(64),
+            source_revision: "fixture".into(),
+        },
+    )?;
+    drop(offline);
+    let restored = private.path().join("restored");
+    milkdrift_redb_store::offline::OfflineStore::restore(&backup, &restored, private.path())?;
+    assert!(RedbStore::open(&restored).is_err());
+    std::fs::remove_file(restored.join(milkdrift_redb_store::offline::INSPECTION_MARKER))?;
+    let store = RedbStore::open(&restored)?;
+    assert_eq!(
+        store.controller_account(declaration.account())?,
+        Some(blocked)
+    );
+    assert!(store.clock_watermark()? >= watermark);
     Ok(())
 }
 

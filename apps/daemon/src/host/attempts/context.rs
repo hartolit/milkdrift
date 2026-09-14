@@ -17,6 +17,10 @@ impl Owner {
         let Some(reference) = located.value.context_manifest.as_ref() else {
             return Ok(());
         };
+        if self.recovery_controls {
+            located.value.context_access = "recovery_redacted".to_owned();
+            return Ok(());
+        }
         let artifact = ArtifactId::new(reference.artifact_id.clone())
             .map_err(|error| invalid(&error.to_string()))?;
         crate::host::artifacts::preauthorize_artifact_identity(

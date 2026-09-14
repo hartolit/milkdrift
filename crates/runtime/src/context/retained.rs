@@ -6,7 +6,10 @@ use milkdrift_model::{ContextManifest, ContextOmissionReason};
 
 use super::{ContextBuildError, ContextBuildIdentity};
 
-pub(crate) fn validate_retained_manifest(
+/// Checks the frozen identity, governing policy and omission evidence used by retry
+/// and lease recovery. Offline diagnostics may call this pure check without constructing
+/// a runtime. Passing it is only a context-reuse check, not authority to execute work.
+pub fn validate_retained_manifest(
     manifest: &ContextManifest,
     identity: &ContextBuildIdentity,
     policy: &TaskContextPolicy,

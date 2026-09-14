@@ -59,6 +59,7 @@ impl RuntimeService {
         reason = "scheduling is one ordered admission pass over a single projection snapshot"
     )]
     pub fn scheduler_tick(&self) -> Result<SchedulerTickResult, RuntimeError> {
+        self.require_execution_mode()?;
         let now = self.clock.now()?;
         let span = info_span!(
             "runtime.scheduler_tick",
@@ -268,7 +269,11 @@ impl RuntimeService {
                             "reconciliation cancellation source is absent".to_owned(),
                         )
                     })?;
-                if source.state() != &NodeExecutionState::Terminal(NodeOutcome::Cancelled) {
+                if !matches!(
+                    source.state(),
+                    NodeExecutionState::Terminal(NodeOutcome::Cancelled)
+                        | NodeExecutionState::CancelledBeforeDispatch
+                ) {
                     continue;
                 }
                 let revision = self.current_revision(&projection)?;

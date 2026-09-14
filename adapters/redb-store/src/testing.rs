@@ -5,6 +5,13 @@
 
 use std::path::Path;
 
+/// Creates a new private temporary directory for offline-storage tests. Unix uses
+/// tempfile's 0700 mode; Windows removes inherited access on this new empty directory.
+/// Never changes permissions on an existing operator directory.
+pub fn private_offline_directory() -> Result<tempfile::TempDir, PersistenceError> {
+    crate::offline::private_test_directory()
+}
+
 use milkdrift_persistence::{PersistenceError, RunnableIndexEntry, SnapshotId};
 use milkdrift_workspace::{RunId, ScopeReference, WorkspaceValueEntry, WorkspaceValueReference};
 use redb::{Database, ReadableTable};

@@ -42,10 +42,11 @@ Recovered leased work faces the same retained-manifest check before startup open
 already entered keeps its existing recovery classification; any subsequent retry must pass the
 reuse check. Refusal leaves accepted history and saved bytes unchanged. Runtime neither rescans
 newer history nor removes omission metadata to make the old decision appear safe. Different evidence
-requires a distinct execution. A daemon blocked during startup cannot serve a CLI/API resolution
-command, and no automatic repair of these manifests is implemented. The
-[daemon operations guide](../operations/daemon.md#backup-compatibility-and-repair) owns the available
-store-generation procedure; it does not resolve outstanding effects in the old generation.
+requires a distinct execution. A daemon blocked during ordinary startup cannot serve commands.
+[ADR 0035](0035-authorized-recovery-controls.md) adds an explicitly selected authenticated recovery
+mode for reviewed prospective repair; it does not rewrite manifests or relax this execution check.
+The [daemon operations guide](../operations/daemon.md#authorized-recovery-controls) owns the procedure
+and remaining effect-resolution requirements.
 
 When claiming a `model.generate` invocation of a model capability, runtime reads its supplied
 provider-neutral request and compares the session variant with the immutable governing task policy.

@@ -131,6 +131,12 @@ operation. `begin_shutdown` closes new admission; the host continues driving can
 reports, and recovery while its workers drain. [Daemon operations](../../docs/operations/daemon.md)
 owns the production procedure.
 
+An explicitly selected recovery host instead calls `enable_recovery_controls` on the closed
+handle. Only pause/cancellation, revision reconciliation and external-work resolution commands
+can mutate runs. Existing authorization, receipts and sequence guards apply; scheduling, recovery
+and effects are refused. This handle can never open execution admission. A new normally initialized
+handle must validate the repaired generation before replacement executions can be scheduled.
+
 Controller policy enters through `ControllerLifecycle`; persistence owns its cumulative account.
 Install it before recovery when reopening accounted runs. The daemon exercises that composition
 through explicit [development qualification](../../docs/operations/daemon.md#controller-activation);

@@ -85,6 +85,8 @@ impl<T> RuntimeStore for T where
 pub enum RuntimeStartupState {
     /// The physical storage schema is current, but active-run recovery has not completed.
     OpenedClosed = 0,
+    /// Only explicit recovery commands are admitted; this handle can never execute work.
+    RecoveryControls = 1,
     /// Every nonterminal run was validated and recovered to a bounded fixed point.
     RecoveryCompleted = 2,
 }
@@ -92,6 +94,7 @@ pub enum RuntimeStartupState {
 impl RuntimeStartupState {
     fn from_u8(value: u8) -> Self {
         match value {
+            1 => Self::RecoveryControls,
             2 => Self::RecoveryCompleted,
             _ => Self::OpenedClosed,
         }
@@ -615,6 +618,27 @@ impl RuntimeService {
         self.resume_admission()
     }
 
+    /// Permanently restricts a newly opened handle to authorized recovery commands.
+    ///
+    /// This does not certify active state as executable or run automatic recovery. Existing
+    /// command planners, authority, sequence guards and durable receipts still apply. Drop
+    /// this handle and initialize a new one normally to validate repaired state for execution.
+    pub fn enable_recovery_controls(&self) -> Result<(), RuntimeError> {
+        let _guard = self.startup_gate.lock().map_err(|_| {
+            RuntimeError::Scheduling("runtime startup coordination lock is poisoned".to_owned())
+        })?;
+        if self.startup_state() != RuntimeStartupState::OpenedClosed {
+            return Err(RuntimeError::Scheduling(
+                "recovery controls require a newly opened closed runtime".to_owned(),
+            ));
+        }
+        self.startup_state.store(
+            RuntimeStartupState::RecoveryControls as u8,
+            Ordering::SeqCst,
+        );
+        Ok(())
+    }
+
     /// Completes bounded-page active-run recovery while keeping command admission closed.
     ///
     /// Daemon composition uses this split phase so application state and adapters can finish
@@ -625,6 +649,7 @@ impl RuntimeService {
         })?;
         self.accepting_admission.store(false, Ordering::SeqCst);
 
+        self.require_execution_mode()?;
         if self.startup_state() == RuntimeStartupState::OpenedClosed {
             self.recover_startup_to_completion()?;
             self.startup_state.store(
@@ -784,7 +809,12 @@ impl RuntimeService {
             Err(error)
         } else if !self.command_allowed_while_draining(command.command()) {
             Err(RuntimeError::InvalidTransition(
-                "runtime admission is closed for graceful shutdown".to_owned(),
+                if self.startup_state() == RuntimeStartupState::RecoveryControls {
+                    "command is unavailable in recovery mode; restart normally after reconciliation"
+                } else {
+                    "runtime admission is closed for graceful shutdown"
+                }
+                .to_owned(),
             ))
         } else {
             self.plan_command(command, &projection)
@@ -840,6 +870,17 @@ impl RuntimeService {
     }
 
     fn command_allowed_while_draining(&self, command: &RunCommand) -> bool {
+        if self.startup_state() == RuntimeStartupState::RecoveryControls {
+            return matches!(
+                command,
+                RunCommand::PauseRun
+                    | RunCommand::RequestCancellation
+                    | RunCommand::RequestRevisionAdoption { .. }
+                    | RunCommand::DecideReconciliation { .. }
+                    | RunCommand::ApplyReconciliation { .. }
+                    | RunCommand::ResolveExternalWork { .. }
+            );
+        }
         self.is_accepting_admission()
             || !matches!(
                 command,
@@ -853,6 +894,15 @@ impl RuntimeService {
                         ..
                     }
             )
+    }
+
+    fn require_execution_mode(&self) -> Result<(), RuntimeError> {
+        if self.startup_state() == RuntimeStartupState::RecoveryControls {
+            return Err(RuntimeError::Scheduling(
+                "recovery controls cannot advance or execute work; restart normally after reconciliation".to_owned(),
+            ));
+        }
+        Ok(())
     }
 }
 

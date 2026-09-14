@@ -159,7 +159,7 @@ impl DaemonHost {
     where
         T: Send + 'static,
     {
-        if require_ready && !self.health.is_ready() {
+        if require_ready && !self.health.accepting_controls() {
             return Err(PublicFailure::new(
                 ErrorCode::Unavailable,
                 "daemon is not ready",
@@ -171,7 +171,7 @@ impl DaemonHost {
         let request_health = self.health.clone();
         let mut pending = OwnerRequest {
             execute: Box::new(move |owner| {
-                if require_ready && !request_health.is_ready() {
+                if require_ready && !request_health.accepting_controls() {
                     let _ = reply.send(Err(PublicFailure::new(
                         ErrorCode::Unavailable,
                         "daemon is not ready",

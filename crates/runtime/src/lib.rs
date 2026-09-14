@@ -36,6 +36,7 @@ pub use context::{
     ContextCandidate, ContextCandidateArtifactFacts, ContextCandidateAvailability,
     ContextCandidateSource, ContextSourceRequest, DurableContextCandidateSource,
     materialize_selected_context, persist_context_manifest, read_context_manifest,
+    validate_retained_manifest,
 };
 pub use controller::{
     CONTROLLER_POLICY_EXTENSION_KEY, ControllerAssessment, ControllerAssessmentContext,

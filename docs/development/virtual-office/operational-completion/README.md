@@ -34,6 +34,7 @@ task. Use the repository as the handoff; do not rely on another agent's chat his
 | 02 | [Model external-effect stages](02-model-external-effect-stages.md) | Proven no-request failures are distinct from genuinely uncertain external outcomes. |
 | 03 | [Qualified controller and budget clarity](03-qualified-controller-and-budgets.md) | Existing lifecycle is integrated and qualified through the daemon, with explicit accounting scope. |
 | 04 | [Read-only recovery and safe storage operations](04-recovery-and-storage-operations.md) | Blocked stores can be inspected and backed up without dispatch or historical rewriting. |
+| 04A | [Authorized recovery controls](04a-handoff.md) | Reviewed prospective repair can unblock the same generation before normal startup validates execution. |
 | 05 | [Explicit continuation](05-explicit-continuation.md) | Existing exact-reference continuation works through supported model mappings without hidden sessions. |
 | 06 | [Constrained peer placement](06-constrained-peer-placement.md) | Task locality/peer constraints are expressible and enforced through admission, selection, and entry. |
 | 07 | [Trusted-process cleanup bounds](07-trusted-process-cleanup-bounds.md) | Owned I/O cleanup is interruptible and bounded without false descendant-containment claims. |
@@ -44,8 +45,16 @@ has completed corrective 03A model-budget implementation and integration review,
 for streamed usage evidence, nullable details and billed-call monetary permission. It has demonstrated two zero-spend local
 model calls, accepted repair, and refusal of a third model request before transmission. Its
 [handoff](03-handoff.md) owns the finite activation decision and evidence. Production activation
-remains blocked pending coordinator acceptance of the corrective qualification. Assignments 04–08 have
-not started; advancing requires coordinator acceptance.
+remains blocked pending coordinator acceptance of the corrective qualification. Assignment 04 is
+implemented by the current Codex task, explicitly assigned by the user at base `d537059`.
+Its [handoff](04-handoff.md) records the completed offline operating path, full verification and
+preserved execution restrictions; the result is ready for coordinator acceptance.
+Assignments 05–08 have not started; advancing requires coordinator acceptance.
+
+The user additionally authorized implementing the missing repair path after assignment 04.
+The same task owns 04A; [its handoff](04a-handoff.md) records the result and evidence. This addition
+does not change the separately assigned scope of 05–08. Control protocol advances to 2.6 for
+recovery health; storage formats, proposal/command schemas and daemon configuration remain unchanged.
 
 The canonical acceptance owner is `crates/control/src/acceptance.rs`, exposed through the existing
 `workflow.accept_result` operation. Assignment 03 should compose `result_acceptance_task` and

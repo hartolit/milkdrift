@@ -145,6 +145,12 @@ On Windows, put a real Python installation before the `WindowsApps` execution al
 The fixture resolves and hashes the interpreter file; an alias can fail executable resolution
 before a scenario starts. Adjust the test shell's `PATH`, not the fixture's identity checks.
 
+Build the product daemon before the structured-runtime retained-context suite as well: its offline
+storage scenarios use the shared legacy fixture to exercise the actual daemon binary. They prove
+blocked startup, offline diagnostics and authorized recovery proposal/replay against the same
+old-writer evidence. The recovery scenario uses the configured grant and normal runtime completion
+after repair. Offline copy tests create private temporary parents, including restricted Windows ACLs.
+
 ```sh
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --all-features

@@ -41,6 +41,7 @@ impl RedbStore {
         validate_config(&config)?;
         let startup_observation = config.clock.now()?;
         prepare_owned_directory(&config.root, "storage root")?;
+        crate::offline::refuse_inspection_clone(&config.root)?;
         let database_path = config.root.join(DATABASE_FILENAME);
         ensure_regular_file_or_absent(&database_path, "storage database")?;
         let database = Database::create(&database_path).map_err(error::database)?;

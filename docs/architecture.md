@@ -5,6 +5,12 @@ what happens next. A client submits intent to the daemon; the runtime accepts fa
 asks external capabilities to perform work. Clients inspect projections of those facts instead
 of opening storage or reconstructing adapter behavior themselves.
 
+Offline `storage-admin` is a separate daemon executable path under OS file-owner authority.
+Redb owns source locking, private inspection copies and complete stopped-generation copies;
+the application composes redacted diagnostics with runtime's pure projection/context checks.
+It constructs no runtime service or external capabilities. Ordinary store opening refuses the
+inspection-only marker on backups/restores before any database writes.
+
 This document explains which component owns each part of that operation and the invariants that
 connect them. The terminology and package map below support the detailed lifecycle sections.
 Read [vision](product/vision.md) for intent, [status](product/status.md) for exact current versions
@@ -311,6 +317,13 @@ command and commits the missing receipt; it does not redo the effect.
 active runtime/application owners before adapter registration, peer recovery, worker startup, and
 admission. It does not scan all terminal history or hash all artifact bytes. Active corruption fails
 startup closed; unrelated terminal corruption is found on read or explicit scrub.
+
+An explicitly selected recovery composition permanently restricts a closed runtime to existing
+authorized recovery commands. Control selects safe-restart proposal plans and requires approval;
+runtime commits prospective cancellation and revision pins through its ordinary command owner.
+The daemon serves authenticated controls and receipt maintenance without adapters, peers,
+execution materializations or scheduling. A fresh normal startup must validate all active state
+before execution. [ADR 0035](decisions/0035-authorized-recovery-controls.md) owns this boundary.
 
 `StorageAdmin::scan_integrity` performs bounded resumable historical verification under one read
 transaction per page. Physical phases and cursor policy cover primary records, derived indexes,

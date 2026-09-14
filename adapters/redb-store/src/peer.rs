@@ -7,6 +7,7 @@
 
 mod claims;
 mod records;
+pub(crate) use records::snapshot_in_read_transaction_text;
 use records::{
     available_key, bump_record, catalog_in_transaction, claim_key, corruption, decode_ordered_time,
     decode_record, decode_tombstone, exact_claim, exact_pre_entry_claim,
@@ -15,9 +16,8 @@ use records::{
     observation_genesis_digest, observation_key, observation_link_digest, ordered_key,
     owned_execution_in_transaction, parse_execution_id, put_execution, put_tombstone,
     relationship_in_transaction, remove_claim_index, remove_terminal_index, request_key,
-    snapshot_in_read_transaction_text, snapshot_in_transaction_text,
-    snapshot_optional_in_read_transaction, snapshot_optional_in_transaction,
-    tombstone_optional_in_transaction,
+    snapshot_in_transaction_text, snapshot_optional_in_read_transaction,
+    snapshot_optional_in_transaction, tombstone_optional_in_transaction,
 };
 
 mod accounting;

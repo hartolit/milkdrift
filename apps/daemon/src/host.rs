@@ -185,6 +185,7 @@ pub(crate) struct ArtifactContentRead {
 }
 
 struct Owner {
+    recovery_controls: bool,
     request_panicked: bool,
     shutdown: ShutdownConfig,
     store: Arc<RedbStore>,

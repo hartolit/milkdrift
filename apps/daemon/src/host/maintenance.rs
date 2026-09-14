@@ -10,7 +10,9 @@ use tracing::warn;
 
 impl Owner {
     pub(super) fn maintenance(&self, health: &SharedHealth) {
-        if let Err(error) = self.refresh_capability_health() {
+        if !self.recovery_controls
+            && let Err(error) = self.refresh_capability_health()
+        {
             warn!(
                 outcome = "error",
                 code = "capability_health",
@@ -52,6 +54,9 @@ impl Owner {
                 );
                 health.receipt_failure();
             }
+        }
+        if self.recovery_controls {
+            return;
         }
         if let Some(service) = self.peer_service.as_ref().and_then(Weak::upgrade) {
             match service.maintain_retention() {

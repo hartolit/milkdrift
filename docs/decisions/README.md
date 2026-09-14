@@ -43,3 +43,5 @@ their existence does not establish that continuous controllers are installed.
 - [0031 — Enforce context decisions before future execution](0031-context-enforcement-and-retained-evidence.md)
 - [0032 — Accept stage results through ordinary workflow composition](0032-purpose-specific-result-acceptance.md)
 - [0033 — Explicit controller qualification and account inspection](0033-explicit-controller-qualification.md)
+- [0034 — Offline generation inspection and preservation](0034-offline-generation-inspection-and-preservation.md)
+- [0035 — Authorized recovery controls before execution readiness](0035-authorized-recovery-controls.md)

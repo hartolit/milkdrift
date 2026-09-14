@@ -85,6 +85,29 @@ fn timeline_projection_never_serializes_internal_event_body() {
 }
 
 #[tokio::test]
+async fn recovery_host_shuts_down_without_workers_or_execution_materialization()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let token = directory.path().join("operator.token");
+    fs::write(&token, "recovery-shutdown-token")?;
+    let config = clock_test_config(directory.path(), &token)?;
+    let host = DaemonHost::start_recovery(config.clone())?;
+    assert_eq!(
+        host.health().state,
+        milkdrift_control_protocol::DaemonState::Recovery
+    );
+    assert!(host.health().live);
+    assert!(!host.health().ready);
+    assert!(!directory.path().join("data/execution").exists());
+    host.shutdown().await?;
+    drop(host);
+    let normal = DaemonHost::start(config)?;
+    assert!(normal.health().ready);
+    normal.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn daemon_restart_rejects_clock_rollback_before_readiness()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;

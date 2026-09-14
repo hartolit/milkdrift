@@ -26,6 +26,32 @@ See [status](../product/status.md) for executed evidence and platform limits.
 
 ## Actual-binary scenarios
 
+Offline storage composition is exercised by
+`cargo test -p milkdrift-daemon --test storage_admin --all-features` and the structured-runtime
+`context_enforcement::offline_binary_inspects_blocked_legacy_context_without_disclosing_or_rewriting_it`
+test. Build the daemon first as described in the [workflow](workflow.md). These tests use temporary
+current-format stores and private scratch: writer refusal, create-new backup/restore, source-byte
+identity, clone execution refusal, and normal startup refusal beside redacted unsafe-context
+inspection. Redb offline/artifact/account tests and peer retention tests establish exact cold
+receipt and tombstone replay/conflict, unfinished publication offsets and outstanding-account
+preservation. They do not establish filesystem power-loss or hostile OS-actor protection.
+
+The structured-runtime `context_enforcement::recovery_binary` scenario starts that actual daemon
+with `--recovery` over the same legacy fixture and configured retained grant. It submits, approves
+and applies a prospective repair through the real control client, checks withheld context and
+execution readiness, and reopens the daemon to prove exact receipt replay/conflict. Normal runtime
+startup then completes the repaired run with one fresh invocation and unchanged prior evidence.
+`context_enforcement::recovery_controls` covers both legacy failure classes and permanent runtime
+effect/scheduler refusal. Control-service replay tests retain the recorded policy across a switch
+to normal startup; daemon host tests verify shutdown without workers. These prove supported
+safe-restart behavior, not general corruption repair or external-effect settlement.
+
+The integrated review retains gate and deterministic binary-scenario logs under `target/review-main`
+and default/all-feature API inventories under `target/public-api/review-main`. Its real-endpoint
+model smokes use `target/review-main/profiles/bonsai-1.json` and `bonsai-2.json`; each saved session
+and failure log records the 150-second harness deadline without terminal evidence. These failures
+do not qualify the live endpoint or prove that generation stopped when the harness exited.
+
 Build and run the headless operator scenario:
 
 ```sh

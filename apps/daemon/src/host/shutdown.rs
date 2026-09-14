@@ -64,7 +64,7 @@ impl DaemonHost {
             .dispatch_draining(|owner| owner.take_effect_workers_for_shutdown())
             .await
         {
-            Ok((workers, mode)) => {
+            Ok(Some((workers, mode))) => {
                 let deadline = self
                     .shutdown_deadline
                     .saturating_sub(shutdown_started.elapsed());
@@ -78,6 +78,11 @@ impl DaemonHost {
                     Err(_) => EffectShutdownOutcome::failed(),
                 }
             }
+            Ok(None) => EffectShutdownOutcome {
+                clean: true,
+                unresolved_invocations: 0,
+                outstanding_effects: 0,
+            },
             Err(error) => {
                 warn!(
                     phase = "draining",
@@ -206,8 +211,11 @@ pub(super) fn shutdown_effect_workers(
 impl Owner {
     pub(super) fn take_effect_workers_for_shutdown(
         &mut self,
-    ) -> Result<(EffectWorkerHost, EffectShutdownMode), PublicFailure> {
+    ) -> Result<Option<(EffectWorkerHost, EffectShutdownMode)>, PublicFailure> {
         self.runtime.begin_shutdown();
+        if self.recovery_controls {
+            return Ok(None);
+        }
         let mode = match self.shutdown.effect_policy {
             ShutdownEffectPolicy::Drain => EffectShutdownMode::Drain,
             ShutdownEffectPolicy::Cancel => EffectShutdownMode::Cancel,
@@ -215,7 +223,7 @@ impl Owner {
         };
         self.effect_workers
             .take()
-            .map(|workers| (workers, mode))
+            .map(|workers| Some((workers, mode)))
             .ok_or_else(|| {
                 PublicFailure::new(
                     ErrorCode::Unavailable,

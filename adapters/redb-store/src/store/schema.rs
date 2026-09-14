@@ -13,6 +13,41 @@ use crate::{
 };
 use milkdrift_persistence::{PersistenceError, TimestampMillis};
 use redb::{Database, ReadableTable, ReadableTableMetadata};
+pub(crate) fn validate_format(database: &Database) -> Result<(), PersistenceError> {
+    let read = database.begin_read().map_err(error::redb)?;
+    let table = read.open_table(METADATA).map_err(error::redb)?;
+    let found = table
+        .get(SCHEMA_VERSION_KEY)
+        .map_err(error::redb)?
+        .ok_or_else(|| error::corruption("storage schema version is missing"))?
+        .value();
+    let internal = table
+        .get(INTERNAL_DOCUMENT_FORMAT_VERSION_KEY)
+        .map_err(error::redb)?
+        .map(|value| value.value());
+    validate_versions(found, internal)?;
+    crate::schema::validate_tables(&read)
+}
+
+fn validate_versions(found: u64, internal: Option<u64>) -> Result<(), PersistenceError> {
+    if found != STORAGE_SCHEMA_VERSION {
+        return Err(PersistenceError::UnsupportedVersion {
+            document: "storage",
+            found: u32::try_from(found).unwrap_or(u32::MAX),
+            supported: STORAGE_SCHEMA_VERSION as u32,
+        });
+    }
+    let internal = internal
+        .ok_or_else(|| error::corruption("redb internal document format marker is missing"))?;
+    if internal != INTERNAL_DOCUMENT_FORMAT_VERSION {
+        return Err(PersistenceError::UnsupportedVersion {
+            document: "redb internal document envelope",
+            found: u32::try_from(internal).unwrap_or(u32::MAX),
+            supported: INTERNAL_DOCUMENT_FORMAT_VERSION as u32,
+        });
+    }
+    Ok(())
+}
 pub(crate) fn initialize_schema(
     database: &Database,
     faults: &dyn FaultInjector,
@@ -161,22 +196,7 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
             security_audit_count,
         )
     };
-    if found != STORAGE_SCHEMA_VERSION {
-        return Err(PersistenceError::UnsupportedVersion {
-            document: "storage",
-            found: u32::try_from(found).unwrap_or(u32::MAX),
-            supported: STORAGE_SCHEMA_VERSION as u32,
-        });
-    }
-    let internal_document_format = internal_document_format
-        .ok_or_else(|| error::corruption("redb internal document format marker is missing"))?;
-    if internal_document_format != INTERNAL_DOCUMENT_FORMAT_VERSION {
-        return Err(PersistenceError::UnsupportedVersion {
-            document: "redb internal document envelope",
-            found: u32::try_from(internal_document_format).unwrap_or(u32::MAX),
-            supported: INTERNAL_DOCUMENT_FORMAT_VERSION as u32,
-        });
-    }
+    validate_versions(found, internal_document_format)?;
     clock_watermark
         .ok_or_else(|| error::corruption("boundary-clock high-water evidence is missing"))?;
     lease_set_revision.ok_or_else(|| error::corruption("lease-set revision is missing"))?;

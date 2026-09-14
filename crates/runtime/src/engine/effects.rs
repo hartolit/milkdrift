@@ -85,6 +85,7 @@ impl RuntimeService {
         executions: bool,
         cancellations: bool,
     ) -> Result<Vec<EffectAction>, RuntimeError> {
+        self.require_execution_mode()?;
         let _claim_guard = self.effect_claim_gate.lock().map_err(|_error| {
             RuntimeError::Scheduling("effect claim coordination lock is poisoned".to_owned())
         })?;
@@ -163,6 +164,7 @@ impl RuntimeService {
         &self,
         action: EffectAction,
     ) -> Result<EffectExecutionResult, RuntimeError> {
+        self.require_execution_mode()?;
         match action {
             EffectAction::Execute(dispatch) => self.execute_invocation_effect(&dispatch),
             EffectAction::Cancel(dispatch) => self.execute_cancellation_effect(&dispatch),

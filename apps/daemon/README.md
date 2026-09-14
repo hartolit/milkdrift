@@ -8,8 +8,19 @@ starts the configured external capability adapters; model servers remain separat
 Use the [fresh-directory operator recipe](../../examples/operator/README.md) to build the binary,
 prepare a private credential, check `daemon.toml`, start a terminal-only workflow, and restart it.
 [Daemon operations](../../docs/operations/daemon.md) owns startup, retention, shutdown, and backup.
+
+`milkdrift-daemon --config ./daemon.toml --recovery` opens authenticated repair controls with
+execution disabled. It uses existing proposal approval and prospective reconciliation, reports
+live but not ready, and starts no adapters or workers. Normal restart validates repaired state
+before dispatch. See [authorized recovery controls](../../docs/operations/daemon.md#authorized-recovery-controls).
 [Authority configuration](../../docs/operations/authority.md) explains which operations and
 resources each credential grants. Process, model, and peer setup remain in their linked guides.
+
+The executable's explicit `storage-admin` path provides offline inspection, backup and restore.
+It bypasses configuration, credentials and runtime recovery, composing the redb offline owner
+with pure historical diagnostics. Follow the
+[storage operations procedure](../../docs/operations/daemon.md#offline-storage-administration)
+to inspect a blocked generation or preserve a stopped one without dispatching work.
 
 ## Follow a request
 

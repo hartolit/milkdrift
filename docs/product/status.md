@@ -28,6 +28,12 @@ This document owns current implementation, limitations, exact versions, and qual
 - Redb implements journal/index/workspace/account transactions, optional verified snapshots,
   content-addressed artifacts, application receipts/layouts/proposals/audit, peer records and
   tombstones, bounded retention, and resumable administrative integrity scans.
+- Explicit daemon `storage-admin` operations inspect blocked generations through a private
+  database copy under the source lock, without runtime recovery or source-byte modification.
+  Bounded diagnostics redact retained context. Offline backup/verify/restore preserve database,
+  artifacts and execution materializations; restored copies carry an execution guard. The
+  [storage operations guide](../operations/daemon.md#offline-storage-administration) owns permissions,
+  limits and the separate operator decision required before activation.
 - Local processes support byte-pinned argv profiles, isolated materialization, explicit inputs and
   outputs, bounded streams, cancellation, and platform ownership. Post-spawn reporting and setup
   failures retain child/I/O ownership through termination and joining, including unwinding;
@@ -82,7 +88,7 @@ values; repository contracts check the version cells against source.
 | Redb internal document format / physical schema | 16 / 11 | Older/future stores refused; no migration. |
 | Application command receipt / layout record | 1 / 1 | Exact supported contracts. |
 | Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
-| External control / authenticated cursor | 2.5 / 2 | Earlier major/cursor forms refused. |
+| External control / authenticated cursor | 2.6 / 2 | Earlier major/cursor forms refused. |
 | Peer protocol and catalog messages | 1.2 | Earlier minors refused. |
 | Daemon configuration | 9 | TOML; JSON and earlier versions refused. |
 | Layout document / CLI JSON output | 1 / 2 | CLI schema 1 refused. |
@@ -92,7 +98,10 @@ values; repository contracts check the version cells against source.
 - Earlier selection-policy-version-1 manifests remain readable, but omissions retaining ambiguous
   identities or sizes and stopped required evidence cannot authorize reuse. Retry and startup refuse
   those retained records without rewriting their bytes. An unsafe active lease prevents daemon
-  startup and HTTP service; no automatic repair is available through the CLI/API. See
+  ordinary startup. Explicit offline inspection supports diagnosis and preservation. Authenticated
+  `--recovery` controls permit reviewed prospective safe-restart proposals with execution disabled;
+  normal restart validates the repaired generation before replacement work can run. Missing/corrupt
+  evidence and unsafe effects still require their existing refusal/resolution paths. See
   [daemon operations](../operations/daemon.md#startup-and-readiness). The corrected selector emits
   policy version 2;
   [ADR 0031](../decisions/0031-context-enforcement-and-retained-evidence.md) explains this distinction
@@ -240,6 +249,30 @@ fixtures preserve the account. The reviewed successful report is `target/review-
 Production activation remains default-disabled/refused pending coordinator acceptance. No live host
 or model-server configuration changed. [Retained evidence](../development/verification-evidence.md#actual-binary-scenarios)
 records exact source, binary, profile and server-observation scope.
+
+Offline storage administration and authorized recovery controls pass the local Windows/MSVC full
+gate with 766 workspace tests, 24 doctests and all 24 repository contracts; five manual longevity
+cases remain ignored. Actual daemon tests prove blocked legacy-context inspection beside healthy
+history, protected-metadata redaction, unchanged source bytes/modification times, writer/path/
+permission refusal and guarded backup/restore. Malformed producer provenance is refused before
+copying and during verification/restore. Storage/peer contracts preserve exact cold replay/conflict,
+blocked accounts, durable clock and unfinished artifacts.
+
+Both unsafe legacy context classes repair prospectively in the same generation. Tests enforce
+authenticated approval and replay without execution, shutdown without workers, and recorded
+proposal policy across a switch to normal mode. The operator, deterministic model and controller
+binary lanes pass. Default/all-feature redb/runtime/daemon/control-protocol API inventories are
+reviewed without default test-helper exports. These Windows software checks establish supported
+safe restart, not filesystem power-loss, hostile-OS-actor protection, arbitrary corruption/effect
+repair or another platform. The
+[evidence guide](../development/verification-evidence.md#actual-binary-scenarios) identifies the suites.
+
+The additional local LM Studio smokes for `prism-ml/bonsai-27b` and `prism-ml/bonsai-27b:2` each reach
+their 150-second harness deadline without terminal model evidence, with a requested 4,096-unit
+output allowance. Their last observations retain one running model attempt and no output artifacts;
+neither run establishes model completion or remote termination. The preserved sessions are
+`target/review-main/live-bonsai-1` and `target/review-main/live-bonsai-2`. Server settings were not
+changed, and these runs add no live-model qualification.
 
 Release receipt, peer, controller-lifecycle, controller-admission, historical-frontier longevity,
 projection stress, and effect-worker shutdown proofs pass. Hosted Linux

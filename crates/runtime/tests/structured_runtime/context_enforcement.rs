@@ -5,6 +5,11 @@ use milkdrift_blueprint::TaskContextPolicy;
 use milkdrift_model::{ContextManifestDocument, ContextSource, MODEL_TASK_INPUT_NAME};
 use milkdrift_persistence::{ArtifactReadAuthority, EvidenceId};
 
+#[path = "context_enforcement/recovery_binary.rs"]
+mod recovery_binary;
+#[path = "context_enforcement/recovery_controls.rs"]
+mod recovery_controls;
+
 fn policy(session: &str, stopped: bool, fail_closed: bool) -> TestResult<TaskContextPolicy> {
     let mut value = serde_json::to_value(TaskContextPolicy::default())?;
     value["session"] = json!(session);
@@ -468,6 +473,13 @@ enum LegacyCase {
 }
 
 fn legacy_schedule(case: LegacyCase) -> TestResult<(Harness, RunId, InvocationRequest)> {
+    legacy_schedule_authorized(case, &test_authority_claim()?)
+}
+
+fn legacy_schedule_authorized(
+    case: LegacyCase,
+    claim: &CommandAuthorityClaim,
+) -> TestResult<(Harness, RunId, InvocationRequest)> {
     use milkdrift_model::{
         ContextManifest, ContextOmission, ContextOmissionReason, ContextSemanticKind, ContextTotals,
     };
@@ -490,7 +502,23 @@ fn legacy_schedule(case: LegacyCase) -> TestResult<(Harness, RunId, InvocationRe
     let run = RunId::new("legacy-context")?;
     for harness in [&source, &target] {
         harness.put_revision(&revision)?;
-        harness.create_and_start(&run, &revision)?;
+        harness.create(&run, &revision)?;
+        let start = harness.runtime.command(
+            run.clone(),
+            ActorRef::new("human:structured-runtime-test")?,
+            harness.store.head(&run)?,
+            Reason::new("start legacy writer fixture under its retained authority")?,
+            Vec::new(),
+            RunCommand::StartRun,
+        )?;
+        assert_eq!(
+            harness
+                .runtime
+                .handle_authorized_command(&start, claim)?
+                .result()
+                .disposition(),
+            CommandDisposition::Accepted
+        );
     }
     let expected = target.store.head(&run)?;
     source.runtime.scheduler_tick()?;
@@ -727,6 +755,145 @@ fn restart_refuses_unsafe_legacy_selection_without_changing_saved_evidence() -> 
             saved,
             ContextManifestDocument::new(manifest(&store, &request)?).to_canonical_json()?
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn offline_binary_inspects_blocked_legacy_context_without_disclosing_or_rewriting_it() -> TestResult
+{
+    use milkdrift_redb_store::offline::OfflineStore;
+    use std::{
+        fs,
+        process::{Command, Stdio},
+        time::Instant,
+    };
+    // The full gate builds the product binary first. This actual-binary proof uses
+    // the same old-writer fixture as runtime recovery, avoiding a second legacy writer.
+    let executable = std::env::current_exe()?
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("test executable has no target directory")?
+        .join(format!("milkdrift-daemon{}", std::env::consts::EXE_SUFFIX));
+    let invoke = |command: &mut Command| -> TestResult<std::process::Output> {
+        let mut child = command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while child.try_wait()?.is_none() {
+            if Instant::now() >= deadline {
+                child.kill()?;
+                let _ = child.wait();
+                return Err("maintenance/startup fixture exceeded its deadline".into());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Ok(child.wait_with_output()?)
+    };
+    for case in [LegacyCase::RequiredLoss, LegacyCase::DisclosureLoss] {
+        let (harness, run, request) = legacy_schedule(case)?;
+        let healthy = revision(
+            "offline-healthy",
+            vec![terminal("done", TerminalOutcome::Success)?],
+            Vec::new(),
+        )?;
+        harness.put_revision(&healthy)?;
+        harness.create(&RunId::new("unrelated-healthy")?, &healthy)?;
+        let saved = ContextManifestDocument::new(manifest(&harness.store, &request)?)
+            .to_canonical_json()?;
+        let directory = harness.close();
+        let private = milkdrift_redb_store::testing::private_offline_directory()?;
+        let config = private.path().join("daemon.toml");
+        let source =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/operator/daemon.toml");
+        let text = fs::read_to_string(source)?
+            .replace(
+                "data_root = \"./data\"",
+                &format!(
+                    "data_root = {}",
+                    serde_json::to_string(&directory.path().to_string_lossy())?
+                ),
+            )
+            .replace("127.0.0.1:9734", "127.0.0.1:0");
+        fs::write(&config, text)?;
+        let refused = invoke(
+            Command::new(&executable)
+                .arg("--config")
+                .arg(&config)
+                .env("MILKDRIFT_TOKEN", "offline-test-credential"),
+        )?;
+        assert!(!refused.status.success());
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains("retained context"),
+            "{}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+        let before = fs::read(directory.path().join("milkdrift.redb"))?;
+        let modified = fs::metadata(directory.path().join("milkdrift.redb"))?.modified()?;
+        let mut command = Command::new(&executable);
+        command
+            .env_remove("MILKDRIFT_DAEMON_CONFIG")
+            .args(["storage-admin", "--root"])
+            .arg(directory.path())
+            .arg("--scratch")
+            .arg(private.path())
+            .args(["run", "--run", run.as_str(), "--limit", "1"]);
+        let inspected = invoke(&mut command)?;
+        assert!(
+            inspected.status.success(),
+            "{}",
+            String::from_utf8_lossy(&inspected.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&inspected.stdout)?;
+        assert_eq!(
+            report["report"]["data"]["attempts"][0]["context"]["classification"],
+            "unsafe_but_readable"
+        );
+        assert_eq!(
+            report["report"]["data"]["attempts"][0]["blocks_context_recovery"],
+            true
+        );
+        assert!(!String::from_utf8_lossy(&inspected.stdout).contains("hidden-execution"));
+        let offline = OfflineStore::open(directory.path(), private.path())?;
+        let reference = request.context_manifest().ok_or("manifest")?;
+        let artifact = milkdrift_workspace::ArtifactReference::new(
+            ArtifactId::new(reference.identity())?,
+            ContentDigest::from_hex(reference.digest())?,
+            MediaType::new(reference.media_type().ok_or("media")?)?,
+            reference.size_bytes().ok_or("size")?,
+        );
+        assert_eq!(
+            offline.artifact_bytes(&artifact, milkdrift_model::MAX_MODEL_DOCUMENT_BYTES as u64)?,
+            saved
+        );
+        let backup = private.path().join("backup");
+        let manifest = offline.backup(
+            &backup,
+            private.path(),
+            milkdrift_redb_store::offline::BackupProducer {
+                version: "test".into(),
+                binary_digest: "a".repeat(64),
+                source_revision: "old-writer-fixture".into(),
+            },
+        )?;
+        assert_eq!(manifest.integrity_failures, 0);
+        drop(offline);
+        assert_eq!(before, fs::read(directory.path().join("milkdrift.redb"))?);
+        assert_eq!(
+            modified,
+            fs::metadata(directory.path().join("milkdrift.redb"))?.modified()?
+        );
+        let restored = private.path().join("restored");
+        OfflineStore::restore(&backup, &restored, private.path())?;
+        assert!(RedbStore::open(&restored).is_err());
+        let clone = OfflineStore::open(&restored, private.path())?;
+        assert_eq!(
+            clone.artifact_bytes(&artifact, milkdrift_model::MAX_MODEL_DOCUMENT_BYTES as u64)?,
+            saved
+        );
+        drop(clone);
+        assert_eq!(before, fs::read(restored.join("milkdrift.redb"))?);
     }
     Ok(())
 }

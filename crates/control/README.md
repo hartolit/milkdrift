@@ -44,6 +44,13 @@ keep their original definitions. The [reconciliation planner](../runtime/src/rec
 owns the classifications and [ADR 0005](../../docs/decisions/0005-prospective-revision-reconciliation.md)
 explains why a later edit cannot rewrite them.
 
+When the runtime is explicitly restricted to recovery controls, live proposals select the existing
+safe-restart reconciliation policy and never auto-apply. An explicit approval is required before
+application, including after a process restart. This lets a blocked task receive corrected future
+work while retaining its old attempt and context. The original run authority must still authorize
+the replacement revision. [Daemon recovery](../../docs/operations/daemon.md#authorized-recovery-controls)
+explains the operational sequence and remaining refusals.
+
 Simple commands such as pause, resume, signal, cancellation, or retained-work resolution use the
 same service. Inspect a `RunInspection` for the current operational frontier, or page the timeline
 for older events. A compact current view does not imply that earlier attempts disappeared.

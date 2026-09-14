@@ -62,6 +62,13 @@ impl Owner {
         maximum: u32,
         evidence: &str,
     ) -> Result<ArtifactContentRead, PublicFailure> {
+        if self.recovery_controls {
+            return Err(PublicFailure::new(
+                milkdrift_control_protocol::ErrorCode::Unavailable,
+                "artifact content is unavailable in recovery mode; use offline preservation",
+                false,
+            ));
+        }
         let artifact_id =
             ArtifactId::new(artifact.to_owned()).map_err(|error| invalid(&error.to_string()))?;
         preauthorize_artifact_identity(

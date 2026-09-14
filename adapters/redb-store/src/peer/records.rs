@@ -106,7 +106,7 @@ pub(super) fn snapshot_in_transaction_text(
         .ok_or_else(|| corruption("peer index points at a missing execution authority"))
 }
 
-pub(super) fn snapshot_in_read_transaction_text(
+pub(crate) fn snapshot_in_read_transaction_text(
     read: &redb::ReadTransaction,
     execution: &str,
 ) -> Result<PeerExecutionSnapshot, PersistenceError> {

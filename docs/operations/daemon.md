@@ -32,12 +32,13 @@ it never becomes ready. Once serving, `daemon readiness` is the coarse readiness
 `daemon health` supplies separately authorized queue, worker, and retention details. Ready means
 commands can be considered, not that every capability is available or every request is authorized.
 
-An active lease with an unsafe older context selection also prevents startup. The saved manifest
+An active lease with an unsafe older context selection also prevents ordinary startup. The saved manifest
 remains readable, but its omissions may lack proof that required evidence was supplied or protected
-metadata was hidden. Recovery refuses to forward it, leaving HTTP unavailable; there is no CLI/API
-repair command that can run against that failed startup. See the
+metadata was hidden. Ordinary recovery refuses to forward it, leaving that startup's HTTP service
+unavailable. Preserve the generation with offline inspection, then explicitly select
+[authorized recovery controls](#authorized-recovery-controls) to review a prospective repair. See the
 [retained-context decision](../decisions/0031-context-enforcement-and-retained-evidence.md) and
-[store-generation procedure](#backup-compatibility-and-repair). Starting an empty generation does
+[offline inspection](#offline-storage-administration). Starting an empty generation does
 not settle any outstanding effects in the preserved old root.
 
 Requests enter one bounded owner queue. Saturation returns overload; it does not create an
@@ -114,21 +115,204 @@ external effect succeeded or stopped. After restart, inspect the exact attempt a
 
 ## Backup, compatibility, and repair
 
-Stop the daemon cleanly before copying its complete data root. Artifact bytes live in the
-content-addressed filesystem store; runtime/application/peer metadata, controller accounts, and
-the clock high-water fact live in redb. Keep them together. This pre-release build accepts only
-the [current formats](../product/status.md), with no migration. Do not edit rows or schema markers.
+Stop the daemon and wait for its process and owned workers to exit. Process exit does not prove
+that a provider or remote worker stopped. `storage-admin backup` copies the complete closed
+generation under the same exclusive database lock as a writer. Copying a live database and
+changing artifacts separately cannot produce this guarantee.
+
+A generation includes `milkdrift.redb`, `artifacts` (including unfinished `.tmp` publications), and
+the daemon's `execution` materializations when present. The database retains run/attempt identities,
+command results, hot/cold receipts, peer records/tombstones, controller accounts and the durable
+clock. Materializations may contain sensitive inputs and working files; verification never resumes
+them. Unknown root components, links/reparse points and special files are refused, not dropped.
+Keep configuration, secret-source files and unrelated directories outside this data-root policy.
+Backup never fetches referenced external files or resolves credentials.
+
+Only physical schema 11 and internal document format 16 are supported by the
+[current readers](../product/status.md), including offline. For other formats, preserve the untouched
+root and its producer binary/source; inspection requires matching offline readers, which this
+command does not supply. No migration, schema-marker patching, row editing or automatic repair occurs.
+
+### Offline storage administration
+
+`milkdrift-daemon storage-admin` uses OS file access, independently of workflow grants. It needs no
+daemon configuration, credential or fabricated `ActorRef`. Ordinary startup never falls back to it.
+No runtime service, effect workers, adapters, peer connections or HTTP service are constructed.
+
+The pinned redb library can change housekeeping metadata during ordinary open. Offline administration
+instead locks a read-only source database handle and copies and hashes it into private scratch.
+Compatible readers open only that verified copy; artifacts are read from the locked source.
+Source bytes and modification times remain unchanged, including failed inspection. Access times
+and OS audit observations may change. No semantic clock advances, lease refreshes, account
+settlements, retention, schema initialization or index rebuilding occur. Normal exit removes the
+private database copy; an OS crash can leave scratch files for later operator cleanup.
+
+Provide an existing private scratch directory outside the source. Unix requires current ownership
+and mode 0700. Windows checks ownership and ACLs using system Windows PowerShell; only the current
+account, SYSTEM and Administrators may have access. Broad inherited access is refused. Create a
+new private parent in PowerShell, checking both commands succeed:
+
+```powershell
+$recovery = Join-Path $env:LOCALAPPDATA 'MilkdriftRecovery'
+New-Item -ItemType Directory -Path $recovery -ErrorAction Stop
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+icacls $recovery /inheritance:r /grant:r "$($identity):(OI)(CI)F"
+```
+
+On Unix, `mkdir -m 700 ./recovery` creates a suitable new parent. These examples use that directory;
+in PowerShell substitute `--scratch "$recovery"` and destinations below it:
+
+```sh
+milkdrift-daemon storage-admin --root ./data --scratch ./recovery overview
+milkdrift-daemon storage-admin --root ./data --scratch ./recovery runs --limit 32
+milkdrift-daemon storage-admin --root ./data --scratch ./recovery records --family leases --limit 32
+milkdrift-daemon storage-admin --root ./data --scratch ./recovery run --run RUN_ID --limit 32 --maximum-events 100000
+milkdrift-daemon storage-admin --root ./data --scratch ./recovery records --family accounts
+milkdrift-daemon storage-admin --root ./data --scratch ./recovery records --family cold-receipts
+milkdrift-daemon storage-admin --root ./data --scratch ./recovery records --family peer-tombstones
+milkdrift-daemon storage-admin --root ./data --scratch ./recovery records --family artifacts --hash-artifacts
+```
+
+Output is a schema-1 `inspection_report` with source database fingerprint and
+`execution_authorized: false`. Redirect it only to a private location. It is a redacted report,
+not a runnable backup. `overview` reports physical row counts and database bytes; record pages
+report encoded bytes visited. Cold receipts/tombstones preserve permanent replay/conflict identity.
+Their growth is a cost of retaining the generation, not a reason to delete them.
+
+`records` also accepts `hot-receipts` and `peers`. It excludes receipt responses, peer requests,
+grants and artifact content. Accounts expose totals, blocked state and exact reservations without
+raw provider evidence. Artifact presence and size are checked; digest hashing is opt-in. Corrupt,
+unsupported and oversized records occupy their page position with an explicit failure.
+
+Pages accept 1–128 entries. Pass `report.data.next` unchanged to `--after`; record/scan cursors bind
+source bytes, family and hash mode. Run-list continuations are exclusive run IDs. `run` replays
+only the named history up to `--maximum-events` (default 100,000; maximum 1,000,000), then pages its
+retained attempt frontier using `--after-attempt`. Compacted completed detail is explicitly outside
+that projection. Each attempt shows revision, lease, uncertainty and frozen-context reuse checks.
+`unsafe_but_readable` means the manifest decoded but cannot authorize reuse; unavailable/corrupt
+content is separate. Policy, digest and bounded omission reasons remain visible. All saved
+selection/omission source identities, sizes, provenance and content are withheld, including legacy
+policy-v1 metadata. A passed context check is not an overall startup-readiness verdict.
+
+Ordinary inspection performs no whole-history logical scan. To verify history deliberately, continue
+the existing integrity scanner until `next` is null, retaining all page failures:
+
+```sh
+milkdrift-daemon storage-admin --root ./data --scratch ./recovery scan --limit 128 --hash-artifacts
+milkdrift-daemon storage-admin --root ./data --scratch ./recovery scan --limit 128 --hash-artifacts --after "$cursor"
+```
+
+Set `$cursor` to the preceding `report.data.next`. Keep hash mode unchanged. Each response describes
+only its page; failure details are redacted to component names. Index rebuilding remains a separate
+Rust storage API requiring diagnosis of authoritative receipt links first. See the
+[redb administration guide](../../adapters/redb-store/README.md).
+
+### Create and verify an isolated copy
+
+```sh
+milkdrift-daemon storage-admin --root ./data --scratch ./recovery backup --destination ./recovery/backup-01
+milkdrift-daemon storage-admin --root ./recovery/backup-01 --scratch ./recovery verify-backup
+milkdrift-daemon storage-admin --root ./recovery/backup-01 --scratch ./recovery restore --destination ./recovery/restored-01
+milkdrift-daemon storage-admin --root ./recovery/restored-01 --scratch ./recovery overview
+```
+
+Destinations must be absent, with an existing private parent outside the source. Existing stores
+and backups are never overwritten. The bounded manifest records file lengths/digests, directories,
+schema formats, clock watermark, producer version, executable digest and build-time Git revision/
+dirty status when available. Source archives without Git explicitly report unavailable provenance;
+the executable digest still identifies their producer. Verification hashes artifacts and traverses
+compatible integrity readers without recovery.
+
+`milkdrift-backup.json` is written last. A missing, truncated or inconsistent manifest refuses
+verification and restore. Interrupted copies retain their execution guard. A completed copy with
+`integrity_failures > 0` preserves damaged evidence; it is not a healthy-store recommendation.
+Verification checks exact inventory and digests again, including the pre-housekeeping database
+fingerprint and clock. Restore repeats these checks and creates another guarded complete copy.
+
+Inspection copies at most a 64 GiB database with fixed buffers. Backup limits are 100,000
+files/directories, 1 TiB of source files, a 32 MiB manifest and 100,000 integrity pages of 256 records.
+Artifact trees allow three directory levels; execution materializations allow 32. Exceeding a
+limit refuses completion. Record pages decode at most 8 MiB of encoded values, report individual
+values above 4 MiB as failures without decoding, and bound final reports to 8 MiB. Artifact record
+hashing has a 1 GiB per-file ceiling and reports `hash_bound_exceeded` above it. A small logical
+inspection still needs scratch space for the complete database; unusually large stores may exceed
+these operational limits.
+
+Every copy carries `milkdrift-inspection-only.json`. All normal store-open paths refuse it before
+opening redb, preventing accidental worker startup. Keep this marker for historical inspection.
+Activation requires an explicit operator decision: fence the original daemon and its control
+clients, account for external workers/providers, review outstanding effects and accounts, then
+remove only this marker from the selected restored root and choose compatible configuration.
+Removing it does not cure unsafe retained context: ordinary recovery still refuses that evidence.
+Never run two copies of one generation or lower clock facts to bypass a rollback refusal.
 
 To start a new store generation, retain an independently verified complete backup of the old root
 and configure an empty root. There is no automatic rotation or cold-archive export/delete command.
 Retain the old generation for historical inspection with a compatible binary. Exact replay applies
 within a generation: all callers must rotate a namespaced client epoch before reusing command IDs,
-or a delayed old request can look like new intent in the empty store.
+or a delayed old request can look like new intent in the empty store. Starting empty does not settle
+old effects. When startup succeeds, use existing authorized
+[retained-work reconciliation](../guides/headless-dogfood.md#retained-or-uncertain-work). A blocked
+generation can also receive authorized prospective repair through the explicit mode below.
 
-Administrative integrity scanning and proposal-index rebuilding are Rust storage APIs, not CLI or
-HTTP operations. A storage administrator can use `StorageAdmin::scan_integrity` for bounded,
-resumable verification, explicitly choosing artifact-content checks. Rebuild a damaged proposal
-projection only after diagnosing its authoritative receipt links. See the
-[redb administration guide](../../adapters/redb-store/README.md) and
-[persistence ports](../../crates/persistence/README.md) for these operations. A healthy sample or
-successful startup does not replace the full scan.
+These are software copy/read guarantees under exclusive ownership, not filesystem power-loss,
+authenticity, rollback protection or protection from OS actors bypassing locks and renaming paths.
+General export/delete, online rotation and historical migration remain unavailable.
+
+### Authorized recovery controls
+
+After preserving a blocked generation, stop and fence its previous daemon and external workers.
+Start the selected generation with its existing configuration and grants:
+
+```sh
+milkdrift-daemon --config ./daemon.toml --recovery
+```
+
+This opens a mutable control service. It advances the durable clock, records ordinary commands,
+security decisions and receipts, and maintains bounded receipt archival. It never schedules work,
+recovers leases, fires timers, materializes execution directories, registers adapters, connects
+peers or starts effect workers. Health reports `state: recovery`, `live: true`, `ready: false`;
+readiness returns unavailable. Authentication and operation/resource authorization still apply.
+The runtime handle cannot switch to execution: stop it and restart normally after repair.
+Inspection guards on restored copies still require the explicit single-generation activation
+decision described above; `--recovery` does not bypass the guard or support older storage formats.
+
+Use the existing proposal path to replace the affected task prospectively. A schema-1 proposal
+must name the run, exact base revision/digest and observed sequence, and carry the actual corrected
+task/context policy as a blueprint mutation. Preserve the proposal file and each complete command
+envelope for lost-reply replay. In recovery mode live proposals use `CancelAndRestartSafeWork`;
+they never auto-apply, and application requires a recorded approval. Read the proposed revision
+and reconciliation timeline before approving it. The run's original execution grant must still
+authorize that revision; operator credentials do not replace its authority.
+
+The normal CLI provides the operations (substitute the returned identities and current sequences):
+
+```sh
+milkdrift --command-id repair-submit --expected-sequence BASE_SEQUENCE --expected-revision BASE_REVISION proposal submit ./repair.json
+milkdrift proposal show RUN_ID PROPOSAL_ID PROPOSED_REVISION
+milkdrift --command-id repair-approve --expected-sequence PLAN_SEQUENCE --expected-revision PROPOSED_REVISION proposal approve RUN_ID PROPOSAL_ID PROPOSAL_DIGEST PROPOSED_REVISION DECISION_ID
+milkdrift --command-id repair-apply --expected-sequence APPROVED_SEQUENCE --expected-revision PROPOSED_REVISION proposal apply RUN_ID PROPOSAL_ID PROPOSAL_DIGEST PROPOSED_REVISION
+```
+
+Endpoint and token configuration are the same as for the [operator CLI](../../examples/operator/README.md).
+Stale sequence/revision guards, missing approval, changed replay content, insufficient or revoked
+authority and unsafe reconciliation actions remain refusals. For a supported task cancelled before
+dispatch, application records cancellation, releases its lease and reserves replacement work under
+the new revision. It retains the old invocation, manifest, command results and accounting history.
+It does not sanitize the old artifact or silently reselect context for the old attempt.
+
+Stop recovery mode, start the same configuration without `--recovery`, and check readiness.
+Normal startup validates every active run again before workers start. Replacement work receives
+a new logical execution, invocation and manifest under the current selection policy. If the run
+was paused, resume it with a fresh authorized command after normal startup. An unrelated remaining
+blocker still refuses ordinary startup; repairing one run does not certify the whole generation.
+
+Recovery also accepts pause, cancellation requests and existing evidence-based external-work
+resolution. Create/start/resume, signal/timer delivery and controller continuation are refused.
+A cancellation request alone does not settle an invocation. The existing safe-restart planner
+supports side-effect-free/read-only work; unsafe side effects, missing/corrupt history or artifacts,
+and controller budget/account violations are not repaired by this mode. Entered or uncertain
+effects retain their normal evidence and reconciliation requirements. Context attachments and
+artifact-content downloads are withheld in recovery mode because an older manifest may contain
+undisclosed source identities; use offline preservation for the original bytes. Other reads retain
+their ordinary scoped authorization and bounds.

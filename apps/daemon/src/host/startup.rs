@@ -1,9 +1,9 @@
 //! Recover active work before allowing a request or worker to start new execution.
 //!
 //! Configuration becomes concrete storage, authority, runtime, adapters, and workers here.
-//! The startup channel returns readiness only after recovery and registration succeed; an
-//! error returns to the launcher with admission closed. Continuous-controller lifecycle
-//! installation remains gated separately from the existing control service.
+//! Normal readiness follows recovery and registration; explicit recovery composition returns
+//! only authenticated controls with execution permanently closed. An error returns to the
+//! launcher with admission closed. Controller lifecycle installation remains separately gated.
 use super::{
     DaemonHost, HostError, LEGACY_SIDECAR_FILE, Owner, OwnerRequest, PeerRuntime,
     build_peer_runtime, capabilities, clock::DaemonClockSource, clock::DurableClock,
@@ -42,18 +42,37 @@ impl DaemonHost {
         Self::start_with_clock(config, Arc::new(SystemDaemonClock))
     }
 
+    /// Opens authenticated recovery controls without automatic recovery or effect workers.
+    ///
+    /// This mode cannot become execution-ready. After prospective reconciliation, shut down
+    /// this host and start normally to validate all active state before dispatch resumes.
+    pub fn start_recovery(config: DaemonPlan) -> Result<Self, HostError> {
+        Self::start_mode(config, Arc::new(SystemDaemonClock), true)
+    }
+
     pub(super) fn start_with_clock(
         config: DaemonPlan,
         clock: Arc<dyn DaemonClockSource>,
+    ) -> Result<Self, HostError> {
+        Self::start_mode(config, clock, false)
+    }
+
+    fn start_mode(
+        config: DaemonPlan,
+        clock: Arc<dyn DaemonClockSource>,
+        recovery_controls: bool,
     ) -> Result<Self, HostError> {
         let DaemonPlanParts {
             storage,
             authentication,
             runtime,
             adapters,
-            peers,
+            mut peers,
             shutdown,
         } = config.into_parts();
+        if recovery_controls {
+            peers = PeerHostConfig::Disabled;
+        }
         let auth = AuthRegistry::from_plan(&authentication)
             .map_err(|error| HostError::Configuration(error.to_string()))?;
         let queue_capacity = runtime.request_queue;
@@ -70,6 +89,7 @@ impl DaemonHost {
         let owner_clock = clock.clone();
         let maintenance = Duration::from_millis(runtime.maintenance_interval_ms);
         let owner_plan = OwnerPlan {
+            recovery_controls,
             storage,
             runtime,
             adapters,
@@ -101,9 +121,16 @@ impl DaemonHost {
                         return;
                     }
                 };
-                thread_health.set_lifecycle(Lifecycle::Ready);
+                thread_health.set_lifecycle(if recovery_controls {
+                    Lifecycle::Recovery
+                } else {
+                    Lifecycle::Ready
+                });
                 let _ = startup_sender.send(Ok(startup));
-                info!(phase = "ready", "runtime owner ready after recovery");
+                info!(
+                    recovery_controls,
+                    "runtime owner accepting control requests"
+                );
                 owner.run(receiver, maintenance, &thread_health);
             })
             .map_err(|error| HostError::Startup(error.to_string()))?;
@@ -135,6 +162,7 @@ impl DaemonHost {
 }
 
 pub(super) struct OwnerPlan {
+    recovery_controls: bool,
     storage: StoragePlan,
     runtime: RuntimeHostConfig,
     adapters: AdapterConfig,
@@ -151,6 +179,7 @@ impl Owner {
         clock_source: Arc<dyn DaemonClockSource>,
     ) -> Result<(Self, PeerRuntime), String> {
         let OwnerPlan {
+            recovery_controls,
             storage,
             runtime: runtime_plan,
             adapters,
@@ -263,10 +292,45 @@ impl Owner {
                 .install_controller_lifecycle(control.controller_lifecycle_owner())
                 .map_err(|error| error.to_string())?;
         }
+        if recovery_controls {
+            runtime
+                .enable_recovery_controls()
+                .map_err(|error| error.to_string())?;
+            health.receipt_status(
+                store
+                    .application_receipt_status()
+                    .map_err(|error| error.to_string())?,
+            );
+            return Ok((
+                Self {
+                    recovery_controls,
+                    request_panicked: false,
+                    shutdown,
+                    store,
+                    runtime,
+                    control,
+                    capability_host,
+                    authority,
+                    effect_workers: None,
+                    peer_service: None,
+                    _peer_artifacts: None,
+                    peer_registries: BTreeMap::new(),
+                    clock: clock.clone(),
+                },
+                PeerRuntime {
+                    service: None,
+                    artifacts: None,
+                    registries: BTreeMap::new(),
+                    clock,
+                },
+            ));
+        }
         let data = Arc::new(
             StoreInvocationDataAccess::new(
                 store.clone(),
-                storage.data_root.join("execution"),
+                storage
+                    .data_root
+                    .join(milkdrift_redb_store::offline::EXECUTION_DIRECTORY),
                 ArtifactReadAuthority::Authorized {
                     actor: ActorRef::new("service:daemon-runtime")
                         .map_err(|error| error.to_string())?,
@@ -346,6 +410,7 @@ impl Owner {
         health.set_active_effects(0);
         Ok((
             Self {
+                recovery_controls,
                 request_panicked: false,
                 shutdown,
                 store,

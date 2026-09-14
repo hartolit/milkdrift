@@ -90,6 +90,8 @@ pub enum DaemonState {
     Starting,
     /// Recovery and adapter initialization completed.
     Ready,
+    /// Authenticated recovery controls are available; execution is permanently disabled.
+    Recovery,
     /// Shutdown has closed admission.
     Draining,
     /// Host has stopped its owned services.

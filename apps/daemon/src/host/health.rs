@@ -15,6 +15,7 @@ use super::read_model::bounded;
 pub(super) enum Lifecycle {
     Starting,
     Ready,
+    Recovery,
     Draining,
     Stopped,
     Failed,
@@ -25,6 +26,7 @@ impl Lifecycle {
         match self {
             Self::Starting => DaemonState::Starting,
             Self::Ready => DaemonState::Ready,
+            Self::Recovery => DaemonState::Recovery,
             Self::Draining => DaemonState::Draining,
             Self::Stopped => DaemonState::Stopped,
             Self::Failed => DaemonState::Failed,
@@ -196,8 +198,11 @@ impl SharedHealth {
         self.update(|state| replace_if_changed(&mut state.lifecycle, lifecycle));
     }
 
-    pub(super) fn is_ready(&self) -> bool {
-        self.lock().state.lifecycle == Lifecycle::Ready
+    pub(super) fn accepting_controls(&self) -> bool {
+        matches!(
+            self.lock().state.lifecycle,
+            Lifecycle::Ready | Lifecycle::Recovery
+        )
     }
 
     pub(super) fn failure(&self, message: &str) {

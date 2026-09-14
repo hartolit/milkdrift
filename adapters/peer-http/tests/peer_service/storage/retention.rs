@@ -1,6 +1,106 @@
 use super::*;
 
 #[test]
+fn offline_restore_preserves_peer_tombstone_exact_replay_and_conflict() -> TestResult {
+    use milkdrift_redb_store::offline::{BackupProducer, InspectionFamily, OfflineStore};
+    let parent = milkdrift_redb_store::testing::private_offline_directory()?;
+    let root = parent.path().join("source");
+    let store = RedbStore::open(&root)?;
+    let peer = PeerId::new("offline-peer")?;
+    let target = PeerId::new("offline-target")?;
+    let descriptor = descriptor()?;
+    let catalog = milkdrift_peer_protocol::CatalogSnapshot::new(
+        1,
+        1,
+        now().saturating_add(600_000),
+        Vec::new(),
+    )?;
+    configure_store(&store, &peer, &catalog.digest, 1)?;
+    let first = request(
+        &peer,
+        &target,
+        &descriptor,
+        1,
+        catalog.digest.clone(),
+        "offline-request",
+        "offline-invocation",
+    )?;
+    let execution = PeerExecutionId::new("offline-execution")?;
+    admit(&store, &peer, &first, &execution, 1)?;
+    claim(&store, &WorkerId::new("offline-worker")?)?;
+    store.append_peer_observation(
+        &peer,
+        &execution,
+        &terminal_observation(&first, &execution, 1, TerminalStatus::Success)?,
+    )?;
+    let archive = now().saturating_add(100);
+    store.archive_peer_executions(&PeerRetentionRequest {
+        terminal_before_or_at: TimestampMillis::new(archive),
+        archived_at: TimestampMillis::new(archive),
+        limit: PageSize::new(1)?,
+    })?;
+    let before = store
+        .peer_execution(&peer, &execution)?
+        .ok_or("tombstone")?;
+    drop(store);
+    let offline = OfflineStore::open(&root, parent.path())?;
+    let page = offline.inspect(
+        InspectionFamily::PeerTombstones,
+        PageSize::new(1)?,
+        None,
+        false,
+    )?;
+    assert!(serde_json::to_string(&page)?.contains("offline-execution"));
+    let backup = parent.path().join("backup");
+    offline.backup(
+        &backup,
+        parent.path(),
+        BackupProducer {
+            version: "test".into(),
+            binary_digest: "a".repeat(64),
+            source_revision: "fixture".into(),
+        },
+    )?;
+    drop(offline);
+    let restored = parent.path().join("restored");
+    OfflineStore::restore(&backup, &restored, parent.path())?;
+    assert!(RedbStore::open(&restored).is_err());
+    std::fs::remove_file(restored.join(milkdrift_redb_store::offline::INSPECTION_MARKER))?;
+    let store = RedbStore::open(&restored)?;
+    assert_eq!(store.peer_execution(&peer, &execution)?, Some(before));
+    let changed = request(
+        &peer,
+        &target,
+        &descriptor,
+        1,
+        catalog.digest,
+        first.request_id.as_str(),
+        "changed-invocation",
+    )?;
+    for (request, replay) in [(&first, true), (&changed, false)] {
+        let result = store.admit_peer_execution(&PeerAdmission {
+            owner_peer: &peer,
+            request,
+            authority: &allowed_decision(&peer)?,
+            execution: &execution,
+            relationship_generation: 1,
+            accepted_at_unix_ms: now(),
+            maximum_global_active: 1,
+            maximum_dispatch_queue: 1,
+            maximum_hot_terminal_records: 1,
+            archive_batch_size: 1,
+            archive_terminal_before_or_at_unix_ms: archive,
+        })?;
+        assert!(match result {
+            PeerAdmissionOutcome::Replayed(PeerExecutionSnapshot::Archived(_)) => replay,
+            PeerAdmissionOutcome::Conflict(PeerExecutionSnapshot::Archived(_)) => !replay,
+            _ => false,
+        });
+    }
+    Ok(())
+}
+
+#[test]
 fn archived_tombstones_reclaim_hot_capacity_and_preserve_replay_conflict_and_history_truth()
 -> TestResult {
     let root = tempfile::tempdir()?;

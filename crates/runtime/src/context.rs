@@ -27,7 +27,7 @@ use thiserror::Error;
 mod retained;
 mod selection;
 mod source;
-pub(crate) use retained::validate_retained_manifest;
+pub use retained::validate_retained_manifest;
 pub(crate) use source::read_model_document_bytes;
 
 // The manifest already records which selection rules produced its omissions. Version 1

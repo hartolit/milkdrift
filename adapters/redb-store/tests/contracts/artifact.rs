@@ -1,5 +1,91 @@
 use super::*;
 
+#[test]
+fn offline_artifact_inspection_and_backup_preserve_partial_corrupt_and_missing_content()
+-> Result<(), Box<dyn std::error::Error>> {
+    use milkdrift_redb_store::offline::{BackupProducer, InspectionFamily, OfflineStore};
+    let parent = milkdrift_redb_store::testing::private_offline_directory()?;
+    let root = parent.path().join("source");
+    let bytes = b"private-artifact-data";
+    let metadata = artifact_metadata("offline-artifact", bytes, ArtifactSensitivity::Restricted)?;
+    let store = RedbStore::open(&root)?;
+    let publication = BeginArtifactPublication::new(
+        ArtifactPublicationId::new("offline-publication")?,
+        RunId::new("offline-owner")?,
+        metadata.clone(),
+        WorkspaceBudget::new(0, 0, 0, 2, 1024, 2048)?,
+        WorkspaceUsage::EMPTY,
+    )?;
+    store.begin_publication(&publication)?;
+    store.write_chunk(publication.publication(), 0, bytes)?;
+    store.commit_publication(publication.publication())?;
+    let partial = BeginArtifactPublication::new(
+        ArtifactPublicationId::new("offline-partial")?,
+        RunId::new("offline-other-owner")?,
+        artifact_metadata(
+            "offline-partial-artifact",
+            b"unfinished",
+            ArtifactSensitivity::Restricted,
+        )?,
+        WorkspaceBudget::new(0, 0, 0, 2, 1024, 2048)?,
+        WorkspaceUsage::EMPTY,
+    )?;
+    store.begin_publication(&partial)?;
+    store.write_chunk(partial.publication(), 0, b"un")?;
+    drop(store);
+    let offline = OfflineStore::open(&root, parent.path())?;
+    let page = offline.inspect(InspectionFamily::Artifacts, PageSize::new(1)?, None, true)?;
+    let report = serde_json::to_string(&page)?;
+    assert!(report.contains("verified"));
+    assert!(!report.contains("private-artifact-data"));
+    let backup = parent.path().join("backup");
+    offline.backup(
+        &backup,
+        parent.path(),
+        BackupProducer {
+            version: "test".into(),
+            binary_digest: "a".repeat(64),
+            source_revision: "fixture".into(),
+        },
+    )?;
+    drop(offline);
+    let restored = parent.path().join("restored");
+    OfflineStore::restore(&backup, &restored, parent.path())?;
+    let clone = OfflineStore::open(&restored, parent.path())?;
+    assert_eq!(clone.artifact_bytes(metadata.reference(), 1024)?, bytes);
+    drop(clone);
+    std::fs::remove_file(restored.join(milkdrift_redb_store::offline::INSPECTION_MARKER))?;
+    let resumed = RedbStore::open(&restored)?;
+    assert_eq!(resumed.begin_publication(&partial)?.next_offset(), Some(2));
+    drop(resumed);
+    let hex = metadata.reference().digest().to_hex();
+    let content = root.join("artifacts").join(&hex[..2]).join(&hex[2..]);
+    std::fs::write(&content, vec![b'x'; bytes.len()])?;
+    let offline = OfflineStore::open(&root, parent.path())?;
+    assert!(
+        serde_json::to_string(&offline.inspect(
+            InspectionFamily::Artifacts,
+            PageSize::new(1)?,
+            None,
+            true
+        )?)?
+        .contains("corrupt_digest")
+    );
+    drop(offline);
+    std::fs::remove_file(&content)?;
+    let offline = OfflineStore::open(&root, parent.path())?;
+    assert!(
+        serde_json::to_string(&offline.inspect(
+            InspectionFamily::Artifacts,
+            PageSize::new(1)?,
+            None,
+            true
+        )?)?
+        .contains("unavailable_content")
+    );
+    Ok(())
+}
+
 #[derive(Debug)]
 struct FixedStoreClock(TimestampMillis);
 

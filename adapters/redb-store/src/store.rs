@@ -6,9 +6,9 @@ use redb::Database;
 use crate::{error, fault::FaultInjector, fault::no_faults};
 
 mod config;
-mod filesystem;
+pub(crate) mod filesystem;
 mod open;
-mod schema;
+pub(crate) mod schema;
 
 pub(crate) use config::{ARTIFACT_DIRECTORY, DATABASE_FILENAME, TEMP_DIRECTORY};
 pub use config::{RedbStore, RedbStoreConfig, StoreClock, SystemStoreClock};

@@ -37,6 +37,7 @@ impl RuntimeService {
         reason = "recovery is one ordered replay-and-repair pass with shared progress invariants"
     )]
     pub fn recover(&self) -> Result<RecoveryResult, RuntimeError> {
+        self.require_execution_mode()?;
         let now = self.clock.now()?;
         let span = info_span!(
             "runtime.recovery",

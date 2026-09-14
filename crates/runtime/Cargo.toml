@@ -25,6 +25,12 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+milkdrift-control.workspace = true
+milkdrift-control-client.workspace = true
+milkdrift-control-protocol.workspace = true
+tokio.workspace = true
+toml.workspace = true
+url.workspace = true
 milkdrift-redb-store = { workspace = true, features = ["test-admin"] }
 tempfile = "3.21.0"
 

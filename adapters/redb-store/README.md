@@ -20,6 +20,13 @@ its ports to runtime, and recovers active work before admission. Current version
 limits belong in [status](../../docs/product/status.md). For setup, stopped-store backup, and
 shutdown, use [daemon operations](../../docs/operations/daemon.md).
 
+For a blocked or preserved generation, `offline::OfflineStore::open` takes the exclusive source
+lock and opens a verified private database copy. Its read-only facade exposes bounded record
+diagnostics, journal/revision/artifact reads and the existing integrity scanner, without normal
+open's clock/retention writes. Backup and restore preserve the complete generation and mark each
+copy inspection-only. The [operator procedure](../../docs/operations/daemon.md#offline-storage-administration)
+explains private destinations, copy limits, completion verification and explicit activation.
+
 ## What a write makes durable
 
 [`journal/append.rs`](src/journal/append.rs) checks replay before optimistic guards. For a new
