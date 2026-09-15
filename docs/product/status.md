@@ -119,7 +119,9 @@ values; repository contracts check the version cells against source.
 - Trusted processes have daemon-account privileges. No sandbox, network isolation, CPU/memory
   quotas, malicious-descendant containment, universal atomic hashed-handle execution, directory
   artifacts, writable shared mounts, or complete non-Unix process-tree cancellation is claimed.
-  Unowned descendants can retain inherited pipes and delay I/O joining during cleanup.
+  Unowned descendants can retain inherited pipes, but local nonblocking I/O now interrupts at
+  the cleanup deadline and joins its workers. Missing EOF remains uncertain. Current platform
+  execution evidence is recorded below.
 - Peers require operator connectivity; the daemon listener is loopback-only. There is no discovery,
   NAT traversal, coordinator, automatic CA/internal mTLS mapper, consensus, shared database,
   model synchronization, or automatic transfer of every artifact. Grants/profiles/relationships

@@ -248,7 +248,13 @@ pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> Att
             .terminal
             .as_ref()
             .and_then(|terminal| terminal.detail())
-            .map(|detail| detail.as_str().to_owned()),
+            .map(|detail| detail.as_str().to_owned())
+            .or_else(|| {
+                value
+                    .external_outcome
+                    .as_ref()
+                    .map(|outcome| outcome.reason().as_str().to_owned())
+            }),
         uncertain: value.external_outcome.is_some(),
         result_acceptance: None,
         model_generation: None,

@@ -41,7 +41,7 @@ use identity::{ExecutableBinding, IdentityFailure};
 use lifecycle::RunningProcess;
 use platform::ProcessControl;
 use prepare::{materialize_arguments, prepare_working_directory, stdin_bytes};
-use reporting::{TerminalReportContext, exit_failure, report_rejected, usage};
+use reporting::{TerminalReportContext, exit_failure, report_rejected};
 use streams::{os_bytes_len, redact_capture, secret_os_string};
 
 /// Production local-process adapter for one immutable validated profile generation.
@@ -479,15 +479,33 @@ impl LocalProcessAdapter {
         })?;
 
         let mut observed = process.monitor(&mut reports, &self.profile, spawn_started)?;
-        if let Err(message) = process.finish_io(&observed) {
-            return reports.failure(ErrorClass::Adapter, "process_io_failed", &message);
-        }
+        let joined = process.finish_io(&mut observed);
+        reports.record_cleanup(&observed, &joined)?;
         redact_capture(&mut observed.stdout, &resolved_secrets);
         redact_capture(&mut observed.stderr, &resolved_secrets);
         drop(resolved_secrets);
 
+        if !observed.stdout_closed || !observed.stderr_closed {
+            return reports.uncertain(
+                "process_io_incomplete",
+                &format!("local I/O workers joined at the cleanup deadline; parent exit observed={}, owned termination confirmed={}, stdout EOF={} ({} captured bytes, limit exceeded={}), stderr EOF={} ({} captured bytes, limit exceeded={}); external descendants or effects remain unresolved",
+                    observed.status.is_some(), observed.termination_confirmed,
+                    observed.stdout_closed, observed.stdout.len(), observed.stdout_overflow,
+                    observed.stderr_closed, observed.stderr.len(), observed.stderr_overflow),
+            );
+        }
         if let Some(termination) = observed.termination {
             return reports.for_termination(termination, observed.termination_confirmed);
+        }
+        if let Some(message) = joined.error() {
+            return reports.uncertain("process_io_failed", message);
+        }
+        if joined.stdin == Ok(streams::IoCompletion::Interrupted) {
+            return reports.failure(
+                ErrorClass::Adapter,
+                "process_input_incomplete",
+                "the parent exited before all input was written",
+            );
         }
         let Some(status) = observed.status else {
             return reports.uncertain(
@@ -528,7 +546,7 @@ impl LocalProcessAdapter {
             TerminalStatus::Success,
             outputs,
             None,
-            usage(spawn_started),
+            reports.usage(),
             self.profile.side_effect,
         )
         .map_err(|error| AdapterError::external_failure(error.to_string()))?;

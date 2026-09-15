@@ -109,23 +109,19 @@ impl Drop for ActiveRegistration {
     }
 }
 
-pub(super) fn terminate_child_immediately(child: &mut Child, control: &ProcessControl) {
+pub(super) fn terminate_child_until(
+    child: &mut Child,
+    control: &ProcessControl,
+    deadline: Instant,
+) {
     let _ = control.request_force();
     let _ = child.kill();
-    let _ = child.wait();
-}
-
-pub(super) fn wait_for_owned_descendants_absence(
-    control: &ProcessControl,
-    maximum: Duration,
-) -> bool {
-    let deadline = Instant::now() + maximum;
     loop {
-        if control.owned_descendants_absent() {
-            return true;
+        if child.try_wait().ok().flatten().is_some() && control.owned_descendants_absent() {
+            return;
         }
         if Instant::now() >= deadline {
-            return false;
+            return;
         }
         thread::sleep(Duration::from_millis(5));
     }

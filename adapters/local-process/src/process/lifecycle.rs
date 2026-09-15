@@ -7,7 +7,6 @@ use std::{
         Arc, Mutex,
         mpsc::{Receiver, sync_channel},
     },
-    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
@@ -15,28 +14,46 @@ use milkdrift_capability::InvocationId;
 use milkdrift_capability_host::AdapterError;
 
 use super::{
-    monitor::{ProcessObservation, monitor_process},
-    platform::{
-        ActiveRegistration, ProcessControl, terminate_child_immediately,
-        wait_for_owned_descendants_absence,
-    },
+    monitor::{MonitorIo, ProcessObservation, monitor_process},
+    platform::{ActiveRegistration, ProcessControl, terminate_child_until},
     reporting::TerminalReportContext,
-    streams::{Stream, StreamMessage, join_io, spawn_reader, spawn_stdin_writer},
+    streams::{
+        IoCancellation, IoCompletion, IoWorker, Stream, StreamMessage, join_io, pipe_reader,
+        spawn_reader, spawn_stdin_writer,
+    },
 };
 use crate::config::ProcessProfile;
 
 const STREAM_CHANNEL_MESSAGES: usize = 16;
+
+pub(super) struct IoCleanup {
+    pub(super) stdin: Result<IoCompletion, String>,
+    pub(super) stdout: Result<IoCompletion, String>,
+    pub(super) stderr: Result<IoCompletion, String>,
+}
+
+impl IoCleanup {
+    pub(super) fn error(&self) -> Option<&str> {
+        [&self.stdin, &self.stdout, &self.stderr]
+            .into_iter()
+            .find_map(|result| result.as_ref().err().map(String::as_str))
+    }
+}
 
 pub(super) struct RunningProcess {
     child: Child,
     control: Arc<ProcessControl>,
     registration: Option<ActiveRegistration>,
     receiver: Option<Receiver<StreamMessage>>,
-    stdin: Option<JoinHandle<Result<(), String>>>,
-    stdout: Option<JoinHandle<Result<(), String>>>,
-    stderr: Option<JoinHandle<Result<(), String>>>,
+    stdin: Option<IoWorker>,
+    stdout: Option<IoWorker>,
+    stderr: Option<IoWorker>,
+    io_cancel: IoCancellation,
+    cleanup_deadline: Option<Instant>,
     cleanup_required: bool,
     forced_termination: Duration,
+    #[cfg(test)]
+    fail_reader_spawn: Option<Stream>,
 }
 
 impl RunningProcess {
@@ -49,8 +66,12 @@ impl RunningProcess {
             stdin: None,
             stdout: None,
             stderr: None,
+            io_cancel: IoCancellation::default(),
+            cleanup_deadline: None,
             cleanup_required: true,
             forced_termination,
+            #[cfg(test)]
+            fail_reader_spawn: None,
         }
     }
 
@@ -80,15 +101,43 @@ impl RunningProcess {
         })?;
         let (sender, receiver) = sync_channel(STREAM_CHANNEL_MESSAGES);
         self.receiver = Some(receiver);
-        self.stdin = spawn_stdin_writer(self.child.stdin.take(), stdin_bytes)
-            .map_err(AdapterError::external_failure)?;
+        self.stdin = spawn_stdin_writer(
+            self.child.stdin.take(),
+            stdin_bytes,
+            self.io_cancel.input.clone(),
+        )
+        .map_err(AdapterError::external_failure)?;
+        #[cfg(test)]
+        if self.fail_reader_spawn == Some(Stream::Stdout) {
+            return Err(AdapterError::external_failure(
+                "injected stdout worker spawn failure",
+            ));
+        }
         self.stdout = Some(
-            spawn_reader(Stream::Stdout, stdout, stdout_maximum, sender.clone())
-                .map_err(AdapterError::external_failure)?,
+            spawn_reader(
+                Stream::Stdout,
+                pipe_reader(stdout),
+                stdout_maximum,
+                sender.clone(),
+                self.io_cancel.output.clone(),
+            )
+            .map_err(AdapterError::external_failure)?,
         );
+        #[cfg(test)]
+        if self.fail_reader_spawn == Some(Stream::Stderr) {
+            return Err(AdapterError::external_failure(
+                "injected stderr worker spawn failure",
+            ));
+        }
         self.stderr = Some(
-            spawn_reader(Stream::Stderr, stderr, stderr_maximum, sender)
-                .map_err(AdapterError::external_failure)?,
+            spawn_reader(
+                Stream::Stderr,
+                pipe_reader(stderr),
+                stderr_maximum,
+                sender,
+                self.io_cancel.output.clone(),
+            )
+            .map_err(AdapterError::external_failure)?,
         );
         Ok(())
     }
@@ -99,41 +148,76 @@ impl RunningProcess {
         profile: &ProcessProfile,
         started: Instant,
     ) -> Result<ProcessObservation, AdapterError> {
-        let receiver = self.receiver.take().ok_or_else(|| {
+        let receiver = self.receiver.as_ref().ok_or_else(|| {
             AdapterError::external_failure("process stream receiver is unavailable")
         })?;
         monitor_process(
             &mut self.child,
             &self.control,
-            receiver,
+            MonitorIo {
+                receiver,
+                cancellation: &self.io_cancel,
+                deadline: &mut self.cleanup_deadline,
+            },
             reports,
             profile,
             started,
         )
     }
 
-    pub(super) fn finish_io(&mut self, observed: &ProcessObservation) -> Result<(), String> {
+    pub(super) fn finish_io(&mut self, observed: &mut ProcessObservation) -> IoCleanup {
         // A normal monitor return can still describe unresolved termination. In that
         // case request force before joining, without upgrading its recorded outcome.
         if observed.status.is_some() && observed.termination_confirmed {
             self.cleanup_required = false;
         }
-        self.cleanup()
+        // Retain the bounded queue while workers stop. Reporting may have consumed
+        // the final drain allowance while EOF/data was already waiting in it.
+        let receiver = self.receiver.take();
+        let joined = self.cleanup();
+        if let Some(receiver) = receiver {
+            for message in receiver.try_iter() {
+                match message {
+                    StreamMessage::Data(Stream::Stdout, bytes) => observed.stdout.extend(bytes),
+                    StreamMessage::Data(Stream::Stderr, bytes) => observed.stderr.extend(bytes),
+                    StreamMessage::Overflow(Stream::Stdout) => observed.stdout_overflow = true,
+                    StreamMessage::Overflow(Stream::Stderr) => observed.stderr_overflow = true,
+                    StreamMessage::Closed(Stream::Stdout) => observed.stdout_closed = true,
+                    StreamMessage::Closed(Stream::Stderr) => observed.stderr_closed = true,
+                    StreamMessage::Failed(..) => {} // The joined worker retains the error.
+                }
+            }
+        }
+        observed.stdout_closed |= joined.stdout == Ok(IoCompletion::Complete);
+        observed.stderr_closed |= joined.stderr == Ok(IoCompletion::Complete);
+        joined
     }
 
-    fn cleanup(&mut self) -> Result<(), String> {
+    fn cleanup(&mut self) -> IoCleanup {
         // Readers may be blocked sending to a full channel when reporting stops.
         // Disconnect it before joining, and stop the child before waiting on pipes.
         drop(self.receiver.take());
+        self.io_cancel
+            .input
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.io_cancel
+            .output
+            .store(true, std::sync::atomic::Ordering::Release);
         if self.cleanup_required {
-            terminate_child_immediately(&mut self.child, &self.control);
-            let _ = wait_for_owned_descendants_absence(&self.control, self.forced_termination);
+            let deadline = *self
+                .cleanup_deadline
+                .get_or_insert_with(|| Instant::now() + self.forced_termination);
+            terminate_child_until(&mut self.child, &self.control, deadline);
             self.cleanup_required = false;
         }
         let stdin = join_io(self.stdin.take(), "stdin writer");
         let stdout = join_io(self.stdout.take(), "stdout reader");
         let stderr = join_io(self.stderr.take(), "stderr reader");
-        stdin.and(stdout).and(stderr)
+        IoCleanup {
+            stdin,
+            stdout,
+            stderr,
+        }
     }
 }
 

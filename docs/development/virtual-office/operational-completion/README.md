@@ -52,7 +52,8 @@ preserved execution restrictions; the result is ready for coordinator acceptance
 Assignment 05 is owned by the current Codex task, explicitly assigned by the user at base `9f6bd0f`.
 Its [handoff](05-handoff.md) records implementation, verification and review state. Assignment 06
 is owned by the current Codex task, explicitly assigned by the user at base `6967da8`. Assignments
-07–08 remain unstarted and require separate assignment/coordinator acceptance. The
+07 is owned by the current Codex task, explicitly assigned by the user at base `5c4d612`.
+Assignment 08 remains unstarted and requires separate assignment/coordinator acceptance. The
 [06 handoff](06-handoff.md) records the completed placement/artifact boundary, verification and
 compatibility changes, reviewed and committed to `main` at the user's request.
 

@@ -18,12 +18,18 @@ use milkdrift_capability_host::AdapterError;
 use crate::config::{OverflowAction, ProcessProfile};
 
 use super::{
-    platform::{ProcessControl, wait_for_owned_descendants_absence},
+    platform::ProcessControl,
     reporting::TerminalReportContext,
-    streams::{Stream, StreamMessage, progress_message},
+    streams::{IoCancellation, Stream, StreamMessage, progress_message},
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+pub(super) struct MonitorIo<'a> {
+    pub(super) receiver: &'a Receiver<StreamMessage>,
+    pub(super) cancellation: &'a IoCancellation,
+    pub(super) deadline: &'a mut Option<Instant>,
+}
 
 pub(super) struct ProcessObservation {
     pub(super) status: Option<ExitStatus>,
@@ -33,6 +39,8 @@ pub(super) struct ProcessObservation {
     pub(super) stdout_overflow: bool,
     pub(super) stderr_overflow: bool,
     pub(super) termination_confirmed: bool,
+    pub(super) stdout_closed: bool,
+    pub(super) stderr_closed: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -47,7 +55,7 @@ pub(super) enum Termination {
 pub(super) fn monitor_process(
     child: &mut Child,
     control: &ProcessControl,
-    receiver: Receiver<StreamMessage>,
+    io: MonitorIo<'_>,
     reports: &mut TerminalReportContext<'_>,
     profile: &ProcessProfile,
     started: Instant,
@@ -62,12 +70,12 @@ pub(super) fn monitor_process(
     let mut stderr_progress = 0_u16;
     let mut termination = None;
     let mut graceful_at = None;
-    let mut forced_at = None;
+    let mut force_requested = false;
     let mut next_heartbeat = started + Duration::from_millis(profile.limits.heartbeat_interval_ms);
     let wall_deadline = started + Duration::from_millis(profile.limits.wall_timeout_ms);
     let mut status = None;
     loop {
-        match receiver.recv_timeout(POLL_INTERVAL) {
+        match io.receiver.recv_timeout(POLL_INTERVAL) {
             Ok(StreamMessage::Data(stream, bytes)) => {
                 let (capture, policy, count) = match stream {
                     Stream::Stdout => (&mut stdout, &profile.stdout, &mut stdout_progress),
@@ -110,10 +118,12 @@ pub(super) fn monitor_process(
                     "{stream_name} reader failed: {kind:?}"
                 )));
             }
-            Err(RecvTimeoutError::Disconnected) => {
-                stdout_closed = true;
-                stderr_closed = true;
+            Err(RecvTimeoutError::Disconnected) if !(stdout_closed && stderr_closed) => {
+                return Err(AdapterError::external_failure(
+                    "stream workers disconnected without EOF evidence",
+                ));
             }
+            Err(RecvTimeoutError::Disconnected) => std::thread::sleep(POLL_INTERVAL),
             Err(RecvTimeoutError::Timeout) => {}
         }
         if status.is_none() {
@@ -132,6 +142,19 @@ pub(super) fn monitor_process(
         if now >= wall_deadline && termination.is_none() {
             termination = Some(Termination::TimedOut);
         }
+        if termination.is_some() || status.is_some() {
+            io.cancellation.input.store(true, Ordering::Release);
+            // One monotonic cleanup budget covers child/group observation and all
+            // pipe draining. Parent exit starts its own short final-output window.
+            io.deadline.get_or_insert_with(|| {
+                now + if termination.is_some() {
+                    Duration::from_millis(profile.limits.graceful_termination_ms)
+                        + Duration::from_millis(profile.limits.forced_termination_ms)
+                } else {
+                    Duration::from_millis(profile.limits.forced_termination_ms)
+                }
+            });
+        }
         if termination.is_some() && !owned_descendants_absent && graceful_at.is_none() {
             control
                 .request_graceful()
@@ -149,7 +172,7 @@ pub(super) fn monitor_process(
                 now.duration_since(at)
                     >= Duration::from_millis(profile.limits.graceful_termination_ms)
             })
-            && forced_at.is_none()
+            && !force_requested
         {
             control
                 .request_force()
@@ -159,15 +182,13 @@ pub(super) fn monitor_process(
                     .kill()
                     .map_err(|error| AdapterError::external_failure(error.to_string()))?;
             }
-            forced_at = Some(now);
+            force_requested = true;
         }
-        if !owned_descendants_absent
-            && forced_at.is_some_and(|at| {
-                now.duration_since(at)
-                    >= Duration::from_millis(profile.limits.forced_termination_ms)
-            })
-        {
-            termination = Some(Termination::Unresolved);
+        if io.deadline.is_some_and(|deadline| now >= deadline) {
+            io.cancellation.output.store(true, Ordering::Release);
+            if !owned_descendants_absent {
+                termination = Some(Termination::Unresolved);
+            }
             break;
         }
         if now >= next_heartbeat {
@@ -183,14 +204,7 @@ pub(super) fn monitor_process(
             AdapterError::external_failure(format!("final process wait failed: {:?}", error.kind()))
         })?;
     }
-    let owned_descendants_absent = if termination.is_some() {
-        wait_for_owned_descendants_absence(
-            control,
-            Duration::from_millis(profile.limits.forced_termination_ms),
-        )
-    } else {
-        control.owned_descendants_absent()
-    };
+    let owned_descendants_absent = control.owned_descendants_absent();
     Ok(ProcessObservation {
         status,
         termination,
@@ -199,5 +213,7 @@ pub(super) fn monitor_process(
         stdout_overflow,
         stderr_overflow,
         termination_confirmed: status.is_some() && owned_descendants_absent,
+        stdout_closed,
+        stderr_closed,
     })
 }

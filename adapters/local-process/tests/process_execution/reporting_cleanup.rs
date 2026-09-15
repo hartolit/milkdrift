@@ -7,6 +7,130 @@ use std::sync::mpsc;
 mod process_cleanup;
 use process_cleanup::{ProbeCleanup, process_alive, read_pids};
 
+#[test]
+fn inherited_idle_pipes_cannot_hold_invocation_cleanup() -> TestResult {
+    for mode in ["exit", "cancel", "timeout", "shutdown"] {
+        let data = Arc::new(TestDataAccess::new()?);
+        let directory = tempfile::tempdir()?;
+        let pids = directory.path().join("pids");
+        let release = directory.path().join("release");
+        let cleanup = ProbeCleanup(pids.clone());
+        let mut value = profile_value(
+            &data.root,
+            vec![
+                json!("escaped-pipes"),
+                json!(pids),
+                json!(release),
+                json!(if mode == "exit" { "exit" } else { "wait" }),
+            ],
+        )?;
+        value["profile"]["inputs"] = json!([{ "input": "prompt", "relative_path": "prompt.txt" }]);
+        value["profile"]["stdin"] =
+            json!({ "type": "input", "input": "prompt", "max_bytes": 65536 });
+        value["profile"]["limits"]["wall_timeout_ms"] =
+            json!(if mode == "timeout" { 800 } else { 30000 });
+        let profile = parse_profile(&value)?;
+        let request = request(
+            &profile,
+            "inherited-pipes",
+            vec![input(
+                "prompt",
+                json!(["i".repeat(30000), "i".repeat(30000)]),
+            )?],
+        )?;
+        let (host, snapshot) = setup(
+            profile,
+            data.clone(),
+            Arc::new(InMemorySecretResolver::new()),
+        )?;
+        let reporter = Arc::new(TestReporter::default());
+        let worker_host = host.clone();
+        let worker_reporter = reporter.clone();
+        let worker_request = request.clone();
+        let context = context()?;
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            let result = worker_host.execute_exact_with_context(
+                &snapshot,
+                &worker_request,
+                &context,
+                worker_reporter.as_ref(),
+            );
+            let _ = sender.send(result);
+        });
+        let ready_deadline = Instant::now() + Duration::from_secs(3);
+        while read_pids(&pids).len() < 2 && Instant::now() < ready_deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        let entered = read_pids(&pids);
+        if mode == "cancel" {
+            for sequence in 1..=3 {
+                TaskExecutor::cancel(
+                    &host,
+                    &CancellationRequest::new(
+                        request.invocation().clone(),
+                        sequence,
+                        "inherited pipes",
+                    )?,
+                )?;
+            }
+        } else if mode == "shutdown" {
+            host.force_shutdown()?;
+        }
+        let result = receiver.recv_timeout(Duration::from_secs(2));
+        let holder_alive = entered.get(1).map(|pid| process_alive(*pid)).transpose();
+        fs::write(&release, b"release")?;
+        drop(cleanup);
+        if result.is_err() {
+            let _ = receiver.recv_timeout(Duration::from_secs(3));
+        }
+        if worker.is_finished() {
+            worker.join().map_err(|_| "execution worker panicked")?;
+        }
+        assert_eq!(entered.len(), 2, "fixture did not enter: {mode}");
+        result??;
+        assert_eq!(
+            holder_alive?,
+            Some(true),
+            "fixture must still hold pipes at cleanup: {mode}"
+        );
+        let events = reporter.events()?;
+        assert_eq!(
+            terminal_status(&events),
+            Some(TerminalStatus::Uncertain),
+            "{mode}"
+        );
+        assert_eq!(
+            terminal_failure_code(&events),
+            Some("process_io_incomplete")
+        );
+        let terminal = events
+            .iter()
+            .find_map(|event| match event.kind() {
+                InvocationEventKind::Terminal { terminal } => Some(terminal),
+                _ => None,
+            })
+            .ok_or("missing terminal")?;
+        let evidence = serde_json::to_value(terminal)?;
+        let cleanup = &evidence["usage"]["extensions"]["org.milkdrift/process-cleanup"];
+        assert_eq!(cleanup["local_io_joined"], true);
+        assert_eq!(cleanup["parent_exit_observed"], true);
+        assert_eq!(cleanup["stdout"]["eof"], false);
+        assert_eq!(cleanup["stderr"]["eof"], false);
+        assert_eq!(evidence["failure"]["retryable"], false);
+        assert!(evidence["usage"]["cost_micros"].is_null());
+        assert!(data.output("stdout")?.is_none());
+        assert!(matches!(
+            TaskExecutor::cancel(
+                &host,
+                &CancellationRequest::new(request.invocation().clone(), 4, "after cleanup")?
+            ),
+            Err(ExecutorError::Unavailable(_))
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Rejection {
     Initial,
@@ -68,13 +192,28 @@ impl AdapterReporter for RejectingReporter {
 }
 
 fn reporting_rejection(target: Rejection, tree: bool) -> TestResult {
+    reporting_rejection_with_inheritance(target, tree, false)
+}
+
+fn reporting_rejection_with_inheritance(
+    target: Rejection,
+    tree: bool,
+    escaped: bool,
+) -> TestResult {
     let data = Arc::new(TestDataAccess::new()?);
     let pid_directory = tempfile::tempdir()?;
     let pid_path = pid_directory
         .path()
         .join(if tree { "tree.pids" } else { "probe.pids" });
     let cleanup = ProbeCleanup(pid_path.clone());
-    let arguments = if tree {
+    let arguments = if escaped {
+        vec![
+            json!("escaped-pipes"),
+            json!(pid_path),
+            json!(pid_directory.path().join("release")),
+            json!("wait"),
+        ]
+    } else if tree {
         vec![json!("tree"), json!(pid_path), json!("30000")]
     } else {
         vec![json!("reporting-probe"), json!(pid_path)]
@@ -97,7 +236,13 @@ fn reporting_rejection(target: Rejection, tree: bool) -> TestResult {
     let reporter = Arc::new(RejectingReporter {
         target,
         pid_path: pid_path.clone(),
-        expected_pids: if tree { 3 } else { 1 },
+        expected_pids: if escaped {
+            2
+        } else if tree {
+            3
+        } else {
+            1
+        },
         accepted: TestReporter::default(),
         rejected: AtomicUsize::new(0),
     });
@@ -133,14 +278,25 @@ fn reporting_rejection(target: Rejection, tree: bool) -> TestResult {
     }
     assert_eq!(
         pids.len(),
-        if tree { 3 } else { 1 },
+        if escaped {
+            2
+        } else if tree {
+            3
+        } else {
+            1
+        },
         "fixture never entered for {target:?}"
     );
     let survivors: Vec<_> = survivors?.into_iter().filter(|(_, alive)| *alive).collect();
-    assert!(
-        survivors.is_empty(),
-        "live children after {target:?}: {survivors:?}"
-    );
+    if escaped {
+        assert_eq!(survivors.len(), 1, "only the external pipe holder remains");
+        assert_eq!(survivors[0].0, pids[1]);
+    } else {
+        assert!(
+            survivors.is_empty(),
+            "live children after {target:?}: {survivors:?}"
+        );
+    }
     match target {
         Rejection::Panic => assert!(matches!(
             result?,
@@ -157,6 +313,14 @@ fn reporting_rejection(target: Rejection, tree: bool) -> TestResult {
         &CancellationRequest::new(request.invocation().clone(), 1, "after cleanup")?,
     );
     assert!(matches!(cancellation, Err(ExecutorError::Unavailable(_))));
+    Ok(())
+}
+
+#[test]
+fn failed_reporting_and_unwinding_interrupt_inherited_idle_pipes() -> TestResult {
+    for rejection in [Rejection::Initial, Rejection::Heartbeat, Rejection::Panic] {
+        reporting_rejection_with_inheritance(rejection, false, true)?;
+    }
     Ok(())
 }
 
@@ -187,7 +351,14 @@ fn reporter_panic_terminates_child_before_host_catches_it() -> TestResult {
 
 #[test]
 fn termination_paths_settle_the_child_and_keep_terminal_meaning() -> TestResult {
-    for mode in ["cancel", "timeout", "overflow", "shutdown"] {
+    for mode in [
+        "cancel",
+        "timeout",
+        "overflow",
+        "shutdown",
+        #[cfg(unix)]
+        "stopped",
+    ] {
         let data = Arc::new(TestDataAccess::new()?);
         let directory = tempfile::tempdir()?;
         let pid_path = directory.path().join("child.pid");
@@ -227,10 +398,28 @@ fn termination_paths_settle_the_child_and_keep_terminal_meaning() -> TestResult 
         while read_pids(&pid_path).is_empty() && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(5));
         }
+        #[cfg(unix)]
+        if mode == "stopped" {
+            use rustix::process::{Pid, Signal, WaitOptions, kill_process, waitpid};
+            let pid = Pid::from_raw(*read_pids(&pid_path).first().ok_or("missing child")? as i32)
+                .ok_or("invalid pid")?;
+            kill_process(pid, Signal::STOP)?;
+            // Observe the stop, then cancel: a stopped process cannot service TERM.
+            // waitpid consumes only the stop notification; the adapter reaps exit.
+            loop {
+                if waitpid(Some(pid), WaitOptions::NOHANG | WaitOptions::UNTRACED)?
+                    .is_some_and(|(_, status)| status.stopped())
+                {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "child never stopped");
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
         if mode == "shutdown" {
             adapter.shutdown()?;
         }
-        if mode == "cancel" {
+        if mode == "cancel" || mode == "stopped" {
             adapter.cancel(&CancellationRequest::new(
                 request.invocation().clone(),
                 1,
@@ -255,7 +444,7 @@ fn termination_paths_settle_the_child_and_keep_terminal_meaning() -> TestResult 
         assert_eq!(alive?, vec![false], "{mode} left a live child");
         let events = reporter.events()?;
         match mode {
-            "cancel" | "shutdown" => {
+            "cancel" | "shutdown" | "stopped" => {
                 assert_eq!(terminal_status(&events), Some(TerminalStatus::Cancelled))
             }
             "timeout" => assert_eq!(terminal_failure_code(&events), Some("process_timeout")),

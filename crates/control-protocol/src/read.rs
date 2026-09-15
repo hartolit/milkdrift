@@ -269,7 +269,8 @@ pub struct AttemptRead {
     pub outputs: Vec<AttemptOutputRead>,
     /// Stable terminal summary.
     pub terminal: Option<String>,
-    /// Bounded durable terminal explanation, including the final-entry budget refusal.
+    /// Bounded durable terminal or uncertain-outcome explanation, including cleanup evidence
+    /// and the final-entry budget refusal. `uncertain` still distinguishes unresolved work.
     /// Missing evidence stays absent; an allowed authority decision alone does not prove entry.
     #[serde(default)]
     pub terminal_detail: Option<String>,

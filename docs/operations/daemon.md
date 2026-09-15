@@ -113,6 +113,15 @@ can retain unresolved work; neither a sent cancellation nor process exit establi
 external effect succeeded or stopped. After restart, inspect the exact attempt and follow the
 [retained-work procedure](../guides/headless-dogfood.md#retained-or-uncertain-work).
 
+For trusted processes, local pipe interruption prevents inherited stdout, stderr or unread stdin
+from keeping owned I/O workers alive indefinitely. The process profile's termination allowance
+covers final capture and joining. `drain` and `retain` still let already running work reach its
+own bounded outcome; choose a daemon deadline that accommodates those invocation limits, or use
+`cancel` to request termination. Incomplete pipe EOF remains uncertain through restart and appears
+in the attempt's `terminal_detail`. Local worker completion is separate from external descendant
+termination; see [process cleanup](../../adapters/local-process/README.md#bound-local-cleanup-without-claiming-descendant-containment).
+
+
 ## Backup, compatibility, and repair
 
 Stop the daemon and wait for its process and owned workers to exit. Process exit does not prove

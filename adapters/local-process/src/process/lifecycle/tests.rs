@@ -113,6 +113,7 @@ fn cleanup_workers(worker_count: usize, unwind: bool) -> TestResult {
             _completion: completion(0),
         }),
         Some(vec![b'i'; 2 * 1024 * 1024]),
+        process.io_cancel.input.clone(),
     )?;
     let (sender, receiver) = mpsc::sync_channel(1);
     process.receiver = Some(receiver);
@@ -120,22 +121,24 @@ fn cleanup_workers(worker_count: usize, unwind: bool) -> TestResult {
         process.stdout = Some(spawn_reader(
             Stream::Stdout,
             TrackedPipe {
-                pipe: process.child.stdout.take().ok_or("missing stdout")?,
+                pipe: pipe_reader(process.child.stdout.take().ok_or("missing stdout")?),
                 _completion: completion(1),
             },
             1024 * 1024,
             sender.clone(),
+            process.io_cancel.output.clone(),
         )?);
     }
     if worker_count >= 3 {
         process.stderr = Some(spawn_reader(
             Stream::Stderr,
             TrackedPipe {
-                pipe: process.child.stderr.take().ok_or("missing stderr")?,
+                pipe: pipe_reader(process.child.stderr.take().ok_or("missing stderr")?),
                 _completion: completion(2),
             },
             1024 * 1024,
             sender,
+            process.io_cancel.output.clone(),
         )?);
     }
     let ready_deadline = Instant::now() + DEADLINE;
@@ -210,6 +213,114 @@ fn cleanup_joins_all_started_io_before_unregistering() -> TestResult {
 #[test]
 fn unwinding_joins_all_io_before_unregistering() -> TestResult {
     cleanup_workers(3, true)
+}
+
+#[test]
+fn deadline_cleanup_preserves_queued_final_bytes_and_eof() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let child = crate::process::spawn::spawn(
+        &std::env::current_exe()?,
+        directory.path(),
+        &[OsString::from("--list")],
+        &[],
+        false,
+    )?;
+    let mut process = RunningProcess::new(child, Duration::from_millis(100));
+    process.start_io(None, 1024 * 1024, 1024 * 1024)?;
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        if process
+            .stdout
+            .as_ref()
+            .is_some_and(|worker| worker.is_finished())
+            && process
+                .stderr
+                .as_ref()
+                .is_some_and(|worker| worker.is_finished())
+            && process.child.try_wait()?.is_some()
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "fixture did not finish");
+        thread::sleep(Duration::from_millis(5));
+    }
+    // Model the monitor returning at its deadline while final frames are queued,
+    // for example after a slow durable progress report. Cleanup must collect them.
+    let mut observed = ProcessObservation {
+        status: process.child.try_wait()?,
+        termination: None,
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+        stdout_overflow: false,
+        stderr_overflow: false,
+        termination_confirmed: true,
+        stdout_closed: false,
+        stderr_closed: false,
+    };
+    process.cleanup_deadline = Some(Instant::now());
+    let joined = process.finish_io(&mut observed);
+    assert!(joined.error().is_none());
+    assert!(observed.stdout_closed && observed.stderr_closed);
+    assert!(
+        String::from_utf8(observed.stdout)?
+            .contains("deadline_cleanup_preserves_queued_final_bytes_and_eof")
+    );
+    assert!(observed.stderr.is_empty());
+    Ok(())
+}
+
+#[test]
+fn partial_reader_spawn_failure_closes_pipes_and_releases_registration() -> TestResult {
+    for failed in [Stream::Stdout, Stream::Stderr] {
+        let directory = tempfile::tempdir()?;
+        let marker = directory.path().join("child.pid");
+        let cleanup = ProbeCleanup(marker.clone());
+        let child = crate::process::spawn::spawn(
+            &std::env::current_exe()?,
+            directory.path(),
+            &[
+                OsString::from("--exact"),
+                OsString::from("process::lifecycle::tests::pipe_holder"),
+                OsString::from("--nocapture"),
+            ],
+            &[(
+                OsString::from("MILKDRIFT_IO_CLEANUP_PROBE"),
+                marker.clone().into_os_string(),
+            )],
+            true,
+        )?;
+        let pid = child.id();
+        let mut process = RunningProcess::new(child, Duration::from_millis(100));
+        let active = Arc::new(Mutex::new(BTreeMap::new()));
+        process.register(active.clone(), InvocationId::new("partial-spawn")?)?;
+        process.fail_reader_spawn = Some(failed);
+        assert!(
+            process
+                .start_io(Some(vec![b'i'; 2 * 1024 * 1024]), 1024, 1024)
+                .is_err()
+        );
+        assert!(process.stdin.is_some());
+        assert_eq!(process.stdout.is_some(), failed == Stream::Stderr);
+        let cleanup_started = Instant::now();
+        let joined = process.cleanup();
+        assert!(cleanup_started.elapsed() < Duration::from_secs(1));
+        assert!(matches!(
+            joined.stdin,
+            Ok(super::super::streams::IoCompletion::Interrupted) | Err(_)
+        ));
+        assert!(process.stdin.is_none() && process.stdout.is_none() && process.stderr.is_none());
+        assert!(!process_alive(pid)?);
+        assert_eq!(active.lock().map_err(|_| "active lock poisoned")?.len(), 1);
+        drop(process);
+        assert!(
+            active
+                .lock()
+                .map_err(|_| "active lock poisoned")?
+                .is_empty()
+        );
+        drop(cleanup);
+    }
+    Ok(())
 }
 
 #[test]
