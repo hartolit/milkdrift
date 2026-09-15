@@ -119,7 +119,9 @@ values; repository contracts check the version cells against source.
 - Trusted processes have daemon-account privileges. No sandbox, network isolation, CPU/memory
   quotas, malicious-descendant containment, universal atomic hashed-handle execution, directory
   artifacts, writable shared mounts, or complete non-Unix process-tree cancellation is claimed.
-  Unowned descendants can retain inherited pipes and delay I/O joining during cleanup.
+  Unowned descendants can retain inherited pipes, but local nonblocking I/O now interrupts at
+  the cleanup deadline and joins its workers. Missing EOF remains uncertain. Current platform
+  execution evidence is recorded below.
 - Peers require operator connectivity; the daemon listener is loopback-only. There is no discovery,
   NAT traversal, coordinator, automatic CA/internal mTLS mapper, consensus, shared database,
   model synchronization, or automatic transfer of every artifact. Grants/profiles/relationships
@@ -172,17 +174,21 @@ headless daemon/CLI evidence and deterministic multiline model evidence also pas
 fixtures retain explicit Python/Git prerequisites. These software checks do not qualify filesystem
 power loss or real coding-agent interoperability.
 
-The reporting-cleanup implementation passes the complete local Windows/MSVC gate with 713 tests
-and all 24 repository contracts; the five manual longevity tests remain ignored in that run.
-Focused regressions establish immediate-child termination after initial,
-stdout/stderr progress, and heartbeat rejection, including an unread stdin pipe and reporter panic.
-Private lifecycle tests observe completion of every started I/O worker and retained cancellation
-registration during partial startup and unwinding. Cancellation, timeout, output-limit termination,
-and shutdown regressions also pass. The later
-[platform run at `005ccb2`](https://github.com/hartolit/milkdrift/actions/runs/34544490423)
-passes Ubuntu and Windows, but macOS fails two private lifecycle tests that inspect child absence
-immediately after worker gate arrival. The local test correction waits for absence with the gates
-held; confirmation on macOS remains pending. That run's Unix owned-descendant reporting cases pass.
+Reviewed bounded process cleanup passes the Linux/Rust 1.95 full gate with 809 workspace tests, 24 doctests
+and all 24 repository contracts; five manual longevity tests remain ignored. Six private lifecycle
+tests and 33 process integration tests prove joined I/O ownership through partial startup,
+reporter failure/panic, unread stdin, saturation, forced termination and inherited idle pipes.
+Normal final output and already queued EOF survive cleanup. Daemon drain/cancel/retain cases
+reopen the same store, preserve the uncertainty explanation and refuse unsafe duplicate retry.
+Actual-binary operator, deterministic model and controller lanes pass. Default/all-feature API
+inventories for local-process, daemon and control-protocol remain identical; cleanup types are
+private. Fresh integration evidence is under `target/review-process-cleanup/`; the original
+reproduction and implementation evidence remain under `target/process-cleanup/`. The
+[platform run at `515337f`](https://github.com/hartolit/milkdrift/actions/runs/35023792743) passes on
+Ubuntu 24.04, Windows 2025 and macOS 15: complete workspace checking, the selected domain/protocol,
+client, shared-host and process suites, and the daemon inherited-pipe shutdown/restart case.
+This qualifies those executed cases, not a complete Windows/macOS workspace gate, escaped-descendant
+containment or filesystem power-loss behavior.
 
 The context-policy enforcement and import-label findings are resolved by `a24671a`. Its complete
 local Windows/MSVC gate passes with 725 tests and all 24 repository contracts; five manual longevity

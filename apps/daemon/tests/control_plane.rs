@@ -8,5 +8,7 @@ mod durability;
 mod operations;
 #[path = "support/process.rs"]
 mod process;
+#[path = "control_plane/process_cleanup.rs"]
+mod process_cleanup;
 #[path = "control_plane/support.rs"]
 mod support;

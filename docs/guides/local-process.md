@@ -131,8 +131,16 @@ but a malicious descendant can escape into another session/group. Non-Unix build
 complete process-tree cancellation. Child-count and resource limits remain observations unless an
 external host sandbox enforces them.
 
-If durable reporting fails after spawn, the adapter requests forced termination and joins its I/O
-workers before releasing local execution capacity. It propagates the reporting error without
+Process pipe endpoints are configured for interruptible local I/O before spawn. Cancellation and
+timeout cover pipe draining and worker joining as well as child/group observation. Parent exit
+allows `forced_termination_ms` for final output; cancellation/timeout use the graceful plus forced
+intervals as one cleanup allowance. A pipe still lacking EOF at that deadline produces uncertain
+work, not successful output or confirmed cancellation. Inspect `terminal_detail` for observed
+parent exit, EOF, capture sizes, and local joining. Increasing the final-output window can help
+slow capture, but cannot establish the termination of an escaped descendant.
+
+If durable reporting fails after spawn, the adapter requests forced termination, interrupts local
+I/O and joins its workers before releasing local execution capacity. It propagates the reporting error without
 inventing a terminal observation. A stopped local child cannot establish whether its earlier
 external effects completed; inspect the retained uncertain attempt before authorizing recovery.
 The [adapter lifecycle explanation](../../adapters/local-process/README.md#results-and-interruptions)

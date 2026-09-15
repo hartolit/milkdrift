@@ -510,8 +510,12 @@ fn traversal_symlink_special_file_and_budget_escapes_are_rejected() -> TestResul
                 .is_err()
         );
 
-        let _socket =
-            std::os::unix::net::UnixListener::bind(workspace.root().join("special-output.socket"))?;
+        // Bind outside the longer materialization path to respect macOS's Unix
+        // socket address limit, then move the same special file into the workspace.
+        let socket_owner = tempfile::tempdir()?;
+        let socket_path = socket_owner.path().join("s");
+        let _socket = std::os::unix::net::UnixListener::bind(&socket_path)?;
+        fs::rename(socket_path, workspace.root().join("special-output.socket"))?;
         assert!(
             access
                 .publish_file(

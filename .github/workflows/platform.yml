@@ -47,6 +47,7 @@ jobs:
             -p milkdrift-authority \
             -p milkdrift-blueprint \
             -p milkdrift-capability \
+            -p milkdrift-capability-host \
             -p milkdrift-control-client \
             -p milkdrift-control-protocol \
             -p milkdrift-local-process \
@@ -55,6 +56,15 @@ jobs:
             -p milkdrift-prompt-sequence \
             -p milkdrift-workspace \
             2>&1 | tee "target/platform-evidence/tests-${RUNNER_OS}.log"
+      - name: Test inherited pipes through daemon shutdown and restart
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build -p milkdrift-local-process --bin milkdrift-process-test-helper
+          cargo test -p milkdrift-daemon --test control_plane --all-features \
+            process_cleanup::inherited_pipes_settle_drain_cancel_and_retain_without_duplicate_entry \
+            -- --exact \
+            2>&1 | tee "target/platform-evidence/process-shutdown-${RUNNER_OS}.log"
       - name: Upload platform evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

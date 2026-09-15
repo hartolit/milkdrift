@@ -24,6 +24,18 @@ registration leaves the original cancellation control intact. Windows execution 
 immediate child; the Unix-only reporting cases additionally check owned descendants when run there.
 See [status](../product/status.md) for executed evidence and platform limits.
 
+The inherited-pipe fixture creates a holder outside the owned group and synchronizes readiness
+through its PID record. Tests own both explicit release and fallback termination. They require
+invocation completion while the holder is still alive, so child termination alone cannot satisfy
+the regression. Normal-output tests compare every final byte. Startup-failure injection and a
+stopped Unix child exercise partial ownership and escalation when TERM cannot complete cleanup.
+
+`cargo test -p milkdrift-daemon --test control_plane --all-features process_cleanup::` drives the
+same byte-pinned helper through drain/cancel/retain shutdown, reopens the store, checks the durable
+uncertainty explanation and refuses unsafe retry without another entry. Build the helper first.
+The platform workflow also runs these daemon cases and the capability-host lifecycle suite.
+The per-platform uploaded logs, not cross-compilation, establish which OS paths were executed.
+
 ## Constrained peer placement
 
 Constrained peer placement is exercised by

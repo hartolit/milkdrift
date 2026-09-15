@@ -134,6 +134,36 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
             thread::sleep(Duration::from_secs(30));
             Ok(0)
         }
+        "escaped-pipes" => {
+            let pid_file = arguments.next().ok_or("missing pid file")?;
+            let release = arguments.next().ok_or("missing release path")?;
+            let mode = arguments.next().ok_or("missing parent mode")?;
+            append_pid(&pid_file)?;
+            let mut command = Command::new(env::current_exe()?);
+            command.args(["hold-pipes", &pid_file, &release]);
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                command.process_group(0);
+            }
+            let mut child = command.spawn()?;
+            if mode == "wait" {
+                child.wait()?;
+            }
+            Ok(0)
+        }
+        "hold-pipes" => {
+            let pid_file = arguments.next().ok_or("missing pid file")?;
+            let release = arguments.next().ok_or("missing release path")?;
+            append_pid(&pid_file)?;
+            // Readiness is the PID record. The test owns release and fallback kill;
+            // this idle holder never needs to write for the blocked reads to occur.
+            let deadline = std::time::Instant::now() + Duration::from_secs(30);
+            while !std::path::Path::new(&release).exists() && std::time::Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Ok(0)
+        }
         "mark" => {
             let path = arguments.next().ok_or("missing marker path")?;
             std::fs::write(path, b"entered")?;

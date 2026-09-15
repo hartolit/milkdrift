@@ -416,7 +416,10 @@ privileges; `SandboxedProcess` requires a distinct enforcing adapter. On Unix, i
 with a live owned group initiates bounded group teardown even if descendants retain output pipes.
 One invocation owner keeps the spawned child, started I/O workers, and cancellation registration
 together. Reporting/setup failure or unwinding disconnects the stream channel and requests forced
-termination before joining workers; registration and the outer host permit outlive that cleanup.
+termination and interrupts nonblocking local pipe operations before joining workers; registration
+and the outer host permit outlive that cleanup. One monotonic deadline covers group observation
+and final pipe draining. Missing EOF remains uncertain even after local joins or parent exit;
+it does not authorize successful output publication or automatic unsafe retry.
 The original reporting failure still reaches runtime without invented terminal evidence.
 [Process operations](guides/local-process.md) owns platform and profile details.
 

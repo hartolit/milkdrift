@@ -1,6 +1,31 @@
 use super::*;
 
 #[test]
+fn normal_exit_preserves_all_final_stdout_and_stderr_bytes() -> TestResult {
+    let data = Arc::new(TestDataAccess::new()?);
+    let bytes = 786432;
+    let profile = parse_profile(&profile_value(
+        &data.root,
+        vec![json!("emit"), json!(bytes.to_string())],
+    )?)?;
+    let request = request(&profile, "final-bytes", Vec::new())?;
+    let (host, snapshot) = setup(
+        profile,
+        data.clone(),
+        Arc::new(InMemorySecretResolver::new()),
+    )?;
+    let reporter = TestReporter::default();
+    host.execute_exact_with_context(&snapshot, &request, &context()?, &reporter)?;
+    assert_eq!(
+        terminal_status(&reporter.events()?),
+        Some(TerminalStatus::Success)
+    );
+    assert_eq!(data.output("stdout")?, Some(vec![b'o'; bytes]));
+    assert_eq!(data.output("stderr")?, Some(vec![b'e'; bytes]));
+    Ok(())
+}
+
+#[test]
 fn nonzero_exit_signal_and_timeout_are_typed_failures() -> TestResult {
     for (suffix, arguments, timeout) in [
         ("nonzero", vec![json!("exit"), json!("7")], 5000_u64),

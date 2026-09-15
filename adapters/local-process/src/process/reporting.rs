@@ -1,12 +1,16 @@
 use std::{collections::BTreeMap, process::ExitStatus, time::Instant};
 
 use milkdrift_capability::{
-    ErrorClass, InvocationEvent, InvocationEventKind, InvocationFailure, InvocationId,
-    InvocationTerminal, SideEffectClass, TerminalStatus, UsageObservation,
+    BoundedJson, ErrorClass, ExtensionKey, InvocationEvent, InvocationEventKind, InvocationFailure,
+    InvocationId, InvocationTerminal, SideEffectClass, TerminalStatus, UsageObservation,
 };
 use milkdrift_capability_host::{AdapterError, AdapterReporter};
 
-use super::{bounded, monitor::Termination};
+use super::{
+    bounded,
+    lifecycle::IoCleanup,
+    monitor::{ProcessObservation, Termination},
+};
 
 pub(super) fn report(
     reporter: &dyn AdapterReporter,
@@ -56,6 +60,7 @@ pub(super) struct TerminalReportContext<'a> {
     sequence: &'a mut u64,
     side_effect: SideEffectClass,
     started: Instant,
+    cleanup: BTreeMap<ExtensionKey, BoundedJson>,
 }
 
 impl<'a> TerminalReportContext<'a> {
@@ -72,6 +77,7 @@ impl<'a> TerminalReportContext<'a> {
             sequence,
             side_effect,
             started,
+            cleanup: BTreeMap::new(),
         }
     }
 
@@ -81,6 +87,32 @@ impl<'a> TerminalReportContext<'a> {
 
     pub(super) fn heartbeat(&self) -> Result<(), AdapterError> {
         self.reporter.heartbeat()
+    }
+
+    pub(super) fn record_cleanup(
+        &mut self,
+        observed: &ProcessObservation,
+        joined: &IoCleanup,
+    ) -> Result<(), AdapterError> {
+        let key = ExtensionKey::new("org.milkdrift/process-cleanup")
+            .map_err(|error| AdapterError::external_failure(error.to_string()))?;
+        let facts = BoundedJson::new(serde_json::json!({
+            "parent_exit_observed": observed.status.is_some(),
+            "parent_exit_code": observed.status.and_then(|status| status.code()),
+            "owned_group_absent": if cfg!(unix) { Some(observed.termination_confirmed) } else { None },
+            "local_io_joined": true,
+            "stdin": joined.stdin,
+            "stdout": { "eof": observed.stdout_closed, "capture_limit_exceeded": observed.stdout_overflow, "captured_bytes": observed.stdout.len(), "worker": joined.stdout },
+            "stderr": { "eof": observed.stderr_closed, "capture_limit_exceeded": observed.stderr_overflow, "captured_bytes": observed.stderr.len(), "worker": joined.stderr },
+            "external_descendants": "not_observed"
+        })).map_err(|error| AdapterError::external_failure(error.to_string()))?;
+        self.cleanup.insert(key, facts);
+        Ok(())
+    }
+
+    pub(super) fn usage(&self) -> Option<UsageObservation> {
+        let duration = u64::try_from(self.started.elapsed().as_millis()).ok();
+        UsageObservation::new(None, None, duration, None, None, self.cleanup.clone()).ok()
     }
 
     pub(super) fn failure(
@@ -95,7 +127,7 @@ impl<'a> TerminalReportContext<'a> {
             TerminalStatus::Failure,
             Vec::new(),
             Some(failure),
-            usage(self.started),
+            self.usage(),
             self.side_effect,
         )
         .map_err(|error| AdapterError::external_failure(error.to_string()))?;
@@ -110,7 +142,7 @@ impl<'a> TerminalReportContext<'a> {
             TerminalStatus::Uncertain,
             Vec::new(),
             Some(failure),
-            usage(self.started),
+            self.usage(),
             self.side_effect,
         )
         .map_err(|error| AdapterError::external_failure(error.to_string()))?;
@@ -128,7 +160,7 @@ impl<'a> TerminalReportContext<'a> {
                     TerminalStatus::Cancelled,
                     Vec::new(),
                     None,
-                    usage(self.started),
+                    self.usage(),
                     self.side_effect,
                 )
                 .map_err(|error| AdapterError::external_failure(error.to_string()))?;
@@ -162,11 +194,6 @@ impl<'a> TerminalReportContext<'a> {
             ),
         }
     }
-}
-
-pub(super) fn usage(started: Instant) -> Option<UsageObservation> {
-    let duration = u64::try_from(started.elapsed().as_millis()).ok();
-    UsageObservation::new(None, None, duration, None, None, BTreeMap::new()).ok()
 }
 
 pub(super) fn exit_failure(status: &ExitStatus) -> (String, String) {

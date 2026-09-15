@@ -44,14 +44,44 @@ owned process group and tears down remaining descendants when the immediate chil
 ownership covers the immediate child only. A PID is not recoverable process identity after daemon
 restart; `RestartPolicy` describes whether the external program can safely accept the same stable key.
 
-If reporting fails after spawn, the invocation owner disconnects the stream channel, requests
-forced termination, reaps the child, and joins every started I/O worker before releasing cancellation
-registration. This also covers partial worker startup and unwinding into the host's panic boundary.
-Disconnecting the channel releases readers blocked on a full queue; terminating first releases pipes
-the child holds open. The original reporting error propagates without a synthetic terminal report,
-so runtime still retains uncertainty about the external operation.
-Cleanup depends on OS termination and pipe closure. Descendants outside the owned process group
-(or any descendant on non-Unix platforms) can retain inherited pipes and delay I/O joins.
+### Bound local cleanup without claiming descendant containment
+
+Before spawn, the adapter creates ordinary blocking child endpoints and nonblocking daemon
+endpoints. Unix uses the existing `rustix` safe `fcntl` wrapper. Windows uses `interprocess` only
+to set `PIPE_NOWAIT` on synchronous pipe handles and preserve raw read errors. Its unnamed
+receiver distinguishes an idle pipe from EOF, which `std`'s Windows reader conflates. It refuses a
+handle unexpectedly reopened for overlapped I/O before spawning. It never uses that dependency's
+flush or background limbo pool. The stdin worker owns a synchronous `File` writer rather than
+calling `ChildStdin`'s asynchronous Windows write method on that handle. This keeps pipe
+cancellation in the existing invocation owner, without cross-thread handle closure or detached I/O work.
+
+Each worker checks its stop signal between nonblocking operations and bounded-channel sends.
+Idle/full pipes and a full channel wait at most one 5 ms polling interval before checking again.
+Cancellation, timeout, or overflow stops input and starts one monotonic cleanup deadline covering
+the configured graceful and forced termination intervals. The monitor requests termination while
+continuing bounded output collection. Ordinary parent exit starts a final-output window of
+`forced_termination_ms`. EOF ends collection early; expiration interrupts the remaining readers.
+The same deadline covers child/group observation; cleanup does not start another wait allowance.
+As with other local deadlines, OS scheduling and individual system calls are not hard real-time
+promises.
+
+The owner signals I/O interruption, requests force where still needed, polls child/group state
+only until that deadline, then joins every worker before releasing the cancellation registration
+and host permit. Workers close their own handles. After monitoring, cleanup collects the remaining
+bounded queue and each joined reader's EOF observation so slow progress reporting does not discard
+already collected final output. Failure and panic paths disconnect the channel and use the same
+ownership rule, with a forced-termination allowance when monitoring has not started. There is no
+blocking `child.wait()` hidden in `Drop`. If reporting failed, its original error propagates
+without a replacement terminal report.
+
+A missing stdout/stderr EOF becomes `process_io_incomplete` with `Uncertain` status, even when the
+parent exited successfully or cancellation was requested. The terminal observation separates
+parent exit, owned termination, local joins, EOF, captured byte counts, and observed overflow.
+Its explanation survives restart and is exposed as the attempt's `terminal_detail`; the ordinary
+uncertain-work rules retain unresolved controller reservations and refuse unsafe duplicate retry.
+Incomplete captures and declared files are not published as successful outputs. Complete output
+continues to use the configured capture/truncation policy. Closing local pipes does not prove
+that an escaped descendant or its external effects stopped.
 
 This is a trusted host process with the daemon account's privileges. Staging checks do not provide
 a sandbox, CPU/memory quotas, network isolation, or containment of malicious descendants. Byte

@@ -115,7 +115,9 @@ safe-restart plans with explicit approval, and execution-opening commands are re
 `RunRead.controller_accounting` and `AttemptRead.terminal_detail` retain accounting and terminal
 evidence. The former is the bounded control-owned account projection described in
 [budget scope](../operations/authority.md#budget-scope); the latter preserves the durable terminal
-reason, including final-entry budget refusal, after operational attempt compaction. Ordinary runs
+reason, including final-entry budget refusal, after operational attempt compaction. An unresolved
+attempt exposes its saved uncertainty reason in the same detail field; `uncertain` stays true and
+the terminal outcome remains absent until authorized resolution. Ordinary runs
 return `{"state":"inactive"}`. A missing accounting field represents `null` (unavailable), and a
 missing terminal detail is absent. CLI JSON remains schema 2. Controller status carries the same account under `accounting`; `committed`
 already includes outstanding reservations and `remaining` is `null` while blocked.
