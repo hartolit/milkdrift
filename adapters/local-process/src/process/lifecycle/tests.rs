@@ -109,7 +109,7 @@ fn cleanup_workers(worker_count: usize, unwind: bool) -> TestResult {
     };
     process.stdin = spawn_stdin_writer(
         Some(TrackedPipe {
-            pipe: process.child.stdin.take().ok_or("missing stdin")?,
+            pipe: pipe_writer(process.child.stdin.take().ok_or("missing stdin")?),
             _completion: completion(0),
         }),
         Some(vec![b'i'; 2 * 1024 * 1024]),
@@ -161,7 +161,7 @@ fn cleanup_workers(worker_count: usize, unwind: bool) -> TestResult {
         for _ in 0..worker_count {
             waiting.recv_timeout(DEADLINE)?;
         }
-        // Pipe completion can precede the cleanup thread's child.wait(), leaving
+        // Pipe completion can precede the cleanup thread's child.try_wait(), leaving
         // a briefly observable zombie on Unix. Keep every worker gated while
         // observing child absence; gate arrival alone does not establish reaping.
         let exit_deadline = Instant::now() + DEADLINE;

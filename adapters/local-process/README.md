@@ -51,8 +51,9 @@ endpoints. Unix uses the existing `rustix` safe `fcntl` wrapper. Windows uses `i
 to set `PIPE_NOWAIT` on synchronous pipe handles and preserve raw read errors. Its unnamed
 receiver distinguishes an idle pipe from EOF, which `std`'s Windows reader conflates. It refuses a
 handle unexpectedly reopened for overlapped I/O before spawning. It never uses that dependency's
-flush or background limbo pool. This keeps pipe cancellation in the existing invocation owner,
-without cross-thread handle closure or detached I/O work.
+flush or background limbo pool. The stdin worker owns a synchronous `File` writer rather than
+calling `ChildStdin`'s asynchronous Windows write method on that handle. This keeps pipe
+cancellation in the existing invocation owner, without cross-thread handle closure or detached I/O work.
 
 Each worker checks its stop signal between nonblocking operations and bounded-channel sends.
 Idle/full pipes and a full channel wait at most one 5 ms polling interval before checking again.
@@ -64,12 +65,14 @@ The same deadline covers child/group observation; cleanup does not start another
 As with other local deadlines, OS scheduling and individual system calls are not hard real-time
 promises.
 
-The owner disconnects its channel, signals I/O interruption, requests force where still needed,
-polls child/group state only until that deadline, then joins every worker before releasing the
-cancellation registration and host permit. Workers close their own handles. Setup failure and
-panic unwinding use this same path, with a forced-termination allowance when monitoring has not
-started. There is no blocking `child.wait()` hidden in `Drop`. If reporting failed, its original
-error propagates without a replacement terminal report.
+The owner signals I/O interruption, requests force where still needed, polls child/group state
+only until that deadline, then joins every worker before releasing the cancellation registration
+and host permit. Workers close their own handles. After monitoring, cleanup collects the remaining
+bounded queue and each joined reader's EOF observation so slow progress reporting does not discard
+already collected final output. Failure and panic paths disconnect the channel and use the same
+ownership rule, with a forced-termination allowance when monitoring has not started. There is no
+blocking `child.wait()` hidden in `Drop`. If reporting failed, its original error propagates
+without a replacement terminal report.
 
 A missing stdout/stderr EOF becomes `process_io_incomplete` with `Uncertain` status, even when the
 parent exited successfully or cancellation was requested. The terminal observation separates

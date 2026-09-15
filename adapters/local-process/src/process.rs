@@ -431,8 +431,6 @@ impl LocalProcessAdapter {
         };
 
         let spawn_started = Instant::now();
-        #[cfg(windows)]
-        eprintln!("PIPE TRACE before spawn");
         let child = match spawn::spawn(
             &self.executable,
             &working_directory,
@@ -452,8 +450,6 @@ impl LocalProcessAdapter {
                 );
             }
         };
-        #[cfg(windows)]
-        eprintln!("PIPE TRACE after spawn");
         let mut process = RunningProcess::new(
             child,
             Duration::from_millis(self.profile.limits.forced_termination_ms),
@@ -482,14 +478,8 @@ impl LocalProcessAdapter {
             total_units: None,
         })?;
 
-        #[cfg(windows)]
-        eprintln!("PIPE TRACE before monitor");
         let mut observed = process.monitor(&mut reports, &self.profile, spawn_started)?;
-        #[cfg(windows)]
-        eprintln!("PIPE TRACE after monitor");
         let joined = process.finish_io(&mut observed);
-        #[cfg(windows)]
-        eprintln!("PIPE TRACE after joins");
         reports.record_cleanup(&observed, &joined)?;
         redact_capture(&mut observed.stdout, &resolved_secrets);
         redact_capture(&mut observed.stderr, &resolved_secrets);

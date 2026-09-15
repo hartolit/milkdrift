@@ -530,7 +530,6 @@ fn authorized_host_working_directory_must_be_inside_a_read_write_root() -> TestR
 
 #[test]
 fn argv_metacharacters_stdin_environment_and_outputs_are_bounded_and_literal() -> TestResult {
-    eprintln!("PIPE TRACE argv test begins");
     let data = Arc::new(TestDataAccess::new()?);
     let mut value = profile_value(
         &data.root,
@@ -606,7 +605,6 @@ fn argv_metacharacters_stdin_environment_and_outputs_are_bounded_and_literal() -
     let (host, snapshot) = setup(profile, data.clone(), secrets)?;
     let reporter = TestReporter::default();
     host.execute_exact_with_context(&snapshot, &request, &context()?, &reporter)?;
-    eprintln!("PIPE TRACE argv executed");
     let events = reporter.events()?;
     assert_eq!(terminal_status(&events), Some(TerminalStatus::Success));
     let process_key = ExtensionKey::new("org.milkdrift/process-profile")?;

@@ -19,7 +19,7 @@ use super::{
     reporting::TerminalReportContext,
     streams::{
         IoCancellation, IoCompletion, IoWorker, Stream, StreamMessage, join_io, pipe_reader,
-        spawn_reader, spawn_stdin_writer,
+        pipe_writer, spawn_reader, spawn_stdin_writer,
     },
 };
 use crate::config::ProcessProfile;
@@ -102,7 +102,7 @@ impl RunningProcess {
         let (sender, receiver) = sync_channel(STREAM_CHANNEL_MESSAGES);
         self.receiver = Some(receiver);
         self.stdin = spawn_stdin_writer(
-            self.child.stdin.take(),
+            self.child.stdin.take().map(pipe_writer),
             stdin_bytes,
             self.io_cancel.input.clone(),
         )
