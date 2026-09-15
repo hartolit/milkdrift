@@ -482,3 +482,35 @@ fn remediation_is_a_digest_bound_prospective_ordinary_revision() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn sequence_profiles_preserve_peer_placement_in_each_compiled_task() -> TestResult {
+    let mut input = document_value();
+    let placement = json!({"localities":["peer"],"peers":["peer-a"]});
+    for stage in input["sequence"]["stages"]
+        .as_array_mut()
+        .ok_or("stages absent")?
+    {
+        stage["coding"]["placement"] = placement.clone();
+        stage["verification"]["profile"]["placement"] = placement.clone();
+        stage["reviewer"]["placement"] = placement.clone();
+    }
+    let document = PromptSequenceDocument::from_json(&serde_json::to_vec(&input)?)?;
+    let compiled = compile(&document, AuthorRef::new("human:placement-test")?)?;
+    let mut count = 0;
+    for node in compiled.revision().semantic().nodes().values() {
+        if let NodeKind::Task { config } = node.kind()
+            && config.requirement().operation().as_str() == "process.execute"
+        {
+            assert_eq!(
+                serde_json::to_value(config.requirement().placement())?,
+                placement
+            );
+            count += 1;
+        }
+    }
+    assert_eq!(count, 6);
+    input["sequence"]["stages"][0]["coding"]["placement"]["localities"] = json!(["local"]);
+    assert!(PromptSequenceDocument::from_json(&serde_json::to_vec(&input)?).is_err());
+    Ok(())
+}

@@ -1097,6 +1097,9 @@ fn attempt_inspection(
         capability: attempt
             .capability()
             .map(|resolution| resolution.snapshot().clone()),
+        requirement: attempt
+            .capability()
+            .map(|resolution| resolution.requirement().clone()),
         execution_authority: execution_authority.cloned(),
         resolution_authorization: attempt.resolution_authorization().cloned(),
         claim_authorization: attempt.entry_authorization().cloned(),

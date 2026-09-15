@@ -628,33 +628,6 @@ fn legacy_schedule_authorized(
     )?
     .with_context_materialization(reference, Vec::new())?;
     let history = source.runtime.history(&run)?;
-    let legacy_snapshot = if legacy_session {
-        let snapshot = history
-            .iter()
-            .find_map(|event| match event.kind() {
-                RunEventKind::CapabilityResolved { snapshot, .. } => Some(snapshot),
-                _ => None,
-            })
-            .ok_or("missing capability snapshot")?;
-        let mut value = serde_json::to_value(snapshot)?;
-        let object = value.as_object_mut().ok_or("snapshot is not an object")?;
-        object.remove("category");
-        object.remove("digest");
-        object.insert("schema_version".to_owned(), json!(1));
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"milkdrift.resolved-capability-snapshot.v1\0");
-        hasher.update(&serde_json::to_vec(&value)?);
-        let object = value.as_object_mut().ok_or("snapshot is not an object")?;
-        object.remove("schema_version");
-        object.insert(
-            "digest".to_owned(),
-            json!(hasher.finalize().to_hex().to_string()),
-        );
-        // The production reader validates the old digest, not just this fixture's flags.
-        Some(serde_json::from_value::<ResolvedCapabilitySnapshot>(value)?)
-    } else {
-        None
-    };
     let events = history
         .into_iter()
         .filter(|event| event.sequence() > expected)
@@ -663,44 +636,7 @@ fn legacy_schedule_authorized(
             match &mut kind {
                 RunEventKind::ArtifactPublished { metadata: saved } => *saved = metadata.clone(),
                 RunEventKind::NodeScheduled { request: saved, .. } => *saved = request.clone(),
-                RunEventKind::CapabilityResolved { snapshot, .. }
-                | RunEventKind::CapabilityResolutionDecisionRecorded { snapshot, .. } => {
-                    if let Some(legacy) = &legacy_snapshot {
-                        *snapshot = legacy.clone();
-                    }
-                }
                 _ => {}
-            }
-            if legacy_session
-                && matches!(
-                    kind,
-                    RunEventKind::CapabilityResolved { .. }
-                        | RunEventKind::CapabilityResolutionDecisionRecorded { .. }
-                )
-            {
-                let mut value = serde_json::to_value(&event)?;
-                value["kind"] = serde_json::to_value(kind)?;
-                value["schema_version"] = json!(1);
-                let object = value.as_object_mut().ok_or_else(|| {
-                    milkdrift_persistence::PersistenceError::InvalidDocument(
-                        "event is not an object".to_owned(),
-                    )
-                })?;
-                object.remove("checksum");
-                object.insert(
-                    "domain".to_owned(),
-                    json!("milkdrift.run-event-envelope.v1"),
-                );
-                let checksum =
-                    milkdrift_persistence::IntegrityDigest::hash(&serde_json::to_vec(&value)?);
-                let object = value.as_object_mut().ok_or_else(|| {
-                    milkdrift_persistence::PersistenceError::InvalidDocument(
-                        "event is not an object".to_owned(),
-                    )
-                })?;
-                object.remove("domain");
-                object.insert("checksum".to_owned(), serde_json::to_value(checksum)?);
-                return RunEventEnvelope::from_json(&serde_json::to_vec(&value)?);
             }
             RunEventEnvelope::new(
                 event.event_id().clone(),
@@ -991,7 +927,7 @@ fn retry_refuses_unsafe_legacy_selection_without_rescanning_or_rewriting_it() ->
 }
 
 #[test]
-fn recovered_snapshot_without_category_cannot_bypass_model_session_agreement() -> TestResult {
+fn recovered_execution_cannot_bypass_model_session_agreement() -> TestResult {
     let (harness, run, request) = legacy_schedule(LegacyCase::SessionMismatch)?;
     let history = harness.runtime.history(&run)?;
     let directory = harness.close();

@@ -385,6 +385,14 @@ impl OwnerPeerArtifactStore {
 }
 
 impl PeerArtifactStore for OwnerPeerArtifactStore {
+    fn metadata(
+        &self,
+        reference: &ArtifactReference,
+    ) -> Result<milkdrift_workspace::ArtifactMetadata, PeerArtifactError> {
+        let reference = reference.clone();
+        self.call(move |direct| direct.metadata(&reference))
+    }
+
     fn transfer_facts(
         &self,
         owner_peer: &PeerId,

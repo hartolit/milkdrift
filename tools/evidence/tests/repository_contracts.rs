@@ -424,13 +424,13 @@ fn shared_text_mechanics_and_canonical_import_paths_do_not_diverge() -> TestResu
     let capability_snapshot = read(repository.join("crates/capability/src/resolved.rs"))?;
     assert_eq!(
         capability_document
-            .match_indices("const RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2")
+            .match_indices("const RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V3")
             .count(),
         1,
         "resolved-capability schema version must have one implementation owner"
     );
     assert!(
-        !capability_snapshot.contains("const RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2"),
+        !capability_snapshot.contains("const RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V3"),
         "resolved-capability schema version regained a secondary owner"
     );
     Ok(())

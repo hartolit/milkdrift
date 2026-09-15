@@ -88,6 +88,9 @@ pub enum SessionPolicy {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapabilityProfileRef {
+    /// Optional locality and authenticated-peer constraints; omitted in existing imports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placement: Option<milkdrift_capability::PlacementRequirement>,
     /// Exact capability identity.
     pub capability: CapabilityId,
     /// Exact namespaced operation advertised by the capability.

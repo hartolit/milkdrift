@@ -82,6 +82,15 @@ impl RuntimeService {
         {
             return Ok(None);
         }
+        if let Some(placement) = attempt
+            .capability()
+            .and_then(|value| value.requirement().placement())
+        {
+            dispatch
+                .resolution()
+                .validate_placement(placement)
+                .map_err(ExecutorError::from)?;
+        }
         let exact_ticket_coordinates = [
             attempt.state() == &AttemptState::Running,
             attempt.adapter_entry_authorization().is_none(),
@@ -254,11 +263,7 @@ impl RuntimeService {
             prepared.as_ref(),
             self.controller_account_for_run(dispatch.run())?,
         ) {
-            let category = dispatch.resolution().category().cloned().ok_or_else(|| {
-                RuntimeError::InvalidHistory(
-                    "current resolved capability snapshot has no frozen category".to_owned(),
-                )
-            })?;
+            let category = dispatch.resolution().category().clone();
             let reservation = ControllerReservationId::for_attempt(
                 account.declaration().account(),
                 dispatch.attempt(),

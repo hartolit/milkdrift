@@ -1,3 +1,4 @@
+mod artifacts;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
@@ -118,6 +119,7 @@ pub struct PeerRegistry {
     client: Arc<PeerHttpClient>,
     relationship: PeerRelationship,
     clock: Arc<dyn PeerClock>,
+    artifacts: Arc<dyn crate::PeerArtifactStore>,
     registrations: Mutex<Registrations>,
     registration_generation: Mutex<u64>,
     status: Mutex<PeerRegistryStatus>,
@@ -140,6 +142,7 @@ impl PeerRegistry {
         client: Arc<PeerHttpClient>,
         relationship: PeerRelationship,
         clock: Arc<dyn PeerClock>,
+        artifacts: Arc<dyn crate::PeerArtifactStore>,
     ) -> Result<Self, PeerHttpError> {
         relationship.validate()?;
         if &relationship.remote_peer != client.remote_peer() {
@@ -152,6 +155,7 @@ impl PeerRegistry {
             client,
             relationship,
             clock,
+            artifacts,
             registrations: Mutex::new(Registrations::default()),
             registration_generation: Mutex::new(0),
             status: Mutex::new(PeerRegistryStatus {
@@ -312,6 +316,7 @@ impl PeerRegistry {
                 local_capability: local_capability.clone(),
                 authority_requirements,
                 clock: self.clock.clone(),
+                artifacts: self.artifacts.clone(),
                 active: Mutex::new(BTreeMap::new()),
                 lifecycle: AtomicU8::new(Lifecycle::Created as u8),
             });
@@ -384,6 +389,7 @@ struct RemoteCapabilityAdapter {
     local_capability: CapabilityId,
     authority_requirements: CapabilityExecutionRequirements,
     clock: Arc<dyn PeerClock>,
+    artifacts: Arc<dyn crate::PeerArtifactStore>,
     active: Mutex<BTreeMap<InvocationId, PeerExecutionId>>,
     lifecycle: AtomicU8,
 }
@@ -553,6 +559,10 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
             .map_err(|_| AdapterError::external_failure("remote execution map unavailable"))?
             .insert(invocation.request().invocation().clone(), execution.clone());
         let mut after: u64 = 0;
+        let mut imported = BTreeSet::new();
+        let mut imported_bytes = request
+            .input_artifact_bytes()
+            .map_err(|error| AdapterError::rejected(error.to_string()))?;
         let result = 'observing: loop {
             if self.lifecycle.load(Ordering::SeqCst) == Lifecycle::Stopped as u8 {
                 break report_uncertainty(
@@ -598,6 +608,22 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
                             break 'observing Err(AdapterError::external_failure(
                                 "remote observation stream was not contiguous",
                             ));
+                        }
+                        if let Err(error) = self.import_output(
+                            &execution,
+                            &observation,
+                            deadline,
+                            &mut imported,
+                            &mut imported_bytes,
+                            reporter,
+                        ) {
+                            break 'observing report_uncertainty(
+                                invocation.request().invocation(),
+                                after.saturating_add(1),
+                                invocation.resolution().operation_contract().side_effect(),
+                                &format!("accepted peer output could not be materialized: {error}"),
+                                reporter,
+                            );
                         }
                         after = observation.sequence;
                         if let Err(error) = reporter.invocation(observation.event) {

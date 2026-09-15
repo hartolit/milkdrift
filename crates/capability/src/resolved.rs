@@ -1,18 +1,16 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     BoundedJson, CapabilityCategory, CapabilityDescriptor, CapabilityId, ContractError,
-    ExecutionTrustClass, ExtensionKey, IdempotencyBehavior, InvocationRequest, OperationContract,
-    OperationId, ProviderProfileRef, SideEffectClass,
-    document::{
-        RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2, SCHEMA_VERSION_V1, canonical_json_bytes,
-    },
+    ExecutionTrustClass, ExtensionKey, IdempotencyBehavior, InvocationRequest, Locality,
+    OperationContract, OperationId, PeerId, PlacementRequirement, ProviderProfileRef,
+    SideEffectClass, TrustZone,
+    document::{RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V3, canonical_json_bytes},
 };
 
-const DIGEST_DOMAIN_V1: &[u8] = b"milkdrift.resolved-capability-snapshot.v1\0";
-const DIGEST_DOMAIN_V2: &[u8] = b"milkdrift.resolved-capability-snapshot.v2\0";
+const DIGEST_DOMAIN_V3: &[u8] = b"milkdrift.resolved-capability-snapshot.v3\0";
 /// Immutable exact capability resolution supplied to an executor before dispatch.
 ///
 /// The digest covers every selection fact using a versioned canonical payload and
@@ -25,14 +23,17 @@ pub struct ResolvedCapabilitySnapshot {
     capability: CapabilityId,
     descriptor_revision: u64,
     provider_profile: Option<ProviderProfileRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    category: Option<CapabilityCategory>,
+    category: CapabilityCategory,
     operation: OperationId,
     operation_contract: OperationContract,
     #[serde(default, skip_serializing_if = "execution_trust_unspecified")]
     execution_trust: ExecutionTrustClass,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     descriptor_extensions: BTreeMap<ExtensionKey, BoundedJson>,
+    locality: Locality,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    peer: Option<PeerId>,
+    trust_zones: BTreeSet<TrustZone>,
     digest: String,
 }
 
@@ -42,14 +43,16 @@ struct ResolvedCapabilitySnapshotWire {
     capability: CapabilityId,
     descriptor_revision: u64,
     provider_profile: Option<ProviderProfileRef>,
-    #[serde(default)]
-    category: Option<CapabilityCategory>,
+    category: CapabilityCategory,
     operation: OperationId,
     operation_contract: OperationContract,
     #[serde(default)]
     execution_trust: ExecutionTrustClass,
     #[serde(default)]
     descriptor_extensions: BTreeMap<ExtensionKey, BoundedJson>,
+    locality: Locality,
+    peer: Option<PeerId>,
+    trust_zones: BTreeSet<TrustZone>,
     digest: String,
 }
 
@@ -60,14 +63,17 @@ struct SnapshotDigestPayload<'a> {
     capability: &'a CapabilityId,
     descriptor_revision: u64,
     provider_profile: Option<&'a ProviderProfileRef>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    category: Option<&'a CapabilityCategory>,
+    category: &'a CapabilityCategory,
     operation: &'a OperationId,
     operation_contract: &'a OperationContract,
     #[serde(skip_serializing_if = "execution_trust_unspecified")]
     execution_trust: ExecutionTrustClass,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     descriptor_extensions: &'a BTreeMap<ExtensionKey, BoundedJson>,
+    locality: Locality,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peer: Option<&'a PeerId>,
+    trust_zones: &'a BTreeSet<TrustZone>,
 }
 
 const fn execution_trust_unspecified(value: &ExecutionTrustClass) -> bool {
@@ -87,6 +93,9 @@ milkdrift_contracts::deserialize_via!(
             operation_contract: wire.operation_contract,
             execution_trust: wire.execution_trust,
             descriptor_extensions: wire.descriptor_extensions,
+            locality: wire.locality,
+            peer: wire.peer,
+            trust_zones: wire.trust_zones,
             digest: wire.digest,
         };
         snapshot.validate().map(|()| snapshot)
@@ -107,25 +116,31 @@ impl ResolvedCapabilitySnapshot {
             ))
         })?;
         let digest = Self::compute_digest(&SnapshotDigestPayload {
-            schema_version: RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2,
+            schema_version: RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V3,
             capability: descriptor.identity(),
             descriptor_revision: descriptor.descriptor_revision(),
             provider_profile: descriptor.provider_profile(),
-            category: Some(descriptor.category()),
+            category: descriptor.category(),
             operation,
             operation_contract,
             execution_trust: descriptor.execution_trust(),
             descriptor_extensions: descriptor.extensions(),
+            locality: descriptor.locality(),
+            peer: descriptor.peer(),
+            trust_zones: descriptor.trust_zones(),
         })?;
         Ok(Self {
             capability: descriptor.identity().clone(),
             descriptor_revision: descriptor.descriptor_revision(),
             provider_profile: descriptor.provider_profile().cloned(),
-            category: Some(descriptor.category().clone()),
+            category: descriptor.category().clone(),
             operation: operation.clone(),
             operation_contract: operation_contract.clone(),
             execution_trust: descriptor.execution_trust(),
             descriptor_extensions: descriptor.extensions().clone(),
+            locality: descriptor.locality(),
+            peer: descriptor.peer().cloned(),
+            trust_zones: descriptor.trust_zones().clone(),
             digest,
         })
     }
@@ -150,8 +165,8 @@ impl ResolvedCapabilitySnapshot {
 
     /// Exact stable category frozen from the descriptor revision.
     #[must_use]
-    pub const fn category(&self) -> Option<&CapabilityCategory> {
-        self.category.as_ref()
+    pub const fn category(&self) -> &CapabilityCategory {
+        &self.category
     }
 
     /// Returns the exact selected operation identity.
@@ -178,6 +193,37 @@ impl ResolvedCapabilitySnapshot {
         &self.descriptor_extensions
     }
 
+    /// Frozen execution locality.
+    #[must_use]
+    pub const fn locality(&self) -> Locality {
+        self.locality
+    }
+
+    /// Frozen authenticated Milkdrift peer, present exactly for peer snapshots.
+    #[must_use]
+    pub const fn peer(&self) -> Option<&PeerId> {
+        self.peer.as_ref()
+    }
+
+    /// Frozen trust zones.
+    #[must_use]
+    pub const fn trust_zones(&self) -> &BTreeSet<TrustZone> {
+        &self.trust_zones
+    }
+
+    /// Checks task placement against the exact frozen host facts.
+    pub fn validate_placement(
+        &self,
+        requirement: &PlacementRequirement,
+    ) -> Result<(), ContractError> {
+        if !requirement.matches(self.locality, self.peer.as_ref()) {
+            return Err(ContractError::InvalidContract(
+                "resolved placement does not satisfy the task requirement".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Returns the canonical lowercase BLAKE3 digest of all selection facts.
     #[must_use]
     pub fn digest(&self) -> &str {
@@ -197,13 +243,13 @@ impl ResolvedCapabilitySnapshot {
         if self.capability != *descriptor.identity()
             || self.descriptor_revision != descriptor.descriptor_revision()
             || self.provider_profile.as_ref() != descriptor.provider_profile()
-            || self
-                .category
-                .as_ref()
-                .is_some_and(|category| category != descriptor.category())
+            || &self.category != descriptor.category()
             || self.operation_contract != *descriptor_operation
             || self.execution_trust != descriptor.execution_trust()
             || self.descriptor_extensions != *descriptor.extensions()
+            || self.locality != descriptor.locality()
+            || self.peer.as_ref() != descriptor.peer()
+            || &self.trust_zones != descriptor.trust_zones()
         {
             return Err(ContractError::InvalidContract(
                 "resolved capability snapshot does not match the exact descriptor revision"
@@ -249,21 +295,24 @@ impl ResolvedCapabilitySnapshot {
                 "resolved capability snapshot descriptor revision must be nonzero".to_owned(),
             ));
         }
-        let schema_version = if self.category.is_some() {
-            RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2
-        } else {
-            SCHEMA_VERSION_V1
-        };
+        if self.trust_zones.len() > 64 || (self.locality == Locality::Peer) != self.peer.is_some() {
+            return Err(ContractError::InvalidContract(
+                "snapshot placement facts are incomplete or contradictory".to_owned(),
+            ));
+        }
         let expected = Self::compute_digest(&SnapshotDigestPayload {
-            schema_version,
+            schema_version: RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V3,
             capability: &self.capability,
             descriptor_revision: self.descriptor_revision,
             provider_profile: self.provider_profile.as_ref(),
-            category: self.category.as_ref(),
+            category: &self.category,
             operation: &self.operation,
             operation_contract: &self.operation_contract,
             execution_trust: self.execution_trust,
             descriptor_extensions: &self.descriptor_extensions,
+            locality: self.locality,
+            peer: self.peer.as_ref(),
+            trust_zones: &self.trust_zones,
         })?;
         if self.digest != expected {
             return Err(ContractError::InvalidContract(
@@ -276,18 +325,7 @@ impl ResolvedCapabilitySnapshot {
     fn compute_digest(payload: &SnapshotDigestPayload<'_>) -> Result<String, ContractError> {
         let canonical_payload = canonical_json_bytes(payload)?;
         let mut hasher = blake3::Hasher::new();
-        let domain = match payload.schema_version {
-            SCHEMA_VERSION_V1 => DIGEST_DOMAIN_V1,
-            RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2 => DIGEST_DOMAIN_V2,
-            _ => {
-                return Err(ContractError::UnsupportedVersion {
-                    document: "resolved capability snapshot digest",
-                    found: payload.schema_version,
-                    supported: RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2,
-                });
-            }
-        };
-        hasher.update(domain);
+        hasher.update(DIGEST_DOMAIN_V3);
         hasher.update(&canonical_payload);
         Ok(hasher.finalize().to_hex().to_string())
     }

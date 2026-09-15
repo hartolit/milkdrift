@@ -444,6 +444,19 @@ collision-resistant local capability identities with typed peer, locality, trust
 provenance. The origin owns workflow truth; the serving daemon owns durable remote acceptance.
 Every acceptance/query/page/cancel acknowledgement binds the caller's exact request or URL identity.
 
+Task `PlacementRequirement` adds intersecting locality and exact-peer sets to the existing requirement
+owner. Revision admission proves that envelope against the retained grant; matching, frozen schema-3
+snapshots, and final entry enforce the actual host. Empty sets select nothing. No catalog or health
+failure widens the task or moves entered work. Origin-side inspection keeps the request and selected
+peer/catalog generation. [ADR 0037](decisions/0037-constrained-peer-placement.md) owns compatibility.
+
+Serving output publication uses the accepted peer execution's remaining artifact allowance in the
+ordinary core artifact store, with that execution as its external producer. Origin-side references
+remain causal commitments to the accepted request, not invented local journal facts. The origin
+imports observed outputs through execution-owned, authorized metadata/chunk transfers before
+reporting their exact references. This path shares core retention and publication; input transfer
+and repository/credential ownership remain explicit.
+
 Serving acceptance atomically binds canonical idempotency, relationship/catalog/generation,
 authority, capacity, and dispatch availability before responding. Fixed workers claim durable
 leases and record entry separately; known-entered work is never automatically replaced. Identical

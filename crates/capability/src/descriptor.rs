@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     BoundedJson, CapabilityId, ContractError, ExtensionKey, FeatureId, OperationId, PeerId,
-    ProviderProfileRef, SchemaId, TrustZone, bounded::validate_extensions,
+    PlacementRequirement, ProviderProfileRef, SchemaId, TrustZone, bounded::validate_extensions,
 };
 
 const MAX_OPERATIONS: usize = 256;
@@ -704,6 +704,13 @@ impl CapabilityDescriptor {
         {
             reasons.push("execution_trust".to_owned());
         }
+        if requirement
+            .placement
+            .as_ref()
+            .is_some_and(|placement| !placement.matches(self.locality, self.peer.as_ref()))
+        {
+            reasons.push("placement".to_owned());
+        }
         RequirementMatch { reasons }
     }
 }
@@ -869,6 +876,8 @@ pub struct CapabilityRequirement {
     trust_zones: BTreeSet<TrustZone>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     execution_trust: Option<ExecutionTrustClass>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    placement: Option<Box<PlacementRequirement>>,
 }
 
 #[derive(Deserialize)]
@@ -885,6 +894,7 @@ struct CapabilityRequirementWire {
     trust_zones: BTreeSet<TrustZone>,
     #[serde(default)]
     execution_trust: Option<ExecutionTrustClass>,
+    placement: Option<PlacementRequirement>,
 }
 
 milkdrift_contracts::deserialize_via!(CapabilityRequirement, CapabilityRequirementWire, |wire| {
@@ -899,6 +909,7 @@ milkdrift_contracts::deserialize_via!(CapabilityRequirement, CapabilityRequireme
         maximum_side_effect: wire.maximum_side_effect,
         trust_zones: wire.trust_zones,
         execution_trust: wire.execution_trust,
+        placement: wire.placement.map(Box::new),
     };
     requirement.validate().map(|()| requirement)
 });
@@ -917,6 +928,7 @@ impl CapabilityRequirement {
             maximum_side_effect: SideEffectClass::Unknown,
             trust_zones: BTreeSet::new(),
             execution_trust: None,
+            placement: None,
         }
     }
 
@@ -981,6 +993,19 @@ impl CapabilityRequirement {
     pub const fn execution_trust(mut self, trust: ExecutionTrustClass) -> Self {
         self.execution_trust = Some(trust);
         self
+    }
+
+    /// Restricts selection to the permitted locality and authenticated peer set.
+    #[must_use]
+    pub fn with_placement(mut self, placement: PlacementRequirement) -> Self {
+        self.placement = Some(Box::new(placement));
+        self
+    }
+
+    /// Task placement constraints; absence preserves unconstrained historical selection.
+    #[must_use]
+    pub fn placement(&self) -> Option<&PlacementRequirement> {
+        self.placement.as_deref()
     }
 
     /// Exact namespaced operation required by this expression.

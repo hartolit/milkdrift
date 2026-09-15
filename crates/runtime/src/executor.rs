@@ -136,6 +136,10 @@ impl ResolvedCapability {
                 != snapshot.provider_profile()
             || authorization.request().provenance.descriptor_revision
                 != Some(snapshot.descriptor_revision())
+            || authorization.request().resources.locality != Some(descriptor.locality())
+            || authorization.request().resources.peer.as_ref() != descriptor.peer()
+            || authorization.request().provenance.peer.as_ref() != descriptor.peer()
+            || authorization.request().resources.trust_zones != *descriptor.trust_zones()
         {
             return Err(ExecutorError::InvalidDispatch(
                 "resolution authorization does not bind the exact snapshot".to_owned(),

@@ -23,6 +23,20 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
     let mut arguments = env::args().skip(1);
     let command = arguments.next().ok_or("missing fixture command")?;
     match command.as_str() {
+        "placement" => {
+            let repository =
+                std::path::PathBuf::from(arguments.next().ok_or("missing repository")?);
+            let host = arguments.next().ok_or("missing host identity")?;
+            let name = std::fs::read_to_string(repository.join("repository.txt"))?;
+            let evidence = format!("host={host} repository={}\n", name.trim());
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(repository.join("entries"))?
+                .write_all(evidence.as_bytes())?;
+            std::io::stdout().write_all(evidence.as_bytes())?;
+            Ok(0)
+        }
         "echo" => {
             writeln!(
                 std::io::stdout(),

@@ -116,7 +116,7 @@ fn request_with_artifact_limit(
 #[test]
 fn version_negotiation_fails_closed_on_unknown_major() -> TestResult {
     let local = ProtocolVersionRange::default();
-    assert_eq!(local.negotiate(local)?, ProtocolVersion::V1_2);
+    assert_eq!(local.negotiate(local)?, ProtocolVersion::V1_3);
     let unknown = ProtocolVersionRange::new(
         ProtocolVersion { major: 2, minor: 0 },
         ProtocolVersion { major: 2, minor: 1 },
@@ -183,7 +183,7 @@ fn decoder_rejects_bounds_duplicates_and_every_non_current_version() -> TestResu
         )
         .is_err()
     );
-    for minor in [0_u16, 1, 3, u16::MAX] {
+    for minor in [0_u16, 1, 2, 4, u16::MAX] {
         let bytes = format!(
             "{{\"protocol\":{{\"major\":1,\"minor\":{minor}}},\"message\":null,\"extensions\":{{}}}}"
         );

@@ -1,4 +1,5 @@
 //! Actual CLI processes against a scripted public endpoint, with owned hard deadlines.
+use milkdrift_control_protocol::ProtocolVersion;
 use serde_json::{Value, json};
 use std::{
     fs::File,
@@ -106,11 +107,12 @@ impl Drop for Server {
 fn response(value: Value) -> String {
     http(
         200,
-        json!({"protocol":{"major":2,"minor":3},"request_id":"fixture","value":value}).to_string(),
+        json!({"protocol":ProtocolVersion::CURRENT,"request_id":"fixture","value":value})
+            .to_string(),
     )
 }
 fn negotiation() -> String {
-    response(json!({"protocol":{"major":2,"minor":3},"service":"milkdrift"}))
+    response(json!({"protocol":ProtocolVersion::CURRENT,"service":"milkdrift"}))
 }
 fn http(status: u16, body: String) -> String {
     format!(
@@ -307,7 +309,7 @@ fn deadline_includes_negotiation_and_blocked_document_input() -> TestResult {
 
 #[test]
 fn authorization_loss_ends_json_lines_with_one_redacted_final_record() -> TestResult {
-    let refusal = json!({"protocol":{"major":2,"minor":3},"request_id":null,"code":"unauthorized","message":"private-fixture-token-do-not-echo","retryable":false,"details":{}});
+    let refusal = json!({"protocol":ProtocolVersion::CURRENT,"request_id":null,"code":"unauthorized","message":"private-fixture-token-do-not-echo","retryable":false,"details":{}});
     let server = Server::new(vec![
         negotiation(),
         response(json!([])),
@@ -352,5 +354,32 @@ fn lost_stream_and_malformed_protocol_are_finite() -> TestResult {
     let (exit, records, _) = invoke(&server.endpoint, &["run", "show", "run-one"], false)?;
     assert_eq!(exit, 9);
     assert!(!records[0].to_string().contains("not-json-secret-fixture"));
+    Ok(())
+}
+
+#[test]
+fn cli_refuses_mismatched_negotiation_success_and_error_versions() -> TestResult {
+    for minor in [
+        ProtocolVersion::CURRENT.minor - 1,
+        ProtocolVersion::CURRENT.minor + 1,
+    ] {
+        let protocol = ProtocolVersion {
+            major: ProtocolVersion::CURRENT.major,
+            minor,
+        };
+        for replies in [
+            vec![response(json!({"protocol": protocol, "service":"milkdrift"}))],
+            vec![negotiation(), http(200, json!({"protocol": protocol, "request_id":"fixture", "value":run_state(None)}).to_string())],
+            vec![negotiation(), http(403, json!({"protocol": protocol, "request_id":null, "code":"unauthorized", "message":"unsupported-error-fixture", "retryable":false, "details":{}}).to_string())],
+        ] {
+            let server = Server::new(replies)?;
+            let (exit, records, stderr) = invoke(&server.endpoint, &["run", "show", "run-one"], false)?;
+            assert_eq!(exit, 9);
+            assert!(stderr.is_empty());
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0]["final"], true);
+            assert!(!records[0].to_string().contains("unsupported-error-fixture"));
+        }
+    }
     Ok(())
 }

@@ -42,7 +42,11 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let body = serde_json::to_vec(&self.envelope).unwrap_or_else(|_| {
-            br#"{"protocol":{"major":1,"minor":0},"request_id":null,"code":"internal","message":"error encoding failed","retryable":false,"details":{}}"#.to_vec()
+            format!(
+                r#"{{"protocol":{{"major":{},"minor":{}}},"request_id":null,"code":"internal","message":"error encoding failed","retryable":false,"details":{{}}}}"#,
+                milkdrift_control_protocol::ProtocolVersion::CURRENT.major,
+                milkdrift_control_protocol::ProtocolVersion::CURRENT.minor,
+            ).into_bytes()
         });
         let mut response = Response::new(Body::from(body));
         *response.status_mut() = self.status;
@@ -148,7 +152,8 @@ pub(super) fn protocol_error(
     request_id: String,
 ) -> ApiError {
     let (status, code) = match error {
-        milkdrift_control_protocol::ProtocolError::UnsupportedMajor { .. } => {
+        milkdrift_control_protocol::ProtocolError::UnsupportedMajor { .. }
+        | milkdrift_control_protocol::ProtocolError::UnsupportedMinor { .. } => {
             (StatusCode::UPGRADE_REQUIRED, ErrorCode::UnsupportedVersion)
         }
         milkdrift_control_protocol::ProtocolError::Bounds(_) => {

@@ -23,7 +23,7 @@ origin                                      serving host
 The handshake's claimed peer is a cross-check against transport authentication, not a way to choose
 an identity. A session identifies a daemon boot; it is not the lifetime of accepted work.
 `ProtocolVersionRange` offers version selection and `HardLimits::intersect` computes lower ceilings.
-Current codecs and the HTTP implementation accept only v1.2. The HTTP service reports its supported
+Current codecs and the HTTP implementation accept only v1.3. The HTTP service reports its supported
 feature flags and disables incremental catalogs; `CatalogUpdate` defines a message shape without
 making that transport path available.
 

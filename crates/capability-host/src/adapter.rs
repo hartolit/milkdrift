@@ -140,6 +140,7 @@ pub struct AdapterExecutionContext {
     resolution_authorization: Option<AuthorityDecisionSnapshot>,
     entry_authorization: Option<AuthorityDecisionSnapshot>,
     controller_reservation: Option<ControllerReservationId>,
+    peer_artifacts: Option<(RunId, milkdrift_workspace::WorkspaceBudget)>,
 }
 
 impl AdapterExecutionContext {
@@ -162,6 +163,7 @@ impl AdapterExecutionContext {
             resolution_authorization: None,
             entry_authorization: None,
             controller_reservation: None,
+            peer_artifacts: None,
         }
     }
 
@@ -179,7 +181,77 @@ impl AdapterExecutionContext {
             resolution_authorization: Some(dispatch.resolution_authorization().clone()),
             entry_authorization: Some(dispatch.entry_authorization().clone()),
             controller_reservation: controller_reservation.cloned(),
+            peer_artifacts: None,
         }
+    }
+
+    /// Binds artifact publication to the serving host's durably entered peer execution.
+    /// The accepted request owns this allowance; the originating run is not a local run.
+    pub fn with_peer_execution(
+        mut self,
+        record: &milkdrift_persistence::PeerExecutionRecord,
+    ) -> Result<Self, crate::InvocationDataError> {
+        let provenance = &record.request.delegation.provenance;
+        if !matches!(
+            record.phase,
+            milkdrift_persistence::PeerExecutionPhase::Entered { .. }
+        ) || record.owner_peer != record.request.delegation.issuer_peer
+            || provenance.run != self.run.as_str()
+            || provenance.revision != self.revision.as_str()
+            || provenance.node != self.node.as_str()
+            || provenance.execution != self.execution.as_str()
+            || provenance.attempt != self.attempt.as_str()
+            || self.authority.is_some()
+            || self.peer_artifacts.is_some()
+        {
+            return Err(crate::InvocationDataError::Rejected(
+                "peer publication requires the exact entered execution".to_owned(),
+            ));
+        }
+        record
+            .request
+            .validate()
+            .map_err(|error| crate::InvocationDataError::Rejected(error.to_string()))?;
+        let limits = record.request.limits;
+        let input_bytes = record
+            .request
+            .input_artifact_bytes()
+            .map_err(|error| crate::InvocationDataError::Rejected(error.to_string()))?;
+        let remaining = limits
+            .artifact_bytes
+            .checked_sub(input_bytes)
+            .ok_or_else(|| {
+                crate::InvocationDataError::Rejected("peer artifact allowance exhausted".to_owned())
+            })?;
+        let namespace = serde_json::to_vec(&(
+            &record.request.delegation.target_peer,
+            &record.owner_peer,
+            &record.execution,
+        ))
+        .map_err(|error| crate::InvocationDataError::Rejected(error.to_string()))?;
+        let run = RunId::new(format!("peer-output:{}", blake3::hash(&namespace)))
+            .map_err(|error| crate::InvocationDataError::Rejected(error.to_string()))?;
+        let budget = milkdrift_workspace::WorkspaceBudget::new(
+            0,
+            0,
+            0,
+            u64::from(limits.observations),
+            remaining,
+            remaining,
+        )
+        .map_err(|error| crate::InvocationDataError::Rejected(error.to_string()))?;
+        self.peer_artifacts = Some((run, budget));
+        Ok(self)
+    }
+
+    pub(crate) fn publication_run(&self) -> &RunId {
+        self.peer_artifacts
+            .as_ref()
+            .map_or(&self.run, |(run, _)| run)
+    }
+
+    pub(crate) fn peer_artifact_budget(&self) -> Option<&milkdrift_workspace::WorkspaceBudget> {
+        self.peer_artifacts.as_ref().map(|(_, budget)| budget)
     }
 
     /// Owning durable run.

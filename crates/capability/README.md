@@ -30,6 +30,12 @@ any side-effect class until narrowed. Neither a match nor a trust-zone label gra
 The host evaluates authority, freshness, and capacity separately before selecting a candidate.
 `CapabilityObservation` carries changing availability and load without changing descriptor identity.
 
+`PlacementRequirement` intersects optional locality and exact authenticated-peer allowlists with
+the other requirements. Absence is unrestricted, an empty set denies all candidates, and nonempty
+peers imply peer locality. Contradictory locality/peer combinations and wildcard peer syntax are
+refused. Resolved snapshots require category, locality, peer consistency, and trust zones under
+schema 3. Older development snapshot formats are refused. See [peer authoring](../../docs/operations/peers.md#pin-tasks-to-approved-hosts).
+
 ## Reporting what happened
 
 `InvocationRequest` names the exact capability, operation, profile, and inputs; its companion
@@ -52,7 +58,7 @@ alone never establishes that boundary.
 Use the `*Document::from_json` readers at serialized boundaries and `to_canonical_json` when exact
 bytes matter. They check versions, duplicate keys, bounds, and domain invariants. The
 [document owner](src/document.rs) and [golden tests](tests/runtime_contracts.rs) explain the
-supported older invocation/snapshot forms; [status](../../docs/product/status.md) lists current
+supported forms and refusal behavior; [status](../../docs/product/status.md) lists current
 versions. Opaque reference identities deliberately keep workspace and storage types out of this
 crate. `AdmissionBound::Unknown` likewise preserves a missing enforceable resource limit instead
 of turning an estimate into a reservation guarantee.

@@ -1,5 +1,7 @@
 //! Deterministic two-daemon authenticated catalog and local registration coverage.
 
+#[path = "two_daemon_peer/placement.rs"]
+mod placement;
 #[path = "support/process.rs"]
 mod process;
 use process::configured_process_profile;
@@ -367,7 +369,7 @@ async fn assert_peer_protocol_boundary(endpoint: &Url) -> TestResult {
         limits: HardLimits::default(),
     };
     let current = serde_json::to_value(ProtocolEnvelope::v1(request.clone()))?;
-    for minor in [1_u16, 3] {
+    for minor in [1_u16, 2, 4] {
         let mut incompatible = current.clone();
         incompatible["protocol"]["minor"] = serde_json::json!(minor);
         let response = client
@@ -388,8 +390,8 @@ async fn assert_peer_protocol_boundary(endpoint: &Url) -> TestResult {
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let envelope: ProtocolEnvelope<HandshakeResponse> =
         decode_envelope(&response.bytes().await?, DecodeLimits::default())?;
-    assert_eq!(envelope.protocol, PeerProtocolVersion::V1_2);
-    assert_eq!(envelope.message.selected_version, PeerProtocolVersion::V1_2);
+    assert_eq!(envelope.protocol, PeerProtocolVersion::V1_3);
+    assert_eq!(envelope.message.selected_version, PeerProtocolVersion::V1_3);
     Ok(())
 }
 
@@ -401,6 +403,13 @@ async fn start(
     listener: tokio::net::TcpListener,
 ) -> TestResult<RunningDaemon> {
     let config = configuration(root, local_peer, remote_peer, remote_endpoint)?;
+    start_plan(config, listener).await
+}
+
+async fn start_plan(
+    config: DaemonPlan,
+    listener: tokio::net::TcpListener,
+) -> TestResult<RunningDaemon> {
     let host = DaemonHost::start(config)?;
     let endpoint = Url::parse(&format!("http://{}/", listener.local_addr()?))?;
     let (stop, stopped) = oneshot::channel();
@@ -421,6 +430,17 @@ fn configuration(
     remote_peer: &str,
     remote_endpoint: &Url,
 ) -> TestResult<DaemonPlan> {
+    configuration_document(root, local_peer, remote_peer, remote_endpoint)?
+        .validate(root.path())
+        .map_err(Into::into)
+}
+
+fn configuration_document(
+    root: &TempDir,
+    local_peer: &str,
+    remote_peer: &str,
+    remote_endpoint: &Url,
+) -> TestResult<DaemonConfig> {
     let operator = root.path().join("operator.token");
     let peer = root.path().join("peer.token");
     write_secret(&operator, OPERATOR_TOKEN)?;
@@ -451,7 +471,7 @@ fn configuration(
     } else {
         Vec::new()
     };
-    DaemonConfig {
+    Ok(DaemonConfig {
         schema_version: milkdrift_daemon::DAEMON_CONFIG_SCHEMA_VERSION,
         data_root: root.path().join("data"),
         bind: "127.0.0.1:0".parse()?,
@@ -545,9 +565,7 @@ fn configuration(
             archive_batch_size: 10,
         },
         security_audit_record_bound: 100,
-    }
-    .validate(root.path())
-    .map_err(Into::into)
+    })
 }
 
 fn command(identity: &str, command: Command) -> CommandRequest {

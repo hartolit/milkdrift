@@ -33,10 +33,9 @@ and currency cost; child artifact metadata supplies logical bytes; attributed re
 requests and rejections maintain monotone run-actor counters through compaction; the first
 assessment/execution boundary supplies elapsed time; and immutable reachable body revisions supply
 repeat/child depth plus conservative potential model/process entry. Missing metering on an admitted
-model/process attempt fails closed. New capability-resolution snapshots bind exact category; legacy
-schema-1 snapshots without it retain their original digest and count conservatively as both process
-and model rather than becoming a bypass. Duplicate commands and observations cannot add another
-accepted fact.
+model/process attempt fails closed. Capability-resolution snapshots require the exact category.
+[ADR 0037](0037-constrained-peer-placement.md) replaces the former legacy-snapshot accounting fallback
+with current-format refusal. Duplicate commands and observations cannot add another accepted fact.
 
 The policy owns cumulative ceilings. Repeat retains a one-iteration-higher structural maximum and
 does not duplicate controller time/cost budgets. Proposal mutation/node dimensions are evaluated on

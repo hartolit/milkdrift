@@ -52,6 +52,12 @@ pub enum PeerArtifactError {
 /// exact offsets and metadata, and publish through the core artifact owner rather than creating
 /// a competing peer-specific store of durable bytes.
 pub trait PeerArtifactStore: Send + Sync {
+    /// Reads exact core metadata after the caller has proved execution ownership.
+    fn metadata(
+        &self,
+        reference: &milkdrift_capability::ArtifactReference,
+    ) -> Result<ArtifactMetadata, PeerArtifactError>;
+
     /// Returns exact immutable transfer facts for chunk-time reauthorization.
     fn transfer_facts(
         &self,
@@ -219,6 +225,31 @@ impl CorePeerArtifactStore {
 }
 
 impl PeerArtifactStore for CorePeerArtifactStore {
+    fn metadata(
+        &self,
+        reference: &milkdrift_capability::ArtifactReference,
+    ) -> Result<ArtifactMetadata, PeerArtifactError> {
+        let identity = milkdrift_workspace::ArtifactId::new(reference.identity())
+            .map_err(|error| PeerArtifactError::Rejected(error.to_string()))?;
+        let metadata = self
+            .core
+            .metadata(&identity)
+            .map_err(map_persistence)?
+            .ok_or_else(|| {
+                PeerArtifactError::Rejected("output artifact metadata unavailable".to_owned())
+            })?;
+        let exact = metadata.reference();
+        if exact.digest().to_hex() != reference.digest()
+            || Some(exact.size_bytes()) != reference.size_bytes()
+            || Some(exact.media_type().as_str()) != reference.media_type()
+        {
+            return Err(PeerArtifactError::Verification(
+                "output reference contradicts core metadata".to_owned(),
+            ));
+        }
+        Ok(metadata)
+    }
+
     fn transfer_facts(
         &self,
         owner_peer: &PeerId,
@@ -356,6 +387,15 @@ impl PeerArtifactStore for CorePeerArtifactStore {
             }
         };
         if already_present {
+            return Ok(ArtifactTransferDecision::AlreadyPresent);
+        }
+        if offer.artifact.size_bytes() == 0
+            && let Some(publication) = publication.as_ref()
+        {
+            if let Err(error) = self.core.commit_publication(publication) {
+                let _ = self.core.abort_publication(publication);
+                return Err(map_persistence(error));
+            }
             return Ok(ArtifactTransferDecision::AlreadyPresent);
         }
         if transfers.len() >= MAX_ACTIVE_TRANSFERS {

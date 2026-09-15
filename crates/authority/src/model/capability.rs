@@ -55,6 +55,12 @@ impl CapabilityAuthorityScope {
     pub fn requirement_envelope(
         requirement: &CapabilityRequirement,
     ) -> Result<Self, AuthorityError> {
+        if requirement
+            .placement()
+            .is_some_and(|placement| placement.denies_all())
+        {
+            return Ok(Self::deny_all());
+        }
         let mut builder =
             CapabilityAuthorityScopeBuilder::new(requirement.maximum_side_effect_class())
                 .only_operations(BTreeSet::from([requirement.operation().clone()]))?;
@@ -72,6 +78,15 @@ impl CapabilityAuthorityScope {
         }
         if let Some(trust_class) = requirement.execution_trust_class() {
             builder = builder.only_execution_trust_classes(BTreeSet::from([trust_class]))?;
+        }
+        if let Some(placement) = requirement.placement() {
+            if let Some(peers) = placement.peers() {
+                builder = builder
+                    .only_peers(peers.clone())?
+                    .only_localities(BTreeSet::from([Locality::Peer]))?;
+            } else if let Some(localities) = placement.localities() {
+                builder = builder.only_localities(localities.clone())?;
+            }
         }
         Ok(builder.build())
     }

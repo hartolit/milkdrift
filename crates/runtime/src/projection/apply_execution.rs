@@ -164,6 +164,10 @@ impl RunProjection {
                         .capability_operation
                         .as_ref()
                         != Some(snapshot.operation())
+                    || authorization.request().resources.locality != Some(snapshot.locality())
+                    || authorization.request().resources.peer.as_ref() != snapshot.peer()
+                    || authorization.request().provenance.peer.as_ref() != snapshot.peer()
+                    || &authorization.request().resources.trust_zones != snapshot.trust_zones()
                     || authorization.request().provenance.attempt.as_deref()
                         != Some(attempt.as_str())
                 {
@@ -235,6 +239,9 @@ impl RunProjection {
                     || request.capability() != snapshot.capability()
                     || request.operation() != snapshot.operation()
                     || request.provider_profile() != snapshot.provider_profile()
+                    || requirement
+                        .placement()
+                        .is_some_and(|placement| snapshot.validate_placement(placement).is_err())
                     || !stable_retry_snapshot
                 {
                     return Err(invalid_at(
@@ -252,19 +259,12 @@ impl RunProjection {
                     authorization: resolution_authorization,
                 });
                 let (count_process, count_model, controller_metered) = match snapshot.category() {
-                    Some(CapabilityCategory::Model) => (false, true, true),
-                    Some(CapabilityCategory::Process) => (true, false, true),
-                    Some(
-                        CapabilityCategory::Tool
-                        | CapabilityCategory::Human
-                        | CapabilityCategory::Peer
-                        | CapabilityCategory::Custom(_),
-                    ) => (false, false, false),
-                    // Schema-v1 snapshots written before exact category freezing retain
-                    // their original digest. Count both resource-bearing categories so
-                    // controller replay cannot turn missing historical classification
-                    // into a bypass.
-                    None => (true, true, true),
+                    CapabilityCategory::Model => (false, true, true),
+                    CapabilityCategory::Process => (true, false, true),
+                    CapabilityCategory::Tool
+                    | CapabilityCategory::Human
+                    | CapabilityCategory::Peer
+                    | CapabilityCategory::Custom(_) => (false, false, false),
                 };
                 if count_process {
                     self.resource_usage.process_invocations = self

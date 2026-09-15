@@ -384,13 +384,15 @@ impl StoreInvocationDataAccess {
                 InvocationDataError::Rejected("output size cannot fit u64".to_owned())
             })?,
         );
-        let provenance = ArtifactProvenance::new(
+        let producer = if context.peer_artifact_budget().is_some() {
+            external_cause("peer-execution", context.publication_run().as_str())?
+        } else {
             CausalReference::Invocation {
                 invocation: request.invocation().clone(),
-            },
-            publication_causes(context, request)?,
-        )
-        .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
+            }
+        };
+        let provenance = ArtifactProvenance::new(producer, publication_causes(context, request)?)
+            .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
         let metadata = ArtifactMetadata::new(
             reference.clone(),
             ArtifactSensitivity::Restricted,
@@ -398,39 +400,56 @@ impl StoreInvocationDataAccess {
             provenance,
         )
         .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
+        if let Some(existing) = self
+            .store
+            .metadata(reference.artifact())
+            .map_err(|error| InvocationDataError::Publication(error.to_string()))?
+        {
+            if existing != metadata {
+                return Err(InvocationDataError::Integrity(
+                    "output identity has conflicting immutable metadata".to_owned(),
+                ));
+            }
+            return capability_artifact_reference(existing.reference());
+        }
         let publication =
             ArtifactPublicationId::new(format!("process-publication:{}", identity_hash.to_hex()))
                 .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
         let usage = self
             .store
-            .workspace_usage(context.run())
+            .workspace_usage(context.publication_run())
             .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
-        // Run creation is the sole owner of this immutable budget. Reading one journal
-        // event avoids a host-global default competing with the accepted run contract.
-        let page = self
-            .store
-            .events(
-                &EventPageQuery::new(
-                    context.run().clone(),
-                    None,
-                    PageSize::new(1)
-                        .map_err(|error| InvocationDataError::Publication(error.to_string()))?,
+        let workspace_budget = if let Some(budget) = context.peer_artifact_budget() {
+            budget.clone()
+        } else {
+            // Local run creation owns its budget. An entered peer execution supplies
+            // its own accepted allowance without inventing a local workflow history.
+            let page = self
+                .store
+                .events(
+                    &EventPageQuery::new(
+                        context.run().clone(),
+                        None,
+                        PageSize::new(1)
+                            .map_err(|error| InvocationDataError::Publication(error.to_string()))?,
+                    )
+                    .map_err(|error| InvocationDataError::Publication(error.to_string()))?,
                 )
-                .map_err(|error| InvocationDataError::Publication(error.to_string()))?,
-            )
-            .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
-        let Some(RunEventKind::RunCreated {
-            workspace_budget, ..
-        }) = page.events.first().map(|event| event.kind())
-        else {
-            return Err(InvocationDataError::Integrity(
-                "run creation budget is absent".to_owned(),
-            ));
+                .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
+            let Some(RunEventKind::RunCreated {
+                workspace_budget, ..
+            }) = page.events.first().map(|event| event.kind())
+            else {
+                return Err(InvocationDataError::Integrity(
+                    "run creation budget is absent".to_owned(),
+                ));
+            };
+            workspace_budget.clone()
         };
         let begin = match context.controller_reservation() {
             Some(reservation) => BeginArtifactPublication::for_invocation(
                 publication.clone(),
-                context.run().clone(),
+                context.publication_run().clone(),
                 metadata,
                 workspace_budget.clone(),
                 usage,
@@ -438,7 +457,7 @@ impl StoreInvocationDataAccess {
             ),
             None => BeginArtifactPublication::new(
                 publication.clone(),
-                context.run().clone(),
+                context.publication_run().clone(),
                 metadata,
                 workspace_budget.clone(),
                 usage,
@@ -727,7 +746,7 @@ fn publication_hash(
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"milkdrift.process-output-publication.v1\0");
     for component in [
-        context.run().as_str().as_bytes(),
+        context.publication_run().as_str().as_bytes(),
         context.revision().as_str().as_bytes(),
         context.node().as_str().as_bytes(),
         context.execution().as_str().as_bytes(),
@@ -752,6 +771,12 @@ fn publication_causes(
         external_cause("execution", context.execution().as_str())?,
         external_cause("attempt", context.attempt().as_str())?,
     ];
+    if context.peer_artifact_budget().is_some() {
+        causes.push(external_cause(
+            "origin-invocation",
+            request.invocation().as_str(),
+        )?);
+    }
     if let Some(manifest) = request.context_manifest() {
         causes.push(CausalReference::Artifact {
             reference: durable_artifact_reference(manifest)?,
@@ -783,6 +808,24 @@ fn publication_causes(
         if !causes.contains(&cause) {
             causes.push(cause);
         }
+    }
+    if context.peer_artifact_budget().is_some() {
+        // The accepted peer request retains these exact origin-side references.
+        // Their source journal/artifact identities are not local storage facts.
+        causes = causes
+            .into_iter()
+            .map(|cause| match cause {
+                CausalReference::External { .. } => Ok(cause),
+                _ => {
+                    let exact = serde_json::to_string(&cause)
+                        .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
+                    external_cause(
+                        "peer-origin-reference",
+                        &format!("{}:{exact}", context.publication_run()),
+                    )
+                }
+            })
+            .collect::<Result<_, InvocationDataError>>()?;
     }
     Ok(causes)
 }

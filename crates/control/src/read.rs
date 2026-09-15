@@ -145,6 +145,8 @@ pub struct AttemptInspection {
     pub state: AttemptState,
     /// Exact capability, descriptor revision, provider profile, operation, and contract.
     pub capability: Option<ResolvedCapabilitySnapshot>,
+    /// Exact task constraints recorded with this attempt, including placement.
+    pub requirement: Option<milkdrift_capability::CapabilityRequirement>,
     /// Frozen actor/grant/policy basis inherited by the run and its child workflows.
     pub execution_authority: Option<ExecutionAuthorityBasis>,
     /// Candidate-set decision made before exact capability resolution.

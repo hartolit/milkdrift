@@ -27,10 +27,11 @@ an authenticated Milkdrift peer execution host.
 ## Implement
 
 - Add the smallest bounded task requirement for permitted locality and exact peer identity/set.
-  Define absent/empty/wildcard semantics explicitly and compatibly; impossible combinations, such
+  Define absent/empty/wildcard semantics explicitly; impossible combinations, such
   as local-only plus a required peer, fail validation. Preserve exact capability/profile/operation/
   trust-zone matching. Update all strict readers, builders, digest owners and fixtures together.
-  Old persisted revisions must not silently acquire wider authority or a changed identity.
+  Components upgrade together before release; obsolete formats may be refused without compatibility
+  readers. Supported persisted revisions must not silently acquire wider authority or a changed identity.
 
 - Carry the requirement through import/authoring, revision admission, registration matching,
   candidate filtering, deterministic selection, frozen resolved snapshot, final authority check,

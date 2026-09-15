@@ -50,15 +50,15 @@ pub use read::{
     AttemptUsageRead, AuthorityDecisionRead, AuthorityRead, CapabilityOperationRead,
     CapabilityProvenanceRead, CapabilityRead, ContextManifestRead, DaemonState,
     ExecutionAuthorityRead, HealthRead, ModelGenerationRead, NodeRead, Observation,
-    ObservationEnvelope, PeerExecutionHealthRead, PeerRead, ProposalRead, ResultAcceptanceRead,
-    RevisionChange, RevisionDiffRead, RevisionRead, RevisionSummary, RunRead, TimelineCategory,
-    TimelineEntry,
+    ObservationEnvelope, PeerCapabilityProvenanceRead, PeerExecutionHealthRead, PeerRead,
+    ProposalRead, ResultAcceptanceRead, RevisionChange, RevisionDiffRead, RevisionRead,
+    RevisionSummary, RunRead, TimelineCategory, TimelineEntry,
 };
 
 /// Supported control protocol major version.
 const PROTOCOL_MAJOR: u16 = 2;
 /// Supported control protocol minor version.
-const PROTOCOL_MINOR: u16 = 6;
+const PROTOCOL_MINOR: u16 = 7;
 /// Independent presentation-layout document version.
 const LAYOUT_SCHEMA_VERSION: u32 = 1;
 const AUTHENTICATED_CURSOR_SCHEMA_VERSION: u8 = 2;
@@ -97,6 +97,14 @@ pub enum ProtocolError {
         /// Supported major version.
         supported: u16,
     },
+    /// A control protocol minor version cannot be served by this coordinated build.
+    #[error("unsupported protocol minor version {found}; supported version is {supported}")]
+    UnsupportedMinor {
+        /// Requested minor version.
+        found: u16,
+        /// Supported minor version.
+        supported: u16,
+    },
     /// A cursor is malformed or is not valid for the selected feed.
     #[error("invalid cursor: {0}")]
     InvalidCursor(String),
@@ -111,7 +119,7 @@ pub enum ProtocolError {
 pub struct ProtocolVersion {
     /// Breaking contract generation.
     pub major: u16,
-    /// Backward-compatible feature generation.
+    /// Contract revision within the major generation.
     pub minor: u16,
 }
 
@@ -122,9 +130,7 @@ impl ProtocolVersion {
         minor: PROTOCOL_MINOR,
     };
 
-    /// Rejects unsupported majors and returns the server's current minor.
-    ///
-    /// This does not select the lower minor or downgrade response shapes for older clients.
+    /// Requires the current version on both sides of a coordinated deployment.
     pub fn negotiate(self) -> Result<Self, ProtocolError> {
         if self.major != PROTOCOL_MAJOR {
             return Err(ProtocolError::UnsupportedMajor {
@@ -132,10 +138,13 @@ impl ProtocolVersion {
                 supported: PROTOCOL_MAJOR,
             });
         }
-        Ok(Self {
-            major: PROTOCOL_MAJOR,
-            minor: PROTOCOL_MINOR,
-        })
+        if self.minor != PROTOCOL_MINOR {
+            return Err(ProtocolError::UnsupportedMinor {
+                found: self.minor,
+                supported: PROTOCOL_MINOR,
+            });
+        }
+        Ok(Self::CURRENT)
     }
 }
 

@@ -24,6 +24,33 @@ registration leaves the original cancellation control intact. Windows execution 
 immediate child; the Unix-only reporting cases additionally check owned descendants when run there.
 See [status](../product/status.md) for executed evidence and platform limits.
 
+## Constrained peer placement
+
+Constrained peer placement is exercised by
+`cargo test -p milkdrift-daemon --test two_daemon_peer --all-features` using the maintained
+`examples/operator/peer-placement.json`. Three production daemon host instances communicate through
+real HTTP listeners on local TCP.
+An origin with a local look-alike connects to two serving peers, each with its own temporary store,
+credential and repository directory. Exact peer requirements admit a narrowed
+grant, enter each approved process once, return verified core artifacts, and retain the same
+requirement/peer/catalog provenance through reconnect and reopening all stores. The fixture uses
+the production daemon host and configuration reader plus the built process helper. This is a
+repeatable test topology for the implemented execution path. It does not establish physical
+multi-machine deployment qualification.
+
+Capability/authority/blueprint/sequence tests cover strict placement sets, immutable revision identity
+and obsolete snapshot refusal. Runtime and capability-host suites exercise final-entry revocation,
+deterministic
+selection, local look-alikes, conflicting exact requirements, empty sets, stale health, removed
+generations and catalog-update races with entry counters. Peer protocol/service tests retain exact
+acceptance/replay/conflict, observation paging and expiry behavior. Artifact tests check the entered
+execution's shared input/output allowance, exact publication replay at its bound, empty/corrupt
+outputs, metadata ownership, and revocation before further bytes. Remote-adapter tests advance a
+controlled clock across multiple HTTP chunks to prove lease renewal through publication. Refused
+renewal and shutdown stop further downloads and release incomplete core staging. Run these through
+the ordinary full gate; the operator/model/controller binary lanes below check the affected common
+composition.
+
 ## Actual-binary scenarios
 
 The deterministic `local-model-evidence` lane also exercises explicit model continuation. It

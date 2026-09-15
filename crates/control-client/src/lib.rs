@@ -211,17 +211,20 @@ impl ControlClient {
         })
     }
 
-    /// Negotiates the current major/minor protocol explicitly.
+    /// Confirms that the daemon uses the same current protocol version.
     pub async fn negotiate(&self) -> Result<VersionResponse, ClientError> {
-        self.json_request(
-            Method::POST,
-            "v1/version",
-            Some(&VersionRequest {
-                protocol: ProtocolVersion::CURRENT,
-            }),
-            false,
-        )
-        .await
+        let response: VersionResponse = self
+            .json_request(
+                Method::POST,
+                "v1/version",
+                Some(&VersionRequest {
+                    protocol: ProtocolVersion::CURRENT,
+                }),
+                false,
+            )
+            .await?;
+        response.protocol.negotiate()?;
+        Ok(response)
     }
 
     /// Reads liveness state.
@@ -685,7 +688,10 @@ async fn read_error(response: reqwest::Response) -> ClientError {
     let status = response.status();
     match bounded_body(response, milkdrift_control_protocol::MAX_DOCUMENT_BYTES).await {
         Ok(bytes) => match decode_json::<ErrorEnvelope>(&bytes) {
-            Ok(error) => ClientError::Api(error),
+            Ok(error) => match error.protocol.negotiate() {
+                Ok(_) => ClientError::Api(error),
+                Err(error) => ClientError::Protocol(error),
+            },
             Err(_) => ClientError::Transport(format!(
                 "daemon returned HTTP {} with an invalid redacted error envelope",
                 status.as_u16()
@@ -821,9 +827,9 @@ fn parse_sse_data(frame: &[u8]) -> Result<Option<ObservationEnvelope>, ClientErr
     if data.is_empty() {
         return Ok(None);
     }
-    decode_json(data.as_bytes())
-        .map(Some)
-        .map_err(ClientError::from)
+    let envelope: ObservationEnvelope = decode_json(data.as_bytes())?;
+    envelope.protocol.negotiate()?;
+    Ok(Some(envelope))
 }
 
 /// Maps a client result into coarse categories useful to CLI exit-code policy.
@@ -876,7 +882,7 @@ mod tests {
                 .map_err(|error| error.to_string())?
                 .is_none()
         );
-        let observation = ObservationEnvelope {
+        let mut observation = ObservationEnvelope {
             protocol: ProtocolVersion::CURRENT,
             cursor: Cursor::new("run:test", 1)?,
             observed_at_ms: 1,
@@ -897,8 +903,22 @@ mod tests {
         let frame = format!("data: {}", serde_json::to_string(&observation)?);
         assert_eq!(
             parse_sse_data(frame.as_bytes()).map_err(|error| error.to_string())?,
-            Some(observation)
+            Some(observation.clone())
         );
+        for minor in [
+            0,
+            ProtocolVersion::CURRENT.minor - 1,
+            ProtocolVersion::CURRENT.minor + 1,
+        ] {
+            observation.protocol.minor = minor;
+            let frame = format!("data: {}", serde_json::to_string(&observation)?);
+            assert!(matches!(
+                parse_sse_data(frame.as_bytes()),
+                Err(ClientError::Protocol(
+                    ProtocolError::UnsupportedMinor { .. }
+                ))
+            ));
+        }
         Ok(())
     }
 }

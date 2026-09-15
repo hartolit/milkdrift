@@ -316,7 +316,7 @@ impl PeerClientConfig {
 fn validate_current_protocol_range(versions: ProtocolVersionRange) -> Result<(), PeerHttpError> {
     if versions != ProtocolVersionRange::default() {
         return Err(PeerHttpError::Configuration(
-            "peer protocol configuration must select exactly v1.2".to_owned(),
+            "peer protocol configuration must select exactly v1.3".to_owned(),
         ));
     }
     Ok(())
@@ -338,9 +338,9 @@ mod tests {
     use super::validate_current_protocol_range;
 
     #[test]
-    fn configured_protocol_ranges_must_name_only_v1_2() -> Result<(), Box<dyn std::error::Error>> {
+    fn configured_protocol_ranges_must_name_only_v1_3() -> Result<(), Box<dyn std::error::Error>> {
         assert!(validate_current_protocol_range(ProtocolVersionRange::default()).is_ok());
-        for (minimum, maximum) in [(1_u16, 1_u16), (1, 2), (2, 3), (3, 3)] {
+        for (minimum, maximum) in [(1_u16, 1_u16), (1, 2), (2, 2), (2, 3), (3, 4), (4, 4)] {
             let range = ProtocolVersionRange::new(
                 ProtocolVersion {
                     major: 1,

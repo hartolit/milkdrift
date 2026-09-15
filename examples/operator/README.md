@@ -8,6 +8,13 @@ without external work or broad authority.
 
 ## Startup and restart
 
+[peer-placement.json](peer-placement.json) is a two-task blueprint: repository A work requires
+`peer-a`, then repository B work requires `peer-b`, both using `process.execute` and returning
+`host_result`. It requires configured peer relationships, host-owned process profiles, output
+download authority and an origin grant covering those tasks. The default starter configuration
+does not supply them. Follow the [peer guide](../../docs/operations/peers.md#pin-tasks-to-approved-hosts)
+before importing it. The loopback daemon scenario executes this exact maintained document.
+
 Run the [fresh-directory quick start](../../README.md#fresh-directory-quick-start). Configuration
 paths resolve against its directory; keep the generated environment credential for later CLI calls.
 

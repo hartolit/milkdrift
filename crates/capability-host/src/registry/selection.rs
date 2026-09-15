@@ -266,7 +266,13 @@ impl CapabilityHost {
         if candidates.is_empty() {
             if !semantic_match {
                 return Err(ExecutorError::ResolutionMismatch {
-                    reasons: mismatch_reasons.into_iter().collect(),
+                    // A constrained task must not learn which dimensions of an
+                    // unrelated, potentially forbidden catalog entry almost matched.
+                    reasons: if requirement.placement().is_some() {
+                        vec!["placement_requirements_unsatisfied".to_owned()]
+                    } else {
+                        mismatch_reasons.into_iter().collect()
+                    },
                 });
             }
             if !authority_match {

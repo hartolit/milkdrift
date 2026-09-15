@@ -66,7 +66,19 @@ execution, then `PeerArtifactStore` negotiates metadata and handles chunks. `Cor
 uses the ordinary core publication/read ports, preserving sensitivity, retention, and source
 provenance while adding peer/execution origin. Uploads resume from exact offsets and become visible
 only after content verification and publication. Downloads use verified ranges. The remote adapter
-does not automatically copy every referenced input or output to the other host.
+imports each durable output observation before forwarding it to the origin reporter. Metadata is
+bound to the authenticated execution owner and exact observation; both transfer owners enforce
+bounds and release staging on failure. Empty outputs commit without a data chunk. Input transfer
+remains explicit. A remote context manifest names origin evidence and does not imply a shared store.
+Between output chunks the adapter renews the origin's durable execution lease and checks shutdown.
+A refused renewal or shutdown stops the transfer and releases staging; accepted remote work keeps
+its existing uncertainty rules.
+
+Serving publication consumes the durably entered request's remaining artifact allowance under an
+execution-specific core accounting domain. The peer execution is its producer; origin-side causal
+references are exact external commitments retained in that request. The serving daemon never
+creates a fictitious local run to publish an output. Imported metadata adds the authenticated peer
+and execution through the existing core provenance path.
 
 Cancellation has its own authenticated route and request identity. Before entry, the service can
 prevent invocation and durably complete cancellation. After entry, it forwards the request to the

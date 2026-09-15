@@ -68,11 +68,11 @@ pub struct ProtocolEnvelope<T> {
 }
 
 impl<T> ProtocolEnvelope<T> {
-    /// Wraps one current v1.2 message without optional extensions.
+    /// Wraps one current v1.3 message without optional extensions.
     #[must_use]
     pub fn v1(message: T) -> Self {
         Self {
-            protocol: ProtocolVersion::V1_2,
+            protocol: ProtocolVersion::V1_3,
             message,
             extensions: BTreeMap::new(),
         }
@@ -124,7 +124,7 @@ fn validate_envelope(
     protocol: ProtocolVersion,
     extensions: &BTreeMap<String, Value>,
 ) -> Result<(), PeerProtocolError> {
-    if protocol != ProtocolVersion::V1_2 {
+    if protocol != ProtocolVersion::V1_3 {
         return Err(PeerProtocolError::IncompatibleVersion);
     }
     if extensions.len() > MAX_EXTENSION_ITEMS

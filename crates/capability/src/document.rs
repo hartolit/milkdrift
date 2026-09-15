@@ -13,8 +13,8 @@ use crate::{
 pub(crate) const SCHEMA_VERSION_V1: u32 = 1;
 /// Invocation request schema adding an explicit frozen context-manifest reference.
 const INVOCATION_REQUEST_SCHEMA_VERSION_V2: u32 = 2;
-/// Current resolved-capability snapshot envelope with category-bound digest semantics.
-pub(crate) const RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2: u32 = 2;
+/// Current snapshot envelope, freezing locality, authenticated peer and trust zones.
+pub(crate) const RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V3: u32 = 3;
 
 pub(crate) fn canonical_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, ContractError> {
     let bytes =
@@ -265,11 +265,11 @@ pub struct ResolvedCapabilitySnapshotDocument {
 }
 
 impl ResolvedCapabilitySnapshotDocument {
-    /// Wraps a category-bound snapshot in the current schema-v2 envelope.
+    /// Wraps an exact snapshot in the current schema envelope.
     #[must_use]
     pub const fn new(snapshot: ResolvedCapabilitySnapshot) -> Self {
         Self {
-            schema_version: RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2,
+            schema_version: RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V3,
             snapshot,
         }
     }
@@ -291,7 +291,7 @@ impl ResolvedCapabilitySnapshotDocument {
         canonical_json_bytes(self)
     }
 
-    /// Reads exact legacy v1 or category-bound v2 without reinterpreting either shape.
+    /// Reads the current placement-bound schema; obsolete development formats are refused.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ContractError> {
         if bytes.len() > MAX_DOCUMENT_BYTES {
             return Err(ContractError::Bounds {
@@ -308,25 +308,12 @@ impl ResolvedCapabilitySnapshotDocument {
             .ok_or_else(|| {
                 ContractError::InvalidContract("missing numeric schema_version".to_owned())
             })?;
-        if !matches!(
-            version,
-            SCHEMA_VERSION_V1 | RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2
-        ) {
+        if version != RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V3 {
             return Err(ContractError::UnsupportedVersion {
                 document: "resolved capability snapshot",
                 found: version,
-                supported: RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2,
+                supported: RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V3,
             });
-        }
-        let has_category = value
-            .get("snapshot")
-            .and_then(Value::as_object)
-            .is_some_and(|snapshot| snapshot.contains_key("category"));
-        if has_category != (version == RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2) {
-            return Err(ContractError::InvalidContract(
-                "resolved capability snapshot envelope version contradicts category-bound digest semantics"
-                    .to_owned(),
-            ));
         }
         serde_json::from_value(value).map_err(ContractError::from)
     }
@@ -344,14 +331,9 @@ impl<'de> Deserialize<'de> for ResolvedCapabilitySnapshotDocument {
             snapshot: ResolvedCapabilitySnapshot,
         }
         let wire = Wire::deserialize(deserializer)?;
-        let valid = match wire.schema_version {
-            SCHEMA_VERSION_V1 => wire.snapshot.category().is_none(),
-            RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2 => wire.snapshot.category().is_some(),
-            _ => false,
-        };
-        if !valid {
+        if wire.schema_version != RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V3 {
             return Err(serde::de::Error::custom(
-                "resolved capability snapshot version/category mismatch",
+                "unsupported resolved capability snapshot schema version",
             ));
         }
         Ok(Self {

@@ -303,3 +303,35 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn placement_envelope_proves_narrowed_grant_without_catalog_assumptions() -> TestResult {
+    use milkdrift_capability::{Locality, PeerId, PlacementRequirement};
+    let peers = BTreeSet::from([PeerId::new("peer-a")?, PeerId::new("peer-b")?]);
+    let grant = CapabilityAuthorityScopeBuilder::new(SideEffectClass::ReadOnly)
+        .only_localities(BTreeSet::from([Locality::Peer]))?
+        .only_peers(peers.clone())?
+        .build();
+    let base = CapabilityRequirement::new(OperationId::new("tool.inspect")?)
+        .maximum_side_effect(SideEffectClass::ReadOnly);
+    assert!(!CapabilityAuthorityScope::requirement_envelope(&base)?.is_subset_of(&grant));
+    for allowed in [peers.clone(), BTreeSet::from([PeerId::new("peer-a")?])] {
+        let requirement = base
+            .clone()
+            .with_placement(PlacementRequirement::new(None, Some(allowed))?);
+        assert!(CapabilityAuthorityScope::requirement_envelope(&requirement)?.is_subset_of(&grant));
+    }
+    for denied in [
+        PlacementRequirement::new(Some(BTreeSet::from([Locality::Local])), None)?,
+        PlacementRequirement::new(Some(BTreeSet::from([Locality::Peer])), None)?,
+        PlacementRequirement::new(None, Some(BTreeSet::from([PeerId::new("peer-c")?])))?,
+    ] {
+        assert!(
+            !CapabilityAuthorityScope::requirement_envelope(&base.clone().with_placement(denied))?
+                .is_subset_of(&grant)
+        );
+    }
+    let empty = base.with_placement(PlacementRequirement::new(None, Some(BTreeSet::new()))?);
+    assert!(CapabilityAuthorityScope::requirement_envelope(&empty)?.denies_all());
+    Ok(())
+}

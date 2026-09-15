@@ -1,4 +1,4 @@
-# Local control API 2.6
+# Local control API 2.7
 
 Use this reference for exact requests, replies, routes, and CLI machine output. For setup, begin
 with the [operator examples](../../examples/operator/README.md); for Rust integration, use the
@@ -12,19 +12,18 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":6}}
+{"protocol":{"major":2,"minor":7}}
 ```
 
-Major 2 is required; protocol 1 is refused. For that major, the current implementation returns
-minor 6 rather than selecting the lower offered minor or downgrading response fields. Clients
-must accept the current response shape; older strict readers are not qualified by this exchange.
+Version 2.7 is required on both sides. Older and newer major/minor versions are refused with
+`unsupported_version`; update the client and daemon together. There is no protocol downgrade.
 Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
 the negotiated envelope version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 6},
+  "protocol": {"major": 2, "minor": 7},
   "request_id": "req-1",
   "value": {}
 }
@@ -38,7 +37,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 6},
+  "protocol": {"major": 2, "minor": 7},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -56,7 +55,7 @@ administration uses the separate routes below. A command envelope has no actor f
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 6},
+  "protocol": {"major": 2, "minor": 7},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -104,19 +103,21 @@ pending digest-derived checkpoint on that execution. Duplicate use of the same e
 decision identity replays exactly; a stale/different decision, revoked grant, reached bound, or
 changed optimistic sequence cannot create another cycle.
 
-Protocol 2.6 adds the `recovery` daemon health state: authenticated controls are live while
+Attempt inspection carries optional task requirements and typed selected locality/peer catalog
+provenance. Every resolved snapshot includes its exact execution locality; older snapshot formats
+are refused.
+
+The `recovery` daemon health state means authenticated controls are live while
 execution readiness is false. Recovery uses the existing command shapes; live proposals select
 safe-restart plans with explicit approval, and execution-opening commands are refused. See
-[recovery controls](../operations/daemon.md#authorized-recovery-controls). Older strict health readers
-must update to accept this state.
+[recovery controls](../operations/daemon.md#authorized-recovery-controls).
 
-Protocol 2.5 introduced `RunRead.controller_accounting` and `AttemptRead.terminal_detail`. The former
-is the bounded control-owned account projection described in
+`RunRead.controller_accounting` and `AttemptRead.terminal_detail` retain accounting and terminal
+evidence. The former is the bounded control-owned account projection described in
 [budget scope](../operations/authority.md#budget-scope); the latter preserves the durable terminal
 reason, including final-entry budget refusal, after operational attempt compaction. Ordinary runs
-return `{"state":"inactive"}`. Readers of older responses treat a missing accounting field as
-`null` (unavailable), not inactive or unlimited, and a missing terminal detail as absent. CLI JSON
-remains schema 2. Controller status carries the same account under `accounting`; `committed`
+return `{"state":"inactive"}`. A missing accounting field represents `null` (unavailable), and a
+missing terminal detail is absent. CLI JSON remains schema 2. Controller status carries the same account under `accounting`; `committed`
 already includes outstanding reservations and `remaining` is `null` while blocked.
 
 The wire command carries the decoded prompt-sequence JSON document. Markdown parsing is owned by

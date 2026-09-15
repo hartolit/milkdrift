@@ -189,7 +189,7 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
                 ("crates/capability/src/document.rs", "SCHEMA_VERSION_V1"),
                 (
                     "crates/capability/src/document.rs",
-                    "RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V2",
+                    "RESOLVED_CAPABILITY_SNAPSHOT_SCHEMA_VERSION_V3",
                 ),
             ],
         ),
@@ -483,7 +483,10 @@ fn every_maintained_example_has_a_production_reader() -> TestResult {
             .replace('\\', "/");
         let bytes = fs::read(&path)?;
         match relative.as_str() {
-            "operator/starter.json" | "operator/process.json" | "operator/model.json" => {
+            "operator/starter.json"
+            | "operator/process.json"
+            | "operator/model.json"
+            | "operator/peer-placement.json" => {
                 let (document, _) =
                     milkdrift_blueprint::BlueprintRevisionDocument::from_json(&bytes)?;
                 assert_eq!(document.to_canonical_json()?, bytes, "{relative}");
@@ -764,7 +767,7 @@ fn peer_protocol_version_is_exact_from_config_through_transport() -> TestResult 
     );
 
     let codec = read(root()?.join("crates/peer-protocol/src/document.rs"))?;
-    assert!(codec.contains("protocol != ProtocolVersion::V1_2"));
+    assert!(codec.contains("protocol != ProtocolVersion::V1_3"));
     let client = read(root()?.join("adapters/peer-http/src/client.rs"))?;
     assert!(
         client.contains("peer response envelope does not match the negotiated protocol version")

@@ -71,7 +71,7 @@ values; repository contracts check the version cells against source.
 
 | Contract or durable family | Current version | Read behavior |
 | --- | --- | --- |
-| Capability descriptor/events/cancellation / resolved snapshot | 1 / 2 | Snapshot v1 retains its original digest and conservative missing-category meaning. |
+| Capability descriptor/events/cancellation / resolved snapshot | 1 / 3 | Only snapshot v3 is supported; exact typed placement is required. |
 | Invocation request | 2 | Context-free v1 migrates unambiguously. |
 | Blueprint revision and mutation | 2 | v1 refused. |
 | Context manifest | 2 | v1 refused; model envelope remains independent. |
@@ -80,7 +80,7 @@ values; repository contracts check the version cells against source.
 | Proposal / workflow-control command / risk policy / controller policy | 1 / 1 / 1 / 2 | Controller policy v1 refused; currency is explicit or absent. |
 | Prompt-sequence import | 3 | v1/v2 refused; existing blueprint history unchanged. |
 | Result acceptance contract / decision | 1 / 1 | Explicit purpose; no implicit policy on generic model tasks. |
-| Run command / run event | 1 / 3 | Exact event v1/v2 remains readable. |
+| Run command / run event | 1 / 3 | Supported event v1/v2 variants remain readable; obsolete nested snapshots are refused. |
 | Authority grant / authorization decision | 4 / 2 | Earlier grants refused. |
 | Authorized-command wrapper / command result | 1 / 2 | Result v1 reads only closed internal records. |
 | Projection snapshot envelope / runtime payload | 2 / 4 | Old/invalid optional checkpoints replay from journal. |
@@ -89,8 +89,8 @@ values; repository contracts check the version cells against source.
 | Redb internal document format / physical schema | 16 / 11 | Older/future stores refused; no migration. |
 | Application command receipt / layout record | 1 / 1 | Exact supported contracts. |
 | Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
-| External control / authenticated cursor | 2.6 / 2 | Earlier major/cursor forms refused. |
-| Peer protocol and catalog messages | 1.2 | Earlier minors refused. |
+| External control / authenticated cursor | 2.7 / 2 | Only the exact current protocol and cursor forms are accepted. |
+| Peer protocol and catalog messages | 1.3 | Earlier minors refused. |
 | Daemon configuration | 9 | TOML; JSON and earlier versions refused. |
 | Layout document / CLI JSON output | 1 / 2 | CLI schema 1 refused. |
 
@@ -134,9 +134,10 @@ values; repository contracts check the version cells against source.
 - There is no public local artifact upload, global event firehose, configuration/audit/shutdown
   route, general plugin framework, context search service, or optimized lifetime attempt index.
   Historical attempt reads use bounded memory but may scan substantial journal history.
-- Task requirements cannot express locality or peer selectors. Revision admission consequently
-  refuses grants narrowed in those dimensions; the [authority guide](../operations/authority.md)
-  explains supported exact capability/profile/trust-zone constraints.
+- Task placement supports exact peer sets and localities through admission, frozen selection, and
+  entry. It provides no discovery, tag selector, shared checkout, or cluster scheduling. Remote output
+  observations use authorized core artifact transfer; input transfer remains explicit. The
+  [peer guide](../operations/peers.md#pin-tasks-to-approved-hosts) explains the two-host workflow.
 - Active state grows with legitimate live obligations, not just elapsed history. Cold receipts and
   peer tombstones grow for the store generation. No storage migration, online destructive rotation,
   export/delete operation, automatic proposal-index rebuild, whole-database authenticity, rollback
@@ -148,6 +149,16 @@ values; repository contracts check the version cells against source.
 
 The pre-UI kernel is maintainership-ready. Broad architectural cleanup is frozen under the
 [roadmap](roadmap.md); continuous controller activation remains a separate qualification decision.
+
+Reviewed constrained placement based on `6967da8` passes the Linux/Rust 1.95 full gate: 803 workspace tests,
+24 doctests, all 24 repository contracts, Clippy/rustdoc and dependency audits. Five manual longevity
+cases remain ignored in the ordinary gate. Default/all-feature API review covers 14 affected
+libraries. The maintained two-repository loopback workflow verifies exact hosts, returned core
+artifacts and provenance through reconnect/restart. Multi-chunk transfer tests prove lease renewal
+and cleanup after renewal refusal or shutdown. The actual-binary operator, deterministic model
+and controller lanes also pass. Fresh review logs are under `target/review-placement/`. This evidence
+does not qualify physical multi-machine deployment or production controller activation; see the
+[verification guide](../development/verification-evidence.md#actual-binary-scenarios).
 
 Implementation commit `0b251625feec6848e650694ff57e2094c88413b5` passes the complete local Windows/MSVC
 gate: formatting, all-target/all-feature checking, 682 workspace tests, Clippy, warning-denying
@@ -177,7 +188,7 @@ The context-policy enforcement and import-label findings are resolved by `a24671
 local Windows/MSVC gate passes with 725 tests and all 24 repository contracts; five manual longevity
 tests remain ignored. Production regressions cover stopped required evidence, serialized protected
 omissions, legacy retry/reopen refusal, model
-session agreement for inline/artifact requests and category-free historical snapshots, and exact
+session agreement for inline/artifact requests, and exact
 import revision identity. A bounded runtime/host/HTTP matrix proves Fresh completion and no request
 for contradictory or unsupported continuation declarations. All 42 default/all-feature library API
 inventories are reviewed; the sole added export shares the model document byte ceiling with runtime.

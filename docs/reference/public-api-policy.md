@@ -1,9 +1,16 @@
 # Public API policy
 
-Milkdrift is pre-1.0. Its Rust source API follows validated current consumers and may change in one
-atomic workspace revision. No general ecosystem stability is promised. Durable JSON documents and
-wire protocols are different: their explicit version, bounded reader, canonical encoding, fixture,
-and refusal behavior remain compatibility contracts even when their Rust representation changes.
+Milkdrift is unreleased. Its daemon, clients, peers and workspace libraries are upgraded together.
+Rust APIs, wire protocols and durable development formats may change in one atomic workspace
+revision. Previous protocol generations do not require compatibility readers, negotiation fallbacks
+or migration paths merely because they existed during development. Update current producers,
+consumers, fixtures and documentation together, and refuse unsupported versions explicitly.
+
+Current formats still have exact versions, bounded readers, canonical encodings and refusal tests.
+Restart durability, immutable history, and exact replay/conflict behavior apply within those
+supported formats. An incompatible upgrade must not reinterpret saved facts or silently give old
+requests new authority. Any future promise to support multiple versions needs an explicit supported
+contract and corresponding evidence.
 
 ## Classification
 
@@ -13,7 +20,7 @@ Every exported item must have at least one of these owners:
    defining package.
 2. **Workspace adapter contract** — public because a separate workspace package implements or
    consumes the boundary.
-3. **Durable schema compatibility contract** — a versioned serialized shape, reader, or semantic
+3. **Durable schema contract** — a versioned serialized shape, reader, or semantic
    fact required to interpret durable or exchanged data.
 4. **Accidental exposure** — no current consumer or invariant; remove or narrow it.
 5. **Test-only exposure** — fault, inspection, or fixture support; gate it behind an explicit test

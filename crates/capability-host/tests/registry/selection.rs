@@ -465,3 +465,164 @@ fn exact_authority(
     );
     Ok((evaluator, context))
 }
+
+#[test]
+fn task_placement_filters_lookalikes_denial_health_and_removed_selection() -> TestResult {
+    use milkdrift_capability::PlacementRequirement;
+    let operation = OperationId::new("model.generate")?;
+    let peer_a = PeerId::new("peer-a")?;
+    let peer_b = PeerId::new("peer-b")?;
+    let local = placed_descriptor("cap-0-local", "profile", Locality::Local, None)?;
+    let a = placed_descriptor("cap-a", "profile", Locality::Peer, Some(peer_a.clone()))?;
+    let b = placed_descriptor("cap-b", "profile", Locality::Peer, Some(peer_b.clone()))?;
+    let registry = host(BTreeMap::from([(local.identity().clone(), 100)]), 2)?;
+    let mut adapters = Vec::new();
+    for descriptor in [&b, &local, &a] {
+        let adapter = Arc::new(FakeAdapter::new(descriptor.identity().clone()));
+        registry.register(
+            descriptor.clone(),
+            adapter.clone(),
+            Some(observation(descriptor, 100, true)?),
+        )?;
+        adapters.push(adapter);
+    }
+    let requirement = CapabilityRequirement::new(operation.clone()).with_placement(
+        PlacementRequirement::new(None, Some(BTreeSet::from([peer_a.clone()])))?,
+    );
+    let scope = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
+        .only_localities(BTreeSet::from([Locality::Peer]))?
+        .only_peers(BTreeSet::from([peer_a.clone()]))?
+        .build();
+    let (evaluator, context) = exact_authority(scope, BTreeSet::new())?;
+    let selected = registry.resolve_authorized_at(&requirement, &context, &evaluator, 150)?;
+    assert_eq!(selected.snapshot().peer(), Some(&peer_a));
+    assert_eq!(selected.snapshot().locality(), Locality::Peer);
+    for denied in [
+        requirement.clone().exact(local.identity().clone()),
+        requirement.clone().exact(b.identity().clone()),
+        requirement
+            .clone()
+            .with_placement(PlacementRequirement::new(None, Some(BTreeSet::new()))?),
+        requirement
+            .clone()
+            .with_placement(PlacementRequirement::new(
+                None,
+                Some(BTreeSet::from([PeerId::new("peer-absent")?])),
+            )?),
+    ] {
+        assert!(matches!(
+            registry.resolve_authorized_at(&denied, &context, &evaluator, 150),
+            Err(ExecutorError::ResolutionMismatch { reasons })
+                if reasons == ["placement_requirements_unsatisfied"]
+        ));
+    }
+    let unauthorized = requirement
+        .clone()
+        .with_placement(PlacementRequirement::new(
+            None,
+            Some(BTreeSet::from([peer_b])),
+        )?);
+    assert!(matches!(
+        registry.resolve_authorized_at(&unauthorized, &context, &evaluator, 150),
+        Err(ExecutorError::AuthorityDenied { .. })
+    ));
+    registry.update_observation(a.identity(), 1, observation(&a, 151, false)?)?;
+    assert!(matches!(
+        registry.resolve_authorized_at(&requirement, &context, &evaluator, 152),
+        Err(ExecutorError::Unavailable(_))
+    ));
+    registry.update_observation(a.identity(), 1, observation(&a, 153, true)?)?;
+    assert!(matches!(
+        registry.resolve_authorized_at(&requirement, &context, &evaluator, 254),
+        Err(ExecutorError::Unavailable(_))
+    ));
+    registry.begin_drain(a.identity(), 1)?;
+    registry.finish_drain(a.identity(), 1)?;
+    assert!(matches!(
+        registry.execute_exact(
+            selected.snapshot(),
+            &request(selected.snapshot(), "removed-peer")?,
+            &CountingReporter::default()
+        ),
+        Err(ExecutorError::UnavailableGeneration { .. })
+    ));
+    assert!(
+        adapters
+            .iter()
+            .all(|adapter| adapter.execute_count.load(Ordering::SeqCst) == 0)
+    );
+    Ok(())
+}
+
+#[test]
+fn peer_set_order_is_deterministic_and_registration_race_cannot_change_frozen_host() -> TestResult {
+    use milkdrift_capability::PlacementRequirement;
+    let a = placed_descriptor(
+        "cap-a",
+        "profile",
+        Locality::Peer,
+        Some(PeerId::new("peer-a")?),
+    )?;
+    let b = placed_descriptor(
+        "cap-b",
+        "profile",
+        Locality::Peer,
+        Some(PeerId::new("peer-b")?),
+    )?;
+    let requirement = CapabilityRequirement::new(OperationId::new("model.generate")?)
+        .with_placement(PlacementRequirement::new(
+            None,
+            Some(BTreeSet::from([
+                PeerId::new("peer-a")?,
+                PeerId::new("peer-b")?,
+            ])),
+        )?);
+    for order in [[&a, &b], [&b, &a]] {
+        let registry = host(BTreeMap::new(), 2)?;
+        for descriptor in order {
+            registry.register(
+                descriptor.clone(),
+                Arc::new(FakeAdapter::new(descriptor.identity().clone())),
+                Some(observation(descriptor, 100, true)?),
+            )?;
+        }
+        assert_eq!(
+            registry.resolve_at(&requirement, 150)?.snapshot().peer(),
+            a.peer()
+        );
+    }
+    let registry = host(BTreeMap::new(), 2)?;
+    let old_adapter = Arc::new(FakeAdapter::new(a.identity().clone()));
+    registry.register(
+        a.clone(),
+        old_adapter.clone(),
+        Some(observation(&a, 100, true)?),
+    )?;
+    // The same identity with a new revision deliberately advertises another host.
+    let mut wire = serde_json::to_value(&a)?;
+    wire["descriptor_revision"] = serde_json::json!(2);
+    wire["peer"] = serde_json::json!("peer-b");
+    let replacement: CapabilityDescriptor = serde_json::from_value(wire)?;
+    let new_adapter = Arc::new(FakeAdapter::new(replacement.identity().clone()));
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let updating_host = registry.clone();
+    let updating_adapter = new_adapter.clone();
+    let updating_barrier = barrier.clone();
+    let updating = std::thread::spawn(move || {
+        updating_barrier.wait();
+        updating_host.register(replacement, updating_adapter, None)
+    });
+    // Resolve the old selection before releasing the update, then overlap entry/update.
+    let snapshot = registry.resolve_at(&requirement, 150)?.snapshot().clone();
+    barrier.wait();
+    registry.execute_exact(
+        &snapshot,
+        &request(&snapshot, "frozen-peer")?,
+        &CountingReporter::default(),
+    )?;
+    updating.join().map_err(|_| "catalog update panicked")??;
+    assert_eq!(snapshot.peer(), a.peer());
+    assert_eq!(old_adapter.execute_count.load(Ordering::SeqCst), 1);
+    assert_eq!(new_adapter.execute_count.load(Ordering::SeqCst), 0);
+    Ok(())
+}

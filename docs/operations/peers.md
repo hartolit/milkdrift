@@ -16,6 +16,60 @@ relationship and serving tables. Configure both sides with stable, different ide
 
 Start with `actions = []`, empty capability/operation allowlists, and add only required capability identities and operations. The configured action list is expanded at startup into an ordinary immutable authority grant: `read_catalog` covers session negotiation, peer inspection, capability listing/health, and provider-profile inspection; invoke, cancel, upload/download, and administration remain separate typed operations. The action list is not consulted as a second executable permission system. Controller, process, filesystem, model, artifact, and workflow-mutation access is never implied by a valid credential. Use finite expiry, conservative concurrency/duration/cost/artifact limits, and a trust zone that workflow capability policy can require or forbid.
 
+## Pin tasks to approved hosts
+
+Give each repository/tool task an explicit capability `placement`. For repository A on `peer-a`,
+the requirement can contain:
+
+```json
+"placement": { "localities": ["peer"], "peers": ["peer-a"] }
+```
+
+Use `peers: ["peer-b"]` on repository B's task. The same optional object is supported in a
+prompt-sequence capability profile. The operation and profile names keep their ordinary exact
+meaning; `process.execute` on the local host or another peer cannot satisfy this placement. Each
+serving host configures and pins its own executable and working directory. Connectivity does not
+copy a checkout, credentials, or a filesystem mount.
+
+The [maintained blueprint](../../examples/operator/peer-placement.json) contains both tasks and their
+control ordering. Import it through the ordinary CLI after configuring the hosts and grants.
+
+Omitted or `null` dimensions are unrestricted. An empty array denies every candidate. Arrays must
+be unique and in canonical order; peers are bounded to 128 exact IDs. There is no `*` peer syntax.
+An exact peer set implies `peer` locality, and a nonempty set combined with localities excluding
+`peer` is invalid. Supported locality values are `local`, `peer`, `remote`, and `unspecified`.
+`remote` describes an external endpoint; it does not authenticate a Milkdrift peer. Tags are
+descriptive and cannot replace identity or authority.
+
+The origin's grant must cover the task's complete requirement, including its peer/locality sets.
+The serving relationship separately authorizes the exact capability and its host resources. No
+eligible match returns a typed resolution failure; unavailable, expired, or drained registrations
+never permit a wrong-host fallback. A constrained mismatch reports `placement_requirements_unsatisfied`
+without enumerating forbidden catalogs. Attempt inspection retains the requested requirement,
+chosen peer/locality, catalog digest/generation/expiry, remote descriptor revision, and entry decision.
+Reconnection and restart preserve that selection for accepted work.
+
+If selection fails before an attempt exists, inspect the run's immutable revision for its request
+and the bounded `runnable dispatch failed` operator log for the run/execution and typed mismatch or
+unavailability reason. No attempt or chosen host is invented for that failure. Daemon health reports
+the scheduler failure generically; it does not contain a per-run placement diagnosis.
+
+Observed remote outputs are imported through authorized core artifact transfers before the origin
+reports them as outputs. Enable the serving relationship's `artifact_download` action and permitted
+sensitivities; the origin also enforces its configured relationship byte and sensitivity bounds.
+The accepted peer execution owns the serving publication allowance. Its producer and origin-side
+causal references remain tied to that request, without creating a local workflow history. Transfer
+failure after entry preserves uncertainty. Referenced inputs still require explicit preparation
+and transfer; this does not make origin-side workspace references readable on another host.
+
+The [workflow test](../../apps/daemon/tests/two_daemon_peer/placement.rs) runs three production daemon
+host instances: an origin and two serving peers. They communicate through real HTTP listeners on
+local TCP, use separate temporary stores, credentials and repository directories, and execute the
+built process helper. It checks distinct entry counters, returned bytes, frozen provenance and
+restart. Temporary loopback is the automated test topology; the implemented peer path uses the
+configured URLs described above. Physical multi-machine deployment has not been qualified by this
+test.
+
 ## Inspect and refresh registrations
 
 Use the local CLI to inspect configured relationships and request an explicit lifecycle action:

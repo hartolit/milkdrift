@@ -264,7 +264,9 @@ impl PeerService {
             worker: claim.worker.clone(),
             claim_generation: claim.generation,
         };
-        let context = adapter_execution_context(&entered.request)?;
+        let context = adapter_execution_context(&entered.request)?
+            .with_peer_execution(&entered)
+            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
         let result = self.capability_host.execute_exact_with_context(
             &entered.request.selection,
             &entered.request.request,

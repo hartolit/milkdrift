@@ -2,6 +2,54 @@
 
 use super::support::*;
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn daemon_requires_current_control_version_before_dispatch() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let daemon = start(configuration(&directory, 16)?, CONTROLLER_TOKEN).await?;
+    assert_eq!(
+        daemon.client.negotiate().await?.protocol,
+        ProtocolVersion::CURRENT
+    );
+    let raw = reqwest::Client::new();
+    for minor in [
+        0,
+        ProtocolVersion::CURRENT.minor - 1,
+        ProtocolVersion::CURRENT.minor + 1,
+    ] {
+        let protocol = ProtocolVersion {
+            major: ProtocolVersion::CURRENT.major,
+            minor,
+        };
+        let mut command = request(
+            "unsupported-control-version",
+            None,
+            Command::StartRun {
+                run_id: "unsupported-control-version".to_owned(),
+                workflow_id: "absent-workflow".to_owned(),
+                revision_id: "absent-revision".to_owned(),
+            },
+        );
+        command.protocol = protocol;
+        for (path, body) in [
+            ("v1/version", serde_json::json!({"protocol": protocol})),
+            ("v1/commands", serde_json::to_value(command)?),
+        ] {
+            let response = raw
+                .post(daemon.endpoint.join(path)?)
+                .bearer_auth(CONTROLLER_TOKEN)
+                .json(&body)
+                .send()
+                .await?;
+            assert_eq!(response.status(), reqwest::StatusCode::UPGRADE_REQUIRED);
+            let error: milkdrift_control_protocol::ErrorEnvelope =
+                decode_json(&response.bytes().await?)?;
+            assert_eq!(error.code, ErrorCode::UnsupportedVersion);
+            assert!(!error.retryable);
+        }
+    }
+    daemon.stop().await
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn daemon_bounded_overload_returns_stable_error() -> TestResult {
     let directory = tempfile::tempdir()?;

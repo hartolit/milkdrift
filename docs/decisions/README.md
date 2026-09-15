@@ -46,3 +46,4 @@ their existence does not establish that continuous controllers are installed.
 - [0034 — Offline generation inspection and preservation](0034-offline-generation-inspection-and-preservation.md)
 - [0035 — Authorized recovery controls before execution readiness](0035-authorized-recovery-controls.md)
 - [0036 — Freeze explicit model continuation in context artifacts](0036-explicit-model-continuation.md)
+- [0037 — Constrain tasks to exact execution hosts](0037-constrained-peer-placement.md)

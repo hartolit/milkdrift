@@ -773,6 +773,9 @@ fn requirement(profile: &CapabilityProfileRef) -> CapabilityRequirement {
     if let Some(provider) = &profile.provider_profile {
         requirement = requirement.provider_profile(provider.clone());
     }
+    if let Some(placement) = &profile.placement {
+        requirement = requirement.with_placement(placement.clone());
+    }
     requirement
 }
 

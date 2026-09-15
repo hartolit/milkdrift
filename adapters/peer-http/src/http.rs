@@ -112,7 +112,7 @@ impl IntoResponse for ApiError {
             PeerHttpError::Transport(_) => (StatusCode::BAD_GATEWAY, "transport", true),
         };
         let body = serde_json::to_vec(&ErrorBody {
-            protocol: milkdrift_peer_protocol::ProtocolVersion::V1_2,
+            protocol: milkdrift_peer_protocol::ProtocolVersion::V1_3,
             code,
             message: bounded(&self.0.to_string(), 512),
             retryable,
@@ -143,6 +143,7 @@ pub fn peer_router(service: Arc<PeerService>) -> Router {
         "/peer/v1/executions/{execution}/observations" => get(observations), PeerRouteAuthorityMapping::Exact(AuthorityOperation::InspectPeerExecution), PeerRouteResourceMapping::Execution;
         "/peer/v1/executions/{execution}/stream" => get(observation_stream), PeerRouteAuthorityMapping::Exact(AuthorityOperation::InspectPeerExecution), PeerRouteResourceMapping::Execution;
         "/peer/v1/executions/{execution}/cancel" => post(cancel), PeerRouteAuthorityMapping::Exact(AuthorityOperation::CancelPeerCapability), PeerRouteResourceMapping::Execution;
+        "/peer/v1/executions/{execution}/observations/{sequence}/artifact" => get(output_artifact), PeerRouteAuthorityMapping::Exact(AuthorityOperation::PeerArtifactDownload), PeerRouteResourceMapping::Artifact;
         "/peer/v1/artifacts/negotiate" => post(artifact_negotiate), PeerRouteAuthorityMapping::QueryDerived, PeerRouteResourceMapping::Artifact;
         "/peer/v1/artifacts/{transfer}/content" => get(artifact_read).post(artifact_write), PeerRouteAuthorityMapping::QueryDerived, PeerRouteResourceMapping::Artifact;
         "/peer/v1/artifacts/{transfer}/abort" => post(artifact_abort), PeerRouteAuthorityMapping::QueryDerived, PeerRouteResourceMapping::Artifact;
@@ -325,6 +326,20 @@ async fn observation_stream(
             .interval(Duration::from_secs(5))
             .text("peer-heartbeat"),
     ))
+}
+
+async fn output_artifact(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((execution, sequence)): Path<(String, u64)>,
+) -> Result<Response, ApiError> {
+    let execution = PeerExecutionId::new(execution)
+        .map_err(|error| ApiError(PeerHttpError::Protocol(error.to_string())))?;
+    let offer = authenticated_service_call(state, &headers, move |service, peer| {
+        service.output_artifact_offer(&peer, &execution, sequence)
+    })
+    .await?;
+    success(offer)
 }
 
 async fn artifact_negotiate(

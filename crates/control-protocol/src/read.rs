@@ -235,6 +235,8 @@ pub struct AttemptRead {
     pub descriptor_revision: Option<u64>,
     /// Exact frozen capability-generation and safe implementation provenance.
     pub capability_provenance: Option<CapabilityProvenanceRead>,
+    /// Frozen task capability requirement, including requested placement constraints.
+    pub requirement: Option<Value>,
     /// Exact selected operation and its frozen external-effect contract.
     pub operation_contract: Option<CapabilityOperationRead>,
     /// Whether runtime propagated a stable provider idempotency key.
@@ -418,6 +420,10 @@ pub struct AuthorityDecisionRead {
 pub struct CapabilityProvenanceRead {
     /// Domain-separated digest of the complete resolved capability snapshot.
     pub snapshot_digest: String,
+    /// Exact frozen execution locality.
+    pub locality: String,
+    /// Exact remote catalog and source generation from the authenticated peer adapter.
+    pub peer: Option<PeerCapabilityProvenanceRead>,
     /// Exact execution isolation/trust class selected for the attempt.
     pub execution_trust: String,
     /// Local-process implementation identity, including safe path digests, when applicable.
@@ -674,4 +680,22 @@ pub enum Observation {
     StreamClosing { reason: String },
     /// Subscriber fell outside retained stream history.
     ResyncRequired { reason: String },
+}
+
+/// Frozen peer catalog facts, independent of current connection health.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerCapabilityProvenanceRead {
+    /// Authenticated execution host.
+    pub peer_id: String,
+    /// Accepted remote catalog generation.
+    pub catalog_generation: u64,
+    /// Digest of the accepted catalog.
+    pub catalog_digest: String,
+    /// Capability identity on the serving host.
+    pub remote_capability_id: String,
+    /// Descriptor revision on the serving host.
+    pub remote_descriptor_revision: u64,
+    /// Catalog expiry recorded at selection, in Unix milliseconds.
+    pub catalog_expires_at_unix_ms: u64,
 }

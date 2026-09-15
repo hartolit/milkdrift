@@ -356,7 +356,7 @@ pub(super) fn build_peer_runtime(
         },
         host.clone(),
         executions,
-        artifacts,
+        artifacts.clone(),
         Some(Arc::new(ConfiguredPeerAuthenticator {
             resolver: secrets,
             relationships: authentication,
@@ -368,8 +368,14 @@ pub(super) fn build_peer_runtime(
     for (client, relationship) in clients {
         let peer = relationship.remote_peer.clone();
         let registry = Arc::new(
-            PeerRegistry::new(host.clone(), client, relationship, peer_clock.clone())
-                .map_err(|error| error.to_string())?,
+            PeerRegistry::new(
+                host.clone(),
+                client,
+                relationship,
+                peer_clock.clone(),
+                artifacts.clone(),
+            )
+            .map_err(|error| error.to_string())?,
         );
         registries.insert(peer, registry);
     }

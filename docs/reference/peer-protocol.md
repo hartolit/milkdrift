@@ -1,6 +1,11 @@
-# Peer protocol v1.2
+# Peer protocol v1.3
 
-`milkdrift-peer-protocol` is transport neutral. Every JSON control message uses a `ProtocolEnvelope` with selected `{major, minor}`, one typed message, and at most 32 explicitly ignorable DNS-namespaced extensions. Major 1/minor 2 is the only implemented version. It retains typed archived replay and observation-history dispositions and adds the exact queried request identity to every lookup result, so clients can bind authenticated responses to the URL they requested. Peers implementing earlier minors are rejected instead of guessing the changed shape or meaning. Unknown majors and unknown typed message fields fail closed. Decoding preflights encoded bytes, depth, container items, string/key sizes, duplicates, and document size before domain deserialization.
+Version 1.3 carries resolved capability snapshots with typed placement and exposes execution-output
+metadata for authorized core transfer. Both peers use this exact version in a coordinated deployment;
+previous protocol generations and snapshot formats are refused. Current durable acceptance/replay
+and tombstone contracts remain exact across restart.
+
+`milkdrift-peer-protocol` is transport neutral. Every JSON control message uses a `ProtocolEnvelope` with selected `{major, minor}`, one typed message, and at most 32 explicitly ignorable DNS-namespaced extensions. Major 1/minor 3 is the only implemented version. It includes typed archived replay and observation-history dispositions and the exact queried request identity in every lookup result, so clients can bind authenticated responses to the URL they requested. Peers implementing earlier minors are rejected instead of guessing the changed shape or meaning. Unknown majors and unknown typed message fields fail closed. Decoding preflights encoded bytes, depth, container items, string/key sizes, duplicates, and document size before domain deserialization.
 
 ## Authentication and session
 
@@ -52,6 +57,15 @@ Before proven acceptance, clients retry only the same canonical request and quer
 Cancellation names a separate request identity, exact remote execution, sequence, and reason. Acknowledgements are `accepted`, `rejected`, `unsupported`, `too_late`, or `unknown`, with terminal evidence when known. TCP close is never cancellation evidence. Late terminal evidence remains sequenced and cannot create two terminal facts.
 
 ## Artifacts
+
+`GET /peer/v1/executions/{execution}/observations/{sequence}/artifact` returns an exact
+`ArtifactMetadataOffer` for an owned durable output observation. The service checks the authenticated
+relationship, execution ownership and download authority, including sensitivity and byte scope.
+Unknown/non-output sequences and archived detail are unavailable. The offer binds the serving peer,
+execution, content reference and expiry; the client verifies those before negotiation. Subsequent
+chunks recheck current relationship authority. The origin imports verified output bytes through
+its configured core artifact port before forwarding the observation. A missing or failed transfer
+after acceptance preserves uncertainty and never causes a fresh peer submission.
 
 Transfers negotiate exact content digest, size, media type, sensitivity, retention, provenance, source peer, remote execution, direction, expiry, and transfer ID before bytes. Paths and filenames never select placement. Upload chunks are sequential and bounded through the ordinary core artifact publication session. Core temporary inventory supports restart resume/abort and remains invisible until exact size/digest verification and atomic metadata commit. Imported provenance preserves the remote producer and adds origin peer/execution; ordinary content-addressed publication supplies deduplication, retention, and orphan cleanup. Downloads are authorized bounded ranges from the ordinary core artifact read port. Peer/action authority and byte quotas apply before transfer.
 

@@ -1,10 +1,10 @@
 mod artifact_transfer;
+pub(crate) use artifact_transfer::DisabledArtifactStore;
 mod authority;
 mod catalog;
 mod lifecycle;
 mod worker;
 
-use artifact_transfer::DisabledArtifactStore;
 #[cfg(test)]
 use authority::peer_capability_authority;
 use authority::{adapter_execution_context, peer_authority_grant};

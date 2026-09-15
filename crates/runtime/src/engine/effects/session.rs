@@ -20,7 +20,7 @@ impl RuntimeService {
         revision: &RevisionId,
         node: &NodeId,
         request: &InvocationRequest,
-        category: Option<&milkdrift_capability::CapabilityCategory>,
+        category: &milkdrift_capability::CapabilityCategory,
         basis: &ExecutionAuthorityBasis,
         now: TimestampMillis,
     ) -> Result<(), RuntimeError> {
@@ -34,9 +34,7 @@ impl RuntimeService {
             return Ok(());
         };
         if request.operation().as_str() != milkdrift_model::MODEL_GENERATE_OPERATION
-            || category.is_some_and(|category| {
-                category != &milkdrift_capability::CapabilityCategory::Model
-            })
+            || category != &milkdrift_capability::CapabilityCategory::Model
         {
             return if config.context_policy().session() == ContextSessionPolicy::Fresh {
                 Ok(())

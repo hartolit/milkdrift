@@ -356,9 +356,9 @@ fn validate_event_schema_semantics(
         )),
         (
             RUN_EVENT_SCHEMA_VERSION_V1,
-            RunEventKind::CapabilityResolved { snapshot, .. }
-            | RunEventKind::CapabilityResolutionDecisionRecorded { snapshot, .. },
-        ) if snapshot.category().is_some() => Err(PersistenceError::InvalidDocument(
+            RunEventKind::CapabilityResolved { .. }
+            | RunEventKind::CapabilityResolutionDecisionRecorded { .. },
+        ) => Err(PersistenceError::InvalidDocument(
             "category-bound capability resolution requires run-event schema v2".to_owned(),
         )),
         (
@@ -376,13 +376,6 @@ fn validate_event_schema_semantics(
             },
         ) => Err(PersistenceError::InvalidDocument(
             "run-event schema v2 revision adoption requires actor attribution".to_owned(),
-        )),
-        (
-            RUN_EVENT_SCHEMA_VERSION_V2,
-            RunEventKind::CapabilityResolved { snapshot, .. }
-            | RunEventKind::CapabilityResolutionDecisionRecorded { snapshot, .. },
-        ) if snapshot.category().is_none() => Err(PersistenceError::InvalidDocument(
-            "run-event schema v2 capability resolution requires a descriptor category".to_owned(),
         )),
         (
             RUN_EVENT_SCHEMA_VERSION_V2,
@@ -424,13 +417,6 @@ fn validate_event_schema_semantics(
             },
         ) => Err(PersistenceError::InvalidDocument(
             "run-event schema v3 revision adoption requires actor attribution".to_owned(),
-        )),
-        (
-            RUN_EVENT_SCHEMA_VERSION_V3,
-            RunEventKind::CapabilityResolved { snapshot, .. }
-            | RunEventKind::CapabilityResolutionDecisionRecorded { snapshot, .. },
-        ) if snapshot.category().is_none() => Err(PersistenceError::InvalidDocument(
-            "run-event schema v3 capability resolution requires a descriptor category".to_owned(),
         )),
         (
             RUN_EVENT_SCHEMA_VERSION_V3,

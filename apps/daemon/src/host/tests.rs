@@ -90,6 +90,11 @@ async fn recovery_host_shuts_down_without_workers_or_execution_materialization()
     let directory = tempfile::tempdir()?;
     let token = directory.path().join("operator.token");
     fs::write(&token, "recovery-shutdown-token")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&token, fs::Permissions::from_mode(0o600))?;
+    }
     let config = clock_test_config(directory.path(), &token)?;
     let host = DaemonHost::start_recovery(config.clone())?;
     assert_eq!(

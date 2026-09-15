@@ -189,9 +189,7 @@ impl DurableContextCandidateSource<'_> {
         };
         if attempt != manifest.attempt()
             || execution != manifest.execution()
-            || snapshot.category().is_some_and(|category| {
-                category != &milkdrift_capability::CapabilityCategory::Model
-            })
+            || snapshot.category() != &milkdrift_capability::CapabilityCategory::Model
             || !authorization.is_allowed()
             || &authorization.request().actor != request.authority.actor()
             || &authorization.request().grant != request.authority.grant()

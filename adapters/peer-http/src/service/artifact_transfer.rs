@@ -12,6 +12,60 @@ use super::{PeerHttpError, PeerService, map_execution_persistence};
 use crate::artifact::{PeerArtifactError, PeerArtifactStore};
 
 impl PeerService {
+    /// Offers the exact artifact at one durable output observation to its authenticated owner.
+    /// Metadata requires the same download authority as subsequent chunks.
+    pub fn output_artifact_offer(
+        &self,
+        authenticated_peer: &PeerId,
+        execution: &milkdrift_peer_protocol::PeerExecutionId,
+        sequence: u64,
+    ) -> Result<ArtifactMetadataOffer, PeerHttpError> {
+        let relationship = self.relationship(authenticated_peer)?;
+        let snapshot = self
+            .executions
+            .peer_execution(authenticated_peer, execution)
+            .map_err(map_execution_persistence)?
+            .ok_or_else(|| PeerHttpError::NotFound("execution output unavailable".to_owned()))?;
+        let PeerExecutionSnapshot::Hot(record) = snapshot else {
+            return Err(PeerHttpError::NotFound(
+                "execution output detail was archived".to_owned(),
+            ));
+        };
+        let reference = self
+            .executions
+            .peer_observation_artifact(execution, sequence)
+            .map_err(map_execution_persistence)?
+            .ok_or_else(|| PeerHttpError::NotFound("execution output unavailable".to_owned()))?;
+        let metadata = self.artifacts.metadata(&reference)?;
+        self.require_operation(
+            &relationship,
+            AuthorityOperation::PeerArtifactDownload,
+            artifact_resource_facts(metadata.reference(), metadata.sensitivity()),
+            AuthorityBudget {
+                artifact_bytes: Some(metadata.reference().size_bytes()),
+                ..AuthorityBudget::default()
+            },
+        )?;
+        self.check_rate(&relationship, "artifact_metadata")?;
+        let identity = serde_json::to_vec(&(authenticated_peer, execution, sequence))
+            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        Ok(ArtifactMetadataOffer {
+            transfer: TransferId::new(format!("transfer:{}", blake3::hash(&identity)))
+                .map_err(|error| PeerHttpError::Protocol(error.to_string()))?,
+            direction: ArtifactTransferDirection::Download,
+            artifact: metadata.reference().clone(),
+            sensitivity: metadata.sensitivity(),
+            retention: metadata.retention().clone(),
+            provenance: metadata.provenance().clone(),
+            source_peer: self.config.local_peer.clone(),
+            execution: execution.clone(),
+            expires_at_unix_ms: record
+                .request
+                .deadline_unix_ms
+                .min(relationship.expires_at_unix_ms),
+        })
+    }
+
     /// Negotiates a metadata-first authorized upload or download.
     pub fn negotiate_artifact(
         &self,
@@ -239,9 +293,18 @@ impl From<PeerArtifactError> for PeerHttpError {
     }
 }
 
-pub(super) struct DisabledArtifactStore;
+pub(crate) struct DisabledArtifactStore;
 
 impl PeerArtifactStore for DisabledArtifactStore {
+    fn metadata(
+        &self,
+        _reference: &milkdrift_capability::ArtifactReference,
+    ) -> Result<milkdrift_workspace::ArtifactMetadata, PeerArtifactError> {
+        Err(PeerArtifactError::Rejected(
+            "artifact transfer is disabled".to_owned(),
+        ))
+    }
+
     fn transfer_facts(
         &self,
         _owner_peer: &PeerId,

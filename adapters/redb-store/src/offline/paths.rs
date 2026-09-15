@@ -169,6 +169,12 @@ pub(super) fn relative(path: &str) -> Result<(), PersistenceError> {
 #[cfg(any(test, feature = "test-admin"))]
 pub(crate) fn private_test_directory() -> Result<tempfile::TempDir, PersistenceError> {
     let directory = tempfile::tempdir().map_err(error::io)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+            .map_err(error::io)?;
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;

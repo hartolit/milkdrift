@@ -1,3 +1,5 @@
+mod artifacts;
+
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
@@ -121,7 +123,7 @@ fn serve_archived_execution(
                 peer: remote_peer,
                 session: SessionId::new("session-remote-conformance-server")
                     .map_err(|error| error.to_string())?,
-                selected_version: ProtocolVersion::V1_2,
+                selected_version: ProtocolVersion::V1_3,
                 features: FeatureSet {
                     resumable_observations: true,
                     resumable_artifacts: true,
@@ -292,6 +294,7 @@ fn remote_case(scenario: ConformanceScenario) -> Result<RemoteCase, Box<dyn std:
         remote_descriptor,
         local_capability,
         clock: Arc::new(ControlledClock::new(100)),
+        artifacts: Arc::new(crate::service::DisabledArtifactStore),
         active: Mutex::new(BTreeMap::new()),
         lifecycle: AtomicU8::new(Lifecycle::Created as u8),
     });
@@ -670,7 +673,13 @@ fn remote_catalog_registration_fails_closed_and_recovers_with_the_clock()
         CapabilitySelectionPolicy::priorities(BTreeMap::new()),
     )?;
     let clock = Arc::new(ControlledClock::new(100));
-    let registry = PeerRegistry::new(host.clone(), client, relationship, clock.clone())?;
+    let registry = PeerRegistry::new(
+        host.clone(),
+        client,
+        relationship,
+        clock.clone(),
+        Arc::new(crate::service::DisabledArtifactStore),
+    )?;
     let descriptor = CapabilityDescriptorDocument::from_json(include_bytes!(
         "../../../../crates/capability/tests/fixtures/descriptor-v1.json"
     ))?
@@ -719,6 +728,31 @@ fn remote_catalog_registration_fails_closed_and_recovers_with_the_clock()
     }
     assert!(registry.apply_catalog(catalog.clone()).is_ok());
     assert!(registry.status().connected);
+
+    let pinned =
+        milkdrift_capability::CapabilityRequirement::new(OperationId::new("model.generate")?)
+            .with_placement(milkdrift_capability::PlacementRequirement::new(
+                None,
+                Some(BTreeSet::from([registry.relationship.remote_peer.clone()])),
+            )?);
+    assert_eq!(
+        host.resolve_at(&pinned, 100)?.snapshot().peer(),
+        Some(&registry.relationship.remote_peer)
+    );
+    clock.now.store(111, Ordering::SeqCst);
+    for generation in host.catalog_generations(
+        &milkdrift_authority::CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
+    )? {
+        host.refresh_health(
+            generation.descriptor.identity(),
+            generation.descriptor.descriptor_revision(),
+            111,
+        )?;
+    }
+    assert!(matches!(
+        host.resolve_at(&pinned, 111),
+        Err(milkdrift_runtime::ExecutorError::Unavailable(_))
+    ));
 
     // A fresh catalog with the same remote descriptor must replace its expired local adapter.
     // The host's one-generation limit also proves that completed generations are reclaimed.

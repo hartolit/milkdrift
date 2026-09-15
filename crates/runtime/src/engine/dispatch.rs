@@ -150,6 +150,12 @@ impl RuntimeService {
                 "authorized executor resolution omitted its authority decision".to_owned(),
             )
         })?;
+        if !resolution.descriptor().matches(&requirement).is_match() {
+            return Err(ExecutorError::InvalidDispatch(
+                "executor selection contradicts the task requirement".to_owned(),
+            )
+            .into());
+        }
         let contract = resolution.snapshot().operation_contract();
         let invocation = self.next_invocation_id()?;
         let idempotency_key = match contract.idempotency() {

@@ -6,7 +6,9 @@ resumable observations. The CLI uses this same client; it adds argument handling
 confirmation, and output presentation.
 
 Create a `ClientConfig` for the daemon URL and a `BearerCredential` from a private source, construct
-the client, and call `negotiate` before other operations. Construction does not contact the daemon.
+the client, and call `negotiate` before other operations. Client and daemon must use the same current
+protocol version. Negotiation, JSON replies, error replies and streamed observations reject a
+different version; upgrade both components together. Construction does not contact the daemon.
 The server maps that credential to an actor and grant; possessing it does not authorize every
 operation. The [daemon guide](../../docs/operations/daemon.md) explains the matching configuration.
 

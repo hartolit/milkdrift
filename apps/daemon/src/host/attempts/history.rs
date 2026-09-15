@@ -163,9 +163,16 @@ impl HistoricalAttemptState {
                 }
             }
             RunEventKind::CapabilityResolved {
-                attempt, snapshot, ..
+                attempt,
+                snapshot,
+                requirement,
+                ..
             } if attempt == &self.attempt => {
                 if let Some(located) = self.located.as_mut() {
+                    located.value.requirement = Some(
+                        serde_json::to_value(requirement)
+                            .map_err(|_| super::super::read_model::internal())?,
+                    );
                     located.value.capability_id = Some(snapshot.capability().as_str().to_owned());
                     located.value.descriptor_revision = Some(snapshot.descriptor_revision());
                     located.value.capability_provenance =

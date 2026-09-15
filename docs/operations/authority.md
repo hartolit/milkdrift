@@ -43,9 +43,16 @@ Secret references are opaque names; secret values never belong in the document.
 
 Revision admission checks the complete capability requirement envelope. Unspecified requirement
 dimensions mean `Any`, so a narrower grant refuses the revision even when an exact capability is
-named. Requirements currently cannot express locality or peer selectors; ordinary task grants
-therefore need `Any` for those dimensions. Use exact capability, profile, and trust-zone constraints
-and explicit adapter registration; do not describe that configuration as a locality-restricted grant.
+named. Set task `placement.localities` and/or `placement.peers` to prove those restrictions. A
+nonempty exact peer set also proves `peer` locality. Admission accepts only restrictions contained
+in the run's grant; dispatch and final entry still check the actual descriptor and current authority.
+An empty placement set admits no candidate. It never enables a fallback.
+
+Locality and peer restrictions intersect exact capability, profile, operation, trust-zone, execution
+trust, and effect requirements. They do not infer any of those dimensions from a catalog or grant.
+For example, a grant narrowed to a provider profile still requires that profile in the task. A
+locality-only requirement leaves the peer dimension unrestricted and cannot prove a grant narrowed
+to exact peers. See the [two-host authoring example](peers.md#pin-tasks-to-approved-hosts).
 
 ## Grant inspection separately
 

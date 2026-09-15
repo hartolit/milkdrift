@@ -21,7 +21,7 @@ fn keeps_uncertain_retained_work_visible_through_cancellation_and_recovery() -> 
     let lease = LeaseId::new("lease-1")?;
     let decision = ReconciliationDecisionId::new("decision-retain")?;
     let snapshot_document = ResolvedCapabilitySnapshotDocument::from_json(include_bytes!(
-        "../../../../capability/tests/fixtures/resolved-capability-snapshot-v2.json"
+        "../../../../capability/tests/fixtures/resolved-capability-snapshot-v3.json"
     ))?;
     let snapshot = snapshot_document.body().clone();
     let requirement = CapabilityRequirement::new(OperationId::new("tool.publish")?)
@@ -303,7 +303,7 @@ fn recovery_query_preserves_obligation_and_remediation_creates_real_work() -> Te
     let compensate = ReconciliationDecisionId::new("decision-compensate")?;
     let remediation = NodeExecutionId::new("execution-remediation")?;
     let snapshot_document = ResolvedCapabilitySnapshotDocument::from_json(include_bytes!(
-        "../../../../capability/tests/fixtures/resolved-capability-snapshot-v2.json"
+        "../../../../capability/tests/fixtures/resolved-capability-snapshot-v3.json"
     ))?;
     let snapshot = snapshot_document.body().clone();
     let requirement = CapabilityRequirement::new(OperationId::new("tool.publish")?)

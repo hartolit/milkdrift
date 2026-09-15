@@ -117,6 +117,7 @@ pub(super) fn empty_attempt_read(attempt: &str, state: &str) -> AttemptRead {
         capability_id: None,
         descriptor_revision: None,
         capability_provenance: None,
+        requirement: None,
         operation_contract: None,
         idempotency_key_present: false,
         execution_authority: None,
@@ -203,6 +204,10 @@ pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> Att
         capability_id,
         descriptor_revision,
         capability_provenance,
+        requirement: value
+            .requirement
+            .as_ref()
+            .and_then(|value| serde_json::to_value(value).ok()),
         operation_contract,
         idempotency_key_present,
         execution_authority: value
@@ -222,7 +227,11 @@ pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> Att
             .as_ref()
             .map(public_authority_decision),
         provider_profile,
-        peer_id: None,
+        peer_id: value
+            .capability
+            .as_ref()
+            .and_then(|snapshot| snapshot.peer())
+            .map(|peer| peer.as_str().to_owned()),
         context_manifest,
         context: None,
         context_access: if has_context_manifest {
@@ -348,6 +357,28 @@ pub(super) fn public_capability_provenance(
     };
     milkdrift_control_protocol::CapabilityProvenanceRead {
         snapshot_digest: snapshot.digest().to_owned(),
+        locality: snake_debug(&snapshot.locality()),
+        peer: snapshot
+            .descriptor_extensions()
+            .iter()
+            .find(|(key, _)| key.as_str() == "dev.milkdrift.peer/provenance")
+            .and_then(|(_, value)| {
+                serde_json::from_value::<milkdrift_peer_http::RemoteCapabilityProvenance>(
+                    value.value().clone(),
+                )
+                .ok()
+            })
+            .filter(|facts| snapshot.peer() == Some(&facts.peer))
+            .map(
+                |facts| milkdrift_control_protocol::PeerCapabilityProvenanceRead {
+                    peer_id: facts.peer.as_str().to_owned(),
+                    catalog_generation: facts.catalog_generation,
+                    catalog_digest: facts.catalog_digest.as_str().to_owned(),
+                    remote_capability_id: facts.remote_capability.as_str().to_owned(),
+                    remote_descriptor_revision: facts.remote_descriptor_revision,
+                    catalog_expires_at_unix_ms: facts.expires_at_unix_ms,
+                },
+            ),
         execution_trust: snake_debug(&snapshot.execution_trust()),
         implementation_identity: string(
             implementation.and_then(|value| value.get("identity_digest")),
@@ -646,7 +677,8 @@ pub(super) fn internal() -> PublicFailure {
 
 pub(super) fn public_protocol(error: milkdrift_control_protocol::ProtocolError) -> PublicFailure {
     match error {
-        milkdrift_control_protocol::ProtocolError::UnsupportedMajor { .. } => PublicFailure::new(
+        milkdrift_control_protocol::ProtocolError::UnsupportedMajor { .. }
+        | milkdrift_control_protocol::ProtocolError::UnsupportedMinor { .. } => PublicFailure::new(
             ErrorCode::UnsupportedVersion,
             bounded(&error.to_string()),
             false,

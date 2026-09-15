@@ -270,6 +270,38 @@ impl PeerHttpClient {
         Ok(response)
     }
 
+    /// Reads an authorized exact output's metadata before negotiating its bytes.
+    pub fn output_artifact_offer(
+        &self,
+        execution: &PeerExecutionId,
+        sequence: u64,
+    ) -> Result<ArtifactMetadataOffer, PeerHttpError> {
+        let offer: ArtifactMetadataOffer = self.get(
+            &[
+                "peer",
+                "v1",
+                "executions",
+                execution.as_str(),
+                "observations",
+                &sequence.to_string(),
+                "artifact",
+            ],
+            &[],
+        )?;
+        offer
+            .validate()
+            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        if offer.execution != *execution
+            || &offer.source_peer != self.remote_peer()
+            || offer.direction != milkdrift_peer_protocol::ArtifactTransferDirection::Download
+        {
+            return Err(PeerHttpError::Protocol(
+                "output metadata does not bind the requested execution host".to_owned(),
+            ));
+        }
+        Ok(offer)
+    }
+
     /// Negotiates metadata, authority, quota, deduplication, and resume offset before bytes.
     pub fn negotiate_artifact(
         &self,
@@ -552,7 +584,7 @@ mod tests {
     fn response_decoder_requires_the_exact_negotiated_version()
     -> Result<(), Box<dyn std::error::Error>> {
         let bytes = encode_envelope(&ProtocolEnvelope::v1(serde_json::json!({"ok": true})))?;
-        let decoded: serde_json::Value = decode_response_document(&bytes, ProtocolVersion::V1_2)?;
+        let decoded: serde_json::Value = decode_response_document(&bytes, ProtocolVersion::V1_3)?;
         assert_eq!(decoded, serde_json::json!({"ok": true}));
 
         assert!(
@@ -564,7 +596,7 @@ mod tests {
         );
         let legacy = br#"{"protocol":{"major":1,"minor":1},"message":null,"extensions":{}}"#;
         assert!(
-            decode_response_document::<serde_json::Value>(legacy, ProtocolVersion::V1_2).is_err()
+            decode_response_document::<serde_json::Value>(legacy, ProtocolVersion::V1_3).is_err()
         );
         Ok(())
     }

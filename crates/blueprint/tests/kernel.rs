@@ -952,3 +952,65 @@ fn workflow_interface_rejects_duplicate_output_fields() -> Result<(), Box<dyn st
     assert!(error.to_string().contains("duplicate interface field"));
     Ok(())
 }
+
+#[test]
+fn placement_changes_revision_identity_and_roundtrips_without_reinterpreting_old_revisions()
+-> TestResult {
+    use milkdrift_capability::{Locality, PeerId, PlacementRequirement};
+    let old_bytes = include_bytes!("fixtures/revision-v2.json");
+    let (old_document, old) = BlueprintRevisionDocument::from_json(old_bytes)?;
+    assert_eq!(
+        old_document.to_canonical_json()?,
+        old_bytes.trim_ascii_end()
+    );
+    let build = |host: &str| -> TestResult<BlueprintRevision> {
+        let task = Node::new(
+            id("task")?,
+            NodeKind::task_direct_inputs(
+                CapabilityRequirement::new(OperationId::new("tool.execute")?).with_placement(
+                    PlacementRequirement::new(
+                        Some(BTreeSet::from([Locality::Peer])),
+                        Some(BTreeSet::from([PeerId::new(host)?])),
+                    )?,
+                ),
+            )?,
+        )?;
+        Ok(genesis(
+            "placement",
+            vec![
+                Mutation::AddNode {
+                    node: task.with_control_output(PortId::new("next")?)?,
+                },
+                Mutation::AddNode {
+                    node: terminal_node("done")?.with_control_input(PortId::new("in")?)?,
+                },
+                Mutation::AddEdge {
+                    edge: Edge::new(
+                        EdgeId::new("finish")?,
+                        EdgeKind::Control,
+                        id("task")?,
+                        PortId::new("next")?,
+                        id("done")?,
+                        PortId::new("in")?,
+                    ),
+                },
+            ],
+        )?)
+    };
+    let a = build("peer-a")?;
+    let b = build("peer-b")?;
+    assert_ne!(a.id(), b.id());
+    assert_ne!(a.content_digest(), b.content_digest());
+    let bytes = BlueprintRevisionDocument::new(&a).to_canonical_json()?;
+    let (_, decoded) = BlueprintRevisionDocument::from_json(&bytes)?;
+    assert_eq!(decoded, a);
+    let mut tampered: serde_json::Value = serde_json::from_slice(&bytes)?;
+    tampered["revision"]["semantic"]["nodes"]["task"]["kind"]["config"]["requirement"]["placement"]
+        ["peers"] = serde_json::json!(["peer-b"]);
+    assert!(BlueprintRevisionDocument::from_json(&serde_json::to_vec(&tampered)?).is_err());
+    assert_eq!(
+        BlueprintRevisionDocument::new(&old).to_canonical_json()?,
+        old_bytes.trim_ascii_end()
+    );
+    Ok(())
+}

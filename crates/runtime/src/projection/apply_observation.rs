@@ -91,7 +91,7 @@ impl RunProjection {
                 let controller_metered = attempt_view.capability.as_ref().is_some_and(|value| {
                     matches!(
                         value.snapshot().category(),
-                        None | Some(CapabilityCategory::Model | CapabilityCategory::Process)
+                        CapabilityCategory::Model | CapabilityCategory::Process
                     )
                 });
                 if !matches!(

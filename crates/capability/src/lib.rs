@@ -27,6 +27,7 @@ mod descriptor;
 mod document;
 mod identity;
 mod invocation;
+mod placement;
 mod resolved;
 
 pub use admission::{
@@ -53,6 +54,7 @@ pub use invocation::{
     InvocationEventKind, InvocationFailure, InvocationRequest, InvocationTerminal,
     InvocationValueReference, MAX_DURABLE_REFERENCE_BYTES, TerminalStatus, UsageObservation,
 };
+pub use placement::PlacementRequirement;
 pub use resolved::ResolvedCapabilitySnapshot;
 
 /// Ordinary capability operation whose output marker establishes purpose-specific acceptance.

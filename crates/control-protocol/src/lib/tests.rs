@@ -27,6 +27,16 @@ fn version_and_cursor_are_explicit_and_feed_bound() -> Result<(), Box<dyn std::e
         ProtocolVersion { major: 1, minor: 0 }.negotiate(),
         Err(ProtocolError::UnsupportedMajor { .. })
     ));
+    for minor in [0, PROTOCOL_MINOR - 1, PROTOCOL_MINOR + 1, u16::MAX] {
+        assert!(matches!(
+            ProtocolVersion {
+                major: PROTOCOL_MAJOR,
+                minor
+            }
+            .negotiate(),
+            Err(ProtocolError::UnsupportedMinor { .. })
+        ));
+    }
     let cursor = Cursor::new("run:alpha", 42)?;
     assert_eq!(cursor.position_for("run:alpha")?, 42);
     assert!(cursor.position_for("run:beta").is_err());
