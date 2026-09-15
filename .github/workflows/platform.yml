@@ -39,6 +39,16 @@ jobs:
         run: |
           set -o pipefail
           cargo check --workspace --all-targets --all-features 2>&1 | tee "target/platform-evidence/check-${RUNNER_OS}.log"
+      - name: Diagnose normal Windows stdin
+        if: runner.os == 'Windows'
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p milkdrift-local-process --test process_execution --all-features \
+            argv_metacharacters_stdin_environment_and_outputs_are_bounded_and_literal \
+            -- --exact --nocapture \
+            2>&1 | tee "target/platform-evidence/stdin-${RUNNER_OS}.log"
       - name: Test pure, domain, protocol, client, and local-process contracts
         shell: bash
         run: |

@@ -168,7 +168,13 @@ pub(super) fn spawn_stdin_writer<W: Write + Send + 'static>(
                         if stop.load(Ordering::Acquire) {
                             return Ok(IoCompletion::Interrupted);
                         }
-                        match stdin.write(&remaining[..remaining.len().min(STREAM_READ_BYTES)]) {
+                        #[cfg(windows)]
+                        eprintln!("PIPE TRACE stdin before write {}", remaining.len());
+                        let written =
+                            stdin.write(&remaining[..remaining.len().min(STREAM_READ_BYTES)]);
+                        #[cfg(windows)]
+                        eprintln!("PIPE TRACE stdin after write {written:?}");
+                        match written {
                             // A full nonblocking Windows byte pipe can accept zero bytes.
                             Ok(0) => thread::sleep(IO_POLL_INTERVAL),
                             Ok(count) => remaining = &remaining[count..],
@@ -179,6 +185,8 @@ pub(super) fn spawn_stdin_writer<W: Write + Send + 'static>(
                             }
                         }
                     }
+                    #[cfg(windows)]
+                    eprintln!("PIPE TRACE stdin complete");
                     // Pipes are unbuffered here. FlushFileBuffers would wait for the child
                     // to consume stdin and would defeat interruption on Windows.
                     Ok(IoCompletion::Complete)
