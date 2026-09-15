@@ -22,7 +22,9 @@ and stream byte limits are separate [profile choices](../../adapters/model-provi
 
 Shared validation does not establish endpoint support. The adapter checks configured features
 and protocol mappings before HTTP, including roles, images, tools, structured output, reasoning,
-streaming, and sessions. Current mappings accept only `SessionSelection::Fresh`. There is no
+streaming, and sessions. Both mappings accept `Fresh` and runtime-prepared exact-reference
+`ExplicitContinuation`; [the continuation guide](../../docs/guides/model-continuation.md) explains
+selection, tool exchanges and refusal. Provider-managed sessions remain refused. There is no
 endpoint-specific numeric output-token limit discovery; an endpoint can refuse an allowance
 that passes shared validation. Follow the [model endpoint guide](../../docs/guides/local-model-endpoint.md)
 for setup and a complete operator scenario rather than treating the library example as a live call.

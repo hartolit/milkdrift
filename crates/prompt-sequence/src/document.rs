@@ -76,7 +76,7 @@ pub enum SessionPolicy {
     /// Request a fresh context for the stage.
     #[default]
     Fresh,
-    /// Request continuation through explicit prior evidence.
+    /// Retained declaration for inspection; current process sequence imports refuse it.
     ExplicitContinuation,
 }
 
@@ -482,6 +482,9 @@ impl PromptSequenceDocument {
 }
 
 fn validate_stage(stage: &StageDefinition, index: usize) -> Result<(), PromptSequenceError> {
+    if stage.session != SessionPolicy::Fresh {
+        return Err(PromptSequenceError::Invalid("process stages support only fresh execution; select durable prior evidence through the context policy".to_owned()));
+    }
     let location = format!("sequence.stages[{index}]");
     validate_identity(&format!("{location}.id"), &stage.id, 64)?;
     validate_text(&format!("{location}.title"), &stage.title, 1, 256)?;

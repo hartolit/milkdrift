@@ -205,10 +205,7 @@ impl RuntimeService {
             resolution.snapshot().capability().clone(),
             resolution.snapshot().provider_profile().cloned(),
             idempotency_key.clone(),
-            matches!(
-                resolution.descriptor().category(),
-                CapabilityCategory::Model | CapabilityCategory::Process
-            ),
+            resolution.descriptor().category(),
             now,
         ) {
             Ok(request) => request,
@@ -391,7 +388,7 @@ impl RuntimeService {
         capability: milkdrift_capability::CapabilityId,
         provider_profile: Option<milkdrift_capability::ProviderProfileRef>,
         idempotency_key: Option<IdempotencyKey>,
-        context_capable: bool,
+        category: &CapabilityCategory,
         now: TimestampMillis,
     ) -> Result<InvocationRequest, RuntimeError> {
         self.validate_projected_scope(projection, occurrence_scope, &[])?;
@@ -503,7 +500,16 @@ impl RuntimeService {
         let NodeKind::Task { config } = node.kind() else {
             return Ok(request);
         };
-        if !context_capable {
+        if config.context_policy().session() != milkdrift_blueprint::ContextSessionPolicy::Fresh
+            && (category != &CapabilityCategory::Model
+                || request.operation().as_str() != milkdrift_model::MODEL_GENERATE_OPERATION)
+        {
+            return Err(RuntimeError::Scheduling("process and other non-model session continuation is unsupported; use Fresh with selected durable evidence".to_owned()));
+        }
+        if !matches!(
+            category,
+            CapabilityCategory::Model | CapabilityCategory::Process
+        ) {
             return Ok(request);
         }
         let visible_scopes = self
@@ -574,28 +580,32 @@ impl RuntimeService {
                 self.store.as_ref(),
                 self.authority.as_ref(),
             );
+            let source_request = crate::ContextSourceRequest {
+                identity: identity.clone(),
+                revision,
+                policy: config.context_policy(),
+                scope: occurrence_scope,
+                direct_inputs: request.inputs(),
+                required_direct_inputs: &required_direct_inputs,
+                through_sequence: projection.sequence(),
+                projection,
+                authority: basis,
+                evaluated_at_ms: now.get(),
+            };
             let candidates = source
-                .discover(crate::ContextSourceRequest {
-                    identity: identity.clone(),
-                    revision,
-                    policy: config.context_policy(),
-                    scope: occurrence_scope,
-                    direct_inputs: request.inputs(),
-                    required_direct_inputs: &required_direct_inputs,
-                    through_sequence: projection.sequence(),
-                    projection,
-                    authority: basis,
-                    evaluated_at_ms: now.get(),
-                })
+                .discover(source_request.clone())
                 .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
-            crate::CausalContextBuilder::build(crate::ContextBuildRequest {
+            let manifest = crate::CausalContextBuilder::build(crate::ContextBuildRequest {
                 identity,
                 semantic: revision.semantic(),
                 policy: config.context_policy(),
                 visible_scopes,
                 candidates,
             })
-            .map_err(|error| RuntimeError::Scheduling(error.to_string()))?
+            .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
+            source
+                .attach_continuation(&source_request, manifest)
+                .map_err(|error| RuntimeError::Scheduling(error.to_string()))?
         };
         let budget = projection.workspace_budget().ok_or_else(|| {
             RuntimeError::InvalidHistory("run has no workspace budget".to_owned())

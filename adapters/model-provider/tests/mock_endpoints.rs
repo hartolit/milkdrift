@@ -53,6 +53,8 @@ use milkdrift_workspace::{
 };
 use serde_json::{Value, json};
 
+#[path = "mock_endpoints/continuation.rs"]
+mod continuation;
 #[path = "mock_endpoints/effect_stages.rs"]
 mod effect_stages;
 #[path = "mock_endpoints/runtime_session.rs"]
@@ -366,16 +368,18 @@ fn serve(
     Ok((address, handle))
 }
 
-fn serve_delayed_stream(
-    first_event: String,
-) -> TestResult<(
-    String,
-    mpsc::Receiver<()>,
-    thread::JoinHandle<std::io::Result<()>>,
-)> {
+struct CancellableStream {
+    address: String,
+    ready: mpsc::Receiver<()>,
+    release: mpsc::Sender<()>,
+    server: thread::JoinHandle<std::io::Result<()>>,
+}
+
+fn serve_cancellable_stream(first_event: String) -> TestResult<CancellableStream> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let address = listener.local_addr()?.to_string();
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::channel();
     let handle = thread::spawn(move || {
         let (mut stream, _) = listener.accept()?;
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
@@ -388,10 +392,19 @@ fn serve_delayed_stream(
         ready_tx
             .send(())
             .map_err(|_| std::io::Error::other("test receiver dropped"))?;
-        thread::sleep(Duration::from_millis(250));
+        release_rx
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|_| {
+                std::io::Error::other("cancellation was not signalled before stream close")
+            })?;
         Ok(())
     });
-    Ok((address, ready_rx, handle))
+    Ok(CancellableStream {
+        address,
+        ready: ready_rx,
+        release: release_tx,
+        server: handle,
+    })
 }
 
 fn read_request(stream: &mut TcpStream) -> std::io::Result<String> {

@@ -233,6 +233,13 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
             ],
         ),
         (
+            "Explicit continuation companion",
+            vec![(
+                "crates/model/src/document.rs",
+                "MODEL_CONTRACT_SCHEMA_VERSION_V1",
+            )],
+        ),
+        (
             "Proposal / workflow-control command / risk policy / controller policy",
             vec![
                 (
@@ -496,6 +503,9 @@ fn every_maintained_example_has_a_production_reader() -> TestResult {
             | "external-evidence/openai-compatible-profile.example.json"
             | "external-evidence/anthropic-profile.example.json" => {
                 milkdrift_model_provider::EndpointProfile::from_json(&bytes)?;
+            }
+            "local-model/continuation-request.example.json" => {
+                milkdrift_model::ModelTaskRequestDocument::from_json(&bytes)?;
             }
             "headless-dogfood-sequence.md" => {
                 milkdrift_prompt_sequence::PromptSequenceDocument::from_bytes(&bytes)?;

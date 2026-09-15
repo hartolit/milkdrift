@@ -201,3 +201,9 @@ document!(
     manifest,
     "context manifest"
 );
+document!(
+    ContinuationHistoryDocument,
+    crate::ContinuationHistory,
+    continuation,
+    "continuation history"
+);

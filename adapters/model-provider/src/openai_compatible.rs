@@ -63,6 +63,11 @@ pub(crate) fn request(
         if let Some(id) = message.tool_call_id() {
             value["tool_call_id"] = Value::String(id.to_owned());
         }
+        if !message.tool_calls().is_empty() {
+            value["tool_calls"] = Value::Array(message.tool_calls().iter().map(|call| json!({
+                "id": call.id(), "type": "function", "function": { "name": call.name(), "arguments": call.arguments().value().to_string() }
+            })).collect());
+        }
         Ok(value)
     }).collect::<Result<Vec<_>, HttpError>>()?;
     messages.insert(0, json!({
@@ -155,6 +160,7 @@ pub(crate) fn response(
         .get("message")
         .and_then(Value::as_object)
         .ok_or(HttpError::MalformedResponse)?;
+    validate_message_fields(message)?;
     let text = message
         .get("content")
         .and_then(Value::as_str)
@@ -183,6 +189,23 @@ pub(crate) fn response(
     )]);
     ModelResponse::new(text, structured, tool_calls, finish, usage, metadata)
         .map_err(|_| HttpError::MalformedResponse)
+}
+
+// Unknown message semantics cannot be silently discarded and later replayed as a
+// complete conversation. Null optional fields carry no content and remain harmless.
+fn validate_message_fields(message: &Map<String, Value>) -> Result<(), HttpError> {
+    if message.iter().any(|(key, value)| {
+        !value.is_null() && !matches!(key.as_str(), "role" | "content" | "tool_calls")
+    }) || message
+        .get("role")
+        .is_some_and(|role| !role.is_null() && role.as_str() != Some("assistant"))
+        || message
+            .get("content")
+            .is_some_and(|content| !content.is_null() && !content.is_string())
+    {
+        return Err(HttpError::MalformedResponse);
+    }
+    Ok(())
 }
 
 pub(crate) struct StreamState {
@@ -272,6 +295,7 @@ impl StreamState {
         let Some(delta) = choice.get("delta").and_then(Value::as_object) else {
             return Ok(());
         };
+        validate_message_fields(delta)?;
         if let Some(content) = delta.get("content").and_then(Value::as_str) {
             self.text.push_str(content);
             fragment(content)?;
@@ -558,6 +582,31 @@ fn merge_extensions(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn response_roles_and_unmapped_message_content_are_refused() {
+        for message in [
+            serde_json::json!({"role":"system","content":"instructions"}),
+            serde_json::json!({"role":"assistant","content":"answer","future_memory":"opaque"}),
+            serde_json::json!({"role":"assistant","content":[{"type":"audio","data":"unknown"}]}),
+        ] {
+            assert!(
+                super::response(
+                    &serde_json::json!({"choices":[{"message":message,"finish_reason":"stop"}]}),
+                    false
+                )
+                .is_err()
+            );
+            let mut state = super::StreamState::new();
+            assert!(
+                state
+                    .event(
+                        &serde_json::json!({"choices":[{"delta":message}]}).to_string(),
+                        |_| Ok(())
+                    )
+                    .is_err()
+            );
+        }
+    }
     use super::*;
 
     #[test]

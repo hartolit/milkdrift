@@ -26,6 +26,27 @@ See [status](../product/status.md) for executed evidence and platform limits.
 
 ## Actual-binary scenarios
 
+The deterministic `local-model-evidence` lane also exercises explicit model continuation. It
+inspects a canonical predecessor, submits and adopts an ordinary prospective proposal, restarts
+before release, and captures the continued request beside a Fresh request. Inspection exposes the
+exact companion and remains unchanged after a second restart. A separate case gives a complete text
+response to a tool-output acceptance contract: continuation must refuse that rejected answer before
+scheduling or contacting its endpoint. Both cases use the actual daemon and CLI, not a provider
+session service. Run the lane with the `evidence-process-helper` binary, as specified below and in CI.
+
+`cargo test -p milkdrift-model-provider --test mock_endpoints --all-features` exercises both wire
+mappings through runtime and the capability host. Continuation cases cover same-run source linkage,
+sibling scope and other-actor references, missing/corrupt/unsupported evidence, retained-policy
+refusal, bounds, current grant revocation, three-invocation chains, complete/incomplete tool pairs,
+excluded traces in saved request messages, source corruption or read revocation after claim, later artifact publication,
+and store reopen after selection. Model contract tests pin the companion/request fixtures and reject
+cycles, depth overflow, unknown fields and instruction-role injection. Parser tests reject unsupported
+response roles and content; sequence tests reject non-Fresh process imports. These mock lanes make no
+real provider-session interoperability claim. The stream-cancellation unit regression forces a
+cancellation during the body read before EOF, a transport error or malformed content returns;
+the HTTP fixture holds its connection until cancellation has been acknowledged. Both preserve
+uncertainty without claiming remote termination.
+
 Offline storage composition is exercised by
 `cargo test -p milkdrift-daemon --test storage_admin --all-features` and the structured-runtime
 `context_enforcement::offline_binary_inspects_blocked_legacy_context_without_disclosing_or_rewriting_it`

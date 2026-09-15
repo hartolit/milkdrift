@@ -72,6 +72,8 @@ pub struct Message {
     role: MessageRole,
     parts: Vec<ContentPart>,
     tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tool_calls: Vec<ToolCall>,
 }
 
 impl Message {
@@ -89,6 +91,7 @@ impl Message {
             role,
             parts,
             tool_call_id,
+            tool_calls: Vec::new(),
         };
         message.validate()?;
         Ok(message)
@@ -112,7 +115,29 @@ impl Message {
         self.tool_call_id.as_deref()
     }
 
+    /// Attaches returned calls to an assistant message. Calls remain data, never execution authority.
+    pub fn with_tool_calls(mut self, calls: Vec<ToolCall>) -> Result<Self, ModelContractError> {
+        self.tool_calls = calls;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Calls proposed by this assistant message, in provider order.
+    #[must_use]
+    pub fn tool_calls(&self) -> &[ToolCall] {
+        &self.tool_calls
+    }
+
     fn validate(&self) -> Result<(), ModelContractError> {
+        let mut calls = BTreeSet::new();
+        if self.tool_calls.len() > MAX_TOOL_CALLS
+            || (!self.tool_calls.is_empty() && self.role != MessageRole::Assistant)
+            || self.tool_calls.iter().any(|call| !calls.insert(call.id()))
+        {
+            return Err(ModelContractError::Invalid(
+                "invalid assistant tool calls".to_owned(),
+            ));
+        }
         if self.parts.is_empty() || self.parts.len() > MAX_PARTS {
             return Err(ModelContractError::Invalid(format!(
                 "a message must contain 1..={MAX_PARTS} parts"
@@ -153,13 +178,16 @@ struct MessageWire {
     role: MessageRole,
     parts: Vec<ContentPart>,
     tool_call_id: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<ToolCall>,
 }
 
 milkdrift_contracts::deserialize_via!(Message, MessageWire, |wire| Self::new(
     wire.role,
     wire.parts,
     wire.tool_call_id
-));
+)
+.and_then(|message| message.with_tool_calls(wire.tool_calls)));
 
 /// Describes a callable shape that a model may request in its response.
 ///
@@ -295,8 +323,9 @@ milkdrift_contracts::deserialize_via!(StructuredOutput, StructuredOutputWire, |w
 
 /// Selects the model request's conversation state explicitly.
 ///
-/// Current endpoint mappings accept only `Fresh`. The continuation variants preserve
-/// intent in the contract but are refused before HTTP until a mapping supports them.
+/// Runtime resolves `ExplicitContinuation` into a frozen conversation artifact for the
+/// existing model mappings. `Fresh` never discovers a conversation. Provider-managed
+/// and persistent process sessions remain unsupported.
 /// Runtime compares this request field with the governing blueprint context-session
 /// declaration before claiming the invocation, including on retry and recovery.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -366,7 +395,8 @@ impl ModelTaskRequest {
     /// `maximum_output_units` is an inclusive output allowance in
     /// `1..=MAX_MODEL_OUTPUT_UNITS`, sent as `max_tokens` by the current mappings. It
     /// neither limits input size nor reserves that many bytes. Set `session` explicitly;
-    /// both current endpoint mappings support only [`SessionSelection::Fresh`].
+    /// both current endpoint mappings support [`SessionSelection::Fresh`] and
+    /// runtime-prepared [`SessionSelection::ExplicitContinuation`].
     ///
     /// # Errors
     ///

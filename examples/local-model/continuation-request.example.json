@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "parts": [{"type": "text", "text": "Continue the selected answer using this new question."}],
+        "tool_call_id": null
+      }
+    ],
+    "tools": [],
+    "structured_output": null,
+    "session": {
+      "type": "explicit_continuation",
+      "manifest": {
+        "identity": "replace-with-inspected-manifest-artifact",
+        "digest": "0000000000000000000000000000000000000000000000000000000000000000",
+        "media_type": "application/vnd.milkdrift.context-manifest.v2+json",
+        "size_bytes": 1
+      },
+      "response": {
+        "identity": "replace-with-inspected-model-response-artifact",
+        "digest": "0000000000000000000000000000000000000000000000000000000000000000",
+        "media_type": "application/vnd.milkdrift.model-response.v1+json",
+        "size_bytes": 1
+      }
+    },
+    "reasoning": null,
+    "maximum_output_units": 256,
+    "streaming": false,
+    "extensions": {}
+  }
+}

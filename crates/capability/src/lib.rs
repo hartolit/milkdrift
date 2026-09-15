@@ -54,3 +54,12 @@ pub use invocation::{
     InvocationValueReference, MAX_DURABLE_REFERENCE_BYTES, TerminalStatus, UsageObservation,
 };
 pub use resolved::ResolvedCapabilitySnapshot;
+
+/// Ordinary capability operation whose output marker establishes purpose-specific acceptance.
+/// The control adapter owns evaluation; consumers may observe its durable invocation result.
+pub const WORKFLOW_ACCEPT_RESULT_OPERATION: &str = "workflow.accept_result";
+/// Input naming the immutable result evaluated by `workflow.accept_result`.
+pub const RESULT_ACCEPTANCE_SUBJECT_INPUT: &str = "result";
+/// Output published only when the acceptance operation's declared requirement passes.
+/// It references the immutable acceptance decision, not the evaluated subject.
+pub const ACCEPTED_RESULT_OUTPUT: &str = "accepted_result";

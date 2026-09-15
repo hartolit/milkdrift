@@ -424,6 +424,13 @@ Model adapters reject unadvertised roles, parts, tools, schemas, reasoning, stre
 oversized encoded requests before entry. Output/tool calls remain artifacts, not automatic tool
 execution. The two provider mappings preserve their own response/stream semantics and truthful
 usage, cancellation, idempotency, and side-effect limits.
+Runtime context assembly resolves explicit model continuation from exact prior manifest/response
+artifacts and journal anchors. It freezes ordered messages and provenance in a versioned companion
+selected by the ordinary manifest; adapters only translate that prepared selection. No conversation
+ledger or provider session pointer is added to hot projections. Current authority and source evidence
+are rechecked after local preparation before every entry, including recovery and retry.
+[ADR 0036](decisions/0036-explicit-model-continuation.md)
+defines the supported boundary and compatibility choices.
 Local preparation owns the exact encoded request and ephemeral headers under the host's generation
 permit. Runtime rechecks authority afterward, refreshes unrelated journal writes while validating
 the exact prepared ticket, and commits against that checked run head. A durable local refusal

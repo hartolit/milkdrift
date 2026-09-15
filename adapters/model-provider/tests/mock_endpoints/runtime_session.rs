@@ -161,7 +161,7 @@ fn governing_session_is_enforced_before_http_for_both_request_forms() -> TestRes
                     )),
                     declared == "fresh" && requested == "fresh"
                 );
-                if declared == requested && declared != "fresh" {
+                if declared == requested && declared == "provider_managed" {
                     assert!(
                         history.iter().any(|event| matches!(
                             event.kind(),
@@ -231,51 +231,32 @@ impl ModelFixture {
         authority: Arc<dyn AuthorityEvaluator>,
         faults: Arc<dyn milkdrift_redb_store::FaultInjector>,
     ) -> TestResult<Self> {
+        Self::with_graph(
+            profile,
+            declared,
+            document,
+            artifact_backed,
+            authority,
+            faults,
+            Ok,
+        )
+    }
+
+    pub(super) fn with_graph(
+        profile: EndpointProfile,
+        declared: &str,
+        document: Vec<u8>,
+        artifact_backed: bool,
+        authority: Arc<dyn AuthorityEvaluator>,
+        faults: Arc<dyn milkdrift_redb_store::FaultInjector>,
+        graph: impl FnOnce(Vec<Mutation>) -> TestResult<Vec<Mutation>>,
+    ) -> TestResult<Self> {
         let directory = tempfile::tempdir()?;
         let store = Arc::new(RedbStore::open_with_config(
             milkdrift_redb_store::RedbStoreConfig::new(directory.path().join("store"))
                 .with_fault_injector(faults),
         )?);
-        let read_denial = Arc::new(AtomicBool::new(false));
-        let data = Arc::new(ReadGuard {
-            denied: read_denial.clone(),
-            inner: StoreInvocationDataAccess::new(
-                store.clone(),
-                directory.path().join("materialized"),
-                ArtifactReadAuthority::Authorized {
-                    actor: ActorRef::new("human:session")?,
-                    evidence: EvidenceId::new("session-read")?,
-                },
-            )?,
-        });
-        let capability = CapabilityId::new("session-model")?;
-        let descriptor = descriptor_for_profile(capability.clone(), &profile)?;
-        let adapter = Arc::new(ModelEndpointAdapter::new(
-            capability,
-            profile,
-            Arc::new(InMemorySecretResolver::new()),
-            data.clone(),
-        )?);
-        let host = Arc::new(CapabilityHost::new(
-            HostConfig {
-                max_registrations: 1,
-                max_generations_per_capability: 1,
-                max_concurrent_per_generation: 1,
-                observation_stale_after_ms: 10_000,
-            },
-            CapabilitySelectionPolicy::priorities(BTreeMap::new()),
-        )?);
-        host.register(
-            descriptor.clone(),
-            adapter.clone(),
-            Some(CapabilityObservation::new(
-                descriptor.identity().clone(),
-                1000,
-                true,
-                0,
-                "ready",
-            )?),
-        )?;
+        let (host, adapter, read_denial) = model_host(store.clone(), directory.path(), profile)?;
         let mut policy = serde_json::to_value(TaskContextPolicy::default())?;
         policy["session"] = json!(declared);
         let mut node = Node::new(
@@ -287,7 +268,12 @@ impl ModelFixture {
         )?
         .with_control_output(PortId::new("out")?)?;
         let schema = SchemaRef::new(SchemaId::new("test.model-request")?, 1)?;
-        for output in ["model_response", "final_text", "provider_metadata"] {
+        for output in [
+            "model_response",
+            "final_text",
+            "provider_metadata",
+            "tool_calls",
+        ] {
             node = node.with_data_output(PortId::new(output)?, DataPort::output(schema.clone()))?;
         }
         let binding = if artifact_backed {
@@ -339,7 +325,7 @@ impl ModelFixture {
         let interface = WorkflowInterface::new([], [])?;
         let revision = BlueprintRevision::genesis(
             WorkflowId::new("session-http")?,
-            MutationBatch::new(vec![
+            MutationBatch::new(graph(vec![
                 Mutation::SetInterface { interface },
                 Mutation::AddNode { node },
                 Mutation::AddNode {
@@ -361,7 +347,7 @@ impl ModelFixture {
                         PortId::new("in")?,
                     ),
                 },
-            ])?,
+            ])?)?,
             AuthorRef::new("human:session")?,
             "session request",
         )?;
@@ -489,5 +475,108 @@ impl InvocationDataAccess for ReadGuard {
     ) -> Result<ArtifactReference, InvocationDataError> {
         self.inner
             .publish_bytes(context, request, name, media, bytes, limits)
+    }
+}
+
+fn model_host(
+    store: Arc<RedbStore>,
+    directory: &Path,
+    profile: EndpointProfile,
+) -> TestResult<(
+    Arc<CapabilityHost>,
+    Arc<ModelEndpointAdapter>,
+    Arc<AtomicBool>,
+)> {
+    let read_denial = Arc::new(AtomicBool::new(false));
+    let data = Arc::new(ReadGuard {
+        denied: read_denial.clone(),
+        inner: StoreInvocationDataAccess::new(
+            store.clone(),
+            directory.join("materialized"),
+            ArtifactReadAuthority::Authorized {
+                actor: ActorRef::new("human:session")?,
+                evidence: EvidenceId::new("session-read")?,
+            },
+        )?,
+    });
+    let capability = CapabilityId::new("session-model")?;
+    let descriptor = descriptor_for_profile(capability.clone(), &profile)?;
+    let adapter = Arc::new(ModelEndpointAdapter::new(
+        capability,
+        profile,
+        Arc::new(InMemorySecretResolver::new()),
+        data.clone(),
+    )?);
+    let host = Arc::new(CapabilityHost::new(
+        HostConfig {
+            max_registrations: 1,
+            max_generations_per_capability: 1,
+            max_concurrent_per_generation: 1,
+            observation_stale_after_ms: 10_000,
+        },
+        CapabilitySelectionPolicy::priorities(BTreeMap::new()),
+    )?);
+    host.register(
+        descriptor.clone(),
+        adapter.clone(),
+        Some(CapabilityObservation::new(
+            descriptor.identity().clone(),
+            1000,
+            true,
+            0,
+            "ready",
+        )?),
+    )?;
+    Ok((host, adapter, read_denial))
+}
+
+impl ModelFixture {
+    pub(super) fn reopen(
+        self,
+        profile: EndpointProfile,
+        authority: Arc<dyn AuthorityEvaluator>,
+        now: u64,
+    ) -> TestResult<Self> {
+        let Self {
+            runtime,
+            host,
+            store,
+            run,
+            directory,
+            adapter,
+            read_denial,
+        } = self;
+        drop(runtime);
+        drop(adapter);
+        drop(host);
+        drop(store);
+        drop(read_denial);
+        let store = Arc::new(RedbStore::open(directory.path().join("store"))?);
+        let (host, adapter, read_denial) = model_host(store.clone(), directory.path(), profile)?;
+        let runtime = RuntimeService::new_with_authority(
+            store.clone(),
+            host.clone(),
+            authority,
+            Arc::new(milkdrift_runtime::ManualClock::new(now)),
+            Arc::new(SequentialIdGenerator::new("continuation-reopen", 1)?),
+            RuntimeConfig::new(
+                WorkerId::new("session-worker")?,
+                ActorRef::new("controller:session")?,
+                30_000,
+                16,
+                SchedulerLimits::new(8, 4, 2, 4)?,
+                RetryPolicy::new(1, Vec::new(), 1, 1000, 0)?,
+            )?,
+        )?;
+        runtime.recover()?;
+        Ok(Self {
+            runtime,
+            host,
+            store,
+            run,
+            directory,
+            adapter,
+            read_denial,
+        })
     }
 }

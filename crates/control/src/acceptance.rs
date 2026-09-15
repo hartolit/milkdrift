@@ -21,8 +21,7 @@ pub const RESULT_ACCEPTANCE_SCHEMA_VERSION: u32 = 1;
 pub const RESULT_ACCEPTANCE_INPUT: &str = "milkdrift.acceptance";
 /// Named artifact containing the decision, including a rejection reason.
 pub const RESULT_ACCEPTANCE_OUTPUT: &str = "acceptance_result";
-/// Published only when the declared requirement is satisfied. Branch on its presence.
-pub const ACCEPTED_RESULT_OUTPUT: &str = "accepted_result";
+pub use milkdrift_capability::ACCEPTED_RESULT_OUTPUT;
 /// Maximum bytes read from any one result or evidence artifact.
 pub const MAX_ACCEPTANCE_INPUT_BYTES: u64 = milkdrift_model::MAX_MODEL_DOCUMENT_BYTES as u64;
 
@@ -65,9 +64,11 @@ impl ResultAcceptanceContract {
         evidence_inputs: BTreeSet<String>,
     ) -> Result<Self, ControlError> {
         if evidence_inputs.len() > 32
-            || evidence_inputs
-                .iter()
-                .any(|name| !safe_name(name) || name == "result" || name == RESULT_ACCEPTANCE_INPUT)
+            || evidence_inputs.iter().any(|name| {
+                !safe_name(name)
+                    || name == milkdrift_capability::RESULT_ACCEPTANCE_SUBJECT_INPUT
+                    || name == RESULT_ACCEPTANCE_INPUT
+            })
         {
             return Err(invalid_contract());
         }

@@ -15,11 +15,12 @@ use super::RuntimeService;
 use crate::RuntimeError;
 
 impl RuntimeService {
-    pub(super) fn validate_model_session(
+    pub(super) fn validate_task_session(
         &self,
         revision: &RevisionId,
         node: &NodeId,
         request: &InvocationRequest,
+        category: Option<&milkdrift_capability::CapabilityCategory>,
         basis: &ExecutionAuthorityBasis,
         now: TimestampMillis,
     ) -> Result<(), RuntimeError> {
@@ -32,6 +33,19 @@ impl RuntimeService {
         else {
             return Ok(());
         };
+        if request.operation().as_str() != milkdrift_model::MODEL_GENERATE_OPERATION
+            || category.is_some_and(|category| {
+                category != &milkdrift_capability::CapabilityCategory::Model
+            })
+        {
+            return if config.context_policy().session() == ContextSessionPolicy::Fresh {
+                Ok(())
+            } else {
+                Err(invalid(
+                    "non-model capabilities support only Fresh execution with explicitly selected durable evidence",
+                ))
+            };
+        }
         let Some(input) = request
             .inputs()
             .iter()
@@ -125,6 +139,51 @@ impl RuntimeService {
             return Err(invalid(
                 "model request session contradicts the governing task context policy",
             ));
+        }
+        if matches!(
+            task.body().session(),
+            SessionSelection::ExplicitContinuation { .. }
+        ) {
+            let reference = request
+                .context_manifest()
+                .ok_or_else(|| invalid("continuation manifest is absent"))?;
+            let manifest = crate::read_context_manifest(
+                self.store.as_ref(),
+                reference,
+                ArtifactReadAuthority::Authorized {
+                    actor: basis.actor().clone(),
+                    evidence: EvidenceId::new(format!("continuation:{}", request.invocation()))?,
+                },
+            )
+            .map_err(|error| invalid(&error.to_string()))?;
+            let projection = self.projection(manifest.run())?;
+            let execution = projection
+                .node_executions()
+                .get(manifest.execution())
+                .ok_or_else(|| invalid("continuation execution is absent"))?;
+            crate::DurableContextCandidateSource::new(self.store.as_ref(), self.authority.as_ref())
+                .check_continuation(
+                    &crate::ContextSourceRequest {
+                        identity: crate::ContextBuildIdentity {
+                            run: manifest.run().clone(),
+                            revision: revision.id().clone(),
+                            node: node.clone(),
+                            execution: manifest.execution().clone(),
+                            attempt: manifest.attempt().clone(),
+                        },
+                        revision: &revision,
+                        policy: config.context_policy(),
+                        scope: execution.scope(),
+                        direct_inputs: request.inputs(),
+                        required_direct_inputs: &std::collections::BTreeSet::new(),
+                        through_sequence: projection.sequence(),
+                        projection: &projection,
+                        authority: basis,
+                        evaluated_at_ms: now.get(),
+                    },
+                    &manifest,
+                )
+                .map_err(|error| invalid(&error.to_string()))?;
         }
         Ok(())
     }

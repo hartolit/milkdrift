@@ -92,7 +92,7 @@ impl WorkflowControlAdapter {
                 .iter()
                 .find(|input| input.name() == name)
         };
-        let Some(source) = input("result") else {
+        let Some(source) = input(milkdrift_capability::RESULT_ACCEPTANCE_SUBJECT_INPUT) else {
             return ResultAcceptance::rejected(AcceptanceReason::MissingRequiredOutput);
         };
         let Ok((_, bytes)) = self.results.read(invocation, source) else {

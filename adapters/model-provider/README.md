@@ -40,6 +40,7 @@ then reject features they cannot encode rather than silently dropping them.
 | Developer role | Available when advertised | Refused |
 | Structured JSON output | Sends the requested schema; parses returned JSON | Refused |
 | Reasoning | Maps effort when advertised; reasoning-unit budget refused | Refused |
+| Exact Milkdrift continuation | Bounded text history and complete tool pairs | Same selection, native message/tool blocks |
 | Generic files or managed sessions | Refused | Refused |
 
 These are Milkdrift mapping choices, not claims about every endpoint implementing either API.
@@ -111,11 +112,19 @@ lost response retains the existing reservation and uncertainty behavior; timeout
 do not establish that remote generation stopped. See the
 [local setup guide](../../docs/guides/local-model-endpoint.md#controlled-local-text-requests).
 
-Only `ModelTaskRequest::session() == Fresh` is accepted. Runtime first compares the request with the
-governing blueprint declaration when claiming the invocation, including inline/artifact requests,
-retries, and recovered leases. Matching continuation still fails this adapter's protocol check;
-neither boundary replaces continuation with a fresh session. Standalone adapter callers supply
-their own governing-policy enforcement because this adapter has no workflow revision store.
+`Fresh` supplies current selected context without discovering a conversation. `ExplicitContinuation`
+requires the exact predecessor manifest and canonical response. Runtime proves their authority,
+causality and linkage, then freezes a bounded history artifact in the current manifest. Both mappings
+read that same selection: prior evidence and task input keep user/data roles, prior responses keep
+assistant roles, and only the current task supplies system/developer instructions. Complete tool
+pairs retain call identities; images, files and provider-specific request extensions in predecessor
+messages are refused. Unknown response roles/content features are refused instead of discarded.
+The [continuation guide](../../docs/guides/model-continuation.md) owns the limits and operator steps.
+
+Runtime compares the request with the governing declaration before claim and after local preparation,
+including inline/artifact requests, retries and recovered leases. Standalone adapter callers must
+provide their own governing policy and source checks: the adapter verifies the prepared companion's binding and shape but has no
+workflow revision or journal store. `ProviderManaged` remains refused by both mappings.
 
 ## Prepare once before external entry
 

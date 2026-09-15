@@ -9,6 +9,16 @@ use serde_json::{Value, json};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+#[test]
+fn process_sequence_refuses_continuation_declarations() -> TestResult {
+    for session in ["explicit_continuation", "provider_managed"] {
+        let mut value = document_value();
+        value["sequence"]["stages"][0]["session"] = json!(session);
+        assert!(PromptSequenceDocument::from_json(&serde_json::to_vec(&value)?).is_err());
+    }
+    Ok(())
+}
+
 fn profile(capability: &str, maximum_side_effect: &str) -> Value {
     json!({
         "capability": capability,

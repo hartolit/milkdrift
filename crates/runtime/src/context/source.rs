@@ -37,6 +37,7 @@ use super::{
 const SOURCE_PAGE_SIZE: u32 = 256;
 
 mod candidate;
+mod continuation;
 mod direct;
 mod discovery;
 mod explicit;
@@ -46,6 +47,7 @@ pub(crate) use materialize::read_model_document_bytes;
 pub use materialize::{materialize_selected_context, read_context_manifest};
 
 /// Frozen facts used by the canonical runtime candidate source.
+#[derive(Clone)]
 pub struct ContextSourceRequest<'a> {
     /// Exact current attempt identity.
     pub identity: ContextBuildIdentity,

@@ -504,6 +504,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
         None
     };
     let report = json!({
+        "explicit_continuation": if arguments.mode == Mode::Deterministic { Some(continuation::scenario(&arguments, &output)?) } else { None },
         "local_preparation_refusal": preparation::scenario(&arguments, &output)?,
         "schema_version": 1,
         "kind": "local_model_smoke",
@@ -1060,6 +1061,8 @@ use milkdrift_evidence::http_fixture::read_request;
 
 #[path = "local-model-evidence/acceptance.rs"]
 mod acceptance;
+#[path = "local-model-evidence/continuation.rs"]
+mod continuation;
 #[path = "local-model-evidence/preparation.rs"]
 mod preparation;
 #[path = "local-model-evidence/profiles.rs"]

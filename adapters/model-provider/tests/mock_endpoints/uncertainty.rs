@@ -2,7 +2,12 @@ use super::*;
 
 #[test]
 fn streaming_cancellation_is_cooperative_and_does_not_claim_remote_termination() -> TestResult {
-    let (address, ready, server) = serve_delayed_stream(format!(
+    let CancellableStream {
+        address,
+        ready,
+        release,
+        server,
+    } = serve_cancellable_stream(format!(
         "data: {}\n\n",
         json!({"choices":[{"delta":{"content":"partial"},"finish_reason":null}]})
     ))?;
@@ -62,6 +67,7 @@ fn streaming_cancellation_is_cooperative_and_does_not_claim_remote_termination()
     let acknowledgement = adapter.cancel(&CancellationRequest::new(invocation, 1, "stop")?)?;
     assert!(acknowledgement.accepted());
     assert!(!acknowledgement.terminal_boundary());
+    release.send(())?;
     worker.join().map_err(|_| "adapter worker panicked")??;
     server.join().map_err(|_| "server panicked")??;
     let events = reporter.events()?;

@@ -44,9 +44,10 @@ The repository profile, stage contract, and verification contract become task in
 processes interpret those declarations; importing them does not create worktrees, inspect Git,
 configure credentials, or enforce a filesystem allowlist. `context_policy_ref` is descriptive
 data; the compiler builds the task's context policy itself. It requests relevant ancestor evidence
-and records output roles for later tasks. A session declaration alone does not arrange external
-continuation. Generated stages use `process.execute`, so the model request's session-agreement
-check does not interpret their stage contract; see the [blueprint policy API](../blueprint/src/context.rs).
+and records output roles for later tasks. Generated stages use `process.execute` and accept only
+`fresh`; imports requesting continuation are refused. Use a fresh process with explicitly selected
+durable prior evidence. Runtime also refuses retained non-Fresh process tasks before entry; see the
+[blueprint policy API](../blueprint/src/context.rs).
 
 ## Read imports and associate results
 

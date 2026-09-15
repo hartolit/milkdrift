@@ -207,10 +207,7 @@ pub fn persist_context_manifest(
     workspace_budget: WorkspaceBudget,
     expected_usage: WorkspaceUsage,
 ) -> Result<milkdrift_capability::ArtifactReference, ContextBuildError> {
-    use milkdrift_persistence::{
-        ArtifactPublicationId, BeginArtifactOutcome, BeginArtifactPublication,
-        MAX_ARTIFACT_CHUNK_BYTES,
-    };
+    use milkdrift_persistence::ArtifactPublicationId;
     let bytes =
         milkdrift_model::ContextManifestDocument::new(manifest.clone()).to_canonical_json()?;
     let identity = format!("context-manifest:{}", manifest.digest().as_str());
@@ -242,9 +239,32 @@ pub fn persist_context_manifest(
         manifest.digest().as_str()
     ))
     .map_err(|error| ContextBuildError::Persistence(error.to_string()))?;
+    publish_context_artifact(
+        store,
+        manifest.run(),
+        metadata,
+        publication,
+        &bytes,
+        workspace_budget,
+        expected_usage,
+    )
+}
+
+pub(crate) fn publish_context_artifact(
+    store: &dyn milkdrift_persistence::ArtifactStore,
+    run: &RunId,
+    metadata: ArtifactMetadata,
+    publication: milkdrift_persistence::ArtifactPublicationId,
+    bytes: &[u8],
+    workspace_budget: WorkspaceBudget,
+    expected_usage: WorkspaceUsage,
+) -> Result<milkdrift_capability::ArtifactReference, ContextBuildError> {
+    use milkdrift_persistence::{
+        BeginArtifactOutcome, BeginArtifactPublication, MAX_ARTIFACT_CHUNK_BYTES,
+    };
     let request = BeginArtifactPublication::new(
         publication.clone(),
-        manifest.run().clone(),
+        run.clone(),
         metadata,
         workspace_budget,
         expected_usage,

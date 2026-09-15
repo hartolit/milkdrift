@@ -49,7 +49,9 @@ remains blocked pending coordinator acceptance of the corrective qualification. 
 implemented by the current Codex task, explicitly assigned by the user at base `d537059`.
 Its [handoff](04-handoff.md) records the completed offline operating path, full verification and
 preserved execution restrictions; the result is ready for coordinator acceptance.
-Assignments 05–08 have not started; advancing requires coordinator acceptance.
+Assignment 05 is owned by the current Codex task, explicitly assigned by the user at base `9f6bd0f`.
+Its [handoff](05-handoff.md) records implementation, verification and review state. Assignments 06–08
+remain unstarted and require separate assignment/coordinator acceptance.
 
 The user additionally authorized implementing the missing repair path after assignment 04.
 The same task owns 04A; [its handoff](04a-handoff.md) records the result and evidence. This addition

@@ -41,7 +41,7 @@ pub fn result_acceptance_task(
                 )?,
             )?
             .with_data_input(
-                PortId::new("result")?,
+                PortId::new(milkdrift_capability::RESULT_ACCEPTANCE_SUBJECT_INPUT)?,
                 DataPort::input(artifact_schema.clone(), false, None)?,
             )?
             .with_data_output(

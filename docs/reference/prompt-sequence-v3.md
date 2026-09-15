@@ -54,7 +54,7 @@ Each stage contains:
 | --- | --- |
 | `id`, `title` | Stable unique stage identity and display title. |
 | `prompt` | Inline Markdown or a digest/media-type/size-bound artifact reference. |
-| `session` | `fresh` or `explicit_continuation`; generated coding nodes preserve it exactly. |
+| `session` | `fresh`; process continuation declarations are refused on import. |
 | `coding` | Preconfigured exact capability/profile requirement. |
 | `verification` | Preconfigured verifier, safe check identities, required result and optional distinct log artifact names. |
 | `failure` | `pause_for_review` or `fail_run`. |
@@ -103,9 +103,9 @@ terminal is reachable only through accepted stages. Coding receives prompt, repo
 and stage contract as typed direct inputs. Verification receives repository and verification contracts.
 
 The compiler requests causal implementation/requirement evidence for coding and records the
-declared session intent. Verification and review request fresh sessions; the configured processes
-must implement that intent. A declaration alone does not arrange or enforce external continuation;
-see the [context-policy contract](../../crates/blueprint/src/context.rs).
+Fresh session intent. Coding, verification and review execute fresh processes. Prior work can be
+supplied as selected durable evidence; this does not create a persistent CLI process or provider
+session. See the [context-policy contract](../../crates/blueprint/src/context.rs).
 
 Verification requests bounded implementation/requirement ancestors. Review requests implementation,
 requirement, verification, failure-evidence, and review roles, excluding prior prompts, raw progress,

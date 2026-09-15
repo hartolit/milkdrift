@@ -39,7 +39,11 @@ pub(crate) fn request(
         let mut content = Vec::new();
         for part in message.parts() {
             match part {
-                ContentPart::Text { text } => content.push(json!({"type":"text","text":text})),
+                ContentPart::Text { text } => {
+                    if !text.is_empty() || message.tool_calls().is_empty() {
+                        content.push(json!({"type":"text","text":text}));
+                    }
+                }
                 ContentPart::Image { reference } => {
                     let media = reference
                         .media_type()
@@ -53,6 +57,9 @@ pub(crate) fn request(
                     ));
                 }
             }
+        }
+        for call in message.tool_calls() {
+            content.push(json!({"type": "tool_use", "id": call.id(), "name": call.name(), "input": call.arguments().value()}));
         }
         match message.role() {
             MessageRole::System => system.extend(content),
@@ -121,6 +128,12 @@ pub(crate) fn request(
 }
 
 pub(crate) fn response(value: &Value) -> Result<ModelResponse, HttpError> {
+    if value
+        .get("role")
+        .is_some_and(|role| role.as_str() != Some("assistant"))
+    {
+        return Err(HttpError::MalformedResponse);
+    }
     let content = value
         .get("content")
         .and_then(Value::as_array)
@@ -221,6 +234,12 @@ impl StreamState {
             "message_start" if self.phase == Phase::Initial => {
                 self.phase = Phase::Started;
                 let message = value.get("message").ok_or(HttpError::MalformedResponse)?;
+                if message
+                    .get("role")
+                    .is_some_and(|role| role.as_str() != Some("assistant"))
+                {
+                    return Err(HttpError::MalformedResponse);
+                }
                 self.response_id = message.get("id").filter(|value| !value.is_null()).cloned();
                 self.response_model = message
                     .get("model")
@@ -242,6 +261,12 @@ impl StreamState {
                 let block = value
                     .get("content_block")
                     .ok_or(HttpError::MalformedResponse)?;
+                if !matches!(
+                    block.get("type").and_then(Value::as_str),
+                    Some("text" | "tool_use")
+                ) {
+                    return Err(HttpError::MalformedResponse);
+                }
                 if block.get("type").and_then(Value::as_str) == Some("tool_use") {
                     self.tools.insert(
                         index,
@@ -415,6 +440,30 @@ fn merge_extensions(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn response_roles_and_unmapped_content_blocks_are_refused() {
+        assert!(super::response(&serde_json::json!({"role":"system","content":[{"type":"text","text":"instructions"}],"stop_reason":"end_turn"})).is_err());
+        assert!(super::response(&serde_json::json!({"role":"assistant","content":[{"type":"future_memory","data":"opaque"}],"stop_reason":"end_turn"})).is_err());
+        let mut state = super::StreamState::new();
+        assert!(
+            state
+                .event(
+                    r#"{"type":"message_start","message":{"role":"system"}}"#,
+                    |_| Ok(())
+                )
+                .is_err()
+        );
+        let mut state = super::StreamState::new();
+        assert!(
+            state
+                .event(
+                    r#"{"type":"message_start","message":{"role":"assistant"}}"#,
+                    |_| Ok(())
+                )
+                .is_ok()
+        );
+        assert!(state.event(r#"{"type":"content_block_start","index":0,"content_block":{"type":"future_memory"}}"#, |_| Ok(())).is_err());
+    }
     use super::*;
 
     #[test]

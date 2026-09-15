@@ -27,9 +27,10 @@ for `sequence.approved`. The final outcome is an explicit `Terminal`. Configure 
 and understand its limits using [result acceptance](result-acceptance.md).
 There is no dogfood node kind, scheduler, hidden retry loop, Git implementation, or UI state.
 
-The maintained example requests `fresh` context for each coding task. The schema also accepts
-explicit continuation intent; the configured process must implement it, and the declaration alone
-does not create a persistent external session. A fresh invocation need not use a new repository:
+The maintained example requests `fresh` context for each coding task. Sequence import refuses
+continuation declarations because the process adapter has no persistent session protocol. Select
+durable prior evidence explicitly when another fresh invocation needs it. A fresh invocation need
+not use a new repository:
 a `shared_sequential` repository profile and a local-process
 `authorized_host_path` working directory let accepted files persist across separate invocations.
 Parallel designs must select `isolated_worktrees` and use operator-configured version-control and

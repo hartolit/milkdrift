@@ -343,6 +343,19 @@ fn model_session_agreement_is_checked_for_inline_artifact_and_recovered_requests
                     harness.put_revision(&revision)?;
                     harness.create_and_start(&run, &revision)?;
                     harness.runtime.scheduler_tick()?;
+                    if *declared == "explicit_continuation" {
+                        assert!(
+                            scheduled_request(&harness.runtime, &run).is_err(),
+                            "missing predecessor was scheduled"
+                        );
+                        assert!(
+                            harness
+                                .runtime
+                                .claim_execution_effects(PageSize::new(8)?)?
+                                .is_empty()
+                        );
+                        continue;
+                    }
                     let before = scheduled_request(&harness.runtime, &run)?;
                     if recovered {
                         harness.runtime.recover()?;
@@ -364,6 +377,38 @@ fn model_session_agreement_is_checked_for_inline_artifact_and_recovered_requests
                 }
             }
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_process_capability_cannot_claim_continuation_by_naming_its_operation_model_generate()
+-> TestResult {
+    let mut value = serde_json::to_value(CapabilityDescriptorDocument::new(test_descriptor()?))?;
+    value["descriptor"]["category"] =
+        serde_json::to_value(milkdrift_capability::CapabilityCategory::Process)?;
+    let descriptor = CapabilityDescriptorDocument::from_json(&serde_json::to_vec(&value)?)?
+        .body()
+        .clone();
+    for session in ["fresh", "explicit_continuation", "provider_managed"] {
+        let harness = Harness::with_descriptor(
+            "process-session",
+            RetryPolicy::new(1, Vec::new(), 1, 1000, 0)?,
+            descriptor.clone(),
+        )?;
+        let revision = workflow(work(policy(session, false, true)?)?)?;
+        let run = RunId::new("process-session")?;
+        harness.put_revision(&revision)?;
+        harness.create_and_start(&run, &revision)?;
+        runtime_tick(&harness.runtime)?;
+        assert_eq!(
+            harness.executor.entry_count(),
+            u64::from(session == "fresh")
+        );
+        assert_eq!(
+            scheduled_request(&harness.runtime, &run).is_ok(),
+            session == "fresh"
+        );
     }
     Ok(())
 }

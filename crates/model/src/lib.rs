@@ -42,6 +42,10 @@
 //! ```
 
 mod context;
+mod continuation;
+pub use continuation::{
+    CONTINUATION_MEDIA_TYPE, ContinuationHistory, ContinuationTurn, MAX_CONTINUATION_DEPTH,
+};
 mod document;
 mod task;
 
@@ -51,8 +55,8 @@ pub use context::{
     ContextOmissionReason, ContextProducerFact, ContextSemanticKind, ContextSource, ContextTotals,
 };
 pub use document::{
-    ContextManifestDocument, MAX_MODEL_DOCUMENT_BYTES, ModelContractError, ModelResponseDocument,
-    ModelTaskRequestDocument,
+    ContextManifestDocument, ContinuationHistoryDocument, MAX_MODEL_DOCUMENT_BYTES,
+    ModelContractError, ModelResponseDocument, ModelTaskRequestDocument,
 };
 pub use task::{
     ContentPart, FinishReason, MAX_MODEL_OUTPUT_UNITS, Message, MessageRole, ModelResponse,

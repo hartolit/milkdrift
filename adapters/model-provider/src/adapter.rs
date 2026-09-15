@@ -261,7 +261,7 @@ impl ModelEndpointAdapter {
         }
         let manifest_text = std::str::from_utf8(&manifest_bytes)
             .map_err(|_| AdapterError::rejected("context manifest is not canonical UTF-8"))?;
-        let context_parts = self.load_context_parts(
+        let (context_parts, continuation) = self.load_context_parts(
             context,
             request,
             manifest.body(),
@@ -269,6 +269,22 @@ impl ModelEndpointAdapter {
             &mut materialization,
         )?;
         let task = self.load_task(context, request, limits, &mut materialization)?;
+        let task = match (task.session(), continuation) {
+            (SessionSelection::ExplicitContinuation { .. }, Some(history)) => task
+                .with_continuation(&history)
+                .map_err(|error| AdapterError::rejected(error.to_string()))?,
+            (SessionSelection::ExplicitContinuation { .. }, None) => {
+                return Err(AdapterError::rejected(
+                    "explicit continuation requires a runtime-prepared history artifact",
+                ));
+            }
+            (_, Some(_)) => {
+                return Err(AdapterError::rejected(
+                    "non-continuation request contains conversation history",
+                ));
+            }
+            (_, None) => task,
+        };
         self.negotiate(&task, &context_parts)?;
         let materialization = RefCell::new(materialization);
         let load = |reference: &milkdrift_capability::ArtifactReference| {
@@ -524,9 +540,16 @@ impl ModelEndpointAdapter {
         manifest: &ContextManifest,
         limits: MaterializationLimits,
         materialization: &mut MaterializationLedger,
-    ) -> Result<Vec<MaterializedContextPart>, AdapterError> {
+    ) -> Result<
+        (
+            Vec<MaterializedContextPart>,
+            Option<milkdrift_model::ContinuationHistory>,
+        ),
+        AdapterError,
+    > {
         let mut expected = BTreeSet::new();
         let mut parts = Vec::new();
+        let mut continuation = None;
         for entry in manifest.entries() {
             if let ContextSource::DirectInput { name, reference } = entry.source() {
                 let input = request
@@ -570,6 +593,21 @@ impl ModelEndpointAdapter {
                 | ContextSource::Event { .. }
                 | ContextSource::WorkspaceValue { .. } => "application/json",
             };
+            if entry.reason() == milkdrift_model::ContextInclusionReason::Continuation {
+                if media_type != milkdrift_model::CONTINUATION_MEDIA_TYPE || continuation.is_some()
+                {
+                    return Err(AdapterError::rejected(
+                        "unsupported or duplicate continuation history",
+                    ));
+                }
+                continuation = Some(
+                    milkdrift_model::ContinuationHistoryDocument::from_json(&bytes)
+                        .map_err(|error| AdapterError::rejected(error.to_string()))?
+                        .body()
+                        .clone(),
+                );
+                continue;
+            }
             let label = serde_json::to_string(&serde_json::json!({
                 "ordinal": entry.ordinal(),
                 "kind": entry.kind(),
@@ -609,7 +647,7 @@ impl ModelEndpointAdapter {
                 "invocation contains context outside the frozen manifest",
             ));
         }
-        Ok(parts)
+        Ok((parts, continuation))
     }
 
     fn load_task(
@@ -679,10 +717,10 @@ impl ModelEndpointAdapter {
             )?;
         }
         if !task.tools().is_empty()
-            || task
-                .messages()
-                .iter()
-                .any(|message| message.role() == milkdrift_model::MessageRole::ToolResult)
+            || task.messages().iter().any(|message| {
+                message.role() == milkdrift_model::MessageRole::ToolResult
+                    || !message.tool_calls().is_empty()
+            })
         {
             require(
                 ModelFeature::Tools,
@@ -728,12 +766,7 @@ impl ModelEndpointAdapter {
         // Runtime checks policy agreement before claiming the invocation. Agreement
         // cannot supply a provider protocol mapping that this adapter does not support.
         match task.session() {
-            SessionSelection::Fresh => {}
-            SessionSelection::ExplicitContinuation { .. } => {
-                return Err(AdapterError::rejected(
-                    "explicit continuation artifacts have no configured protocol mapping",
-                ));
-            }
+            SessionSelection::Fresh | SessionSelection::ExplicitContinuation { .. } => {}
             SessionSelection::ProviderManaged { .. } => {
                 return Err(AdapterError::rejected(
                     "provider-managed sessions have no configured protocol mapping",

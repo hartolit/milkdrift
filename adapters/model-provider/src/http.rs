@@ -141,11 +141,20 @@ pub(crate) fn read_json(profile: &EndpointProfile, response: Response) -> Result
 
 pub(crate) fn read_sse(
     profile: &EndpointProfile,
-    mut response: Response,
+    response: Response,
+    cancelled: &AtomicBool,
+    event: impl FnMut(&str) -> Result<(), HttpError>,
+) -> Result<(), HttpError> {
+    validate_headers(profile, &response)?;
+    read_sse_body(profile, response, cancelled, event)
+}
+
+fn read_sse_body(
+    profile: &EndpointProfile,
+    mut response: impl Read,
     cancelled: &AtomicBool,
     mut event: impl FnMut(&str) -> Result<(), HttpError>,
 ) -> Result<(), HttpError> {
-    validate_headers(profile, &response)?;
     let mut parser = SseParser::new(
         profile.limits().max_stream_line_bytes,
         profile.limits().max_stream_event_bytes,
@@ -156,9 +165,13 @@ pub(crate) fn read_sse(
         if cancelled.load(Ordering::SeqCst) {
             return Err(HttpError::Cancelled);
         }
-        let read = response
-            .read(&mut buffer)
-            .map_err(|_| HttpError::Transport)?;
+        let read = response.read(&mut buffer);
+        // A blocked read can outlive a cancellation request. Observe it before
+        // interpreting EOF, a transport error, or newly received provider content.
+        if cancelled.load(Ordering::SeqCst) {
+            return Err(HttpError::Cancelled);
+        }
+        let read = read.map_err(|_| HttpError::Transport)?;
         if read == 0 {
             break;
         }
@@ -260,6 +273,47 @@ pub(crate) struct ProviderStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancellation_during_a_body_read_precedes_eof_error_and_content()
+    -> Result<(), Box<dyn std::error::Error>> {
+        struct CancelOnRead<'a> {
+            cancelled: &'a AtomicBool,
+            outcome: u8,
+        }
+        impl Read for CancelOnRead<'_> {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                self.cancelled.store(true, Ordering::SeqCst);
+                match self.outcome {
+                    0 => Ok(0),
+                    1 => Err(std::io::Error::from(std::io::ErrorKind::ConnectionReset)),
+                    _ => {
+                        buffer[..8].copy_from_slice(b"unknown\n");
+                        Ok(8)
+                    }
+                }
+            }
+        }
+        let profile = EndpointProfile::from_json(include_bytes!(
+            "../../../examples/local-model/openai-compatible-loopback.example.json"
+        ))?;
+        for outcome in 0..3 {
+            let cancelled = AtomicBool::new(false);
+            assert_eq!(
+                read_sse_body(
+                    &profile,
+                    CancelOnRead {
+                        cancelled: &cancelled,
+                        outcome
+                    },
+                    &cancelled,
+                    |_| Err(HttpError::MalformedResponse),
+                ),
+                Err(HttpError::Cancelled),
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn provider_statuses_have_stable_retry_and_authority_classes() {

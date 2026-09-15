@@ -76,6 +76,7 @@ values; repository contracts check the version cells against source.
 | Blueprint revision and mutation | 2 | v1 refused. |
 | Context manifest | 2 | v1 refused; model envelope remains independent. |
 | Model document / task / response / endpoint profile | 1 / 1 / 1 / 2 | Endpoint v1 refused; explicit billing and counting required. |
+| Explicit continuation companion | 1 | Exact artifacts and journal anchors; unknown/future documents refused. |
 | Proposal / workflow-control command / risk policy / controller policy | 1 / 1 / 1 / 2 | Controller policy v1 refused; currency is explicit or absent. |
 | Prompt-sequence import | 3 | v1/v2 refused; existing blueprint history unchanged. |
 | Result acceptance contract / decision | 1 / 1 | Explicit purpose; no implicit policy on generic model tasks. |
@@ -106,8 +107,10 @@ values; repository contracts check the version cells against source.
   policy version 2;
   [ADR 0031](../decisions/0031-context-enforcement-and-retained-evidence.md) explains this distinction
   from the unchanged manifest schema. Model session agreement is checked before claiming work;
-  supported provider mappings still accept only `Fresh`. Process session intent remains
-  capability-specific and does not implement continuation.
+  both provider mappings support `Fresh` and bounded exact-reference `ExplicitContinuation`.
+  Continuation is restricted to authorized causal text history and complete tool exchanges in the
+  same run and visible scope lineage. Provider-managed sessions and non-Fresh process tasks remain
+  refused. See [the continuation guide](../guides/model-continuation.md).
 - Combined real coding-agent/model interoperability is qualified for the exercised local Windows
   Codex/Bonsai configuration. This run does not qualify thinking mode: the operator subsequently
   reported disabling it, and effective server settings were not captured per request.
@@ -273,6 +276,30 @@ output allowance. Their last observations retain one running model attempt and n
 neither run establishes model completion or remote termination. The preserved sessions are
 `target/review-main/live-bonsai-1` and `target/review-main/live-bonsai-2`. Server settings were not
 changed, and these runs add no live-model qualification.
+
+Exact-reference model continuation passes the local Windows/MSVC full gate with 776 workspace tests,
+24 doctests and all 24 repository contracts; five manual longevity tests remain ignored. Both model
+mappings pass a 30-case runtime/host/HTTP matrix covering exact history, authority and branch
+isolation, source integrity, bounded selection, tool exchanges, restart and pre-entry lease recovery.
+Review regressions prove three-invocation chains, refusal of excluded tool traces in saved request
+messages, and refusal after source corruption or read revocation between claim and final entry.
+Streaming cancellation observed during a body read retains cancellation uncertainty even when that
+read returns EOF, an error or provider content. The real-socket fixture coordinates cancellation
+before closure rather than depending on a timing delay.
+The actual daemon/CLI model lane proves authorized predecessor selection, Fresh isolation, unchanged
+inspection across restart and zero dependent requests after prior-answer rejection. The ordinary
+operator lane also passes. Seven affected packages have reviewed default/all-feature API inventories,
+with existing test/evidence helpers still excluded from default surfaces. The review fixes add no
+public API. Logs and source/binary hashes are under `target/review-continuation/`; the deterministic
+report is `target/review-continuation/verified-model/report.json`.
+
+Both supplied LM Studio aliases, `prism-ml/bonsai-27b` and `prism-ml/bonsai-27b:2`, pass the ordinary
+model smoke at a requested 4,096-unit allowance. Each produces final text, response identity and
+usage, preserves selected/omitted context, and restarts without another attempt. The reports are
+`target/review-continuation/verified-bonsai-1/report.json` and
+`target/review-continuation/verified-bonsai-2/report.json`. Server settings were not changed and
+thinking settings remain unknown. These smokes do not exercise live continuation or qualify the
+combined external-agent boundary or another platform.
 
 Release receipt, peer, controller-lifecycle, controller-admission, historical-frontier longevity,
 projection stress, and effect-worker shutdown proofs pass. Hosted Linux

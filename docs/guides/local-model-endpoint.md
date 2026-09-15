@@ -144,7 +144,8 @@ cross-origin redirects are never followed, and the default redirect policy follo
 local server requires a token, put only an opaque `SecretRef` in the profile and resolve it through
 the host secret boundary; never place a token in the URL.
 
-For a workflow model task, use `Fresh` in both its blueprint context policy and its model request.
+For an independent model task, use `Fresh` in both its blueprint context policy and model request.
+To continue an exact prior answer, follow [explicit continuation](model-continuation.md).
 Runtime compares those declarations before claiming work, including artifact requests, retries,
 and recovered leases. Matching declarations still need a supported provider mapping; see the
 [adapter's session rules](../../adapters/model-provider/README.md#choose-features-the-endpoint-actually-supports).
@@ -157,8 +158,9 @@ then reads only the manifest-selected reserved inputs. Selected text/JSON become
 delimited untrusted user evidence; supported selected images remain image parts. Every selected
 input is checked against its manifest digest, size, and media facts, extra reserved inputs are
 rejected, and unsupported generic binary evidence fails before connection. This path does not
-dereference arbitrary model-task references or unselected artifacts. Generic file parts, explicit
-continuation artifacts, and provider-managed sessions currently have no OpenAI-compatible mapping.
+dereference arbitrary model-task references or unselected artifacts. Explicit continuation consumes
+only the companion selected by runtime. Generic file parts and provider-managed sessions remain
+unsupported.
 Cancellation signals cause the response reader to close at its next observable read boundary; the
 acknowledgement truthfully does not claim provider-side termination.
 

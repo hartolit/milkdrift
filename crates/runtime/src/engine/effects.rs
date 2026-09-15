@@ -252,19 +252,19 @@ impl RuntimeService {
                     entry_authorization.digest(),
                 ),
             ))
-        } else if capability.snapshot().category().is_none_or(|category| {
-            // Historical snapshots lack category; the model operation must still
-            // enforce its request contract instead of treating absence as an exemption.
-            category == &milkdrift_capability::CapabilityCategory::Model
-        }) && request.operation().as_str() == milkdrift_model::MODEL_GENERATE_OPERATION
-        {
-            match self.validate_model_session(revision, execution.node(), request, basis, now) {
+        } else {
+            match self.validate_task_session(
+                revision,
+                execution.node(),
+                request,
+                capability.snapshot().category(),
+                basis,
+                now,
+            ) {
                 Ok(()) => None,
                 Err(RuntimeError::Scheduling(detail)) => Some((ErrorClass::InvalidRequest, detail)),
                 Err(error) => return Err(error),
             }
-        } else {
-            None
         };
         if let Some((error_class, detail)) = refusal {
             let detail = milkdrift_persistence::BoundedDetail::new(detail)?;

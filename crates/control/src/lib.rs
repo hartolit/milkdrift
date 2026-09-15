@@ -63,8 +63,7 @@ pub use service::ControlService;
 
 /// Namespaced capability operation for bounded inspection.
 pub const WORKFLOW_INSPECT_OPERATION: &str = "workflow.inspect";
-/// Evaluates purpose-specific immutable output evidence without invoking an external validator.
-pub const WORKFLOW_ACCEPT_RESULT_OPERATION: &str = "workflow.accept_result";
+pub use milkdrift_capability::WORKFLOW_ACCEPT_RESULT_OPERATION;
 /// Namespaced capability operation for untrusted proposal submission.
 pub const WORKFLOW_PROPOSE_OPERATION: &str = "workflow.propose_revision";
 /// Namespaced capability operation for pausing a run.

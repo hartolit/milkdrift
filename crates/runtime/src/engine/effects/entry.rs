@@ -214,6 +214,40 @@ impl RuntimeService {
             return Ok(None);
         }
         projection = latest;
+        // A worker can wait after claiming, and preparation can overlap later acceptance
+        // or access changes. Recheck the frozen sources at the final entry boundary.
+        if prepared.is_some() {
+            match self.validate_task_session(
+                dispatch.revision(),
+                dispatch.node(),
+                dispatch.request(),
+                dispatch.resolution().category(),
+                dispatch.execution_authority(),
+                now,
+            ) {
+                Ok(()) => {}
+                Err(RuntimeError::Scheduling(detail)) => {
+                    self.commit_internal_plan_from_projection(
+                        dispatch.run(),
+                        projection,
+                        now,
+                        SystemTransition::DecideCapabilityAdapterEntry {
+                            attempt: dispatch.attempt().clone(),
+                        },
+                        CommandPlan::one(RunEventKind::NodeTerminal {
+                            execution: dispatch.execution().clone(),
+                            attempt: dispatch.attempt().clone(),
+                            report_sequence: next_sequence,
+                            outcome: milkdrift_persistence::NodeOutcome::Rejected,
+                            error_class: Some(ErrorClass::InvalidRequest),
+                            detail: Some(milkdrift_persistence::BoundedDetail::new(detail)?),
+                        }),
+                    )?;
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            }
+        }
         let mut controller_actions = Vec::new();
         let mut expected_controller_revision = None;
         let controller_admission = if let (Some(prepared), Some(account)) = (

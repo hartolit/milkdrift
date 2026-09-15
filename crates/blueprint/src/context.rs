@@ -454,9 +454,9 @@ pub enum ContextTruncation {
 ///
 /// This choice is part of the policy digest. Before claiming a model invocation, runtime
 /// compares it with the inline or artifact-backed `milkdrift_model::SessionSelection`.
-/// Agreement does not establish provider support: current endpoint mappings accept only
-/// `Fresh`. Process stages retain this declaration as capability-specific intent; it does
-/// not create a process session or select continuation references.
+/// The model mappings support `Fresh` and bounded exact-reference `ExplicitContinuation`.
+/// Agreement does not grant access to predecessor artifacts. Non-model tasks support only
+/// `Fresh`, with explicitly selected durable evidence; no persistent process session exists.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextSessionPolicy {
