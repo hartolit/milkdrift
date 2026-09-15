@@ -25,7 +25,8 @@ fn nonblocking(pipe: impl Into<OwnedPipe>) -> std::io::Result<OwnedPipe> {
         use std::os::windows::io::AsRawHandle;
 
         let original = pipe.as_raw_handle();
-        let stream = DuplexPipeStream::<Bytes>::try_from(pipe).map_err(std::io::Error::other)?;
+        let stream = DuplexPipeStream::<Bytes>::try_from(pipe)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
         // Interprocess may reopen a handle for overlapped I/O. Our workers use
         // synchronous nonblocking operations; refuse a changed handle before spawn.
         let result = if stream.as_raw_handle() == original {
