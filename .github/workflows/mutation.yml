@@ -26,21 +26,33 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { shard: authority, partition: 0, partitions: 2 }
-          - { shard: authority, partition: 1, partitions: 2 }
+          - { shard: authority, partition: 0, partitions: 4 }
+          - { shard: authority, partition: 1, partitions: 4 }
+          - { shard: authority, partition: 2, partitions: 4 }
+          - { shard: authority, partition: 3, partitions: 4 }
           - { shard: retention, partition: 0, partitions: 1 }
-          - { shard: runtime, partition: 0, partitions: 2 }
-          - { shard: runtime, partition: 1, partitions: 2 }
+          - { shard: runtime, partition: 0, partitions: 4 }
+          - { shard: runtime, partition: 1, partitions: 4 }
+          - { shard: runtime, partition: 2, partitions: 4 }
+          - { shard: runtime, partition: 3, partitions: 4 }
           - { shard: uncertainty, partition: 0, partitions: 1 }
-          - { shard: controller, partition: 0, partitions: 4 }
-          - { shard: controller, partition: 1, partitions: 4 }
-          - { shard: controller, partition: 2, partitions: 4 }
-          - { shard: controller, partition: 3, partitions: 4 }
+          - { shard: controller, partition: 0, partitions: 8 }
+          - { shard: controller, partition: 1, partitions: 8 }
+          - { shard: controller, partition: 2, partitions: 8 }
+          - { shard: controller, partition: 3, partitions: 8 }
+          - { shard: controller, partition: 4, partitions: 8 }
+          - { shard: controller, partition: 5, partitions: 8 }
+          - { shard: controller, partition: 6, partitions: 8 }
+          - { shard: controller, partition: 7, partitions: 8 }
           - { shard: context, partition: 0, partitions: 1 }
-          - { shard: peer, partition: 0, partitions: 4 }
-          - { shard: peer, partition: 1, partitions: 4 }
-          - { shard: peer, partition: 2, partitions: 4 }
-          - { shard: peer, partition: 3, partitions: 4 }
+          - { shard: peer, partition: 0, partitions: 8 }
+          - { shard: peer, partition: 1, partitions: 8 }
+          - { shard: peer, partition: 2, partitions: 8 }
+          - { shard: peer, partition: 3, partitions: 8 }
+          - { shard: peer, partition: 4, partitions: 8 }
+          - { shard: peer, partition: 5, partitions: 8 }
+          - { shard: peer, partition: 6, partitions: 8 }
+          - { shard: peer, partition: 7, partitions: 8 }
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:

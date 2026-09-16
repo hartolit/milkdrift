@@ -446,10 +446,12 @@ where the live runner executable cannot be replaced.
 On a host dominated by debug-symbol linking, Cargo's `CARGO_PROFILE_DEV_DEBUG=0` and
 `CARGO_PROFILE_TEST_DEBUG=0` retain test assertions while omitting debug symbols. Record these
 settings and `CARGO_BUILD_JOBS` alongside the campaign; they do not classify failed builds.
-Hosted campaigns omit debug symbols and retain assertions. Authority/runtime use two disjoint
-partitions each, and controller/peer use four each; the other groups use one. This distributes the
-measured longer campaigns within the 180-minute job bound. Locally,
-`cargo mutation-evidence peer --partition 0/4` runs the first partition. The pinned tool owns
+Hosted campaigns omit debug symbols and retain assertions. Every matching push selects the
+full campaign. Authority/runtime use four disjoint partitions each, and controller/peer use eight
+each; the other groups use one. These partitions divide mutation rebuilds and test runs among
+more jobs, at the cost of more baseline builds. Total completion time also depends on hosted
+runner availability; each job has a 180-minute timeout. Locally,
+`cargo mutation-evidence peer --partition 0/8` runs the first partition. The pinned tool owns
 partition parsing and selection; qualification requires the union of every partition to match the
 unpartitioned mutant list exactly. Partitioning preserves the selected tests and enforces each
 mutation's separate deadlines.

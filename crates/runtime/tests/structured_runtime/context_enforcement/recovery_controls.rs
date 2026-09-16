@@ -52,10 +52,26 @@ fn recovery_controls_replace_unsafe_context_prospectively_and_resume_the_same_ru
         );
         assert_eq!(executor.entry_count(), 0);
         assert_eq!(runtime.history(&run)?, history);
+        let start = runtime.command(
+            unrelated.clone(),
+            ActorRef::new("human:structured-runtime-test")?,
+            store.head(&unrelated)?,
+            Reason::new("start while only recovery commands are available")?,
+            Vec::new(),
+            RunCommand::StartRun,
+        )?;
+        let rejected = runtime.handle_authorized_command(&start, &test_authority_claim()?)?;
         assert_eq!(
-            submit_command(&runtime, &store, &unrelated, RunCommand::StartRun)?,
+            rejected.result().disposition(),
             CommandDisposition::Rejected
         );
+        assert_eq!(
+            rejected.result().result().value()["reason"],
+            "invalid run transition: command is unavailable in recovery mode; restart normally after reconciliation"
+        );
+        let replay = runtime.handle_authorized_command(&start, &test_authority_claim()?)?;
+        assert!(replay.replayed());
+        assert_eq!(replay.result(), rejected.result());
         assert_eq!(
             submit_command(&runtime, &store, &run, RunCommand::ResumeRun)?,
             CommandDisposition::Rejected

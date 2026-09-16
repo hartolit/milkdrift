@@ -489,9 +489,24 @@ fn shutdown_closes_admission_and_cancellation_explicitly_drains_wait_ownership()
     harness.runtime.begin_shutdown();
     assert!(!harness.runtime.is_accepting_admission());
     assert_eq!(runtime_tick(&harness.runtime)?.deferred, 1);
+    let start = harness.runtime.command(
+        run.clone(),
+        ActorRef::new("human:structured-runtime-test")?,
+        harness.store.head(&run)?,
+        Reason::new("start while graceful shutdown closes admission")?,
+        Vec::new(),
+        RunCommand::StartRun,
+    )?;
+    let rejected = harness
+        .runtime
+        .handle_authorized_command(&start, &test_authority_claim()?)?;
     assert_eq!(
-        harness.command(&run, RunCommand::StartRun)?,
+        rejected.result().disposition(),
         CommandDisposition::Rejected
+    );
+    assert_eq!(
+        rejected.result().result().value()["reason"],
+        "invalid run transition: runtime admission is closed for graceful shutdown"
     );
     assert_eq!(
         harness.runtime.projection(&run)?.lifecycle(),
@@ -499,6 +514,11 @@ fn shutdown_closes_admission_and_cancellation_explicitly_drains_wait_ownership()
     );
 
     harness.runtime.resume_admission()?;
+    let replay = harness
+        .runtime
+        .handle_authorized_command(&start, &test_authority_claim()?)?;
+    assert!(replay.replayed());
+    assert_eq!(replay.result(), rejected.result());
     assert_eq!(
         harness.command(&run, RunCommand::StartRun)?,
         CommandDisposition::Accepted
