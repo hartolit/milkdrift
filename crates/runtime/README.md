@@ -138,9 +138,9 @@ and effects are refused. This handle can never open execution admission. A new n
 handle must validate the repaired generation before replacement executions can be scheduled.
 
 Controller policy enters through `ControllerLifecycle`; persistence owns its cumulative account.
-Install it before recovery when reopening accounted runs. The daemon exercises that composition
-through explicit [development qualification](../../docs/operations/daemon.md#controller-activation);
-production activation remains refused pending the evidence in [status](../../docs/product/status.md).
+Install it before recovery when reopening accounted runs. The daemon uses that composition with
+explicit [controller activation](../../docs/operations/daemon.md#controller-activation); default
+startup remains disabled. [Status](../../docs/product/status.md) records the qualified scope.
 Ordinary structured repeats use their own declared bounds.
 
 The `test-support` feature exposes deterministic fixtures. Run

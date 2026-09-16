@@ -7,8 +7,8 @@ Models and tools run outside the core.
 
 The pre-1.0 headless kernel is maintainership-ready, with broad architectural cleanup frozen.
 There is no UI or storage migration. Local processes run with the daemon account's privileges;
-they are not sandboxed. Controller final-entry accounting exists in the libraries, but production
-continuous controllers remain unavailable until strict real coding-agent/model qualification.
+they are not sandboxed. Continuous controllers require explicit daemon activation and retain
+cumulative final-entry admission limits. Controller activation is disabled by default.
 [Status](docs/product/status.md) owns exact versions, limitations, and evidence;
 the [roadmap](docs/product/roadmap.md) owns the remaining work.
 

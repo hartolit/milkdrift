@@ -1,12 +1,10 @@
 //! Bounded-memory historical journal reconstruction into the canonical attempt read shape.
 
-use std::collections::BTreeMap;
-
 use milkdrift_blueprint::RevisionId;
 use milkdrift_control_protocol::{ArtifactMetadataRead, AttemptOutputRead};
 use milkdrift_persistence::{
-    AttemptId, EventPageQuery, NodeExecutionId, PageSize, RunEventEnvelope, RunEventKind,
-    RunQueryStore, TimerId,
+    AttemptId, EventCursor, EventPage, EventPageQuery, NodeExecutionId, PageSize,
+    ReconciliationPlanId, RunEventEnvelope, RunEventKind, RunQueryStore, RunSequence, TimerId,
 };
 use milkdrift_workspace::RunId;
 
@@ -17,22 +15,29 @@ use crate::host::{
     public_invocation_artifact, public_operation_contract, public_persistence, snake_debug,
 };
 
+#[cfg(test)]
+mod tests;
+
 struct HistoricalAttemptState {
     attempt: AttemptId,
     current_revision: Option<RevisionId>,
     execution_authority: Option<milkdrift_control_protocol::ExecutionAuthorityRead>,
-    executions: BTreeMap<NodeExecutionId, (String, String)>,
+    execution: NodeExecutionId,
+    owner: Option<(String, String)>,
+    remediation: Option<(ReconciliationPlanId, String)>,
     retry_timer: Option<TimerId>,
     located: Option<LocatedAttempt>,
 }
 
 impl HistoricalAttemptState {
-    fn new(attempt: AttemptId) -> Self {
+    fn new(attempt: AttemptId, execution: NodeExecutionId) -> Self {
         Self {
             attempt,
             current_revision: None,
             execution_authority: None,
-            executions: BTreeMap::new(),
+            execution,
+            owner: None,
+            remediation: None,
             retry_timer: None,
             located: None,
         }
@@ -49,30 +54,49 @@ impl HistoricalAttemptState {
             RunEventKind::ExecutionAuthorityEstablished { basis } => {
                 self.execution_authority = Some(public_execution_authority(basis));
             }
-            RunEventKind::RunCreated { revision, .. }
-            | RunEventKind::RevisionPinned { revision, .. } => {
+            RunEventKind::RunCreated { revision, .. } => {
+                self.current_revision = Some(revision.clone());
+            }
+            RunEventKind::RevisionPinned { revision, plan, .. } => {
+                // Reconciliation creates remediation before pinning its target revision.
+                // Bind only that plan's pin; later adoptions cannot change this owner.
+                if self
+                    .remediation
+                    .as_ref()
+                    .is_some_and(|(pending, _)| pending == plan)
+                    && let Some((_, node)) = self.remediation.take()
+                {
+                    self.owner = Some((node, revision.as_str().to_owned()));
+                }
                 self.current_revision = Some(revision.clone());
             }
             RunEventKind::NodeBecameEligible {
                 node, execution, ..
-            } => {
+            }
+            | RunEventKind::RemediationWorkCreated {
+                node, execution, ..
+            } if execution == &self.execution => {
                 if let Some(revision) = self.current_revision.as_ref() {
-                    self.executions.insert(
-                        execution.clone(),
-                        (node.as_str().to_owned(), revision.as_str().to_owned()),
-                    );
+                    self.owner = Some((node.as_str().to_owned(), revision.as_str().to_owned()));
                 }
+            }
+            RunEventKind::ReconciliationRemediationCreated {
+                plan,
+                node,
+                execution,
+                ..
+            } if execution == &self.execution => {
+                self.remediation = Some((plan.clone(), node.as_str().to_owned()));
             }
             RunEventKind::NodeRetryScheduled {
                 execution,
                 next_attempt,
                 timer,
                 ..
-            } if next_attempt == &self.attempt => {
+            } if next_attempt == &self.attempt && execution == &self.execution => {
                 let (node_id, revision_id) = self
-                    .executions
-                    .get(execution)
-                    .cloned()
+                    .owner
+                    .clone()
                     .ok_or_else(|| corruption("retry attempt has no owning execution"))?;
                 self.retry_timer = Some(timer.clone());
                 self.located = Some(LocatedAttempt {
@@ -93,17 +117,12 @@ impl HistoricalAttemptState {
                 invocation,
                 request,
                 ..
-            } if attempt == &self.attempt => {
+            } if attempt == &self.attempt && execution == &self.execution => {
                 let revision_id = self
-                    .executions
-                    .get(execution)
+                    .owner
+                    .as_ref()
                     .map(|(_, revision)| revision.clone())
-                    .or_else(|| {
-                        self.current_revision
-                            .as_ref()
-                            .map(|revision| revision.as_str().to_owned())
-                    })
-                    .ok_or_else(|| corruption("scheduled attempt has no revision"))?;
+                    .ok_or_else(|| corruption("scheduled attempt has no owning execution"))?;
                 let mut value = empty_attempt_read(self.attempt.as_str(), "scheduled");
                 value.execution_authority = self.execution_authority.clone();
                 value.invocation_id = Some(invocation.as_str().to_owned());
@@ -175,6 +194,7 @@ impl HistoricalAttemptState {
                     );
                     located.value.capability_id = Some(snapshot.capability().as_str().to_owned());
                     located.value.descriptor_revision = Some(snapshot.descriptor_revision());
+                    located.value.peer_id = snapshot.peer().map(|peer| peer.as_str().to_owned());
                     located.value.capability_provenance =
                         Some(public_capability_provenance(snapshot));
                     located.value.operation_contract = Some(public_operation_contract(
@@ -289,21 +309,129 @@ impl Owner {
         let run = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
         let attempt =
             AttemptId::new(attempt.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        let page_size = PageSize::new(256).map_err(public_persistence)?;
-        let mut cursor = None;
-        let mut state = HistoricalAttemptState::new(attempt);
-        loop {
-            let query =
-                EventPageQuery::new(run.clone(), cursor, page_size).map_err(public_persistence)?;
-            let page = self.store.events(&query).map_err(public_persistence)?;
-            for event in &page.events {
+        let projection = self.runtime.projection(&run).map_err(|error| {
+            crate::host::read_model::public_control(milkdrift_control::ControlError::Runtime(error))
+        })?;
+        // These are verified operational anchors, not a second historical index. Settled
+        // occurrences retain their original revision and exact terminal sequence.
+        let current = projection
+            .node_executions()
+            .values()
+            .find(|execution| execution.attempts().contains(&attempt))
+            .map(|value| {
+                (
+                    value.execution(),
+                    value.revision(),
+                    value.created_sequence(),
+                    projection.sequence(),
+                )
+            })
+            .or_else(|| {
+                projection
+                    .settled_node_executions()
+                    .values()
+                    .find(|execution| execution.latest_attempt() == Some(&attempt))
+                    .map(|value| {
+                        (
+                            value.execution(),
+                            value.revision(),
+                            value.created_sequence(),
+                            value.terminal_sequence().unwrap_or(projection.sequence()),
+                        )
+                    })
+            });
+        let (mut state, start, end) = if let Some((execution, revision, start, end)) = current {
+            let mut state = HistoricalAttemptState::new(attempt, execution.clone());
+            state.current_revision = Some(revision.clone());
+            state.execution_authority = projection
+                .execution_authority()
+                .map(public_execution_authority);
+            (state, start, end)
+        } else {
+            // A retired occurrence has no retained anchor. First locate its identity,
+            // then fold only that occurrence. Two bounded passes avoid retaining every
+            // execution merely to recover one old attempt's original revision.
+            let mut execution = None;
+            scan_history(
+                |query| self.store.events(query).map_err(public_persistence),
+                &run,
+                RunSequence::new(1),
+                projection.sequence(),
+                |event| {
+                    match event.kind() {
+                        RunEventKind::NodeScheduled {
+                            attempt: id,
+                            execution: owner,
+                            ..
+                        }
+                        | RunEventKind::NodeRetryScheduled {
+                            next_attempt: id,
+                            execution: owner,
+                            ..
+                        } if id == &attempt => execution = Some(owner.clone()),
+                        _ => {}
+                    }
+                    Ok(execution.is_some())
+                },
+            )?;
+            (
+                HistoricalAttemptState::new(attempt, execution.ok_or_else(not_found)?),
+                RunSequence::new(1),
+                projection.sequence(),
+            )
+        };
+        scan_history(
+            |query| self.store.events(query).map_err(public_persistence),
+            &run,
+            start,
+            end,
+            |event| {
                 state.fold(event)?;
-            }
-            cursor = page.next;
-            if cursor.is_none() {
-                break;
-            }
-        }
+                Ok(false)
+            },
+        )?;
         state.finish()
     }
+}
+
+/// Visit a fixed journal prefix in bounded pages. The caller may stop after finding an identity.
+fn scan_history(
+    mut read_page: impl FnMut(&EventPageQuery) -> Result<EventPage, PublicFailure>,
+    run: &RunId,
+    start: RunSequence,
+    end: RunSequence,
+    mut visit: impl FnMut(&RunEventEnvelope) -> Result<bool, PublicFailure>,
+) -> Result<(), PublicFailure> {
+    let mut sequence = start;
+    while sequence <= end {
+        let limit = u32::try_from((end.get() - sequence.get() + 1).min(256))
+            .map_err(|_| super::super::read_model::internal())?;
+        let query = EventPageQuery::new(
+            run.clone(),
+            Some(EventCursor {
+                run: run.clone(),
+                next_sequence: sequence,
+            }),
+            PageSize::new(limit).map_err(public_persistence)?,
+        )
+        .map_err(public_persistence)?;
+        let page = read_page(&query)?;
+        if page.events.is_empty() {
+            return Err(corruption(
+                "historical attempt journal prefix is incomplete",
+            ));
+        }
+        for event in &page.events {
+            if event.sequence() != sequence {
+                return Err(corruption(
+                    "historical attempt journal prefix is discontinuous",
+                ));
+            }
+            if visit(event)? || sequence == end {
+                return Ok(());
+            }
+            sequence = sequence.next().map_err(public_persistence)?;
+        }
+    }
+    Ok(())
 }

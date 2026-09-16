@@ -9,7 +9,7 @@ fn fixture_document() -> Result<DaemonConfig, Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn controller_activation_is_explicit_and_production_qualification_cannot_be_claimed()
+fn controller_activation_is_explicit_and_qualification_remains_feature_gated()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut config = fixture_document()?;
     let path = fixture_path();
@@ -19,12 +19,12 @@ fn controller_activation_is_explicit_and_production_qualification_cannot_be_clai
         ControllerActivation::Disabled
     );
     config.runtime.controller_activation = ControllerActivation::Enabled;
-    let error = config
-        .clone()
-        .validate(base)
-        .err()
-        .ok_or("production activation was admitted")?;
-    assert!(error.to_string().contains("real external controller loop"));
+    let enabled = config.clone().validate(base)?;
+    assert_eq!(
+        enabled.runtime.controller_activation,
+        ControllerActivation::Enabled
+    );
+    assert!(enabled.redacted_toml().contains("enabled"));
     config.runtime.controller_activation = ControllerActivation::Qualification;
     let result = config.validate(base);
     if cfg!(feature = "controller-qualification") {

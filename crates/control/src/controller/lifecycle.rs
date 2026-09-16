@@ -27,8 +27,8 @@ use crate::ControlError;
 /// a checkpoint continuation. The account's final-entry and artifact transactions own
 /// cumulative resource changes; assessment does not reserve resources a second time.
 ///
-/// The daemon installs this owner before recovery in explicit development qualification mode.
-/// Production activation remains refused pending the evidence recorded in product status.
+/// The daemon installs this owner before recovery with explicit controller activation.
+/// Product status records the accepted operating scope; default startup remains disabled.
 pub struct ControllerLifecycleOwner {
     revisions: Arc<dyn RevisionStore>,
 }

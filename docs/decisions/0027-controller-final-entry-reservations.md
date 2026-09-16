@@ -3,8 +3,9 @@
 - Status: accepted
 - Date: 2026-09-01
 
-[ADR 0033](0033-explicit-controller-qualification.md) adds an isolated development installation
-path through the real daemon composition. The production qualification requirements below remain.
+[ADR 0033](0033-explicit-controller-qualification.md) supersedes this decision's initial activation
+refusal after implementation and acceptance of the requirements below. The final-entry accounting
+requirements remain binding; [status](../product/status.md) owns current evidence and scope.
 
 ## Context
 
@@ -17,7 +18,7 @@ A hard resource ceiling cannot depend only on a prior read of current projection
 
 ## Decision
 
-The production daemon leaves `ControllerLifecycleOwner` uninstalled. A revision marked with the
+At adoption, the production daemon left `ControllerLifecycleOwner` uninstalled. A revision marked with the
 controller-policy extension fails closed at activation rather than running under a ceiling that the
 host cannot enforce atomically. The library owner, durable assessments, read models, commands, and
 focused integration tests remain available to develop and validate the contract; presets grant
@@ -42,10 +43,9 @@ assessment may consume that truth but cannot duplicate it.
 
 ## Consequences
 
-The daemon supports ordinary human, service, process, and model proposals through the shared
-authorized control path, but does not support continuous autonomous controller execution. A CLI
-continue command cannot install the lifecycle or bypass the refusal. Documentation and status must
-distinguish the tested library integration from production support.
+The initial refusal allowed ordinary proposals while withholding continuous controller execution
+until the reservation owner and evidence were complete. A CLI continue command still cannot install
+the lifecycle or bypass activation configuration. The later activation decision is owned by ADR 0033.
 
 ## Reconsideration triggers
 

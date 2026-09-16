@@ -9,8 +9,8 @@ what belongs here; [the office procedure](../README.md) handles sprint coordinat
 
 | Topic | State | Next action | Assignment | Last evaluated |
 | --- | --- | --- | --- | --- |
-| [Configurable generation and thinking policy](discussions/model-generation-policy.md) | open | Decide the task/profile ownership and supported wire mappings for thinking mode, effort, and budgets; distinguish deployment limits from necessary hard ceilings. | Unassigned | 2026-09-11 |
-| [External model configuration provenance](issues/external-model-configuration-provenance.md) | open | Define how evidence captures or verifies server-side thinking/context settings and run controlled thinking-on/off cases with recorded budgets. | Unassigned | 2026-09-11 |
+| [Configurable generation and thinking policy](discussions/model-generation-policy.md) | open | Establish a workflow need and reliable mapping for thinking controls beyond supported effort and total-output bounds; retain the current design unless that evidence justifies expansion. | Unassigned | 2026-09-16 |
+| [External model configuration provenance](issues/external-model-configuration-provenance.md) | open | Distinguish pre-run inspected defaults from per-request effective settings; scope a controlled thinking comparison only if its claim requires one. | Unassigned | 2026-09-16 |
 
 This overview alone owns planning state, next actions, assignment links, and last-evaluation dates.
 Topic files hold evidence, current technical assessment, and dated contributions. Keep execution

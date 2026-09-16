@@ -9,7 +9,7 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-[Operational completion](operational-completion/README.md) is executing its ordered assignments.
+No active sprints.
 The [whiteboard](whiteboard/README.md) holds broader questions for future planning.
 
 ## Prepared assignments

@@ -47,6 +47,8 @@ impl AdapterReporter for LeaseReporter {
 }
 
 fn request_target(stream: &mut TcpStream) -> Result<String, Box<dyn std::error::Error>> {
+    // Windows accepted sockets can inherit the listener's nonblocking mode.
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     let mut reader = BufReader::new(stream);
     let mut line = String::new();

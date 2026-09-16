@@ -170,7 +170,7 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
     daemon.terminate()?;
     config.runtime.controller_activation = ControllerActivation::Enabled;
     save_config(&config_path, &config)?;
-    let refused = run_command(
+    let checked = run_command(
         Command::new(&arguments.daemon)
             .arg("--config")
             .arg(&config_path)
@@ -179,19 +179,17 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         Duration::from_secs(10),
     )?;
     ensure(
-        !refused.status.success() && refused.stderr.contains("real external controller loop"),
-        "unqualified production activation was accepted",
+        checked.status.success(),
+        "explicit controller activation was refused",
     )?;
     fs::write(
-        directory.join("production-activation-refusal.txt"),
-        refused.stderr,
+        directory.join("production-activation-check.txt"),
+        checked.stdout,
     )?;
-    config.runtime.controller_activation = ControllerActivation::Qualification;
-    save_config(&config_path, &config)?;
     daemon = start_daemon(&arguments.daemon, &config_path)?;
     wait_for_readiness(&runner, &mut daemon)?;
     refusals::prelude(&runner, &directory, &body, "qualification")?;
-    // The disabled command retains its refusal. Qualification starts a distinct aggregate.
+    // The disabled command retains its refusal. Explicit activation starts a distinct aggregate.
     runner.success(&[
         "--command-id",
         "controller-start-qualified",
@@ -329,7 +327,7 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         directory.join("disabled-recovery-refusal.txt"),
         disabled_reopen.stderr,
     )?;
-    config.runtime.controller_activation = ControllerActivation::Qualification;
+    config.runtime.controller_activation = ControllerActivation::Enabled;
     save_config(&config_path, &config)?;
     daemon = start_daemon(&arguments.daemon, &config_path)?;
     wait_for_readiness(&runner, &mut daemon)?;
@@ -565,7 +563,7 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         runner.success(&["run", "show", ROOT])?["value"]["controller_accounting"] == *accounting,
         "cold replay changed the cumulative account",
     )?;
-    let report = json!({"production_activation":"pending_coordinator_acceptance", "reason":"qualification does not change a running installation or accept production activation",
+    let report = json!({"production_activation":"explicit_enabled", "reason":"isolated evidence uses explicit activation; ordinary startup remains disabled by default",
         "real_coding_agent":real_agent,"real_model_review":arguments.controller_review_profile.is_some(),
         "model_profile":review.profile, "identities":review::identities(arguments, &directory)?,
         "installed_qualification_loop":"passed", "initial_account":original_account, "final_account":accounting,

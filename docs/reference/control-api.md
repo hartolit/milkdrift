@@ -91,8 +91,8 @@ The closed command types are:
 Evidence kinds accepted by the daemon are `authority_decision`, `worker_observation`, `external_receipt`, `artifact`, and `recovery_observation`. A success returns `CommandAccepted`: `command_id`, `replayed`, optional `resulting_sequence`, stable `result_type`, and a bounded command-specific `value`.
 
 Acceptance is not task completion. Read the run and exact attempts to establish execution outcome.
-Controller commands use the installed lifecycle in the daemon's explicit development qualification
-mode. Production activation remains refused under the [qualification gate](../product/status.md#limitations-now).
+Controller commands use the installed lifecycle when the daemon explicitly enables it. Startup
+defaults to disabled; see [activation and recovery](../operations/daemon.md#controller-activation).
 
 Controller status contains the policy controller identity/digest; exact run, governing revision,
 node, and execution; lifecycle state; every progress and limit field; last assessment

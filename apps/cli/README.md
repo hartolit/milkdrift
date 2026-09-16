@@ -19,7 +19,7 @@ authentication, runs a small workflow, and shows process/model setup. The CLI us
 | Inspect execution options | `capability` and `provider` |
 | Manage a configured peer | `peer list`, `show`, `connect`, `reload`, `disconnect`, `drain`, `revoke` |
 | Retrieve output or presentation state | `artifact metadata`, `get`; `layout get`, `put` |
-| Inspect or continue a controller checkpoint | `controller status`, `continue`; production activation remains gated |
+| Inspect or continue a controller checkpoint | `controller status`, `continue`; the daemon must explicitly enable its lifecycle |
 
 Use `milkdrift --help` and family help for exact arguments. The
 [control API reference](../../docs/reference/control-api.md#cli-automation-contract) owns JSON

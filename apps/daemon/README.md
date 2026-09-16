@@ -67,11 +67,10 @@ The private modules divide that operation:
 - `host/peers` and `peer_store` connect peer workers to the same storage owner without extending
   its lifetime through router handles.
 
-The [architecture](../../docs/architecture.md) owns the full responsibility map. Production
-controller activation remains refused under the [current qualification gate](../../docs/product/status.md).
-The non-default `controller-qualification` feature and explicit
-[qualification configuration](../../docs/operations/daemon.md#controller-activation) exercise
-the installed lifecycle with isolated development fixtures.
+The [architecture](../../docs/architecture.md) owns the full responsibility map. Explicit
+[controller activation](../../docs/operations/daemon.md#controller-activation) installs the
+accounted lifecycle before recovery; ordinary startup remains disabled by default. The non-default
+`controller-qualification` feature also permits the isolated development configuration.
 The `control_plane`, `configuration_cli`, and `two_daemon_peer` tests check public request,
 configuration, recovery, authority, and peer behavior. The
 [verification policy](../../docs/development/workflow.md#choose-verification-for-the-change)

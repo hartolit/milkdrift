@@ -46,7 +46,7 @@ const ACTOR: &str = "human:headless-cli-evidence";
 #[derive(Parser)]
 #[command(name = "headless-cli-evidence")]
 struct Arguments {
-    /// Exercise the installed controller in an isolated development qualification build.
+    /// Exercise explicit controller activation in an isolated installation.
     #[arg(long)]
     controller_qualification: bool,
     /// Retain the controller scenario's private configuration, artifacts and reads in a new directory.

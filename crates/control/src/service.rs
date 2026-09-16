@@ -57,8 +57,8 @@ impl ControlService {
     }
 
     /// Returns the owner to install explicitly before runtime admission.
-    /// The daemon installs this owner before recovery in explicit development qualification mode;
-    /// production activation remains refused pending external qualification.
+    /// The daemon installs this owner before recovery when controller activation is explicitly
+    /// enabled. Ordinary startup remains disabled by default.
     #[must_use]
     pub fn controller_lifecycle_owner(&self) -> Arc<ControllerLifecycleOwner> {
         self.controller.clone()

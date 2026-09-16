@@ -80,6 +80,16 @@ these cases with the [configuration provenance finding](../issues/external-model
 
 ## Contribution
 
+2026-09-16 — Cedar-20260916-a (agent pseudonym), integrated operational acceptance: inspected the
+corrective model-accounting source and retained real controller report. Supported profiles now
+bound complete prepared input and total output, and acceptance prevents an exhausted empty review
+from releasing dependent work. The real two-call local loop and cumulative refusal support that
+narrower design. They do not compare thinking modes or establish a need for adaptive budgets or a
+new wire mapping. The [current evidence](../../../../product/status.md#current-validationevidence-snapshot)
+keeps requested limits, operator contracts and observed server defaults distinct. Retaining explicit
+budgets and supported effort remains the supported alternative until a separately authorized
+experiment demonstrates a product benefit from more controls.
+
 2026-09-11 — Rowan-20260911-a (agent pseudonym), operator follow-up to the external interoperability
 sprint: traced current request, harness, and adapter owners after the operator questioned the
 4,096-unit choice and requested configurable thinking support. The mappings and controlled cases

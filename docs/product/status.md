@@ -54,9 +54,9 @@ This document owns current implementation, limitations, exact versions, and qual
   entry intent commit atomically; artifact publication
   and logical-byte charges also commit atomically. Account revisions retain replayable predecessor
   evidence. The daemon composition installs the single control-owned lifecycle before recovery
-  when explicitly configured for an isolated `controller-qualification` build. Production
-  activation remains default-disabled and an `enabled` request is refused pending a current
-  accepted qualification review. Supported text profiles now freeze operator billing, byte-BPE
+  when `controller_activation = "enabled"` is explicitly configured. Startup remains disabled
+  by default. The integrated review accepts the finite activation prerequisites within the
+  operating scope recorded below. Supported text profiles now freeze operator billing, byte-BPE
   input bounds and the selected total-output control with the prepared request. Explicitly unbilled
   completions settle tokens without a monetary report; text tariffs retain calculated and reported
   cost separately. The shared account accepts explicitly declared logical model tokens; unspecified
@@ -114,8 +114,8 @@ values; repository contracts check the version cells against source.
 - Combined real coding-agent/model interoperability is qualified for the exercised local Windows
   Codex/Bonsai configuration. This run does not qualify thinking mode: the operator subsequently
   reported disabling it, and effective server settings were not captured per request.
-  Continuous controller activation has separate prerequisites and remains unavailable in production;
-  library stop behavior is fail-at-bound, and ambiguous multiple proposer occurrences are refused.
+  Explicit controller activation is qualified separately below. Stop behavior is fail-at-bound,
+  and ambiguous multiple proposer occurrences are refused.
 - Trusted processes have daemon-account privileges. No sandbox, network isolation, CPU/memory
   quotas, malicious-descendant containment, universal atomic hashed-handle execution, directory
   artifacts, writable shared mounts, or complete non-Unix process-tree cancellation is claimed.
@@ -135,7 +135,8 @@ values; repository contracts check the version cells against source.
   capabilities and automatic distributed dogfood are absent.
 - There is no public local artifact upload, global event firehose, configuration/audit/shutdown
   route, general plugin framework, context search service, or optimized lifetime attempt index.
-  Historical attempt reads use bounded memory but may scan substantial journal history.
+  Retained attempts use verified occurrence anchors; retired attempts use bounded journal passes.
+  Missing optional checkpoints can still require full projection replay.
 - Task placement supports exact peer sets and localities through admission, frozen selection, and
   entry. It provides no discovery, tag selector, shared checkout, or cluster scheduling. Remote output
   observations use authorized core artifact transfer; input transfer remains explicit. The
@@ -149,196 +150,99 @@ values; repository contracts check the version cells against source.
 
 ## Current validation/evidence snapshot
 
-The pre-UI kernel is maintainership-ready. Broad architectural cleanup is frozen under the
-[roadmap](roadmap.md); continuous controller activation remains a separate qualification decision.
+The integrated operational review is based on `f80cce80725777cc364b71db9ce81e2baff22a85`
+plus the reviewed operational changes on Windows x86_64/MSVC, Rust 1.95.0. Raw commands,
+source/binary identities, reports and logs are retained under `target/acceptance-08/` and
+`target/review-commit/`. The [verification guide](../development/verification-evidence.md)
+owns reproduction and evidence scope.
+Broad architectural cleanup and feature expansion remain frozen under the [roadmap](roadmap.md).
 
-Reviewed constrained placement based on `6967da8` passes the Linux/Rust 1.95 full gate: 803 workspace tests,
-24 doctests, all 24 repository contracts, Clippy/rustdoc and dependency audits. Five manual longevity
-cases remain ignored in the ordinary gate. Default/all-feature API review covers 14 affected
-libraries. The maintained two-repository loopback workflow verifies exact hosts, returned core
-artifacts and provenance through reconnect/restart. Multi-chunk transfer tests prove lease renewal
-and cleanup after renewal refusal or shutdown. The actual-binary operator, deterministic model
-and controller lanes also pass. Fresh review logs are under `target/review-placement/`. This evidence
-does not qualify physical multi-machine deployment or production controller activation; see the
-[verification guide](../development/verification-evidence.md#actual-binary-scenarios).
+### Integrated operating decision
 
-Implementation commit `0b251625feec6848e650694ff57e2094c88413b5` passes the complete local Windows/MSVC
-gate: formatting, all-target/all-feature checking, 682 workspace tests, Clippy, warning-denying
-rustdoc, dependency audits, test discovery, and all 21 repository contracts. Five manual longevity
-tests are ignored in the ordinary suite and pass separately in release mode. All 21 library public
-APIs are inventoried under default and all features, with no default test-helper exports.
+Explicit controller activation is accepted for the implemented bounded contract. Ordinary builds
+install the existing lifecycle only with `controller_activation = "enabled"`; default startup
+remains disabled. No live daemon or model-server configuration was changed. The accepted scope
+combines current deterministic refusal/recovery evidence with the retained authorized real local
+controller loop. It is not a general provider, model-quality, capacity or power-loss qualification.
 
-The fresh-directory starter, ordinary byte-pinned Windows process, verified artifact download,
-exact replay/conflict, settled restart, and failure path pass through actual binaries. Release
-headless daemon/CLI evidence and deterministic multiline model evidence also pass. Portable process
-fixtures retain explicit Python/Git prerequisites. These software checks do not qualify filesystem
-power loss or real coding-agent interoperability.
+The actual daemon/CLI loop retains failed work and rejected verification, selects causal review
+evidence, submits an ordinary proposal, requires a separate actor's approval, applies a prospective
+revision, and accepts verified repair. Two model calls share one publicly inspected cumulative
+account; a third model request is refused before transmission. A new child, revision, retry or
+restart cannot reset that account. Per-request permission remains separate from cumulative allowance.
+Disabled recovery, revoked approval, concurrent admission, unknown metering, entered-process crash,
+exact archived replay and compaction retain their existing refusal/accounting assertions.
 
-Reviewed bounded process cleanup passes the Linux/Rust 1.95 full gate with 809 workspace tests, 24 doctests
-and all 24 repository contracts; five manual longevity tests remain ignored. Six private lifecycle
-tests and 33 process integration tests prove joined I/O ownership through partial startup,
-reporter failure/panic, unread stdin, saturation, forced termination and inherited idle pipes.
-Normal final output and already queued EOF survive cleanup. Daemon drain/cancel/retain cases
-reopen the same store, preserve the uncertainty explanation and refuse unsafe duplicate retry.
-Actual-binary operator, deterministic model and controller lanes pass. Default/all-feature API
-inventories for local-process, daemon and control-protocol remain identical; cleanup types are
-private. Fresh integration evidence is under `target/review-process-cleanup/`; the original
-reproduction and implementation evidence remain under `target/process-cleanup/`. The
-[platform run at `515337f`](https://github.com/hartolit/milkdrift/actions/runs/35023792743) passes on
-Ubuntu 24.04, Windows 2025 and macOS 15: complete workspace checking, the selected domain/protocol,
-client, shared-host and process suites, and the daemon inherited-pipe shutdown/restart case.
-This qualifies those executed cases, not a complete Windows/macOS workspace gate, escaped-descendant
-containment or filesystem power-loss behavior.
+The real-loop evidence is `target/review-03a-real/report.json`, accepted against the corrective
+implementation committed as `d537059`; the reviewed account, lifecycle and metering owners are
+unchanged by later operational work. It used byte-pinned Codex CLI `0.154.0-alpha.6.2` and LM Studio
+`prism-ml/bonsai-27b:2` on the authorized local endpoint. Two direct calls settled 6661 input / 102
+output tokens, four process entries and 45487 logical artifact bytes, zero provider spend, absent
+currency and no outstanding reservations. Accepted repair precedes the deliberate third-call
+refusal; the final failed workflow is truthful stop evidence. The report retains exact source,
+binaries, profiles, observed server defaults, operator declarations and unknowns. Pre-run inspection
+of thinking enabled is not per-request attestation or a controlled thinking comparison. Agent-internal
+calls remain outside the direct-model meter. The current review reuses this real controller report.
 
-The context-policy enforcement and import-label findings are resolved by `a24671a`. Its complete
-local Windows/MSVC gate passes with 725 tests and all 24 repository contracts; five manual longevity
-tests remain ignored. Production regressions cover stopped required evidence, serialized protected
-omissions, legacy retry/reopen refusal, model
-session agreement for inline/artifact requests, and exact
-import revision identity. A bounded runtime/host/HTTP matrix proves Fresh completion and no request
-for contradictory or unsupported continuation declarations. All 42 default/all-feature library API
-inventories are reviewed; the sole added export shares the model document byte ceiling with runtime.
-Focused revalidation passes 28 context/session/import tests, five affected doctests, formatting,
-warning-denying rustdoc, and documentation contracts. The full gate is reused for unchanged
-executable code; subsequent changes clarify explanations and remove resolved office topics.
-These checks do not add real-provider, process-session, or cross-platform qualification.
+### Current local checks
 
-Independently accepted combined real external evidence qualifies clean candidate
-`8c6cdb9137bc8f688fd6cc800d3adf416d4f4625` on Windows x86_64/MSVC with Rust 1.95.0.
-Byte-pinned `codex-cli 0.153.4` used LM Studio's `prism-ml/bonsai-27b:2`; the direct model task used
-`prism-ml/bonsai-27b`. Both scenarios qualify: fresh coding-agent work, separate verification and
-prospective remediation, selected causal context, final model text and usage, linked artifacts,
-and settled-boundary restarts without duplicate entry. The candidate passed the complete local
-gate with 709 tests, 24 doctests, and all 24 repository contracts; five manual longevity cases
-remained ignored. This establishes no model-quality, thinking-mode, peer, new-platform,
-graceful-signal, or filesystem power-loss claim. The
-[retained evidence](../development/verification-evidence.md#actual-binary-scenarios) identifies the
-accepted report, independent inspection, and private session. Controller activation remains separate.
+The acceptance checks exercise ordinary operator use, Fresh beside ExplicitContinuation, accepted
+result gates and model preparation refusal through actual binaries. Production-host tests cover two
+exact approved peers, verified returned artifacts, reconnect/reopen without duplicate entry, blocked
+read-only inspection, guarded backup/restore, prospective recovery, and inherited-pipe shutdown.
+The latter preserves uncertainty and unsafe-retry refusal. These are local loopback/software cases.
 
-The ordinary model scenario passes against separately managed LM Studio with
-`google/gemma-4-12b-qat`, explicit response/idle bounds, and a 4,096-unit output allowance. Evidence
-establishes final text, streamed progress, supplied response identity/usage, selected and omitted
-context, linked artifacts, and restart without another attempt. A controlled post-entry close
-separately proves retained uncertainty and unsafe-retry refusal. This model-only smoke does not
-qualify the combined real-agent/model gate. Endpoint replacement remains an operator profile change
-through the [same guide](../guides/local-model-endpoint.md).
+Historical-query measurements at 128, 1024 and 4096 settled occurrences found an unnecessary
+lifetime execution map and repeated attempt scans. The daemon now uses existing verified occurrence
+anchors and retains one owning execution. On the same reopened stores, near-start/end reads at the
+largest size fell from about 1.32 seconds to 32–35 milliseconds, with identical public results.
+Broad browsing still reads every requested page. Bounded causal discovery selected the same early
+artifact at all sizes. No new index, cache, public Rust item or serialized version was introduced;
+see the [measurement](../development/verification-evidence.md#historical-query-cost) and its limits.
+Historical reads also recognize recovery and reconciliation remediation, preserving each
+occurrence's creation revision across later pins in both anchored and full-history reconstruction.
+Windows fixture corrections explicitly restore blocking accepted TCP sockets and allow end-to-end
+peer scheduling variance while preserving process deadlines and every placement/entry assertion.
 
-A bounded Gemma/Bonsai fork/join experiment completes both author branches and preserves exact
-replay/restart. Its Bonsai reviewer reports a length finish at 2,048 output units with no final text;
-the stronger useful-review check therefore fails. The deterministic actual-binary counterpart
-verifies that both distinct author texts reach the reviewer while private response metadata remains
-excluded. Workflow success is not evidence that a model produced a useful review.
+The complete local gate passes: 802 workspace tests, 24 doctests, all 24 repository contracts,
+formatting, all-target/all-feature checking, warning-denying Clippy/rustdoc, dependency audits and
+test discovery. All three actual-binary scenarios pass in default builds. The remediation-history
+regression fails before correction and passes afterward. Historical-owner and omitted-activation
+fault evidence remains in `target/acceptance-08/final/`; current commands/results are in
+`target/review-commit/`. Five manual longevity tests remain separate from ordinary discovery.
+Regenerated default/all-feature daemon API inventories match the retained review with no exported
+changes.
+The evidence guide maps applicable retained longevity results and the finite controller checklist.
 
-Purpose-specific acceptance now closes that continuation gap in maintained model and sequence
-workflows. The deterministic actual-daemon/CLI scenario rejects an empty exhausted review while
-retaining its successful invocation, keeps the dependent endpoint unentered, and continues only
-after an authorized repair passes acceptance. Three restarts preserve the decisions and exact
-release replay. This proves mechanical requirements and routing, not semantic review quality.
-The model-preparation implementation passes its actual-daemon/CLI zero-request refusal scenario:
-the rejected attempt has no entry intent or uncertainty, and restart leaves it unchanged. Fault
-tests preserve uncertainty after possible submission and reporting loss after a complete response;
-controller tests prove that preparation refusal creates no reservation or entry charge.
-The rebuilt local LM Studio smoke with `prism-ml/bonsai-27b` passes at a declared 4,096-unit request
-allowance. The separate `prism-ml/bonsai-27b:2` request produces no terminal within its 180-second
-bound; two reopens retain one uncertain attempt with unknown finish reason and usage. Neither
-observation verifies server thinking settings or qualifies the combined external-agent boundary.
-The [evidence guide](../development/verification-evidence.md#actual-binary-scenarios) records the
-retained paths and the exact scope of these local observations.
-The model-preparation implementation passes the local Windows/MSVC full gate: 727 workspace tests,
-24 doctests, all 24 repository contracts, formatting, checking, warning-denying Clippy/rustdoc,
-dependency audits, and test discovery. Five manual longevity tests remain ignored in this run.
+### External and platform scope
 
-The reviewed corrective model-accounting implementation passes the Windows/MSVC full gate: 750 workspace
-tests, 24 doctests and all 24 repository contracts; five manual tests remain ignored in the ordinary
-gate. Both required release controller longevity lanes pass. Review fixes prevent streamed usage
-from erasing earlier evidence, accept nullable usage details, retain raw streamed usage, and enforce
-billed profiles' per-request monetary permission. Four corresponding faults are caught and restored;
-prior unit-admission, conflicting-charge and zero-spend-repeat fault evidence still applies to those
-unchanged owners. Default/all-feature API inventories are reviewed for capability, model-provider,
-persistence and control; the review fixes add no public surface.
+The earlier combined external session at clean candidate `8c6cdb9137bc8f688fd6cc800d3adf416d4f4625`
+qualifies its Windows Codex CLI `0.153.4` / LM Studio Bonsai configuration, selected context, linked
+artifacts and settled restarts. It does not qualify thinking mode, peers, graceful signals or power
+loss. Current ordinary smokes for `prism-ml/bonsai-27b` and `prism-ml/bonsai-27b:2` pass through
+the default daemon/CLI binaries with a requested 4,096-unit allowance. Both produce final text and
+usage, preserve selected/omitted context and reopen without another attempt. Reports are under
+`target/review-commit/bonsai-1/` and `bonsai-2/`. Server settings were unchanged and effective
+thinking settings remain unknown. These runs do not exercise live continuation or qualify the
+combined external-agent boundary. Earlier deadline/empty-review results remain negative evidence in the
+[retained scenario records](../development/verification-evidence.md#actual-binary-scenarios).
 
-The actual-binary local controller loop passes with Bonsai `prism-ml/bonsai-27b:2` on the approved
-loopback LM Studio endpoint and byte-pinned Codex CLI `0.154.0-alpha.6.2`. Independent verification
-rejects deliberately incorrect work, the model informs a repair proposal, a separate actor approves,
-future work repairs the file, and verification plus acceptance pass. Two direct model calls settle
-6661 input and 102 output tokens with zero provider spend, no currency and no outstanding reservations.
-The shared two-call allowance refuses a third model request before transmission. Four process entries
-remain within their separate allowance; the workflow stops failed on the deliberate model refusal,
-preserving accepted repair history. Recorded restarts, cold replay, compaction and the concurrent-entry/crash
-fixtures preserve the account. The reviewed successful report is `target/review-03a-real/report.json`.
-Production activation remains default-disabled/refused pending coordinator acceptance. No live host
-or model-server configuration changed. [Retained evidence](../development/verification-evidence.md#actual-binary-scenarios)
-records exact source, binary, profile and server-observation scope.
+The review-recorded [quality run](https://github.com/hartolit/milkdrift/actions/runs/34595978663)
+and [platform run](https://github.com/hartolit/milkdrift/actions/runs/34595978543) at
+`aa77c483626b100e0f550c63648875ba28182238` are confirmed successful prior evidence, not newly run
+checks. The later [process platform run](https://github.com/hartolit/milkdrift/actions/runs/35023792743)
+at `515337f` passes on Ubuntu 24.04, Windows 2025 and macOS 15. Its exact scope is complete workspace
+checking, selected domain/protocol/client/shared-host/process suites, and the daemon inherited-pipe
+shutdown/restart case. This closes the old pending macOS note for those cases, not a complete
+Windows/macOS workspace test gate or physical multi-machine peer qualification.
 
-Offline storage administration and authorized recovery controls pass the local Windows/MSVC full
-gate with 766 workspace tests, 24 doctests and all 24 repository contracts; five manual longevity
-cases remain ignored. Actual daemon tests prove blocked legacy-context inspection beside healthy
-history, protected-metadata redaction, unchanged source bytes/modification times, writer/path/
-permission refusal and guarded backup/restore. Malformed producer provenance is refused before
-copying and during verification/restore. Storage/peer contracts preserve exact cold replay/conflict,
-blocked accounts, durable clock and unfinished artifacts.
+Retained hosted Linux [benchmark/operational evidence](https://github.com/hartolit/milkdrift/actions/runs/34065354712)
+covers twelve scenarios, overload recovery, bounded frontier/storage observations, fresh-cursor
+stream reconnect and graceful shutdown. [Release stress](https://github.com/hartolit/milkdrift/actions/runs/34065354738)
+passes at the same recorded implementation. Windows forced-child termination is not graceful-signal
+proof. The [mutation campaign](https://github.com/hartolit/milkdrift/actions/runs/34065354713) covers
+seven groups / 15 partitions; the evidence guide preserves reviewed classifications and independent
+retention requalification. These reports remain scoped to their own commits and environments.
 
-Both unsafe legacy context classes repair prospectively in the same generation. Tests enforce
-authenticated approval and replay without execution, shutdown without workers, and recorded
-proposal policy across a switch to normal mode. The operator, deterministic model and controller
-binary lanes pass. Default/all-feature redb/runtime/daemon/control-protocol API inventories are
-reviewed without default test-helper exports. These Windows software checks establish supported
-safe restart, not filesystem power-loss, hostile-OS-actor protection, arbitrary corruption/effect
-repair or another platform. The
-[evidence guide](../development/verification-evidence.md#actual-binary-scenarios) identifies the suites.
-
-The additional local LM Studio smokes for `prism-ml/bonsai-27b` and `prism-ml/bonsai-27b:2` each reach
-their 150-second harness deadline without terminal model evidence, with a requested 4,096-unit
-output allowance. Their last observations retain one running model attempt and no output artifacts;
-neither run establishes model completion or remote termination. The preserved sessions are
-`target/review-main/live-bonsai-1` and `target/review-main/live-bonsai-2`. Server settings were not
-changed, and these runs add no live-model qualification.
-
-Exact-reference model continuation passes the local Windows/MSVC full gate with 776 workspace tests,
-24 doctests and all 24 repository contracts; five manual longevity tests remain ignored. Both model
-mappings pass a 30-case runtime/host/HTTP matrix covering exact history, authority and branch
-isolation, source integrity, bounded selection, tool exchanges, restart and pre-entry lease recovery.
-Review regressions prove three-invocation chains, refusal of excluded tool traces in saved request
-messages, and refusal after source corruption or read revocation between claim and final entry.
-Streaming cancellation observed during a body read retains cancellation uncertainty even when that
-read returns EOF, an error or provider content. The real-socket fixture coordinates cancellation
-before closure rather than depending on a timing delay.
-The actual daemon/CLI model lane proves authorized predecessor selection, Fresh isolation, unchanged
-inspection across restart and zero dependent requests after prior-answer rejection. The ordinary
-operator lane also passes. Seven affected packages have reviewed default/all-feature API inventories,
-with existing test/evidence helpers still excluded from default surfaces. The review fixes add no
-public API. Logs and source/binary hashes are under `target/review-continuation/`; the deterministic
-report is `target/review-continuation/verified-model/report.json`.
-
-Both supplied LM Studio aliases, `prism-ml/bonsai-27b` and `prism-ml/bonsai-27b:2`, pass the ordinary
-model smoke at a requested 4,096-unit allowance. Each produces final text, response identity and
-usage, preserves selected/omitted context, and restarts without another attempt. The reports are
-`target/review-continuation/verified-bonsai-1/report.json` and
-`target/review-continuation/verified-bonsai-2/report.json`. Server settings were not changed and
-thinking settings remain unknown. These smokes do not exercise live continuation or qualify the
-combined external-agent boundary or another platform.
-
-Release receipt, peer, controller-lifecycle, controller-admission, historical-frontier longevity,
-projection stress, and effect-worker shutdown proofs pass. Hosted Linux
-[benchmark and operational evidence](https://github.com/hartolit/milkdrift/actions/runs/34065354712)
-passes all twelve scenarios, overload recovery, bounded storage/frontier observations, a real
-fresh-cursor stream reconnect, and graceful shutdown. Hosted
-[release stress](https://github.com/hartolit/milkdrift/actions/runs/34065354738) also passes at the
-same implementation commit. Windows signal refusal is not counted as graceful-shutdown proof.
-
-Hosted [Linux quality](https://github.com/hartolit/milkdrift/actions/runs/34065354710) and
-[Windows/macOS/Linux platform checks](https://github.com/hartolit/milkdrift/actions/runs/34065354722)
-pass at that commit. Linux quality includes the complete workspace and actual daemon/CLI/model
-scenarios; the platform matrix runs complete workspace checking and its declared selected suites.
-All seven [mutation groups](https://github.com/hartolit/milkdrift/actions/runs/34065354713) complete
-across 15 partitions (656 campaign entries), with 3 exact reviewed classifications, no unclassified
-survivors, no timeouts, and inspected compiler diagnostics. Partition selections match their full
-groups without gaps or overlaps. Separate controller-origin fault injections are caught; the
-[evidence guide](../development/verification-evidence.md) explains constructor exclusions.
-Two retention entries whose early fixture timeouts prevented later owner tests were independently
-requalified by rerunning the exact mutations through the existing storage contract.
-
-[Verification evidence](../development/verification-evidence.md) owns commands, pinned workflows,
-report meaning, and classification rules. Configured workflows are not executed evidence. Raw
-outputs, source commit/tree/dirty identity, runtime observations, structural metrics, and API
-inventories belong under ignored `target/` paths or CI artifacts, not active documentation.
+Configured CI lanes are not executed evidence. None of these checks establish sandbox strength,
+arbitrary provider interoperability, escaped-descendant containment or filesystem power-loss behavior.

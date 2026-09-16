@@ -63,6 +63,87 @@ renewal and shutdown stop further downloads and release incomplete core staging.
 the ordinary full gate; the operator/model/controller binary lanes below check the affected common
 composition.
 
+## Historical query cost
+
+The integrated review measures the public daemon/client paths with an ignored reproduction under
+`target/acceptance-08/query/`. It creates the ordinary process → signal wait → process workflow,
+then appends 128, 1024 or 4096 settled terminal occurrences using atomic journal contracts. The
+semantic frontier remains fixed: one live wait before release, four current nodes and no live
+obligations after completion. Seeded checkpoint envelopes are verified by the production reader;
+the daemon runs the actual processes and selects the early output as the late task's context.
+
+The Windows build 26200 x86_64/MSVC Rust 1.95.0 debug comparison runs on an i9-13905H (20 logical
+processors) with about 32 GiB RAM and uses source base `f80cce8` plus the acceptance diff.
+Both binaries read the same reopened completed stores; every public attempt field must equal
+the baseline result. Temporary counters were removed after building private measurement binaries.
+They count decoded journal rows/pages and returned stored-event payload bytes, not physical disk
+I/O, total allocation, TLS cost or operating-system cache misses. Three attempt samples use median
+elapsed time; broad browsing and node/denial reads are individual observations.
+
+| Settled occurrences | Attempt rows / pages / payload bytes before, per read | Near-start / near-end before | Near-start / near-end after | Execution entries retained before → after |
+| --- | --- | --- | --- | --- |
+| 128 | 427 / 2 / 161804 | 61 / 60 ms | 34 / 35 ms | 131 → 1 |
+| 1024 | 3116 / 13 / 1013719 | 344 / 344 ms | 35 / 36 ms | 1027 → 1 |
+| 4096 | 12331 / 49 / 3946426 | 1324 / 1327 ms | 32 / 35 ms | 4099 → 1 |
+
+After correction each retained attempt reads one page of 15–17 events, about 17.6–18.8 KB. The
+existing occurrence's creation/terminal anchors replace the whole-history reconstruction, and the
+current-attempt path no longer scans again for peer identity already frozen in its snapshot. A
+retired occurrence without an anchor uses two page-bounded passes and retains one owning execution.
+No new index or cache is justified by this workload. Original revision, retry timing, exact prefix,
+missing/discontinuous page refusal, whole-result equality and restart checks protect the change.
+Historical reconstruction also recognizes recovery and reconciliation remediation creation. The
+regression checks both full-history and anchored reads after later revision pins; reconciliation
+work keeps its authorizing plan's target revision rather than the prior or latest run revision.
+Runtime's existing rejected/missing optional-checkpoint tests remain applicable without modification.
+
+Broad timeline browsing still returns 427 / 3116 / 12331 rows in 2 / 13 / 49 pages, with a peak page
+of 256 events and 0.16 / 1.01 / 3.95 MB of event payload. Its post-change elapsed times are 92 / 619 /
+2393 ms. Known execution reads require no event rows on these checkpointed stores (22–74 ms in the
+post-change observations). A credential scoped to another run is refused before journal decoding:
+zero rows and payload bytes at every size (9–27 ms). Existing context tests additionally verify
+protected-artifact omission/redaction and post-claim permission refusal.
+
+Causal discovery before late-task entry takes 49 / 59 / 60 ms. It reads four exact anchors and up
+to two bounded tail pages: 415 / 516 / 516 rows and 145176 / 164185 / 165133 payload bytes. Its tail
+limit is 512 records; maximum retained execution entries are 131 / 171 / 171, with one candidate,
+at most one attempt, one revision-distance entry and one indexed source sequence. It selects one
+authorized early artifact in all three histories. This is bounded by the configured discovery
+budget, not constant memory for every possible task policy.
+
+The separate missing-checkpoint probe shows why these figures are not universal latency promises:
+at 1024 occurrences a near-start read takes about 2.2 seconds and a full browse about 24.8 seconds;
+at 4096, a subsequent CLI command exceeds its harness deadline while replaying the uncapped tail.
+This seeded probe deliberately omits normal checkpoint persistence. Keep snapshots available and
+distinguish projection rebuild from exact historical lookup. Reconsider a rebuildable lookup index
+only if measured retired-occurrence access remains an operator problem after using existing anchors
+and cursors. Journal authority, exact replay and authority filtering must remain unchanged.
+
+`query-summary.json`, `query-snapshot-before/`, `query-snapshot-after/`, the earlier cold probe,
+instrumentation scripts and build logs retain the reproduction and raw samples under
+`target/acceptance-08/`. These are machine-specific observations, not throughput guarantees.
+
+## Controller activation acceptance
+
+Explicit `enabled` activation is accepted by the integrated review. Default startup remains
+disabled. The finite prerequisite list is closed by these owners and scoped observations:
+
+| Prerequisite | Evidence and acceptance meaning |
+| --- | --- |
+| Concurrent final entry | Persistence/redb account contracts and control admission tests require exact revisions and reserve the final allowance atomically. The actual-binary race retains two process reservations and refuses another entry. |
+| Crash/reopen and unknown usage | Runtime/host/model effect-stage and account suites retain uncertain effects and reservations through preparation, entry and reporting boundaries. The controller process-kill case reopens after lease expiry and again without resetting its account. |
+| Artifact accounting and compaction | Atomic publication/charge, replay/abort/restart and exact-bound artifact tests pass; the binary lane archives receipts, retains linked acceptance/proposal artifacts and verifies unchanged public accounting after cold replay. |
+| Approval and reconciliation | The installed binary loop refuses revoked approval, reopens at the approval hold, adopts an ordinary prospective revision and preserves failed history and exact command replay. |
+| Mutation sensitivity | Retained accounting/model faults from `review-03a` still apply to unchanged owners. The acceptance diff additionally targets historical owner selection and omitted installation for explicit enablement. Raw fault outcomes remain under `target/acceptance-08/final/`. |
+| Longevity | Release `revision_and_lifecycle::release_controller_longevity_stops_once_across_checkpoints_and_restart` and `admission::release_controller_admission_longevity_turns_over_reservations_artifacts_and_restart` exercise the unchanged lifecycle/account owners. Retained executed results are `target/review-03a-extra-results.json`. |
+| Operational and full gate | Current Windows full gate and default-build operator/model/controller binaries cover the combined diff. Retained hosted benchmark/stress scope is recorded in status; it does not become new platform evidence. |
+| Real external loop | `target/review-03a-real/report.json` records the authorized Windows Codex/Bonsai loop, separate approval, accepted repair, two settled direct-model calls and pre-transmission refusal of a third. Account/lifecycle/metering owners are unchanged; current fixtures cover later operational integrations. No additional cloud call is required. |
+
+This decision changes source support for explicit configuration. It neither deploys an installation
+nor qualifies arbitrary providers, managed sessions, thinking controls, physical peers or power loss.
+The [status owner](../product/status.md#current-validationevidence-snapshot) records the accepted
+configuration, source identities, current results and supported limits.
+
 ## Actual-binary scenarios
 
 The deterministic `local-model-evidence` lane also exercises explicit model continuation. It
@@ -130,8 +211,8 @@ replay/conflict, inspection, pause/signal/resume, guarded proposal adoption, art
 abrupt-restart uncertainty resolution, durable reads, stable failure exits, and model provenance.
 Every CLI action is a real process; no CLI receives the database path.
 
-The installed controller scenario uses the same daemon composition with explicit development
-activation. Build the daemon with `--all-features` (or `--features controller-qualification`), then
+The installed controller scenario uses the same daemon composition with explicit `enabled`
+activation. Build the daemon with ordinary default features or `--all-features`, then
 run `headless-cli-evidence` with the same `--daemon` and `--cli` paths plus
 `--controller-qualification`. Optional `--controller-output NEW_DIRECTORY` retains the private
 fixture configuration, pinned process profiles, exact proposals, accounting reads, and reports.
@@ -145,11 +226,11 @@ the next model task is refused by their cumulative allowance. Separate concurren
 reservations and the denied third attempt are inspected. Process/model entry counts are charged
 at admission, while unit/cost/artifact remainders stay reserved until their owning evidence settles.
 
-The scenario checks disabled start, refused production enablement, disabled recovery of an active
+The scenario checks disabled start, explicit enablement, disabled recovery of an active
 account, revoked approval, exact command replay after receipt archival, retained proposal/acceptance
 artifacts after compaction, settled restart, and crash/reopen of an entered process with a retained
 artifact obligation. These are process-kill boundaries, not power-loss or escaped-descendant proof.
-Both disabled and qualification modes refuse an unmarked subworkflow placed before the marked
+Both disabled and enabled modes refuse an unmarked subworkflow placed before the marked
 repeat: its parent remains created and no child is admitted outside the cumulative account.
 The process fixture emits bounded entry progress, lives at most ten seconds, and has a thirty-second
 adapter deadline; concurrent verification uses a sixty-second execution lease.
@@ -162,8 +243,8 @@ three explicitly supplied `--controller-model-profile PATH` options exercise the
 path against operator-selected profiles. Registration and local preparation must succeed before
 the exact admission refusal is accepted as evidence. A refusal is not a qualifying model/controller
 loop. Requested output units, endpoint/profile provenance, unknown effective server settings, and
-the unchanged model-admission count are retained separately. Production activation remains refused
-as described in [daemon operation](../operations/daemon.md#controller-activation).
+the unchanged model-admission count are retained separately. Activation is an explicit operator
+configuration described in [daemon operation](../operations/daemon.md#controller-activation).
 
 The same scenario's `--controller-review-profile PATH` selects an explicitly approved loopback
 model for two connected review stages. Real mode also requires `--controller-server-facts PATH`,

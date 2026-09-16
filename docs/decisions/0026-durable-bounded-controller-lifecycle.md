@@ -72,7 +72,7 @@ occurrences make proposer attribution ambiguous. Paused-at-bound behavior and un
 of legacy controller metadata are deliberately unsupported. ADR 0027 owns the production
 accounting and qualification requirements. [ADR 0033](0033-explicit-controller-qualification.md)
 adds the isolated development installation through the daemon; [status](../product/status.md)
-owns the remaining production qualification conditions.
+owns the current explicit activation decision and its qualification scope.
 
 ## Reconsideration triggers
 

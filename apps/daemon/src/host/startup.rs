@@ -286,8 +286,11 @@ impl Owner {
             runtime.clone(),
             authority.clone(),
         ));
-        if runtime_plan.controller_activation == crate::config::ControllerActivation::Qualification
-        {
+        if matches!(
+            runtime_plan.controller_activation,
+            crate::config::ControllerActivation::Qualification
+                | crate::config::ControllerActivation::Enabled
+        ) {
             runtime
                 .install_controller_lifecycle(control.controller_lifecycle_owner())
                 .map_err(|error| error.to_string())?;

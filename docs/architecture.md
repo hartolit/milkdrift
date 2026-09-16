@@ -364,10 +364,10 @@ This preserves the prepared handle across sibling writes made during preparation
 transaction still checks the current run head and account revision; a later conflict retries within
 the existing bound, and a changed or expired ticket is refused.
 
-The daemon installs that one lifecycle before recovery only under explicit development
-qualification configuration. Active account bindings require installation during recovery;
-marked revisions also require account establishment before any external task entry. Production
-activation has a separate qualification refusal, not a fallback to unaccounted repeats.
+The daemon installs that one lifecycle before recovery when `controller_activation = "enabled"`
+is explicitly configured. The default is disabled; the feature-gated development `qualification`
+mode uses the same installation. Active account bindings require installation during recovery;
+marked revisions also require account establishment before any external task entry.
 Child creation in a marked revision also requires an account, established earlier or atomically
 in the same transaction. An unmarked child placed before activation cannot escape that account.
 Authorized run/controller reads project this account with committed and remaining totals. They

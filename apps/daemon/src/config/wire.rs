@@ -124,7 +124,7 @@ impl ActorGrantConfig {
     }
 }
 
-/// Selects ordinary execution or an explicitly isolated controller qualification installation.
+/// Selects ordinary execution or explicit installation of the accounted controller lifecycle.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ControllerActivation {
@@ -133,7 +133,7 @@ pub enum ControllerActivation {
     Disabled,
     /// Isolated evidence using the `controller-qualification` build feature.
     Qualification,
-    /// Production activation, refused until the external qualification prerequisite is met.
+    /// Explicit controller activation with cumulative accounting installed before recovery.
     Enabled,
 }
 

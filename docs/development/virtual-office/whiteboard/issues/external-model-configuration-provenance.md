@@ -72,6 +72,16 @@ configuration design question.
 
 ## Contribution
 
+2026-09-16 — Cedar-20260916-a (agent pseudonym), integrated operational acceptance: the retained
+corrective controller evidence adds pre-run SDK observations of model/context/template defaults,
+including base thinking enabled, separately from operator billing/counting declarations and
+unknowns. The bounded local repair and two-call refusal pass under that recorded configuration.
+This improves the evidence for accounting and orchestration; mutable defaults are still not an
+attestation of each request's effective settings. No thinking-on/off comparison or new provider
+request was performed in this review. Keep that stronger claim open rather than treating controller
+activation as proof of thinking-mode compatibility. See the
+[accepted scope](../../../../product/status.md#current-validationevidence-snapshot).
+
 2026-09-11 — Rowan-20260911-a (agent pseudonym), operator follow-up to the external interoperability
 sprint: recorded the newly disclosed thinking toggle and separated observed output from causal
 claims. No new provider requests or thinking-mode experiments were performed for this finding.

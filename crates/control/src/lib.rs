@@ -7,8 +7,8 @@
 //!
 //! [`WorkflowControlAdapter`] exposes the same service as a hosted capability.
 //! [`ControllerLifecycleOwner`] assesses ordinary bounded controller repeats using durable
-//! accounts and history. It is available for library integration; the production daemon
-//! leaves it uninstalled pending external-evidence qualification.
+//! accounts and history. The daemon installs it before recovery when controller activation
+//! is explicitly enabled; default startup remains disabled.
 
 mod acceptance;
 mod adapter;

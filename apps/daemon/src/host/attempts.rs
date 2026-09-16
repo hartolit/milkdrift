@@ -82,12 +82,7 @@ impl Owner {
             "read:attempt",
         )?;
         let mut located = match self.current_attempt_read(session, run, attempt)? {
-            Some(mut current) => {
-                if let Ok(historical) = self.historical_attempt_read(run, attempt) {
-                    current.value.peer_id = historical.value.peer_id;
-                }
-                current
-            }
+            Some(current) => current,
             None => self.historical_attempt_read(run, attempt)?,
         };
         self.attach_context(session, attempt, &mut located)?;

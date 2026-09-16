@@ -160,7 +160,9 @@ async fn completed_attempts(
     client: &ControlClient,
     run: &str,
 ) -> TestResult<Vec<milkdrift_control_protocol::AttemptRead>> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    // Two remote entries include artifact transfer and durable observation polling.
+    // Allow scheduler variance on Windows without changing either process's 5s limit.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
         let view = client.run(run).await?;
         if view.uncertainty_count > 0 {

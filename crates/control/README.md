@@ -74,10 +74,10 @@ checkpoints, and cumulative usage. [Persistence accounts](../persistence/src/con
 reserve resources at final adapter entry and charge artifact publication; lifecycle assessment
 consumes those facts. Authority presets expand to ordinary grants and enable no hidden role.
 
-The daemon installs the lifecycle before recovery in its explicit development qualification mode.
-Production activation still requires the evidence recorded in [status](../../docs/product/status.md)
-and [roadmap](../../docs/product/roadmap.md); [activation configuration](../../docs/operations/daemon.md#controller-activation)
-explains the build feature, disabled default, and recovery refusal.
+The daemon installs the lifecycle before recovery when explicitly enabled. The accepted operating
+scope is recorded in [status](../../docs/product/status.md);
+[activation configuration](../../docs/operations/daemon.md#controller-activation) explains the
+disabled default, development feature and recovery refusal.
 Constructing the service, a preset, or a controller blueprint does not install the lifecycle.
 
 Run `cargo test -p milkdrift-control --all-features` for proposals, risk/authority refusal,

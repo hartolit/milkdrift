@@ -65,17 +65,12 @@ impl DaemonConfig {
         }
         validate_runtime(&self.runtime)?;
         match self.runtime.controller_activation {
-            super::ControllerActivation::Disabled => {}
+            super::ControllerActivation::Disabled | super::ControllerActivation::Enabled => {}
             super::ControllerActivation::Qualification
                 if cfg!(feature = "controller-qualification") => {}
             super::ControllerActivation::Qualification => {
                 return Err(ConfigError::Invalid(
                     "controller qualification requires the development-only controller-qualification build feature and an isolated test installation".to_owned(),
-                ));
-            }
-            super::ControllerActivation::Enabled => {
-                return Err(ConfigError::Invalid(
-                    "production controller activation is unqualified: coordinator acceptance of the bounded real external controller loop and current verification is required".to_owned(),
                 ));
             }
         }

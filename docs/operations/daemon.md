@@ -19,8 +19,8 @@ Startup establishes what can continue before it admits new work:
 2. Open the [current storage formats](../product/status.md) and durable clock boundary. Legacy
    `control-state-v1.json`, `peer-executions-v1`, and `peer-artifacts-v1` paths are refused because
    their old ownership cannot be silently imported or ignored. No conversion tool is implemented.
-3. Construct the control service and install its single lifecycle owner when development
-   qualification is explicitly configured, then recover active runtime work with admission closed. Check
+3. Construct the control service and install its single lifecycle owner when controller activation
+   is explicitly configured, then recover active runtime work with admission closed. Check
    bounded application-receipt and layout reads; this is not a complete historical integrity scan.
 4. Register and health-check workflow-control and configured process/model adapters, then build
    relationships and recover serving-peer work if peers are enabled.
@@ -53,24 +53,33 @@ controllers cannot start without their lifecycle and cumulative account. Reopeni
 work with activation disabled fails before admission, including descendants whose own revisions
 have no controller marker. Preserve that data root and use its compatible activation configuration.
 
-`qualification` installs the existing control-owned lifecycle before recovery, using the same store,
-authority service, and clock as other work. It requires a daemon built with the non-default
-`controller-qualification` Cargo feature and is intended for isolated development evidence.
+`enabled` installs the existing control-owned lifecycle before recovery, using the same store,
+authority service, and clock as other work. It is available in ordinary builds. The retained
+`qualification` mode requires the non-default `controller-qualification` Cargo feature and uses
+the same installation for isolated development evidence.
 Installation is one-shot while admission is closed. A marked task cannot enter before its account
 has been established, even if it precedes the repeat in the graph.
 The child-creation transaction enforces the same rule for subworkflows: a child preceding
 activation cannot enter under its own unmarked revision. The normal first controller child and
 account establishment commit together.
 
-`enabled` requests production activation and currently fails configuration validation with the
-missing prerequisite: coordinator acceptance of the bounded real external loop and current checks.
-Supported model profiles can now bound prepared text and settle declared billing; unknown and
-unsupported configurations remain refused. Neither the development feature nor a
-CLI command satisfies the [qualification gate](../product/status.md#limitations-now).
+Choose `enabled` only for the intended installation and its approved profiles, authority and
+allowances. Source support does not change existing configuration. Supported model profiles bound
+prepared text and settle declared billing; unknown and unsupported configurations remain refused.
+The [accepted evidence and limits](../product/status.md#current-validationevidence-snapshot) describe
+the exercised local external configuration and deterministic refusal/recovery cases.
 See [accounting architecture](../architecture.md#controller-resource-accounting) and
 [budget scope](authority.md#budget-scope).
 
 ## Application receipts and retention
+
+Exact attempt inspection uses current attempt state when available, then the retained occurrence's
+verified creation/terminal sequence anchors. A retired occurrence without an anchor requires two
+bounded journal passes. Node inspection asks about the current frontier; timeline pagination asks
+about all history. Reuse the returned cursor when browsing rather than repeatedly starting at page
+one. A missing or rejected optional checkpoint can require full projection replay even for a small
+read. No constant-time lifetime lookup is promised; see the
+[measured workload](../development/verification-evidence.md#historical-query-cost).
 
 A receipt lets a caller recover a lost reply. It binds the actor, exact grant, command ID, complete
 canonical request digest, and accepted or intentionally retained deterministic rejected result.

@@ -1,13 +1,14 @@
 # ADR 0033: Explicit controller qualification and account inspection
 
-Status: Accepted for implementation; production operational qualification remains blocked.
+Status: Accepted, including explicit activation for the qualified bounded operating scope.
 
 ## Decision
 
 Use the existing control-owned lifecycle in the daemon composition before runtime recovery. Keep
 `runtime.controller_activation` default-disabled. `qualification` requires a non-default development
-build feature; `enabled` requests production activation and is refused until the existing evidence
-prerequisites are met. No live installation is enabled by a source change or development test.
+build feature; `enabled` explicitly installs the same lifecycle in ordinary builds. The integrated
+acceptance review closes the finite prerequisites recorded in [status](../product/status.md).
+No live installation is enabled by a source change or development test.
 
 An active account binding requires a lifecycle during recovery, including unmarked descendants.
 A marked task cannot enter before account establishment. The one-shot installation API, existing
@@ -50,8 +51,8 @@ current revision to differ. Inputs, workspace, authority, and account linkage re
 
 ## Consequences
 
-Deterministic actual-binary evidence can exercise the real composition without claiming that a
-fixture or an ordinary external model run qualifies production. The explicit refusal is retained
-until a bounded authorized external controller loop and the other current prerequisites have been
-accepted. [Status](../product/status.md) owns that decision; the
+Deterministic actual-binary evidence exercises explicit enablement, disabled-start/recovery refusal,
+and the same reservations, approval and reconciliation paths as the accepted bounded local external
+controller loop. This supports the recorded operating scope, not arbitrary providers or traffic
+capacity. [Status](../product/status.md) owns that decision and its limits; the
 [evidence guide](../development/verification-evidence.md) owns reproducible verification.
