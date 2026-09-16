@@ -460,10 +460,18 @@ The peer group excludes the three process/model-only external fixture scenarios,
 no peers and previously produced unrelated HTTP timeouts before peer assertions ran. They remain
 in the full workspace gate and the authority/receipt groups. Peer service, daemon-peer, storage
 corruption, and operational peer tests remain selected.
-The pinned tool times its baseline over mutated packages, while a shard may select more packages
-for each mutation. Set its `CARGO_MUTANTS_MINIMUM_TEST_TIMEOUT` from a measured full selected-suite
-run when that broader suite needs more time; an inadequate automatic deadline must be rerun, not
-classified as a caught mutant. Hosted shards allow at least 600 seconds for that broader suite.
+The runner passes each shard's complete package selection to Cargo for both the baseline and every
+mutation. The pinned tool's `--test-package` option alone changes only mutation scenarios, leaving
+the baseline dependent on which source packages happen to occur in a partition. A baseline must
+exercise the same suite to detect missing prerequisites before they can make a mutation look caught.
+Shards that run the retained-context binary tests include the daemon and shared process-helper
+packages. Cargo builds their executables inside each isolated checkout, including any mutation;
+prebuilt binaries from the caller's workspace cannot supply that evidence.
+The runner prints each completed mutation, including caught and unbuildable cases, so CI logs
+show progress during long campaigns instead of remaining silent until the final summary.
+Set `CARGO_MUTANTS_MINIMUM_TEST_TIMEOUT` from a measured full selected-suite run when the host needs
+more time; an inadequate automatic deadline must be rerun, not classified as a caught mutant.
+Hosted shards allow at least 600 seconds for that suite.
 Mutation checkouts retain Git metadata because application-evidence tests require exact source
 provenance; a missing repository must never make a mutation look caught.
 
@@ -485,7 +493,9 @@ Unclassified survivors and timeouts fail. Fix missing assertions or record an ex
 in [.cargo/mutation-classifications.json](../../.cargo/mutation-classifications.json). Accepted
 classifications are only equivalent behavior, unreachable under a validated public contract, or
 mutation-tool limitation. The runner rejects duplicate identities and validates its classification
-policy. A healthy benchmark cannot justify a survivor. Historical counts do not qualify new source.
+policy. When source moves, review the affected contract again and refresh its exact mutant identity
+from the current list; a stale line number must not silently match another mutation.
+A healthy benchmark cannot justify a survivor. Historical counts do not qualify new source.
 
 The September 12 controller integration based on `741b230` has a focused changed-line campaign,
 not a new full controller-shard qualification. Across 46 exact mutants, 36 are caught, five are

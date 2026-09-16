@@ -99,6 +99,7 @@ impl MutationShard {
                 pattern: "(Selection.*(matches|is_subset_of)|validate_count|GrantSetEvaluator.*evaluate|CapabilityAuthorityScope::is_subset_of|AuthorityBudget::fits_within|within|validate_admission)",
                 test_packages: &[
                     "milkdrift-authority",
+                    "milkdrift-redb-store",
                     "milkdrift-local-process",
                     "milkdrift-peer-http",
                     "milkdrift-evidence",
@@ -123,7 +124,11 @@ impl MutationShard {
                     "crates/runtime/src/engine.rs",
                 ],
                 pattern: "(handle_new_command|replay_if_present|projection_checkpoint_due|plan_revision_adoption|plan_reconciliation_decision|plan_reconciliation_application)",
-                test_packages: &["milkdrift-runtime"],
+                test_packages: &[
+                    "milkdrift-runtime",
+                    "milkdrift-daemon",
+                    "milkdrift-local-process",
+                ],
                 cargo_test_arguments: &[
                     "--lib",
                     "--test",
@@ -142,7 +147,12 @@ impl MutationShard {
                 // effects file even when their enclosing function does not match `--re`.
                 // Controller integration tests therefore remain in this lane so those incidental
                 // final-entry plan mutations cannot survive a runtime-only test selection.
-                test_packages: &["milkdrift-runtime", "milkdrift-control"],
+                test_packages: &[
+                    "milkdrift-runtime",
+                    "milkdrift-control",
+                    "milkdrift-daemon",
+                    "milkdrift-local-process",
+                ],
                 cargo_test_arguments: &[],
             },
             Self::Controller => ShardSpecification {
@@ -168,6 +178,8 @@ impl MutationShard {
                     "milkdrift-redb-store",
                     "milkdrift-capability-host",
                     "milkdrift-runtime",
+                    "milkdrift-daemon",
+                    "milkdrift-local-process",
                 ],
                 cargo_test_arguments: &[],
             },
@@ -402,12 +414,17 @@ fn mutation_command(
         .arg("run")
         .arg("--build-timeout")
         .arg(positive_environment("CARGO_MUTANTS_BUILD_TIMEOUT", 180)?.to_string())
-        .arg("--no-shuffle");
+        .arg("--no-shuffle")
+        .arg("--caught")
+        .arg("--unviable");
     for file in specification.files {
         command.arg("--file").arg(file);
     }
+    // cargo-mutants 27.1 applies --test-package only to mutations. Cargo arguments also
+    // apply to the baseline, so every partition checks the full suite and builds its
+    // daemon/process executables inside the checkout that contains the mutation.
     for package in specification.test_packages {
-        command.arg("--test-package").arg(package);
+        command.arg(format!("--cargo-arg=--package={package}"));
     }
     for argument in specification.cargo_test_arguments {
         command.arg("--cargo-test-arg").arg(argument);
@@ -654,6 +671,49 @@ mod tests {
             peer.files
                 .contains(&"adapters/redb-store/src/peer/validation.rs")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn every_shard_builds_its_complete_suite_in_baseline_and_mutant_checkouts() -> TestResult {
+        let repository = repository_root()?;
+        for shard in ALL_SHARDS {
+            let specification = shard.specification();
+            let command = mutation_command(&repository, Path::new("target/unused"), specification)?;
+            let arguments: BTreeSet<_> = command.get_args().map(OsString::from).collect();
+            // Test-only package selection in cargo-mutants 27.1 excludes the baseline.
+            for package in specification.test_packages {
+                assert!(
+                    arguments.contains(&OsString::from(format!("--cargo-arg=--package={package}"))),
+                    "{} must build and test {package} in every scenario",
+                    shard.name()
+                );
+            }
+            // The tool adds each mutated source's owner even when a partition contains only
+            // that package. Keep that implicit baseline selection inside the declared suite.
+            for file in specification.files {
+                let source = repository.join(file);
+                let manifest = source
+                    .ancestors()
+                    .map(|parent| parent.join("Cargo.toml"))
+                    .find(|candidate| candidate.is_file())
+                    .ok_or("mutation source has no owning package")?;
+                let manifest: toml::Value = toml::from_str(&fs::read_to_string(manifest)?)?;
+                let package = manifest["package"]["name"]
+                    .as_str()
+                    .ok_or("mutation source package has no name")?;
+                assert!(specification.test_packages.contains(&package));
+            }
+            if matches!(
+                shard,
+                MutationShard::Runtime | MutationShard::Uncertainty | MutationShard::Controller
+            ) {
+                // Retained-context tests execute the daemon; daemon suites execute the helper.
+                for package in ["milkdrift-daemon", "milkdrift-local-process"] {
+                    assert!(specification.test_packages.contains(&package));
+                }
+            }
+        }
         Ok(())
     }
 

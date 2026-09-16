@@ -77,21 +77,31 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 fn an_account_refuses_unspecified_units_without_changing_its_allowance() -> TestResult {
     let mut state = account(2, 2)?;
     let before = state.clone();
-    let mut wire = serde_json::to_value(bounded_envelope(2)?)?;
-    wire.as_object_mut()
-        .ok_or("envelope missing")?
-        .remove("unit");
-    let historical: InvocationAdmissionEnvelope = serde_json::from_value(wire.clone())?;
-    assert_eq!(serde_json::to_value(&historical)?, wire);
-    let (id, attempt) = reservation(&state, "unlike-units")?;
-    assert!(
-        matches!(state.admit(id, attempt, CapabilityCategory::Model, &historical)?,
-        ControllerAdmissionOutcome::Denied { reason: ControllerAdmissionDenial::Unknown { dimension }, .. }
-        if dimension == "model_token_units")
-    );
-    assert_eq!(state, before);
-    wire["unit"] = serde_json::json!("bytes");
-    assert!(serde_json::from_value::<InvocationAdmissionEnvelope>(wire).is_err());
+    // Either token dimension requires a known unit, including a zero bound; the other
+    // dimension may be inapplicable and must not let the metered dimension enter.
+    for envelope in [
+        bounded_envelope(2)?,
+        single_dimension_envelope("input_units", 2)?,
+        single_dimension_envelope("output_units", 2)?,
+        single_dimension_envelope("input_units", 0)?,
+        single_dimension_envelope("output_units", 0)?,
+    ] {
+        let mut wire = serde_json::to_value(envelope)?;
+        wire.as_object_mut()
+            .ok_or("envelope missing")?
+            .remove("unit");
+        let historical: InvocationAdmissionEnvelope = serde_json::from_value(wire.clone())?;
+        assert_eq!(serde_json::to_value(&historical)?, wire);
+        let (id, attempt) = reservation(&state, "unlike-units")?;
+        assert!(
+            matches!(state.admit(id, attempt, CapabilityCategory::Model, &historical)?,
+            ControllerAdmissionOutcome::Denied { reason: ControllerAdmissionDenial::Unknown { dimension }, .. }
+            if dimension == "model_token_units")
+        );
+        assert_eq!(state, before);
+        wire["unit"] = serde_json::json!("bytes");
+        assert!(serde_json::from_value::<InvocationAdmissionEnvelope>(wire).is_err());
+    }
     Ok(())
 }
 
