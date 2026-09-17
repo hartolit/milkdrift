@@ -17,6 +17,13 @@ successful invocation means evaluation finished; inspect `accepted` and `reason`
 or route an ordinary branch on `accepted_result`. Required publication failure publishes no
 successful acceptance. The source invocation and its artifacts retain their original history.
 
+Here, publication means publishing an artifact, not deploying an application or publishing a
+workflow as a capability. These gates do not prevent an independently authorized raw tool from
+performing an effect. The adopted [protected-agreement design](../decisions/0040-protected-adaptive-methods.md)
+adds verifier trust, exact candidate/configuration binding and enforcement at the consequential
+operation. Those additions and the [Slotbook example](adaptive-method-example.md) are not yet
+implemented by `workflow.accept_result`.
+
 ## Declare the required result
 
 Use `result_acceptance_task` and `result_acceptance_gate` from `milkdrift-control` when authoring a

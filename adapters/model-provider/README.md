@@ -10,6 +10,11 @@ This adapter sends a provider-neutral model task to an explicitly configured end
 the response as workflow artifacts. It supports OpenAI-compatible chat completions and native
 Anthropic Messages mappings. Milkdrift does not load a model or discover providers here.
 
+The current adapter requires durable workflow coordinates and a frozen causal manifest, including
+when served through a peer. Public fresh direct requests with an explicit selection are assigned
+under [ADR 0038](../../docs/decisions/0038-independent-host-execution.md); omitting context or
+fabricating a run is not an implementation of that boundary.
+
 ## Set up a model task
 
 Use the [local model endpoint guide](../../docs/guides/local-model-endpoint.md) for a supported

@@ -15,6 +15,13 @@ promoted method must be reusable for independently tracked product variations. T
 of guaranteed self-improvement and not a new LLM memory engine. It is a usable, auditable learning
 workflow with explicit inputs, criteria, authority, and outcomes.
 
+Use [Slotbook's maintained specification](../../../guides/adaptive-method-example.md) and actual
+source evidence from 03–04. It owns the four separate evaluation inputs, loan/class variations,
+unchanged verifier, fixed two-round improvement threshold and rejection/inconclusive rules. Do
+not invent another application, leak evaluation cases into the proposal context, or retune the
+criterion after observing a preferred candidate. Record the exact evaluation declaration before
+proposal generation and preserve seeded versus observed-model evidence as different lanes.
+
 ## Existing owners to use
 
 Trace bounded causal context and historical artifact discovery; workspace scope/value ownership;
@@ -58,10 +65,12 @@ subscription/global event distribution is not needed to finish this learning pat
 
 Ship a maintained learning workflow that selects prior attempt/result/adaptation evidence and asks
 an external model for a bounded structured candidate proposal. The example should address the user's
-concrete concern: unclear planning produced contradictory implementation or avoidable repair, so the
-candidate introduces a useful requirements/planning responsibility and response to contradictions.
-The proposition must cite selected evidence and state expected benefit, applicability, unchanged
-obligations, and what would count against it.
+concrete concern: unclear planning produced contradictory implementation or avoidable repair.
+Supply that problem and the permitted editable scope; let the agent propose an evidence-supported
+method change. A requirements/planning responsibility is a hypothesis, not a mandated graph change,
+prompt, node name or answer. The proposition must cite the source run's relevant decisions,
+contradictions, failed checks and repair, and state expected benefit, applicability, unchanged
+obligations, and what would count against it. A repaired application alone is insufficient evidence.
 
 Parse the candidate through ordinary blueprint/mutation/control validators. A prose suggestion,
 model confidence, successful earlier run, or a node renamed “planning” is not a validated method.
@@ -110,8 +119,9 @@ work. Avoid adding a new alias subsystem merely for this assignment.
 
 ### 5. Product variations through ordinary workflow composition
 
-Define bounded variation inputs for the maintained example and execute at least two different
-variants of the candidate method. They share the declared reusable method and constraints but have
+Use the specified bounded variation inputs and execute independent loan and class variants of the
+selected method. If evaluation rejects the candidate or is inconclusive, the retained baseline can supply these
+variants; do not call that candidate promotion. They share the selected method and constraints but have
 separate run identities, working areas/worktrees, inputs, artifacts, acceptance decisions, and
 attributable usage. Use existing fork/subworkflow/peer placement mechanisms where appropriate.
 

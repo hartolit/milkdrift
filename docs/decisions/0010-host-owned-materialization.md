@@ -3,6 +3,10 @@
 - Status: accepted
 - Date: 2026-08-26
 
+[ADR 0038](0038-independent-host-execution.md) adopts typed host-invocation ownership alongside
+workflow ownership, superseding run-only publication/accounting as the intended boundary. The
+implementation below remains current until assignment 01 changes its readers and consumers.
+
 ## Context
 
 A process needs files, while invocation contracts contain immutable workspace/artifact references

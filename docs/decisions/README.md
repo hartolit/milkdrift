@@ -10,6 +10,9 @@ for supported versions and qualification, and [architecture](../architecture.md)
 ownership model. Controller installation remains an explicit operator configuration; ADR 0033 and
 status record the accepted activation scope rather than inferring it from a decision's existence.
 
+ADRs 0038–0041 adopt the adaptive-host direction. Their stated assignment owners must implement and
+verify it; these decisions do not change current readers, configuration options or support claims.
+
 - [0001 — Rebirth as a durable workflow system](0001-rebirth-as-durable-workflow-system.md)
 - [0002 — Append-only run events and deterministic projections](0002-append-only-run-events-and-deterministic-projections.md)
 - [0003 — Redb transactions and content-addressed artifact ownership](0003-redb-transactions-and-content-addressed-artifacts.md)
@@ -47,3 +50,7 @@ status record the accepted activation scope rather than inferring it from a deci
 - [0035 — Authorized recovery controls before execution readiness](0035-authorized-recovery-controls.md)
 - [0036 — Freeze explicit model continuation in context artifacts](0036-explicit-model-continuation.md)
 - [0037 — Constrain tasks to exact execution hosts](0037-constrained-peer-placement.md)
+- [0038 — Independent hosts share execution without sharing workflow history](0038-independent-host-execution.md)
+- [0039 — Managed resources retain lifetime protection and transferable editing ownership](0039-managed-resource-ownership.md)
+- [0040 — Adapt the method within a protected agreement](0040-protected-adaptive-methods.md)
+- [0041 — Published methods bind a starting revision and recoverable service invocation](0041-published-method-invocation.md)

@@ -6,6 +6,11 @@ earlier values, and artifact references identify content stored elsewhere. A wor
 not a directory; the [capability host](../capability-host/src/materialization.rs) turns selected
 values into files when a process needs them.
 
+The adopted [managed working area](../../docs/decisions/0039-managed-resource-ownership.md) is a
+separate resource lifecycle for ordinary persistent files. Its lifetime holds and editing claims
+do not replace logical branch visibility. [Direct invocation ownership](../../docs/decisions/0038-independent-host-execution.md)
+will generalize artifact provenance/accounting without requiring a synthetic run; that change is pending.
+
 ## Let a branch use an input without changing its parent
 
 A `WorkspaceValueReference` names a run, scope, key, and exact version. There is no implicit

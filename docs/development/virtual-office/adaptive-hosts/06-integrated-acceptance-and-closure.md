@@ -14,6 +14,11 @@ report-only audit, a visual polish pass, or permission for earlier assignments t
 The result must be a coherent operator experience: an independent host, useful managed work,
 legitimate method adaptation, protected effects, callable workflow versions, and evaluated reuse.
 
+Use [Slotbook](../../../guides/adaptive-method-example.md) throughout the integrated scenario.
+Its source case, verifier, separate evaluation inputs, comparison threshold and variant identities
+are fixed by 00. Rerun 04's one-worker same-working-area parent/child test built on 02's resource
+transitions, including interruption and authorized resolution. Neither case was executed in 00.
+
 Use a fresh reviewing agent where available. Record who actually reviewed what; do not claim
 independence when the implementing agent reviewed its own work. Resolve concrete findings and stop
 at the stated acceptance outcome, not an open-ended quest for cosmetic perfection.
@@ -62,18 +67,23 @@ Execute this sequence, retaining IDs and evidence from the normal public path:
 3. Invoke useful process and fresh model operations directly, then invoke the same serving operations
    from a desktop workflow. Inspect their different origins and common serving lifecycle; no local
    workflow is invented on the execution-only host. Upload/download real files through product APIs.
-4. Develop the demonstration application under a governed adaptable method. Produce a candidate that
-   fails a concrete declared check. Obtain real selected failure evidence and a structured model
-   proposal for a legitimate repair or investigation. Apply it through ordinary preauthorized control,
-   rebuild the candidate, and obtain applicable verifier evidence.
+4. Develop the demonstration application from the fixed source input under a governed adaptable
+   method and record its actual verifier result. For a failed candidate, obtain selected failure
+   evidence and a structured model proposal for legitimate repair or investigation. Apply it through
+   ordinary preauthorized control, rebuild, and obtain applicable verifier evidence. If the live
+   source candidate passes immediately, retain that result and exercise model-driven repair against
+   the separately labelled seeded candidate. That demonstrates repair from a seeded failure, not an
+   observed model planning failure or a positive live learning result.
 5. Invoke the protected publication operation and the same method as a versioned workflow capability.
    Confirm the exact candidate/configuration is deployed to the allowed test target and remains
    served after the deployment request finishes. Inspect public and internal state using appropriate
    different permissions. Do not grant the caller production internals merely to make the demo work.
 6. Learn from prior authorized run evidence through 05's actual workflow. Obtain a real model-produced
    candidate method, evaluate it on distinct declared inputs, and promote or reject on the configured
-   criteria. Exercise successful promotion with a legitimately passing candidate, retaining failed
-   candidates honestly rather than modifying criteria to manufacture success.
+   criteria. Exercise positive promotion in the deterministic mechanism lane; promote the real-model
+   candidate only if it meets the unchanged criterion. A negative or inconclusive live result is
+   retained as such, including absence of an observed source planning failure. Do not substitute
+   seeded behavior or modify cases to manufacture a successful learning claim.
 7. Produce at least two meaningful variations through the selected reusable method, with separate
    mutable workspaces and accepted output lineage. Compare/select through supported operations;
    do not silently deploy every candidate or reuse another variant's evidence.
@@ -106,6 +116,7 @@ harness to hide them.
 | Method obligations | Legitimate scoped repair succeeds; deleting/replacing checks, altering verifiers, changing terminals/data dependencies, or weakening policy cannot produce compliant completion. |
 | Effect protection | Direct/peer/raw-resource bypass, forged acceptance, changed artifact/configuration/target, replay at another target, revoked/expired evidence, and writes to served content after verification are prevented. |
 | Published service | Narrow invoke-only authority works; edit/read-internal/publish rights stay separate; new version and retirement do not rewrite accepted calls; one worker slot still permits internal work; nesting/cycles are bounded. |
+| Nested resource use | With one worker, a child edits the parent's managed working area while the parent waits. Parent/conflicting writes and removal/replacement refuse; unrelated resources progress. After proven child quiescence the parent reacquires editing with no duplicate or leaked hold. Interrupt handoff and active use, restart and cancel; exact lineage/claims survive and uncertainty blocks unsafe reuse until authorized resolution with stop/fencing evidence. |
 | Learning and variants | Denied evidence stays denied; criteria cannot be edited by the candidate; failed candidates remain unpromoted; promotion is exact and future-only; variant data/evidence/usage are isolated. |
 | Shutdown and bounds | Queue saturation, long streams, panics, inherited pipes, stalled supervisor replies, many retained operations, and cancellation produce bounded ownership and truthful outcomes. |
 

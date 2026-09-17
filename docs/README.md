@@ -14,6 +14,8 @@ Use the references when you need an exact command, field, or compatibility rule.
   snapshot.
 - [Roadmap](product/roadmap.md) owns ordered unfinished product work.
 - [Architecture decision records](decisions/README.md) explain durable decisions and tradeoffs.
+- [Slotbook adaptive-method example](guides/adaptive-method-example.md) fixes the shared application,
+  verifier, evaluation inputs and criterion for the authorized sprint; it is not yet a runnable recipe.
 
 ## Develop and verify
 

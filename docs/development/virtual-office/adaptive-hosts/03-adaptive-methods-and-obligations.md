@@ -30,6 +30,13 @@ general semantic-quality guarantee. Keep their valid uses while correcting the m
 and effect boundary. Use 00's owner decision; refine a mistaken abstraction now rather than
 wrapping it in another policy layer.
 
+[ADR 0040](../../../decisions/0040-protected-adaptive-methods.md) fixes agreement ownership and
+effect enforcement. Use [Slotbook](../../../guides/adaptive-method-example.md) for the source input,
+candidate failure, mandatory checks, trusted verifier and editable method. Freeze the concrete
+harness/API representation before candidate generation without changing those requirements. Label
+the seeded anonymous/in-memory candidate separately from actually observed model behavior. Preserve
+the source decisions, failure, repair and verification identities that 05 needs for its proposal.
+
 ## Required implementation
 
 ### 1. An immutable governing agreement for a scope of work

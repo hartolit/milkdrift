@@ -1,10 +1,37 @@
 # Managed execution and connected hosts
 
-Discussion synthesis, 2026-09-16. This preserves the user's requirements and the design questions connecting them. It is not an accepted architecture change or an instruction to implement every proposal below.
+Discussion synthesis, 2026-09-16, reconciled with direction adoption on 2026-09-18. The historical
+assessment below explains the proposal's origins; accepted rules now belong to
+[vision](../../../../product/vision.md), [architecture](../../../../architecture.md) and
+[ADRs 0038–0041](../../../../decisions/README.md). The whiteboard overview owns assignment state.
 
 Repository reviewed: `64b4c5fa2b218dc59eef63fc44af8e094a8fb430`.
 
-Suggested location: `docs/development/virtual-office/whiteboard/discussions/managed-execution-and-connected-hosts.md`.
+## Adopted assessment
+
+The accepted direction retains independent hosts, optional managed separation, ordinary files,
+external inference, shared administration and tools that remain native or attached. One executable
+with explicit roles and rootless Podman/systemd for the first Linux setup resolve the packaging
+and initial-mechanism questions. Durable resource state and use protection are necessary because
+services outlive operations and active work must survive interrupted maintenance; installer scripts
+alone do not own those obligations.
+
+The central outcome is now adaptable reusable methods, with hosts supporting that work. A published
+version binds a starting blueprint and protected adaptation policy, not an invariably fixed graph.
+The agreement, exact effect checks and constrained service identity preserve caller promises while
+allowing useful repair. Evaluation on distinct inputs determines whether a lesson earns promotion.
+[The shared Slotbook specification](../../../../guides/adaptive-method-example.md) and ADR 0039's
+explicit parent/child editing handoff settle the two concrete acceptance cases.
+
+These decisions replace the unresolved alternatives and scope restriction in the dated assessment
+below. They report no implementation or physical qualification. GUI, inference, general deployment
+frameworks and unrelated expansion remain excluded. The two unrelated model-policy/provenance
+topics remain unchanged.
+
+Contribution: 2026-09-18, `Alder-20260918-00` (agent pseudonym), direction adoption for assignment 00.
+Source and test inspection, not an independent review or a host experiment.
+
+## Historical assessment
 
 ## Purpose
 
@@ -36,7 +63,9 @@ The vision already distinguishes trusted host execution from genuinely sandboxed
 
 Implementation is narrower than the vision. Current status says ordinary trusted processes have the daemon account's privileges, without a sandbox or OS resource quotas. Peer placement and remote execution exist; dynamic local configuration reload and a GUI do not. These are documentation-based observations, not results of a new source audit or execution test. [2]
 
-The existing roadmap does not authorize further feature implementation. Preserving and examining this operator need does not silently lift that restriction. The whiteboard explicitly exists to carry unresolved discussions across assignments. [3][4]
+At the reviewed baseline, the roadmap did not authorize further feature implementation. The
+subsequent user-authorized sprint replaces that blanket restriction; its finite scope now belongs
+to the canonical roadmap. The original assessment did not itself lift the restriction. [3][4]
 
 The earlier downloadable capability-host proposal used a September 6 baseline. Its statement that controller activation remained unavailable is no longer current: status now records explicitly enabled activation within a qualified operating scope. Do not reuse that earlier status claim as a prerequisite. Its deployment, knowledge, and recovery ideas remain proposals to assess, not accepted requirements. [2]
 

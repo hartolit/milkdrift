@@ -3,6 +3,10 @@
 - Status: accepted
 - Date: 2026-08-29
 
+This decision governs workflow causal selection. [ADR 0038](0038-independent-host-execution.md)
+adds an explicit direct-input selection owner without inventing workflow manifests; it does not
+relax these workflow rules or claim direct selection is already implemented.
+
 ## Context
 
 Workflow history, current projections, branch workspaces, and artifacts can all contain material a

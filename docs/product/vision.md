@@ -56,13 +56,24 @@ The work is not only the code an agent writes. The work also includes:
 - controlling who or what may change the process;
 - resuming after interruption without inventing history.
 
-Milkdrift exists to make that entire process programmable.
+Milkdrift exists to make that entire process programmable, and to help people and agents develop,
+adapt, and reuse the methods behind it. A repaired application solves one case. A method supported
+by evidence from other cases can improve future work without requiring the operator to reconstruct
+the lesson from a chat. Independent hosts and prepared tools make that work practical.
 
 It should reduce manual prompt shuffling without hiding the work behind an opaque autonomous-agent loop. It should make automation more powerful **because it is more observable and governable**, not because it asks the operator to trust more invisible state.
 
 ## 2. The product thesis
 
-Milkdrift is a local-first, durable, live-editable blueprint runtime for work.
+Milkdrift is a local-first system for adaptable, reusable methods of work, implemented through a
+durable, live-editable blueprint runtime and independently useful execution hosts.
+
+A blueprint defines a reusable method: responsibilities, decisions, process and result obligations,
+and the freedom to adapt within them. A revision is one immutable executable definition; a run
+records what actually happened under its starting revision and any prospective adaptations. One
+workflow system supports different scopes of freedom. Exploration may permit substantial changes
+to an internal plan; a dependable deployment method may permit repair while preserving its checks
+and target. There is no global static/dynamic engine split or unaccountable mode.
 
 A workflow is a versioned program made from capabilities. Capabilities may be:
 
@@ -74,7 +85,7 @@ A workflow is a versioned program made from capabilities. Capabilities may be:
 - remote Milkdrift execution hosts;
 - future capability types the core does not need to know in advance.
 
-The runtime owns:
+The workflow system owns:
 
 - workflow meaning;
 - immutable revision history;
@@ -85,6 +96,12 @@ The runtime owns:
 - provenance;
 - cancellation, retries, recovery, and uncertainty;
 - prospective live changes.
+
+Execution hosts own accepted direct or delegated operations and their tools. A direct model or
+process call needs authorized inputs, limits, provenance, and recovery, but no invented workflow.
+Managed installations own resources that survive the operation that created them. A workflow-enabled
+daemon composes these responsibilities with the runtime; an execution-only host can serve tools
+without constructing a workflow engine.
 
 The runtime does **not** own:
 
@@ -398,6 +415,21 @@ An actor's authority may constrain:
 
 A controller must not be able to enlarge its own authority merely by proposing a revision that requests a stronger capability.
 
+A dependable method accepts an identifiable agreement: input/output meaning, required responsibilities
+and evidence, effect prerequisites, permitted adaptation, and failure or escalation behavior.
+Preauthorization should allow useful investigation and repair without another human decision for
+every internal edit. It cannot permit an agent to rewrite the agreement that limits those edits.
+Repairing this run, improving the reusable method, and changing a published agreement are distinct
+authorized actions, even when one actor is permitted to perform all three.
+
+For example, an agent may replace a failed implementation and request new verification. Removing
+the required check, selecting itself as the trusted verifier, or changing the deployment target
+cannot make that candidate acceptable. The consequential operation must check applicable evidence
+for the exact candidate, configuration, target, and verifier for every caller, including a direct
+client. A graph containing a check is insufficient if its worker also holds an unrestricted path
+to publication. Artifact checksums establish bytes; trusted verification establishes the finite
+claim made about those bytes.
+
 ## 9. AI-authored workflows
 
 The operator should not need to construct every graph manually.
@@ -654,6 +686,12 @@ The event does not embed a 20 MB build log, repository archive, model transcript
 
 Workspaces provide scoped logical state. Artifacts provide immutable content. Context manifests select references to both.
 
+Ordinary files remain the editable working medium. A managed working area has a durable owner and
+data-preservation policy; it is not just the temporary directory of one invocation. A knowledge
+entry point can change as agents learn, while each task freezes the exact authorized evidence it
+selected. Cross-run reuse requires explicit source selection and does not grant access to another
+branch's private state. Retrieved knowledge is evidence, never new authority.
+
 Retention should be explicit:
 
 ```text
@@ -682,7 +720,9 @@ Compaction must never mean silently erasing the execution journal or the provena
 
 Milkdrift should make it difficult for meaningful work to happen without traceable provenance.
 
-Every execution result should connect to facts such as:
+Every result should identify its actual caller, accepted request, authority, capability generation,
+input selection, artifacts, and terminal or uncertain outcome. Workflow-originated results also
+connect to facts such as:
 
 ```text
 RunId
@@ -892,7 +932,11 @@ This is useful when:
 - an infrastructure server should expose carefully scoped administration operations;
 - remote work must survive disconnects without accidental duplicate execution.
 
-The workflow authority remains with the originating daemon. The serving peer owns its environment and the accepted remote execution record.
+For delegated workflow work, workflow authority remains with the originating daemon. The serving
+host owns its environment and accepted operation. A peer transport can also carry a direct request;
+transport does not determine origin. A delegated credential must retain its governing scope and
+account rather than reclassify work as independent. Shared administration lets authorized clients
+inspect several hosts while each host retains its own storage and authority.
 
 The peer protocol must preserve:
 
@@ -949,9 +993,12 @@ Tags are descriptive. They are never authority.
 
 A peer calling itself `trusted=true` does not grant trust. Trust comes from authenticated identity, configured relationships, immutable grants, capability allowlists, quotas, and exact generation pins.
 
-## 21. Self-extending capability hosts
+## 21. Managed tools and callable methods
 
-A future workflow may be allowed to install or extend tools on a peer. This is powerful and dangerous enough to require its own controlled lifecycle.
+A direct client or workflow may be allowed to install or extend tools on a host through a controlled
+lifecycle. An installation retains approved configuration, exact owned resources, active use,
+interrupted changes, and removal instructions after the creating invocation has finished or its
+detail has been compacted. Attached external services remain owned elsewhere.
 
 It must not be:
 
@@ -999,6 +1046,32 @@ An in-flight invocation remains pinned to the generation it accepted. New work m
 
 The capability documentation is part of the generation's usable state. An agent must be able to retrieve the exact operation semantics, examples, failure modes, and rollback instructions corresponding to the selected generation.
 
+Managed setup supplies normal files, tools and persistent services. Rootless Podman with
+systemd/Quadlet is the first Linux mechanism; the external supervisor maintains services while
+Milkdrift owns approved changes and resource use. Native trusted execution and attached endpoints
+remain valid choices. Isolation claims require demonstrated OS enforcement, and workers cannot
+modify the manager, its credentials, or the controls enforcing their grant. A failed protected
+setup must refuse rather than silently run with broader host privileges.
+
+Lifetime protection and editing access are different. Accepted work protects the resource generation
+it needs from removal or replacement. Only one operation may mutate a managed working area at a
+time. A parent waiting for an authorized child can explicitly hand editing access to that child
+while retaining lifetime protection; parent writes resume only after child use is safely settled.
+Uncertainty, expiry, or a cancellation acknowledgement cannot establish that files are safe to reuse.
+
+A workflow-enabled host can publish a method as a versioned capability. The version binds an exact
+starting blueprint, agreement, and adaptation policy, so calls may have different legal revision
+lineages without receiving different promises. One accepted call maps to one internal run, including
+after restart. New promotion affects future selection only. Invoke-only callers need the public
+operation's permission; an explicit constrained service identity supplies its internal authority
+without handing callers production secrets or general administrative rights.
+
+Learning selects authorized run evidence, proposes a candidate method, and evaluates it on separate
+inputs under criteria fixed before selection. Ordinary control promotes or rejects it. A successful
+trace alone is not a universal recipe, and a negative or inconclusive result is useful evidence.
+Product variations use explicit inputs and separate mutable state; shared immutable lessons do not
+justify shared writable checkouts. No separate learning engine is implied.
+
 ## 22. Security is explicit authority, not optimistic trust
 
 Milkdrift coordinates systems that can modify repositories, install software, deploy services, alter databases, spend money, and operate production infrastructure. Security cannot be a later wrapper.
@@ -1022,7 +1095,7 @@ A valid bearer token, peer certificate, or local login must not imply access to 
 
 ## 23. The daemon is the durable authority
 
-The canonical deployment has one authoritative daemon for a workflow domain.
+One authoritative daemon owns a workflow domain. Its workflow-enabled composition is:
 
 ```text
                         Iced / CLI / API clients
@@ -1042,7 +1115,7 @@ The canonical deployment has one authoritative daemon for a workflow domain.
                          capability host
 ```
 
-The daemon owns:
+The workflow-enabled daemon owns:
 
 - persistence lifecycle;
 - runtime recovery and admission;
@@ -1056,6 +1129,11 @@ The daemon owns:
 Clients do not open the database or resolve adapter secrets. They submit commands and render authorized read models.
 
 One daemon may delegate capability execution to peers, but it does not surrender workflow truth.
+
+The same executable also has an execution-only composition with authentication, storage, artifacts,
+capability hosting, serving recovery and installed resource management. Role removal cannot abandon
+live or unresolved workflow obligations. Clients, including future cross-platform graphical clients,
+continue to submit scoped commands rather than open a host's database.
 
 ## 24. The Iced control center
 
@@ -1235,6 +1313,11 @@ Deterministic responsibilities include:
 - provenance linking.
 
 Nondeterministic results are accepted only through explicit capability observations and become immutable evidence.
+
+Keep five claims distinct: inspectable history explains a run; a reusable method can be applied to
+other inputs; consistent acceptance preserves agreed checks; reproducible setup reconstructs the
+declared tool environment; identical execution or output needs separate evidence. A recipe does not
+restore a database's contents, and fixed acceptance rules do not promise identical generated code.
 
 ```text
 nondeterministic model/tool
@@ -1464,12 +1547,18 @@ The first decisive success is:
 - pause automatically or manually;
 - inspect exact context and outputs;
 - insert an independent reviewer and remediation step through a prospective revision;
-- continue after approval;
+- continue under the applicable preauthorization or recorded approval;
 - survive daemon restart;
 - preserve the complete provenance chain;
 - use local or hosted model endpoints without Milkdrift owning inference.
 
 The broader success is a federated work fabric where repositories, tools, infrastructure, models, and human approvals can be composed under explicit authority without collapsing into one privileged machine or one opaque agent loop.
+
+The next proof connects that fabric to method development: prepare a working setup, observe and
+repair a failed candidate without weakening its agreement, invoke the method through a published
+version, evaluate a proposed lesson on distinct inputs, and produce independently tracked product
+variations. Preserve useful files, evidence, and knowledge when disposable infrastructure is removed.
+Whether the proposed lesson earns promotion is determined by the evidence.
 
 ## 34. Final compass
 

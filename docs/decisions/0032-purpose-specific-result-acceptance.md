@@ -1,5 +1,9 @@
 # 0032 — Accept stage results through ordinary workflow composition
 
+[ADR 0040](0040-protected-adaptive-methods.md) adds protected agreements and consequential effect
+checks to this direction. The finite acceptance behavior below remains supported; it does not
+already establish trusted deployment evidence or prevent every alternate effect path.
+
 Provider completion can preserve an empty, tool-only, structured-only, or exhausted response.
 Treating every such completion as a usable review allowed dependent work to enter without the
 output it required. Changing the model response contract to reject empty text would discard

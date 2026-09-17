@@ -3,6 +3,10 @@
 - Status: accepted
 - Date: 2026-08-26
 
+[ADR 0038](0038-independent-host-execution.md) supersedes mandatory workflow-runtime composition
+for every host. It retains the single executable, bounded owners and orderly lifecycle here;
+execution-only startup is an accepted addition for 01, not current implemented behavior.
+
 ## Context
 
 The runtime and redb adapter are deliberately synchronous, stateful owners. Putting them behind an

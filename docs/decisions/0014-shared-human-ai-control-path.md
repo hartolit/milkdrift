@@ -3,6 +3,10 @@
 - Status: accepted
 - Date: 2026-08-26
 
+[ADR 0040](0040-protected-adaptive-methods.md) adopts scoped preauthorized adaptation under a
+protected agreement. It supersedes coarse approval classification as the sole intended adaptation
+boundary, while preserving this shared command path. Current classification remains until 03.
+
 ## Context
 
 AI-produced workflow changes need stricter input handling, but they do not need a privileged runtime

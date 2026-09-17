@@ -1,11 +1,13 @@
 # Milkdrift
 
-Milkdrift is a local-first, durable workflow runtime for work performed by AI endpoints, coding
-agents, tools, humans, and peer machines. It lets an operator inspect execution, pause it, and
-revise future work while retaining the history and evidence needed to understand each decision.
-Models and tools run outside the core.
+Milkdrift helps people and agents develop, adapt, and reuse methods of work. Its local-first,
+durable workflow runtime coordinates AI endpoints, coding agents, tools, humans, and peer machines.
+An operator can inspect execution, pause it, and revise future work while retaining the history
+and evidence needed to understand each decision. Models and tools run outside the core.
 
-The pre-1.0 headless kernel is maintainership-ready, with broad architectural cleanup frozen.
+The pre-1.0 headless kernel supplies the current workflow implementation. Independent hosting,
+managed resources, protected adaptation, and callable methods are authorized additions in the roadmap;
+their design is adopted, and their implementation remains unfinished.
 There is no UI or storage migration. Local processes run with the daemon account's privileges;
 they are not sandboxed. Continuous controllers require explicit daemon activation and retain
 cumulative final-entry admission limits. Controller activation is disabled by default.

@@ -11,8 +11,9 @@ makes that method callable. Experience can produce a better version and isolated
 
 The sprint finishes with an actual desktop-to-UM790 scenario: establish a protected working setup,
 use a local model, develop and verify an application, repair a failed candidate, publish it through
-a versioned workflow capability, learn a reusable improvement, and preserve useful outputs when
-the disposable setup is removed. Disconnects, restarts, unauthorized shortcuts, stale evidence,
+a versioned workflow capability, evaluate a proposed reusable improvement, and preserve useful outputs
+when the disposable setup is removed. A negative or inconclusive learning result remains valid evidence
+under the fixed criterion. Disconnects, restarts, unauthorized shortcuts, stale evidence,
 and failed updates are part of the scenario, not later hardening work.
 
 These are seven sequential assignments, including the direction-adoption assignment. They are
@@ -21,36 +22,36 @@ unfinished assignment across sessions instead of treating its number as permissi
 
 ## Start here
 
-Extract this directory into `docs/development/virtual-office/`. The resulting first prompt is
-`docs/development/virtual-office/adaptive-hosts/00-first-execution-prompt.md`.
+This sprint is installed in `docs/development/virtual-office/adaptive-hosts/` and registered in
+the [virtual office](../README.md). Start from the assignment table and predecessor handoff.
 
 Execute **00**, then **01–06 in order**. Each agent reads this README, its prompt, and
 [the discussion synthesis](discussed-direction.md), followed by the canonical documents and source
 required by its assignment. Once 00 has adopted the direction, canonical documents own the accepted
 rules; the synthesis remains a temporary record of intent and rationale, not a second specification.
 
-00 registers this sprint in the existing virtual-office README. Nothing in this package overwrites
-that README on extraction. Earlier downloadable patches are not prerequisites; agents must inspect
-what is actually present rather than assuming that a previous patch was applied.
+Earlier downloadable patches are not prerequisites; agents must inspect what is actually present
+rather than assuming that a previous patch was applied. The shared maintained application is
+[Slotbook](../../../guides/adaptive-method-example.md); 02–06 must use its single specification.
 
-The user's request authorizes preparation of this implementation sprint and its direction changes.
-00 must replace the conflicting blanket feature freeze with an explicit, limited authorization for
-this sprint. Do not ask again for permission already given. This does not authorize unrelated
+The user's request authorizes this implementation sprint and its direction changes, now recorded in
+the [roadmap](../../../product/roadmap.md). Do not ask again for permission already given. This does not authorize unrelated
 features, production deployments, destruction of user data, or unannounced host privilege changes.
 
 ## Assignments and current state
 
 The coordinator maintains this table. Claiming an assignment sets its real session owner; do not
-invent completed reviews or additional participants. All assignments below are prepared, not run.
+invent completed reviews or additional participants. Implementation assignments remain prepared
+until their actual owners execute them; direction adoption is not implementation evidence.
 
 | Order | Assignment | Owner | State | Required outcome |
 | --- | --- | --- | --- | --- |
-| 00 | [Adopt direction and ownership](00-first-execution-prompt.md) | Unassigned | Prepared | Canonical intent, architecture, scope, compatibility decisions, and testable implementation boundaries agree. |
+| 00 | [Adopt direction and ownership](00-first-execution-prompt.md) | Alder-20260918-00; review: Rowan-20260918-review | Reviewed and accepted — [handoff](handoffs/00.md) | Canonical intent, architecture, scope, compatibility decisions, and testable implementation boundaries agree. |
 | 01 | [Independent host execution](01-independent-host-execution.md) | Unassigned | Prepared | Direct and workflow-originated work use complete authorized execution, context, artifacts, and recovery without requiring a local workflow role. |
 | 02 | [Managed Linux working setup](02-managed-linux-environments.md) | Unassigned | Prepared | A useful rootless Podman/systemd setup has a complete lifecycle, enforced worker separation, durable ownership, and safe resource-use coordination. |
 | 03 | [Adaptation with protected obligations](03-adaptive-methods-and-obligations.md) | Unassigned | Prepared | Useful autonomous revisions are permitted within scope; acceptance requirements and protected effects cannot be bypassed. |
 | 04 | [Published workflow capabilities](04-published-workflow-capabilities.md) | Unassigned | Prepared | A versioned adaptable method can be called locally or remotely, with durable invocation/run linkage and distinct invocation/edit/publication permissions. |
-| 05 | [Learn and reuse better methods](05-learning-and-product-variations.md) | Unassigned | Prepared | Evidence produces an evaluated candidate blueprint, explicit promotion, and isolated product variants through ordinary workflows. |
+| 05 | [Learn and reuse better methods](05-learning-and-product-variations.md) | Unassigned | Prepared | Evidence produces an evaluated candidate blueprint, a promotion/rejection/inconclusive decision, and isolated product variants through ordinary workflows. |
 | 06 | [Integrated acceptance and closure](06-integrated-acceptance-and-closure.md) | Unassigned | Prepared | The combined system works through product binaries, including real Linux/UM790 evidence, failure recovery, and removal; remaining defects are corrected. |
 
 Do not parallelize these numbered assignments: they deliberately share contract and composition
@@ -169,6 +170,7 @@ make missing UM790 qualification disappear, and do not create another sprint aut
 
 ## Planning verification
 
-This package is a prepared assignment set, not an implementation or a completed sprint. Its source
-basis and product decisions are in [the synthesis](discussed-direction.md). No repository, daemon,
-model, container, or UM790 execution is claimed by the preparation of these files.
+The original package was prepared against the stated baseline. Assignment 00's handoff records the
+actual adoption checkout and documentation checks. [The synthesis](discussed-direction.md) retains
+discussion rationale; canonical owners and ADRs 0038–0041 now own accepted direction. No daemon,
+model, container, or UM790 execution is established by adopting these documents.

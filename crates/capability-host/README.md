@@ -6,6 +6,12 @@ generations, execution permits, and workers. Start here when changing that conne
 an adapter. Operators configure existing adapters through the
 [daemon guide](../../docs/operations/daemon.md).
 
+This is the current workflow/peer composition, not yet a public independent-call service.
+[ADR 0038](../../docs/decisions/0038-independent-host-execution.md) adopts shared prepared execution
+and durable direct/serving ownership. The current `execute_exact` helpers require their caller to
+own authorization and reporting and skip runtime's final account transaction; they are not a safe
+shortcut for implementing a direct endpoint. Local attempts must retain runtime-owned history.
+
 ## Follow one task
 
 The daemon's [capability construction](../../apps/daemon/src/host/capabilities.rs) loads validated

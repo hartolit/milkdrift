@@ -9,13 +9,14 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-No active sprints.
-The [whiteboard](whiteboard/README.md) holds broader questions for future planning.
+[Adaptive methods and independent hosts](adaptive-hosts/README.md) owns the authorized direction
+adoption and sequential implementation assignments 00–06. Its assignment table and handoffs own
+execution state. The [whiteboard](whiteboard/README.md) retains unrelated questions.
 
 ## Prepared assignments
 
-No prepared assignments. Use the [roadmap](../../product/roadmap.md) and whiteboard to choose the
-next sprint's purpose before creating assignments.
+Assignments 01–06 are prepared within the active sprint. Use its predecessor handoffs before
+starting dependent work; do not create a competing sprint for the same responsibility.
 
 ## Start a sprint
 

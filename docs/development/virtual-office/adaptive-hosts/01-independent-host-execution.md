@@ -10,6 +10,12 @@ Complete independent hosting end to end after 00 is accepted. Read `handoffs/00.
 [verification policy](../../workflow.md). You own the entire host-execution responsibility and every
 current consumer affected by its generalization.
 
+[ADR 0038](../../../decisions/0038-independent-host-execution.md) is the adopted owner decision:
+move serving lifecycle semantics out of peer-http into capability-host, generalize existing
+persistence, retain runtime's local transaction, and represent direct selection and artifact
+ownership honestly. Review actual schemas/fixtures before assigning versions; no migration is
+preapproved by 00. ADRs 0039–0041 describe later consumers, not unused interfaces to scaffold now.
+
 A direct client must invoke useful process and model operations on an execution-only host. A desktop
 workflow must invoke those same operations remotely. Neither request requires a workflow runtime on
 the serving host. Existing local workflow execution retains its guarantees and history. A hidden

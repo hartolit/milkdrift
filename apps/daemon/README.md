@@ -5,6 +5,12 @@ configure it once, then use the [CLI](../cli/README.md) or
 [control client](../../crates/control-client/README.md) to submit work and inspect results. It
 starts the configured external capability adapters; model servers remain separately managed.
 
+Normal startup currently constructs the workflow runtime and control service even when serving
+peer tools. The accepted [independent-host design](../../docs/decisions/0038-independent-host-execution.md)
+adds an execution-only composition in the same executable; no current configuration option supplies
+that role. Managed service setup is separately assigned under
+[resource ownership](../../docs/decisions/0039-managed-resource-ownership.md).
+
 Use the [fresh-directory operator recipe](../../examples/operator/README.md) to build the binary,
 prepare a private credential, check `daemon.toml`, start a terminal-only workflow, and restart it.
 [Daemon operations](../../docs/operations/daemon.md) owns startup, retention, shutdown, and backup.

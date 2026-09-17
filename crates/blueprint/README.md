@@ -5,6 +5,11 @@ tasks and their relationships here. The result is an immutable `BlueprintRevisio
 inspected, saved, and submitted to the runtime. A revision describes intended work; a run's events
 later record which tasks actually executed and under which revision.
 
+A blueprint is the reusable method; one run may prospectively adopt several revisions of it.
+The accepted [adaptive-method design](../../docs/decisions/0040-protected-adaptive-methods.md)
+adds separately protected agreements and editable scopes. Current graph validation does not yet
+enforce those agreements; do not mistake an immutable revision for an unchangeable method.
+
 The [prompt-sequence compiler](../prompt-sequence/README.md) is a concrete author of these
 definitions. It emits ordinary nodes and edges, using the same mutation and validation APIs as
 other callers. The [crate example](src/lib.rs) shows the construction path in Rust.

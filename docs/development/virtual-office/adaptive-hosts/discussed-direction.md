@@ -2,13 +2,20 @@
 
 Discussion synthesis and implementation direction, 2026-09-17.
 
-This document carries the user's intent and the conclusions of the host and adaptive-workflow
-discussions into the next sprint. It is not a transcript, an assessment of the agents who took
-part, or a claim that the proposed behavior already exists. The user has now requested the sprint;
-[00](00-first-execution-prompt.md) must adopt the direction in its proper canonical owners before
-implementation. Keep enduring intent in vision, ownership in architecture, compatibility decisions
-in ADRs, verified behavior in status, and unfinished work in the roadmap. Do not paste this entire
-document into each of them.
+Reconciled during 00 on 2026-09-18: accepted rules now live in the canonical
+[architecture](../../../architecture.md), [vision](../../../product/vision.md) and
+[ADRs 0038–0041](../../../decisions/README.md). This synthesis retains rationale, not competing
+normative ownership. The [Slotbook specification](../../../guides/adaptive-method-example.md)
+settles the common application and fixed evaluation; ADR 0039 settles parent/child editing handoff.
+Those clarifications supersede an unconditional planning-stage prescription or a worker-slot-only
+interpretation of nested progress. Implementation and physical qualification remain unexecuted.
+
+This document carried the user's intent and the conclusions of the host and adaptive-workflow
+discussions into the sprint. It is not a transcript, an assessment of the agents who took part,
+or a claim that the behavior already exists. [00](00-first-execution-prompt.md) adopts this direction
+in its proper canonical owners before implementation: intent in vision, ownership in architecture,
+compatibility decisions in ADRs, verified behavior in status, and unfinished work in the roadmap.
+Do not paste this entire document into each of them.
 
 Baseline reviewed: `855f8ecbb1007baa2a91006384fa322af40ebef9`. The source index at the end pins the
 observations below. The earlier independent-host document and documentation patch are inputs to
@@ -332,10 +339,16 @@ would invalidate it. A maintenance request closes new affected admission and eit
 state or waits under a declared bound. Avoid hold-order deadlocks when more than one resource is
 required.
 
+ADR 0039 distinguishes those lifetime holds from editing claims. A suspended parent retains
+lifetime protection while handing mutation to its exact accepted child, after physical writer
+quiescence is proven. Parent editing resumes only after proven child quiescence and authorized
+reacquisition. This transfer, as well as worker availability, is part of the nested-call test.
+
 Unknown work cannot hold the system hostage without explanation, but timeout is not a deletion
 license. Provide inspection and an explicit authorized resolution/disruption path. A decision to
 reclaim a resource at known risk remains distinct from evidence that an old invocation succeeded
-or safely terminated. Rebuild use obligations before opening admission after restart.
+or safely terminated; reuse requires physical fencing under ADR 0039. Rebuild use obligations before
+opening admission after restart.
 
 Record intended resource identity and change before creating a container, replacing configuration,
 or removing data. Inspect that exact identity after interruption. A matching name or PID is not
@@ -400,9 +413,9 @@ run-specific adaptation can produce different actual revision histories for diff
 The allowed adaptation is part of what the caller selected, not an unannounced moving target.
 
 One accepted invocation maps durably to one internal run on a workflow-enabled host. Lost replies,
-reconnection, restart, or withdrawal of a catalog entry must not create another run. Creation and
-linkage require an atomic same-store transition where possible or a deliberately recoverable
-idempotent command association. Invocation acknowledgement, internal completion, accepted result,
+reconnection, restart, or withdrawal of a catalog entry must not create another run. ADR 0041 selects
+a stable create/start command association saved before internal creation, with runtime receipts
+proving linkage after interruption. Invocation acknowledgement, internal completion, accepted result,
 and surviving deployed service remain distinct facts.
 
 The published method's owner controls its internal implementation and credentials. The caller
@@ -484,8 +497,9 @@ must establish the following observations through product behavior:
 5. A versioned workflow capability creates one recoverable internal run per accepted call, permits
    authorized internal editing without granting it to invoke-only clients, and retains budgets and
    effect requirements across hosts and nested calls.
-6. Run evidence produces a proposed, evaluated method improvement and independent product variations;
-   promotion affects future selection without rewriting older accepted versions or histories.
+6. Run evidence produces a candidate method revision evaluated under fixed criteria and independent
+   product variations; promotion, rejection or an inconclusive result follows the evidence. Promotion
+   affects future selection without rewriting older accepted versions or histories.
 7. The whole scenario works on the real authorized Linux/UM790 setup, with actual local inference,
    explicit evidence limits, reproducible commands, and no left-behind disposable resources.
 

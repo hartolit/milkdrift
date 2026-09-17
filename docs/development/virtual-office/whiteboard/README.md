@@ -9,6 +9,7 @@ what belongs here; [the office procedure](../README.md) handles sprint coordinat
 
 | Topic | State | Next action | Assignment | Last evaluated |
 | --- | --- | --- | --- | --- |
+| [Managed execution and connected hosts](discussions/managed-execution-and-connected-hosts.md) | assigned | Implement the adopted method/host/resource boundaries and qualify the shared scenario; accepted direction is in canonical product docs and ADRs 0038–0041. | [Adaptive hosts 00–06](../adaptive-hosts/README.md) | 2026-09-18 |
 | [Configurable generation and thinking policy](discussions/model-generation-policy.md) | open | Establish a workflow need and reliable mapping for thinking controls beyond supported effort and total-output bounds; retain the current design unless that evidence justifies expansion. | Unassigned | 2026-09-16 |
 | [External model configuration provenance](issues/external-model-configuration-provenance.md) | open | Distinguish pre-run inspected defaults from per-request effective settings; scope a controlled thinking comparison only if its claim requires one. | Unassigned | 2026-09-16 |
 

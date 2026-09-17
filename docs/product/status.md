@@ -96,6 +96,16 @@ values; repository contracts check the version cells against source.
 
 ## Limitations now
 
+- Independent execution-only startup and public direct invocation/upload are not implemented.
+  Normal startup constructs runtime and control services. Adapter context and model selection
+  require workflow coordinates; serving peer output uses a run-shaped accounting key without
+  creating a serving-side workflow. Local prepared entry and serving peer entry still differ.
+- Managed installations, persistent resource inventories and generation holds, worker isolation,
+  protected adaptive agreements, service-execution delegation, published invocation/run linkage,
+  and evaluated method learning are not implemented. Existing prospective reconciliation and result
+  acceptance do not establish those guarantees. The current risk classifier requires approval for
+  node replacement and other elevated changes; it has no protected editable-scope policy.
+  [Architecture](../architecture.md) and ADRs 0038–0041 describe accepted additions, not supported APIs.
 - Earlier selection-policy-version-1 manifests remain readable, but omissions retaining ambiguous
   identities or sizes and stopped required evidence cannot authorize reuse. Retry and startup refuse
   those retained records without rewriting their bytes. An unsafe active lease prevents daemon
@@ -155,7 +165,8 @@ plus the reviewed operational changes on Windows x86_64/MSVC, Rust 1.95.0. Raw c
 source/binary identities, reports and logs are retained under `target/acceptance-08/` and
 `target/review-commit/`. The [verification guide](../development/verification-evidence.md)
 owns reproduction and evidence scope.
-Broad architectural cleanup and feature expansion remain frozen under the [roadmap](roadmap.md).
+The [roadmap](roadmap.md) authorizes a finite implementation sprint beyond this evidence snapshot.
+Direction adoption adds no execution, isolation, learning, or platform qualification to these results.
 
 ### Integrated operating decision
 

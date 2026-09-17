@@ -59,7 +59,7 @@ Whiteboard contributions are optional; never invent an entry or weaken a deliver
 
 An entry is not an established defect, approved design, or automatic dependency. Continue the
 assignment unless a demonstrated problem prevents its correctness or acceptance, and report that
-specific impact. Recording a topic does not lift the product scope freeze. The whiteboard procedure
+specific impact. Recording a topic does not expand the roadmap's finite authorization. The whiteboard procedure
 owns investigation and carryover; the [office procedure](virtual-office/README.md) owns sprint cleanup.
 
 ## Definition of done

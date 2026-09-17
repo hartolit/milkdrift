@@ -2,8 +2,8 @@
 
 Start with [AGENTS.md](AGENTS.md) and its reading order. Milkdrift's headless applications already
 run through a durable workflow kernel; [status](docs/product/status.md) explains current behavior
-and limitations, and the [roadmap](docs/product/roadmap.md) identifies the remaining work and scope
-freeze. Use [the implementation reading path](docs/README.md#learning-the-implementation) to trace
+and limitations, and the [roadmap](docs/product/roadmap.md) identifies the authorized work and its
+exclusions. Use [the implementation reading path](docs/README.md#learning-the-implementation) to trace
 an operator action to its source and independent tests.
 
 Keep each fact with its [architectural owner](docs/architecture.md). Follow the

@@ -3,6 +3,10 @@
 - Status: accepted
 - Date: 2026-08-29
 
+[ADR 0041](0041-published-method-invocation.md) adds an explicit constrained service-execution
+relationship for published method calls. Ordinary runs and subworkflows keep this inheritance rule;
+ambient publisher authority and implicit widening remain forbidden. That addition is not implemented.
+
 ## Context
 
 Authenticating and authorizing an external run command did not by itself constrain work scheduled

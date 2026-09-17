@@ -14,6 +14,11 @@ removal, and their common direct/workflow API. This is not an installer script f
 administration, an empty resource schema, or a process adapter that abandons background children.
 The environment must be usable through the independent host delivered in 01.
 
+Use the single [Slotbook specification](../../../guides/adaptive-method-example.md) for working
+files, tools, staging, persistent data and later deployment. The protected verifier/effect gate
+belongs to 03; do not invent a separate application or claim that protection from setup alone.
+[ADR 0039](../../../decisions/0039-managed-resource-ownership.md) owns the adopted lifecycle rules.
+
 ## Starting owners and design
 
 Read the current host registry/materialization/execution owners from 01, authority/resource selectors,
@@ -89,6 +94,18 @@ Allow one mutating operation per working area initially. This must not block unr
 other services, or separate worktrees. Account for readers when deleting/replacing their resources.
 Acquire multiple resource holds coherently with a defined order/refusal strategy so conflicting
 operations cannot deadlock. Bound any queue or wait.
+
+Implement ADR 0039's distinction between generation lifetime holds and exclusive editing claims.
+An accepted parent may retain lifetime protection while transferring mutation to its exact
+authorized child association. Record suspension/physical quiescence before the guarded resource
+transaction transfers the claim; parent writes must refuse until proven child quiescence and
+authorized reacquisition. A shared actor/workspace name is not lineage, and a live writable mount
+cannot be suspended by a flag alone. Refuse unsupported suspension before child entry.
+
+02 owns transactional handoff/return, claim-generation conflicts, physical stop evidence, restart
+and cancellation behavior, and authorized blocker inspection/resolution, using accepted execution
+relationships from 01. 04 supplies the published invocation/run association and integrated one-worker
+test; no publication stub is needed here. Carry these facts in `handoffs/02.md`.
 
 Updates/removal close new affected admission and refuse busy state or wait under an explicit bounded
 policy. Queued accepted work must not be silently invalidated. A timeout, socket close, expired lease,
@@ -184,6 +201,12 @@ mechanism tests. Both are necessary; a mock container state map cannot establish
   versions, and stale callbacks; refuse unsafe adoption or state advancement.
 - Race mutation/read work with update/removal; respect per-resource holds across restart. Exercise
   pre-entry cancellation, entered uncertainty, bounded busy behavior, and authorized resolution.
+- Prove the resource portion of the shared parent/child test: during child mutation, parent and
+  unrelated conflicting writes refuse; retained lifetime protection prevents removal/replacement;
+  other resources progress. Proven child completion returns parent editing without simultaneous
+  writers or leaked holds. Interrupt at handoff and during child use; exact lineage and claims
+  survive, and uncertain use keeps writes/deletion blocked. 04 composes this with a single worker
+  and a published child; 06 reruns that integrated case. Timeout/acknowledgement is not stop evidence.
 - Fail an update's verification, test declared interruption when generations cannot coexist, and
   prove old accepted work is not silently served by replacement bytes.
 - Compact operation detail, then inspect and remove its still-owned installation correctly. Backup/

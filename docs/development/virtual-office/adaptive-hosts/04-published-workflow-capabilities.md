@@ -30,6 +30,12 @@ credential store, or event journal. If current adapter/worker interfaces cannot 
 pending workflow-backed work without blocking, repair that shared boundary completely rather than
 adding a special untracked thread or a fake terminal event.
 
+Use [ADR 0041](../../../decisions/0041-published-method-invocation.md): a stable canonical
+create/start command association in the caller's authoritative record links the accepted call to
+one real internal run. Control implements a host-owned continuation port, avoiding a reverse
+dependency. [Slotbook](../../../guides/adaptive-method-example.md) is the shared callable method;
+its agreement and verifier are unchanged from 03.
+
 ## Required implementation
 
 ### 1. Exact published versions
@@ -88,6 +94,13 @@ process/model work. It must progress, report, cancel, and recover. Bound nesting
 recursive publications, and cumulative usage. Detect or refuse unsupported self-calls/call cycles
 rather than hanging or recursively creating unlimited runs. This must remain one workflow engine,
 not an environment/publication-specific scheduler.
+
+Worker availability must be tested together with resource ownership. Compose 02's
+[explicit editing handoff](../../../decisions/0039-managed-resource-ownership.md#lifetime-protection-versus-mutation)
+with the exact accepted parent/child association, generation and inherited authority. The parent
+retains lifetime protection but suspends its writer with proof before transferring mutation.
+After child quiescence is proven, return/reacquire editing under current checks; uncertain child
+use cannot permit parent writes or deletion. A timeout or cancellation acknowledgement is not proof.
 
 Cancellation has an exact public request and a linked internal control action. Propagate it through
 normal ownership with separate acknowledgement and terminal evidence. Caller disconnect or timeout
@@ -161,6 +174,14 @@ Required cases include:
   exact starting method/agreement and legal continuation; new selection follows explicit policy.
 - Invoke with one worker slot and nested ordinary work: no worker starvation. Test nesting/cycle
   limits, queue saturation, cancellation, partial failure, and bounded shutdown.
+- With that one worker, make the parent and authorized child edit the same managed working area.
+  Observe child progress while the parent waits; refuse parent and unrelated conflicting writes
+  and removal/replacement, while permitting work on other resources. Prove parent resumption after
+  child completion with one mutator, no duplicate work and no leaked hold. Interrupt both the
+  ownership handoff and active child use, restart and cancel: retain exact linkage/claims and block
+  unsafe reuse until the resource owner's inspection/resolution path establishes stop or fencing.
+  This is the integrated test built on 02's transition suite and rerun in 06; record its evidence
+  and exact resource/link transactions in `handoffs/04.md`.
 - Invoke-only caller successfully deploys within the public contract but cannot inspect protected
   internals, edit/republish, use production secrets, or choose an unapproved target. An authorized
   editor succeeds through the ordinary control path without changing another accepted call.

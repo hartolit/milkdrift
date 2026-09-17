@@ -1,9 +1,10 @@
 # Architecture
 
-Milkdrift separates the definition of work, the history of its execution, and authority to change
-what happens next. A client submits intent to the daemon; the runtime accepts facts durably and
-asks external capabilities to perform work. Clients inspect projections of those facts instead
-of opening storage or reconstructing adapter behavior themselves.
+Milkdrift separates a reusable method, the history of performing it, and authority to change what
+happens next. In the current workflow composition, a client submits intent to the daemon; runtime
+accepts facts durably and asks external capabilities to perform work. The accepted independent-host
+design also admits direct operations without a workflow. Clients inspect the owning service's
+projections instead of opening storage or reconstructing adapter behavior themselves.
 
 Offline `storage-admin` is a separate daemon executable path under OS file-owner authority.
 Redb owns source locking, private inspection copies and complete stopped-generation copies;
@@ -19,8 +20,8 @@ the executable system. Development methods belong in the [practices](development
 
 ## Terminology
 
-- **Blueprint:** reusable declarative workflow or subworkflow package. **Workflow:** top-level
-  identity with revision lineage. **Revision:** immutable semantic snapshot with exact parents.
+- **Blueprint:** reusable method expressed as a declarative workflow or subworkflow package.
+  **Workflow:** identity with revision lineage. **Revision:** immutable semantic snapshot with exact parents.
 - **Node:** definition-time unit. **Node execution:** one runtime occurrence. **Attempt:** one
   invocation under an exact capability selection. **Run:** durable execution pinned to a revision
   lineage. **Edge:** explicit control and/or typed data dependency.
@@ -38,9 +39,23 @@ the executable system. Development methods belong in the [practices](development
   bounded import/template compiled into ordinary revisions. **Layout:** presentation state outside
   semantic identity. **Peer:** remote execution host with its own accepted invocation records.
 
+The adopted additions below are not yet implemented (see [status](product/status.md)):
+
+- **Agreement:** immutable obligations, effect prerequisites and adaptation limits accepted for a
+  scope. **Method adaptation:** a prospective revision inside those limits, not a change to them.
+- **Host invocation:** one accepted direct or delegated operation. **Origin:** its direct caller or
+  workflow relationship, independent of transport. Local workflow attempts retain their runtime owner.
+- **Installation:** durable approved setup and owned resources. **Managed working area:** ordinary
+  mutable files with a resource generation, lifetime holds and one editing owner; distinct from
+  logical workspace values and temporary materialization. **Attachment:** access to a resource
+  owned elsewhere, without permission to delete it.
+- **Published method:** a callable version binding an exact starting blueprint, agreement,
+  adaptation policy and constrained service identity. **Promotion:** selection for future calls,
+  distinct from repairing a run or approving a changed agreement.
+
 ## Owners and dependency direction
 
-The physical workspace below is the complete package map. Names in the first column correspond to
+The physical workspace below is the current complete package map. Names in the first column correspond to
 directories; every package is named `milkdrift-` plus the final directory component, except the CLI
 executable, which is `milkdrift`. Private children organize each owner's implementation.
 
@@ -94,6 +109,18 @@ Canonical capability-owned identities (`PeerId`, `SchemaId`, `ExtensionKey`, `Bo
 `TrustZone`) are imported directly; consuming domains do not re-export alternative owners.
 [Public API policy](reference/public-api-policy.md) governs exports and test-only features.
 
+The accepted dependency changes preserve that inward direction. Transport-independent serving
+acceptance and recovery move from peer-http into capability-host, using generalized persistence
+ports; local workflow history stays in runtime. Host resource policy belongs in a narrow module
+with typed persistence actions and an adopted Linux mechanism adapter. Blueprint owns agreement
+semantics, authority owns verifier/service delegation decisions, and control owns publication and
+proposal orchestration. Host consumes a continuation port implemented by control, avoiding a
+host-to-control dependency cycle. Shared producer meaning stays in workspace, with one artifact
+store. These moves are required by concrete direct/resource/publication consumers; no new crate
+is required just to name a concept. ADRs [0038](decisions/0038-independent-host-execution.md),
+[0039](decisions/0039-managed-resource-ownership.md), [0040](decisions/0040-protected-adaptive-methods.md)
+and [0041](decisions/0041-published-method-invocation.md) own rationale and compatibility decisions.
+
 ## Definitions and prospective control
 
 A revision is created by one complete versioned mutation batch against genesis or an exact
@@ -114,11 +141,21 @@ optional run action, and stop condition. Large reasoning stays in artifacts. Onl
 model output can become a proposal; prose and returned tool calls do not execute control actions.
 
 Control privately validates the candidate, computes authority delta and deterministic risk, stores
-the revision, and delegates acceptance to runtime. It never appends run events itself. Low-risk
+the revision, and delegates acceptance to runtime. It never appends run events itself. Current low-risk
 auto-apply requires explicit policy and exact apply authority and is limited to future pure/read-only
 work. Terminal/started work, side effects, profile/trust expansion, subworkflow/interface changes,
 cancellation, and elevated changes require recorded approval. Approval links exact proposal,
 revision/effect, approver, and policy. Preset names expand into grants rather than runtime roles.
+
+The adopted adaptive-method design refines that coarse approval rule inside explicit governed
+scopes. A run binds an immutable agreement separately from the revision region an agent may edit.
+Blueprint validates preserved responsibilities and interfaces; control classifies the actual delta;
+runtime applies it prospectively under the retained authority/account. Useful repair, investigation
+and dependency edits within that region can be preauthorized. The same grant cannot weaken the
+agreement, verifier, target, completion requirements or its own limits. Outside such scopes the
+existing approval policy remains. Agreement changes require a distinct authorized decision and
+cannot relabel old failure as compliance. This checks protected structure and effect prerequisites,
+not equivalence of arbitrary programs; implementation belongs to 03 under ADR 0040.
 
 ## One command and external-effect path
 
@@ -157,6 +194,10 @@ inherit that basis. Later revisions may narrow it, never replace or enlarge it. 
 reducer, and nested-workflow requirements are checked against the frozen envelope before start or
 adoption without needing a live provider.
 
+That is the current ordinary run/subworkflow rule. The adopted published-service boundary binds
+both the caller relationship and an explicitly constrained service identity under ADR 0041. It
+does not implicitly widen ordinary children or reset their inherited restrictions and accounts.
+
 The host evaluates every semantic candidate against authority before mutable health or capacity.
 Stable selection uses the exact requirement, explicit priority, capability identity, and revision.
 Resolution, exact-generation claim, and immediately-before-entry evaluation retain canonical
@@ -177,6 +218,23 @@ A durable terminal observation outranks a later worker failure. Missing terminal
 entry remains uncertain. Retry eligibility follows recorded side-effect and idempotency facts;
 neither cancellation requests nor connection closure prove that an external effect stopped.
 Worker/system receipts are private runtime paths, not alternate external authority.
+
+### Direct and remotely served operations
+
+The intended shared path is authorize → exact-generation preparation → revalidation → durable entry
+and reservations → adapter entry → durable observations. Preparation freezes authorized data without
+external effects. It is shared mechanism, not a shared second journal. Runtime's current local
+entry/account transaction remains the only authority for a local attempt. A generalized serving
+execution owner persists direct and incoming remote acceptance, claims, entry and cancellation.
+An origin workflow and a serving operation have linked records because they own different facts.
+
+A direct client supplies explicit bounded inputs and receives a real host invocation identity.
+Workflow delegation carries its actual owner/run/revision/execution/attempt and governing selection.
+Authentication binds delegation, grant and account; a delegated credential cannot relabel its work
+as direct to avoid limits. Replay is scoped by host, authenticated caller realm/principal and exact
+request. Current disclosure authorization remains required even for retained results. After possible
+entry, missing evidence preserves uncertainty. This is the accepted 01 addition in ADR 0038; today's
+peer worker still uses its distinct entry/helper path and direct public invocation is absent.
 
 ## Scoped authority and disclosure
 
@@ -272,11 +330,87 @@ does not supply an unsupported provider protocol. Processes explicitly map reser
 inputs through existing input-file policy; no ambient global context file appears. Outputs retain
 manifest/input provenance.
 
+For the adopted direct path, the serving owner freezes a distinct explicit selection from supplied
+inputs and authorized references; it discovers no workflow ancestors. Host materialization verifies
+that selection and the bytes, including empty selection where valid. Workflow causal manifests and
+continuation retain their stronger run/attempt rules. Direct fresh model calls cannot bypass those
+rules by submitting workflow context under another origin. Workspace/persistence producer and
+accounting contracts will identify actual host invocations as well as workflow attempts, replacing
+run-shaped serving accounting keys while keeping one artifact store. Bounded upload/import,
+transfer, retention, integrity and reads are part of 01, not a client-side database shortcut.
+
 Artifact publication uses bounded resumable chunks, exact offsets, digest/size checks, and atomic
 metadata/accounting acceptance after content publication. Read authority, integrity verification,
 and ranges remain independent. Abort/cleanup release owned reservations; replay and content
 deduplication do not duplicate logical charges. Explicit retention may expire bytes while keeping
 safe metadata and integrity evidence; compaction never silently deletes artifact content or outputs.
+
+## Managed resources and editing ownership
+
+This is accepted design for 02, not current process isolation. Capability-host's resource owner
+retains approved recipe/configuration, exact platform identity, generation, ownership/preservation
+policy, use and pending changes. Persistence/redb atomically record guarded intent and affected
+admission before a platform action. A later transaction records observed completion against the
+same transition generation. Rootless Podman and systemd/Quadlet supply Linux effects and service
+supervision; a successful service restart is not evidence that a lost model request completed.
+Native trusted execution and externally attached services remain usable.
+
+Resource state outlives the creating operation. After create succeeds but result recording fails,
+recovery inspects the saved intended identity/configuration and records verified completion or
+uncertainty without creating a replacement. Updates/removal close affected admission and respect
+exact generation holds. Compaction retains ownership/removal facts and preserved-data disposition
+independently of execution detail. Attached services are not deletion targets. No transaction spans
+redb, the filesystem and systemd; no general rollback is promised for irreversible external changes.
+
+A lifetime hold prevents invalidating the generation required by accepted work. An editing claim
+permits one mutator in a working area. A waiting parent keeps its lifetime hold while explicitly
+handing the editing claim to its exact accepted child. The resource transaction checks generation,
+parent/child association, inherited authority and expected claim. The parent must first suspend
+writes with evidence of physical quiescence; releasing a thread or acknowledging cancellation is
+insufficient for a live process holding a writable mount. Child entry waits for the durable transfer.
+
+After proven child quiescence, the owner settles its use and makes the parent eligible to reacquire
+editing under current checks. Parent/conflicting writes and removal remain refused while use is
+uncertain, including after restart. Other resources can progress. Authorized blocker inspection
+and resolution extend the existing command/read plane; a disruption records risk and requires
+physical fencing before reuse, without pretending to establish the old operation's result.
+[ADR 0039](decisions/0039-managed-resource-ownership.md) owns the precise handoff and recovery rules.
+
+## Agreements at effects and published methods
+
+These are accepted additions for 03–05. Required verifier evidence binds immutable candidate/build
+bytes, material configuration, target generation, agreement/policy, verifier identity and validity.
+Authority establishes verifier trust separately from content integrity. The resource operation
+checks these prerequisites after preparation at consequential entry for every caller, including
+direct/raw update paths. Repair workers cannot write served content or use an unguarded socket,
+credential or native tool to bypass the operation. The existing result-acceptance capability retains
+its finite documented meaning; it is not by itself this effect protection.
+
+Control publishes exact starting methods and adaptation policies through the normal registry. A
+published version binds a service principal/grant and input/target narrowing policy, allowing a
+caller to invoke deployment without owning its internal administrative grant union. Caller authority,
+inherited restrictions, agreement and budgets remain applicable; caller-supplied paths or context
+cannot turn the service into an arbitrary proxy. Internal inspection/editing, publication and public
+invocation remain separately granted operations.
+
+The accepted operation retains a planned child identity and canonical create/start command association
+before internal creation. Control submits those exact runtime commands; their receipts prove linkage
+after interruption. A local caller stores the pending link in runtime history; a direct/remote caller
+uses its serving record. No duplicate local attempt journal is added. Once arranged, the call yields
+its worker capacity and continues through bounded durable observation while retaining version and
+resource lifetime pins. Runtime remains the only scheduler. Exact ancestry/depth bounds refuse
+unsupported recursion. Shared-area children use the editing transfer above as well as releasing
+worker capacity. Cancellation, internal completion, agreement satisfaction, result publication and
+surviving deployed service remain separate facts. [ADR 0041](decisions/0041-published-method-invocation.md)
+owns linkage, service authority and account settlement.
+
+Learning uses ordinary control proposals, runtime evaluations, artifacts and publication. An agent
+selects authorized source decisions/failures and proposes a candidate method; an evaluator compares
+baseline and candidate on separate inputs with criteria fixed before selection. Promotion changes
+future calls only. Each product variation owns mutable files, inputs, verification and usage, even
+when immutable lessons are shared. The [Slotbook specification](guides/adaptive-method-example.md)
+fixes the shared demonstration and its possible rejection/inconclusive outcomes; it reports no
+executed learning result.
 
 ## History, compaction, and recovery
 
@@ -476,6 +610,11 @@ use core publication/read ports. [Peer protocol](reference/peer-protocol.md) own
 details; [peer operations](operations/peers.md) owns operator connectivity and quotas.
 
 ## Daemon lifecycle and compatibility
+
+The lifecycle below describes current normal workflow-enabled composition. The accepted execution-only
+role in ADR 0038 uses the same common owners without constructing runtime/control/workflow workers.
+Role removal must refuse unresolved workflow obligations, preserve history and expose truthful
+role availability. It is an intended startup change, not an existing configuration option.
 
 The [daemon](../apps/daemon/README.md) connects these owners into one process. Startup establishes
 what can safely continue before accepting new work; shutdown keeps storage available until workers
