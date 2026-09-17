@@ -93,6 +93,82 @@ for the following cases and record why each owner is necessary:
 - A proposed lesson becomes a candidate blueprint, is evaluated on separate inputs, and is promoted
   for future calls. Identify who owns proposal, evidence, selection, and each variant's mutable data.
 
+### Define one shared application and evaluation case
+
+Before handing off implementation, select and name the demonstration application that connects
+managed setup, failed deployment, adaptive repair, method learning, and product variations. Record
+its specification in one maintained example location, with a reference from `handoffs/00.md`.
+Do not let 02–06 invent separate applications or independent success demonstrations for these steps.
+
+Settle these concrete facts during 00:
+
+- The application's purpose, controlled deployment target, original input, and initial candidate's
+  observable failure. Explain how unclear planning or contradictory requirements can produce that
+  failure; an unrelated planted defect does not establish a planning lesson. Label seeded fixture
+  behavior separately from behavior actually observed in a model-driven run.
+- The required verifier and its trusted owner, exact checks, candidate/configuration binding, and
+  evidence required before publication. Identify which requirements and verifier settings the
+  repair and learning agents cannot change.
+- The editable part of the method and the authority available to repair this run or propose a
+  reusable improvement. Specify the problem and permitted changes, not the model's answer. The
+  suggestion in 05 to introduce a planning responsibility is a hypothesis, not a mandated graph
+  change, prescribed prompt, or required node name.
+- The evidence connecting the source run's failure and repair to the proposed method revision.
+  The proposal must cite that run's relevant decisions, contradictions, and verification results.
+  A repaired application alone does not prove that the method improved.
+- Concrete reuse inputs separate from the source case, including at least two meaningful product
+  variations. Evaluate the baseline and candidate methods on the same declared evaluation inputs
+  with isolated working state and comparable declared tools and limits. Keep those inputs and
+  expected answers out of the proposal agent's source context; candidate methods receive their
+  task inputs normally when evaluated.
+- An observable improvement criterion, its measurement, and its threshold, fixed before candidate
+  selection. For example, reduced contradiction-driven repair rounds while still satisfying every
+  unchanged required check could count; a renamed stage or an extra planning artifact would not.
+  Define failure and inconclusive outcomes too. Do not require or fabricate a positive learning
+  result when the evidence does not meet the criterion.
+
+The trace must remain inspectable: original run evidence → candidate method proposal → separate
+baseline/candidate evaluations → promotion or rejection → independently recorded variations.
+Later agents must use the same example and traceable identities. Do not retune evaluation cases
+until a preferred candidate wins or generalize a small demonstration into a universal quality claim.
+This is an example and acceptance decision, not authorization for another learning subsystem.
+
+### Resolve nested resource ownership as well as worker availability
+
+Extend the single-worker published-call case to a parent and its authorized child using the same
+managed working area. Releasing a worker slot is insufficient when the parent still holds the
+exclusive editing access the child needs.
+
+Distinguish two responsibilities: protecting the exact resource generation from removal or
+replacement while accepted work depends on it, and deciding which operation may currently mutate
+its files. A waiting parent may retain the first without retaining an editing claim that blocks
+its own authorized child. Choose an explicit ownership handoff or narrowly delegated child-use rule
+within 02's resource owner and 04's durable invocation/run linkage; do not add another scheduler or
+an unrestricted reentrant lock keyed only by a shared actor or workspace name.
+
+Bind child access to the exact accepted parent/child relationship, resource generation, and
+inherited authority. Parent writes must be suspended or refused while the child owns mutation;
+there must still be at most one active mutator. Resume parent writes only after child use is safely
+settled and editing authority has been reacquired or returned under the chosen rule. A wait, timeout,
+lease expiry, or cancellation acknowledgement alone does not establish that the child has stopped.
+
+Specify one integrated acceptance test, implemented across 02 and 04 and rerun in 06:
+
+1. With one execution worker, a parent starts a workflow-backed call whose child must edit the
+   same managed working area. The child makes observable progress while the parent waits.
+2. During child mutation, a parent write and an unrelated conflicting write cannot enter, and
+   removal/replacement remains controlled by the retained resource-lifetime protection. Unrelated
+   work on other resources can still proceed.
+3. After proven child completion, the parent can regain editing access and continue without
+   simultaneous writers, duplicate work, or a leaked hold.
+4. Interrupt at the ownership handoff and while the child is active. Restart and cancellation must
+   preserve the exact lineage and holds; uncertain child use must not permit unsafe parent writes
+   or deletion. Define the existing inspection and authorized resolution path for blocked work.
+
+Record the owning transition/transaction, recovery evidence, and test allocation in `handoffs/00.md`.
+These are required design and acceptance clarifications, not a claim that the current implementation
+already contains a deadlock. Do not change the rule into one operation per host or environment.
+
 Prefer explicit protected scopes and effect checks over arbitrary program-equivalence claims. A
 new concept earns a representation only when it owns a real invariant. State necessary module or
 crate moves with their dependency reason; do not promise a small change or require a crate per noun.
@@ -134,7 +210,10 @@ implementation owners, not untested scaffolding committed here.
 Review each relevant rule against source, consumers, and tests. Recheck the full diff for duplicate
 truth, misleading current-support claims, broken links, and stale freeze language. Confirm that the
 remaining prompts reflect the adopted boundaries; clarify their wording when needed without
-silently removing requested features or inventing another sprint.
+silently removing requested features or inventing another sprint. In particular, align 05's learning
+example with the shared application without prescribing the proposed solution, and carry the nested
+resource-ownership test into 02, 04, and 06. These are clarifications within the existing assignments,
+not new phases or a reason to regenerate the sprint.
 
 For prose/planning changes run:
 
@@ -155,7 +234,12 @@ these features are authorized? A list of terms without these relationships is no
 ## Completion and handoff
 
 Update `handoffs/00.md` with adopted decisions, concise affected-boundary/compatibility map, canonical
-locations, exact checks, and any unresolved conflict that actually prevents execution. Record source
-and resulting commit identities. Update the sprint assignment table accurately. The stop condition
-is an adopted, internally consistent direction and executable assignment sequence—not merely a new
-whiteboard essay and not the implementation of 01 itself.
+locations, exact checks, and any unresolved conflict that actually prevents execution. Include the
+shared application's specification location, failure/verifier/editable-method decisions, separate
+reuse inputs, fixed improvement criterion, and source-to-evaluation evidence links to be produced.
+Also include the parent/child resource-ownership rule, interruption/resolution behavior, and which
+assignments own each integrated test. Do not mark either case as executed during this design task.
+Record source and resulting commit identities. Update the sprint assignment table accurately. The
+stop condition is an adopted, internally consistent direction and executable assignment sequence,
+including these two settled decisions—not merely a new whiteboard essay and not the implementation
+of 01 itself.
