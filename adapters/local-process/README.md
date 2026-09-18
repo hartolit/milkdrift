@@ -40,9 +40,9 @@ the extra bytes; `Terminate` asks the monitor to stop the process. After a succe
 the adapter publishes configured captures and declared regular files through the host data port.
 Missing required outputs or publication failure prevent success; undeclared files are not imported.
 
-Cancellation sets an invocation-specific flag. The monitor owns graceful/forced termination and
-the evidence used to distinguish `Cancelled`, failure, and uncertainty. On Unix it observes the
-owned process group and tears down remaining descendants when the immediate child exits. Non-Unix
+Cancellation and shutdown set an invocation-specific flag. The monitor owns graceful/forced
+termination and the evidence used to distinguish `Cancelled`, failure, and uncertainty. On Unix it
+observes the owned process group and tears down remaining descendants when the immediate child exits. Non-Unix
 ownership covers the immediate child only. A PID is not recoverable process identity after daemon
 restart; `RestartPolicy` describes whether the external program can safely accept the same stable key.
 

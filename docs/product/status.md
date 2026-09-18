@@ -175,14 +175,22 @@ values; repository contracts check the version cells against source.
 ### Independent host execution
 
 Assignment 01 is reviewed and accepted on Windows x86_64/MSVC with
-Rust 1.95.0. The full gate checks pass: 832 workspace tests, 24 doctests, all 24 repository contracts,
+Rust 1.95.0. The local gate after the process-shutdown correction passes: 833 workspace tests,
+24 doctests, all 24 repository contracts,
 formatting, all-target/all-feature checking, warning-denying Clippy/rustdoc, dependency audits and
 test discovery. Five manual tests remain ignored. Commands and results are under
-`target/adaptive-hosts/review/`; the [assignment handoff](../development/virtual-office/adaptive-hosts/handoffs/01.md)
-records the resulting commit, corrected operator grant, final verification and initial timeout failures.
+`target/ci-repair/`, with the independent-host binary evidence under `target/adaptive-hosts/review/`.
+The [assignment handoff](../development/virtual-office/adaptive-hosts/handoffs/01.md) records the
+resulting commits, corrected operator grant, verification and initial timeout failures.
 Default/all-feature API inventories for fourteen affected libraries were reviewed against their
 actual consumers; fixture entry, conformance and unjournaled clock helpers remain outside the
 ordinary host API.
+
+Hosted platform run 35317306020 passed Linux but failed macOS process shutdown and Windows fixture
+startup. Shutdown now leaves signalling to the execution monitor; the cleanup fixture separates
+bounded startup from its three-second shutdown assertion. The delayed-start regression reproduces
+the old Windows failure and passes after correction. The corrected macOS path and hosted Windows
+timing still require a fresh CI run; local checks do not qualify those hosted results.
 
 The actual daemon/CLI independent-host scenario verifies direct process/fresh-model output,
 public input upload and artifact download, replay/restart, real remote workflow origins and

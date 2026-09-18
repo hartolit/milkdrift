@@ -18,12 +18,16 @@ async fn inherited_pipes_settle_drain_cancel_and_retain_without_duplicate_entry(
         let directory = tempfile::tempdir()?;
         let pids = directory.path().join("pids");
         let release = directory.path().join("release");
+        let parent_exit = directory.path().join("parent-exit");
         let fixture_cleanup = cleanup::ProbeCleanup(pids.clone());
         let profile_path = configured_process_profile(&directory)?;
         let mut profile: serde_json::Value = serde_json::from_slice(&fs::read(&profile_path)?)?;
-        profile["profile"]["arguments"] = json!(["escaped-pipes", pids, release, "wait"]);
+        // Deliberately exceed the former 800 ms wall budget before the holder starts.
+        // Shutdown timing starts only after both processes have published readiness.
+        profile["profile"]["arguments"] =
+            json!(["escaped-pipes", pids, release, "wait", parent_exit, "1000"]);
         profile["profile"]["side_effect"] = json!("unknown");
-        profile["profile"]["limits"]["wall_timeout_ms"] = json!(800);
+        profile["profile"]["limits"]["wall_timeout_ms"] = json!(30000);
         fs::write(&profile_path, serde_json::to_vec(&profile)?)?;
         let mut config =
             configuration_document_with_process_profiles(&directory, 16, vec![profile_path])?;
@@ -59,16 +63,27 @@ async fn inherited_pipes_settle_drain_cancel_and_retain_without_duplicate_entry(
                 },
             ))
             .await?;
-        let ready_deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        let ready_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         while cleanup::read_pids(&pids).len() < 2 {
             assert!(
                 tokio::time::Instant::now() < ready_deadline,
-                "fixture did not enter: {mode:?}"
+                "fixture did not enter: {mode:?}; observed PIDs: {:?}",
+                cleanup::read_pids(&pids)
             );
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         let started = std::time::Instant::now();
-        let stopped = daemon.stop().await;
+        let (stopped, released) = tokio::join!(
+            biased;
+            daemon.stop(),
+            async {
+                if mode != ShutdownEffectPolicy::Cancel {
+                    fs::write(&parent_exit, b"exit")?;
+                }
+                std::io::Result::Ok(())
+            },
+        );
+        released?;
         assert!(
             started.elapsed() < Duration::from_secs(3),
             "shutdown exceeded its bound: {mode:?}"

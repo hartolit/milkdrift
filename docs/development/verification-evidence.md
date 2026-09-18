@@ -70,10 +70,18 @@ through its PID record. Tests own both explicit release and fallback termination
 invocation completion while the holder is still alive, so child termination alone cannot satisfy
 the regression. Normal-output tests compare every final byte. Startup-failure injection and a
 stopped Unix child exercise partial ownership and escalation when TERM cannot complete cleanup.
+The shutdown regression pauses the monitor at its initial report, requests cancellation or shutdown,
+then requires a fresh child-written marker before releasing the monitor. This detects competing
+signal delivery even when an exited child remains visible as a zombie. After release, it requires
+child absence, cancelled terminal evidence and no retained adapter load.
 
 `cargo test -p milkdrift-daemon --test control_plane --all-features process_cleanup::` drives the
 same byte-pinned helper through drain/cancel/retain shutdown, reopens the store, checks the durable
 uncertainty explanation and refuses unsafe retry without another entry. Build the helper first.
+This fixture deliberately delays holder startup beyond 800 ms. Readiness has a separate bounded
+allowance; drain/retain request parent exit explicitly after shutdown is requested, while cancel
+must terminate the parent itself. The three-second shutdown bound and live external-holder checks
+remain independent of startup speed.
 The platform workflow also runs these daemon cases and the capability-host lifecycle suite.
 The per-platform uploaded logs, not cross-compilation, establish which OS paths were executed.
 

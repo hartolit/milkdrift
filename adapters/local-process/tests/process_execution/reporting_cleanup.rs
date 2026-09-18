@@ -3,9 +3,7 @@ use milkdrift_capability::InvocationEventKind;
 use milkdrift_runtime::ExecutorError;
 use std::sync::mpsc;
 
-#[path = "../support/process_cleanup.rs"]
-mod process_cleanup;
-use process_cleanup::{ProbeCleanup, process_alive, read_pids};
+use super::process_cleanup::{ProbeCleanup, process_alive, read_pids};
 
 #[test]
 fn inherited_idle_pipes_cannot_hold_invocation_cleanup() -> TestResult {

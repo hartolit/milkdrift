@@ -600,8 +600,9 @@ impl CapabilityAdapter for LocalProcessAdapter {
             .cloned()
             .collect::<Vec<_>>();
         for control in controls {
+            // As with cancellation, the monitor owns signalling and escalation. A
+            // concurrent KILL here can leave it sending TERM to an exiting group.
             control.cancel_requested.store(true, Ordering::SeqCst);
-            let _ = control.request_force();
         }
         Ok(())
     }

@@ -126,6 +126,11 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
         "reporting-probe" => {
             let pid_file = arguments.next().ok_or("missing pid file")?;
             append_pid(&pid_file)?;
+            if let Some(proceed) = arguments.next() {
+                let responsive = arguments.next().ok_or("missing responsiveness marker")?;
+                wait_for_release(&proceed)?;
+                std::fs::write(responsive, b"running")?;
+            }
             writeln!(std::io::stdout(), "reporting probe stdout")?;
             std::io::stdout().flush()?;
             writeln!(std::io::stderr(), "reporting probe stderr")?;
@@ -139,6 +144,10 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
             let release = arguments.next().ok_or("missing release path")?;
             let mode = arguments.next().ok_or("missing parent mode")?;
             append_pid(&pid_file)?;
+            let parent_exit = arguments.next();
+            if let Some(delay_ms) = arguments.next() {
+                thread::sleep(Duration::from_millis(delay_ms.parse()?));
+            }
             let mut command = Command::new(env::current_exe()?);
             command.args(["hold-pipes", &pid_file, &release]);
             #[cfg(unix)]
@@ -147,7 +156,9 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
                 command.process_group(0);
             }
             let mut child = command.spawn()?;
-            if mode == "wait" {
+            if let Some(parent_exit) = parent_exit {
+                wait_for_release(&parent_exit)?;
+            } else if mode == "wait" {
                 child.wait()?;
             }
             Ok(0)
@@ -158,10 +169,7 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
             append_pid(&pid_file)?;
             // Readiness is the PID record. The test owns release and fallback kill;
             // this idle holder never needs to write for the blocked reads to occur.
-            let deadline = std::time::Instant::now() + Duration::from_secs(30);
-            while !std::path::Path::new(&release).exists() && std::time::Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(5));
-            }
+            wait_for_release(&release)?;
             Ok(0)
         }
         "mark" => {
@@ -244,6 +252,17 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
         }
         _ => Err("unknown fixture command".into()),
     }
+}
+
+fn wait_for_release(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !std::path::Path::new(path).exists() {
+        if std::time::Instant::now() >= deadline {
+            return Err("fixture release deadline expired".into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    Ok(())
 }
 
 fn write_repeated(mut writer: impl Write, byte: u8, bytes: usize) -> Result<(), std::io::Error> {

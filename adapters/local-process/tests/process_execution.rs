@@ -898,3 +898,9 @@ mod lifecycle;
 
 #[path = "process_execution/reporting_cleanup.rs"]
 mod reporting_cleanup;
+
+#[path = "support/process_cleanup.rs"]
+mod process_cleanup;
+
+#[path = "process_execution/shutdown.rs"]
+mod shutdown;
