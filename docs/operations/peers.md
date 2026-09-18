@@ -10,9 +10,20 @@ Milkdrift consumes a URL you configure; it does not discover peers or make them 
 
 For any non-loopback URL, use HTTPS with certificates managed by your platform or reverse proxy. Milkdrift does not issue certificates or run a CA. Keep the daemon listener on loopback behind the proxy unless a later hardened listener explicitly supports your deployment. The named insecure development option accepts only loopback/localhost and is disabled by default.
 
-Peer state is explicit in TOML schema 9: `[peers] mode = "disabled"` has no identity, relationships,
-or serving policy, while `mode = "enabled"` requires one `local_peer_id` and permits explicit
-relationship and serving tables. Configure both sides with stable, different identities and inverse relationship entries. Keep bearer values in file/environment `secret_sources`; use distinct credentials per relationship where possible. Values rotate at request time. Set `maximum_requests_per_minute`, `maximum_concurrent`, duration, cost, observation, and artifact-byte ceilings explicitly for production relationships. Relationships must also name `artifact_sensitivities`; an empty set denies transfer even when an upload/download action is present. Remote process/model capabilities require explicit `execution_filesystem`, `execution_network_profiles`, `execution_network_destinations`, and `execution_secrets` authority matching their adapter-declared requirements; capability allowlisting alone grants none of those host resources. Unknown secret references and malformed resource scopes fail configuration validation. Changing identity mappings, allowlists, resources, quotas, expiry, or revocation generation requires validated configuration restart; `peer reload` re-authenticates and replaces only the current remote catalog. `peer revoke` immediately rejects inbound protocol actions and drains outbound registrations until restart; update the credential and configuration for durable revocation.
+Peer state is explicit in TOML schema 10. Both roles require a top-level stable `host_id` and share
+the top-level `serving` policy. `[peers] mode = "disabled"` excludes relationships; `mode = "enabled"`
+permits explicit relationship tables. Configure both sides with different host identities and inverse
+relationship entries. The origin uses `workflow_enabled`; the target may use `execution_only`.
+Keep bearer values in file/environment `secret_sources` and use distinct relationship credentials.
+Values rotate at request time. Set request rate, concurrency, duration, cost with its exact currency,
+input/output units, observations and artifact-byte ceilings explicitly. `artifact_sensitivities`
+must permit the intended content: an empty set denies transfer even with upload/download actions.
+Process/model capabilities also require `execution_filesystem`, `execution_network_profiles`,
+`execution_network_destinations` and `execution_secrets` matching their adapter requirements.
+Capability allowlisting grants none of those resources. Changing identities, scopes, quotas, expiry
+or revocation requires validated restart. `peer reload` replaces the authenticated catalog;
+`peer revoke` rejects inbound actions and drains outbound registrations until restart. Update the
+credential and configuration for durable revocation.
 
 Start with `actions = []`, empty capability/operation allowlists, and add only required capability identities and operations. The configured action list is expanded at startup into an ordinary immutable authority grant: `read_catalog` covers session negotiation, peer inspection, capability listing/health, and provider-profile inspection; invoke, cancel, upload/download, and administration remain separate typed operations. The action list is not consulted as a second executable permission system. Controller, process, filesystem, model, artifact, and workflow-mutation access is never implied by a valid credential. Use finite expiry, conservative concurrency/duration/cost/artifact limits, and a trust zone that workflow capability policy can require or forbid.
 
@@ -93,7 +104,7 @@ inside the catalog's remaining lifetime; expiry during execution may preserve un
 
 ## Retain and recover accepted work
 
-Serving work uses the schema-9 enabled-mode `peers.serving` policy. `worker_threads`,
+Serving work uses the schema-10 top-level `serving` policy in both roles. `worker_threads`,
 `maximum_global_active`, and `maximum_dispatch_queue` bound live ownership;
 `maximum_hot_terminal_records` bounds terminal detail and reserves capacity for active work's
 eventual disposition. `archive_batch_size` bounds each compaction pass, and

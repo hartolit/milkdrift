@@ -1,11 +1,12 @@
-# Peer protocol v1.3
+# Peer protocol v1.4
 
-Version 1.3 carries resolved capability snapshots with typed placement and exposes execution-output
-metadata for authorized core transfer. Both peers use this exact version in a coordinated deployment;
+Version 1.4 separates invocation origin from authenticated caller identity and adds enforced
+per-call allowances, request-bound input transfer and host-invocation artifact provenance.
+Both peers use this exact version in a coordinated deployment;
 previous protocol generations and snapshot formats are refused. Current durable acceptance/replay
 and tombstone contracts remain exact across restart.
 
-`milkdrift-peer-protocol` is transport neutral. Every JSON control message uses a `ProtocolEnvelope` with selected `{major, minor}`, one typed message, and at most 32 explicitly ignorable DNS-namespaced extensions. Major 1/minor 3 is the only implemented version. It includes typed archived replay and observation-history dispositions and the exact queried request identity in every lookup result, so clients can bind authenticated responses to the URL they requested. Peers implementing earlier minors are rejected instead of guessing the changed shape or meaning. Unknown majors and unknown typed message fields fail closed. Decoding preflights encoded bytes, depth, container items, string/key sizes, duplicates, and document size before domain deserialization.
+`milkdrift-peer-protocol` is transport neutral. Every JSON control message uses a `ProtocolEnvelope` with selected `{major, minor}`, one typed message, and at most 32 explicitly ignorable DNS-namespaced extensions. Major 1/minor 4 is the only implemented version. It includes typed archived replay and observation-history dispositions and the exact queried request identity in every lookup result, so clients can bind authenticated responses to the URL they requested. Peers implementing earlier minors are rejected instead of guessing the changed shape or meaning. Unknown majors and unknown typed message fields fail closed. Decoding preflights encoded bytes, depth, container items, string/key sizes, duplicates, and document size before domain deserialization.
 
 ## Authentication and session
 
@@ -40,7 +41,22 @@ The consumer verifies digest/TTL and maps each remote `(PeerId, capability, desc
 
 ## Invocation and idempotency
 
-`PeerInvocationRequest` binds one local `PeerRequestId`, exact catalog generation/digest, remote `ResolvedCapabilitySnapshot`, provider-neutral `InvocationRequest`, deadline, quotas, constrained opaque delegation, and originating run/revision/node/execution/attempt coordinates. Its canonical request digest covers all those facts. The configured server-side delegation record is cross-checked against authenticated issuer, configured actor, target peer, capability, operation, request, limits, expiry, nonce, and provenance; claims cannot broaden the relationship.
+`ServingInvocationRequest` binds a caller-scoped `PeerRequestId`, exact catalog generation/digest,
+remote `ResolvedCapabilitySnapshot`, provider-neutral `InvocationRequest`, deadline, quotas and
+accepted authorization. Peer requests carry a targeted delegation with explicit direct or workflow
+origin. Workflow origin retains real run/revision/node/execution/attempt coordinates. Client
+authorization comes from the serving authentication owner and is refused on peer routes. The
+canonical serving-v2 digest covers all these facts. The configured delegation is cross-checked
+against the authenticated issuer, actor, target, capability, operation, limits and expiry. Durable
+replay and accounting keys include the target host, caller realm and principal.
+
+A controlled origin reserves the adapter's enforced request allowance in its ordinary final-entry
+transaction. Delegation binds that reservation identity and the same limits to the exact accepted
+request. Serving preparation must fit the allowance before entry. Process calls restrict model-token
+and billed-cost use to not applicable/zero; this does not meter provider calls hidden inside a process.
+Authenticated terminal usage settles the originating reservation, and imported output bytes charge
+it atomically with publication. An uncertain outcome leaves the full unconsumed allowance outstanding,
+including after restart; a wait timeout or missing reply does not settle it.
 
 The serving daemon resolves an existing request identity before applying fresh-work availability, catalog, or capacity checks. It then uses one redb transaction to validate exact replay, relationship/catalog generations, the allowing authority decision, per-peer/global active limits, queue capacity, and hot-history capacity. That transaction may compact an eligible oldest-first terminal page before writing the primary record, request index, durable dispatch index, and accounting. Exact redelivery returns the same `PeerExecutionId` as either `accepted` hot history or `archived` compact history; same key/different digest always returns `idempotency_conflict`. A response loss therefore cannot create replacement provider/process work. This is exact submission idempotency, not a claim that arbitrary external side effects are globally exactly once.
 
@@ -67,7 +83,23 @@ chunks recheck current relationship authority. The origin imports verified outpu
 its configured core artifact port before forwarding the observation. A missing or failed transfer
 after acceptance preserves uncertainty and never causes a fresh peer submission.
 
-Transfers negotiate exact content digest, size, media type, sensitivity, retention, provenance, source peer, remote execution, direction, expiry, and transfer ID before bytes. Paths and filenames never select placement. Upload chunks are sequential and bounded through the ordinary core artifact publication session. Core temporary inventory supports restart resume/abort and remains invisible until exact size/digest verification and atomic metadata commit. Imported provenance preserves the remote producer and adds origin peer/execution; ordinary content-addressed publication supplies deduplication, retention, and orphan cleanup. Downloads are authorized bounded ranges from the ordinary core artifact read port. Peer/action authority and byte quotas apply before transfer.
+Transfers bind either an accepted execution or an exact prospective input request, plus content
+digest, size, media type, sensitivity, retention, provenance, authenticated source, direction,
+expiry and transfer ID. Paths never select placement. Input staging rechecks the current catalog,
+invocation allowance and upload authority before accepting bytes; it creates no execution record.
+The origin freezes authorized artifact inputs and the causal manifest before entry, then stages
+them against the final delegated request before submission. Workspace-value references are not
+portable inputs and refuse before remote entry; use explicit inline or artifact references.
+
+Upload chunks are sequential and bounded through ordinary artifact publication. Temporary inventory
+supports resume/abort and stays invisible until size/digest verification and atomic metadata commit.
+Imports wrap each foreign producer/cause in `PeerClaim`, retaining the authenticated source without
+pretending foreign run IDs are local records. Nesting is bounded to four imports. Input ownership
+is the host/peer pair, limited to 1,024 logical artifacts and the configured import byte ceiling
+(10 GiB in daemon composition). Exact replay still succeeds when that cumulative quota is full.
+Outputs bind the serving host invocation; controlled origin imports charge its existing reservation
+in the same transaction as publication. Downloads use authorized bounded artifact reads. Transfer
+failure after acceptance retains uncertainty and does not authorize a replacement invocation.
 
 Large bytes use raw bounded HTTP content routes and never enter run events or semantic observation JSON. Publication metadata is the visibility boundary. No `peer-artifacts-v1` metadata/blob/temp tree exists.
 

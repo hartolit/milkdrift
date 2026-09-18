@@ -755,16 +755,16 @@ fn configuration_rejects_unknown_placeholders_traversal_and_missing_secrets() ->
         Arc::new(InMemorySecretResolver::new()),
     )?;
     let denied_reporter = TestReporter::default();
-    denied_host.execute_exact_with_context(
+    let denied = denied_host.execute_exact_with_context(
         &denied_snapshot,
         &denied_request,
         &context()?,
         &denied_reporter,
-    )?;
-    assert_eq!(
-        terminal_status(&denied_reporter.events()?),
-        Some(TerminalStatus::Rejected)
     );
+    assert!(
+        matches!(denied, Err(milkdrift_runtime::ExecutorError::BoundaryBeforeEntry(detail)) if detail.starts_with("execution_root_denied:"))
+    );
+    assert!(denied_reporter.events()?.is_empty());
 
     let mut missing = profile_value(
         &data.root,
@@ -788,11 +788,11 @@ fn configuration_rejects_unknown_placeholders_traversal_and_missing_secrets() ->
     let request = request(&profile, "invocation-secret-missing", Vec::new())?;
     let (host, snapshot) = setup(profile, data, Arc::new(InMemorySecretResolver::new()))?;
     let reporter = TestReporter::default();
-    host.execute_exact_with_context(&snapshot, &request, &context()?, &reporter)?;
-    assert_eq!(
-        terminal_status(&reporter.events()?),
-        Some(TerminalStatus::Rejected)
+    let refused = host.execute_exact_with_context(&snapshot, &request, &context()?, &reporter);
+    assert!(
+        matches!(refused, Err(milkdrift_runtime::ExecutorError::BoundaryBeforeEntry(detail)) if detail.starts_with("secret_resolution_failed:"))
     );
+    assert!(reporter.events()?.is_empty());
     Ok(())
 }
 

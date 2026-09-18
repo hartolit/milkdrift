@@ -11,6 +11,7 @@ use milkdrift_authority::{
 use milkdrift_blueprint::{AuthorRef, BlueprintRevisionDocument, WorkflowId};
 use milkdrift_capability::PeerId;
 use milkdrift_capability_host::{CapabilityHost, EffectWorkerHost};
+use milkdrift_capability_host::{CorePeerArtifactStore, PeerService};
 use milkdrift_control::{
     ControlCommand, ControlCommandDocument, ControlId, ControlResult, ControlService,
     OptimisticGuard, ProposalDigest, ProposalId, WorkflowProposalDocument,
@@ -19,7 +20,7 @@ use milkdrift_control_protocol::{
     ArtifactMetadataRead, CommandAccepted, CommandRequest, ContextManifestRead, ErrorCode,
     HealthRead, ProposalDecision,
 };
-use milkdrift_peer_http::{CorePeerArtifactStore, PeerRegistry, PeerService};
+use milkdrift_peer_http::PeerRegistry;
 use milkdrift_persistence::{
     ArtifactReadAuthority, ArtifactStore, AttemptId, CorrelationKey, EvidenceId, EvidenceKind,
     EvidenceReference, NodeExecutionId, Reason, ReconciliationDecisionId, RepeatDecisionId,
@@ -55,6 +56,7 @@ mod requests;
 mod runs;
 mod shutdown;
 mod startup;
+mod uploads;
 
 use clock::DurableClock;
 use health::SharedHealth;
@@ -185,12 +187,13 @@ pub(crate) struct ArtifactContentRead {
 }
 
 struct Owner {
+    host_id: PeerId,
+    input_budget: WorkspaceBudget,
     recovery_controls: bool,
     request_panicked: bool,
     shutdown: ShutdownConfig,
     store: Arc<RedbStore>,
-    runtime: Arc<RuntimeService>,
-    control: Arc<ControlService>,
+    workflow: Option<WorkflowServices>,
     capability_host: CapabilityHost,
     authority: Arc<GrantSetEvaluator>,
     effect_workers: Option<EffectWorkerHost>,
@@ -201,7 +204,19 @@ struct Owner {
     clock: DurableClock,
 }
 
+struct WorkflowServices {
+    runtime: Arc<RuntimeService>,
+    control: Arc<ControlService>,
+}
+
 impl Owner {
+    fn workflow(&self) -> Result<&WorkflowServices, PublicFailure> {
+        self.workflow.as_ref().ok_or_else(|| PublicFailure::new(
+            ErrorCode::Unavailable,
+            "this host has the execution_only role; workflow operations require workflow_enabled; retained history can be inspected with storage-admin",
+            false,
+        ))
+    }
     fn now(&self) -> Result<u64, PublicFailure> {
         self.clock
             .now()
@@ -234,7 +249,10 @@ impl Owner {
             command,
         )
         .map_err(public_control)?;
-        self.control.execute(&document).map_err(public_control)
+        self.workflow()?
+            .control
+            .execute(&document)
+            .map_err(public_control)
     }
 }
 

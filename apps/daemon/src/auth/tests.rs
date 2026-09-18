@@ -8,6 +8,9 @@ use std::{collections::BTreeMap, fs, net::SocketAddr};
 fn config(root: &std::path::Path, token: &std::path::Path) -> DaemonConfig {
     DaemonConfig {
         schema_version: crate::DAEMON_CONFIG_SCHEMA_VERSION,
+        role: milkdrift_control_protocol::HostRole::WorkflowEnabled,
+        host_id: "host:local".to_owned(),
+        serving: Default::default(),
         data_root: root.join("data"),
         bind: SocketAddr::from(([127, 0, 0, 1], 0)),
         secret_sources: BTreeMap::from([(

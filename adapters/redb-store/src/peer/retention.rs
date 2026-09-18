@@ -2,9 +2,9 @@
 
 use milkdrift_peer_protocol::PeerObservation;
 use milkdrift_persistence::{
-    PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1, PeerAcceptedAuthoritySummary,
-    PeerArchivedDisposition, PeerExecutionPhase, PeerExecutionRecord, PeerExecutionTombstone,
-    PeerRetentionPage, PersistenceError,
+    PeerAcceptedAuthoritySummary, PeerArchivedDisposition, PeerExecutionPhase, PeerExecutionRecord,
+    PeerExecutionTombstone, PeerRetentionPage, PersistenceError,
+    SERVING_EXECUTION_TOMBSTONE_SCHEMA_VERSION,
 };
 use redb::ReadableTable;
 
@@ -80,7 +80,7 @@ pub(super) fn archive_eligible_in_transaction(
         ) {
             return Err(corruption("peer terminal index points at an active record"));
         }
-        let request_key = request_key(&record.owner_peer, &record.request.request_id)?;
+        let request_key = request_key(&record.caller, &record.request.request_id)?;
         let indexed_execution = write
             .open_table(PEER_EXECUTIONS_BY_REQUEST)
             .map_err(error::redb)?
@@ -172,10 +172,9 @@ fn tombstone_from_record(
     };
     let operation = record.request.selection.operation_contract();
     let tombstone = PeerExecutionTombstone {
-        schema_version: PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1,
-        owner_peer: record.owner_peer.clone(),
-        target_peer: record.request.delegation.target_peer.clone(),
-        delegation_ref: record.request.delegation.reference.clone(),
+        schema_version: SERVING_EXECUTION_TOMBSTONE_SCHEMA_VERSION,
+        caller: record.caller.clone(),
+        authorization: record.request.authorization.clone(),
         relationship_generation: record.relationship_generation,
         request_id: record.request.request_id.clone(),
         request_digest: record.request.request_digest.clone(),
@@ -201,7 +200,6 @@ fn tombstone_from_record(
             policy_version: record.authority.policy_version(),
             decision_digest: record.authority.digest().to_owned(),
         },
-        provenance: record.request.delegation.provenance.clone(),
         disposition,
         cancellation: record.cancellation.clone(),
         last_observation_sequence: record.last_observation_sequence,

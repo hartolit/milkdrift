@@ -4,18 +4,17 @@ use super::{
     ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST, ArtifactId, ArtifactMetadata, ArtifactPublicationId,
     ArtifactReadChunk, ArtifactReadRequest, ArtifactReference, ArtifactStore,
     ArtifactWriteProgress, BeginArtifactOutcome, BeginArtifactPublication, CommitArtifactOutcome,
-    ContentDigest, FaultPoint, MAX_CHUNK_BYTES, OrphanCleanupCursor, OrphanCleanupFamily,
-    OrphanCleanupRequest, OrphanCleanupResult, PUBLICATION_SCHEMA_VERSION, PersistenceError,
-    PublicationRecord, PublicationState, Read, ReadableTable, RedbStore, RunId, Seek, SeekFrom,
-    StorageFailureClass, Write, authorize_artifact_read, codec, error, fs, json,
+    ContentDigest, FaultPoint, MAX_CHUNK_BYTES, OrphanCleanupRequest, OrphanCleanupResult,
+    PUBLICATION_SCHEMA_VERSION, PersistenceError, PublicationRecord, PublicationState, Read,
+    ReadableTable, RedbStore, RunId, Seek, SeekFrom, StorageFailureClass, Write,
+    authorize_artifact_read, codec, error, fs, json,
 };
 use super::{
     accounting::{
         commit_artifact_metadata, usage_covers, validate_artifact_state,
-        validated_run_artifact_reference_in_transaction,
+        validated_owner_artifact_reference_in_transaction,
     },
     cleanup::{
-        cleanup_content_files, cleanup_temporary_files, expire_writable_publications,
         finalize_released_publication_paths, release_writable_publication,
         validate_writable_publication_indexes,
     },
@@ -29,11 +28,19 @@ use super::{
 };
 use crate::clock::require_clock_in_transaction;
 impl ArtifactStore for RedbStore {
+    fn artifact_usage(
+        &self,
+        owner: &milkdrift_workspace::ArtifactOwner,
+    ) -> Result<super::WorkspaceUsage, PersistenceError> {
+        let read = self.database().begin_read().map_err(error::redb)?;
+        Ok(crate::journal::validated_workspace_domain(&read, owner)?
+            .unwrap_or(super::WorkspaceUsage::EMPTY))
+    }
     #[tracing::instrument(
         name = "milkdrift.redb_store.begin_artifact_publication",
         skip_all,
         fields(
-            run = %request.run(),
+            owner = ?request.owner(),
             publication = %request.publication(),
             artifact = %request.metadata().reference().artifact(),
             size_bytes = request.metadata().reference().size_bytes()
@@ -70,7 +77,7 @@ impl ArtifactStore for RedbStore {
                 PublicationState::Committed { .. } => {
                     let actual = crate::journal::validate_workspace_domain_in_transaction(
                         &write,
-                        &record.run,
+                        &record.owner,
                         &record.budget,
                     )?;
                     if !usage_covers(actual, record.resulting_usage) {
@@ -78,13 +85,13 @@ impl ArtifactStore for RedbStore {
                             "committed publication is beyond current workspace usage",
                         ));
                     }
-                    if !validated_run_artifact_reference_in_transaction(
+                    if !validated_owner_artifact_reference_in_transaction(
                         &write,
-                        &record.run,
+                        &record.owner,
                         record.metadata.reference(),
                     )? {
                         return Err(error::corruption(
-                            "committed publication has no run artifact ownership",
+                            "committed publication has no artifact ownership",
                         ));
                     }
                     match validated_artifact_metadata_in_transaction(
@@ -107,7 +114,7 @@ impl ArtifactStore for RedbStore {
                 PublicationState::Writable => {
                     let actual = crate::journal::validate_workspace_domain_in_transaction(
                         &write,
-                        &record.run,
+                        &record.owner,
                         &record.budget,
                     )?;
                     if actual != record.expected_usage {
@@ -168,12 +175,16 @@ impl ArtifactStore for RedbStore {
 
         let actual = crate::journal::validate_or_initialize_workspace_domain(
             &write,
-            request.run(),
+            request.owner(),
             request.budget(),
         )?;
         if actual != request.expected_usage() {
-            return Err(PersistenceError::WorkspaceUsageConflict {
-                run: request.run().clone(),
+            if let Some(run) = request.owner().run() {
+                return Err(PersistenceError::WorkspaceUsageConflict { run: run.clone() });
+            }
+            return Err(PersistenceError::ImmutableConflict {
+                entity: "artifact_owner_usage",
+                identity: super::owner::domain_key(request.owner())?,
             });
         }
         {
@@ -181,15 +192,15 @@ impl ArtifactStore for RedbStore {
                 .open_table(ARTIFACT_RESERVATIONS)
                 .map_err(error::redb)?;
             if let Some(owner) = reservations
-                .get(request.run().as_str())
+                .get(super::owner::domain_key(request.owner())?.as_str())
                 .map_err(error::redb)?
                 && owner.value() != request.publication().as_str()
             {
                 return Err(PersistenceError::Storage {
                     class: StorageFailureClass::OwnerBusy,
                     message: format!(
-                        "run {} already has an active artifact publication",
-                        request.run()
+                        "owner {:?} already has an active artifact publication",
+                        request.owner()
                     ),
                 });
             }
@@ -225,7 +236,10 @@ impl ArtifactStore for RedbStore {
                     .open_table(ARTIFACT_RESERVATIONS)
                     .map_err(error::redb)?;
                 reservations
-                    .insert(request.run().as_str(), request.publication().as_str())
+                    .insert(
+                        super::owner::domain_key(request.owner())?.as_str(),
+                        request.publication().as_str(),
+                    )
                     .map_err(error::redb)?;
             }
             {
@@ -296,7 +310,7 @@ impl ArtifactStore for RedbStore {
         }
         let actual = crate::journal::validate_workspace_domain_in_transaction(
             &write,
-            &record.run,
+            &record.owner,
             &record.budget,
         )?;
         if actual != record.expected_usage {
@@ -368,7 +382,7 @@ impl ArtifactStore for RedbStore {
         if let PublicationState::Committed { .. } = record.state {
             let actual = crate::journal::validate_workspace_domain_in_transaction(
                 &write,
-                &record.run,
+                &record.owner,
                 &record.budget,
             )?;
             if !usage_covers(actual, record.resulting_usage) {
@@ -376,13 +390,13 @@ impl ArtifactStore for RedbStore {
                     "committed publication is beyond current workspace usage",
                 ));
             }
-            if !validated_run_artifact_reference_in_transaction(
+            if !validated_owner_artifact_reference_in_transaction(
                 &write,
-                &record.run,
+                &record.owner,
                 record.metadata.reference(),
             )? {
                 return Err(error::corruption(
-                    "committed publication has no run artifact ownership",
+                    "committed publication has no artifact ownership",
                 ));
             }
             if validated_artifact_metadata_in_transaction(
@@ -419,7 +433,7 @@ impl ArtifactStore for RedbStore {
 
         let actual = crate::journal::validate_workspace_domain_in_transaction(
             &write,
-            &record.run,
+            &record.owner,
             &record.budget,
         )?;
         if actual != record.expected_usage {
@@ -530,7 +544,7 @@ impl ArtifactStore for RedbStore {
         }
         let actual = crate::journal::validate_workspace_domain_in_transaction(
             &write,
-            &record.run,
+            &record.owner,
             &record.budget,
         )?;
         if actual != record.expected_usage {
@@ -538,15 +552,21 @@ impl ArtifactStore for RedbStore {
                 "writable publication changed workspace usage before metadata commit",
             ));
         }
-        let controller_charge = crate::controller_account::charge_artifact_publication(
-            &write,
-            &record.publication,
-            &record.run,
-            &record.controller_owner,
-            record.metadata.reference().size_bytes(),
-        )?;
+        let controller_charge = if let (Some(run), Some(controller_owner)) =
+            (record.controller_run(), record.controller_owner.as_ref())
+        {
+            Some(crate::controller_account::charge_artifact_publication(
+                &write,
+                &record.publication,
+                run,
+                controller_owner,
+                record.metadata.reference().size_bytes(),
+            )?)
+        } else {
+            None
+        };
         if controller_charge
-            == milkdrift_persistence::ControllerArtifactChargeOutcome::ContractViolation
+            == Some(milkdrift_persistence::ControllerArtifactChargeOutcome::ContractViolation)
         {
             release_writable_publication(&write, &record)?;
             write.commit().map_err(error::redb)?;
@@ -593,7 +613,7 @@ impl ArtifactStore for RedbStore {
         };
         let actual = crate::journal::validate_workspace_domain_in_transaction(
             &write,
-            &record.run,
+            &record.owner,
             &record.budget,
         )?;
         if (matches!(
@@ -666,7 +686,7 @@ impl ArtifactStore for RedbStore {
         reference: &ArtifactReference,
     ) -> Result<bool, PersistenceError> {
         let write = self.database().begin_write().map_err(error::redb)?;
-        validated_run_artifact_reference_in_transaction(&write, run, reference)
+        validated_owner_artifact_reference_in_transaction(&write, run, reference)
     }
 
     fn read_chunk(
@@ -731,83 +751,7 @@ impl ArtifactStore for RedbStore {
         &self,
         request: OrphanCleanupRequest,
     ) -> Result<OrphanCleanupResult, PersistenceError> {
-        if request.created_before > request.observed_at {
-            return Err(PersistenceError::InvalidDocument(
-                "orphan cleanup threshold cannot be after observed_at".to_owned(),
-            ));
-        }
-        if request
-            .cursor
-            .as_ref()
-            .is_some_and(|cursor| cursor.created_before() != request.created_before)
-        {
-            return Err(PersistenceError::InvalidCursor(
-                "orphan-cleanup cursor belongs to a different age threshold".to_owned(),
-            ));
-        }
-        let _artifact_serialization = self.lock_artifact_publications()?;
-        let mut result = OrphanCleanupResult::default();
-        let mut examined = 0_u32;
-        let start_family = request.cursor.as_ref().map_or(
-            OrphanCleanupFamily::WritablePublications,
-            OrphanCleanupCursor::family,
-        );
-        let mut last_cursor = None;
-
-        if start_family <= OrphanCleanupFamily::WritablePublications {
-            let after = request
-                .cursor
-                .as_ref()
-                .filter(|cursor| cursor.family() == OrphanCleanupFamily::WritablePublications)
-                .map(OrphanCleanupCursor::after_key);
-            if expire_writable_publications(
-                self,
-                &request,
-                after,
-                &mut result,
-                &mut examined,
-                &mut last_cursor,
-            )? {
-                result.next_cursor = last_cursor;
-                return Ok(result);
-            }
-        }
-
-        if start_family <= OrphanCleanupFamily::TemporaryFiles {
-            let after = request
-                .cursor
-                .as_ref()
-                .filter(|cursor| cursor.family() == OrphanCleanupFamily::TemporaryFiles)
-                .map(OrphanCleanupCursor::after_key);
-            if cleanup_temporary_files(
-                self,
-                &request,
-                after,
-                &mut result,
-                &mut examined,
-                &mut last_cursor,
-            )? {
-                result.next_cursor = last_cursor;
-                return Ok(result);
-            }
-        }
-        if start_family <= OrphanCleanupFamily::ContentFiles
-            && cleanup_content_files(
-                self,
-                &request,
-                request
-                    .cursor
-                    .as_ref()
-                    .filter(|cursor| cursor.family() == OrphanCleanupFamily::ContentFiles)
-                    .map(OrphanCleanupCursor::after_key),
-                &mut result,
-                &mut examined,
-                &mut last_cursor,
-            )?
-        {
-            result.next_cursor = last_cursor;
-        }
-        Ok(result)
+        self.cleanup_orphans_scoped(request, false)
     }
 }
 
@@ -836,6 +780,57 @@ pub(crate) fn decode_publication(bytes: &[u8]) -> Result<PublicationRecord, Pers
             found: record.schema_version,
             supported: PUBLICATION_SCHEMA_VERSION,
         });
+    }
+    let controller_valid = matches!(
+        (&record.owner, &record.controller_owner),
+        (
+            milkdrift_workspace::ArtifactOwner::Workflow { .. },
+            Some(
+                milkdrift_persistence::ControllerArtifactOwner::RunBinding
+                    | milkdrift_persistence::ControllerArtifactOwner::InvocationReservation(_),
+            ),
+        ) | (
+            milkdrift_workspace::ArtifactOwner::Transfer { .. },
+            Some(
+                milkdrift_persistence::ControllerArtifactOwner::RemoteInvocationReservation { .. }
+            ),
+        ) | (
+            milkdrift_workspace::ArtifactOwner::PeerInput { .. }
+                | milkdrift_workspace::ArtifactOwner::ClientInput { .. }
+                | milkdrift_workspace::ArtifactOwner::HostInvocation { .. }
+                | milkdrift_workspace::ArtifactOwner::Transfer { .. },
+            None,
+        )
+    );
+    if !controller_valid {
+        return Err(error::corruption(
+            "artifact owner contradicts its controller-account source",
+        ));
+    }
+    if let milkdrift_workspace::ArtifactOwner::PeerInput { peer, .. } = &record.owner
+        && !matches!(record.metadata.provenance().producer(), milkdrift_workspace::CausalReference::PeerClaim { peer: source, .. } if source == peer)
+    {
+        return Err(error::corruption(
+            "peer input publication lost its authenticated source claim",
+        ));
+    }
+    if let milkdrift_workspace::ArtifactOwner::ClientInput { host, client } = &record.owner
+        && !matches!(record.metadata.provenance().producer(), milkdrift_workspace::CausalReference::ClientUpload { host: producer_host, client: producer_client, .. } if host == producer_host && client == producer_client)
+    {
+        return Err(error::corruption(
+            "client input publication owner disagrees with its producer",
+        ));
+    }
+    if let milkdrift_workspace::ArtifactOwner::HostInvocation { host, invocation } = &record.owner
+        && record.metadata.provenance().producer()
+            != &(milkdrift_workspace::CausalReference::HostInvocation {
+                host: host.clone(),
+                invocation: invocation.clone(),
+            })
+    {
+        return Err(error::corruption(
+            "serving publication owner disagrees with its producer",
+        ));
     }
     record
         .budget

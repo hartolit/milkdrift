@@ -262,7 +262,9 @@ impl Owner {
                     .is_err()
                     {
                         self.request_panicked = true;
-                        self.runtime.begin_shutdown();
+                        if let Some(workflow) = &self.workflow {
+                            workflow.runtime.begin_shutdown();
+                        }
                         health.failure("runtime owner request panicked");
                         health.set_lifecycle(super::health::Lifecycle::Failed);
                         // Keep servicing final worker persistence and shutdown requests.

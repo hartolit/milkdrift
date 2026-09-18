@@ -1,4 +1,4 @@
-# Local control API 2.7
+# Local control API 2.8
 
 Use this reference for exact requests, replies, routes, and CLI machine output. For setup, begin
 with the [operator examples](../../examples/operator/README.md); for Rust integration, use the
@@ -12,10 +12,10 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":7}}
+{"protocol":{"major":2,"minor":8}}
 ```
 
-Version 2.7 is required on both sides. Older and newer major/minor versions are refused with
+Version 2.8 is required on both sides. Older and newer major/minor versions are refused with
 `unsupported_version`; update the client and daemon together. There is no protocol downgrade.
 Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
@@ -23,7 +23,7 @@ the negotiated envelope version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 7},
+  "protocol": {"major": 2, "minor": 8},
   "request_id": "req-1",
   "value": {}
 }
@@ -37,7 +37,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 7},
+  "protocol": {"major": 2, "minor": 8},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -50,12 +50,39 @@ Stable codes are `unauthenticated`, `unauthorized`, `invalid_input`, `conflict`,
 
 ## Commands
 
+Both host roles also expose independent capability execution through the same authenticated
+connection. `GET /v1/execution/catalog` returns the stable host identity, enforceable per-call
+ceilings and exact authorized catalog. `POST /v1/invocations` accepts `DirectInvocationRequest`,
+which fixes that host/catalog, an exact selection, explicit inputs, limits, deadline and caller-scoped
+request ID. It cannot supply actor, grant or workflow origin. Serving acceptance is durable before
+acknowledgement and remains distinct from outcome.
+
+`GET /v1/invocation-requests/{request}` recovers acceptance after a lost reply.
+`GET /v1/invocations/{execution}` reads its accepted identity, status and accounting;
+`GET /v1/invocations/{execution}/observations?after=0&limit=128` reads a bounded page.
+`POST /v1/invocations/{execution}/cancel` requests cancellation. Reads, replay and cancellation
+reevaluate current authority and cannot cross the authenticated caller's namespace. Observation
+`closed` means no further page is required; a terminal record may still have unread earlier pages.
+An uncertain status is never represented as successful completion.
+
+`POST /v1/artifact-inputs` accepts `InputUploadRequest`: explicit host, stable upload ID, media type,
+sensitivity, canonical digest and base64 content, limited to 512 KiB decoded bytes.
+The server supplies client provenance and a host/actor accounting owner. Verified publication is
+atomic, exact upload replay returns the same artifact and changed bytes conflict. Interrupted
+uploads are reclaimed before startup opens admission; per-actor cumulative quotas survive restart.
+The ordinary artifact metadata/range routes download both inputs and outputs.
+
+Use the [independent execution recipe](../../examples/operator/README.md#independent-execution).
+`invocation prepare` obtains discovery and writes a create-new exact request file without execution.
+Keep it for submission/replay. Explicit `--endpoint`, credentials and `--host` prevent silently
+selecting another owner. Direct continuation and implicit workflow/workspace input discovery refuse.
+
 Workflow, run, proposal, controller, and layout commands use `POST /v1/commands`. Peer lifecycle
 administration uses the separate routes below. A command envelope has no actor field:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 7},
+  "protocol": {"major": 2, "minor": 8},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -158,7 +185,7 @@ Every route is authenticated and authority-filtered. List queries constrain or f
 
 `limit` defaults to 100 and must be within the protocol page bound. A page contains `items`, optional `next_cursor`, and optional feed-head `observed_cursor`. Clients must request subsequent pages explicitly; the client library never auto-loads a complete run lifetime.
 
-Artifact metadata and content are separately authorized against the exact immutable artifact identity and stored sensitivity before either is disclosed. Content accepts one `Range: bytes=start-end` request and returns 206 with `Content-Type`, `Accept-Ranges: bytes`, `Content-Range`, safe `Content-Disposition: attachment`, and `x-milkdrift-artifact-complete`. A server call returns at most 1 MiB. There is no arbitrary path access or public upload endpoint. Protected metadata/content decisions are retained in the bounded security audit with actor, grant revision/digest, operation, resource digest, decision digest, outcome, and reason codes; raw credentials and content are absent.
+Artifact metadata and content are separately authorized against the exact immutable artifact identity and stored sensitivity before either is disclosed. Content accepts one `Range: bytes=start-end` request and returns 206 with `Content-Type`, `Accept-Ranges: bytes`, `Content-Range`, safe `Content-Disposition: attachment`, and `x-milkdrift-artifact-complete`. A server call returns at most 1 MiB. Input upload uses the bounded publication route described above; artifact access never accepts a server path. Protected metadata/content decisions are retained in the bounded security audit with actor, grant revision/digest, operation, resource digest, decision digest, outcome, and reason codes; raw credentials and content are absent.
 
 ## Read models
 
@@ -301,13 +328,14 @@ The current operator surface intentionally covers every legitimate external oper
 | `capability list`, `show` | The scoped capability read; `list --follow` exposes the capability SSE feed. |
 | `provider list`, `show` | Authorized provider-profile identities and generations projected from the same scoped capability read. |
 | `peer list`, `show`, `connect`, `reload`, `disconnect`, `drain`, `revoke` | Every peer read and administration route. |
-| `artifact metadata`, `get` | Metadata plus a verified sequence of bounded range reads into one create-new destination. |
+| `invocation catalog`, `prepare`, `submit`, `lookup`, `show`, `observations`, `wait`, `cancel` | Authorized independent discovery, exact saved requests and bounded invocation lifecycle reads/actions. |
+| `artifact upload`, `metadata`, `get` | Atomic bounded input upload; metadata plus verified range reads into one create-new destination. |
 | `layout get`, `put` | The layout read and `put_layout` command. |
 
 Protocol negotiation is performed automatically when a CLI session connects; it is not a separate
 operator command. Individual artifact-range calls are an implementation detail of verified
-`artifact get`, not a byte-splicing operator surface. Public configuration, audit, shutdown, and
-local artifact upload routes do not exist, so the CLI does not invent them or access daemon storage.
+`artifact get`, not a byte-splicing operator surface. Public configuration, audit, and shutdown
+routes do not exist; the CLI uses the public input-publication route for uploads and never accesses daemon storage.
 
 Every command can carry exact `--command-id`, `--expected-sequence`, `--expected-revision`, bounded
 `--reason`, and repeatable `--evidence KIND=ID`. Actor, grant, authority decision, and timestamp

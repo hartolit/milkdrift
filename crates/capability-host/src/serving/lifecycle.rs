@@ -7,18 +7,18 @@ use std::{
 
 use milkdrift_capability::PeerId;
 use milkdrift_persistence::{
-    PageSize, PeerExecutionStatus, PeerRecoveryResult, PeerRelationshipState, PeerRetentionRequest,
+    PageSize, PeerExecutionStatus, PeerRecoveryResult, PeerRetentionRequest, ServingCallerState,
     TimestampMillis,
 };
 
 use super::{
-    PeerHttpError, PeerService, PeerWorkerShutdownReport, map_execution_persistence,
+    PeerService, PeerWorkerShutdownReport, ServingError, map_execution_persistence,
     relationship_generation,
 };
 
 impl PeerService {
     /// Marks all catalogs stale and stops accepting new peer invocations.
-    pub fn begin_drain(&self) -> Result<(), PeerHttpError> {
+    pub fn begin_drain(&self) -> Result<(), ServingError> {
         self.executions
             .set_peer_admission_open(false)
             .map_err(map_execution_persistence)?;
@@ -28,7 +28,7 @@ impl PeerService {
     }
 
     /// Marks shutdown state for handshake and catalog consumers.
-    pub fn begin_shutdown(&self) -> Result<(), PeerHttpError> {
+    pub fn begin_shutdown(&self) -> Result<(), ServingError> {
         let closed = self
             .executions
             .set_peer_admission_open(false)
@@ -40,7 +40,18 @@ impl PeerService {
 
     /// Stops durable claims and joins the fixed worker owner up to the supplied deadline.
     pub fn shutdown_workers(&self, timeout: Duration) -> PeerWorkerShutdownReport {
-        let admission_closed = self.begin_shutdown().is_ok();
+        let started = std::time::Instant::now();
+        // Stop local claims immediately. A temporarily full owner queue must not turn an
+        // otherwise clean shutdown into a failed durable close; retry inside the same budget.
+        let admission_closed = loop {
+            match self.begin_shutdown() {
+                Ok(()) => break true,
+                Err(ServingError::Overloaded(_)) if started.elapsed() < timeout => {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(_) => break false,
+            }
+        };
         let Ok(mut workers) = self.workers.lock() else {
             return PeerWorkerShutdownReport {
                 clean: false,
@@ -54,22 +65,22 @@ impl PeerService {
                 joined: 0,
                 retained_workers: 0,
             },
-            |owner| owner.shutdown(timeout),
+            |owner| owner.shutdown(timeout.saturating_sub(started.elapsed())),
         );
         report.clean &= admission_closed;
         report
     }
 
     /// Revokes one relationship immediately for inbound authentication and protocol actions.
-    pub fn revoke_peer(&self, peer: &PeerId) -> Result<(), PeerHttpError> {
+    pub fn revoke_peer(&self, peer: &PeerId) -> Result<(), ServingError> {
         let Some(relationship) = self.relationships.get(peer) else {
-            return Err(PeerHttpError::NotFound(
+            return Err(ServingError::NotFound(
                 "peer relationship is not configured".to_owned(),
             ));
         };
         self.executions
-            .configure_peer_relationship(&PeerRelationshipState {
-                peer: peer.clone(),
+            .configure_peer_relationship(&ServingCallerState {
+                caller: self.peer_caller(peer),
                 generation: relationship_generation(relationship).saturating_add(1),
                 enabled: false,
                 expires_at_unix_ms: relationship.expires_at_unix_ms,
@@ -78,23 +89,21 @@ impl PeerService {
             .map_err(map_execution_persistence)?;
         self.revoked_peers
             .lock()
-            .map_err(|_| {
-                PeerHttpError::Unavailable("peer revocation state unavailable".to_owned())
-            })?
+            .map_err(|_| ServingError::Unavailable("peer revocation state unavailable".to_owned()))?
             .insert(peer.clone());
         self.catalogs
             .lock()
-            .map_err(|_| PeerHttpError::Unavailable("catalog cache unavailable".to_owned()))?
+            .map_err(|_| ServingError::Unavailable("catalog cache unavailable".to_owned()))?
             .remove(peer);
         Ok(())
     }
 
     /// Recovers bounded prior-owner claims. Pre-entry work requeues; entered work becomes uncertain.
-    pub fn recover(self: &Arc<Self>, maximum: usize) -> Result<(), PeerHttpError> {
+    pub fn recover(self: &Arc<Self>, maximum: usize) -> Result<(), ServingError> {
         let configured = usize::from(self.config.workers.recovery_page);
         let bounded = maximum.min(configured).max(1);
         let limit = PageSize::new(u32::try_from(bounded).unwrap_or(u32::MAX))
-            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+            .map_err(|error| ServingError::Protocol(error.to_string()))?;
         recover_claim_pages(|| {
             self.executions
                 .recover_peer_claims(self.now()?, limit)
@@ -116,7 +125,7 @@ impl PeerService {
     }
 
     /// Compacts one bounded page beyond the configured hot observation horizon.
-    pub fn maintain_retention(&self) -> Result<PeerExecutionStatus, PeerHttpError> {
+    pub fn maintain_retention(&self) -> Result<PeerExecutionStatus, ServingError> {
         let now = self.now()?;
         let retention_ms = u64::try_from(self.config.workers.observation_hot_retention.as_millis())
             .unwrap_or(u64::MAX);
@@ -127,7 +136,7 @@ impl PeerService {
                 ),
                 archived_at: TimestampMillis::new(now),
                 limit: PageSize::new(self.config.workers.archive_batch_size)
-                    .map_err(|error| PeerHttpError::Protocol(error.to_string()))?,
+                    .map_err(|error| ServingError::Protocol(error.to_string()))?,
             })
             .map_err(map_execution_persistence)?;
         self.executions
@@ -136,7 +145,7 @@ impl PeerService {
     }
 
     /// Returns redacted serving execution accounting for daemon health projection.
-    pub fn execution_status(&self) -> Result<PeerExecutionStatus, PeerHttpError> {
+    pub fn execution_status(&self) -> Result<PeerExecutionStatus, ServingError> {
         self.executions
             .peer_execution_status()
             .map_err(map_execution_persistence)
@@ -144,15 +153,15 @@ impl PeerService {
 }
 
 fn recover_claim_pages(
-    mut recover_page: impl FnMut() -> Result<PeerRecoveryResult, PeerHttpError>,
-) -> Result<(), PeerHttpError> {
+    mut recover_page: impl FnMut() -> Result<PeerRecoveryResult, ServingError>,
+) -> Result<(), ServingError> {
     loop {
         let recovered = recover_page()?;
         if !recovered.more {
             return Ok(());
         }
         if recovered.requeued == 0 && recovered.uncertain == 0 {
-            return Err(PeerHttpError::Unavailable(
+            return Err(ServingError::Unavailable(
                 "peer claim recovery reported more work without progress".to_owned(),
             ));
         }
@@ -161,7 +170,7 @@ fn recover_claim_pages(
 
 #[cfg(test)]
 mod tests {
-    use super::{PeerHttpError, PeerRecoveryResult, recover_claim_pages};
+    use super::{PeerRecoveryResult, ServingError, recover_claim_pages};
 
     #[test]
     fn recovery_refuses_an_empty_continuation_before_requesting_another_page() {
@@ -169,9 +178,7 @@ mod tests {
         let result = recover_claim_pages(|| {
             calls += 1;
             if calls > 1 {
-                return Err(PeerHttpError::Unavailable(
-                    "unexpected next page".to_owned(),
-                ));
+                return Err(ServingError::Unavailable("unexpected next page".to_owned()));
             }
             Ok(PeerRecoveryResult {
                 more: true,
@@ -179,7 +186,7 @@ mod tests {
             })
         });
         assert_eq!(calls, 1);
-        assert!(matches!(result, Err(PeerHttpError::Unavailable(reason))
+        assert!(matches!(result, Err(ServingError::Unavailable(reason))
             if reason == "peer claim recovery reported more work without progress"));
     }
 
@@ -203,7 +210,7 @@ mod tests {
             recover_claim_pages(|| {
                 pages
                     .next()
-                    .ok_or_else(|| PeerHttpError::Unavailable("past the frontier".to_owned()))
+                    .ok_or_else(|| ServingError::Unavailable("past the frontier".to_owned()))
             })
             .is_ok()
         );

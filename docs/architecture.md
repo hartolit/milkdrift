@@ -2,8 +2,8 @@
 
 Milkdrift separates a reusable method, the history of performing it, and authority to change what
 happens next. In the current workflow composition, a client submits intent to the daemon; runtime
-accepts facts durably and asks external capabilities to perform work. The accepted independent-host
-design also admits direct operations without a workflow. Clients inspect the owning service's
+accepts facts durably and asks external capabilities to perform work. Independent hosting
+also admits direct operations without a workflow. Clients inspect the owning service's
 projections instead of opening storage or reconstructing adapter behavior themselves.
 
 Offline `storage-admin` is a separate daemon executable path under OS file-owner authority.
@@ -25,6 +25,8 @@ the executable system. Development methods belong in the [practices](development
 - **Node:** definition-time unit. **Node execution:** one runtime occurrence. **Attempt:** one
   invocation under an exact capability selection. **Run:** durable execution pinned to a revision
   lineage. **Edge:** explicit control and/or typed data dependency.
+- **Host invocation:** one accepted direct or delegated operation. **Origin:** its direct caller or
+  workflow relationship, independent of transport. Local workflow attempts retain their runtime owner.
 - **Requirement:** what a task needs. **Descriptor:** immutable advertisement of one capability
   generation. **Observation:** mutable health/load/availability or a reported execution fact.
 - **Author:** bounded revision provenance. **Actor:** authenticated principal. **Grant:** immutable
@@ -43,8 +45,6 @@ The adopted additions below are not yet implemented (see [status](product/status
 
 - **Agreement:** immutable obligations, effect prerequisites and adaptation limits accepted for a
   scope. **Method adaptation:** a prospective revision inside those limits, not a change to them.
-- **Host invocation:** one accepted direct or delegated operation. **Origin:** its direct caller or
-  workflow relationship, independent of transport. Local workflow attempts retain their runtime owner.
 - **Installation:** durable approved setup and owned resources. **Managed working area:** ordinary
   mutable files with a resource generation, lifetime holds and one editing owner; distinct from
   logical workspace values and temporary materialization. **Attachment:** access to a resource
@@ -69,7 +69,7 @@ executable, which is `milkdrift`. Private children organize each owner's impleme
 | `crates/model` | Provider-neutral task/response and exact causal-manifest contracts (`task`, `context`, `document`). |
 | `crates/persistence` | Durable documents and narrow journal/revision/workspace/artifact/application/peer/clock ports; controller account validation and transitions. |
 | `crates/runtime` | Commands, scheduling, final entry/reporting, structured work, projection, recovery, reconciliation, and causal discovery/selection (`engine`, `projection`, `context`). |
-| `crates/capability-host` | Live generations, selection/permits, adapter port, bounded workers, secrets/materialization ports, and `RuntimeStore` bridge (`registry`, `worker`, `materialization`). |
+| `crates/capability-host` | Live generations, selection/permits, prepared adapter entry, direct/peer serving lifecycle, bounded workers, secrets/materialization ports, and `RuntimeStore` bridge (`registry`, `serving`, `worker`, `materialization`). |
 | `crates/control` | Proposals, deterministic risk, grants/presets, controller lifecycle, application orchestration, and ordinary workflow-control adapter (`service`, `policy`, `controller`, `adapter`). |
 | `crates/prompt-sequence` | Strict JSON/Markdown imports, ordinary blueprint compilation, stage association, and prospective remediation; no executor or storage. |
 | `crates/control-protocol` | External command/read/layout DTOs, codecs, negotiation, authenticated cursors; no HTTP/runtime/storage types. |
@@ -78,7 +78,7 @@ executable, which is `milkdrift`. Private children organize each owner's impleme
 | `adapters/local-process` | Profile validation and byte identity; direct argv, preparation, streams, monitoring, outputs, and platform process ownership (`config`, `process`). |
 | `adapters/model-provider` | Endpoint policy, feature negotiation, bounded HTTP/SSE, independent OpenAI-compatible and Anthropic mappings, artifact publication. |
 | `adapters/local-secret` | Explicit environment/restricted-file references; no enumeration or retained secret values. |
-| `adapters/peer-http` | Authentication, configured transport, catalogs, remote capability adapters, fixed dispatch workers, artifact transfer, and peer service lifecycle. |
+| `adapters/peer-http` | Authentication, configured transport, catalogs, remote capability adapters, and artifact transfer framing. Capability-host owns serving lifecycle. |
 | `adapters/redb-store` | Physical schema/transactions, journal/indexes, snapshots, accounts, application/peer retention, artifacts, and administrative integrity scans. |
 | `apps/daemon` | Configuration compilation, authentication, single owner queue, command/read adaptation, HTTP/SSE, startup/maintenance/shutdown (`config`, `auth`, `host`, `http`). |
 | `apps/cli` | Arguments and presentation over the control client; bounded input/output/session/streaming owners and command-family routing. |
@@ -100,8 +100,9 @@ control protocol ← control client ← CLI                         ↑
 ```
 
 The diagram shows dependency layers, not every Cargo edge. Daemon explicitly composes concrete
-storage, secret, process/model/peer adapters. The CLI directly consumes only control-client,
-control-protocol, and prompt-sequence. HTTP, database, OS, provider, and async types stay outside
+storage, secret, process/model/peer adapters. The CLI consumes control-client, control-protocol,
+capability and serving wire documents from peer-protocol, plus prompt-sequence for local authoring.
+It neither constructs runtime services nor opens storage. HTTP, database, OS, provider, and async types stay outside
 semantic contracts. No UI or local inference package exists. Exact manifest boundaries are checked
 by `tools/evidence/tests/repository_contracts.rs`.
 
@@ -109,9 +110,9 @@ Canonical capability-owned identities (`PeerId`, `SchemaId`, `ExtensionKey`, `Bo
 `TrustZone`) are imported directly; consuming domains do not re-export alternative owners.
 [Public API policy](reference/public-api-policy.md) governs exports and test-only features.
 
-The accepted dependency changes preserve that inward direction. Transport-independent serving
-acceptance and recovery move from peer-http into capability-host, using generalized persistence
-ports; local workflow history stays in runtime. Host resource policy belongs in a narrow module
+Transport-independent serving acceptance, preparation, entry and recovery live in capability-host;
+local workflow history stays in runtime. Further accepted dependency changes preserve that inward
+direction. Host resource policy belongs in a narrow module
 with typed persistence actions and an adopted Linux mechanism adapter. Blueprint owns agreement
 semantics, authority owns verifier/service delegation decisions, and control owns publication and
 proposal orchestration. Host consumes a continuation port implemented by control, avoiding a
@@ -120,6 +121,20 @@ store. These moves are required by concrete direct/resource/publication consumer
 is required just to name a concept. ADRs [0038](decisions/0038-independent-host-execution.md),
 [0039](decisions/0039-managed-resource-ownership.md), [0040](decisions/0040-protected-adaptive-methods.md)
 and [0041](decisions/0041-published-method-invocation.md) own rationale and compatibility decisions.
+
+Daemon startup composes common storage, clock, authority, registry and serving workers in both
+roles. Only workflow-enabled hosts construct runtime, control and effect workers. Recovery closes
+new entry until these owners are ready; execution-only startup refuses outstanding workflow
+obligations and preserves closed history. The installation identity is durable and cannot change
+with a configuration edit. Authenticated direct clients and delegated peers share serving acceptance
+and reporting, while local workflow attempts retain their atomic runtime journal/account transition.
+
+Adapter preparation freezes validated inputs before external entry. Serving and runtime owners
+then recheck authority and their own lease, cancellation and allowance facts before committing
+entry. A consumed prepared call cannot be reused. Direct selection contains only explicitly supplied
+inline/artifact inputs and does not manufacture workflow context. Host-invocation and client-input
+artifact owners have no run namespace. Peer imports preserve foreign causes as authenticated claims,
+and controlled remote outputs charge the originating reservation through ordinary publication.
 
 ## Definitions and prospective control
 
@@ -221,7 +236,7 @@ Worker/system receipts are private runtime paths, not alternate external authori
 
 ### Direct and remotely served operations
 
-The intended shared path is authorize → exact-generation preparation → revalidation → durable entry
+The shared path is authorize → exact-generation preparation → revalidation → durable entry
 and reservations → adapter entry → durable observations. Preparation freezes authorized data without
 external effects. It is shared mechanism, not a shared second journal. Runtime's current local
 entry/account transaction remains the only authority for a local attempt. A generalized serving
@@ -233,8 +248,9 @@ Workflow delegation carries its actual owner/run/revision/execution/attempt and 
 Authentication binds delegation, grant and account; a delegated credential cannot relabel its work
 as direct to avoid limits. Replay is scoped by host, authenticated caller realm/principal and exact
 request. Current disclosure authorization remains required even for retained results. After possible
-entry, missing evidence preserves uncertainty. This is the accepted 01 addition in ADR 0038; today's
-peer worker still uses its distinct entry/helper path and direct public invocation is absent.
+entry, missing evidence preserves uncertainty. Capability-host owns this serving lifecycle;
+[ADR 0038](decisions/0038-independent-host-execution.md) explains why it shares preparation with
+local workflow execution while retaining a separate durable owner.
 
 ## Scoped authority and disclosure
 
@@ -330,14 +346,14 @@ does not supply an unsupported provider protocol. Processes explicitly map reser
 inputs through existing input-file policy; no ambient global context file appears. Outputs retain
 manifest/input provenance.
 
-For the adopted direct path, the serving owner freezes a distinct explicit selection from supplied
+For direct calls, the serving owner freezes a distinct explicit selection from supplied
 inputs and authorized references; it discovers no workflow ancestors. Host materialization verifies
 that selection and the bytes, including empty selection where valid. Workflow causal manifests and
 continuation retain their stronger run/attempt rules. Direct fresh model calls cannot bypass those
 rules by submitting workflow context under another origin. Workspace/persistence producer and
-accounting contracts will identify actual host invocations as well as workflow attempts, replacing
-run-shaped serving accounting keys while keeping one artifact store. Bounded upload/import,
-transfer, retention, integrity and reads are part of 01, not a client-side database shortcut.
+accounting contracts identify actual host invocations, imports and workflow attempts in one
+artifact store. Public input uploads and peer transfers use its bounded publication, retention,
+integrity and authorized read paths.
 
 Artifact publication uses bounded resumable chunks, exact offsets, digest/size checks, and atomic
 metadata/accounting acceptance after content publication. Read authority, integrity verification,
@@ -611,10 +627,11 @@ details; [peer operations](operations/peers.md) owns operator connectivity and q
 
 ## Daemon lifecycle and compatibility
 
-The lifecycle below describes current normal workflow-enabled composition. The accepted execution-only
-role in ADR 0038 uses the same common owners without constructing runtime/control/workflow workers.
-Role removal must refuse unresolved workflow obligations, preserve history and expose truthful
-role availability. It is an intended startup change, not an existing configuration option.
+Configuration selects workflow-enabled or execution-only composition. Execution-only startup uses
+the common owners without constructing runtime, control or workflow workers. Role removal refuses
+nonterminal runs, active leases and unresolved controller accounts; closed history stays intact for
+offline inspection. Health reports the role, and absent workflow operations return an explicit
+unavailable result.
 
 The [daemon](../apps/daemon/README.md) connects these owners into one process. Startup establishes
 what can safely continue before accepting new work; shutdown keeps storage available until workers

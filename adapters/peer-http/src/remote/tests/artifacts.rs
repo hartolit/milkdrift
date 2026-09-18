@@ -9,7 +9,7 @@ use milkdrift_workspace::{
 };
 
 use super::*;
-use crate::{CorePeerArtifactStore, PeerArtifactStore};
+use milkdrift_capability_host::{CorePeerArtifactStore, PeerArtifactStore};
 
 #[derive(Clone, Copy)]
 enum TransferOutcome {
@@ -134,11 +134,17 @@ fn transfer_case(outcome: TransferOutcome) -> Result<(), Box<dyn std::error::Err
             Vec::new(),
         )?,
         source_peer: adapter.client.remote_peer().clone(),
-        execution: PeerExecutionId::new("chunked-execution")?,
+        binding: milkdrift_peer_protocol::ArtifactTransferBinding::Execution {
+            execution: PeerExecutionId::new("chunked-execution")?,
+        },
         expires_at_unix_ms: 1000,
     };
     let observation = PeerObservation {
-        execution: offer.execution.clone(),
+        execution: offer
+            .binding
+            .execution()
+            .ok_or("missing output execution")?
+            .clone(),
         sequence: 1,
         category: ObservationCategory::Artifact,
         observed_at_unix_ms: 100,
@@ -222,11 +228,15 @@ fn transfer_case(outcome: TransferOutcome) -> Result<(), Box<dyn std::error::Err
     let mut imported = BTreeSet::new();
     let mut total = 0;
     let result = fixture.adapter.import_output(
-        &offer.execution,
+        offer
+            .binding
+            .execution()
+            .ok_or("missing output execution")?,
         &observation,
         1000,
         &mut imported,
         &mut total,
+        None,
         &reporter,
     );
     let received = server.join().map_err(|_| "transfer server panicked")??;

@@ -3,27 +3,34 @@
 //! Describe remote acceptance and observations while each host retains its own durable truth.
 //!
 //! Begin with [`HandshakeRequest`] and [`CatalogSnapshot`] to find an advertised generation.
-//! [`PeerInvocationRequest`] binds the exact selection and delegated scope; its request identity
+//! [`ServingInvocationRequest`] binds the exact selection and delegated scope; its request identity
 //! survives lost replies through [`InvocationAcceptance`] and [`InvocationLookup`]. Follow a
 //! known execution with [`ObservationPage`], which distinguishes retained rows from archival.
 //!
 //! A transport authenticates the peer and calls [`decode_envelope`] with bounded limits. Call
 //! payload `validate`/`validate_for` methods for semantic and request-binding checks as applicable.
 //! These contracts perform no authentication or I/O; `milkdrift-peer-http` supplies the current
-//! transport, worker lifecycle, and core artifact bridge.
+//! HTTP transport; `milkdrift-capability-host` owns serving workers and the core artifact bridge.
 
 mod artifact;
+mod caller;
 mod catalog;
+mod direct;
 mod document;
 mod execution;
 mod identity;
 mod session;
 
 pub use artifact::{
-    ArtifactChunk, ArtifactMetadataOffer, ArtifactTransferDecision, ArtifactTransferDirection,
-    MAX_ARTIFACT_CHUNK_BYTES,
+    ArtifactChunk, ArtifactMetadataOffer, ArtifactTransferBinding, ArtifactTransferDecision,
+    ArtifactTransferDirection, MAX_ARTIFACT_CHUNK_BYTES,
+};
+pub use caller::{
+    ClientInvocationAuthorization, InvocationOrigin, ServingAuthorization, ServingCaller,
+    ServingPrincipal,
 };
 pub use catalog::{CatalogEntry, CatalogSnapshot, CatalogUpdate, CatalogUpdateKind};
+pub use direct::{DirectDiscovery, DirectInvocationRequest, ServingInvocationRead};
 pub use document::{
     DecodeLimits, MAX_PEER_DOCUMENT_BYTES, ProtocolEnvelope, decode_envelope, encode_envelope,
 };
@@ -31,7 +38,7 @@ pub use execution::{
     ArchivedExecutionSummary, CancellationDisposition, DelegatedAuthorization, ExecutionLimits,
     InvocationAcceptance, InvocationLookup, ObservationCategory, ObservationHistory,
     ObservationPage, PeerCancellationAcknowledgement, PeerCancellationRequest,
-    PeerExecutionProvenance, PeerInvocationRequest, PeerObservation, RemoteExecutionStatus,
+    PeerExecutionProvenance, PeerObservation, RemoteExecutionStatus, ServingInvocationRequest,
 };
 pub use identity::{
     CatalogDigest, DelegationRef, PeerExecutionId, PeerRequestId, SessionId, TransferId,

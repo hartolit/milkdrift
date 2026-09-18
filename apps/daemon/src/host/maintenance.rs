@@ -72,7 +72,9 @@ impl Owner {
                 }
             }
         }
-        if let Err(error) = self.runtime.scheduler_tick() {
+        if let Some(workflow) = &self.workflow
+            && let Err(error) = workflow.runtime.scheduler_tick()
+        {
             warn!(
                 outcome = "error",
                 code = "runtime_tick",

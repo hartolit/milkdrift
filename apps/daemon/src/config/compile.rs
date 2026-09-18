@@ -31,8 +31,21 @@ impl DaemonConfig {
         }
         let source =
             std::str::from_utf8(&bytes).map_err(|error| ConfigError::Toml(error.to_string()))?;
-        let config: Self =
+        let table: toml::Table =
             toml::from_str(source).map_err(|error| ConfigError::Toml(error.to_string()))?;
+        let version = table
+            .get("schema_version")
+            .and_then(toml::Value::as_integer)
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| {
+                ConfigError::Toml("schema_version must be an unsigned integer".to_owned())
+            })?;
+        if version != DAEMON_CONFIG_SCHEMA_VERSION {
+            return Err(ConfigError::UnsupportedVersion(version));
+        }
+        let config: Self = table
+            .try_into()
+            .map_err(|error: toml::de::Error| ConfigError::Toml(error.to_string()))?;
         let parent = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
@@ -64,6 +77,13 @@ impl DaemonConfig {
             ));
         }
         validate_runtime(&self.runtime)?;
+        if self.role == milkdrift_control_protocol::HostRole::ExecutionOnly
+            && self.runtime.controller_activation != super::ControllerActivation::Disabled
+        {
+            return Err(ConfigError::Invalid(
+                "controller activation requires the workflow_enabled role".to_owned(),
+            ));
+        }
         match self.runtime.controller_activation {
             super::ControllerActivation::Disabled | super::ControllerActivation::Enabled => {}
             super::ControllerActivation::Qualification
@@ -131,7 +151,9 @@ impl DaemonConfig {
             validate_safe_identity("model capability", &model.capability_id)?;
             model.profile = normalize_existing_file(&base, &model.profile)?;
         }
-        validate_peers(&self.peers, &self.secret_sources)?;
+        validate_safe_identity("host_id", &self.host_id)?;
+        validate_serving(&self.serving)?;
+        validate_peers(&self.peers, &self.host_id, &self.secret_sources)?;
         let redacted_toml = redacted_toml(&redacted_value(&self)?)?;
         let normalized = canonical_json_bytes(&self, CONFIG_DIGEST_LIMITS).map_err(|error| {
             ConfigError::Invalid(format!(
@@ -156,6 +178,9 @@ impl DaemonConfig {
             })
             .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
         Ok(DaemonPlan {
+            role: self.role,
+            host_id: self.host_id,
+            serving: self.serving,
             bind: self.bind,
             storage: StoragePlan {
                 data_root: self.data_root,
@@ -260,18 +285,7 @@ fn validate_actor_authority(authority: &ActorGrantConfig) -> Result<(), ConfigEr
     Ok(())
 }
 
-fn validate_peers(
-    peers: &PeerHostConfig,
-    secrets: &BTreeMap<String, SecretSourceConfig>,
-) -> Result<(), ConfigError> {
-    let PeerHostConfig::Enabled {
-        local_peer_id,
-        relationships,
-        serving,
-    } = peers
-    else {
-        return Ok(());
-    };
+fn validate_serving(serving: &super::ServingHostConfig) -> Result<(), ConfigError> {
     if serving.worker_threads == 0
         || serving.worker_threads > 256
         || serving.maximum_global_active == 0
@@ -288,10 +302,38 @@ fn validate_peers(
         || serving.poll_interval_ms > 60_000
     {
         return Err(ConfigError::Invalid(
-            "peer serving active/queue/hot/archive/recovery bounds are invalid".to_owned(),
+            "serving active/queue/hot/archive/recovery bounds are invalid".to_owned(),
         ));
     }
-    validate_safe_identity("local_peer_id", local_peer_id)?;
+    let clients = &serving.clients;
+    if clients.maximum_concurrent == 0
+        || clients.maximum_uploaded_artifacts == 0
+        || clients.maximum_uploaded_artifacts > 1_000_000
+        || clients.maximum_uploaded_bytes
+            < milkdrift_control_protocol::MAX_INPUT_UPLOAD_BYTES as u64
+        || clients.maximum_requests_per_minute == 0
+        || clients.maximum_requests_per_minute > 100_000
+        || clients.catalog_ttl_ms == 0
+        || clients.catalog_ttl_ms > 300_000
+        || clients.execution_limits.artifact_bytes == 0
+        || clients.execution_limits.duration_ms == 0
+        || clients.execution_limits.observations == 0
+    {
+        return Err(ConfigError::Invalid(
+            "client serving limits are invalid".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_peers(
+    peers: &PeerHostConfig,
+    host_id: &str,
+    secrets: &BTreeMap<String, SecretSourceConfig>,
+) -> Result<(), ConfigError> {
+    let PeerHostConfig::Enabled { relationships } = peers else {
+        return Ok(());
+    };
     if relationships.len() > 256 {
         return Err(ConfigError::Invalid(
             "peer relationship count must not exceed 256".to_owned(),
@@ -299,11 +341,15 @@ fn validate_peers(
     }
     let mut identities = BTreeSet::new();
     for relationship in relationships {
+        relationship
+            .execution_limits()
+            .validate()
+            .map_err(|error| ConfigError::Invalid(error.to_string()))?;
         validate_safe_identity("peer_id", &relationship.peer_id)?;
         validate_safe_identity("peer credential_ref", &relationship.credential_ref)?;
         validate_safe_identity("peer trust_zone", &relationship.trust_zone)?;
         validate_safe_identity("peer delegation_ref", &relationship.delegation_ref)?;
-        if relationship.peer_id == *local_peer_id
+        if relationship.peer_id == host_id
             || !identities.insert(&relationship.peer_id)
             || !secrets.contains_key(&relationship.credential_ref)
             || relationship.minimum_minor != PROTOCOL_MINOR_V1

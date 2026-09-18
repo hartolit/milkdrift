@@ -713,12 +713,14 @@ pub(crate) fn workspace_value_key(
 
 pub(crate) fn validated_workspace_domain(
     read: &redb::ReadTransaction,
-    run: &RunId,
+    owner: impl Into<milkdrift_workspace::ArtifactOwner>,
 ) -> Result<Option<WorkspaceUsage>, PersistenceError> {
+    let owner = owner.into();
+    let key = crate::artifact::owner::domain_key(&owner)?;
     let budget: Option<milkdrift_workspace::WorkspaceBudget> = {
         let budgets = read.open_table(WORKSPACE_BUDGETS).map_err(error::redb)?;
         budgets
-            .get(run.as_str())
+            .get(key.as_str())
             .map_err(error::redb)?
             .map(|bytes| json::decode(bytes.value(), "workspace budget"))
             .transpose()?
@@ -726,7 +728,7 @@ pub(crate) fn validated_workspace_domain(
     let usage = {
         let usages = read.open_table(WORKSPACE_USAGE).map_err(error::redb)?;
         usages
-            .get(run.as_str())
+            .get(key.as_str())
             .map_err(error::redb)?
             .map(|bytes| json::decode(bytes.value(), "workspace usage"))
             .transpose()?

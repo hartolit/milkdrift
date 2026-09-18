@@ -18,9 +18,11 @@ use super::{
         decode_publication, optional_publication_in_transaction, publication_in_transaction,
     },
 };
+#[allow(clippy::too_many_arguments)] // One bounded indexed scan shares cleanup accounting and cursor state with its caller.
 pub(crate) fn expire_writable_publications(
     store: &RedbStore,
     request: &OrphanCleanupRequest,
+    only_client_inputs: bool,
     after: Option<&[u8]>,
     result: &mut OrphanCleanupResult,
     examined: &mut u32,
@@ -45,7 +47,11 @@ pub(crate) fn expire_writable_publications(
                 .and_then(|bytes| bytes.try_into().ok())
                 .map(u64::from_be_bytes)
                 .ok_or_else(|| error::corruption("invalid publication-age index key"))?;
-            if created_at >= request.created_before.get() {
+            if if only_client_inputs {
+                created_at > request.observed_at.get()
+            } else {
+                created_at >= request.created_before.get()
+            } {
                 break;
             }
             if *examined >= request.limit.get() {
@@ -74,7 +80,14 @@ pub(crate) fn expire_writable_publications(
                 age_key.to_vec(),
                 request.created_before,
             )?);
-            expired.push(record);
+            if !only_client_inputs
+                || matches!(
+                    record.owner,
+                    milkdrift_workspace::ArtifactOwner::ClientInput { .. }
+                )
+            {
+                expired.push(record);
+            }
         }
     }
     if expired.is_empty() {
@@ -132,7 +145,7 @@ pub(crate) fn validate_writable_publication_indexes(
         .open_table(ARTIFACT_RESERVATIONS)
         .map_err(error::redb)?;
     if reservations
-        .get(record.run.as_str())
+        .get(super::owner::domain_key(&record.owner)?.as_str())
         .map_err(error::redb)?
         .is_none_or(|value| value.value() != record.publication.as_str())
     {
@@ -241,7 +254,7 @@ pub(crate) fn release_writable_publication(
             .open_table(ARTIFACT_RESERVATIONS)
             .map_err(error::redb)?;
         let owner = reservations
-            .get(record.run.as_str())
+            .get(super::owner::domain_key(&record.owner)?.as_str())
             .map_err(error::redb)?
             .map(|value| value.value().to_owned());
         if owner.as_deref() != Some(record.publication.as_str()) {
@@ -250,7 +263,7 @@ pub(crate) fn release_writable_publication(
             ));
         }
         let _removed = reservations
-            .remove(record.run.as_str())
+            .remove(super::owner::domain_key(&record.owner)?.as_str())
             .map_err(error::redb)?;
     }
     {
@@ -987,3 +1000,5 @@ pub(crate) fn remove_file_if_present(
     store.faults.check(after)?;
     Ok(Some(metadata.len()))
 }
+
+mod paging;

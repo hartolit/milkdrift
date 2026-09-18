@@ -91,6 +91,9 @@ impl Owner {
             command,
         )
         .map_err(public_control)?;
-        self.control.execute(&document).map_err(public_control)
+        self.workflow()?
+            .control
+            .execute(&document)
+            .map_err(public_control)
     }
 }

@@ -33,6 +33,7 @@ mod monitor;
 mod outputs;
 mod platform;
 mod prepare;
+mod prepared;
 mod reporting;
 mod spawn;
 mod streams;
@@ -233,189 +234,38 @@ impl LocalProcessAdapter {
         invocation: &AdapterInvocation<'_>,
         reporter: &dyn AdapterReporter,
     ) -> Result<(), AdapterError> {
+        match self.prepare_process(invocation) {
+            Ok(prepared) => self.execute_prepared(invocation, reporter, prepared),
+            Err(failure) => report_rejected(
+                reporter,
+                invocation.request().invocation(),
+                &mut 1,
+                failure.class,
+                &failure.code,
+                &failure.detail,
+            ),
+        }
+    }
+
+    fn execute_prepared(
+        &self,
+        invocation: &AdapterInvocation<'_>,
+        reporter: &dyn AdapterReporter,
+        prepared: prepared::PreparedProcess,
+    ) -> Result<(), AdapterError> {
         let request = invocation.request();
         let mut sequence = 1_u64;
-        if !matches!(
-            self.lifecycle.load(Ordering::SeqCst),
-            value if value == Lifecycle::Started as u8 || value == Lifecycle::Draining as u8
-        ) {
-            return report_rejected(
-                reporter,
-                request.invocation(),
-                &mut sequence,
-                ErrorClass::Unsupported,
-                "process_host_not_accepting",
-                "local process generation is not accepting work",
-            );
-        }
-        if let Some(failure) = self.latched_identity_failure()? {
-            return report_rejected(
-                reporter,
-                request.invocation(),
-                &mut sequence,
-                ErrorClass::Adapter,
-                failure.code(),
-                "registered tool generation is unavailable after identity invalidation",
-            );
-        }
-        if invocation.resolution().capability() != &self.profile.capability
-            || invocation.resolution().descriptor_revision() != self.profile.descriptor_revision
-            || invocation.resolution().operation() != &self.profile.operation
-            || request.capability() != &self.profile.capability
-            || request.operation() != &self.profile.operation
-            || request.provider_profile() != self.profile.provider_profile.as_ref()
-        {
-            return report_rejected(
-                reporter,
-                request.invocation(),
-                &mut sequence,
-                ErrorClass::InvalidRequest,
-                "profile_selection_mismatch",
-                "invocation does not equal the configured process generation",
-            );
-        }
-        let Some(context) = invocation.context() else {
-            return report_rejected(
-                reporter,
-                request.invocation(),
-                &mut sequence,
-                ErrorClass::InvalidRequest,
-                "missing_execution_provenance",
-                "process execution requires exact durable run provenance",
-            );
-        };
-        if request.inputs().len() > 120 {
-            return report_rejected(
-                reporter,
-                request.invocation(),
-                &mut sequence,
-                ErrorClass::InvalidRequest,
-                "input_provenance_bound",
-                "process invocation exceeds the exact artifact provenance input bound",
-            );
-        }
-        let specifications = match self
-            .profile
-            .inputs
-            .iter()
-            .map(|input| InputMaterialization::new(&input.input, &input.relative_path))
-            .collect::<Result<Vec<_>, _>>()
-        {
-            Ok(specifications) => specifications,
-            Err(error) => {
-                return report_rejected(
-                    reporter,
-                    request.invocation(),
-                    &mut sequence,
-                    ErrorClass::InvalidRequest,
-                    "invalid_materialization_rule",
-                    &bounded(&error.to_string()),
-                );
-            }
-        };
-        let workspace = match self.data.materialize(
-            context,
-            request,
-            &specifications,
-            self.profile.limits.materialization(),
-        ) {
-            Ok(workspace) => workspace,
-            Err(error) => {
-                return report_rejected(
-                    reporter,
-                    request.invocation(),
-                    &mut sequence,
-                    ErrorClass::InvalidRequest,
-                    "materialization_failed",
-                    &bounded(&error.to_string()),
-                );
-            }
-        };
-        let canonical_root = match workspace.root().canonicalize() {
-            Ok(root) => root,
-            Err(error) => {
-                return report_rejected(
-                    reporter,
-                    request.invocation(),
-                    &mut sequence,
-                    ErrorClass::Adapter,
-                    "execution_root_unavailable",
-                    &format!("execution root cannot be canonicalized: {:?}", error.kind()),
-                );
-            }
-        };
-        if !self
-            .writable_roots
-            .iter()
-            .any(|allowed| canonical_root.starts_with(allowed))
-        {
-            return report_rejected(
-                reporter,
-                request.invocation(),
-                &mut sequence,
-                ErrorClass::Authorization,
-                "execution_root_denied",
-                "isolated execution root is outside configured read-write roots",
-            );
-        }
-        let working_directory = match prepare_working_directory(
-            &canonical_root,
-            &self.profile.working_directory,
-            self.authorized_host_working_directory.as_deref(),
-        ) {
-            Ok(path) => path,
-            Err(message) => {
-                return report_rejected(
-                    reporter,
-                    request.invocation(),
-                    &mut sequence,
-                    ErrorClass::InvalidRequest,
-                    "working_directory_rejected",
-                    &message,
-                );
-            }
-        };
-        let arguments = match materialize_arguments(&self.profile, request, workspace.as_ref()) {
-            Ok(arguments) => arguments,
-            Err(message) => {
-                return report_rejected(
-                    reporter,
-                    request.invocation(),
-                    &mut sequence,
-                    ErrorClass::InvalidRequest,
-                    "argument_substitution_rejected",
-                    &message,
-                );
-            }
-        };
-        let stdin_bytes = match stdin_bytes(&self.profile, workspace.as_ref()) {
-            Ok(bytes) => bytes,
-            Err(message) => {
-                return report_rejected(
-                    reporter,
-                    request.invocation(),
-                    &mut sequence,
-                    ErrorClass::InvalidRequest,
-                    "stdin_rejected",
-                    &message,
-                );
-            }
-        };
-        let mut resolved_secrets = Vec::new();
-        let environment = match self.resolve_environment(&mut resolved_secrets) {
-            Ok(environment) => environment,
-            Err(message) => {
-                return report_rejected(
-                    reporter,
-                    request.invocation(),
-                    &mut sequence,
-                    ErrorClass::Authentication,
-                    "secret_resolution_failed",
-                    &message,
-                );
-            }
-        };
-
+        let context = invocation
+            .context()
+            .ok_or_else(|| AdapterError::rejected("prepared process lost its execution context"))?;
+        let prepared::PreparedProcess {
+            workspace,
+            working_directory,
+            arguments,
+            stdin_bytes,
+            environment,
+            resolved_secrets,
+        } = prepared;
         let pre_entry_identity = match self.revalidate_identity() {
             Ok(identity) => identity,
             Err(failure) => {
@@ -593,6 +443,24 @@ impl LocalProcessAdapter {
 }
 
 impl CapabilityAdapter for LocalProcessAdapter {
+    fn accepts_direct_inputs(&self) -> bool {
+        true
+    }
+
+    fn prepare(
+        self: Arc<Self>,
+        invocation: &AdapterInvocation<'_>,
+    ) -> Result<milkdrift_capability_host::PreparedAdapterExecution, AdapterError> {
+        let prepared = self
+            .prepare_process(invocation)
+            .map_err(|failure| failure.adapter_error())?;
+        let envelope = self.admission_envelope(invocation)?;
+        Ok(milkdrift_capability_host::PreparedAdapterExecution::new(
+            envelope,
+            move |invocation, reporter| self.execute_prepared(invocation, reporter, prepared),
+        ))
+    }
+
     fn authority_requirements(&self) -> CapabilityExecutionRequirements {
         self.authority_requirements.clone()
     }

@@ -2,11 +2,11 @@
 
 use std::sync::{Arc, atomic::Ordering};
 
+use crate::{AdapterError, AdapterReporter};
 use milkdrift_capability::{
     ErrorClass, InvocationEvent, InvocationEventKind, InvocationFailure, InvocationTerminal,
-    PeerId, TerminalStatus,
+    TerminalStatus,
 };
-use milkdrift_capability_host::{AdapterError, AdapterReporter};
 use milkdrift_peer_protocol::{
     CancellationDisposition, DrainState, ObservationCategory, PeerCancellationAcknowledgement,
     PeerExecutionId, PeerObservation,
@@ -18,8 +18,8 @@ use milkdrift_persistence::{
 use milkdrift_runtime::ExecutorError;
 
 use super::{
-    PeerClock, PeerHttpError, PeerService, adapter_execution_context, bounded,
-    map_execution_persistence, relationship_generation,
+    PeerClock, PeerService, ServingError, adapter_execution_context, bounded,
+    map_execution_persistence,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -74,7 +74,7 @@ enum PeerRecoveryTransition {
 
 #[derive(Debug)]
 pub(crate) struct PeerWorkerRecovery {
-    owner_peer: PeerId,
+    caller: milkdrift_peer_protocol::ServingCaller,
     execution: PeerExecutionId,
     transition: PeerRecoveryTransition,
 }
@@ -82,7 +82,7 @@ pub(crate) struct PeerWorkerRecovery {
 impl PeerWorkerRecovery {
     pub(crate) fn inspect(record: PeerExecutionRecord, post_entry: PeerUncertainty) -> Self {
         Self {
-            owner_peer: record.owner_peer,
+            caller: record.caller,
             execution: record.execution,
             transition: PeerRecoveryTransition::InspectClaim { post_entry },
         }
@@ -90,7 +90,7 @@ impl PeerWorkerRecovery {
 
     fn exact(record: PeerExecutionRecord, transition: PeerRecoveryTransition) -> Self {
         Self {
-            owner_peer: record.owner_peer,
+            caller: record.caller,
             execution: record.execution,
             transition,
         }
@@ -107,8 +107,8 @@ enum ClaimedRunFailure {
     Exact(PeerRecoveryTransition),
 }
 
-impl From<PeerHttpError> for ClaimedRunFailure {
-    fn from(error: PeerHttpError) -> Self {
+impl From<ServingError> for ClaimedRunFailure {
+    fn from(error: ServingError) -> Self {
         Self::Inspect(PeerUncertainty::ServiceInterrupted {
             detail: bounded(&error.to_string(), 1_920),
         })
@@ -123,7 +123,18 @@ impl PeerService {
     pub(crate) fn claim_for_worker(
         &self,
         worker: &WorkerId,
-    ) -> Result<PeerClaimOutcome, PeerHttpError> {
+    ) -> Result<PeerClaimOutcome, ServingError> {
+        // Empty polling is a read. Sampling the durable clock and opening a claim transaction
+        // on every idle worker would compete with useful work even with no accepted calls.
+        if self
+            .executions
+            .peer_execution_status()
+            .map_err(map_execution_persistence)?
+            .dispatch_queued
+            == 0
+        {
+            return Ok(PeerClaimOutcome::Empty);
+        }
         let now = self.now()?;
         self.executions
             .claim_peer_dispatch(&PeerDispatchClaimRequest {
@@ -148,7 +159,7 @@ impl PeerService {
 
     fn run_claimed_once(&self, record: &PeerExecutionRecord) -> Result<(), ClaimedRunFailure> {
         let claim = record.phase.claim().cloned().ok_or_else(|| {
-            PeerHttpError::Persistence("claimed peer work lacks a claim".to_owned())
+            ServingError::Persistence("claimed peer work lacks a claim".to_owned())
         })?;
         if matches!(
             &record.phase,
@@ -176,56 +187,64 @@ impl PeerService {
                 )
                 .map_err(ClaimedRunFailure::from);
         }
-        let relationship = match self.relationship(&record.owner_peer) {
-            Ok(relationship) => relationship,
-            Err(error @ PeerHttpError::Unavailable(_)) => return Err(error.into()),
+        if let Err(error) = self.authorize_serving_request(&record.caller, &record.request) {
+            if matches!(error, ServingError::Unavailable(_)) {
+                return Err(error.into());
+            }
+            return self
+                .append_pre_entry_failure(
+                    record,
+                    "serving authority or inputs were denied before preparation",
+                )
+                .map_err(ClaimedRunFailure::from);
+        }
+        let prepared = match self
+            .capability_host
+            .prepare_serving_execution(record, adapter_execution_context(&record.request)?)
+        {
+            Ok(prepared) => prepared,
             Err(_) => {
                 return self
                     .append_pre_entry_failure(
                         record,
-                        "peer relationship was revoked or expired before adapter entry",
+                        "peer execution preparation refused before adapter entry",
                     )
                     .map_err(ClaimedRunFailure::from);
             }
         };
-        let generation = match self.exact_generation(&relationship, &record.request) {
-            Ok(generation) => generation,
-            Err(_) => {
-                return self
-                    .append_pre_entry_failure(
-                        record,
-                        "selected capability generation was unavailable before adapter entry",
-                    )
-                    .map_err(ClaimedRunFailure::from);
-            }
-        };
+        // Preparation can perform bounded local reads while authority, cancellation, or the
+        // lease changes. The entry transaction checks the claim; sample authority afterward.
         let entry_now = self.now()?;
-        let entry_authority = match self.authorize_invocation(
-            &relationship,
-            &record.request,
-            &generation.descriptor,
-            &generation.authority_requirements,
-            entry_now,
-        ) {
-            Ok(decision) => decision,
-            Err(error @ PeerHttpError::Unavailable(_)) => return Err(error.into()),
-            Err(_) => {
-                return self
-                    .append_pre_entry_failure(
-                        record,
-                        "peer execution authority was denied before adapter entry",
-                    )
-                    .map_err(ClaimedRunFailure::from);
-            }
-        };
+        if entry_now > record.request.deadline_unix_ms || entry_now > claim.lease_expires_at_unix_ms
+        {
+            return self
+                .append_pre_entry_failure(
+                    record,
+                    "peer execution deadline or claim elapsed during preparation",
+                )
+                .map_err(ClaimedRunFailure::from);
+        }
+        let (entry_authority, authority_generation) =
+            match self.authorize_serving_request(&record.caller, &record.request) {
+                Ok(decision) => decision,
+                Err(error @ ServingError::Unavailable(_)) => return Err(error.into()),
+                Err(_) => {
+                    return self
+                        .append_pre_entry_failure(
+                            record,
+                            "peer execution authority was denied before adapter entry",
+                        )
+                        .map_err(ClaimedRunFailure::from);
+                }
+            };
         let entered = match self
             .executions
             .mark_peer_entered(&PeerEntryRequest {
-                owner: &record.owner_peer,
+                owner: &record.caller,
                 execution: &record.execution,
                 worker: &claim.worker,
                 claim_generation: claim.generation,
-                relationship_generation: relationship_generation(&relationship),
+                relationship_generation: authority_generation,
                 entered_at_unix_ms: entry_now,
                 authority: &entry_authority,
             })
@@ -250,34 +269,26 @@ impl PeerService {
             }
         };
         let reporter = PeerStoreReporter {
-            owner_peer: entered.owner_peer.clone(),
+            caller: entered.caller.clone(),
             execution: entered.execution.clone(),
             executions: self.executions.clone(),
             clock: self.clock.clone(),
             lease_ms: self.config.lease.execution_lease_ms,
-            limits: entered.request.limits,
+            limits: entered.request.limits.clone(),
             input_artifact_bytes: entered
                 .request
                 .input_artifact_bytes()
-                .map_err(|error| PeerHttpError::Protocol(error.to_string()))?,
+                .map_err(|error| ServingError::Protocol(error.to_string()))?,
             deadline_unix_ms: entered.request.deadline_unix_ms,
             worker: claim.worker.clone(),
             claim_generation: claim.generation,
         };
-        let context = adapter_execution_context(&entered.request)?
-            .with_peer_execution(&entered)
-            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
-        let result = self.capability_host.execute_exact_with_context(
-            &entered.request.selection,
-            &entered.request.request,
-            &context,
-            &reporter,
-        );
+        let result = prepared.enter(&entered, &reporter);
         let uncertainty = PeerUncertainty::from_execution(&result);
         let recovery = PeerRecoveryTransition::MarkPostEntryUncertain(uncertainty.clone());
         let current = self
             .executions
-            .peer_execution(&entered.owner_peer, &entered.execution)
+            .peer_execution(&entered.caller, &entered.execution)
             .map_err(map_execution_persistence)
             .map_err(|_| ClaimedRunFailure::Exact(recovery.clone()))?
             .ok_or_else(|| ClaimedRunFailure::Exact(recovery.clone()))?;
@@ -296,7 +307,7 @@ impl PeerService {
             .map_err(|_| ClaimedRunFailure::Exact(recovery.clone()))?;
         self.executions
             .mark_peer_uncertain(
-                &entered.owner_peer,
+                &entered.caller,
                 &entered.execution,
                 &claim.worker,
                 claim.generation,
@@ -312,12 +323,12 @@ impl PeerService {
         &self,
         recovery: &mut PeerWorkerRecovery,
         worker: &WorkerId,
-    ) -> Result<(), PeerHttpError> {
+    ) -> Result<(), ServingError> {
         let current = self
             .executions
-            .peer_execution(&recovery.owner_peer, &recovery.execution)
+            .peer_execution(&recovery.caller, &recovery.execution)
             .map_err(map_execution_persistence)?
-            .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
+            .ok_or_else(|| ServingError::NotFound("remote execution was not found".to_owned()))?;
         let PeerExecutionSnapshot::Hot(current) = current else {
             return Ok(());
         };
@@ -347,13 +358,13 @@ impl PeerService {
             }
             PeerRecoveryTransition::ReleasePreEntryClaim => {
                 if current.phase.entry_evidence().is_some() {
-                    return Err(PeerHttpError::Persistence(
+                    return Err(ServingError::Persistence(
                         "pre-entry recovery found durable adapter entry".to_owned(),
                     ));
                 }
                 self.executions
                     .release_peer_claim(
-                        &current.owner_peer,
+                        &current.caller,
                         &current.execution,
                         worker,
                         claim.generation,
@@ -364,13 +375,13 @@ impl PeerService {
             }
             PeerRecoveryTransition::MarkPostEntryUncertain(uncertainty) => {
                 if current.phase.entry_evidence().is_none() {
-                    return Err(PeerHttpError::Persistence(
+                    return Err(ServingError::Persistence(
                         "post-entry recovery lacks durable adapter entry".to_owned(),
                     ));
                 }
                 self.executions
                     .mark_peer_uncertain(
-                        &current.owner_peer,
+                        &current.caller,
                         &current.execution,
                         worker,
                         claim.generation,
@@ -386,27 +397,27 @@ impl PeerService {
     fn complete_pre_entry_cancellation(
         &self,
         record: &PeerExecutionRecord,
-    ) -> Result<(), PeerHttpError> {
+    ) -> Result<(), ServingError> {
         let terminal = self.append_cancelled_before_entry(record)?;
         let cancellation = record.cancellation.as_ref().ok_or_else(|| {
-            PeerHttpError::Persistence("cancellation facts disappeared".to_owned())
+            ServingError::Persistence("cancellation facts disappeared".to_owned())
         })?;
         if cancellation.acknowledgement.is_some() {
             return Ok(());
         }
         let terminal_fact = terminal.event.kind().terminal().ok_or_else(|| {
-            PeerHttpError::Persistence("pre-entry cancellation evidence is not terminal".to_owned())
+            ServingError::Persistence("pre-entry cancellation evidence is not terminal".to_owned())
         })?;
         if terminal_fact.status() != TerminalStatus::Cancelled
             || terminal_fact.side_effect() != milkdrift_capability::SideEffectClass::None
         {
-            return Err(PeerHttpError::Persistence(
+            return Err(ServingError::Persistence(
                 "pre-entry cancellation evidence has incompatible terminal semantics".to_owned(),
             ));
         }
         self.executions
             .acknowledge_peer_cancellation(
-                &record.owner_peer,
+                &record.caller,
                 &PeerCancellationAcknowledgement {
                     request_id: cancellation.request.request_id.clone(),
                     execution: record.execution.clone(),
@@ -425,7 +436,7 @@ impl PeerService {
         &self,
         record: &PeerExecutionRecord,
         reason: &str,
-    ) -> Result<(), PeerHttpError> {
+    ) -> Result<(), ServingError> {
         let sequence = record.last_observation_sequence.saturating_add(1);
         let failure = InvocationFailure::new(
             ErrorClass::Adapter,
@@ -434,7 +445,7 @@ impl PeerService {
             bounded(reason, 2_048),
             None,
         )
-        .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        .map_err(|error| ServingError::Protocol(error.to_string()))?;
         let terminal = InvocationTerminal::new(
             TerminalStatus::Failure,
             Vec::new(),
@@ -442,16 +453,16 @@ impl PeerService {
             None,
             milkdrift_capability::SideEffectClass::None,
         )
-        .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        .map_err(|error| ServingError::Protocol(error.to_string()))?;
         let event = InvocationEvent::new(
             record.request.request.invocation().clone(),
             sequence,
             InvocationEventKind::Terminal { terminal },
         )
-        .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        .map_err(|error| ServingError::Protocol(error.to_string()))?;
         self.executions
             .append_peer_observation(
-                &record.owner_peer,
+                &record.caller,
                 &record.execution,
                 &PeerObservation {
                     execution: record.execution.clone(),
@@ -468,23 +479,23 @@ impl PeerService {
     pub(super) fn append_cancelled_before_entry(
         &self,
         record: &PeerExecutionRecord,
-    ) -> Result<PeerObservation, PeerHttpError> {
+    ) -> Result<PeerObservation, ServingError> {
         let current = self
             .executions
-            .peer_execution(&record.owner_peer, &record.execution)
+            .peer_execution(&record.caller, &record.execution)
             .map_err(map_execution_persistence)?
-            .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
+            .ok_or_else(|| ServingError::NotFound("remote execution was not found".to_owned()))?;
         let PeerExecutionSnapshot::Hot(current) = current else {
-            return Err(PeerHttpError::Persistence(
+            return Err(ServingError::Persistence(
                 "active cancellation unexpectedly resolved an archived execution".to_owned(),
             ));
         };
         if let PeerExecutionPhase::Terminal { sequence, .. } = current.phase {
             return self
-                .terminal_observation(&record.owner_peer, &current)?
+                .terminal_observation(&record.caller, &current)?
                 .filter(|observation| observation.sequence == sequence)
                 .ok_or_else(|| {
-                    PeerHttpError::Persistence(
+                    ServingError::Persistence(
                         "terminal cancellation evidence is missing".to_owned(),
                     )
                 });
@@ -497,13 +508,13 @@ impl PeerService {
             None,
             milkdrift_capability::SideEffectClass::None,
         )
-        .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        .map_err(|error| ServingError::Protocol(error.to_string()))?;
         let event = InvocationEvent::new(
             current.request.request.invocation().clone(),
             sequence,
             InvocationEventKind::Terminal { terminal },
         )
-        .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        .map_err(|error| ServingError::Protocol(error.to_string()))?;
         let observation = PeerObservation {
             execution: current.execution.clone(),
             sequence,
@@ -512,16 +523,16 @@ impl PeerService {
             observed_at_unix_ms: self.now()?,
         };
         self.executions
-            .append_peer_observation(&current.owner_peer, &current.execution, &observation)
+            .append_peer_observation(&current.caller, &current.execution, &observation)
             .map_err(map_execution_persistence)?;
         Ok(observation)
     }
 
     pub(super) fn terminal_observation(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         record: &PeerExecutionRecord,
-    ) -> Result<Option<PeerObservation>, PeerHttpError> {
+    ) -> Result<Option<PeerObservation>, ServingError> {
         if record.last_observation_sequence == 0 {
             return Ok(None);
         }
@@ -531,7 +542,7 @@ impl PeerService {
                 owner,
                 &record.execution,
                 record.last_observation_sequence.saturating_sub(1),
-                PageSize::new(1).map_err(|error| PeerHttpError::Protocol(error.to_string()))?,
+                PageSize::new(1).map_err(|error| ServingError::Protocol(error.to_string()))?,
             )
             .map_err(map_execution_persistence)?;
         Ok(page
@@ -551,7 +562,7 @@ impl PeerService {
 }
 
 struct PeerStoreReporter {
-    owner_peer: PeerId,
+    caller: milkdrift_peer_protocol::ServingCaller,
     execution: PeerExecutionId,
     executions: Arc<dyn PeerExecutionStore>,
     clock: Arc<dyn PeerClock>,
@@ -577,7 +588,7 @@ impl PeerStoreReporter {
             Err(error) => return error,
         };
         let _ = self.executions.mark_peer_uncertain(
-            &self.owner_peer,
+            &self.caller,
             &self.execution,
             &self.worker,
             self.claim_generation,
@@ -610,9 +621,20 @@ impl AdapterReporter for PeerStoreReporter {
                 usage
                     .duration_ms()
                     .is_some_and(|duration| duration > self.limits.duration_ms)
-                    || usage
-                        .cost_micros()
-                        .is_some_and(|cost| cost > self.limits.cost_micros)
+                    || usage.cost_micros().is_some_and(|cost| {
+                        cost > self.limits.cost_micros
+                            || usage.currency() != self.limits.cost_currency.as_deref()
+                    })
+                    || usage.input_units().is_some_and(|units| {
+                        self.limits
+                            .input_units
+                            .is_none_or(|maximum| units > maximum)
+                    })
+                    || usage.output_units().is_some_and(|units| {
+                        self.limits
+                            .output_units
+                            .is_none_or(|maximum| units > maximum)
+                    })
             }) {
                 return Err(self.reject_report(
                     "peer_report_usage_quota",
@@ -644,7 +666,7 @@ impl AdapterReporter for PeerStoreReporter {
         };
         self.executions
             .append_peer_observation(
-                &self.owner_peer,
+                &self.caller,
                 &self.execution,
                 &PeerObservation {
                     execution: self.execution.clone(),
@@ -669,7 +691,7 @@ impl AdapterReporter for PeerStoreReporter {
         }
         self.executions
             .extend_peer_claim(
-                &self.owner_peer,
+                &self.caller,
                 &self.execution,
                 &self.worker,
                 self.claim_generation,

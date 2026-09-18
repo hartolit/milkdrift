@@ -9,5 +9,9 @@ mod storage;
 #[path = "peer_service/support.rs"]
 mod support;
 
+#[path = "peer_service/direct.rs"]
+mod direct;
 #[path = "peer_service/faults.rs"]
 mod faults;
+#[path = "peer_service/preparation.rs"]
+mod preparation;

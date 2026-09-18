@@ -146,7 +146,14 @@ pub(crate) fn charge_artifact_publication(
             };
             (account, None)
         }
-        ControllerArtifactOwner::InvocationReservation(reservation) => {
+        ControllerArtifactOwner::InvocationReservation(reservation)
+        | ControllerArtifactOwner::RemoteInvocationReservation { reservation, .. } => {
+            if matches!(owner, ControllerArtifactOwner::RemoteInvocationReservation { run: origin, .. } if origin != run)
+            {
+                return Err(PersistenceError::InvalidDocument(
+                    "remote artifact reservation names another originating run".to_owned(),
+                ));
+            }
             let account = binding.ok_or_else(|| {
                 PersistenceError::InvalidDocument(
                     "invocation artifact reservation belongs to an unbound run".to_owned(),

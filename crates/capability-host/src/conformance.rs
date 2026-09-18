@@ -22,6 +22,15 @@ use crate::{
     CapabilityAdapter, CapabilityHost, CapabilitySelectionPolicy, HostConfig,
 };
 
+/// Applies the production serving-entry checks to a storage fixture's retained record.
+/// Production callers receive this context only from the serving worker after durable entry.
+pub fn entered_serving_context(
+    context: AdapterExecutionContext,
+    record: &milkdrift_persistence::PeerExecutionRecord,
+) -> Result<AdapterExecutionContext, crate::InvocationDataError> {
+    context.with_serving_execution(record)
+}
+
 /// Fresh fixture purpose supplied to a production adapter's mechanism-specific factory.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConformanceScenario {
@@ -610,4 +619,8 @@ fn require(condition: bool, message: &'static str) -> Result<(), AdapterConforma
     condition
         .then_some(())
         .ok_or_else(|| AdapterConformanceError::new(message))
+}
+/// Supplies the host's explicit no-transfer policy to adapter conformance fixtures.
+pub fn disabled_artifact_store() -> std::sync::Arc<dyn crate::PeerArtifactStore> {
+    std::sync::Arc::new(crate::serving::DisabledArtifactStore)
 }

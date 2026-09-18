@@ -194,7 +194,13 @@ impl ModelEndpointAdapter {
                 duration_ms: Some(limits.request_timeout_ms),
                 invocations: Some(1),
                 artifact_bytes: Some(artifact_bytes),
-                units: Some(MAX_MODEL_OUTPUT_UNITS),
+                units: Some(match profile.token_limits() {
+                    crate::ModelTokenLimits::ByteBpe {
+                        maximum_output_tokens,
+                        ..
+                    } => *maximum_output_tokens,
+                    crate::ModelTokenLimits::Unknown => MAX_MODEL_OUTPUT_UNITS,
+                }),
                 concurrency: Some(1),
             },
             ..CapabilityExecutionRequirements::default()
@@ -232,43 +238,62 @@ impl ModelEndpointAdapter {
                 "model invocation does not match the exact operation/profile",
             ));
         }
-        let manifest_ref = request.context_manifest().ok_or_else(|| {
-            AdapterError::rejected("model invocation requires a frozen context manifest")
-        })?;
-        if manifest_ref.media_type() != Some(CONTEXT_MEDIA) {
-            return Err(AdapterError::rejected(
-                "context manifest media type is unsupported",
-            ));
-        }
         let limits = self.materialization_limits();
         let mut materialization = MaterializationLedger::new(limits);
-        let manifest_bytes = self
-            .data
-            .read_artifact_bytes(context, manifest_ref, limits)
-            .map_err(|error| AdapterError::rejected(error.to_string()))?;
-        materialization.record(manifest_bytes.len())?;
-        let manifest = ContextManifestDocument::from_json(&manifest_bytes)
-            .map_err(|_| AdapterError::rejected("context manifest is malformed"))?;
-        if manifest.body().run() != context.run()
-            || manifest.body().revision() != context.revision()
-            || manifest.body().node() != context.node()
-            || manifest.body().execution() != context.execution()
-            || manifest.body().attempt() != context.attempt()
+        let (selection_text, context_parts, continuation) = match context.selection() {
+            milkdrift_capability_host::AdapterInputSelection::Direct(selection) => {
+                selection
+                    .validate_request(request)
+                    .map_err(|error| AdapterError::rejected(error.to_string()))?;
+                (selection.canonical_json().to_owned(), Vec::new(), None)
+            }
+            milkdrift_capability_host::AdapterInputSelection::Workflow(workflow) => {
+                let manifest_ref = request.context_manifest().ok_or_else(|| {
+                    AdapterError::rejected("model invocation requires a frozen context manifest")
+                })?;
+                if manifest_ref.media_type() != Some(CONTEXT_MEDIA) {
+                    return Err(AdapterError::rejected(
+                        "context manifest media type is unsupported",
+                    ));
+                }
+                let manifest_bytes = self
+                    .data
+                    .read_artifact_bytes(context, manifest_ref, limits)
+                    .map_err(|error| AdapterError::rejected(error.to_string()))?;
+                materialization.record(manifest_bytes.len())?;
+                let manifest = ContextManifestDocument::from_json(&manifest_bytes)
+                    .map_err(|_| AdapterError::rejected("context manifest is malformed"))?;
+                if manifest.body().run() != workflow.run()
+                    || manifest.body().revision() != workflow.revision()
+                    || manifest.body().node() != workflow.node()
+                    || manifest.body().execution() != workflow.execution()
+                    || manifest.body().attempt() != workflow.attempt()
+                {
+                    return Err(AdapterError::rejected(
+                        "context manifest provenance does not match this exact attempt",
+                    ));
+                }
+                let manifest_text = std::str::from_utf8(&manifest_bytes).map_err(|_| {
+                    AdapterError::rejected("context manifest is not canonical UTF-8")
+                })?;
+                let (context_parts, continuation) = self.load_context_parts(
+                    context,
+                    request,
+                    manifest.body(),
+                    limits,
+                    &mut materialization,
+                )?;
+                (manifest_text.to_owned(), context_parts, continuation)
+            }
+        };
+        let task = self.load_task(context, request, limits, &mut materialization)?;
+        if context.direct_selection().is_some()
+            && !matches!(task.session(), SessionSelection::Fresh)
         {
             return Err(AdapterError::rejected(
-                "context manifest provenance does not match this exact attempt",
+                "direct model execution supports fresh sessions only",
             ));
         }
-        let manifest_text = std::str::from_utf8(&manifest_bytes)
-            .map_err(|_| AdapterError::rejected("context manifest is not canonical UTF-8"))?;
-        let (context_parts, continuation) = self.load_context_parts(
-            context,
-            request,
-            manifest.body(),
-            limits,
-            &mut materialization,
-        )?;
-        let task = self.load_task(context, request, limits, &mut materialization)?;
         let task = match (task.session(), continuation) {
             (SessionSelection::ExplicitContinuation { .. }, Some(history)) => task
                 .with_continuation(&history)
@@ -288,6 +313,11 @@ impl ModelEndpointAdapter {
         self.negotiate(&task, &context_parts)?;
         let materialization = RefCell::new(materialization);
         let load = |reference: &milkdrift_capability::ArtifactReference| {
+            if let Some(selection) = context.direct_selection() {
+                selection.require_artifact(reference).map_err(|_| {
+                    HttpError::Policy("referenced content is outside the direct selection")
+                })?;
+            }
             let bytes = self
                 .data
                 .read_artifact_bytes(context, reference, self.materialization_limits())
@@ -304,7 +334,7 @@ impl ModelEndpointAdapter {
             ProviderProtocol::OpenAiCompatible { .. } => openai_compatible::request(
                 &task,
                 self.profile.model(),
-                manifest_text,
+                &selection_text,
                 &context_parts,
                 self.profile.provider_options(),
                 self.profile.output_control(),
@@ -313,7 +343,7 @@ impl ModelEndpointAdapter {
             ProviderProtocol::Anthropic { .. } => anthropic::request(
                 &task,
                 self.profile.model(),
-                manifest_text,
+                &selection_text,
                 &context_parts,
                 self.profile.provider_options(),
                 load,
@@ -699,7 +729,7 @@ impl ModelEndpointAdapter {
         };
         require(
             ModelFeature::SystemRole,
-            "profile does not advertise the system role required for the frozen context manifest",
+            "profile does not advertise the system role required for the frozen input selection",
         )?;
         if context_parts
             .iter()
@@ -789,6 +819,10 @@ impl ModelEndpointAdapter {
 }
 
 impl CapabilityAdapter for ModelEndpointAdapter {
+    fn accepts_direct_inputs(&self) -> bool {
+        true
+    }
+
     fn prepare(
         self: Arc<Self>,
         invocation: &AdapterInvocation<'_>,

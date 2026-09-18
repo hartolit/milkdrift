@@ -309,7 +309,7 @@ impl Owner {
         let run = RunId::new(run.to_owned()).map_err(|error| invalid(&error.to_string()))?;
         let attempt =
             AttemptId::new(attempt.to_owned()).map_err(|error| invalid(&error.to_string()))?;
-        let projection = self.runtime.projection(&run).map_err(|error| {
+        let projection = self.workflow()?.runtime.projection(&run).map_err(|error| {
             crate::host::read_model::public_control(milkdrift_control::ControlError::Runtime(error))
         })?;
         // These are verified operational anchors, not a second historical index. Settled

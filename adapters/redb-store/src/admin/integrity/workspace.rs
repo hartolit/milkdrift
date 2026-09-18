@@ -1,8 +1,7 @@
 use super::super::{
-    PersistenceError, ROOT_SCOPES, RUN_ARTIFACT_OWNERSHIP, RunId, SCOPES, ScopeId, ScopeKind,
-    VALUES, WORKSPACE_BUDGETS, WORKSPACE_USAGE, WORKSPACE_VALUE_HEADS, WorkspaceBudget,
-    WorkspaceScope, WorkspaceUsage, WorkspaceValueEntry, WorkspaceValueReference, codec, error,
-    json,
+    ARTIFACT_OWNERSHIP, PersistenceError, ROOT_SCOPES, RunId, SCOPES, ScopeId, ScopeKind, VALUES,
+    WORKSPACE_BUDGETS, WORKSPACE_USAGE, WORKSPACE_VALUE_HEADS, WorkspaceBudget, WorkspaceScope,
+    WorkspaceUsage, WorkspaceValueEntry, WorkspaceValueReference, codec, error, json,
 };
 use super::{ScanContext, phase};
 
@@ -13,9 +12,7 @@ pub(super) fn scan_core(context: &mut ScanContext<'_, '_>) -> Result<(), Persist
     let values = read.open_table(VALUES).map_err(error::redb)?;
     let usage = read.open_table(WORKSPACE_USAGE).map_err(error::redb)?;
     let budgets = read.open_table(WORKSPACE_BUDGETS).map_err(error::redb)?;
-    let ownership = read
-        .open_table(RUN_ARTIFACT_OWNERSHIP)
-        .map_err(error::redb)?;
+    let ownership = read.open_table(ARTIFACT_OWNERSHIP).map_err(error::redb)?;
 
     context.binary_bytes(phase::SCOPES, &scopes, "workspace_indexes", |key, bytes| {
         let scope: WorkspaceScope = json::decode(bytes, "workspace scope")?;
@@ -70,9 +67,7 @@ pub(super) fn scan_core(context: &mut ScanContext<'_, '_>) -> Result<(), Persist
     })?;
     context.string_bytes(phase::USAGE, &usage, "workspace_indexes", |key, bytes| {
         let usage: WorkspaceUsage = json::decode(bytes, "workspace usage")?;
-        let run = RunId::new(key).map_err(|cause| {
-            error::corruption(format!("invalid workspace-usage run identity: {cause}"))
-        })?;
+        let run = crate::artifact::owner::domain_owner(key)?;
         if budgets.get(key).map_err(error::redb)?.is_none() {
             return Err(error::corruption(
                 "workspace usage is missing its immutable budget",
@@ -85,7 +80,7 @@ pub(super) fn scan_core(context: &mut ScanContext<'_, '_>) -> Result<(), Persist
                 "workspace usage disagrees with its durable domain",
             ));
         }
-        crate::artifact::validate_run_artifact_ownership(&ownership, &run, usage)?;
+        crate::artifact::validate_artifact_ownership(&ownership, &run, usage)?;
         Ok(())
     })?;
     context.string_bytes(
@@ -94,9 +89,7 @@ pub(super) fn scan_core(context: &mut ScanContext<'_, '_>) -> Result<(), Persist
         "workspace_indexes",
         |key, bytes| {
             let _budget: WorkspaceBudget = json::decode(bytes, "workspace budget")?;
-            let run = RunId::new(key).map_err(|cause| {
-                error::corruption(format!("invalid workspace-budget run identity: {cause}"))
-            })?;
+            let run = crate::artifact::owner::domain_owner(key)?;
             if usage.get(key).map_err(error::redb)?.is_none() {
                 return Err(error::corruption(
                     "workspace budget is missing its usage accounting",

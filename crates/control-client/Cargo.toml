@@ -10,6 +10,7 @@ rust-version.workspace = true
 async-stream.workspace = true
 futures-util.workspace = true
 milkdrift-control-protocol.workspace = true
+milkdrift-peer-protocol.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

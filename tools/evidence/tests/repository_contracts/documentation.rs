@@ -331,11 +331,11 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
             vec![
                 (
                     "crates/persistence/src/peer.rs",
-                    "PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3",
+                    "SERVING_EXECUTION_RECORD_SCHEMA_VERSION",
                 ),
                 (
                     "crates/persistence/src/peer.rs",
-                    "PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1",
+                    "SERVING_EXECUTION_TOMBSTONE_SCHEMA_VERSION",
                 ),
             ],
         ),
@@ -491,7 +491,7 @@ fn every_maintained_example_has_a_production_reader() -> TestResult {
                     milkdrift_blueprint::BlueprintRevisionDocument::from_json(&bytes)?;
                 assert_eq!(document.to_canonical_json()?, bytes, "{relative}");
             }
-            "operator/daemon.toml" => {
+            "operator/daemon.toml" | "operator/execution-only.toml" => {
                 // Compile without starting a host or resolving secrets. Paths belong to a fresh directory.
                 let directory = tempfile::tempdir()?;
                 let config = directory.path().join("daemon.toml");
@@ -507,8 +507,13 @@ fn every_maintained_example_has_a_production_reader() -> TestResult {
             | "external-evidence/anthropic-profile.example.json" => {
                 milkdrift_model_provider::EndpointProfile::from_json(&bytes)?;
             }
-            "local-model/continuation-request.example.json" => {
+            "local-model/continuation-request.example.json" | "operator/direct-model-task.json" => {
                 milkdrift_model::ModelTaskRequestDocument::from_json(&bytes)?;
+            }
+            "operator/direct-process-inputs.json" => {
+                let inputs: Vec<milkdrift_capability::InputReference> =
+                    serde_json::from_slice(&bytes)?;
+                assert_eq!(inputs.len(), 1);
             }
             "headless-dogfood-sequence.md" => {
                 milkdrift_prompt_sequence::PromptSequenceDocument::from_bytes(&bytes)?;
@@ -767,7 +772,7 @@ fn peer_protocol_version_is_exact_from_config_through_transport() -> TestResult 
     );
 
     let codec = read(root()?.join("crates/peer-protocol/src/document.rs"))?;
-    assert!(codec.contains("protocol != ProtocolVersion::V1_3"));
+    assert!(codec.contains("protocol != ProtocolVersion::V1_4"));
     let client = read(root()?.join("adapters/peer-http/src/client.rs"))?;
     assert!(
         client.contains("peer response envelope does not match the negotiated protocol version")

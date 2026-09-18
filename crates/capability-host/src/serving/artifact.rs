@@ -6,15 +6,15 @@ use std::{
 use milkdrift_authority::ActorRef;
 use milkdrift_capability::PeerId;
 use milkdrift_peer_protocol::{
-    ArtifactChunk, ArtifactMetadataOffer, ArtifactTransferDecision, ArtifactTransferDirection,
-    TransferId,
+    ArtifactChunk, ArtifactMetadataOffer, ArtifactTransferBinding, ArtifactTransferDecision,
+    ArtifactTransferDirection, TransferId,
 };
 use milkdrift_persistence::{
     ArtifactPublicationId, ArtifactReadAuthority, ArtifactReadRequest, ArtifactStore,
-    BeginArtifactOutcome, BeginArtifactPublication, EvidenceId, WorkspaceStore,
+    BeginArtifactOutcome, BeginArtifactPublication, EvidenceId,
 };
 use milkdrift_workspace::{
-    ArtifactMetadata, ArtifactProvenance, CausalId, CausalReference, RunId, WorkspaceBudget,
+    ArtifactMetadata, ArtifactProvenance, CausalId, CausalReference, WorkspaceBudget,
     WorkspaceUsage,
 };
 use thiserror::Error;
@@ -52,6 +52,12 @@ pub enum PeerArtifactError {
 /// exact offsets and metadata, and publish through the core artifact owner rather than creating
 /// a competing peer-specific store of durable bytes.
 pub trait PeerArtifactStore: Send + Sync {
+    /// Reads a selected local input for preparation. The origin owns selection authorization;
+    /// this bounded range still passes through the ordinary artifact read and digest checks.
+    fn read_input_chunk(
+        &self,
+        request: &ArtifactReadRequest,
+    ) -> Result<milkdrift_persistence::ArtifactReadChunk, PeerArtifactError>;
     /// Reads exact core metadata after the caller has proved execution ownership.
     fn metadata(
         &self,
@@ -61,22 +67,23 @@ pub trait PeerArtifactStore: Send + Sync {
     /// Returns exact immutable transfer facts for chunk-time reauthorization.
     fn transfer_facts(
         &self,
-        owner_peer: &PeerId,
+        caller: &PeerId,
         transfer: &TransferId,
     ) -> Result<PeerArtifactTransferFacts, PeerArtifactError>;
 
     /// Negotiates exact metadata before any bytes, returning deduplication or resume state.
     fn negotiate(
         &self,
-        owner_peer: &PeerId,
+        caller: &PeerId,
         offer: &ArtifactMetadataOffer,
         maximum_artifact_bytes: u64,
+        controller: Option<&milkdrift_persistence::ControllerArtifactOwner>,
     ) -> Result<ArtifactTransferDecision, PeerArtifactError>;
 
     /// Appends one exact bounded chunk and publishes only through the core artifact authority.
     fn write_chunk(
         &self,
-        owner_peer: &PeerId,
+        caller: &PeerId,
         chunk: &ArtifactChunk,
         maximum_chunk_bytes: u32,
     ) -> Result<ArtifactTransferDecision, PeerArtifactError>;
@@ -84,14 +91,14 @@ pub trait PeerArtifactStore: Send + Sync {
     /// Reads one bounded verified range through the core authorized read port.
     fn read_chunk(
         &self,
-        owner_peer: &PeerId,
+        caller: &PeerId,
         transfer: &TransferId,
         offset: u64,
         maximum_bytes: u32,
     ) -> Result<ArtifactChunk, PeerArtifactError>;
 
     /// Aborts an incomplete core publication.
-    fn abort(&self, owner_peer: &PeerId, transfer: &TransferId) -> Result<(), PeerArtifactError>;
+    fn abort(&self, caller: &PeerId, transfer: &TransferId) -> Result<(), PeerArtifactError>;
 }
 
 /// Exact non-secret transfer metadata used for every chunk-time authority decision.
@@ -107,17 +114,13 @@ pub struct PeerArtifactTransferFacts {
     pub expires_at_unix_ms: u64,
 }
 
-/// Trait-object boundary for the ordinary core artifact and workspace accounting ports.
-pub trait PeerCoreArtifactStore: ArtifactStore + WorkspaceStore {}
-
-impl<T> PeerCoreArtifactStore for T where T: ArtifactStore + WorkspaceStore {}
-
 #[derive(Clone)]
 struct TransferState {
-    owner_peer: PeerId,
+    caller: PeerId,
     offer: ArtifactMetadataOffer,
     publication: Option<ArtifactPublicationId>,
     next_offset: u64,
+    controller: Option<milkdrift_persistence::ControllerArtifactOwner>,
 }
 
 /// Stage peer transfers through the ordinary core artifact publication and read ports.
@@ -126,10 +129,10 @@ struct TransferState {
 /// to recover a core publication's durable offset. Successful upload publication preserves source
 /// sensitivity/retention and adds peer/execution provenance; downloads use authorized core ranges.
 pub struct CorePeerArtifactStore {
-    core: Arc<dyn PeerCoreArtifactStore>,
+    core: Arc<dyn ArtifactStore>,
     clock: Arc<dyn PeerClock>,
     budget: WorkspaceBudget,
-    transfers: Mutex<BTreeMap<TransferId, TransferState>>,
+    transfers: Mutex<BTreeMap<(PeerId, TransferId), TransferState>>,
 }
 
 impl std::fmt::Debug for CorePeerArtifactStore {
@@ -144,7 +147,7 @@ impl std::fmt::Debug for CorePeerArtifactStore {
 impl CorePeerArtifactStore {
     /// Constructs bounded staging over one ordinary core artifact owner.
     pub fn new(
-        core: Arc<dyn PeerCoreArtifactStore>,
+        core: Arc<dyn ArtifactStore>,
         maximum_artifact_bytes: u64,
         maximum_total_import_bytes: u64,
         clock: Arc<dyn PeerClock>,
@@ -174,10 +177,11 @@ impl CorePeerArtifactStore {
 
     fn publication_request(
         &self,
-        owner_peer: &PeerId,
+        caller: &PeerId,
         offer: &ArtifactMetadataOffer,
+        controller: Option<&milkdrift_persistence::ControllerArtifactOwner>,
     ) -> Result<BeginArtifactPublication, PeerArtifactError> {
-        let provenance = imported_provenance(owner_peer, offer)?;
+        let provenance = imported_provenance(caller, offer)?;
         let metadata = ArtifactMetadata::new(
             offer.artifact.clone(),
             offer.sensitivity,
@@ -185,12 +189,46 @@ impl CorePeerArtifactStore {
             provenance,
         )
         .map_err(|error| PeerArtifactError::Rejected(error.to_string()))?;
-        BeginArtifactPublication::new(
-            publication_id(&offer.transfer)?,
-            import_run_id(&offer.transfer)?,
+        if let ArtifactTransferBinding::Input { request } = &offer.binding {
+            if controller.is_some() {
+                return Err(PeerArtifactError::Rejected(
+                    "input staging cannot choose a controller account".to_owned(),
+                ));
+            }
+            let host = request.authorization.host().clone();
+            let owner = milkdrift_workspace::ArtifactOwner::PeerInput {
+                host: host.clone(),
+                peer: caller.clone(),
+            };
+            let budget = WorkspaceBudget::new(
+                0,
+                0,
+                0,
+                1_024,
+                self.budget.max_bytes_per_artifact(),
+                self.budget.max_total_artifact_bytes(),
+            )
+            .map_err(|error| PeerArtifactError::Rejected(error.to_string()))?;
+            let usage = self.core.artifact_usage(&owner).map_err(map_persistence)?;
+            return BeginArtifactPublication::for_peer_input(
+                publication_id(caller, &offer.transfer)?,
+                host,
+                caller.clone(),
+                metadata,
+                budget,
+                usage,
+            )
+            .map_err(map_persistence);
+        }
+        BeginArtifactPublication::for_transfer(
+            publication_id(caller, &offer.transfer)?,
+            caller.clone(),
+            CausalId::new(offer.transfer.as_str())
+                .map_err(|error| PeerArtifactError::Rejected(error.to_string()))?,
             metadata,
             self.budget.clone(),
             WorkspaceUsage::EMPTY,
+            controller.cloned(),
         )
         .map_err(map_persistence)
     }
@@ -225,6 +263,12 @@ impl CorePeerArtifactStore {
 }
 
 impl PeerArtifactStore for CorePeerArtifactStore {
+    fn read_input_chunk(
+        &self,
+        request: &ArtifactReadRequest,
+    ) -> Result<milkdrift_persistence::ArtifactReadChunk, PeerArtifactError> {
+        self.core.read_chunk(request).map_err(map_persistence)
+    }
     fn metadata(
         &self,
         reference: &milkdrift_capability::ArtifactReference,
@@ -252,17 +296,19 @@ impl PeerArtifactStore for CorePeerArtifactStore {
 
     fn transfer_facts(
         &self,
-        owner_peer: &PeerId,
+        caller: &PeerId,
         transfer: &TransferId,
     ) -> Result<PeerArtifactTransferFacts, PeerArtifactError> {
         let transfers = self
             .transfers
             .lock()
             .map_err(|_| PeerArtifactError::Unavailable)?;
-        let state = transfers.get(transfer).ok_or_else(|| {
-            PeerArtifactError::Conflict("artifact transfer is not negotiated".to_owned())
-        })?;
-        if &state.owner_peer != owner_peer {
+        let state = transfers
+            .get(&(caller.clone(), transfer.clone()))
+            .ok_or_else(|| {
+                PeerArtifactError::Conflict("artifact transfer is not negotiated".to_owned())
+            })?;
+        if &state.caller != caller {
             return Err(PeerArtifactError::Rejected(
                 "artifact transfer owner mismatch".to_owned(),
             ));
@@ -277,10 +323,21 @@ impl PeerArtifactStore for CorePeerArtifactStore {
 
     fn negotiate(
         &self,
-        owner_peer: &PeerId,
+        caller: &PeerId,
         offer: &ArtifactMetadataOffer,
         maximum_artifact_bytes: u64,
+        controller: Option<&milkdrift_persistence::ControllerArtifactOwner>,
     ) -> Result<ArtifactTransferDecision, PeerArtifactError> {
+        if controller.is_some_and(|owner| {
+            !matches!(
+                owner,
+                milkdrift_persistence::ControllerArtifactOwner::RemoteInvocationReservation { .. }
+            ) || offer.direction != ArtifactTransferDirection::Upload
+        }) {
+            return Err(PeerArtifactError::Rejected(
+                "controller reservation is only valid for an origin-owned output import".to_owned(),
+            ));
+        }
         offer
             .validate()
             .map_err(|error| PeerArtifactError::Rejected(error.to_string()))?;
@@ -297,12 +354,12 @@ impl PeerArtifactStore for CorePeerArtifactStore {
             ));
         }
         match offer.direction {
-            ArtifactTransferDirection::Upload if &offer.source_peer != owner_peer => {
+            ArtifactTransferDirection::Upload if &offer.source_peer != caller => {
                 return Err(PeerArtifactError::Rejected(
                     "artifact source does not match authenticated peer".to_owned(),
                 ));
             }
-            ArtifactTransferDirection::Download if &offer.source_peer == owner_peer => {
+            ArtifactTransferDirection::Download if &offer.source_peer == caller => {
                 return Err(PeerArtifactError::Rejected(
                     "download source must be the serving peer".to_owned(),
                 ));
@@ -314,8 +371,11 @@ impl PeerArtifactStore for CorePeerArtifactStore {
             .transfers
             .lock()
             .map_err(|_| PeerArtifactError::Unavailable)?;
-        if let Some(existing) = transfers.get(&offer.transfer) {
-            if existing.owner_peer != *owner_peer || existing.offer != *offer {
+        if let Some(existing) = transfers.get(&(caller.clone(), offer.transfer.clone())) {
+            if existing.caller != *caller
+                || existing.offer != *offer
+                || existing.controller.as_ref() != controller
+            {
                 return Err(PeerArtifactError::Conflict(
                     "transfer identity was reused with different metadata".to_owned(),
                 ));
@@ -328,13 +388,30 @@ impl PeerArtifactStore for CorePeerArtifactStore {
 
         let (publication, next_offset, already_present) = match offer.direction {
             ArtifactTransferDirection::Upload => {
-                let request = self.publication_request(owner_peer, offer)?;
                 if let Some(existing) = self
                     .core
                     .metadata(offer.artifact.artifact())
                     .map_err(map_persistence)?
                 {
-                    if &existing == request.metadata() {
+                    let expected = ArtifactMetadata::new(
+                        offer.artifact.clone(),
+                        offer.sensitivity,
+                        offer.retention.clone(),
+                        imported_provenance(caller, offer)?,
+                    )
+                    .map_err(|error| PeerArtifactError::Rejected(error.to_string()))?;
+                    if existing == expected
+                        && self
+                            .core
+                            .is_committed(&offer.artifact)
+                            .map_err(map_persistence)?
+                    {
+                        if controller.is_some() {
+                            let request = self.publication_request(caller, offer, controller)?;
+                            self.core
+                                .begin_publication(&request)
+                                .map_err(map_persistence)?;
+                        }
                         return Ok(ArtifactTransferDecision::AlreadyPresent);
                     }
                     return Err(PeerArtifactError::Conflict(
@@ -342,6 +419,7 @@ impl PeerArtifactStore for CorePeerArtifactStore {
                             .to_owned(),
                     ));
                 }
+                let request = self.publication_request(caller, offer, controller)?;
                 match self
                     .core
                     .begin_publication(&request)
@@ -409,12 +487,13 @@ impl PeerArtifactStore for CorePeerArtifactStore {
             ));
         }
         transfers.insert(
-            offer.transfer.clone(),
+            (caller.clone(), offer.transfer.clone()),
             TransferState {
-                owner_peer: owner_peer.clone(),
+                caller: caller.clone(),
                 offer: offer.clone(),
                 publication,
                 next_offset,
+                controller: controller.cloned(),
             },
         );
         Ok(ArtifactTransferDecision::Transfer {
@@ -425,7 +504,7 @@ impl PeerArtifactStore for CorePeerArtifactStore {
 
     fn write_chunk(
         &self,
-        owner_peer: &PeerId,
+        caller: &PeerId,
         chunk: &ArtifactChunk,
         maximum_chunk_bytes: u32,
     ) -> Result<ArtifactTransferDecision, PeerArtifactError> {
@@ -436,18 +515,18 @@ impl PeerArtifactStore for CorePeerArtifactStore {
             .transfers
             .lock()
             .map_err(|_| PeerArtifactError::Unavailable)?;
-        let state = transfers.get(&chunk.transfer).ok_or_else(|| {
-            PeerArtifactError::Conflict("artifact transfer is not negotiated".to_owned())
-        })?;
-        if &state.owner_peer != owner_peer
-            || state.offer.direction != ArtifactTransferDirection::Upload
-        {
+        let state = transfers
+            .get(&(caller.clone(), chunk.transfer.clone()))
+            .ok_or_else(|| {
+                PeerArtifactError::Conflict("artifact transfer is not negotiated".to_owned())
+            })?;
+        if &state.caller != caller || state.offer.direction != ArtifactTransferDirection::Upload {
             return Err(PeerArtifactError::Conflict(
                 "artifact transfer owner or direction mismatch".to_owned(),
             ));
         }
         if self.now()? > state.offer.expires_at_unix_ms {
-            let expired = transfers.remove(&chunk.transfer);
+            let expired = transfers.remove(&(caller.clone(), chunk.transfer.clone()));
             drop(transfers);
             if let Some(publication) = expired.and_then(|state| state.publication) {
                 self.core
@@ -458,9 +537,11 @@ impl PeerArtifactStore for CorePeerArtifactStore {
                 "artifact transfer authority expired".to_owned(),
             ));
         }
-        let state = transfers.get_mut(&chunk.transfer).ok_or_else(|| {
-            PeerArtifactError::Conflict("artifact transfer is not negotiated".to_owned())
-        })?;
+        let state = transfers
+            .get_mut(&(caller.clone(), chunk.transfer.clone()))
+            .ok_or_else(|| {
+                PeerArtifactError::Conflict("artifact transfer is not negotiated".to_owned())
+            })?;
         if chunk.offset != state.next_offset {
             return Err(PeerArtifactError::Conflict(
                 "artifact transfer offset mismatch".to_owned(),
@@ -506,13 +587,13 @@ impl PeerArtifactStore for CorePeerArtifactStore {
                 "core publication returned different artifact facts".to_owned(),
             ));
         }
-        transfers.remove(&chunk.transfer);
+        transfers.remove(&(caller.clone(), chunk.transfer.clone()));
         Ok(ArtifactTransferDecision::AlreadyPresent)
     }
 
     fn read_chunk(
         &self,
-        owner_peer: &PeerId,
+        caller: &PeerId,
         transfer: &TransferId,
         offset: u64,
         maximum_bytes: u32,
@@ -521,26 +602,28 @@ impl PeerArtifactStore for CorePeerArtifactStore {
             .transfers
             .lock()
             .map_err(|_| PeerArtifactError::Unavailable)?;
-        let state = transfers.get(transfer).ok_or_else(|| {
-            PeerArtifactError::Conflict("artifact transfer is not negotiated".to_owned())
-        })?;
-        if &state.owner_peer != owner_peer
-            || state.offer.direction != ArtifactTransferDirection::Download
-        {
+        let state = transfers
+            .get(&(caller.clone(), transfer.clone()))
+            .ok_or_else(|| {
+                PeerArtifactError::Conflict("artifact transfer is not negotiated".to_owned())
+            })?;
+        if &state.caller != caller || state.offer.direction != ArtifactTransferDirection::Download {
             return Err(PeerArtifactError::Rejected(
                 "artifact download owner or direction mismatch".to_owned(),
             ));
         }
         if self.now()? > state.offer.expires_at_unix_ms {
-            transfers.remove(transfer);
+            transfers.remove(&(caller.clone(), transfer.clone()));
             return Err(PeerArtifactError::Rejected(
                 "artifact transfer authority expired".to_owned(),
             ));
         }
-        let state = transfers.get(transfer).ok_or_else(|| {
-            PeerArtifactError::Conflict("artifact transfer is not negotiated".to_owned())
-        })?;
-        let actor = ActorRef::new(format!("peer:{}", owner_peer.as_str()))
+        let state = transfers
+            .get(&(caller.clone(), transfer.clone()))
+            .ok_or_else(|| {
+                PeerArtifactError::Conflict("artifact transfer is not negotiated".to_owned())
+            })?;
+        let actor = ActorRef::new(format!("peer:{}", caller.as_str()))
             .map_err(|error| PeerArtifactError::Rejected(error.to_string()))?;
         let evidence = EvidenceId::new(format!("peer-artifact:{}", short_hash(transfer.as_str())))
             .map_err(|error| PeerArtifactError::Rejected(error.to_string()))?;
@@ -560,22 +643,24 @@ impl PeerArtifactStore for CorePeerArtifactStore {
         })
     }
 
-    fn abort(&self, owner_peer: &PeerId, transfer: &TransferId) -> Result<(), PeerArtifactError> {
+    fn abort(&self, caller: &PeerId, transfer: &TransferId) -> Result<(), PeerArtifactError> {
         let mut transfers = self
             .transfers
             .lock()
             .map_err(|_| PeerArtifactError::Unavailable)?;
-        let Some(state) = transfers.get(transfer) else {
+        let Some(state) = transfers.get(&(caller.clone(), transfer.clone())) else {
             return Ok(());
         };
-        if state.owner_peer != *owner_peer {
+        if state.caller != *caller {
             return Err(PeerArtifactError::Rejected(
                 "artifact transfer owner mismatch".to_owned(),
             ));
         }
-        let state = transfers.remove(transfer).ok_or_else(|| {
-            PeerArtifactError::Conflict("artifact transfer disappeared during abort".to_owned())
-        })?;
+        let state = transfers
+            .remove(&(caller.clone(), transfer.clone()))
+            .ok_or_else(|| {
+                PeerArtifactError::Conflict("artifact transfer disappeared during abort".to_owned())
+            })?;
         drop(transfers);
         if let Some(publication) = state.publication {
             self.core
@@ -587,55 +672,31 @@ impl PeerArtifactStore for CorePeerArtifactStore {
 }
 
 fn imported_provenance(
-    owner_peer: &PeerId,
+    caller: &PeerId,
     offer: &ArtifactMetadataOffer,
 ) -> Result<ArtifactProvenance, PeerArtifactError> {
-    let origin = CausalReference::External {
-        source: origin_identity(owner_peer, offer)?,
+    let claim = |reference: &CausalReference| CausalReference::PeerClaim {
+        peer: caller.clone(),
+        reference: Box::new(reference.clone()),
     };
-    let mut causes = offer.provenance.causes().to_vec();
-    if offer.provenance.producer() != &origin && !causes.contains(offer.provenance.producer()) {
-        causes.push(offer.provenance.producer().clone());
-    }
-    ArtifactProvenance::new(origin, causes)
-        .map_err(|error| PeerArtifactError::Rejected(error.to_string()))
-}
-
-fn origin_identity(
-    owner_peer: &PeerId,
-    offer: &ArtifactMetadataOffer,
-) -> Result<CausalId, PeerArtifactError> {
-    let readable = format!(
-        "peer:{}/execution:{}",
-        owner_peer.as_str(),
-        offer.execution.as_str()
-    );
-    CausalId::new(readable)
-        .or_else(|_| {
-            CausalId::new(format!(
-                "peer-import:{}",
-                short_hash(&format!(
-                    "{}:{}:{}",
-                    owner_peer.as_str(),
-                    offer.execution.as_str(),
-                    offer.artifact.digest()
-                ))
-            ))
-        })
-        .map_err(|error| PeerArtifactError::Rejected(error.to_string()))
-}
-
-fn publication_id(transfer: &TransferId) -> Result<ArtifactPublicationId, PeerArtifactError> {
-    ArtifactPublicationId::new(format!(
-        "peer-publication:{}",
-        short_hash(transfer.as_str())
-    ))
+    ArtifactProvenance::new(
+        claim(offer.provenance.producer()),
+        offer.provenance.causes().iter().map(claim).collect(),
+    )
     .map_err(|error| PeerArtifactError::Rejected(error.to_string()))
 }
-
-fn import_run_id(transfer: &TransferId) -> Result<RunId, PeerArtifactError> {
-    RunId::new(format!("peer-import:{}", short_hash(transfer.as_str())))
-        .map_err(|error| PeerArtifactError::Rejected(error.to_string()))
+fn publication_id(
+    owner: &PeerId,
+    transfer: &TransferId,
+) -> Result<ArtifactPublicationId, PeerArtifactError> {
+    ArtifactPublicationId::new(format!(
+        "peer-publication:{}",
+        short_hash(
+            &serde_json::to_string(&(owner, transfer))
+                .map_err(|error| PeerArtifactError::Rejected(error.to_string()))?
+        )
+    ))
+    .map_err(|error| PeerArtifactError::Rejected(error.to_string()))
 }
 
 fn short_hash(value: &str) -> String {

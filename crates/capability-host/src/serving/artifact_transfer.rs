@@ -8,8 +8,8 @@ use milkdrift_peer_protocol::{
 };
 use milkdrift_persistence::PeerExecutionSnapshot;
 
-use super::{PeerHttpError, PeerService, map_execution_persistence};
-use crate::artifact::{PeerArtifactError, PeerArtifactStore};
+use super::artifact::{PeerArtifactError, PeerArtifactStore};
+use super::{PeerService, ServingError, map_execution_persistence};
 
 impl PeerService {
     /// Offers the exact artifact at one durable output observation to its authenticated owner.
@@ -19,15 +19,20 @@ impl PeerService {
         authenticated_peer: &PeerId,
         execution: &milkdrift_peer_protocol::PeerExecutionId,
         sequence: u64,
-    ) -> Result<ArtifactMetadataOffer, PeerHttpError> {
+    ) -> Result<ArtifactMetadataOffer, ServingError> {
         let relationship = self.relationship(authenticated_peer)?;
         let snapshot = self
             .executions
-            .peer_execution(authenticated_peer, execution)
+            .peer_execution(&self.peer_caller(authenticated_peer), execution)
             .map_err(map_execution_persistence)?
-            .ok_or_else(|| PeerHttpError::NotFound("execution output unavailable".to_owned()))?;
+            .ok_or_else(|| ServingError::NotFound("execution output unavailable".to_owned()))?;
+        self.require_execution_operation(
+            &relationship,
+            &snapshot,
+            AuthorityOperation::InspectPeerExecution,
+        )?;
         let PeerExecutionSnapshot::Hot(record) = snapshot else {
-            return Err(PeerHttpError::NotFound(
+            return Err(ServingError::NotFound(
                 "execution output detail was archived".to_owned(),
             ));
         };
@@ -35,7 +40,7 @@ impl PeerService {
             .executions
             .peer_observation_artifact(execution, sequence)
             .map_err(map_execution_persistence)?
-            .ok_or_else(|| PeerHttpError::NotFound("execution output unavailable".to_owned()))?;
+            .ok_or_else(|| ServingError::NotFound("execution output unavailable".to_owned()))?;
         let metadata = self.artifacts.metadata(&reference)?;
         self.require_operation(
             &relationship,
@@ -48,17 +53,19 @@ impl PeerService {
         )?;
         self.check_rate(&relationship, "artifact_metadata")?;
         let identity = serde_json::to_vec(&(authenticated_peer, execution, sequence))
-            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+            .map_err(|error| ServingError::Protocol(error.to_string()))?;
         Ok(ArtifactMetadataOffer {
             transfer: TransferId::new(format!("transfer:{}", blake3::hash(&identity)))
-                .map_err(|error| PeerHttpError::Protocol(error.to_string()))?,
+                .map_err(|error| ServingError::Protocol(error.to_string()))?,
             direction: ArtifactTransferDirection::Download,
             artifact: metadata.reference().clone(),
             sensitivity: metadata.sensitivity(),
             retention: metadata.retention().clone(),
             provenance: metadata.provenance().clone(),
             source_peer: self.config.local_peer.clone(),
-            execution: execution.clone(),
+            binding: milkdrift_peer_protocol::ArtifactTransferBinding::Execution {
+                execution: execution.clone(),
+            },
             expires_at_unix_ms: record
                 .request
                 .deadline_unix_ms
@@ -71,33 +78,99 @@ impl PeerService {
         &self,
         authenticated_peer: &PeerId,
         offer: &ArtifactMetadataOffer,
-    ) -> Result<ArtifactTransferDecision, PeerHttpError> {
+    ) -> Result<ArtifactTransferDecision, ServingError> {
         let relationship = self.relationship(authenticated_peer)?;
+        offer
+            .validate()
+            .map_err(|error| ServingError::Protocol(error.to_string()))?;
+        if let milkdrift_peer_protocol::ArtifactTransferBinding::Input { request } = &offer.binding
+        {
+            if offer.direction != ArtifactTransferDirection::Upload
+                || &offer.source_peer != authenticated_peer
+            {
+                return Err(ServingError::Unauthorized(
+                    "request-bound input staging requires an authenticated upload".to_owned(),
+                ));
+            }
+            let now = self.now()?;
+            if self.drain_state() != milkdrift_peer_protocol::DrainState::Ready
+                || now > request.deadline_unix_ms
+            {
+                return Err(ServingError::Unavailable(
+                    "input staging is draining or its request expired".to_owned(),
+                ));
+            }
+            let catalog = self.catalog(authenticated_peer)?;
+            if catalog.generation != request.catalog_generation
+                || catalog.digest != request.catalog_digest
+            {
+                return Err(ServingError::Unauthorized(
+                    "input staging requires the current exact catalog".to_owned(),
+                ));
+            }
+            let generation = self.exact_generation(&relationship, request)?;
+            self.authorize_invocation(
+                &relationship,
+                request,
+                &generation.descriptor,
+                &generation.authority_requirements,
+                now,
+            )?;
+            self.require_operation(
+                &relationship,
+                AuthorityOperation::PeerArtifactUpload,
+                artifact_resource_facts(&offer.artifact, offer.sensitivity),
+                AuthorityBudget {
+                    artifact_bytes: Some(offer.artifact.size_bytes()),
+                    ..AuthorityBudget::default()
+                },
+            )?;
+            self.check_rate(&relationship, "input_upload_negotiate")?;
+            return self
+                .artifacts
+                .negotiate(
+                    authenticated_peer,
+                    offer,
+                    relationship.maximum_artifact_bytes,
+                    None,
+                )
+                .map_err(Into::into);
+        }
         let operation = match offer.direction {
             ArtifactTransferDirection::Upload => AuthorityOperation::PeerArtifactUpload,
             ArtifactTransferDirection::Download => AuthorityOperation::PeerArtifactDownload,
         };
         let snapshot = self
             .executions
-            .peer_execution(authenticated_peer, &offer.execution)
+            .peer_execution(
+                &self.peer_caller(authenticated_peer),
+                offer.binding.execution().ok_or_else(|| {
+                    ServingError::Protocol("execution transfer lacks an execution".to_owned())
+                })?,
+            )
             .map_err(map_execution_persistence)?
             .ok_or_else(|| {
-                PeerHttpError::Unauthorized(
+                ServingError::Unauthorized(
                     "artifact is not bound to an execution owned by this peer".to_owned(),
                 )
             })?;
+        self.require_execution_operation(
+            &relationship,
+            &snapshot,
+            AuthorityOperation::InspectPeerExecution,
+        )?;
         let record = match snapshot {
             PeerExecutionSnapshot::Hot(record) => record,
             PeerExecutionSnapshot::Archived(_)
                 if offer.direction == ArtifactTransferDirection::Download =>
             {
-                return Err(PeerHttpError::NotFound(
+                return Err(ServingError::NotFound(
                     "archived execution observation-to-artifact history was compacted; core artifact retention is unchanged"
                         .to_owned(),
                 ));
             }
             PeerExecutionSnapshot::Archived(tombstone) => {
-                return Err(PeerHttpError::Unauthorized(format!(
+                return Err(ServingError::Unauthorized(format!(
                     "artifact upload cannot target archived execution {}",
                     tombstone.execution
                 )));
@@ -105,7 +178,7 @@ impl PeerService {
         };
         if offer.direction == ArtifactTransferDirection::Download {
             if offer.source_peer != self.config.local_peer {
-                return Err(PeerHttpError::Unauthorized(
+                return Err(ServingError::Unauthorized(
                     "download source is not the serving peer".to_owned(),
                 ));
             }
@@ -125,7 +198,7 @@ impl PeerService {
                 }
             }
             if !produced {
-                return Err(PeerHttpError::Unauthorized(
+                return Err(ServingError::Unauthorized(
                     "artifact is not a durable output of the claimed execution".to_owned(),
                 ));
             }
@@ -147,7 +220,7 @@ impl PeerService {
             },
         )?;
         if self.now()? > offer.expires_at_unix_ms {
-            return Err(PeerHttpError::Unauthorized(
+            return Err(ServingError::Unauthorized(
                 "artifact transfer authority expired".to_owned(),
             ));
         }
@@ -156,6 +229,7 @@ impl PeerService {
                 authenticated_peer,
                 offer,
                 relationship.maximum_artifact_bytes,
+                None,
             )
             .map_err(Into::into)
     }
@@ -165,13 +239,13 @@ impl PeerService {
         &self,
         authenticated_peer: &PeerId,
         chunk: &ArtifactChunk,
-    ) -> Result<ArtifactTransferDecision, PeerHttpError> {
+    ) -> Result<ArtifactTransferDecision, ServingError> {
         let relationship = self.relationship(authenticated_peer)?;
         let facts = self
             .artifacts
             .transfer_facts(authenticated_peer, &chunk.transfer)?;
         if facts.direction != ArtifactTransferDirection::Upload {
-            return Err(PeerHttpError::Unauthorized(
+            return Err(ServingError::Unauthorized(
                 "artifact transfer direction is not upload".to_owned(),
             ));
         }
@@ -201,13 +275,13 @@ impl PeerService {
         transfer: &TransferId,
         offset: u64,
         maximum_bytes: u32,
-    ) -> Result<ArtifactChunk, PeerHttpError> {
+    ) -> Result<ArtifactChunk, ServingError> {
         let relationship = self.relationship(authenticated_peer)?;
         let facts = self
             .artifacts
             .transfer_facts(authenticated_peer, transfer)?;
         if facts.direction != ArtifactTransferDirection::Download {
-            return Err(PeerHttpError::Unauthorized(
+            return Err(ServingError::Unauthorized(
                 "artifact transfer direction is not download".to_owned(),
             ));
         }
@@ -236,7 +310,7 @@ impl PeerService {
         &self,
         authenticated_peer: &PeerId,
         transfer: &TransferId,
-    ) -> Result<(), PeerHttpError> {
+    ) -> Result<(), ServingError> {
         let relationship = self.relationship(authenticated_peer)?;
         let facts = self
             .artifacts
@@ -277,7 +351,7 @@ fn workspace_artifact_matches_capability(
         && capability.size_bytes() == Some(workspace.size_bytes())
 }
 
-impl From<PeerArtifactError> for PeerHttpError {
+impl From<PeerArtifactError> for ServingError {
     fn from(error: PeerArtifactError) -> Self {
         match error {
             PeerArtifactError::Rejected(message) => Self::Unauthorized(message),
@@ -296,6 +370,14 @@ impl From<PeerArtifactError> for PeerHttpError {
 pub(crate) struct DisabledArtifactStore;
 
 impl PeerArtifactStore for DisabledArtifactStore {
+    fn read_input_chunk(
+        &self,
+        _request: &milkdrift_persistence::ArtifactReadRequest,
+    ) -> Result<milkdrift_persistence::ArtifactReadChunk, PeerArtifactError> {
+        Err(PeerArtifactError::Rejected(
+            "artifact transfer is disabled".to_owned(),
+        ))
+    }
     fn metadata(
         &self,
         _reference: &milkdrift_capability::ArtifactReference,
@@ -320,6 +402,7 @@ impl PeerArtifactStore for DisabledArtifactStore {
         _owner_peer: &PeerId,
         _offer: &ArtifactMetadataOffer,
         _maximum_artifact_bytes: u64,
+        _controller: Option<&milkdrift_persistence::ControllerArtifactOwner>,
     ) -> Result<ArtifactTransferDecision, PeerArtifactError> {
         Err(PeerArtifactError::Rejected(
             "peer artifact storage is not configured".to_owned(),

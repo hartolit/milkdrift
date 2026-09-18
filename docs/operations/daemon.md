@@ -1,15 +1,25 @@
 # Daemon operation and durable application state
 
-Run one `milkdrift-daemon` for a configured data root. It owns workflow execution, storage, and
-the configured capability adapters; clients use its authenticated API. A second store opener is
+Run one `milkdrift-daemon` for a configured data root. It owns storage, configured capability
+adapters and, when enabled, workflow execution; clients use its authenticated API. A second store opener is
 refused while the first holds the domain lock. Start with the
 [operator recipe](../../examples/operator/README.md) for configuration, credentials, and a first run.
 
-Configuration is TOML schema 9. `--check-config` validates it and resolves paths relative to the
+Configuration is TOML schema 10. `--check-config` validates it and resolves paths relative to the
 configuration file; `--print-effective-config` prints normalized, redacted TOML. Neither starts
 adapters or proves storage recovery. The running host uses an immutable compiled plan, so changes
 to grants, profile sources, worker limits, or peer relationships require validation and restart.
 The [authority guide](authority.md) owns grant choices and revocation procedure.
+
+Set the required top-level `role` to `"workflow_enabled"` for local workflow execution, or
+`"execution_only"` to serve configured capabilities without runtime/control services or workflow
+workers. Execution-only startup requires disabled controller activation and refuses nonterminal
+workflow runs, active leases or unresolved controller accounts. Preserve and inspect closed history
+with `storage-admin`.
+Health reports the configured role. Both roles expose authenticated direct execution and bounded
+input uploads; use `milkdrift invocation catalog` to discover the exact callable generations.
+Workflow-control capabilities are absent from execution-only hosts and from direct discovery.
+Set a stable required `host_id`; an existing store refuses a different identity on restart.
 
 ## Startup and readiness
 
@@ -19,12 +29,14 @@ Startup establishes what can continue before it admits new work:
 2. Open the [current storage formats](../product/status.md) and durable clock boundary. Legacy
    `control-state-v1.json`, `peer-executions-v1`, and `peer-artifacts-v1` paths are refused because
    their old ownership cannot be silently imported or ignored. No conversion tool is implemented.
-3. Construct the control service and install its single lifecycle owner when controller activation
+3. In workflow-enabled composition, construct the control service and install its single lifecycle owner when controller activation
    is explicitly configured, then recover active runtime work with admission closed. Check
    bounded application-receipt and layout reads; this is not a complete historical integrity scan.
-4. Register and health-check workflow-control and configured process/model adapters, then build
-   relationships and recover serving-peer work if peers are enabled.
-5. Start fixed effect workers, open admission, and return a ready host to the HTTP server.
+4. Reclaim interrupted public input uploads through bounded pages, preserving resumable peer and
+   workflow publications. Register and health-check configured process/model adapters, plus
+   workflow-control when its role exists, then build configured peer relationships.
+5. Start fixed effect workers only for the workflow role. Recover the common serving owner and
+   open admission only after the other startup steps succeed, then return a ready host to HTTP.
 
 The executable begins serving requests only after host startup succeeds. While it is starting,
 readiness polling may fail to connect or receive a reply; inspect process exit and diagnostics if
@@ -95,7 +107,7 @@ Choose each retention setting for the state it owns:
 | `application_receipts.hot_receipt_bound` | Limits recent receipts in the operational tier. Old complete receipts move to cold storage and still replay. |
 | `application_receipts.archive_batch_size` | Limits one oldest-first archival batch. Maintenance and new-command transactions use the same atomic move. |
 | `security_audit_record_bound` | Bounds retained security-audit entries independently of command replay. Old audit entries can be evicted. |
-| `peers.serving.maximum_hot_terminal_records`, `archive_batch_size`, `observation_hot_retention_ms` | Govern serving-peer detail independently; see [peer operations](peers.md). |
+| `serving.maximum_hot_terminal_records`, `archive_batch_size`, `observation_hot_retention_ms` | Govern serving-peer detail independently; see [peer operations](peers.md). |
 
 Startup re-establishes receipt/audit bounds, including smaller limits selected for a restart.
 Maintenance refreshes capability health, schedules eligible work, notifies workers, and retires
@@ -145,7 +157,7 @@ them. Unknown root components, links/reparse points and special files are refuse
 Keep configuration, secret-source files and unrelated directories outside this data-root policy.
 Backup never fetches referenced external files or resolves credentials.
 
-Only physical schema 11 and internal document format 16 are supported by the
+Only physical schema 12 and internal document format 17 are supported by the
 [current readers](../product/status.md), including offline. For other formats, preserve the untouched
 root and its producer binary/source; inspection requires matching offline readers, which this
 command does not supply. No migration, schema-marker patching, row editing or automatic repair occurs.

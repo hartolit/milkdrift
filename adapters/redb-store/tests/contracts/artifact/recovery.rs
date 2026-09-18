@@ -134,7 +134,12 @@ fn artifact_path_intent_and_finalize_faults_resume_after_reopen()
                 .is_none()
         );
         assert_eq!(
-            reopened.workspace_usage(request.run())?,
+            reopened.workspace_usage(
+                request
+                    .owner()
+                    .run()
+                    .ok_or("fixture requires a workflow publication")?
+            )?,
             WorkspaceUsage::EMPTY
         );
         assert!(

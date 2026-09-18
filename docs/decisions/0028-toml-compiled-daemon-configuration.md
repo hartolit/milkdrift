@@ -30,6 +30,10 @@ and formatting.
 Peer hosting is an explicit `Disabled` or `Enabled { local_peer_id, relationships, serving }` sum
 type. Disabled state owns no dependent peer fields, and enabled-without-identity state cannot decode.
 
+The role generalization in [ADR 0038](0038-independent-host-execution.md) supersedes this placement
+in schema 10: `role`, `host_id` and `serving` are installation-wide fields, and the peer sum type
+owns only enabled/disabled relationship configuration. The strict compiled-plan decision remains.
+
 ## Rejected alternatives
 
 - Keeping JSON alongside TOML would create two operator formats, ambiguous examples, and another

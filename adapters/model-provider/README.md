@@ -7,13 +7,15 @@ the raw response, finish reason, usage, and selected context while evaluating th
 shape separately. Generic model tasks acquire no review-specific policy.
 
 This adapter sends a provider-neutral model task to an explicitly configured endpoint and publishes
-the response as workflow artifacts. It supports OpenAI-compatible chat completions and native
+the response as ordinary artifacts. It supports OpenAI-compatible chat completions and native
 Anthropic Messages mappings. Milkdrift does not load a model or discover providers here.
 
-The current adapter requires durable workflow coordinates and a frozen causal manifest, including
-when served through a peer. Public fresh direct requests with an explicit selection are assigned
-under [ADR 0038](../../docs/decisions/0038-independent-host-execution.md); omitting context or
-fabricating a run is not an implementation of that boundary.
+Workflow invocations require exact workflow coordinates and a frozen causal manifest, including
+when served through a peer. Fresh direct requests use `DirectInputSelection`: only the supplied
+inputs and explicitly authorized artifact references, with no workflow-history lookup. Direct
+continuation refuses before provider entry. The serving owner binds output to its durable host
+invocation; no workflow or account is fabricated. Use the
+[direct recipe](../../examples/operator/README.md#independent-execution) to upload and call through the CLI.
 
 ## Set up a model task
 
@@ -28,10 +30,11 @@ transport policy, and limits. The daemon creates `ModelEndpointAdapter` and regi
 Keep the same capability identity and profile in both calls. Profile changes require a new generation;
 health describes local adapter readiness and active load without probing endpoint availability.
 
-The adapter checks manifest provenance against the exact attempt, reads selected content through
+For workflow requests, the adapter checks manifest provenance against the exact attempt, reads selected content through
 the host data port, and verifies its size/digest. Both mappings inject the manifest as system context
 and label additional evidence as untrusted data. Direct inputs are verified against the manifest;
-they are not all appended a second time as evidence messages. `SystemRole` must therefore be
+they are not all appended a second time as evidence messages. Direct requests inject their explicit
+selection evidence instead, and nested artifact reads must belong to that selection. `SystemRole` must therefore be
 advertised even when the task's own messages contain only a user role.
 
 ## Choose features the endpoint actually supports

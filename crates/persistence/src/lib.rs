@@ -100,14 +100,14 @@ pub use journal::{
     TimerIndexEntry, TimerIndexMutation, WorkspaceAccounting, WorkspaceMutation, WorkspaceStore,
 };
 pub use peer::{
-    PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2, PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3,
-    PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1, PeerAcceptedAuthoritySummary, PeerAdmission,
-    PeerAdmissionOutcome, PeerAdmissionRejection, PeerArchivedDisposition, PeerCancellationRecord,
-    PeerCatalogState, PeerClaimOutcome, PeerDispatchClaim, PeerDispatchClaimRequest,
-    PeerEntryEvidence, PeerEntryOutcome, PeerEntryRequest, PeerExecutionAccounting,
-    PeerExecutionPhase, PeerExecutionRecord, PeerExecutionSnapshot, PeerExecutionStatus,
-    PeerExecutionStore, PeerExecutionTombstone, PeerObservationAppend, PeerObservationPage,
-    PeerRecoveryResult, PeerRelationshipState, PeerRetentionPage, PeerRetentionRequest,
+    PeerAcceptedAuthoritySummary, PeerAdmission, PeerAdmissionOutcome, PeerAdmissionRejection,
+    PeerArchivedDisposition, PeerCancellationRecord, PeerClaimOutcome, PeerDispatchClaim,
+    PeerDispatchClaimRequest, PeerEntryEvidence, PeerEntryOutcome, PeerEntryRequest,
+    PeerExecutionAccounting, PeerExecutionPhase, PeerExecutionRecord, PeerExecutionSnapshot,
+    PeerExecutionStatus, PeerExecutionStore, PeerExecutionTombstone, PeerObservationAppend,
+    PeerObservationPage, PeerRecoveryResult, PeerRetentionPage, PeerRetentionRequest,
+    SERVING_EXECUTION_RECORD_SCHEMA_VERSION, SERVING_EXECUTION_TOMBSTONE_SCHEMA_VERSION,
+    ServingCallerState, ServingCatalogState,
 };
 pub use revision::{
     ImmutableRevisionPut, RevisionCursor, RevisionFilter, RevisionPage, RevisionPageQuery,

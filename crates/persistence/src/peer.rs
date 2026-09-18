@@ -2,29 +2,27 @@ use milkdrift_authority::{
     ActorRef, AuthorityDecisionSnapshot, DecisionId, GrantDigest, GrantId, PolicyId,
 };
 use milkdrift_capability::{
-    ArtifactReference, CapabilityId, IdempotencyBehavior, OperationId, PeerId, SideEffectClass,
+    ArtifactReference, CapabilityId, IdempotencyBehavior, OperationId, SideEffectClass,
 };
 use milkdrift_peer_protocol::{
-    DelegationRef, PeerCancellationAcknowledgement, PeerCancellationRequest, PeerExecutionId,
-    PeerExecutionProvenance, PeerInvocationRequest, PeerObservation, PeerRequestId,
+    PeerCancellationAcknowledgement, PeerCancellationRequest, PeerExecutionId, PeerObservation,
+    PeerRequestId, ServingAuthorization, ServingInvocationRequest,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{PageSize, PersistenceError, TimestampMillis, WorkerId};
 
-/// Readable hot peer-execution schema predating exact input/output artifact accounting.
-pub const PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2: u32 = 2;
-/// Current record schema whose artifact accounting includes exact inputs and cumulative outputs.
-pub const PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3: u32 = 3;
-/// Current compact immutable archived peer-execution tombstone schema.
-pub const PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1: u32 = 1;
+/// Current record schema binds host, authenticated caller realm and explicit invocation origin.
+pub const SERVING_EXECUTION_RECORD_SCHEMA_VERSION: u32 = 4;
+/// Current immutable archive retains the exact accepted authorization and caller namespace.
+pub const SERVING_EXECUTION_TOMBSTONE_SCHEMA_VERSION: u32 = 2;
 
 /// Durable relationship facts consulted inside the acceptance transaction.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct PeerRelationshipState {
+pub struct ServingCallerState {
     /// Authenticated remote identity.
-    pub peer: PeerId,
+    pub caller: milkdrift_peer_protocol::ServingCaller,
     /// Exact revocation/configuration generation.
     pub generation: u64,
     /// Whether this generation may accept new work.
@@ -38,9 +36,9 @@ pub struct PeerRelationshipState {
 /// Latest exact catalog generation eligible for new acceptance.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct PeerCatalogState {
+pub struct ServingCatalogState {
     /// Relationship owner.
-    pub peer: PeerId,
+    pub caller: milkdrift_peer_protocol::ServingCaller,
     /// Relationship generation that authorized publication.
     pub relationship_generation: u64,
     /// Exact catalog generation.
@@ -195,11 +193,11 @@ pub struct PeerExecutionRecord {
     /// Record schema.
     pub schema_version: u32,
     /// Authenticated submitting peer.
-    pub owner_peer: PeerId,
+    pub caller: milkdrift_peer_protocol::ServingCaller,
     /// Relationship generation used by the atomic admission decision.
     pub relationship_generation: u64,
     /// Exact canonical accepted request and capability generation.
-    pub request: PeerInvocationRequest,
+    pub request: ServingInvocationRequest,
     /// Exact allowed authority decision.
     pub authority: AuthorityDecisionSnapshot,
     /// Stable remote execution identity.
@@ -288,11 +286,9 @@ pub struct PeerExecutionTombstone {
     /// Tombstone document schema.
     pub schema_version: u32,
     /// Authenticated submitting peer.
-    pub owner_peer: PeerId,
-    /// Serving peer targeted by the accepted delegation.
-    pub target_peer: PeerId,
-    /// Opaque non-secret delegation provenance identity.
-    pub delegation_ref: DelegationRef,
+    pub caller: milkdrift_peer_protocol::ServingCaller,
+    /// Exact accepted client or peer authority basis, including its target and origin.
+    pub authorization: ServingAuthorization,
     /// Relationship generation used by admission.
     pub relationship_generation: u64,
     /// Exact accepted request identity.
@@ -323,8 +319,6 @@ pub struct PeerExecutionTombstone {
     pub idempotency: IdempotencyBehavior,
     /// Compact immutable accepted authority identity.
     pub authority: PeerAcceptedAuthoritySummary,
-    /// Originating daemon workflow/run provenance.
-    pub provenance: PeerExecutionProvenance,
     /// Final terminal or uncertain disposition.
     pub disposition: PeerArchivedDisposition,
     /// Latest cancellation request/acknowledgement facts, when present.
@@ -353,10 +347,10 @@ pub enum PeerExecutionSnapshot {
 impl PeerExecutionSnapshot {
     /// Authenticated owner.
     #[must_use]
-    pub const fn owner_peer(&self) -> &PeerId {
+    pub const fn caller(&self) -> &milkdrift_peer_protocol::ServingCaller {
         match self {
-            Self::Hot(record) => &record.owner_peer,
-            Self::Archived(tombstone) => &tombstone.owner_peer,
+            Self::Hot(record) => &record.caller,
+            Self::Archived(tombstone) => &tombstone.caller,
         }
     }
 
@@ -400,9 +394,9 @@ impl PeerExecutionSnapshot {
 /// Complete facts needed by one atomic acceptance transaction.
 pub struct PeerAdmission<'a> {
     /// Authenticated owner.
-    pub owner_peer: &'a PeerId,
+    pub caller: &'a milkdrift_peer_protocol::ServingCaller,
     /// Exact durable request.
-    pub request: &'a PeerInvocationRequest,
+    pub request: &'a ServingInvocationRequest,
     /// Exact authority decision.
     pub authority: &'a AuthorityDecisionSnapshot,
     /// Stable deterministic execution identity.
@@ -456,7 +450,7 @@ pub enum PeerEntryOutcome {
 /// Complete facts needed by one atomic adapter-entry transaction.
 pub struct PeerEntryRequest<'a> {
     /// Authenticated execution owner.
-    pub owner: &'a PeerId,
+    pub owner: &'a milkdrift_peer_protocol::ServingCaller,
     /// Stable remote execution identity.
     pub execution: &'a PeerExecutionId,
     /// Worker holding the exact durable claim.
@@ -582,20 +576,28 @@ pub struct PeerRetentionPage {
 /// admission reply, use the same owner/request identity rather than submitting new work.
 /// Entry and terminal evidence remain separate from acceptance and cancellation.
 pub trait PeerExecutionStore: Send + Sync {
+    /// Binds this store to one installation; a different host must refuse without mutation.
+    fn bind_serving_host(
+        &self,
+        host: &milkdrift_capability::PeerId,
+    ) -> Result<(), PersistenceError>;
     /// Opens or closes the durable admission/entry gate through one serialized transaction.
     fn set_peer_admission_open(&self, open: bool) -> Result<(), PersistenceError>;
 
     /// Records or replaces a relationship only at a strictly newer generation; exact replay is safe.
     fn configure_peer_relationship(
         &self,
-        relationship: &PeerRelationshipState,
+        relationship: &ServingCallerState,
     ) -> Result<(), PersistenceError>;
 
     /// Records the exact currently eligible catalog generation.
-    fn publish_peer_catalog(&self, catalog: &PeerCatalogState) -> Result<(), PersistenceError>;
+    fn publish_peer_catalog(&self, catalog: &ServingCatalogState) -> Result<(), PersistenceError>;
 
     /// Reads the latest durable catalog generation for restart-safe monotonic publication.
-    fn peer_catalog(&self, peer: &PeerId) -> Result<Option<PeerCatalogState>, PersistenceError>;
+    fn peer_catalog(
+        &self,
+        peer: &milkdrift_peer_protocol::ServingCaller,
+    ) -> Result<Option<ServingCatalogState>, PersistenceError>;
 
     /// Atomically checks idempotency, relationship/catalog generations and every capacity counter.
     fn admit_peer_execution(
@@ -606,14 +608,14 @@ pub trait PeerExecutionStore: Send + Sync {
     /// Indexed lookup by authenticated owner and idempotency key.
     fn peer_execution_by_request(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         request: &PeerRequestId,
     ) -> Result<Option<PeerExecutionSnapshot>, PersistenceError>;
 
     /// Indexed lookup by execution identity with owner cross-check.
     fn peer_execution(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
     ) -> Result<Option<PeerExecutionSnapshot>, PersistenceError>;
 
@@ -626,7 +628,7 @@ pub trait PeerExecutionStore: Send + Sync {
     /// Reads a bounded contiguous page without materializing retained history.
     fn peer_observations(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         after_sequence: u64,
         limit: PageSize,
@@ -650,7 +652,7 @@ pub trait PeerExecutionStore: Send + Sync {
     /// Releases only an exact pre-entry claim back to the durable queue.
     fn release_peer_claim(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         worker: &WorkerId,
         claim_generation: u64,
@@ -660,7 +662,7 @@ pub trait PeerExecutionStore: Send + Sync {
     /// Extends only the exact current claim lease.
     fn extend_peer_claim(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         worker: &WorkerId,
         claim_generation: u64,
@@ -670,7 +672,7 @@ pub trait PeerExecutionStore: Send + Sync {
     /// Persists uncertainty after known entry without fabricating terminal evidence.
     fn mark_peer_uncertain(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         worker: &WorkerId,
         claim_generation: u64,
@@ -681,7 +683,7 @@ pub trait PeerExecutionStore: Send + Sync {
     /// Appends one next semantic observation, with exact replay idempotency.
     fn append_peer_observation(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         observation: &PeerObservation,
     ) -> Result<PeerObservationAppend, PersistenceError>;
@@ -689,7 +691,7 @@ pub trait PeerExecutionStore: Send + Sync {
     /// Persists a cancellation request before adapter interaction.
     fn request_peer_cancellation(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         request: &PeerCancellationRequest,
         requested_at_unix_ms: u64,
     ) -> Result<PeerExecutionRecord, PersistenceError>;
@@ -697,7 +699,7 @@ pub trait PeerExecutionStore: Send + Sync {
     /// Persists a separate acknowledgement through exact request matching.
     fn acknowledge_peer_cancellation(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         acknowledgement: &PeerCancellationAcknowledgement,
         acknowledged_at_unix_ms: u64,
     ) -> Result<PeerExecutionRecord, PersistenceError>;

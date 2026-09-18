@@ -1,4 +1,5 @@
 mod artifacts;
+mod inputs;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
@@ -10,10 +11,10 @@ use std::{
 
 use milkdrift_authority::{AuthorityBudget, CapabilityExecutionRequirements, NetworkProfileRef};
 use milkdrift_capability::{
-    AdmissionBound, BoundedJson, CancellationAcknowledgement, CancellationRequest,
-    CapabilityDescriptor, CapabilityId, CapabilityObservation, DescriptorBuilder, ErrorClass,
-    ExtensionKey, InvocationAdmissionEnvelope, InvocationEvent, InvocationEventKind,
-    InvocationFailure, InvocationId, InvocationRequest, InvocationTerminal, Locality, PeerId,
+    BoundedJson, CancellationAcknowledgement, CancellationRequest, CapabilityDescriptor,
+    CapabilityId, CapabilityObservation, DescriptorBuilder, ErrorClass, ExtensionKey,
+    InvocationAdmissionEnvelope, InvocationEvent, InvocationEventKind, InvocationFailure,
+    InvocationId, InvocationRequest, InvocationTerminal, Locality, PeerId,
     ResolvedCapabilitySnapshot, TerminalStatus,
 };
 use milkdrift_capability_host::{
@@ -22,7 +23,7 @@ use milkdrift_capability_host::{
 use milkdrift_peer_protocol::{
     ArchivedExecutionSummary, CancellationDisposition, CatalogDigest, CatalogSnapshot,
     DelegatedAuthorization, InvocationAcceptance, ObservationHistory, PeerCancellationRequest,
-    PeerExecutionId, PeerExecutionProvenance, PeerInvocationRequest, PeerRequestId, SessionId,
+    PeerExecutionId, PeerExecutionProvenance, PeerRequestId, ServingInvocationRequest, SessionId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -403,7 +404,9 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
         &self,
         _invocation: &AdapterInvocation<'_>,
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
-        Ok(remote_admission_envelope())
+        self.request_limits()
+            .admission_envelope()
+            .map_err(|error| AdapterError::rejected(error.to_string()))
     }
 
     fn start(&self) -> Result<(), AdapterError> {
@@ -432,244 +435,25 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
         }
     }
 
+    fn prepare(
+        self: Arc<Self>,
+        invocation: &AdapterInvocation<'_>,
+    ) -> Result<milkdrift_capability_host::PreparedAdapterExecution, AdapterError> {
+        let inputs = self.prepare_inputs(invocation)?;
+        let envelope = self.admission_envelope(invocation)?;
+        Ok(milkdrift_capability_host::PreparedAdapterExecution::new(
+            envelope,
+            move |invocation, reporter| self.execute_prepared(invocation, reporter, inputs),
+        ))
+    }
+
     fn execute(
         &self,
         invocation: &AdapterInvocation<'_>,
         reporter: &dyn AdapterReporter,
     ) -> Result<(), AdapterError> {
-        let lifecycle = self.lifecycle.load(Ordering::SeqCst);
-        if lifecycle != Lifecycle::Started as u8 && lifecycle != Lifecycle::Draining as u8 {
-            return Err(AdapterError::unavailable(
-                "remote capability adapter is not accepting exact work",
-            ));
-        }
-        let now = self
-            .clock
-            .now_unix_ms()
-            .map_err(|error| AdapterError::unavailable(error.to_string()))?;
-        if now > self.catalog_expires_at_unix_ms || now > self.relationship.expires_at_unix_ms {
-            return Err(AdapterError::unavailable(
-                "remote peer catalog is unavailable or expired",
-            ));
-        }
-        let remote_selection = ResolvedCapabilitySnapshot::from_descriptor(
-            &self.remote_descriptor,
-            invocation.request().operation(),
-        )
-        .map_err(|error| AdapterError::rejected(error.to_string()))?;
-        let remote_request = remap_request(invocation.request(), self.remote_descriptor.identity())
-            .map_err(|error| AdapterError::rejected(error.to_string()))?;
-        let request_id = PeerRequestId::new(format!(
-            "request:{}",
-            invocation.request().invocation().as_str()
-        ))
-        .map_err(|error| AdapterError::rejected(error.to_string()))?;
-        let deadline = now
-            .saturating_add(self.relationship.execution_limits.duration_ms)
-            .min(self.catalog_expires_at_unix_ms)
-            .min(self.relationship.expires_at_unix_ms);
-        let actor = milkdrift_authority::ActorRef::new(format!(
-            "peer:{}",
-            self.client.local_peer().as_str()
-        ))
-        .map_err(|error| AdapterError::rejected(error.to_string()))?;
-        let context = invocation.context().ok_or_else(|| {
-            AdapterError::rejected("remote execution requires exact durable run provenance")
-        })?;
-        let delegation = DelegatedAuthorization {
-            reference: self.relationship.delegation.clone(),
-            issuer_peer: self.client.local_peer().clone(),
-            actor,
-            target_peer: self.client.remote_peer().clone(),
-            capability: remote_selection.capability().clone(),
-            operation: remote_selection.operation().clone(),
-            request: request_id.clone(),
-            limits: self.relationship.execution_limits,
-            expires_at_unix_ms: deadline,
-            nonce: request_id.as_str().to_owned(),
-            provenance: PeerExecutionProvenance {
-                run: context.run().to_string(),
-                revision: context.revision().to_string(),
-                node: context.node().to_string(),
-                execution: context.execution().to_string(),
-                attempt: context.attempt().to_string(),
-            },
-        };
-        let request = PeerInvocationRequest::new(
-            request_id,
-            self.catalog_generation,
-            self.catalog_digest.clone(),
-            remote_selection,
-            remote_request,
-            self.relationship.execution_limits,
-            deadline,
-            delegation,
-        )
-        .map_err(|error| AdapterError::rejected(error.to_string()))?;
-        let execution = match self.client.submit(&request) {
-            Ok(InvocationAcceptance::Accepted { execution, .. }) => execution,
-            Ok(InvocationAcceptance::Archived { summary, .. }) => {
-                return report_archived_summary(
-                    invocation.request().invocation(),
-                    1,
-                    invocation.resolution().operation_contract().side_effect(),
-                    &summary,
-                    reporter,
-                );
-            }
-            Ok(InvocationAcceptance::Rejected {
-                code,
-                detail,
-                retryable,
-                ..
-            }) => {
-                let failure = InvocationFailure::new(
-                    if retryable {
-                        ErrorClass::RateLimit
-                    } else {
-                        ErrorClass::InvalidRequest
-                    },
-                    retryable,
-                    code,
-                    detail,
-                    None,
-                )
-                .map_err(|error| AdapterError::rejected(error.to_string()))?;
-                let terminal = InvocationTerminal::new(
-                    TerminalStatus::Rejected,
-                    Vec::new(),
-                    Some(failure),
-                    None,
-                    milkdrift_capability::SideEffectClass::None,
-                )
-                .map_err(|error| AdapterError::rejected(error.to_string()))?;
-                return reporter.invocation(
-                    InvocationEvent::new(
-                        invocation.request().invocation().clone(),
-                        1,
-                        InvocationEventKind::Terminal { terminal },
-                    )
-                    .map_err(|error| AdapterError::rejected(error.to_string()))?,
-                );
-            }
-            Err(error) => return Err(AdapterError::unavailable(error.to_string())),
-        };
-        self.active
-            .lock()
-            .map_err(|_| AdapterError::external_failure("remote execution map unavailable"))?
-            .insert(invocation.request().invocation().clone(), execution.clone());
-        let mut after: u64 = 0;
-        let mut imported = BTreeSet::new();
-        let mut imported_bytes = request
-            .input_artifact_bytes()
-            .map_err(|error| AdapterError::rejected(error.to_string()))?;
-        let result = 'observing: loop {
-            if self.lifecycle.load(Ordering::SeqCst) == Lifecycle::Stopped as u8 {
-                break report_uncertainty(
-                    invocation.request().invocation(),
-                    after.saturating_add(1),
-                    invocation.resolution().operation_contract().side_effect(),
-                    "remote adapter shutdown interrupted observation before terminal evidence",
-                    reporter,
-                );
-            }
-            let now = match self.clock.now_unix_ms() {
-                Ok(now) => now,
-                Err(_) => {
-                    break report_uncertainty(
-                        invocation.request().invocation(),
-                        after.saturating_add(1),
-                        invocation.resolution().operation_contract().side_effect(),
-                        "local clock became unavailable after remote execution acceptance",
-                        reporter,
-                    );
-                }
-            };
-            if now > deadline {
-                break report_uncertainty(
-                    invocation.request().invocation(),
-                    after.saturating_add(1),
-                    invocation.resolution().operation_contract().side_effect(),
-                    "remote execution deadline elapsed without terminal evidence",
-                    reporter,
-                );
-            }
-            match self.client.observations(&execution, after, 128) {
-                Ok(page) => {
-                    let archived_summary = match &page.history {
-                        ObservationHistory::Archived { summary } => Some(summary.clone()),
-                        ObservationHistory::Hot => None,
-                    };
-                    let empty = page.observations.is_empty();
-                    for observation in page.observations {
-                        if observation.event.invocation() != invocation.request().invocation()
-                            || observation.sequence != after.saturating_add(1)
-                        {
-                            break 'observing Err(AdapterError::external_failure(
-                                "remote observation stream was not contiguous",
-                            ));
-                        }
-                        if let Err(error) = self.import_output(
-                            &execution,
-                            &observation,
-                            deadline,
-                            &mut imported,
-                            &mut imported_bytes,
-                            reporter,
-                        ) {
-                            break 'observing report_uncertainty(
-                                invocation.request().invocation(),
-                                after.saturating_add(1),
-                                invocation.resolution().operation_contract().side_effect(),
-                                &format!("accepted peer output could not be materialized: {error}"),
-                                reporter,
-                            );
-                        }
-                        after = observation.sequence;
-                        if let Err(error) = reporter.invocation(observation.event) {
-                            break 'observing Err(error);
-                        }
-                    }
-                    if let Some(summary) = archived_summary {
-                        break report_archived_summary(
-                            invocation.request().invocation(),
-                            after.saturating_add(1),
-                            invocation.resolution().operation_contract().side_effect(),
-                            &summary,
-                            reporter,
-                        );
-                    }
-                    if page.closed {
-                        break Ok(());
-                    }
-                    if empty {
-                        if let Err(error) = reporter.heartbeat() {
-                            break Err(error);
-                        }
-                        thread::sleep(self.client.observation_poll_interval());
-                    }
-                }
-                Err(PeerHttpError::NotFound(_)) => {
-                    break report_uncertainty(
-                        invocation.request().invocation(),
-                        after.saturating_add(1),
-                        invocation.resolution().operation_contract().side_effect(),
-                        "accepted remote execution record became irrecoverably unavailable",
-                        reporter,
-                    );
-                }
-                Err(_) => {
-                    let _ = reporter.heartbeat();
-                    thread::sleep(self.client.observation_poll_interval());
-                }
-            }
-        };
-        if let Ok(mut active) = self.active.lock() {
-            active.remove(invocation.request().invocation());
-        }
-        result
+        self.execute_prepared(invocation, reporter, self.prepare_inputs(invocation)?)
     }
-
     fn cancel(
         &self,
         request: &CancellationRequest,
@@ -769,34 +553,6 @@ enum Lifecycle {
     Started = 1,
     Draining = 2,
     Stopped = 3,
-}
-
-// Relationship quotas bound what the origin asks for. They do not establish a locally enforceable
-// resource reservation for work running on another host.
-fn remote_admission_envelope() -> InvocationAdmissionEnvelope {
-    InvocationAdmissionEnvelope::new(
-        milkdrift_capability::AdmissionUnit::Unknown,
-        AdmissionBound::Unknown,
-        AdmissionBound::Unknown,
-        AdmissionBound::Unknown,
-        AdmissionBound::Unknown,
-    )
-}
-
-#[cfg(test)]
-mod admission_tests {
-    use super::*;
-
-    #[test]
-    fn remote_generation_exposes_no_local_enforceable_resource_claim() {
-        let first = remote_admission_envelope();
-        let second = remote_admission_envelope();
-        assert_eq!(first, second);
-        assert!(first.input_units().is_unknown());
-        assert!(first.output_units().is_unknown());
-        assert!(first.artifact_bytes().is_unknown());
-        assert!(first.monetary_cost().is_unknown());
-    }
 }
 
 fn remote_authority_requirements(
@@ -1001,3 +757,286 @@ fn error_class(error: &PeerHttpError) -> &'static str {
 
 #[cfg(test)]
 mod tests;
+
+impl RemoteCapabilityAdapter {
+    fn request_limits(&self) -> milkdrift_peer_protocol::ExecutionLimits {
+        let mut limits = self.relationship.execution_limits.clone();
+        if self.remote_descriptor.category() == &milkdrift_capability::CapabilityCategory::Process {
+            // Native process admission does not qualify model billing or logical tokens.
+            // Forbid those dimensions in the exact delegated call; serving preparation
+            // must confirm they are inapplicable before any process can enter.
+            limits.input_units = None;
+            limits.output_units = None;
+            limits.cost_micros = 0;
+            limits.cost_currency = None;
+        }
+        limits
+    }
+
+    fn execute_prepared(
+        &self,
+        invocation: &AdapterInvocation<'_>,
+        reporter: &dyn AdapterReporter,
+        inputs: Vec<inputs::PreparedInput>,
+    ) -> Result<(), AdapterError> {
+        let lifecycle = self.lifecycle.load(Ordering::SeqCst);
+        if lifecycle != Lifecycle::Started as u8 && lifecycle != Lifecycle::Draining as u8 {
+            return Err(AdapterError::unavailable(
+                "remote capability adapter is not accepting exact work",
+            ));
+        }
+        let now = self
+            .clock
+            .now_unix_ms()
+            .map_err(|error| AdapterError::unavailable(error.to_string()))?;
+        if now > self.catalog_expires_at_unix_ms || now > self.relationship.expires_at_unix_ms {
+            return Err(AdapterError::unavailable(
+                "remote peer catalog is unavailable or expired",
+            ));
+        }
+        let remote_selection = ResolvedCapabilitySnapshot::from_descriptor(
+            &self.remote_descriptor,
+            invocation.request().operation(),
+        )
+        .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        let remote_request = remap_request(invocation.request(), self.remote_descriptor.identity())
+            .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        let request_id = PeerRequestId::new(format!(
+            "request:{}",
+            invocation.request().invocation().as_str()
+        ))
+        .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        let deadline = now
+            .saturating_add(self.relationship.execution_limits.duration_ms)
+            .min(self.catalog_expires_at_unix_ms)
+            .min(self.relationship.expires_at_unix_ms);
+        let actor = milkdrift_authority::ActorRef::new(format!(
+            "peer:{}",
+            self.client.local_peer().as_str()
+        ))
+        .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        let context = invocation.context().ok_or_else(|| {
+            AdapterError::rejected("remote execution requires exact durable run provenance")
+        })?;
+        let controller_reservation = context.controller_reservation().map(ToString::to_string);
+        let artifact_controller = context
+            .controller_reservation()
+            .zip(context.workflow())
+            .map(|(reservation, workflow)| {
+                milkdrift_persistence::ControllerArtifactOwner::RemoteInvocationReservation {
+                    run: workflow.run().clone(),
+                    reservation: reservation.clone(),
+                }
+            });
+        let context = context.workflow().ok_or_else(|| {
+            AdapterError::rejected("workflow delegation cannot carry direct origin")
+        })?;
+        let limits = self.request_limits();
+        let delegation = DelegatedAuthorization {
+            controller_reservation,
+            reference: self.relationship.delegation.clone(),
+            issuer_peer: self.client.local_peer().clone(),
+            actor,
+            target_peer: self.client.remote_peer().clone(),
+            capability: remote_selection.capability().clone(),
+            operation: remote_selection.operation().clone(),
+            request: request_id.clone(),
+            limits: limits.clone(),
+            expires_at_unix_ms: deadline,
+            nonce: request_id.as_str().to_owned(),
+            origin: milkdrift_peer_protocol::InvocationOrigin::Workflow {
+                provenance: PeerExecutionProvenance {
+                    run: context.run().to_string(),
+                    revision: context.revision().to_string(),
+                    node: context.node().to_string(),
+                    execution: context.execution().to_string(),
+                    attempt: context.attempt().to_string(),
+                },
+            },
+        };
+        let request = ServingInvocationRequest::new(
+            request_id,
+            self.catalog_generation,
+            self.catalog_digest.clone(),
+            remote_selection,
+            remote_request,
+            limits,
+            deadline,
+            delegation,
+        )
+        .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        self.stage_inputs(&request, inputs, reporter)?;
+        let execution = match self.client.submit(&request) {
+            Ok(InvocationAcceptance::Accepted { execution, .. }) => execution,
+            Ok(InvocationAcceptance::Archived { summary, .. }) => {
+                return report_archived_summary(
+                    invocation.request().invocation(),
+                    1,
+                    invocation.resolution().operation_contract().side_effect(),
+                    &summary,
+                    reporter,
+                );
+            }
+            Ok(InvocationAcceptance::Rejected {
+                code,
+                detail,
+                retryable,
+                ..
+            }) => {
+                let failure = InvocationFailure::new(
+                    if retryable {
+                        ErrorClass::RateLimit
+                    } else {
+                        ErrorClass::InvalidRequest
+                    },
+                    retryable,
+                    code,
+                    detail,
+                    None,
+                )
+                .map_err(|error| AdapterError::rejected(error.to_string()))?;
+                let terminal = InvocationTerminal::new(
+                    TerminalStatus::Rejected,
+                    Vec::new(),
+                    Some(failure),
+                    None,
+                    milkdrift_capability::SideEffectClass::None,
+                )
+                .map_err(|error| AdapterError::rejected(error.to_string()))?;
+                return reporter.invocation(
+                    InvocationEvent::new(
+                        invocation.request().invocation().clone(),
+                        1,
+                        InvocationEventKind::Terminal { terminal },
+                    )
+                    .map_err(|error| AdapterError::rejected(error.to_string()))?,
+                );
+            }
+            Err(error) => return Err(AdapterError::unavailable(error.to_string())),
+        };
+        self.active
+            .lock()
+            .map_err(|_| AdapterError::external_failure("remote execution map unavailable"))?
+            .insert(invocation.request().invocation().clone(), execution.clone());
+        let mut after: u64 = 0;
+        let mut imported = BTreeSet::new();
+        let mut imported_bytes = request
+            .input_artifact_bytes()
+            .map_err(|error| AdapterError::rejected(error.to_string()))?;
+        let result = 'observing: loop {
+            if self.lifecycle.load(Ordering::SeqCst) == Lifecycle::Stopped as u8 {
+                break report_uncertainty(
+                    invocation.request().invocation(),
+                    after.saturating_add(1),
+                    invocation.resolution().operation_contract().side_effect(),
+                    "remote adapter shutdown interrupted observation before terminal evidence",
+                    reporter,
+                );
+            }
+            let now = match self.clock.now_unix_ms() {
+                Ok(now) => now,
+                Err(_) => {
+                    break report_uncertainty(
+                        invocation.request().invocation(),
+                        after.saturating_add(1),
+                        invocation.resolution().operation_contract().side_effect(),
+                        "local clock became unavailable after remote execution acceptance",
+                        reporter,
+                    );
+                }
+            };
+            if now > deadline {
+                break report_uncertainty(
+                    invocation.request().invocation(),
+                    after.saturating_add(1),
+                    invocation.resolution().operation_contract().side_effect(),
+                    "remote execution deadline elapsed without terminal evidence",
+                    reporter,
+                );
+            }
+            match self.client.observations(&execution, after, 128) {
+                Ok(page) => {
+                    let archived_summary = match &page.history {
+                        ObservationHistory::Archived { summary } => Some(summary.clone()),
+                        ObservationHistory::Hot => None,
+                    };
+                    let empty = page.observations.is_empty();
+                    for observation in page.observations {
+                        if observation.event.invocation() != invocation.request().invocation()
+                            || observation.sequence != after.saturating_add(1)
+                        {
+                            break 'observing Err(AdapterError::external_failure(
+                                "remote observation stream was not contiguous",
+                            ));
+                        }
+                        if let Err(error) = self.import_output(
+                            &execution,
+                            &observation,
+                            deadline,
+                            &mut imported,
+                            &mut imported_bytes,
+                            artifact_controller.as_ref(),
+                            reporter,
+                        ) {
+                            break 'observing report_uncertainty(
+                                invocation.request().invocation(),
+                                after.saturating_add(1),
+                                invocation.resolution().operation_contract().side_effect(),
+                                &format!("accepted peer output could not be materialized: {error}"),
+                                reporter,
+                            );
+                        }
+                        after = observation.sequence;
+                        if let Err(error) = reporter.invocation(observation.event) {
+                            break 'observing Err(error);
+                        }
+                    }
+                    if let Some(summary) = archived_summary {
+                        break report_archived_summary(
+                            invocation.request().invocation(),
+                            after.saturating_add(1),
+                            invocation.resolution().operation_contract().side_effect(),
+                            &summary,
+                            reporter,
+                        );
+                    }
+                    if page.closed {
+                        if !page.terminal {
+                            break report_uncertainty(
+                                invocation.request().invocation(),
+                                after.saturating_add(1),
+                                invocation.resolution().operation_contract().side_effect(),
+                                "serving host retained uncertainty without terminal evidence",
+                                reporter,
+                            );
+                        }
+                        break Ok(());
+                    }
+                    if empty {
+                        if let Err(error) = reporter.heartbeat() {
+                            break Err(error);
+                        }
+                        thread::sleep(self.client.observation_poll_interval());
+                    }
+                }
+                Err(PeerHttpError::NotFound(_)) => {
+                    break report_uncertainty(
+                        invocation.request().invocation(),
+                        after.saturating_add(1),
+                        invocation.resolution().operation_contract().side_effect(),
+                        "accepted remote execution record became irrecoverably unavailable",
+                        reporter,
+                    );
+                }
+                Err(_) => {
+                    let _ = reporter.heartbeat();
+                    thread::sleep(self.client.observation_poll_interval());
+                }
+            }
+        };
+        if let Ok(mut active) = self.active.lock() {
+            active.remove(invocation.request().invocation());
+        }
+        result
+    }
+}

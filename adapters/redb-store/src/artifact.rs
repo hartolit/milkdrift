@@ -20,8 +20,8 @@ use milkdrift_persistence::{
     authorize_artifact_read,
 };
 use milkdrift_workspace::{
-    ArtifactId, ArtifactMetadata, ArtifactReference, CausalReference, ContentDigest, RunId,
-    WorkspaceUsage, WorkspaceValueEntry,
+    ArtifactId, ArtifactMetadata, ArtifactOwner, ArtifactReference, CausalReference, ContentDigest,
+    RunId, WorkspaceUsage, WorkspaceValueEntry,
 };
 use redb::{ReadableTable, ReadableTableMetadata};
 use serde::{Deserialize, Serialize};
@@ -32,15 +32,15 @@ use crate::{
     json,
     schema::{
         ARTIFACT_ACCOUNTING, ARTIFACT_DELETE_GUARDS, ARTIFACT_DIGEST_RESERVATIONS,
-        ARTIFACT_MANIFEST, ARTIFACT_METADATA, ARTIFACT_PATHS, ARTIFACT_PUBLICATIONS,
-        ARTIFACT_PUBLICATIONS_BY_AGE, ARTIFACT_REFERENCES, ARTIFACT_RESERVATIONS,
-        ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST,
-        CONTROLLER_ARTIFACT_CHARGES, CONTROLLER_RUN_BINDINGS, ROOT_SCOPES, RUN_ARTIFACT_OWNERSHIP,
-        RUN_EVENTS, SCOPES, VALUES, WORKSPACE_USAGE,
+        ARTIFACT_MANIFEST, ARTIFACT_METADATA, ARTIFACT_OWNERSHIP, ARTIFACT_PATHS,
+        ARTIFACT_PUBLICATIONS, ARTIFACT_PUBLICATIONS_BY_AGE, ARTIFACT_REFERENCES,
+        ARTIFACT_RESERVATIONS, ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST,
+        CONTROLLER_ARTIFACT_CHARGES, CONTROLLER_RUN_BINDINGS, ROOT_SCOPES, RUN_EVENTS, SCOPES,
+        VALUES, WORKSPACE_USAGE,
     },
 };
 
-const PUBLICATION_SCHEMA_VERSION: u32 = 2;
+const PUBLICATION_SCHEMA_VERSION: u32 = 3;
 pub(crate) const ARTIFACT_ACCOUNTING_SCHEMA_VERSION: u32 = 3;
 pub(crate) const GLOBAL_ARTIFACT_BYTES_KEY: &str = "artifact_content_bytes";
 const MAX_CHUNK_BYTES: usize = milkdrift_persistence::MAX_ARTIFACT_CHUNK_BYTES;
@@ -58,12 +58,12 @@ enum PublicationState {
 pub(crate) struct PublicationRecord {
     schema_version: u32,
     publication: ArtifactPublicationId,
-    run: milkdrift_workspace::RunId,
+    owner: ArtifactOwner,
     metadata: ArtifactMetadata,
     budget: milkdrift_workspace::WorkspaceBudget,
     expected_usage: WorkspaceUsage,
     resulting_usage: WorkspaceUsage,
-    controller_owner: ControllerArtifactOwner,
+    controller_owner: Option<ControllerArtifactOwner>,
     created_at_millis: u64,
     state: PublicationState,
 }
@@ -83,16 +83,22 @@ impl ArtifactAccountingRecord {
 }
 
 impl PublicationRecord {
+    fn controller_run(&self) -> Option<&RunId> {
+        self.owner.run().or(match &self.controller_owner {
+            Some(ControllerArtifactOwner::RemoteInvocationReservation { run, .. }) => Some(run),
+            _ => None,
+        })
+    }
     fn from_request(request: &BeginArtifactPublication, created_at_millis: u64) -> Self {
         Self {
             schema_version: PUBLICATION_SCHEMA_VERSION,
             publication: request.publication().clone(),
-            run: request.run().clone(),
+            owner: request.owner().clone(),
             metadata: request.metadata().clone(),
             budget: request.budget().clone(),
             expected_usage: request.expected_usage(),
             resulting_usage: request.resulting_usage(),
-            controller_owner: request.controller_owner().clone(),
+            controller_owner: request.controller_owner().cloned(),
             created_at_millis,
             state: PublicationState::Writable,
         }
@@ -100,23 +106,24 @@ impl PublicationRecord {
 
     fn matches(&self, request: &BeginArtifactPublication) -> bool {
         self.publication == *request.publication()
-            && self.run == *request.run()
+            && self.owner == *request.owner()
             && self.metadata == *request.metadata()
             && self.budget == *request.budget()
             && self.expected_usage == request.expected_usage()
             && self.resulting_usage == request.resulting_usage()
-            && self.controller_owner == *request.controller_owner()
+            && self.controller_owner.as_ref() == request.controller_owner()
     }
 }
 
 mod accounting;
 mod cleanup;
+pub(crate) mod owner;
 mod path;
 mod publication;
 
 pub(crate) use accounting::{
-    persist_artifact_reference_occurrence, persist_run_artifact_ownership, validate_artifact_state,
-    validate_run_artifact_ownership, validated_run_artifact_reference_in_transaction,
+    persist_artifact_ownership, persist_artifact_reference_occurrence, validate_artifact_ownership,
+    validate_artifact_state, validated_owner_artifact_reference_in_transaction,
 };
 pub(crate) use path::verify_blob;
 
@@ -175,7 +182,7 @@ pub(crate) fn validate_publication_scrub(
         .map_err(error::redb)?
         .map(|value| value.value().to_owned());
     let run_owner = reservations
-        .get(record.run.as_str())
+        .get(owner::domain_key(&record.owner)?.as_str())
         .map_err(error::redb)?
         .map(|value| value.value().to_owned());
     let temp_owner = owners
@@ -257,11 +264,20 @@ fn validate_publication_controller_charge(
     let bindings = read
         .open_table(CONTROLLER_RUN_BINDINGS)
         .map_err(error::redb)?;
-    let binding = bindings
-        .get(record.run.as_str())
-        .map_err(error::redb)?
-        .map(|value| ControllerAccountId::new(value.value().to_owned()))
-        .transpose()?;
+    let binding = record
+        .controller_run()
+        .map(|run| {
+            bindings
+                .get(run.as_str())
+                .map_err(error::redb)
+                .and_then(|value| {
+                    value
+                        .map(|value| ControllerAccountId::new(value.value().to_owned()))
+                        .transpose()
+                })
+        })
+        .transpose()?
+        .flatten();
     let charges = read
         .open_table(CONTROLLER_ARTIFACT_CHARGES)
         .map_err(error::redb)?;
@@ -272,8 +288,11 @@ fn validate_publication_controller_charge(
         .transpose()?;
 
     let expected_reservation = match &record.controller_owner {
-        ControllerArtifactOwner::RunBinding => None,
-        ControllerArtifactOwner::InvocationReservation(reservation) => Some(reservation),
+        Some(ControllerArtifactOwner::RunBinding) | None => None,
+        Some(
+            ControllerArtifactOwner::InvocationReservation(reservation)
+            | ControllerArtifactOwner::RemoteInvocationReservation { reservation, .. },
+        ) => Some(reservation),
     };
     match (&record.state, binding, charge) {
         (PublicationState::Writable, _, None) => Ok(false),
@@ -283,6 +302,7 @@ fn validate_publication_controller_charge(
         }
         (state, Some(account), Some(charge))
             if charge.account == account
+                && record.controller_run() == Some(&charge.run)
                 && charge.reservation.as_ref() == expected_reservation
                 && charge.bytes == record.metadata.reference().size_bytes()
                 && matches!(
@@ -322,8 +342,14 @@ pub(crate) fn validate_controller_charge_publication(
         .ok_or_else(|| error::corruption("controller artifact mutation has no publication"))?;
     let record = publication::decode_publication(bytes.value())?;
     if record.publication != *publication
-        || &record.run != expected_run
-        || record.controller_owner != *owner
+        || record.controller_run() != Some(expected_run)
+        || match (&record.controller_owner, owner) {
+            (
+                Some(ControllerArtifactOwner::RemoteInvocationReservation { reservation, .. }),
+                ControllerArtifactOwner::InvocationReservation(expected),
+            ) => reservation != expected,
+            (actual, expected) => actual.as_ref() != Some(expected),
+        }
         || record.metadata.reference().size_bytes() != charged_bytes
         || !matches!(
             (&record.state, outcome),
@@ -340,7 +366,7 @@ pub(crate) fn validate_controller_charge_publication(
             "controller artifact mutation disagrees with its publication outcome",
         ));
     }
-    Ok(record.run)
+    Ok(expected_run.clone())
 }
 
 fn scrub_publication(
@@ -388,7 +414,9 @@ pub(crate) fn validate_publication_reservation_scrub(
     publication: &str,
 ) -> Result<(), PersistenceError> {
     let record = scrub_publication(read, publication)?;
-    if !matches!(record.state, PublicationState::Writable) || record.run.as_str() != run {
+    if !matches!(record.state, PublicationState::Writable)
+        || owner::domain_key(&record.owner)?.as_str() != run
+    {
         return Err(error::corruption(
             "artifact run reservation disagrees with its writable publication",
         ));

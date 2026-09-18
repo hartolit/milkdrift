@@ -8,7 +8,7 @@
 use std::sync::Weak;
 
 use milkdrift_capability::{ArtifactReference, PeerId};
-use milkdrift_peer_http::{
+use milkdrift_capability_host::{
     CorePeerArtifactStore, PeerArtifactError, PeerArtifactStore, PeerArtifactTransferFacts,
 };
 use milkdrift_peer_protocol::{
@@ -17,11 +17,11 @@ use milkdrift_peer_protocol::{
     PeerRequestId, TransferId,
 };
 use milkdrift_persistence::{
-    PageSize, PeerAdmission, PeerAdmissionOutcome, PeerCatalogState, PeerClaimOutcome,
-    PeerDispatchClaimRequest, PeerEntryOutcome, PeerEntryRequest, PeerExecutionRecord,
-    PeerExecutionSnapshot, PeerExecutionStatus, PeerExecutionStore, PeerObservationAppend,
-    PeerObservationPage, PeerRecoveryResult, PeerRelationshipState, PeerRetentionPage,
-    PeerRetentionRequest, PersistenceError, StorageFailureClass, WorkerId,
+    PageSize, PeerAdmission, PeerAdmissionOutcome, PeerClaimOutcome, PeerDispatchClaimRequest,
+    PeerEntryOutcome, PeerEntryRequest, PeerExecutionRecord, PeerExecutionSnapshot,
+    PeerExecutionStatus, PeerExecutionStore, PeerObservationAppend, PeerObservationPage,
+    PeerRecoveryResult, PeerRetentionPage, PeerRetentionRequest, PersistenceError,
+    ServingCallerState, ServingCatalogState, StorageFailureClass, WorkerId,
 };
 use milkdrift_redb_store::RedbStore;
 
@@ -79,24 +79,31 @@ impl OwnerPeerExecutionStore {
 }
 
 impl PeerExecutionStore for OwnerPeerExecutionStore {
+    fn bind_serving_host(&self, host: &PeerId) -> Result<(), PersistenceError> {
+        let host = host.clone();
+        self.call(move |direct| direct.bind_serving_host(&host))
+    }
     fn set_peer_admission_open(&self, open: bool) -> Result<(), PersistenceError> {
         self.call(move |direct| direct.set_peer_admission_open(open))
     }
 
     fn configure_peer_relationship(
         &self,
-        relationship: &PeerRelationshipState,
+        relationship: &ServingCallerState,
     ) -> Result<(), PersistenceError> {
         let relationship = relationship.clone();
         self.call(move |direct| direct.configure_peer_relationship(&relationship))
     }
 
-    fn publish_peer_catalog(&self, catalog: &PeerCatalogState) -> Result<(), PersistenceError> {
+    fn publish_peer_catalog(&self, catalog: &ServingCatalogState) -> Result<(), PersistenceError> {
         let catalog = catalog.clone();
         self.call(move |direct| direct.publish_peer_catalog(&catalog))
     }
 
-    fn peer_catalog(&self, peer: &PeerId) -> Result<Option<PeerCatalogState>, PersistenceError> {
+    fn peer_catalog(
+        &self,
+        peer: &milkdrift_peer_protocol::ServingCaller,
+    ) -> Result<Option<ServingCatalogState>, PersistenceError> {
         let peer = peer.clone();
         self.call(move |direct| direct.peer_catalog(&peer))
     }
@@ -105,7 +112,7 @@ impl PeerExecutionStore for OwnerPeerExecutionStore {
         &self,
         admission: &PeerAdmission<'_>,
     ) -> Result<PeerAdmissionOutcome, PersistenceError> {
-        let owner_peer = admission.owner_peer.clone();
+        let caller = admission.caller.clone();
         let request = admission.request.clone();
         let authority = admission.authority.clone();
         let execution = admission.execution.clone();
@@ -118,7 +125,7 @@ impl PeerExecutionStore for OwnerPeerExecutionStore {
         let archive_terminal_before_or_at_unix_ms = admission.archive_terminal_before_or_at_unix_ms;
         self.call(move |direct| {
             direct.admit_peer_execution(&PeerAdmission {
-                owner_peer: &owner_peer,
+                caller: &caller,
                 request: &request,
                 authority: &authority,
                 execution: &execution,
@@ -135,7 +142,7 @@ impl PeerExecutionStore for OwnerPeerExecutionStore {
 
     fn peer_execution_by_request(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         request: &PeerRequestId,
     ) -> Result<Option<PeerExecutionSnapshot>, PersistenceError> {
         let owner = owner.clone();
@@ -145,7 +152,7 @@ impl PeerExecutionStore for OwnerPeerExecutionStore {
 
     fn peer_execution(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
     ) -> Result<Option<PeerExecutionSnapshot>, PersistenceError> {
         let owner = owner.clone();
@@ -163,7 +170,7 @@ impl PeerExecutionStore for OwnerPeerExecutionStore {
 
     fn peer_observations(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         after_sequence: u64,
         limit: PageSize,
@@ -215,7 +222,7 @@ impl PeerExecutionStore for OwnerPeerExecutionStore {
 
     fn release_peer_claim(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         worker: &WorkerId,
         claim_generation: u64,
@@ -237,7 +244,7 @@ impl PeerExecutionStore for OwnerPeerExecutionStore {
 
     fn extend_peer_claim(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         worker: &WorkerId,
         claim_generation: u64,
@@ -259,7 +266,7 @@ impl PeerExecutionStore for OwnerPeerExecutionStore {
 
     fn mark_peer_uncertain(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         worker: &WorkerId,
         claim_generation: u64,
@@ -284,7 +291,7 @@ impl PeerExecutionStore for OwnerPeerExecutionStore {
 
     fn append_peer_observation(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         observation: &PeerObservation,
     ) -> Result<PeerObservationAppend, PersistenceError> {
@@ -296,7 +303,7 @@ impl PeerExecutionStore for OwnerPeerExecutionStore {
 
     fn request_peer_cancellation(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         request: &PeerCancellationRequest,
         requested_at_unix_ms: u64,
     ) -> Result<PeerExecutionRecord, PersistenceError> {
@@ -309,7 +316,7 @@ impl PeerExecutionStore for OwnerPeerExecutionStore {
 
     fn acknowledge_peer_cancellation(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         acknowledgement: &PeerCancellationAcknowledgement,
         acknowledged_at_unix_ms: u64,
     ) -> Result<PeerExecutionRecord, PersistenceError> {
@@ -385,6 +392,13 @@ impl OwnerPeerArtifactStore {
 }
 
 impl PeerArtifactStore for OwnerPeerArtifactStore {
+    fn read_input_chunk(
+        &self,
+        request: &milkdrift_persistence::ArtifactReadRequest,
+    ) -> Result<milkdrift_persistence::ArtifactReadChunk, PeerArtifactError> {
+        let request = request.clone();
+        self.call(move |direct| direct.read_input_chunk(&request))
+    }
     fn metadata(
         &self,
         reference: &ArtifactReference,
@@ -395,51 +409,55 @@ impl PeerArtifactStore for OwnerPeerArtifactStore {
 
     fn transfer_facts(
         &self,
-        owner_peer: &PeerId,
+        caller: &PeerId,
         transfer: &TransferId,
     ) -> Result<PeerArtifactTransferFacts, PeerArtifactError> {
-        let owner_peer = owner_peer.clone();
+        let caller = caller.clone();
         let transfer = transfer.clone();
-        self.call(move |direct| direct.transfer_facts(&owner_peer, &transfer))
+        self.call(move |direct| direct.transfer_facts(&caller, &transfer))
     }
 
     fn negotiate(
         &self,
-        owner_peer: &PeerId,
+        caller: &PeerId,
         offer: &ArtifactMetadataOffer,
         maximum_artifact_bytes: u64,
+        controller: Option<&milkdrift_persistence::ControllerArtifactOwner>,
     ) -> Result<ArtifactTransferDecision, PeerArtifactError> {
-        let owner_peer = owner_peer.clone();
+        let caller = caller.clone();
         let offer = offer.clone();
-        self.call(move |direct| direct.negotiate(&owner_peer, &offer, maximum_artifact_bytes))
+        let controller = controller.cloned();
+        self.call(move |direct| {
+            direct.negotiate(&caller, &offer, maximum_artifact_bytes, controller.as_ref())
+        })
     }
 
     fn write_chunk(
         &self,
-        owner_peer: &PeerId,
+        caller: &PeerId,
         chunk: &ArtifactChunk,
         maximum_chunk_bytes: u32,
     ) -> Result<ArtifactTransferDecision, PeerArtifactError> {
-        let owner_peer = owner_peer.clone();
+        let caller = caller.clone();
         let chunk = chunk.clone();
-        self.call(move |direct| direct.write_chunk(&owner_peer, &chunk, maximum_chunk_bytes))
+        self.call(move |direct| direct.write_chunk(&caller, &chunk, maximum_chunk_bytes))
     }
 
     fn read_chunk(
         &self,
-        owner_peer: &PeerId,
+        caller: &PeerId,
         transfer: &TransferId,
         offset: u64,
         maximum_bytes: u32,
     ) -> Result<ArtifactChunk, PeerArtifactError> {
-        let owner_peer = owner_peer.clone();
+        let caller = caller.clone();
         let transfer = transfer.clone();
-        self.call(move |direct| direct.read_chunk(&owner_peer, &transfer, offset, maximum_bytes))
+        self.call(move |direct| direct.read_chunk(&caller, &transfer, offset, maximum_bytes))
     }
 
-    fn abort(&self, owner_peer: &PeerId, transfer: &TransferId) -> Result<(), PeerArtifactError> {
-        let owner_peer = owner_peer.clone();
+    fn abort(&self, caller: &PeerId, transfer: &TransferId) -> Result<(), PeerArtifactError> {
+        let caller = caller.clone();
         let transfer = transfer.clone();
-        self.call(move |direct| direct.abort(&owner_peer, &transfer))
+        self.call(move |direct| direct.abort(&caller, &transfer))
     }
 }

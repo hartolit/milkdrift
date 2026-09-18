@@ -10,6 +10,44 @@ use milkdrift_persistence::{
     PeerExecutionTombstone,
 };
 
+pub(crate) fn observation_page(
+    page: milkdrift_persistence::PeerObservationPage,
+    execution: &milkdrift_peer_protocol::PeerExecutionId,
+    after_sequence: u64,
+    maximum_items: usize,
+) -> Result<milkdrift_peer_protocol::ObservationPage, super::ServingError> {
+    let status = snapshot_status(&page.execution);
+    let next_sequence = page
+        .observations
+        .last()
+        .map_or(after_sequence, |observation| observation.sequence);
+    let archived = matches!(page.execution, PeerExecutionSnapshot::Archived(_));
+    let caught_up = archived || next_sequence >= page.execution.last_observation_sequence();
+    let result = milkdrift_peer_protocol::ObservationPage {
+        execution: execution.clone(),
+        after_sequence,
+        next_sequence,
+        observations: page.observations,
+        status,
+        terminal: caught_up && status == RemoteExecutionStatus::Terminal,
+        closed: caught_up
+            && matches!(
+                status,
+                RemoteExecutionStatus::Terminal | RemoteExecutionStatus::OutcomeUnknown
+            ),
+        history: match page.execution {
+            PeerExecutionSnapshot::Hot(_) => ObservationHistory::Hot,
+            PeerExecutionSnapshot::Archived(tombstone) => ObservationHistory::Archived {
+                summary: Box::new(archived_summary(&tombstone)),
+            },
+        },
+    };
+    result
+        .validate(maximum_items)
+        .map_err(|error| super::ServingError::Protocol(error.to_string()))?;
+    Ok(result)
+}
+
 pub(crate) fn acceptance(snapshot: &PeerExecutionSnapshot, replayed: bool) -> InvocationAcceptance {
     match snapshot {
         PeerExecutionSnapshot::Hot(record) => InvocationAcceptance::Accepted {

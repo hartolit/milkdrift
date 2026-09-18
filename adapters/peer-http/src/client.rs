@@ -8,7 +8,7 @@ use milkdrift_peer_protocol::{
     ArtifactChunk, ArtifactMetadataOffer, ArtifactTransferDecision, CatalogSnapshot,
     HandshakeRequest, HandshakeResponse, InvocationAcceptance, InvocationLookup,
     ObservationHistory, ObservationPage, PeerCancellationAcknowledgement, PeerCancellationRequest,
-    PeerExecutionId, PeerInvocationRequest, PeerRequestId, ProtocolEnvelope, ProtocolVersion,
+    PeerExecutionId, PeerRequestId, ProtocolEnvelope, ProtocolVersion, ServingInvocationRequest,
     TransferId, decode_envelope, encode_envelope,
 };
 use reqwest::{
@@ -156,7 +156,7 @@ impl PeerHttpClient {
     /// An error may follow remote acceptance; it is not permission to submit replacement work.
     pub fn submit(
         &self,
-        request: &PeerInvocationRequest,
+        request: &ServingInvocationRequest,
     ) -> Result<InvocationAcceptance, PeerHttpError> {
         self.ensure_handshake()?;
         let mut last_error = None;
@@ -291,7 +291,7 @@ impl PeerHttpClient {
         offer
             .validate()
             .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
-        if offer.execution != *execution
+        if offer.binding.execution() != Some(execution)
             || &offer.source_peer != self.remote_peer()
             || offer.direction != milkdrift_peer_protocol::ArtifactTransferDirection::Download
         {
@@ -584,7 +584,7 @@ mod tests {
     fn response_decoder_requires_the_exact_negotiated_version()
     -> Result<(), Box<dyn std::error::Error>> {
         let bytes = encode_envelope(&ProtocolEnvelope::v1(serde_json::json!({"ok": true})))?;
-        let decoded: serde_json::Value = decode_response_document(&bytes, ProtocolVersion::V1_3)?;
+        let decoded: serde_json::Value = decode_response_document(&bytes, ProtocolVersion::V1_4)?;
         assert_eq!(decoded, serde_json::json!({"ok": true}));
 
         assert!(
@@ -596,7 +596,7 @@ mod tests {
         );
         let legacy = br#"{"protocol":{"major":1,"minor":1},"message":null,"extensions":{}}"#;
         assert!(
-            decode_response_document::<serde_json::Value>(legacy, ProtocolVersion::V1_3).is_err()
+            decode_response_document::<serde_json::Value>(legacy, ProtocolVersion::V1_4).is_err()
         );
         Ok(())
     }

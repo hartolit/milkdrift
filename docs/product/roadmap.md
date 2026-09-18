@@ -4,12 +4,11 @@ Ordered unfinished work; [status](status.md) owns implementation and evidence fa
 
 The user has authorized the [adaptive methods and independent hosts sprint](../development/virtual-office/adaptive-hosts/README.md).
 Its direction is adopted in vision, architecture, and ADRs 0038–0041. This authorization replaces
-the blanket feature freeze. Execute the following responsibility boundaries in order; each must
+the blanket feature freeze. Complete the remaining responsibility boundaries in order; each must
 finish its public path, refusal/recovery behavior, tests, and documentation before its successor.
 
 | Order | Unfinished responsibility | Acceptance outcome |
 | --- | --- | --- |
-| 01 | Independent execution hosting | Direct process/model calls and workflow requests share prepared execution, explicit origin, authorized inputs/artifacts, durable serving acceptance and recovery; local attempts keep runtime history and accounts. |
 | 02 | Managed Linux resources | Rootless Podman and systemd/Quadlet supply a useful setup with approved configuration, durable ownership, generation use protection, exclusive editing and child handoff, recovery, update, and deliberate removal. |
 | 03 | Adaptive methods and protected obligations | Agents can repair within an immutable agreement; trusted candidate-bound verification and the consequential operation both prevent bypass. |
 | 04 | Published workflow capabilities | Exact starting methods and adaptation policies are callable under constrained service authority, with one recoverable internal run, inherited accounting, and progress with one worker and a shared working area. |

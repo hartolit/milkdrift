@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, fmt, str::FromStr};
 
-use milkdrift_capability::InvocationId;
+use milkdrift_capability::{InvocationId, PeerId};
 use serde::{Deserialize, Serialize, Serializer};
 
 use crate::{ArtifactId, CausalId, RunId, ValueKey, WorkspaceError, WorkspaceValueReference};
@@ -10,6 +10,72 @@ const BLAKE3_HEX_BYTES: usize = BLAKE3_DIGEST_BYTES * 2;
 /// Maximum bytes in one canonical artifact media type.
 pub const MAX_MEDIA_TYPE_BYTES: usize = 255;
 const MAX_CAUSAL_REFERENCES: usize = 128;
+
+/// Durable owner charged for a logical artifact, independently of content deduplication.
+/// A remote workflow's outputs belong to the serving invocation, not to a local run.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ArtifactOwner {
+    /// The authenticated peer's cumulative input quota on this installation.
+    PeerInput {
+        /// Receiving host.
+        host: PeerId,
+        /// Authenticated source peer.
+        peer: PeerId,
+    },
+    /// The authenticated client's cumulative input-publication quota on this installation.
+    ClientInput {
+        /// Actual serving host.
+        host: PeerId,
+        /// Server-resolved actor identity, represented without importing authority policy.
+        client: CausalId,
+    },
+    /// A workflow workspace in this store.
+    Workflow {
+        /// Local durable run.
+        run: RunId,
+    },
+    /// An accepted invocation in this host's serving ledger.
+    HostInvocation {
+        /// Configured serving host identity.
+        host: PeerId,
+        /// Host-scoped invocation identity derived from durable acceptance.
+        invocation: InvocationId,
+    },
+    /// A bounded artifact import authenticated from another host.
+    Transfer {
+        /// Authenticated source host.
+        source: PeerId,
+        /// Exact immutable transfer identity.
+        transfer: CausalId,
+    },
+}
+
+impl ArtifactOwner {
+    /// Returns local workflow ownership when it actually exists.
+    #[must_use]
+    pub const fn run(&self) -> Option<&RunId> {
+        match self {
+            Self::Workflow { run } => Some(run),
+            Self::HostInvocation { .. }
+            | Self::Transfer { .. }
+            | Self::ClientInput { .. }
+            | Self::PeerInput { .. } => None,
+        }
+    }
+}
+
+impl From<&RunId> for ArtifactOwner {
+    fn from(run: &RunId) -> Self {
+        Self::Workflow { run: run.clone() }
+    }
+}
+
+impl From<&ArtifactOwner> for ArtifactOwner {
+    fn from(owner: &ArtifactOwner) -> Self {
+        owner.clone()
+    }
+}
 
 /// Canonical 256-bit BLAKE3 content digest.
 ///
@@ -337,6 +403,22 @@ pub enum ArtifactRetention {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum CausalReference {
+    /// A fact asserted by an authenticated source host, not a fact in this store's journal.
+    PeerClaim {
+        /// Authenticated host that supplied the assertion.
+        peer: PeerId,
+        /// Original typed cause. At most four import boundaries may be retained.
+        reference: Box<CausalReference>,
+    },
+    /// Bytes submitted through the authenticated public input-publication path.
+    ClientUpload {
+        /// Actual serving host.
+        host: PeerId,
+        /// Server-resolved actor identity.
+        client: CausalId,
+        /// Caller-scoped immutable upload identity.
+        upload: CausalId,
+    },
     /// One named input pinned when a run was created.
     RunInput {
         /// Owning run.
@@ -359,6 +441,13 @@ pub enum CausalReference {
         /// Provider-neutral invocation identity.
         invocation: InvocationId,
     },
+    /// An invocation durably accepted by an independent serving host.
+    HostInvocation {
+        /// Serving host identity.
+        host: PeerId,
+        /// Exact host-scoped invocation identity.
+        invocation: InvocationId,
+    },
     /// A bounded external import or operator-supplied source reference.
     External {
         /// Opaque durable source identity; never source bytes or credentials.
@@ -367,6 +456,18 @@ pub enum CausalReference {
 }
 
 impl CausalReference {
+    fn import_depth(&self) -> usize {
+        let mut depth = 0;
+        let mut current = self;
+        while let Self::PeerClaim { reference, .. } = current {
+            depth += 1;
+            if depth > 4 {
+                break;
+            }
+            current = reference;
+        }
+        depth
+    }
     fn references_artifact(&self, artifact: &ArtifactReference) -> bool {
         matches!(self, Self::Artifact { reference } if reference == artifact)
     }
@@ -405,6 +506,14 @@ impl ArtifactProvenance {
         producer: CausalReference,
         causes: Vec<CausalReference>,
     ) -> Result<Self, WorkspaceError> {
+        if std::iter::once(&producer)
+            .chain(&causes)
+            .any(|reference| reference.import_depth() > 4)
+        {
+            return Err(WorkspaceError::InvalidArtifact(
+                "causal import depth exceeds four authenticated boundaries".to_owned(),
+            ));
+        }
         if causes.len() > MAX_CAUSAL_REFERENCES {
             return Err(WorkspaceError::InvalidArtifact(format!(
                 "provenance may contain at most {MAX_CAUSAL_REFERENCES} causal references"

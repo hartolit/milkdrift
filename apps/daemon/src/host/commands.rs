@@ -20,6 +20,7 @@ impl Owner {
         session: &ActorSession,
         request: &CommandRequest,
     ) -> Result<CommandAccepted, PublicFailure> {
+        self.workflow()?;
         match &request.command {
             Command::ImportBlueprint { document } => {
                 definitions::blueprint(self, session, request, document, true)

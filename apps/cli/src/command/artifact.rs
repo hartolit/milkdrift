@@ -11,6 +11,32 @@ pub(super) async fn execute(
     command: &ArtifactCommand,
 ) -> Result<(), CliError> {
     match command {
+        ArtifactCommand::Upload {
+            file,
+            host,
+            upload_id,
+            media_type,
+            sensitivity,
+        } => {
+            let bytes = crate::input::read_bounded(
+                file,
+                milkdrift_control_protocol::MAX_INPUT_UPLOAD_BYTES,
+                "input artifact",
+            )
+            .await?;
+            let request = milkdrift_control_protocol::InputUploadRequest::from_content(
+                host.clone(),
+                upload_id.clone(),
+                media_type.clone(),
+                sensitivity.clone(),
+                &bytes,
+            )
+            .map_err(|error| CliError::Invalid(error.to_string()))?;
+            session.output(
+                "artifact.upload",
+                &session.client().upload_input(&request).await?,
+            )
+        }
         ArtifactCommand::Metadata { artifact } => session.output(
             "artifact.metadata",
             &session.client().artifact_metadata(artifact).await?,

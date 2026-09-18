@@ -81,6 +81,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum TopCommand {
+    /// Independent execution on the explicitly selected daemon endpoint.
+    Invocation {
+        #[command(subcommand)]
+        command: InvocationCommand,
+    },
     /// Daemon lifecycle observations.
     Daemon {
         #[command(subcommand)]
@@ -142,6 +147,51 @@ enum TopCommand {
     Layout {
         #[command(subcommand)]
         command: LayoutCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum InvocationCommand {
+    /// Discover the host identity, limits and exact callable generations.
+    Catalog,
+    /// Save an exact request from current discovery without admitting execution.
+    Prepare {
+        capability: String,
+        operation: String,
+        #[arg(long)]
+        host: String,
+        #[arg(long)]
+        request_id: String,
+        /// JSON array of named inline or artifact input references.
+        #[arg(long)]
+        inputs: PathBuf,
+        /// New file to retain for submission and exact replay.
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Submit an immutable direct request document once; save it for exact replay.
+    Submit { file: PathBuf },
+    /// Recover durable acceptance after a lost reply.
+    Lookup { request: String },
+    /// Inspect one accepted invocation in the authenticated caller's namespace.
+    Show { execution: String },
+    /// Read one bounded observation page.
+    Observations {
+        execution: String,
+        #[arg(long, default_value_t = 0)]
+        after: u64,
+        #[arg(long, default_value_t = 128, value_parser = clap::value_parser!(u32).range(1..=1024))]
+        limit: u32,
+    },
+    /// Follow bounded pages until terminal evidence or retained uncertainty; requires a timeout.
+    Wait { execution: String },
+    /// Request cancellation; acknowledgement is separate from execution outcome.
+    Cancel {
+        execution: String,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u64).range(1..))]
+        sequence: u64,
     },
 }
 
@@ -475,6 +525,18 @@ enum PeerCommand {
 
 #[derive(Subcommand)]
 enum ArtifactCommand {
+    /// Publish one complete input file (at most 512 KiB) with authenticated provenance.
+    Upload {
+        file: PathBuf,
+        #[arg(long)]
+        host: String,
+        #[arg(long)]
+        upload_id: String,
+        #[arg(long, default_value = "application/octet-stream")]
+        media_type: String,
+        #[arg(long, default_value = "restricted", value_parser = ["restricted", "internal", "public"])]
+        sensitivity: String,
+    },
     /// Read safe immutable metadata.
     Metadata { artifact: String },
     /// Download verified bounded ranges into one new explicit destination.

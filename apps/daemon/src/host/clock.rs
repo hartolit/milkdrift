@@ -5,7 +5,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use milkdrift_peer_http::{PeerClock, PeerClockError};
+use milkdrift_capability_host::{PeerClock, PeerClockError};
 use milkdrift_persistence::{
     ClockWatermarkObservation, PersistenceError, StorageFailureClass, TimestampMillis,
 };
@@ -190,12 +190,12 @@ impl StoreClock for StoreClockAdapter {
 mod tests {
     use std::sync::atomic::AtomicU64;
 
-    use milkdrift_peer_http::PeerClockError;
+    use milkdrift_capability_host::PeerClockError;
     use milkdrift_persistence::ClockWatermarkStore;
     use tempfile::TempDir;
 
     use super::*;
-    use crate::config::{ApplicationReceiptConfig, PeerHostConfig, StoragePlan};
+    use crate::config::{ApplicationReceiptConfig, StoragePlan};
 
     struct ControlledSource {
         now: AtomicU64,
@@ -242,7 +242,12 @@ mod tests {
             application_receipts: ApplicationReceiptConfig::default(),
             security_audit_record_bound: 10,
         };
-        let health = Arc::new(SharedHealth::new(4, &storage, &PeerHostConfig::default()));
+        let health = Arc::new(SharedHealth::new(
+            4,
+            &storage,
+            None,
+            milkdrift_control_protocol::HostRole::WorkflowEnabled,
+        ));
         let (sender, _receiver) = std::sync::mpsc::sync_channel(1);
         let sender = Arc::new(sender);
         let queue = OwnerQueue::new(

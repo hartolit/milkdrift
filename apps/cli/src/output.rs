@@ -136,6 +136,19 @@ fn human_value(value: &Value) {
         Value::Object(fields) => {
             for key in [
                 "command_id",
+                "host",
+                "request_id",
+                "execution",
+                "type",
+                "status",
+                "origin",
+                "replayed",
+                "code",
+                "detail",
+                "closed",
+                "next_sequence",
+                "disposition",
+                "terminal_boundary",
                 "result_type",
                 "run_id",
                 "revision_id",
@@ -168,7 +181,20 @@ fn human_value(value: &Value) {
                     println!("  cumulative controller accounting: {accounting}");
                 }
             }
-            for key in ["summary", "value", "items"] {
+            for key in [
+                "summary",
+                "value",
+                "items",
+                "catalog",
+                "entries",
+                "descriptor",
+                "acceptance",
+                "observations",
+                "event",
+                "kind",
+                "final_observation",
+                "history",
+            ] {
                 if let Some(value) = fields.get(key) {
                     human_value(value);
                 }

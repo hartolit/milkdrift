@@ -1,4 +1,6 @@
-schema_version = 9
+schema_version = 10
+role = "workflow_enabled"
+host_id = "host:local"
 data_root = "./test-data"
 bind = "127.0.0.1:9734"
 security_audit_record_bound = 10000

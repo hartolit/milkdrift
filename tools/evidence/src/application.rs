@@ -478,6 +478,9 @@ pub fn write_config(
     );
     let config = DaemonConfig {
         schema_version: milkdrift_daemon::DAEMON_CONFIG_SCHEMA_VERSION,
+        role: milkdrift_control_protocol::HostRole::WorkflowEnabled,
+        host_id: "host:local".to_owned(),
+        serving: Default::default(),
         data_root: directory.join("data"),
         bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), bind.port()),
         secret_sources,

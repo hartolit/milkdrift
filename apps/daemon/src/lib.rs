@@ -17,9 +17,9 @@ mod http;
 
 pub use config::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, ControllerActivation, DAEMON_CONFIG_SCHEMA_VERSION, DaemonConfig,
-    DaemonPlan, ModelProfileConfig, PeerHostConfig, PeerRelationshipConfig, PeerServingConfig,
-    PeerSideEffectConfig, RuntimeHostConfig, SecretSourceConfig, ShutdownConfig,
+    AuthorityPresetConfig, ClientServingConfig, ControllerActivation, DAEMON_CONFIG_SCHEMA_VERSION,
+    DaemonConfig, DaemonPlan, ModelProfileConfig, PeerHostConfig, PeerRelationshipConfig,
+    PeerSideEffectConfig, RuntimeHostConfig, SecretSourceConfig, ServingHostConfig, ShutdownConfig,
     ShutdownEffectPolicy,
 };
 pub use host::{DaemonHost, HostError};

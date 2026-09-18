@@ -17,38 +17,24 @@ use milkdrift_runtime::{
 use super::{CapabilityHost, GenerationHealth, GenerationKey, HostCore, HostError, RegistryState};
 use crate::{
     AdapterError, AdapterExecutionContext, AdapterFailureKind, AdapterInvocation, AdapterReporter,
-    CapabilityAdapter,
+    CapabilityAdapter, PreparedAdapterExecution,
 };
 
 impl CapabilityHost {
-    /// Executes one already-persisted exact snapshot without re-resolution or fallback.
-    ///
-    /// The caller must own authorization and durable reporting. This direct host boundary checks
-    /// selection and permits but does not run runtime's final authority/account transaction.
-    /// Ordinary runtime work uses the `TaskExecutor` prepared-entry path instead.
+    /// Exercises prepared adapter entry without a durable owner in conformance tests.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn execute_exact(
         &self,
         snapshot: &ResolvedCapabilitySnapshot,
         request: &InvocationRequest,
         reporter: &dyn AdapterReporter,
     ) -> Result<(), ExecutorError> {
-        let (adapter, mut permit) = self.acquire(snapshot, request)?;
-        let invocation = AdapterInvocation::new(snapshot, request);
-        match catch_unwind(AssertUnwindSafe(|| adapter.execute(&invocation, reporter))) {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => {
-                permit.failure = Some(error.summary().to_owned());
-                Err(executor_error_from_adapter(&error))
-            }
-            Err(_panic) => {
-                permit.failure = Some("adapter panicked".to_owned());
-                Err(ExecutorError::AdapterPanicked { after_entry: true })
-            }
-        }
+        self.prepare_invocation(snapshot, request, None)?
+            .enter(None, reporter)
     }
 
-    /// Executes one already-persisted exact snapshot with explicit durable provenance.
-    /// The caller has the same authorization/reporting obligations as [`Self::execute_exact`].
+    /// Exercises contextual prepared entry without a durable owner in adapter tests.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn execute_exact_with_context(
         &self,
         snapshot: &ResolvedCapabilitySnapshot,
@@ -56,19 +42,35 @@ impl CapabilityHost {
         context: &AdapterExecutionContext,
         reporter: &dyn AdapterReporter,
     ) -> Result<(), ExecutorError> {
+        self.prepare_invocation(snapshot, request, Some(context))?
+            .enter(Some(context), reporter)
+    }
+
+    pub(crate) fn prepare_invocation(
+        &self,
+        snapshot: &ResolvedCapabilitySnapshot,
+        request: &InvocationRequest,
+        context: Option<&AdapterExecutionContext>,
+    ) -> Result<PreparedHostInvocation, ExecutorError> {
         let (adapter, mut permit) = self.acquire(snapshot, request)?;
-        let invocation = AdapterInvocation::with_context(snapshot, request, context);
-        match catch_unwind(AssertUnwindSafe(|| adapter.execute(&invocation, reporter))) {
-            Ok(Ok(())) => Ok(()),
+        let invocation = invocation_view(snapshot, request, context);
+        let prepared = match catch_unwind(AssertUnwindSafe(|| adapter.prepare(&invocation))) {
+            Ok(Ok(prepared)) => prepared,
             Ok(Err(error)) => {
-                permit.failure = Some(error.summary().to_owned());
-                Err(executor_error_from_adapter(&error))
+                permit.mark_failure(error.summary());
+                return Err(executor_error_from_adapter(&error));
             }
             Err(_panic) => {
-                permit.failure = Some("adapter panicked".to_owned());
-                Err(ExecutorError::AdapterPanicked { after_entry: true })
+                permit.mark_failure("adapter panicked during local preparation");
+                return Err(ExecutorError::AdapterPanicked { after_entry: false });
             }
-        }
+        };
+        Ok(PreparedHostInvocation {
+            snapshot: snapshot.clone(),
+            request: request.clone(),
+            prepared,
+            permit,
+        })
     }
 
     /// Routes cancellation to the exact registered generation currently owning an invocation.
@@ -192,43 +194,16 @@ impl TaskExecutor for CapabilityHost {
         &'a self,
         dispatch: &ExecutionDispatch,
     ) -> Result<PreparedExecution<'a>, ExecutorError> {
-        let (adapter, mut permit) = self.acquire(dispatch.resolution(), dispatch.request())?;
         let context = AdapterExecutionContext::from_dispatch(dispatch, None);
-        let invocation =
-            AdapterInvocation::with_context(dispatch.resolution(), dispatch.request(), &context);
-        let prepared = match catch_unwind(AssertUnwindSafe(|| adapter.prepare(&invocation))) {
-            Ok(Ok(prepared)) => prepared,
-            Ok(Err(error)) => {
-                permit.mark_failure(error.summary());
-                return Err(executor_error_from_adapter(&error));
-            }
-            Err(_panic) => {
-                permit.mark_failure("adapter panicked during local preparation");
-                return Err(ExecutorError::AdapterPanicked { after_entry: false });
-            }
-        };
+        let prepared =
+            self.prepare_invocation(dispatch.resolution(), dispatch.request(), Some(&context))?;
         Ok(PreparedExecution::new_with_controller_reservation(
             dispatch,
             prepared.envelope().clone(),
             move |dispatch, reservation, reporter| {
                 let bridge = ReporterBridge { reporter };
                 let context = AdapterExecutionContext::from_dispatch(dispatch, reservation);
-                let invocation = AdapterInvocation::with_context(
-                    dispatch.resolution(),
-                    dispatch.request(),
-                    &context,
-                );
-                match catch_unwind(AssertUnwindSafe(|| prepared.enter(&invocation, &bridge))) {
-                    Ok(Ok(())) => Ok(()),
-                    Ok(Err(error)) => {
-                        permit.mark_failure(error.summary());
-                        Err(executor_error_from_adapter(&error))
-                    }
-                    Err(_panic) => {
-                        permit.mark_failure("adapter panicked");
-                        Err(ExecutorError::AdapterPanicked { after_entry: true })
-                    }
-                }
+                prepared.enter(Some(&context), &bridge)
             },
         ))
     }
@@ -238,6 +213,51 @@ impl TaskExecutor for CapabilityHost {
         request: &CancellationRequest,
     ) -> Result<CancellationAcknowledgement, ExecutorError> {
         self.cancel_exact(request)
+    }
+}
+
+pub(crate) struct PreparedHostInvocation {
+    snapshot: ResolvedCapabilitySnapshot,
+    request: InvocationRequest,
+    prepared: PreparedAdapterExecution,
+    permit: Permit,
+}
+
+impl PreparedHostInvocation {
+    pub(crate) fn envelope(&self) -> &milkdrift_capability::InvocationAdmissionEnvelope {
+        self.prepared.envelope()
+    }
+
+    pub(crate) fn enter(
+        mut self,
+        context: Option<&AdapterExecutionContext>,
+        reporter: &dyn AdapterReporter,
+    ) -> Result<(), ExecutorError> {
+        let invocation = invocation_view(&self.snapshot, &self.request, context);
+        match catch_unwind(AssertUnwindSafe(|| {
+            self.prepared.enter(&invocation, reporter)
+        })) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => {
+                self.permit.mark_failure(error.summary());
+                Err(executor_error_from_adapter(&error))
+            }
+            Err(_panic) => {
+                self.permit.mark_failure("adapter panicked");
+                Err(ExecutorError::AdapterPanicked { after_entry: true })
+            }
+        }
+    }
+}
+
+fn invocation_view<'a>(
+    snapshot: &'a ResolvedCapabilitySnapshot,
+    request: &'a InvocationRequest,
+    context: Option<&'a AdapterExecutionContext>,
+) -> AdapterInvocation<'a> {
+    match context {
+        Some(context) => AdapterInvocation::with_context(snapshot, request, context),
+        None => AdapterInvocation::new(snapshot, request),
     }
 }
 

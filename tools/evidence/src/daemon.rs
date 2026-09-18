@@ -225,6 +225,9 @@ fn configuration(
     write_private(&token_path, TOKEN.as_bytes())?;
     let config = DaemonConfig {
         schema_version: milkdrift_daemon::DAEMON_CONFIG_SCHEMA_VERSION,
+        role: milkdrift_control_protocol::HostRole::WorkflowEnabled,
+        host_id: "host:local".to_owned(),
+        serving: Default::default(),
         data_root: directory.path().join("data"),
         bind: reserve_endpoint()?,
         secret_sources: BTreeMap::from([(

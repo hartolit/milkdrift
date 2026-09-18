@@ -222,7 +222,10 @@ impl RunProjection {
             CausalReference::Invocation { invocation } if self.invocations.contains(invocation) => {
                 Ok(())
             }
-            CausalReference::External { .. } => Ok(()),
+            CausalReference::External { .. }
+            | CausalReference::HostInvocation { .. }
+            | CausalReference::ClientUpload { .. }
+            | CausalReference::PeerClaim { .. } => Ok(()),
             CausalReference::RunInput { .. } | CausalReference::Invocation { .. } => {
                 Err(invalid_at(
                     event,

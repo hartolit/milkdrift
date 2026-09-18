@@ -4,7 +4,34 @@ use milkdrift_workspace::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{PeerExecutionId, PeerProtocolError, TransferId};
+use crate::{PeerExecutionId, PeerProtocolError, ServingInvocationRequest, TransferId};
+
+/// The immutable request consuming an input, or the accepted execution producing an output.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+pub enum ArtifactTransferBinding {
+    /// Upload input before acceptance, without creating an execution or entering an adapter.
+    Input {
+        /// Exact catalog, selection, origin and delegated allowance that will consume these bytes.
+        request: Box<ServingInvocationRequest>,
+    },
+    /// Transfer an artifact associated with an already accepted execution.
+    Execution {
+        /// Host-scoped durable execution identity.
+        execution: PeerExecutionId,
+    },
+}
+
+impl ArtifactTransferBinding {
+    /// Returns an accepted execution only when the transfer actually has one.
+    #[must_use]
+    pub const fn execution(&self) -> Option<&PeerExecutionId> {
+        match self {
+            Self::Execution { execution } => Some(execution),
+            Self::Input { .. } => None,
+        }
+    }
+}
 
 /// Protocol ceiling for one artifact chunk or range.
 pub const MAX_ARTIFACT_CHUNK_BYTES: u32 = 1_048_576;
@@ -24,7 +51,7 @@ pub enum ArtifactTransferDirection {
 /// The receiver checks execution ownership, sensitivity, expiry, and budget before returning an
 /// [`ArtifactTransferDecision`]. Digest/size identify content; no filename or host path chooses
 /// placement. Reuse the same transfer identity and metadata to resume an incomplete publication.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactMetadataOffer {
     /// Idempotent transfer identity.
@@ -41,8 +68,8 @@ pub struct ArtifactMetadataOffer {
     pub provenance: ArtifactProvenance,
     /// Authenticated source peer retained in provenance.
     pub source_peer: PeerId,
-    /// Exact remote execution that produced or consumes the artifact.
-    pub execution: PeerExecutionId,
+    /// Exact consuming request or accepted execution authorizing this transfer.
+    pub binding: ArtifactTransferBinding,
     /// Expiry of this narrow transfer authority.
     pub expires_at_unix_ms: u64,
 }
@@ -50,6 +77,27 @@ pub struct ArtifactMetadataOffer {
 impl ArtifactMetadataOffer {
     /// Requires exact media type/size and a nonzero transfer expiry.
     pub fn validate(&self) -> Result<(), PeerProtocolError> {
+        if let ArtifactTransferBinding::Input { request } = &self.binding {
+            request.validate()?;
+            if self.expires_at_unix_ms > request.deadline_unix_ms
+                || !request
+                    .request
+                    .inputs()
+                    .iter()
+                    .filter_map(|input| input.value().artifact())
+                    .chain(request.request.context_manifest())
+                    .any(|reference| {
+                        reference.identity() == self.artifact.artifact().as_str()
+                            && reference.digest() == self.artifact.digest().to_hex()
+                            && reference.size_bytes() == Some(self.artifact.size_bytes())
+                            && reference.media_type() == Some(self.artifact.media_type().as_str())
+                    })
+            {
+                return Err(PeerProtocolError::InvalidContract(
+                    "input transfer is outside its exact consuming request".to_owned(),
+                ));
+            }
+        }
         if self.expires_at_unix_ms == 0 {
             return Err(PeerProtocolError::InvalidContract(
                 "artifact transfer requires exact size, content type, and expiry".to_owned(),
@@ -60,7 +108,7 @@ impl ArtifactMetadataOffer {
 }
 
 /// Receiver decision after checking digest, authority, content type, and budget.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum ArtifactTransferDecision {
     /// Verified identical content is already authorized and present.
@@ -80,7 +128,7 @@ pub enum ArtifactTransferDecision {
 }
 
 /// One bounded sequential or ranged artifact chunk.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactChunk {
     /// Exact transfer session.

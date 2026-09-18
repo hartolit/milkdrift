@@ -10,6 +10,22 @@ use axum::{
 use milkdrift_control_protocol::ErrorCode;
 use std::sync::atomic::Ordering;
 
+pub(super) async fn upload_input(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<Response, ApiError> {
+    let (request_id, session) = authenticate(&state, &headers)?;
+    let request = milkdrift_control_protocol::decode_json(&body)
+        .map_err(|error| super::protocol_error(error, request_id.clone()))?;
+    let result = state
+        .host
+        .upload_input(session, request)
+        .await
+        .map_err(|error| owner_error(error, request_id.clone()))?;
+    success(request_id, result)
+}
+
 pub(super) async fn artifact_metadata(
     State(state): State<AppState>,
     headers: HeaderMap,

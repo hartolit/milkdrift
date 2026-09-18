@@ -66,23 +66,23 @@ fn peer_clock_failure_and_backward_movement_fail_closed_at_expiry() -> TestResul
     clock.set_available(false)?;
     assert!(matches!(
         service.authenticate_bearer(b"peer-secret"),
-        Err(PeerHttpError::Unavailable(_))
+        Err(milkdrift_capability_host::ServingError::Unavailable(_))
     ));
     assert!(matches!(
         service.catalog(&peer),
-        Err(PeerHttpError::Unavailable(_))
+        Err(milkdrift_capability_host::ServingError::Unavailable(_))
     ));
 
     clock.set_available(true)?;
     clock.set(expiry.saturating_add(1))?;
     assert!(matches!(
         service.authenticate_bearer(b"peer-secret"),
-        Err(PeerHttpError::Unauthenticated)
+        Err(milkdrift_capability_host::ServingError::Unauthenticated)
     ));
     clock.set(expiry.saturating_sub(1))?;
     assert!(matches!(
         service.authenticate_bearer(b"peer-secret"),
-        Err(PeerHttpError::Unavailable(_))
+        Err(milkdrift_capability_host::ServingError::Unavailable(_))
     ));
     assert!(service.shutdown_workers(Duration::from_secs(2)).clean);
     Ok(())
@@ -160,7 +160,7 @@ fn assert_post_entry_clock_recovery(
     assert!(entry.wait_for_call(Duration::from_secs(2))?);
     assert!(clock.wait_for_unavailable_observations(1, Duration::from_secs(2))?);
     assert!(matches!(
-        store.peer_execution(&peer, &execution)?,
+        store.peer_execution(&milkdrift_peer_protocol::ServingCaller::peer(&target, &peer), &execution)?,
         Some(PeerExecutionSnapshot::Hot(ref record))
             if matches!(record.phase, PeerExecutionPhase::Entered { .. })
     ));
@@ -168,7 +168,7 @@ fn assert_post_entry_clock_recovery(
     clock.set_available(true)?;
     assert!(service.shutdown_workers(Duration::from_secs(2)).clean);
     assert!(matches!(
-        store.peer_execution(&peer, &execution)?,
+        store.peer_execution(&milkdrift_peer_protocol::ServingCaller::peer(&target, &peer), &execution)?,
         Some(PeerExecutionSnapshot::Hot(record))
             if matches!(record.phase, PeerExecutionPhase::Uncertain { ref reason, .. }
                 if reason == expected_reason)
@@ -262,7 +262,7 @@ fn pre_entry_store_failure_releases_claim_and_retries_without_uncertainty() -> T
     assert!(matches!(
         running
             .store
-            .peer_execution(&running.peer, &running.execution)?,
+            .peer_execution(&milkdrift_peer_protocol::ServingCaller::peer(&running.config.local_peer, &running.peer), &running.execution)?,
         Some(PeerExecutionSnapshot::Hot(record))
             if matches!(record.phase, PeerExecutionPhase::Terminal { .. })
     ));
@@ -288,7 +288,7 @@ fn terminal_committed_before_recovery_is_never_replaced_by_uncertainty() -> Test
     assert!(matches!(
         running
             .store
-            .peer_execution(&running.peer, &running.execution)?,
+            .peer_execution(&milkdrift_peer_protocol::ServingCaller::peer(&running.config.local_peer, &running.peer), &running.execution)?,
         Some(PeerExecutionSnapshot::Hot(record))
             if matches!(record.phase, PeerExecutionPhase::Terminal { .. })
     ));
@@ -314,7 +314,7 @@ fn post_entry_store_commit_replay_is_an_exact_noop() -> TestResult {
     assert!(matches!(
         running
             .store
-            .peer_execution(&running.peer, &running.execution)?,
+            .peer_execution(&milkdrift_peer_protocol::ServingCaller::peer(&running.config.local_peer, &running.peer), &running.execution)?,
         Some(PeerExecutionSnapshot::Hot(record))
             if matches!(record.phase, PeerExecutionPhase::Uncertain { ref reason, .. }
                 if reason == "peer adapter failed after durable entry: deterministic adapter failure after entry")
@@ -341,7 +341,7 @@ fn shutdown_and_restart_recover_entered_claim_without_duplicate_adapter_entry() 
     assert!(matches!(
         running
             .store
-            .peer_execution(&running.peer, &running.execution)?,
+            .peer_execution(&milkdrift_peer_protocol::ServingCaller::peer(&running.config.local_peer, &running.peer), &running.execution)?,
         Some(PeerExecutionSnapshot::Hot(ref record))
             if matches!(record.phase, PeerExecutionPhase::Entered { .. })
     ));
@@ -366,7 +366,7 @@ fn shutdown_and_restart_recover_entered_claim_without_duplicate_adapter_entry() 
     assert!(matches!(
         running
             .store
-            .peer_execution(&running.peer, &running.execution)?,
+            .peer_execution(&milkdrift_peer_protocol::ServingCaller::peer(&running.config.local_peer, &running.peer), &running.execution)?,
         Some(PeerExecutionSnapshot::Hot(record))
             if matches!(record.phase, PeerExecutionPhase::Uncertain { ref reason, .. }
                 if reason == "serving daemon restarted after durable adapter entry")
@@ -387,7 +387,7 @@ fn durable_drain_and_relationship_generation_close_the_adapter_entry_race() -> T
         now().saturating_add(60_000),
         Vec::new(),
     )?;
-    configure_store(&store, &peer, &catalog.digest, 1)?;
+    configure_store(&store, &target, &peer, &catalog.digest, 1)?;
     let request = request(
         &peer,
         &target,
@@ -400,7 +400,7 @@ fn durable_drain_and_relationship_generation_close_the_adapter_entry_race() -> T
     let execution = PeerExecutionId::new("execution-entry-race")?;
     assert!(matches!(
         store.admit_peer_execution(&PeerAdmission {
-            owner_peer: &peer,
+            caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
             request: &request,
             authority: &allowed_decision(&peer)?,
             execution: &execution,
@@ -420,7 +420,7 @@ fn durable_drain_and_relationship_generation_close_the_adapter_entry_race() -> T
     store.set_peer_admission_open(false)?;
     let authority = allowed_decision(&peer)?;
     let entry_request = PeerEntryRequest {
-        owner: &peer,
+        owner: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         execution: &execution,
         worker: &worker,
         claim_generation: generation,
@@ -433,8 +433,8 @@ fn durable_drain_and_relationship_generation_close_the_adapter_entry_race() -> T
         PeerEntryOutcome::AdmissionClosed
     );
     store.set_peer_admission_open(true)?;
-    store.configure_peer_relationship(&PeerRelationshipState {
-        peer: peer.clone(),
+    store.configure_peer_relationship(&ServingCallerState {
+        caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         generation: 2,
         enabled: false,
         expires_at_unix_ms: now().saturating_add(60_000),
@@ -460,7 +460,7 @@ fn recovery_reports_a_remaining_claim_frontier_after_a_bounded_page() -> TestRes
         now().saturating_add(60_000),
         Vec::new(),
     )?;
-    configure_store(&store, &peer, &catalog.digest, 2)?;
+    configure_store(&store, &target, &peer, &catalog.digest, 2)?;
     for ordinal in 0..2 {
         let request = request(
             &peer,
@@ -504,7 +504,7 @@ fn observation_history_is_append_only_and_pages_bound_long_stream_memory() -> Te
         now().saturating_add(60_000),
         Vec::new(),
     )?;
-    configure_store(&store, &peer, &catalog.digest, 1)?;
+    configure_store(&store, &target, &peer, &catalog.digest, 1)?;
     let request = request(
         &peer,
         &target,
@@ -519,20 +519,25 @@ fn observation_history_is_append_only_and_pages_bound_long_stream_memory() -> Te
     let worker = WorkerId::new("observation-worker")?;
     let claimed = claim(&store, &worker)?;
     let generation = claimed.phase.claim().ok_or("claim missing")?.generation;
-    enter(&store, &peer, &execution, &worker, generation)?;
+    enter(&store, &target, &peer, &execution, &worker, generation)?;
     for sequence in 1..100 {
         store.append_peer_observation(
-            &peer,
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
             &execution,
             &progress_observation(&request, &execution, sequence)?,
         )?;
     }
     store.append_peer_observation(
-        &peer,
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         &execution,
         &terminal_observation(&request, &execution, 100, TerminalStatus::Success)?,
     )?;
-    let first = store.peer_observations(&peer, &execution, 93, PageSize::new(4)?)?;
+    let first = store.peer_observations(
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+        &execution,
+        93,
+        PageSize::new(4)?,
+    )?;
     assert_eq!(
         first
             .observations
@@ -541,7 +546,12 @@ fn observation_history_is_append_only_and_pages_bound_long_stream_memory() -> Te
             .collect::<Vec<_>>(),
         vec![94, 95, 96, 97]
     );
-    let resumed = store.peer_observations(&peer, &execution, 97, PageSize::new(4)?)?;
+    let resumed = store.peer_observations(
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+        &execution,
+        97,
+        PageSize::new(4)?,
+    )?;
     assert_eq!(
         resumed
             .observations
@@ -691,7 +701,9 @@ fn fixed_worker_owner_bounds_execution_and_shutdown_joins() -> TestResult {
             Vec::new(),
         )?,
         source_peer: peer.clone(),
-        execution: PeerExecutionId::new("nonexistent-peer-execution")?,
+        binding: milkdrift_peer_protocol::ArtifactTransferBinding::Execution {
+            execution: PeerExecutionId::new("nonexistent-peer-execution")?,
+        },
         expires_at_unix_ms: now().saturating_add(60_000),
     };
     assert!(
@@ -725,7 +737,12 @@ fn service_archived_replay_returns_summary_without_second_adapter_entry() -> Tes
     config.workers.maximum_hot_terminal_records = 4;
     config.workers.archive_batch_size = 1;
     config.workers.observation_hot_retention = Duration::from_millis(1);
-    let service = PeerService::new(config, host, store.clone(), system_peer_clock())?;
+    let service = PeerService::new(
+        config.clone(),
+        host.clone(),
+        store.clone(),
+        system_peer_clock(),
+    )?;
     service.recover(1_024)?;
     let catalog = service.catalog(&peer)?;
     let invocation_request = request(
@@ -744,7 +761,7 @@ fn service_archived_replay_returns_summary_without_second_adapter_entry() -> Tes
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     loop {
         if matches!(
-            store.peer_execution(&peer, &execution)?,
+            store.peer_execution(&milkdrift_peer_protocol::ServingCaller::peer(&target, &peer), &execution)?,
             Some(PeerExecutionSnapshot::Hot(ref record))
                 if matches!(record.phase, PeerExecutionPhase::Terminal { .. })
         ) {
@@ -758,7 +775,10 @@ fn service_archived_replay_returns_summary_without_second_adapter_entry() -> Tes
     thread::sleep(Duration::from_millis(2));
     service.maintain_retention()?;
     assert!(matches!(
-        store.peer_execution(&peer, &execution)?,
+        store.peer_execution(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+            &execution
+        )?,
         Some(PeerExecutionSnapshot::Archived(_))
     ));
     assert!(matches!(
@@ -787,6 +807,19 @@ fn service_archived_replay_returns_summary_without_second_adapter_entry() -> Tes
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert!(service.shutdown_workers(Duration::from_secs(2)).clean);
+    drop(service);
+    config.relationships[0].capability_allow.clear();
+    config.relationships[0].revocation_generation += 1;
+    let restricted = PeerService::new(config, host, store, system_peer_clock())?;
+    assert!(
+        restricted
+            .lookup(&peer, &invocation_request.request_id)
+            .is_err()
+    );
+    assert!(restricted.observations(&peer, &execution, 0, 8).is_err());
+    assert!(restricted.invoke(&peer, invocation_request).is_err());
+    assert!(restricted.shutdown_workers(Duration::from_secs(2)).clean);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
     Ok(())
 }
 

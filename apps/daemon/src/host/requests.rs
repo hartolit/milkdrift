@@ -11,6 +11,19 @@ use milkdrift_control_protocol::{
 use std::collections::BTreeSet;
 
 impl DaemonHost {
+    pub(crate) async fn upload_input(
+        &self,
+        session: ActorSession,
+        request: milkdrift_control_protocol::InputUploadRequest,
+    ) -> Result<ArtifactMetadataRead, PublicFailure> {
+        if !self.accepting_mutations() {
+            return Err(super::read_model::invalid(
+                "input publication admission is closed",
+            ));
+        }
+        self.dispatch(false, move |owner| owner.upload_input(&session, &request))
+            .await
+    }
     pub(crate) async fn authorize_version(
         &self,
         session: ActorSession,

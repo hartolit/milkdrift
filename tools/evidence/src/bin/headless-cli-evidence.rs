@@ -38,6 +38,8 @@ mod setup;
 
 #[path = "headless-cli-evidence/controller.rs"]
 mod controller;
+#[path = "headless-cli-evidence/independent.rs"]
+mod independent;
 
 const TOKEN: &str = "headless-cli-evidence-token";
 const WRONG_TOKEN: &str = "headless-cli-evidence-wrong-token";
@@ -46,6 +48,9 @@ const ACTOR: &str = "human:headless-cli-evidence";
 #[derive(Parser)]
 #[command(name = "headless-cli-evidence")]
 struct Arguments {
+    /// Run only independent process/model hosting through the actual daemon and CLI binaries.
+    #[arg(long, conflicts_with = "controller_qualification")]
+    independent_host_only: bool,
     /// Exercise explicit controller activation in an isolated installation.
     #[arg(long)]
     controller_qualification: bool,
@@ -81,6 +86,13 @@ fn main() {
         .and_then(|value| value.into_string().ok())
     {
         match mode.as_str() {
+            "--fixture-independent" => {
+                if let Err(error) = independent::process_fixture() {
+                    eprintln!("independent fixture failed: {error}");
+                    std::process::exit(1);
+                }
+                return;
+            }
             "--fixture-artifact" => {
                 println!("headless-cli-artifact");
                 return;
@@ -151,6 +163,10 @@ fn run(arguments: Arguments) -> EvidenceResult {
     require_executable(&arguments.cli)?;
     if arguments.controller_qualification {
         return controller::run(&arguments);
+    }
+    independent::run(&arguments)?;
+    if arguments.independent_host_only {
+        return Ok(());
     }
     setup::exercise_starter(&arguments.examples, &arguments.daemon, &arguments.cli)?;
     let directory = tempfile::tempdir()?;

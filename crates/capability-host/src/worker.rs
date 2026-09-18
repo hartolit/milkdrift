@@ -6,7 +6,7 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel},
+        mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -145,6 +145,24 @@ pub struct EffectWorkerHost {
     joins: Mutex<Vec<JoinHandle<()>>>,
 }
 
+/// No work can be queued while spawning. A partial spawn failure closes both queues and
+/// joins every thread already started before releasing the runtime or its storage.
+struct WorkerStartup {
+    execution: Option<SyncSender<EffectAction>>,
+    cancellation: Option<SyncSender<EffectAction>>,
+    joins: Vec<JoinHandle<()>>,
+}
+
+impl Drop for WorkerStartup {
+    fn drop(&mut self) {
+        self.execution.take();
+        self.cancellation.take();
+        for join in self.joins.drain(..) {
+            let _ = join.join();
+        }
+    }
+}
+
 impl EffectWorkerHost {
     /// Starts exactly the configured threads; no singleton or async runtime is used.
     pub fn start(
@@ -160,12 +178,16 @@ impl EffectWorkerHost {
         let shared = Arc::new(WorkerShared::default());
         let execution_receiver = Arc::new(Mutex::new(execution_receiver));
         let cancellation_receiver = Arc::new(Mutex::new(cancellation_receiver));
-        let mut joins = Vec::with_capacity(usize::from(config.execution_threads) + 1);
+        let mut startup = WorkerStartup {
+            execution: Some(execution_sender),
+            cancellation: Some(cancellation_sender),
+            joins: Vec::with_capacity(usize::from(config.execution_threads) + 1),
+        };
         for index in 0..config.execution_threads {
             let runtime = runtime.clone();
             let receiver = execution_receiver.clone();
             let worker_shared = shared.clone();
-            joins.push(
+            startup.joins.push(
                 thread::Builder::new()
                     .name(format!("milkdrift-effect-{index}"))
                     .spawn(move || execution_worker(runtime, receiver, worker_shared))
@@ -175,7 +197,7 @@ impl EffectWorkerHost {
         {
             let worker_runtime = runtime.clone();
             let worker_shared = shared.clone();
-            joins.push(
+            startup.joins.push(
                 thread::Builder::new()
                     .name("milkdrift-effect-control".to_owned())
                     .spawn(move || {
@@ -189,10 +211,10 @@ impl EffectWorkerHost {
             capability_host,
             config,
             shared,
-            execution_sender: Mutex::new(Some(execution_sender)),
-            cancellation_sender: Mutex::new(Some(cancellation_sender)),
+            execution_sender: Mutex::new(startup.execution.take()),
+            cancellation_sender: Mutex::new(startup.cancellation.take()),
             poll_gate: Mutex::new(()),
-            joins: Mutex::new(joins),
+            joins: Mutex::new(std::mem::take(&mut startup.joins)),
         })
     }
 
@@ -384,22 +406,8 @@ fn capability_shutdown_before(
     if remaining.is_zero() {
         return Ok(None);
     }
-    let (sender, receiver) = sync_channel(1);
-    thread::Builder::new()
-        .name("milkdrift-capability-shutdown".to_owned())
-        .spawn(move || {
-            let result = if force {
-                host.force_shutdown()
-            } else {
-                host.shutdown()
-            };
-            let _ = sender.send(result);
-        })
-        .map_err(|_| EffectWorkerError::StateUnavailable)?;
-    match receiver.recv_timeout(remaining) {
-        Ok(result) => result.map(Some).map_err(EffectWorkerError::Host),
-        Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => Ok(None),
-    }
+    host.shutdown_with_deadline(force, remaining)
+        .map_err(EffectWorkerError::Host)
 }
 
 #[derive(Default)]
@@ -562,3 +570,6 @@ fn page_size(value: usize) -> Result<PageSize, EffectWorkerError> {
 fn bounded(value: &str) -> String {
     milkdrift_contracts::truncate_utf8(value, 512).to_owned()
 }
+
+#[cfg(test)]
+mod startup_tests;

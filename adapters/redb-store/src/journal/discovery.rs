@@ -593,7 +593,7 @@ pub(crate) fn record_artifact_references(
             request.receipt().command().as_str(),
         ])?;
         crate::artifact::persist_artifact_reference_occurrence(write, &key, reference)?;
-        crate::artifact::persist_run_artifact_ownership(write, request.receipt().run(), reference)?;
+        crate::artifact::persist_artifact_ownership(write, request.receipt().run(), reference)?;
     }
     crate::artifact::validate_artifact_state(write)?;
     Ok(())

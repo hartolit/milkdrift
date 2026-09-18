@@ -55,12 +55,12 @@ impl AuthorityPreset {
 
     fn operations(self) -> BTreeSet<AuthorityOperation> {
         use AuthorityOperation::{
-            AdministerPeer, Apply, Approve, Cancel, CreateRun, DeliverSignal, ImportBlueprint,
-            Inspect, InspectAttempt, InspectCapabilityHealth, InspectDaemonHealth,
+            AdministerPeer, Apply, Approve, Cancel, CancelCapability, CreateRun, DeliverSignal,
+            ImportBlueprint, Inspect, InspectAttempt, InspectCapabilityHealth, InspectDaemonHealth,
             InspectNodeExecution, InspectOwnAuthority, InspectPeer, InspectProposal,
             InspectProviderProfile, InspectRevision, InspectRun, InspectTimeline, InvokeCapability,
             ListCapabilities, NegotiateControlProtocol, Pause, Propose, ProposeOffline,
-            ReadArtifactContent, ReadArtifactMetadata, ReadLayout, ReadReadiness,
+            PublishArtifact, ReadArtifactContent, ReadArtifactMetadata, ReadLayout, ReadReadiness,
             ReadWorkspaceValue, Resume, Retry, StartRun, Terminate, ValidateBlueprint, WriteLayout,
         };
         let reads = [
@@ -113,6 +113,8 @@ impl AuthorityPreset {
                     CreateRun,
                     StartRun,
                     InvokeCapability,
+                    CancelCapability,
+                    PublishArtifact,
                     Pause,
                     Resume,
                     Cancel,
@@ -133,6 +135,8 @@ impl AuthorityPreset {
                     CreateRun,
                     StartRun,
                     InvokeCapability,
+                    CancelCapability,
+                    PublishArtifact,
                     Pause,
                     Resume,
                     Cancel,

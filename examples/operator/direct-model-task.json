@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "request": {
+    "messages": [{"role":"user","parts":[{"type":"text","text":"Explain why an accepted invocation is different from completed work."}],"tool_call_id":null}],
+    "tools": [],
+    "structured_output": null,
+    "session": {"type":"fresh"},
+    "reasoning": null,
+    "maximum_output_units": 256,
+    "streaming": true,
+    "extensions": {}
+  }
+}

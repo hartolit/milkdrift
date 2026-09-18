@@ -39,8 +39,19 @@ fn clock_test_config(
     root: &std::path::Path,
     token: &std::path::Path,
 ) -> Result<crate::DaemonPlan, ConfigError> {
+    owner_test_config(root, token, 32)
+}
+
+fn owner_test_config(
+    root: &std::path::Path,
+    token: &std::path::Path,
+    request_queue: u32,
+) -> Result<crate::DaemonPlan, ConfigError> {
     DaemonConfig {
         schema_version: crate::DAEMON_CONFIG_SCHEMA_VERSION,
+        role: milkdrift_control_protocol::HostRole::WorkflowEnabled,
+        host_id: "host:local".to_owned(),
+        serving: Default::default(),
         data_root: root.join("data"),
         bind: SocketAddr::from(([127, 0, 0, 1], 0)),
         secret_sources: BTreeMap::from([(
@@ -60,7 +71,7 @@ fn clock_test_config(
             enabled: true,
         }],
         runtime: RuntimeHostConfig {
-            request_queue: 1,
+            request_queue,
             ..RuntimeHostConfig::default()
         },
         adapters: AdapterConfig::default(),
@@ -151,9 +162,16 @@ fn queue_test_host() -> Result<(tempfile::TempDir, DaemonHost), Box<dyn std::err
         fs::set_permissions(&token, fs::Permissions::from_mode(0o600))?;
     }
     let host = DaemonHost::start_with_clock(
-        clock_test_config(root.path(), &token)?,
+        owner_test_config(root.path(), &token, 1)?,
         Arc::new(ControlledDaemonClock::new(100)),
     )?;
+    // These tests isolate owner-queue occupancy from independently polling serving workers.
+    let serving = host.peer_service().ok_or("serving owner absent")?;
+    assert!(
+        serving
+            .shutdown_workers(std::time::Duration::from_secs(5))
+            .clean
+    );
     Ok((root, host))
 }
 
@@ -292,5 +310,48 @@ async fn owner_request_panic_closes_admission_but_preserves_final_clock_and_shut
         Arc::new(ControlledDaemonClock::new(100)),
     )?;
     reopened.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn shutdown_retries_a_full_owner_queue_within_its_existing_deadline()
+-> Result<(), Box<dyn std::error::Error>> {
+    use super::queue::OwnerRequest;
+    use std::{sync::mpsc::sync_channel, time::Duration};
+    let (_root, host) = queue_test_host()?;
+    let (entered, entry) = tokio::sync::oneshot::channel();
+    let (release, released) = sync_channel(1);
+    let mut blocking = OwnerRequest {
+        execute: Box::new(move |_| {
+            let _ = entered.send(());
+            let _ = released.recv_timeout(Duration::from_secs(5));
+        }),
+        stop_owner: false,
+        queued: None,
+    };
+    blocking.mark_queued(&host.health);
+    host.sender
+        .try_send(blocking)
+        .map_err(|_| "blocking request refused")?;
+    tokio::time::timeout(Duration::from_secs(5), entry).await??;
+    let mut queued = OwnerRequest {
+        execute: Box::new(|_| {}),
+        stop_owner: false,
+        queued: None,
+    };
+    queued.mark_queued(&host.health);
+    host.sender
+        .try_send(queued)
+        .map_err(|_| "queue filler refused")?;
+    let shutting_down = host.clone();
+    let mut shutdown = tokio::spawn(async move { shutting_down.shutdown().await });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut shutdown)
+            .await
+            .is_err()
+    );
+    release.send(())?;
+    tokio::time::timeout(Duration::from_secs(5), shutdown).await???;
+    assert_eq!(host.health().queued_requests, 0);
     Ok(())
 }

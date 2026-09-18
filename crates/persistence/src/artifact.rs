@@ -1,7 +1,7 @@
 use milkdrift_authority::ActorRef;
 use milkdrift_workspace::{
-    ArtifactId, ArtifactMetadata, ArtifactReference, ArtifactSensitivity, RunId, WorkspaceBudget,
-    WorkspaceUsage,
+    ArtifactId, ArtifactMetadata, ArtifactOwner, ArtifactReference, ArtifactSensitivity, RunId,
+    WorkspaceBudget, WorkspaceUsage,
 };
 
 use crate::{
@@ -33,7 +33,7 @@ pub struct BeginArtifactPublication {
     /// Idempotent publication-session identity.
     publication: ArtifactPublicationId,
     /// Workspace accounting domain.
-    run: RunId,
+    owner: ArtifactOwner,
     /// Complete expected digest/size/media/sensitivity/retention/provenance.
     metadata: ArtifactMetadata,
     /// Immutable workspace limits.
@@ -43,10 +43,58 @@ pub struct BeginArtifactPublication {
     /// Exact usage after charging metadata/content once.
     resulting_usage: WorkspaceUsage,
     /// Explicit controller-account source used at first logical commit.
-    controller_owner: ControllerArtifactOwner,
+    controller_owner: Option<ControllerArtifactOwner>,
 }
 
 impl BeginArtifactPublication {
+    /// Publishes an authenticated peer input against its cumulative quota, before invocation acceptance.
+    pub fn for_peer_input(
+        publication: ArtifactPublicationId,
+        host: milkdrift_capability::PeerId,
+        peer: milkdrift_capability::PeerId,
+        metadata: ArtifactMetadata,
+        budget: WorkspaceBudget,
+        expected_usage: WorkspaceUsage,
+    ) -> Result<Self, PersistenceError> {
+        let resulting_usage = budget
+            .admit_artifact(&expected_usage, &metadata)
+            .map_err(|error| PersistenceError::InvalidDocument(error.to_string()))?;
+        let request = Self {
+            publication,
+            owner: ArtifactOwner::PeerInput { host, peer },
+            metadata,
+            budget,
+            expected_usage,
+            resulting_usage,
+            controller_owner: None,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+    /// Publishes client-supplied input against its authenticated owner's cumulative quota.
+    pub fn for_client_input(
+        publication: ArtifactPublicationId,
+        host: milkdrift_capability::PeerId,
+        client: milkdrift_workspace::CausalId,
+        metadata: ArtifactMetadata,
+        budget: WorkspaceBudget,
+        expected_usage: WorkspaceUsage,
+    ) -> Result<Self, PersistenceError> {
+        let resulting_usage = budget
+            .admit_artifact(&expected_usage, &metadata)
+            .map_err(|error| PersistenceError::InvalidDocument(error.to_string()))?;
+        let request = Self {
+            publication,
+            owner: ArtifactOwner::ClientInput { host, client },
+            metadata,
+            budget,
+            expected_usage,
+            resulting_usage,
+            controller_owner: None,
+        };
+        request.validate()?;
+        Ok(request)
+    }
     /// Constructs a request and proves its exact accounting transition.
     pub fn new(
         publication: ArtifactPublicationId,
@@ -60,12 +108,12 @@ impl BeginArtifactPublication {
             .map_err(|error| PersistenceError::InvalidDocument(error.to_string()))?;
         Ok(Self {
             publication,
-            run,
+            owner: ArtifactOwner::Workflow { run },
             metadata,
             budget,
             expected_usage,
             resulting_usage,
-            controller_owner: ControllerArtifactOwner::RunBinding,
+            controller_owner: Some(ControllerArtifactOwner::RunBinding),
         })
     }
 
@@ -79,7 +127,59 @@ impl BeginArtifactPublication {
         reservation: ControllerReservationId,
     ) -> Result<Self, PersistenceError> {
         let mut request = Self::new(publication, run, metadata, budget, expected_usage)?;
-        request.controller_owner = ControllerArtifactOwner::InvocationReservation(reservation);
+        request.controller_owner =
+            Some(ControllerArtifactOwner::InvocationReservation(reservation));
+        Ok(request)
+    }
+
+    /// Constructs publication against the serving invocation's accepted output allowance.
+    pub fn for_host_invocation(
+        publication: ArtifactPublicationId,
+        host: milkdrift_capability::PeerId,
+        invocation: milkdrift_capability::InvocationId,
+        metadata: ArtifactMetadata,
+        budget: WorkspaceBudget,
+        expected_usage: WorkspaceUsage,
+    ) -> Result<Self, PersistenceError> {
+        let resulting_usage = budget
+            .admit_artifact(&expected_usage, &metadata)
+            .map_err(|error| PersistenceError::InvalidDocument(error.to_string()))?;
+        let request = Self {
+            publication,
+            owner: ArtifactOwner::HostInvocation { host, invocation },
+            metadata,
+            budget,
+            expected_usage,
+            resulting_usage,
+            controller_owner: None,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    /// Constructs a bounded import without creating a workflow accounting domain.
+    pub fn for_transfer(
+        publication: ArtifactPublicationId,
+        source: milkdrift_capability::PeerId,
+        transfer: milkdrift_workspace::CausalId,
+        metadata: ArtifactMetadata,
+        budget: WorkspaceBudget,
+        expected_usage: WorkspaceUsage,
+        controller: Option<ControllerArtifactOwner>,
+    ) -> Result<Self, PersistenceError> {
+        let resulting_usage = budget
+            .admit_artifact(&expected_usage, &metadata)
+            .map_err(|error| PersistenceError::InvalidDocument(error.to_string()))?;
+        let request = Self {
+            publication,
+            owner: ArtifactOwner::Transfer { source, transfer },
+            metadata,
+            budget,
+            expected_usage,
+            resulting_usage,
+            controller_owner: controller,
+        };
+        request.validate()?;
         Ok(request)
     }
 
@@ -91,8 +191,8 @@ impl BeginArtifactPublication {
 
     /// Returns the owning workspace accounting domain.
     #[must_use]
-    pub const fn run(&self) -> &RunId {
-        &self.run
+    pub const fn owner(&self) -> &ArtifactOwner {
+        &self.owner
     }
 
     /// Returns the complete immutable artifact metadata.
@@ -121,12 +221,61 @@ impl BeginArtifactPublication {
 
     /// Returns the explicit controller-account source for this logical publication.
     #[must_use]
-    pub const fn controller_owner(&self) -> &ControllerArtifactOwner {
-        &self.controller_owner
+    pub const fn controller_owner(&self) -> Option<&ControllerArtifactOwner> {
+        self.controller_owner.as_ref()
     }
 
     /// Revalidates the request's derived accounting transition at a trust boundary.
     pub fn validate(&self) -> Result<(), PersistenceError> {
+        let controller_valid = matches!(
+            (&self.owner, &self.controller_owner),
+            (
+                ArtifactOwner::Workflow { .. },
+                Some(
+                    ControllerArtifactOwner::RunBinding
+                        | ControllerArtifactOwner::InvocationReservation(_),
+                ),
+            ) | (
+                ArtifactOwner::Transfer { .. },
+                Some(ControllerArtifactOwner::RemoteInvocationReservation { .. }),
+            ) | (
+                ArtifactOwner::PeerInput { .. }
+                    | milkdrift_workspace::ArtifactOwner::ClientInput { .. }
+                    | ArtifactOwner::HostInvocation { .. }
+                    | ArtifactOwner::Transfer { .. },
+                None,
+            )
+        );
+        if !controller_valid {
+            return Err(PersistenceError::InvalidDocument(
+                "artifact owner and controller reservation source disagree".to_owned(),
+            ));
+        }
+        if let ArtifactOwner::PeerInput { peer, .. } = &self.owner
+            && !matches!(self.metadata.provenance().producer(), milkdrift_workspace::CausalReference::PeerClaim { peer: source, .. } if source == peer)
+        {
+            return Err(PersistenceError::InvalidDocument(
+                "peer input must retain its authenticated source claim".to_owned(),
+            ));
+        }
+        if let ArtifactOwner::ClientInput { host, client } = &self.owner
+            && !matches!(self.metadata.provenance().producer(), milkdrift_workspace::CausalReference::ClientUpload { host: producer_host, client: producer_client, .. } if host == producer_host && client == producer_client)
+        {
+            return Err(PersistenceError::InvalidDocument(
+                "client input producer differs from its authenticated owner".to_owned(),
+            ));
+        }
+        if let ArtifactOwner::HostInvocation { host, invocation } = &self.owner
+            && self.metadata.provenance().producer()
+                != &(milkdrift_workspace::CausalReference::HostInvocation {
+                    host: host.clone(),
+                    invocation: invocation.clone(),
+                })
+        {
+            return Err(PersistenceError::InvalidDocument(
+                "serving artifact producer differs from its invocation owner".to_owned(),
+            ));
+        }
         self.budget
             .validate_usage(&self.expected_usage)
             .map_err(|error| PersistenceError::InvalidDocument(error.to_string()))?;
@@ -459,6 +608,9 @@ pub struct OrphanCleanupResult {
 /// Reads verify content independently of the caller's authority proof; this port does
 /// not authenticate an actor or evaluate a grant.
 pub trait ArtifactStore: Send + Sync {
+    /// Returns committed logical usage for the exact publication owner.
+    fn artifact_usage(&self, owner: &ArtifactOwner) -> Result<WorkspaceUsage, PersistenceError>;
+
     /// Begins an idempotent sequential temporary publication and validates its intended
     /// budget transition. Usage is checked again and committed only at publication.
     fn begin_publication(

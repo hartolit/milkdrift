@@ -372,7 +372,11 @@ impl StoreInvocationDataAccess {
             ));
         }
         let digest = ContentDigest::for_bytes(bytes);
-        let identity_hash = publication_hash(context, request, output_name, digest);
+        if let Some(selection) = context.direct_selection() {
+            selection.validate_request(request)?;
+        }
+        let owner = context.publication_owner()?;
+        let identity_hash = publication_hash(context, request, output_name, digest)?;
         let artifact = ArtifactId::new(format!("process:{}", identity_hash.to_hex()))
             .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
         let reference = ArtifactReference::new(
@@ -385,7 +389,16 @@ impl StoreInvocationDataAccess {
             })?,
         );
         let producer = if context.peer_artifact_budget().is_some() {
-            external_cause("peer-execution", context.publication_run().as_str())?
+            match owner.clone() {
+                milkdrift_workspace::ArtifactOwner::HostInvocation { host, invocation } => {
+                    CausalReference::HostInvocation { host, invocation }
+                }
+                _ => {
+                    return Err(InvocationDataError::Integrity(
+                        "serving publication owner absent".to_owned(),
+                    ));
+                }
+            }
         } else {
             CausalReference::Invocation {
                 invocation: request.invocation().clone(),
@@ -417,7 +430,7 @@ impl StoreInvocationDataAccess {
                 .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
         let usage = self
             .store
-            .workspace_usage(context.publication_run())
+            .artifact_usage(&owner)
             .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
         let workspace_budget = if let Some(budget) = context.peer_artifact_budget() {
             budget.clone()
@@ -428,7 +441,16 @@ impl StoreInvocationDataAccess {
                 .store
                 .events(
                     &EventPageQuery::new(
-                        context.run().clone(),
+                        context
+                            .workflow()
+                            .ok_or_else(|| {
+                                InvocationDataError::Integrity(
+                                    "workflow publication budget requires workflow provenance"
+                                        .to_owned(),
+                                )
+                            })?
+                            .run()
+                            .clone(),
                         None,
                         PageSize::new(1)
                             .map_err(|error| InvocationDataError::Publication(error.to_string()))?,
@@ -446,22 +468,41 @@ impl StoreInvocationDataAccess {
             };
             workspace_budget.clone()
         };
-        let begin = match context.controller_reservation() {
-            Some(reservation) => BeginArtifactPublication::for_invocation(
-                publication.clone(),
-                context.publication_run().clone(),
-                metadata,
-                workspace_budget.clone(),
-                usage,
-                reservation.clone(),
-            ),
-            None => BeginArtifactPublication::new(
-                publication.clone(),
-                context.publication_run().clone(),
-                metadata,
-                workspace_budget.clone(),
-                usage,
-            ),
+        let begin = match (owner, context.controller_reservation()) {
+            (milkdrift_workspace::ArtifactOwner::Workflow { run }, Some(reservation)) => {
+                BeginArtifactPublication::for_invocation(
+                    publication.clone(),
+                    run,
+                    metadata,
+                    workspace_budget.clone(),
+                    usage,
+                    reservation.clone(),
+                )
+            }
+            (milkdrift_workspace::ArtifactOwner::HostInvocation { host, invocation }, None) => {
+                BeginArtifactPublication::for_host_invocation(
+                    publication.clone(),
+                    host,
+                    invocation,
+                    metadata,
+                    workspace_budget.clone(),
+                    usage,
+                )
+            }
+            (milkdrift_workspace::ArtifactOwner::Workflow { run }, None) => {
+                BeginArtifactPublication::new(
+                    publication.clone(),
+                    run,
+                    metadata,
+                    workspace_budget.clone(),
+                    usage,
+                )
+            }
+            _ => {
+                return Err(InvocationDataError::Integrity(
+                    "serving output cannot name a local controller reservation".to_owned(),
+                ));
+            }
         }
         .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
         let begin_outcome = self
@@ -508,30 +549,39 @@ impl StoreInvocationDataAccess {
 impl InvocationDataAccess for StoreInvocationDataAccess {
     fn read_input_bytes(
         &self,
-        _context: &AdapterExecutionContext,
+        context: &AdapterExecutionContext,
         input: &InputReference,
         limits: MaterializationLimits,
     ) -> Result<Vec<u8>, InvocationDataError> {
+        if let Some(selection) = context.direct_selection() {
+            selection.require_input(input)?;
+        }
         self.input_bytes(input, limits.validate()?)
             .map(|(bytes, _cause)| bytes)
     }
 
     fn read_artifact_bytes(
         &self,
-        _context: &AdapterExecutionContext,
+        context: &AdapterExecutionContext,
         reference: &CapabilityArtifactReference,
         limits: MaterializationLimits,
     ) -> Result<Vec<u8>, InvocationDataError> {
+        if let Some(selection) = context.direct_selection() {
+            selection.require_artifact(reference)?;
+        }
         self.read_artifact(durable_artifact_reference(reference)?, limits.validate()?)
     }
 
     fn materialize(
         &self,
-        _context: &AdapterExecutionContext,
+        context: &AdapterExecutionContext,
         request: &InvocationRequest,
         inputs: &[InputMaterialization],
         limits: MaterializationLimits,
     ) -> Result<Box<dyn MaterializedExecution>, InvocationDataError> {
+        if let Some(selection) = context.direct_selection() {
+            selection.validate_request(request)?;
+        }
         let limits = limits.validate()?;
         if u32::try_from(inputs.len()).map_or(true, |count| count > limits.max_files) {
             return Err(InvocationDataError::Rejected(
@@ -587,7 +637,7 @@ impl InvocationDataAccess for StoreInvocationDataAccess {
                             specification.input_name()
                         ))
                     })?;
-                let (bytes, _cause) = self.input_bytes(input, limits)?;
+                let bytes = self.read_input_bytes(context, input, limits)?;
                 (bytes, input.name())
             };
             let size = u64::try_from(bytes.len()).map_err(|_error| {
@@ -742,36 +792,51 @@ fn publication_hash(
     request: &InvocationRequest,
     output_name: &str,
     digest: ContentDigest,
-) -> blake3::Hash {
+) -> Result<blake3::Hash, InvocationDataError> {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"milkdrift.process-output-publication.v1\0");
-    for component in [
-        context.publication_run().as_str().as_bytes(),
-        context.revision().as_str().as_bytes(),
-        context.node().as_str().as_bytes(),
-        context.execution().as_str().as_bytes(),
-        context.attempt().as_str().as_bytes(),
+    let mut components = vec![context.publication_namespace()?.as_bytes()];
+    match context.selection() {
+        crate::AdapterInputSelection::Workflow(workflow) => components.extend([
+            workflow.revision().as_str().as_bytes(),
+            workflow.node().as_str().as_bytes(),
+            workflow.execution().as_str().as_bytes(),
+            workflow.attempt().as_str().as_bytes(),
+        ]),
+        crate::AdapterInputSelection::Direct(selection) => {
+            components.push(b"direct");
+            components.push(selection.canonical_json().as_bytes());
+        }
+    }
+    components.extend([
         request.invocation().as_str().as_bytes(),
         output_name.as_bytes(),
         digest.as_bytes(),
-    ] {
+    ]);
+    for component in components {
         hasher.update(&(component.len() as u64).to_be_bytes());
         hasher.update(component);
     }
-    hasher.finalize()
+    Ok(hasher.finalize())
 }
 
 fn publication_causes(
     context: &AdapterExecutionContext,
     request: &InvocationRequest,
 ) -> Result<Vec<CausalReference>, InvocationDataError> {
-    let mut causes = vec![
-        external_cause("revision", context.revision().as_str())?,
-        external_cause("node", context.node().as_str())?,
-        external_cause("execution", context.execution().as_str())?,
-        external_cause("attempt", context.attempt().as_str())?,
-    ];
-    if context.peer_artifact_budget().is_some() {
+    let mut causes = match context.selection() {
+        crate::AdapterInputSelection::Workflow(workflow) => vec![
+            external_cause("revision", workflow.revision().as_str())?,
+            external_cause("node", workflow.node().as_str())?,
+            external_cause("execution", workflow.execution().as_str())?,
+            external_cause("attempt", workflow.attempt().as_str())?,
+        ],
+        crate::AdapterInputSelection::Direct(selection) => vec![external_cause(
+            "direct-selection",
+            &blake3::hash(selection.canonical_json().as_bytes()).to_hex(),
+        )?],
+    };
+    if context.peer_artifact_budget().is_some() && context.workflow().is_some() {
         causes.push(external_cause(
             "origin-invocation",
             request.invocation().as_str(),
@@ -809,7 +874,7 @@ fn publication_causes(
             causes.push(cause);
         }
     }
-    if context.peer_artifact_budget().is_some() {
+    if context.peer_artifact_budget().is_some() && context.workflow().is_some() {
         // The accepted peer request retains these exact origin-side references.
         // Their source journal/artifact identities are not local storage facts.
         causes = causes
@@ -821,7 +886,7 @@ fn publication_causes(
                         .map_err(|error| InvocationDataError::Publication(error.to_string()))?;
                     external_cause(
                         "peer-origin-reference",
-                        &format!("{}:{exact}", context.publication_run()),
+                        &format!("{}:{exact}", context.publication_namespace()?),
                     )
                 }
             })

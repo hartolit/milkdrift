@@ -113,6 +113,82 @@ fn two_input_request() -> TestResult<InvocationRequest> {
     )?)
 }
 
+#[test]
+fn direct_selection_materializes_only_frozen_inputs_and_cannot_publish_before_entry() -> TestResult
+{
+    use milkdrift_capability_host::DirectInputSelection;
+    let store_owner = tempfile::tempdir()?;
+    let execution_owner = tempfile::tempdir()?;
+    let store = Arc::new(RedbStore::open(store_owner.path())?);
+    let access = StoreInvocationDataAccess::new(
+        store,
+        execution_owner.path(),
+        ArtifactReadAuthority::PublicOnly,
+    )?;
+    let request = request()?;
+    let selection = DirectInputSelection::new(&request, 1_024)?;
+    assert!(DirectInputSelection::new(&request, 1).is_err());
+    assert!(!selection.canonical_json().contains("instruction"));
+    let context = AdapterExecutionContext::direct(selection);
+    assert!(context.workflow().is_none());
+    let workspace = access.materialize(
+        &context,
+        &request,
+        &[InputMaterialization::new("prompt", "prompt.json")?],
+        limits(),
+    )?;
+    assert_eq!(
+        fs::read(workspace.input_path("prompt").ok_or("input missing")?)?,
+        br#"{"instruction":"safe"}"#
+    );
+    let foreign = InputReference::new(
+        "other",
+        InvocationValueReference::Inline {
+            value: BoundedJson::new(json!("secret"))?,
+        },
+    )?;
+    assert!(
+        access
+            .read_input_bytes(&context, &foreign, limits())
+            .is_err()
+    );
+    assert!(
+        access
+            .materialize(&context, &two_input_request()?, &[], limits())
+            .is_err()
+    );
+    let missing = milkdrift_capability::ArtifactReference::new(
+        "forbidden",
+        "1".repeat(64),
+        Some("text/plain".to_owned()),
+        Some(4),
+    )?;
+    let error = access
+        .read_artifact_bytes(&context, &missing, limits())
+        .err()
+        .ok_or("foreign read accepted")?;
+    assert!(
+        error
+            .to_string()
+            .contains("outside the frozen direct selection")
+    );
+    assert!(
+        access
+            .publish_bytes(
+                &context,
+                &request,
+                "output",
+                "text/plain",
+                b"result",
+                limits()
+            )
+            .is_err()
+    );
+    drop(workspace);
+    assert_eq!(fs::read_dir(execution_owner.path())?.count(), 0);
+    Ok(())
+}
+
 fn expected_process_artifact(
     context: &AdapterExecutionContext,
     request: &InvocationRequest,
@@ -124,11 +200,36 @@ fn expected_process_artifact(
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"milkdrift.process-output-publication.v1\0");
     for component in [
-        context.run().as_str().as_bytes(),
-        context.revision().as_str().as_bytes(),
-        context.node().as_str().as_bytes(),
-        context.execution().as_str().as_bytes(),
-        context.attempt().as_str().as_bytes(),
+        context
+            .workflow()
+            .ok_or("workflow context missing")?
+            .run()
+            .as_str()
+            .as_bytes(),
+        context
+            .workflow()
+            .ok_or("workflow context missing")?
+            .revision()
+            .as_str()
+            .as_bytes(),
+        context
+            .workflow()
+            .ok_or("workflow context missing")?
+            .node()
+            .as_str()
+            .as_bytes(),
+        context
+            .workflow()
+            .ok_or("workflow context missing")?
+            .execution()
+            .as_str()
+            .as_bytes(),
+        context
+            .workflow()
+            .ok_or("workflow context missing")?
+            .attempt()
+            .as_str()
+            .as_bytes(),
         request.invocation().as_str().as_bytes(),
         output_name.as_bytes(),
         digest.as_bytes(),
@@ -164,24 +265,40 @@ fn seed_invocation(
     let command = CommandId::new("command-materialization")?;
     let receipt = CommandReceipt::new(
         command.clone(),
-        context.run().clone(),
+        context
+            .workflow()
+            .ok_or("workflow context missing")?
+            .run()
+            .clone(),
         ActorRef::new("actor-materialization")?,
         RunSequence::ZERO,
         TimestampMillis::new(10),
         br#"{"schema_version":1,"type":"fixture"}"#.to_vec(),
     )?;
     let root_scope = milkdrift_workspace::WorkspaceScope::run_root(
-        context.run().clone(),
+        context
+            .workflow()
+            .ok_or("workflow context missing")?
+            .run()
+            .clone(),
         milkdrift_workspace::ScopeId::new("root")?,
     );
     let created = RunEventEnvelope::new(
         EventId::new("event-materialization-created")?,
-        context.run().clone(),
+        context
+            .workflow()
+            .ok_or("workflow context missing")?
+            .run()
+            .clone(),
         RunSequence::FIRST,
         TimestampMillis::new(10),
         RunEventKind::RunCreated {
             workflow: WorkflowId::new("workflow-materialization")?,
-            revision: context.revision().clone(),
+            revision: context
+                .workflow()
+                .ok_or("workflow context missing")?
+                .revision()
+                .clone(),
             revision_digest: serde_json::from_value(json!(format!("b3_{}", "2".repeat(64))))?,
             root_scope: root_scope.clone(),
             workspace_budget: budget.clone(),
@@ -190,13 +307,29 @@ fn seed_invocation(
     )?;
     let event = RunEventEnvelope::new(
         EventId::new("event-materialization")?,
-        context.run().clone(),
+        context
+            .workflow()
+            .ok_or("workflow context missing")?
+            .run()
+            .clone(),
         RunSequence::new(2),
         TimestampMillis::new(10),
         RunEventKind::NodeScheduled {
-            node: context.node().clone(),
-            execution: context.execution().clone(),
-            attempt: context.attempt().clone(),
+            node: context
+                .workflow()
+                .ok_or("workflow context missing")?
+                .node()
+                .clone(),
+            execution: context
+                .workflow()
+                .ok_or("workflow context missing")?
+                .execution()
+                .clone(),
+            attempt: context
+                .workflow()
+                .ok_or("workflow context missing")?
+                .attempt()
+                .clone(),
             invocation: request.invocation().clone(),
             idempotency_key: None,
             request: request.clone(),
@@ -204,7 +337,11 @@ fn seed_invocation(
     )?;
     let result = CommandResultDocument::new(
         command,
-        context.run().clone(),
+        context
+            .workflow()
+            .ok_or("workflow context missing")?
+            .run()
+            .clone(),
         receipt.fingerprint().clone(),
         CommandDisposition::Accepted,
         RunSequence::new(2),
@@ -237,9 +374,17 @@ fn seed_invocation(
         result,
         RunIndexUpdate::new(
             Some(RunSummaryIndex {
-                run: context.run().clone(),
+                run: context
+                    .workflow()
+                    .ok_or("workflow context missing")?
+                    .run()
+                    .clone(),
                 workflow: WorkflowId::new("workflow-materialization")?,
-                revision: context.revision().clone(),
+                revision: context
+                    .workflow()
+                    .ok_or("workflow context missing")?
+                    .revision()
+                    .clone(),
                 state: IndexedRunState::Active,
                 through_sequence: RunSequence::new(2),
                 updated_at: TimestampMillis::new(10),

@@ -292,7 +292,17 @@ fn scrub_detects_corruption_in_every_artifact_coordination_family()
             }
             Family::RunReservations => {
                 let mut table = write.open_table(ARTIFACT_RESERVATIONS)?;
-                assert!(table.remove(request.run().as_str())?.is_some());
+                assert!(
+                    table
+                        .remove(
+                            request
+                                .owner()
+                                .run()
+                                .ok_or("fixture requires a workflow publication")?
+                                .as_str()
+                        )?
+                        .is_some()
+                );
             }
             Family::Paths => {
                 let mut table = write.open_table(ARTIFACT_PATHS)?;
@@ -409,7 +419,11 @@ fn double_charge_request(
     let command = CommandId::new("command-double-charge")?;
     let receipt = CommandReceipt::new(
         command.clone(),
-        publication.run().clone(),
+        publication
+            .owner()
+            .run()
+            .ok_or("fixture requires a workflow publication")?
+            .clone(),
         ActorRef::new("actor-integrity")?,
         RunSequence::ZERO,
         TimestampMillis::new(20),
@@ -417,7 +431,11 @@ fn double_charge_request(
     )?;
     let event = RunEventEnvelope::new(
         EventId::new("event-double-charge")?,
-        publication.run().clone(),
+        publication
+            .owner()
+            .run()
+            .ok_or("fixture requires a workflow publication")?
+            .clone(),
         RunSequence::FIRST,
         TimestampMillis::new(20),
         RunEventKind::ArtifactPublished {
@@ -426,7 +444,11 @@ fn double_charge_request(
     )?;
     let result = CommandResultDocument::new(
         command,
-        publication.run().clone(),
+        publication
+            .owner()
+            .run()
+            .ok_or("fixture requires a workflow publication")?
+            .clone(),
         receipt.fingerprint().clone(),
         CommandDisposition::Accepted,
         RunSequence::FIRST,
@@ -451,7 +473,11 @@ fn double_charge_request(
         result,
         RunIndexUpdate::new(
             Some(RunSummaryIndex {
-                run: publication.run().clone(),
+                run: publication
+                    .owner()
+                    .run()
+                    .ok_or("fixture requires a workflow publication")?
+                    .clone(),
                 workflow: WorkflowId::new("workflow-integrity")?,
                 revision: revision_id()?,
                 state: IndexedRunState::Active,
@@ -641,7 +667,15 @@ fn paired_artifact_reference_loss_cannot_reopen_double_charging()
     drop(database);
 
     let store = RedbStore::open(directory.path())?;
-    assert_corruption(store.is_referenced_by_run(request.run(), request.metadata().reference()));
+    assert_corruption(
+        store.is_referenced_by_run(
+            request
+                .owner()
+                .run()
+                .ok_or("fixture requires a workflow publication")?,
+            request.metadata().reference(),
+        ),
+    );
     assert_corruption(store.commit_command(&double_charge_request(&request)?));
     assert!(exhaustive_integrity_failure_count(&store)? > 0);
     Ok(())
@@ -669,13 +703,30 @@ fn artifact_only_usage_requires_a_complete_workspace_domain()
     let write = database.begin_write()?;
     {
         let mut usage = write.open_table(WORKSPACE_USAGE)?;
-        assert!(usage.remove(first.run().as_str())?.is_some());
+        assert!(
+            usage
+                .remove(
+                    first
+                        .owner()
+                        .run()
+                        .ok_or("fixture requires a workflow publication")?
+                        .as_str()
+                )?
+                .is_some()
+        );
     }
     write.commit()?;
     drop(database);
 
     let store = RedbStore::open(directory.path())?;
-    assert_corruption(store.workspace_usage(first.run()));
+    assert_corruption(
+        store.workspace_usage(
+            first
+                .owner()
+                .run()
+                .ok_or("fixture requires a workflow publication")?,
+        ),
+    );
     assert_eq!(
         store.health(TimestampMillis::new(20))?.status,
         StorageHealthStatus::Degraded
@@ -683,7 +734,11 @@ fn artifact_only_usage_requires_a_complete_workspace_domain()
     let second = publication_request(
         "artifact-accounted-second",
         "publication-accounted-second",
-        first.run().as_str(),
+        first
+            .owner()
+            .run()
+            .ok_or("fixture requires a workflow publication")?
+            .as_str(),
         b"second",
         budget,
         first.resulting_usage(),

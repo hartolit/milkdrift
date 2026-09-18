@@ -1,9 +1,21 @@
 use super::{Cursor, Deserialize, ProtocolVersion, Serialize, Value};
 
+/// Services constructed by one daemon installation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostRole {
+    /// Capability serving without workflow runtime, control, or scheduler workers.
+    ExecutionOnly,
+    /// Capability serving together with workflow ownership.
+    WorkflowEnabled,
+}
+
 /// Daemon liveness/readiness/draining state.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HealthRead {
+    /// Configured services available on this host.
+    pub role: HostRole,
     /// Stable lifecycle state.
     pub state: DaemonState,
     /// Process is alive.

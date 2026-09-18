@@ -1,6 +1,37 @@
 use super::*;
 
 #[test]
+fn standalone_lifecycle_shutdown_observes_deadline_and_adapter_cleanup() -> TestResult {
+    let descriptor = descriptor("standalone-shutdown", 1, "profile-lifecycle", 1)?;
+    let host = host(BTreeMap::new(), 1)?;
+    let adapter = Arc::new(LifecycleProbeAdapter::new(
+        descriptor.identity().clone(),
+        LifecyclePanic::None,
+    ));
+    host.register(descriptor, adapter.clone(), None)?;
+    assert!(
+        host.shutdown_with_deadline(false, Duration::ZERO)?
+            .is_none()
+    );
+    assert_eq!(adapter.shutdowns.load(Ordering::SeqCst), 0);
+    assert!(
+        host.shutdown_with_deadline(false, Duration::from_secs(1))?
+            .ok_or("idle lifecycle did not finish")?
+            .unresolved_invocations
+            .is_empty()
+    );
+    assert_eq!(adapter.shutdowns.load(Ordering::SeqCst), 1);
+    assert!(
+        host.generations(
+            &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
+            100
+        )?
+        .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
 fn registration_and_lifecycle_failures_are_contained_without_partial_visibility() -> TestResult {
     let visible = CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown);
 

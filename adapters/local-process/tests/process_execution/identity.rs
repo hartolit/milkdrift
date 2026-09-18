@@ -239,31 +239,25 @@ fn pre_spawn_replacement_is_rejected_before_child_entry_and_remains_invalidated(
 
     fs::write(&executable, b"changed executable bytes")?;
     let first_reporter = TestReporter::default();
-    host.execute_exact_with_context(&snapshot, &first_request, &context()?, &first_reporter)?;
+    let refused =
+        host.execute_exact_with_context(&snapshot, &first_request, &context()?, &first_reporter);
+    assert!(
+        matches!(refused, Err(milkdrift_runtime::ExecutorError::BoundaryBeforeEntry(detail)) if detail.starts_with("tool_size_mismatch:"))
+    );
     let first_events = first_reporter.events()?;
-    assert_eq!(
-        terminal_status(&first_events),
-        Some(TerminalStatus::Rejected)
-    );
-    assert_eq!(
-        terminal_failure_code(&first_events),
-        Some("tool_size_mismatch")
-    );
+    assert!(first_events.is_empty());
     assert!(!marker.exists());
 
     fs::write(&executable, original)?;
     let second_request = request(&profile, "invocation-restored-stale-generation", Vec::new())?;
     let second_reporter = TestReporter::default();
-    host.execute_exact_with_context(&snapshot, &second_request, &context()?, &second_reporter)?;
+    let refused =
+        host.execute_exact_with_context(&snapshot, &second_request, &context()?, &second_reporter);
+    assert!(
+        matches!(refused, Err(milkdrift_runtime::ExecutorError::BoundaryBeforeEntry(detail)) if detail.starts_with("tool_size_mismatch:"))
+    );
     let second_events = second_reporter.events()?;
-    assert_eq!(
-        terminal_status(&second_events),
-        Some(TerminalStatus::Rejected)
-    );
-    assert_eq!(
-        terminal_failure_code(&second_events),
-        Some("tool_size_mismatch")
-    );
+    assert!(second_events.is_empty());
     assert!(!marker.exists());
 
     value["profile"]["revision"] = json!(2);

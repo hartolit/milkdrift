@@ -7,7 +7,7 @@ use milkdrift_control_protocol::{
 };
 use milkdrift_persistence::{ApplicationReceiptStatus, PeerExecutionStatus, TimestampMillis};
 
-use crate::config::{PeerHostConfig, PeerServingConfig, StoragePlan};
+use crate::config::{ServingHostConfig, StoragePlan};
 
 use super::read_model::bounded;
 
@@ -83,8 +83,7 @@ struct PeerHealth {
 }
 
 impl PeerHealth {
-    fn new(peers: &PeerHostConfig) -> Self {
-        let serving = peer_serving(peers);
+    fn new(serving: Option<&ServingHostConfig>) -> Self {
         Self {
             enabled: serving.is_some(),
             active_bound: serving.map_or(0, |policy| policy.maximum_global_active),
@@ -120,6 +119,7 @@ impl PeerHealth {
 }
 
 struct HealthState {
+    role: milkdrift_control_protocol::HostRole,
     lifecycle: Lifecycle,
     queued_requests: u32,
     request_queue_capacity: u32,
@@ -132,6 +132,7 @@ struct HealthState {
 impl HealthState {
     fn read(&self) -> HealthRead {
         HealthRead {
+            role: self.role,
             state: self.lifecycle.public(),
             live: !matches!(self.lifecycle, Lifecycle::Stopped | Lifecycle::Failed),
             ready: self.lifecycle == Lifecycle::Ready,
@@ -160,19 +161,21 @@ impl SharedHealth {
     pub(super) fn new(
         request_queue_capacity: u32,
         storage: &StoragePlan,
-        peers: &PeerHostConfig,
+        serving: Option<&ServingHostConfig>,
+        role: milkdrift_control_protocol::HostRole,
     ) -> Self {
         Self {
             versioned: Mutex::new(VersionedHealth {
                 generation: 1,
                 state: HealthState {
+                    role,
                     lifecycle: Lifecycle::Starting,
                     queued_requests: 0,
                     request_queue_capacity,
                     active_effects: 0,
                     last_failure: None,
                     application_receipts: ReceiptHealth::new(storage),
-                    peer_executions: PeerHealth::new(peers),
+                    peer_executions: PeerHealth::new(serving),
                 },
             }),
         }
@@ -326,13 +329,6 @@ impl QueuedRequestGuard {
 impl Drop for QueuedRequestGuard {
     fn drop(&mut self) {
         self.release_if_occupied();
-    }
-}
-
-fn peer_serving(peers: &PeerHostConfig) -> Option<&PeerServingConfig> {
-    match peers {
-        PeerHostConfig::Disabled => None,
-        PeerHostConfig::Enabled { serving, .. } => Some(serving),
     }
 }
 

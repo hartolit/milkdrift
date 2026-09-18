@@ -693,6 +693,8 @@ fn same_account_identity_with_an_altered_budget_is_not_idempotent() -> TestResul
 
 #[path = "controller_account/artifact_charge.rs"]
 mod artifact_charge;
+#[path = "controller_account/remote_output.rs"]
+mod remote_output;
 #[test]
 fn unbound_publication_integrity_rejects_an_invocation_reservation_owner() -> TestResult {
     let directory = TempDir::new()?;

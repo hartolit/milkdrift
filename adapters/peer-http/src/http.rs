@@ -15,7 +15,7 @@ use axum::{
 use milkdrift_authority::AuthorityOperation;
 use milkdrift_peer_protocol::{
     ArtifactChunk, ArtifactMetadataOffer, HandshakeRequest, PeerCancellationRequest,
-    PeerExecutionId, PeerInvocationRequest, PeerRequestId, ProtocolEnvelope, TransferId,
+    PeerExecutionId, PeerRequestId, ProtocolEnvelope, ServingInvocationRequest, TransferId,
     decode_envelope, encode_envelope,
 };
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,7 @@ use tower::ServiceBuilder;
 use tower_http::{catch_panic::CatchPanicLayer, trace::TraceLayer};
 
 use crate::{PeerHttpError, PeerService};
+use milkdrift_capability_host::ServingError;
 
 #[derive(Clone)]
 struct AppState {
@@ -112,7 +113,7 @@ impl IntoResponse for ApiError {
             PeerHttpError::Transport(_) => (StatusCode::BAD_GATEWAY, "transport", true),
         };
         let body = serde_json::to_vec(&ErrorBody {
-            protocol: milkdrift_peer_protocol::ProtocolVersion::V1_3,
+            protocol: milkdrift_peer_protocol::ProtocolVersion::V1_4,
             code,
             message: bounded(&self.0.to_string(), 512),
             retryable,
@@ -134,7 +135,7 @@ impl IntoResponse for ApiError {
 /// body sizes; observation streams reauthenticate each page. SSE closure alone does not carry
 /// archived history—use lookup or observation pages for its final/uncertain summary. CORS is absent.
 pub fn peer_router(service: Arc<PeerService>) -> Router {
-    let blocking_call_limit = service.http_connection_limit();
+    let blocking_call_limit = service.connection_limit();
     authorized_peer_routes! { Router::new();
         "/peer/v1/handshake" => post(handshake), PeerRouteAuthorityMapping::Exact(AuthorityOperation::NegotiatePeerSession), PeerRouteResourceMapping::Relationship;
         "/peer/v1/catalog" => get(catalog), PeerRouteAuthorityMapping::QueryDerived, PeerRouteResourceMapping::Capability;
@@ -187,7 +188,7 @@ async fn invoke(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    let request: ProtocolEnvelope<PeerInvocationRequest> = decode(&body)?;
+    let request: ProtocolEnvelope<ServingInvocationRequest> = decode(&body)?;
     let accepted = authenticated_service_call(state, &headers, move |service, peer| {
         service.invoke(&peer, request.message)
     })
@@ -278,7 +279,7 @@ async fn observation_stream(
             let page = service_call(service.clone(), blocking_calls.clone(), move |service| {
                 let current = service.authenticate_bearer(observation_bearer.as_bytes())?;
                 if current != observation_peer {
-                    return Err(PeerHttpError::Unauthenticated);
+                    return Err(ServingError::Unauthenticated);
                 }
                 service.observations(
                     &observation_peer,
@@ -447,7 +448,7 @@ async fn artifact_abort(
 async fn authenticated_service_call<T>(
     state: AppState,
     headers: &HeaderMap,
-    operation: impl FnOnce(Arc<PeerService>, milkdrift_capability::PeerId) -> Result<T, PeerHttpError>
+    operation: impl FnOnce(Arc<PeerService>, milkdrift_capability::PeerId) -> Result<T, ServingError>
     + Send
     + 'static,
 ) -> Result<T, ApiError>
@@ -466,7 +467,7 @@ where
 async fn service_call<T>(
     service: Arc<PeerService>,
     blocking_calls: Arc<tokio::sync::Semaphore>,
-    operation: impl FnOnce(Arc<PeerService>) -> Result<T, PeerHttpError> + Send + 'static,
+    operation: impl FnOnce(Arc<PeerService>) -> Result<T, ServingError> + Send + 'static,
 ) -> Result<T, PeerHttpError>
 where
     T: Send + 'static,
@@ -474,7 +475,7 @@ where
     let permit = blocking_permit(blocking_calls)?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        operation(service)
+        operation(service).map_err(PeerHttpError::from)
     })
     .await
     .map_err(|_| PeerHttpError::Unavailable("peer service task failed".to_owned()))?

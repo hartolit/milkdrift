@@ -10,7 +10,7 @@ use crate::{
     RedbStore, error, fault::FaultPoint, schema::PEER_ACTIVE_CLAIMS,
     schema::PEER_DISPATCH_AVAILABLE,
 };
-use milkdrift_capability::PeerId;
+
 use milkdrift_peer_protocol::PeerExecutionId;
 use milkdrift_persistence::{
     PeerClaimOutcome, PeerDispatchClaim, PeerDispatchClaimRequest, PeerEntryEvidence,
@@ -121,6 +121,14 @@ impl RedbStore {
         validate_entry_authority(&record, request.authority)?;
         let claim =
             exact_pre_entry_claim(&record, request.worker, request.claim_generation)?.clone();
+        if request.entered_at_unix_ms > claim.lease_expires_at_unix_ms
+            || request.entered_at_unix_ms > record.request.deadline_unix_ms
+        {
+            return Err(PersistenceError::ImmutableConflict {
+                entity: "peer_dispatch_claim",
+                identity: request.execution.to_string(),
+            });
+        }
         let mut global = global_accounting(&write)?;
         if !global.admission_open {
             return Ok(PeerEntryOutcome::AdmissionClosed);
@@ -155,7 +163,7 @@ impl RedbStore {
 
     pub(super) fn release_claim(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         worker: &WorkerId,
         claim_generation: u64,
@@ -204,7 +212,7 @@ impl RedbStore {
 
     pub(super) fn extend_claim(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         worker: &WorkerId,
         claim_generation: u64,
@@ -244,7 +252,7 @@ impl RedbStore {
 
     pub(super) fn mark_uncertain(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         worker: &WorkerId,
         claim_generation: u64,
@@ -272,7 +280,7 @@ impl RedbStore {
             reason: reason.to_owned(),
         };
         bump_record(&mut record)?;
-        release_active_accounting(&write, &record.owner_peer, false)?;
+        release_active_accounting(&write, &record.caller, false)?;
         insert_terminal_index(&write, &record, uncertain_at_unix_ms)?;
         put_execution(&write, &record)?;
         self.faults.check(FaultPoint::BeforePeerUncertainCommit)?;
@@ -345,7 +353,7 @@ impl RedbStore {
                         uncertain_at_unix_ms: recovered_at_unix_ms,
                         reason: "serving daemon restarted after durable adapter entry".to_owned(),
                     };
-                    release_active_accounting(&write, &record.owner_peer, false)?;
+                    release_active_accounting(&write, &record.caller, false)?;
                     insert_terminal_index(&write, &record, recovered_at_unix_ms)?;
                     result.uncertain = result.uncertain.saturating_add(1);
                 }

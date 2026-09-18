@@ -439,7 +439,10 @@ const fn provenance(value: &ArtifactProvenance) -> ContextProvenanceClass {
         CausalReference::WorkspaceValue { .. } => ContextProvenanceClass::WorkspaceValue,
         CausalReference::Artifact { .. } => ContextProvenanceClass::Artifact,
         CausalReference::Invocation { .. } => ContextProvenanceClass::Invocation,
-        CausalReference::External { .. } => ContextProvenanceClass::External,
+        CausalReference::External { .. }
+        | CausalReference::HostInvocation { .. }
+        | CausalReference::ClientUpload { .. }
+        | CausalReference::PeerClaim { .. } => ContextProvenanceClass::External,
     }
 }
 

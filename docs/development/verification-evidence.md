@@ -6,6 +6,47 @@ lanes below exercise application use, mutation sensitivity, sustained load, and 
 The [evidence package guide](../../tools/evidence/README.md) compares the tools and their entry points.
 [Status](../product/status.md#current-validationevidence-snapshot) owns the latest executed state.
 
+## Independent host execution
+
+Build the daemon, CLI and `headless-cli-evidence`, then run:
+
+```sh
+cargo run -p milkdrift-evidence --bin headless-cli-evidence -- \
+  --independent-host-only --daemon PATH_TO_DAEMON --cli PATH_TO_CLI
+```
+
+This uses actual daemon/CLI binaries, the production process adapter and a deterministic external
+model HTTP endpoint. Public uploads and `invocation prepare/submit` produce useful outputs on an
+execution-only host. Hot replay and complete teardown/restart preserve one entry, direct producers
+and absence of workflow records. A second daemon runs workflows against the same serving operations;
+the fixture asserts staged artifact/manifest inputs, real origin coordinates, imported useful outputs,
+originating controller reservation/settlement and no serving-side synthetic runs. A third model
+request reaches the external endpoint, which drops the reply. The origin retains an uncertain
+attempt and the exact outstanding token/artifact allowance across restart; the external counter
+remains three model requests in total (one direct, two remote). An uncertain outcome is not terminal
+settlement and cannot release its reservation. The process marker records two useful entries, one
+direct and one remote. It uses an explicit loopback development exception and does not
+establish non-loopback TLS deployment, a physical second machine, or real model quality.
+
+The harness prints idle process measurements before either role begins its workflow scenario.
+On Windows x64 build 26200 with debug binaries, one 2026-09-18 observation measured execution-only
+at 31 threads, 30,457,856 working-set bytes and 6,369,280 private bytes; workflow-enabled measured
+35 threads, 31,608,832 working-set bytes and 6,275,072 private bytes. Both had the configured serving
+workers and ran on the same machine. These are process snapshots with OS/runtime overhead,
+not a portable performance promise or a live-inference memory measurement.
+
+Focused serving tests cover prepared refusal/panic/revocation/expiry, caller separation, archival,
+request-bound input staging and cumulative quota replay. Redb artifact tests reopen after interrupted
+client uploads, reclaim only that owner through bounded pages, preserve workflow/peer publication
+ownership, and verify imported controller charges across replay/reopen. Daemon role tests assert
+closed-history preservation and active-obligation refusal. The full gate remains necessary for
+changes to these shared boundaries.
+
+The prepared-allowance negative tests were also run with their admission guard deliberately
+disabled. Both detected one forbidden external entry instead of zero; both passed after restoring
+the guard. The targeted commands and failure assertions are retained under
+`target/adaptive-hosts/prepared-allowance-mutant.log` and `prepared-allowance-restored.log`.
+
 ## Local process reporting cleanup
 
 Run `cargo test -p milkdrift-local-process --all-features` for adapter conformance and lifecycle
@@ -577,7 +618,7 @@ prompts, provider payloads, artifact bytes, and environment values are excluded.
 
 | Workflow | Configured evidence |
 | --- | --- |
-| [quality](../../.github/workflows/quality.yml) | Linux full gate, actual CLI/daemon operator scenario, deterministic local model, and installed controller qualification/refusal scenario. |
+| [quality](../../.github/workflows/quality.yml) | Linux full gate, actual CLI/daemon independent-host and operator scenarios, deterministic local model, and installed controller qualification/refusal scenario. |
 | [platform](../../.github/workflows/platform.yml) | Pinned Ubuntu, Windows, macOS checks and selected domain/protocol/client/process tests. |
 | [mutation](../../.github/workflows/mutation.yml) | Seven weekly/manual shards and complete mutation artifacts. |
 | [benchmarks](../../.github/workflows/benchmarks.yml) | Smoke/full distributions, operational reports, worker saturation. |

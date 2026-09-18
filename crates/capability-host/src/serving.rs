@@ -1,7 +1,23 @@
+mod artifact;
 mod artifact_transfer;
+mod auth;
+mod config;
+mod dispatch;
+mod error;
+pub(crate) mod prepared;
+mod store;
+pub use artifact::{
+    CorePeerArtifactStore, PeerArtifactError, PeerArtifactStore, PeerArtifactTransferFacts,
+};
 pub(crate) use artifact_transfer::DisabledArtifactStore;
+pub use auth::PeerAuthenticator;
+pub use config::ServingClientPolicy;
+pub use config::{PeerRelationship, PeerServerConfig, PeerWorkerConfig};
+pub use error::ServingError;
 mod authority;
 mod catalog;
+mod client_authority;
+mod direct;
 mod lifecycle;
 mod worker;
 
@@ -10,41 +26,38 @@ use authority::peer_capability_authority;
 use authority::{adapter_execution_context, peer_authority_grant};
 pub(crate) use worker::{PeerUncertainty, PeerWorkerRecovery, PeerWorkerRun};
 
+#[cfg(any(test, feature = "test-support"))]
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
         Arc, Mutex,
         atomic::{AtomicU8, Ordering},
     },
-    time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::CapabilityHost;
 use milkdrift_authority::{
     AuthorityBudget, AuthorityGrant, AuthorityOperation, GrantSetEvaluator, PolicyId,
     RequestedResourceFacts,
 };
 use milkdrift_capability::{CancellationBehavior, CancellationRequest, PeerId};
-use milkdrift_capability_host::CapabilityHost;
 use milkdrift_peer_protocol::{
     CancellationDisposition, CatalogSnapshot, DrainState, HandshakeRequest, HandshakeResponse,
-    InvocationAcceptance, InvocationLookup, ObservationHistory, ObservationPage,
-    PeerCancellationAcknowledgement, PeerCancellationRequest, PeerExecutionId,
-    PeerInvocationRequest, RemoteExecutionStatus,
+    InvocationAcceptance, InvocationLookup, ObservationPage, PeerCancellationAcknowledgement,
+    PeerCancellationRequest, PeerExecutionId, ServingInvocationRequest,
 };
 use milkdrift_persistence::{
     PageSize, PeerAdmission, PeerAdmissionOutcome, PeerAdmissionRejection, PeerArchivedDisposition,
-    PeerExecutionPhase, PeerExecutionSnapshot, PeerExecutionStore, PeerRelationshipState,
-    PersistenceError, StorageFailureClass,
+    PeerExecutionPhase, PeerExecutionSnapshot, PeerExecutionStore, PersistenceError,
+    ServingCallerState, StorageFailureClass,
 };
 use subtle::ConstantTimeEq as _;
 use thiserror::Error;
 
-use crate::{
-    PeerAuthenticator, PeerHttpError,
-    artifact::PeerArtifactStore,
-    config::{PeerRelationship, PeerServerConfig},
+use self::{
     dispatch::PeerDispatchWorkers,
-    store::{acceptance, archived_summary, lookup as execution_lookup, snapshot_status},
+    store::{acceptance, lookup as execution_lookup},
 };
 
 /// Supply boundary time for peer authority, deadlines, leases, and durable observations.
@@ -74,10 +87,12 @@ pub enum PeerClockError {
 /// Standalone system clock with a process-local monotonic observation check.
 /// Restart-persistent rollback detection requires the daemon's injected durable clock.
 #[derive(Debug, Default)]
+#[cfg(any(test, feature = "test-support"))]
 pub struct SystemPeerClock {
     last_unix_ms: Mutex<u64>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl PeerClock for SystemPeerClock {
     fn now_unix_ms(&self) -> Result<u64, PeerClockError> {
         let mut last = self
@@ -93,6 +108,7 @@ impl PeerClock for SystemPeerClock {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn unix_millis_at(now: SystemTime) -> Result<u64, PeerClockError> {
     let duration = now
         .duration_since(UNIX_EPOCH)
@@ -100,6 +116,7 @@ fn unix_millis_at(now: SystemTime) -> Result<u64, PeerClockError> {
     unix_millis_from_duration(duration)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn unix_millis_from_duration(duration: std::time::Duration) -> Result<u64, PeerClockError> {
     u64::try_from(duration.as_millis()).map_err(|_| PeerClockError::MillisecondOverflow)
 }
@@ -126,12 +143,16 @@ pub struct PeerService {
     config: PeerServerConfig,
     relationships: BTreeMap<PeerId, PeerRelationship>,
     grants: BTreeMap<PeerId, AuthorityGrant>,
+    clients: BTreeMap<milkdrift_authority::ActorRef, AuthorityGrant>,
+    client_policy: Option<ServingClientPolicy>,
     authority: GrantSetEvaluator,
     capability_host: CapabilityHost,
     executions: Arc<dyn PeerExecutionStore>,
     clock: Arc<dyn PeerClock>,
     catalogs: Mutex<BTreeMap<PeerId, CachedCatalog>>,
-    rate_windows: Mutex<BTreeMap<(PeerId, String), RateWindow>>,
+    client_catalogs: Mutex<BTreeMap<milkdrift_authority::ActorRef, CachedCatalog>>,
+    rate_windows:
+        Mutex<BTreeMap<(milkdrift_peer_protocol::ServingCaller, &'static str), RateWindow>>,
     revoked_peers: Mutex<BTreeSet<PeerId>>,
     drain: AtomicU8,
     artifacts: Arc<dyn PeerArtifactStore>,
@@ -166,7 +187,11 @@ impl std::fmt::Debug for PeerService {
 }
 
 impl PeerService {
-    pub(crate) fn http_connection_limit(&self) -> usize {
+    fn peer_caller(&self, peer: &PeerId) -> milkdrift_peer_protocol::ServingCaller {
+        milkdrift_peer_protocol::ServingCaller::peer(&self.config.local_peer, peer)
+    }
+    /// Maximum concurrently admitted transport requests for this owner.
+    pub fn connection_limit(&self) -> usize {
         usize::from(self.config.limits.connections)
     }
 
@@ -177,7 +202,7 @@ impl PeerService {
         capability_host: CapabilityHost,
         executions: Arc<dyn PeerExecutionStore>,
         clock: Arc<dyn PeerClock>,
-    ) -> Result<Arc<Self>, PeerHttpError> {
+    ) -> Result<Arc<Self>, ServingError> {
         Self::new_with_artifacts(
             config,
             capability_host,
@@ -194,7 +219,7 @@ impl PeerService {
         executions: Arc<dyn PeerExecutionStore>,
         artifacts: Arc<dyn PeerArtifactStore>,
         clock: Arc<dyn PeerClock>,
-    ) -> Result<Arc<Self>, PeerHttpError> {
+    ) -> Result<Arc<Self>, ServingError> {
         Self::new_with_artifacts_and_authenticator(
             config,
             capability_host,
@@ -213,8 +238,40 @@ impl PeerService {
         artifacts: Arc<dyn PeerArtifactStore>,
         authenticator: Option<Arc<dyn PeerAuthenticator>>,
         clock: Arc<dyn PeerClock>,
-    ) -> Result<Arc<Self>, PeerHttpError> {
+    ) -> Result<Arc<Self>, ServingError> {
+        Self::with_clients(
+            config,
+            capability_host,
+            executions,
+            artifacts,
+            authenticator,
+            None,
+            clock,
+        )
+    }
+
+    /// Constructs one serving owner for peer relationships and independently authenticated clients.
+    /// The embedding authentication owner supplies the client grants; recover before admission.
+    #[allow(clippy::too_many_arguments)] // One owner binds registry, persistence, artifacts, peer authentication, client policy, and clock.
+    pub fn with_clients(
+        config: PeerServerConfig,
+        capability_host: CapabilityHost,
+        executions: Arc<dyn PeerExecutionStore>,
+        artifacts: Arc<dyn PeerArtifactStore>,
+        authenticator: Option<Arc<dyn PeerAuthenticator>>,
+        client_policy: Option<ServingClientPolicy>,
+        clock: Arc<dyn PeerClock>,
+    ) -> Result<Arc<Self>, ServingError> {
         config.validate()?;
+        if let Some(policy) = &client_policy {
+            policy.validate()?;
+        }
+        let clients: BTreeMap<_, _> = client_policy
+            .as_ref()
+            .into_iter()
+            .flat_map(|policy| &policy.grants)
+            .map(|grant| (grant.actor().clone(), grant.clone()))
+            .collect();
         let relationships: BTreeMap<_, _> = config
             .relationships
             .iter()
@@ -230,23 +287,64 @@ impl PeerService {
             .collect::<Result<BTreeMap<_, _>, _>>()?;
         let authority = GrantSetEvaluator::new(
             PolicyId::new("peer.relationship-authority.v1")
-                .map_err(|error| PeerHttpError::Configuration(error.to_string()))?,
+                .map_err(|error| ServingError::Configuration(error.to_string()))?,
             1,
-            grants.values().cloned(),
-            BTreeMap::new(),
+            grants.values().chain(clients.values()).cloned(),
+            client_policy
+                .as_ref()
+                .map_or_else(BTreeMap::new, |policy| policy.revocations.clone()),
         )
-        .map_err(|error| PeerHttpError::Configuration(error.to_string()))?;
+        .map_err(|error| ServingError::Configuration(error.to_string()))?;
+        executions
+            .bind_serving_host(&config.local_peer)
+            .map_err(map_execution_persistence)?;
         executions
             .set_peer_admission_open(false)
             .map_err(map_execution_persistence)?;
         for relationship in relationships.values() {
             executions
-                .configure_peer_relationship(&PeerRelationshipState {
-                    peer: relationship.remote_peer.clone(),
+                .configure_peer_relationship(&ServingCallerState {
+                    caller: milkdrift_peer_protocol::ServingCaller::peer(
+                        &config.local_peer,
+                        &relationship.remote_peer,
+                    ),
                     generation: relationship_generation(relationship),
                     enabled: relationship.enabled,
                     expires_at_unix_ms: relationship.expires_at_unix_ms,
                     maximum_active: u32::from(relationship.maximum_concurrent),
+                })
+                .map_err(map_execution_persistence)?;
+        }
+        for grant in clients.values() {
+            let policy = client_policy
+                .as_ref()
+                .ok_or_else(|| ServingError::Configuration("client policy missing".to_owned()))?;
+            let revoked = policy
+                .revocations
+                .get(grant.identity())
+                .is_some_and(|generation| *generation > grant.revocation_generation());
+            executions
+                .configure_peer_relationship(&ServingCallerState {
+                    caller: milkdrift_peer_protocol::ServingCaller {
+                        host: config.local_peer.clone(),
+                        principal: milkdrift_peer_protocol::ServingPrincipal::Client {
+                            actor: grant.actor().clone(),
+                        },
+                    },
+                    generation: grant
+                        .revision()
+                        .saturating_add(grant.revocation_generation()),
+                    enabled: !revoked,
+                    expires_at_unix_ms: grant.valid_until().get(),
+                    maximum_active: policy
+                        .maximum_concurrent
+                        .min(
+                            grant
+                                .budget()
+                                .concurrency
+                                .unwrap_or(policy.maximum_concurrent),
+                        )
+                        .max(1),
                 })
                 .map_err(map_execution_persistence)?;
         }
@@ -255,11 +353,14 @@ impl PeerService {
             config,
             relationships,
             grants,
+            clients,
+            client_policy,
             authority,
             capability_host,
             executions,
             clock,
             catalogs: Mutex::new(BTreeMap::new()),
+            client_catalogs: Mutex::new(BTreeMap::new()),
             rate_windows: Mutex::new(BTreeMap::new()),
             revoked_peers: Mutex::new(BTreeSet::new()),
             // Recovery owns startup. Workers and inbound admission remain closed until it finishes.
@@ -269,15 +370,17 @@ impl PeerService {
             workers: Mutex::new(None),
         });
         let workers = PeerDispatchWorkers::start(Arc::downgrade(&service), worker_config)?;
-        *service.workers.lock().map_err(|_| {
-            PeerHttpError::Unavailable("peer worker owner unavailable".to_owned())
-        })? = Some(workers);
+        *service
+            .workers
+            .lock()
+            .map_err(|_| ServingError::Unavailable("peer worker owner unavailable".to_owned()))? =
+            Some(workers);
         Ok(service)
     }
 
     /// Authenticates only the transport bearer value and returns its configured identity.
     /// Request payload identity fields never choose this result.
-    pub fn authenticate_bearer(&self, supplied: &[u8]) -> Result<PeerId, PeerHttpError> {
+    pub fn authenticate_bearer(&self, supplied: &[u8]) -> Result<PeerId, ServingError> {
         let now = self.now()?;
         if let Some(authenticator) = &self.authenticator {
             return authenticator
@@ -289,7 +392,7 @@ impl PeerService {
                             .lock()
                             .map_or(true, |revoked| revoked.contains(peer))
                 })
-                .ok_or(PeerHttpError::Unauthenticated);
+                .ok_or(ServingError::Unauthenticated);
         }
         self.relationships
             .values()
@@ -306,13 +409,13 @@ impl PeerService {
                 })
             })
             .map(|relationship| relationship.remote_peer.clone())
-            .ok_or(PeerHttpError::Unauthenticated)
+            .ok_or(ServingError::Unauthenticated)
     }
 
-    pub(super) fn now(&self) -> Result<u64, PeerHttpError> {
+    pub(super) fn now(&self) -> Result<u64, ServingError> {
         self.clock
             .now_unix_ms()
-            .map_err(|error| PeerHttpError::Unavailable(error.to_string()))
+            .map_err(|error| ServingError::Unavailable(error.to_string()))
     }
 
     /// Negotiates a session and cross-checks the claimed identity against authentication.
@@ -320,7 +423,7 @@ impl PeerService {
         &self,
         authenticated_peer: &PeerId,
         request: &HandshakeRequest,
-    ) -> Result<HandshakeResponse, PeerHttpError> {
+    ) -> Result<HandshakeResponse, ServingError> {
         let relationship = self.relationship(authenticated_peer)?;
         self.require_operation(
             &relationship,
@@ -329,7 +432,7 @@ impl PeerService {
             AuthorityBudget::default(),
         )?;
         if &request.claimed_peer != authenticated_peer {
-            return Err(PeerHttpError::Unauthorized(
+            return Err(ServingError::Unauthorized(
                 "handshake identity does not match transport authentication".to_owned(),
             ));
         }
@@ -337,7 +440,7 @@ impl PeerService {
         request
             .limits
             .validate()
-            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+            .map_err(|error| ServingError::Protocol(error.to_string()))?;
         let selected_version = self
             .config
             .versions
@@ -350,7 +453,7 @@ impl PeerService {
                         maximum: selected,
                     })
             })
-            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+            .map_err(|error| ServingError::Protocol(error.to_string()))?;
         Ok(HandshakeResponse {
             peer: self.config.local_peer.clone(),
             session: self.config.session.clone(),
@@ -373,17 +476,27 @@ impl PeerService {
     pub fn invoke(
         self: &Arc<Self>,
         authenticated_peer: &PeerId,
-        request: PeerInvocationRequest,
-    ) -> Result<InvocationAcceptance, PeerHttpError> {
+        request: ServingInvocationRequest,
+    ) -> Result<InvocationAcceptance, ServingError> {
         let relationship = self.relationship(authenticated_peer)?;
+        if request.authorization.caller() != self.peer_caller(authenticated_peer) {
+            return Err(ServingError::Unauthorized(
+                "request caller does not match peer authentication and target host".to_owned(),
+            ));
+        }
         request
             .validate()
-            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+            .map_err(|error| ServingError::Protocol(error.to_string()))?;
         if let Some(existing) = self
             .executions
-            .peer_execution_by_request(authenticated_peer, &request.request_id)
+            .peer_execution_by_request(&self.peer_caller(authenticated_peer), &request.request_id)
             .map_err(map_execution_persistence)?
         {
+            self.require_execution_operation(
+                &relationship,
+                &existing,
+                AuthorityOperation::InspectPeerExecution,
+            )?;
             return if existing.request_digest() == request.request_digest {
                 Ok(acceptance(&existing, true))
             } else {
@@ -405,10 +518,7 @@ impl PeerService {
                 None,
             ));
         }
-        self.check_rate(
-            &relationship,
-            &format!("invoke:{}", request.selection.operation().as_str()),
-        )?;
+        self.check_rate(&relationship, "invoke")?;
         let now = self.now()?;
         if now > request.deadline_unix_ms {
             return Ok(rejection(
@@ -440,19 +550,19 @@ impl PeerService {
                         == request.selection.descriptor_revision()
             })
             .ok_or_else(|| {
-                PeerHttpError::Unauthorized(
+                ServingError::Unauthorized(
                     "selected capability generation is not advertised".to_owned(),
                 )
             })?;
         request
             .selection
             .validate_against(&entry.descriptor)
-            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+            .map_err(|error| ServingError::Protocol(error.to_string()))?;
         if !entry
             .invocable_operations
             .contains(request.selection.operation())
         {
-            return Err(PeerHttpError::Unauthorized(
+            return Err(ServingError::Unauthorized(
                 "selected operation is not advertised".to_owned(),
             ));
         }
@@ -464,15 +574,30 @@ impl PeerService {
             &generation.authority_requirements,
             now,
         )?;
-        let execution = execution_identity(authenticated_peer, &request)?;
+        self.accept_serving(
+            request,
+            authority_decision,
+            relationship_generation(&relationship),
+        )
+    }
+
+    fn accept_serving(
+        &self,
+        request: ServingInvocationRequest,
+        authority_decision: milkdrift_authority::AuthorityDecisionSnapshot,
+        authority_generation: u64,
+    ) -> Result<InvocationAcceptance, ServingError> {
+        let caller = request.authorization.caller();
+        let now = self.now()?;
+        let execution = execution_identity(&caller, &request)?;
         match self
             .executions
             .admit_peer_execution(&PeerAdmission {
-                owner_peer: authenticated_peer,
+                caller: &caller,
                 request: &request,
                 authority: &authority_decision,
                 execution: &execution,
-                relationship_generation: relationship_generation(&relationship),
+                relationship_generation: authority_generation,
                 accepted_at_unix_ms: now,
                 maximum_global_active: self.config.workers.maximum_global_active,
                 maximum_dispatch_queue: self.config.workers.maximum_dispatch_queue,
@@ -518,7 +643,7 @@ impl PeerService {
         &self,
         authenticated_peer: &PeerId,
         request: &milkdrift_peer_protocol::PeerRequestId,
-    ) -> Result<InvocationLookup, PeerHttpError> {
+    ) -> Result<InvocationLookup, ServingError> {
         let relationship = self.relationship(authenticated_peer)?;
         self.require_operation(
             &relationship,
@@ -527,16 +652,23 @@ impl PeerService {
             AuthorityBudget::default(),
         )?;
         self.check_rate(&relationship, "lookup")?;
-        Ok(self
+        let existing = self
             .executions
-            .peer_execution_by_request(authenticated_peer, request)
-            .map_err(map_execution_persistence)?
-            .map_or_else(
-                || InvocationLookup::NotAccepted {
-                    request_id: request.clone(),
-                },
-                |record| execution_lookup(&record),
-            ))
+            .peer_execution_by_request(&self.peer_caller(authenticated_peer), request)
+            .map_err(map_execution_persistence)?;
+        if let Some(record) = &existing {
+            self.require_execution_operation(
+                &relationship,
+                record,
+                AuthorityOperation::InspectPeerExecution,
+            )?;
+        }
+        Ok(existing.map_or_else(
+            || InvocationLookup::NotAccepted {
+                request_id: request.clone(),
+            },
+            |record| execution_lookup(&record),
+        ))
     }
 
     /// Returns a contiguous resumable observation page for one owned execution.
@@ -546,7 +678,7 @@ impl PeerService {
         execution: &PeerExecutionId,
         after_sequence: u64,
         maximum: usize,
-    ) -> Result<ObservationPage, PeerHttpError> {
+    ) -> Result<ObservationPage, ServingError> {
         let relationship = self.relationship(authenticated_peer)?;
         self.require_operation(
             &relationship,
@@ -557,35 +689,37 @@ impl PeerService {
         self.check_rate(&relationship, "observations")?;
         let maximum = maximum.min(usize::from(self.config.limits.observation_items));
         let limit = PageSize::new(u32::try_from(maximum).unwrap_or(u32::MAX))
-            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+            .map_err(|error| ServingError::Protocol(error.to_string()))?;
         let page = self
             .executions
-            .peer_observations(authenticated_peer, execution, after_sequence, limit)
+            .peer_observations(
+                &self.peer_caller(authenticated_peer),
+                execution,
+                after_sequence,
+                limit,
+            )
             .map_err(map_execution_persistence)?;
-        let status = snapshot_status(&page.execution);
-        let history = match &page.execution {
-            PeerExecutionSnapshot::Hot(_) => ObservationHistory::Hot,
-            PeerExecutionSnapshot::Archived(tombstone) => ObservationHistory::Archived {
-                summary: Box::new(archived_summary(tombstone)),
-            },
-        };
-        let terminal = status == RemoteExecutionStatus::Terminal;
-        let archived = matches!(page.execution, PeerExecutionSnapshot::Archived(_));
-        let page = ObservationPage {
-            execution: execution.clone(),
+        self.require_execution_operation(
+            &relationship,
+            &page.execution,
+            AuthorityOperation::InspectPeerExecution,
+        )?;
+        for observation in &page.observations {
+            if let Some((_, reference)) = observation.event.kind().output() {
+                self.authorize_peer_artifact_metadata(&relationship, reference)?;
+            }
+            if let Some(terminal) = observation.event.kind().terminal() {
+                for reference in terminal.outputs() {
+                    self.authorize_peer_artifact_metadata(&relationship, reference)?;
+                }
+            }
+        }
+        store::observation_page(
+            page,
+            execution,
             after_sequence,
-            next_sequence: page
-                .observations
-                .last()
-                .map_or(after_sequence, |observation| observation.sequence),
-            observations: page.observations,
-            terminal,
-            closed: terminal || archived,
-            history,
-        };
-        page.validate(usize::from(self.config.limits.observation_items))
-            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
-        Ok(page)
+            usize::from(self.config.limits.observation_items),
+        )
     }
 
     /// Routes a separately authenticated cancellation and persists its acknowledgement.
@@ -593,38 +727,33 @@ impl PeerService {
         &self,
         authenticated_peer: &PeerId,
         request: &PeerCancellationRequest,
-    ) -> Result<PeerCancellationAcknowledgement, PeerHttpError> {
+    ) -> Result<PeerCancellationAcknowledgement, ServingError> {
         let relationship = self.relationship(authenticated_peer)?;
         self.check_rate(&relationship, "cancel")?;
         if request.sequence == 0 || request.reason.is_empty() || request.reason.len() > 512 {
-            return Err(PeerHttpError::Protocol(
+            return Err(ServingError::Protocol(
                 "invalid peer cancellation request".to_owned(),
             ));
         }
         let before = self
             .executions
-            .peer_execution(authenticated_peer, &request.execution)
+            .peer_execution(&self.peer_caller(authenticated_peer), &request.execution)
             .map_err(map_execution_persistence)?
-            .ok_or_else(|| PeerHttpError::NotFound("remote execution was not found".to_owned()))?;
-        let mut resources = RequestedResourceFacts::empty();
-        match &before {
-            PeerExecutionSnapshot::Hot(record) => {
-                resources.capability = Some(record.request.selection.capability().clone());
-                resources.capability_operation = Some(record.request.selection.operation().clone());
-                resources.side_effect = record.request.selection.operation_contract().side_effect();
-            }
-            PeerExecutionSnapshot::Archived(tombstone) => {
-                resources.capability = Some(tombstone.capability.clone());
-                resources.capability_operation = Some(tombstone.operation.clone());
-                resources.side_effect = tombstone.side_effect;
-            }
-        }
-        self.require_operation(
+            .ok_or_else(|| ServingError::NotFound("remote execution was not found".to_owned()))?;
+        self.require_execution_operation(
             &relationship,
+            &before,
             AuthorityOperation::CancelPeerCapability,
-            resources,
-            AuthorityBudget::default(),
         )?;
+        self.cancel_owned(&self.peer_caller(authenticated_peer), request, before)
+    }
+
+    fn cancel_owned(
+        &self,
+        caller: &milkdrift_peer_protocol::ServingCaller,
+        request: &PeerCancellationRequest,
+        before: PeerExecutionSnapshot,
+    ) -> Result<PeerCancellationAcknowledgement, ServingError> {
         let existing_cancellation = match &before {
             PeerExecutionSnapshot::Hot(record) => record.cancellation.as_ref(),
             PeerExecutionSnapshot::Archived(tombstone) => tombstone.cancellation.as_ref(),
@@ -662,7 +791,7 @@ impl PeerService {
             };
             acknowledgement
                 .validate()
-                .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+                .map_err(|error| ServingError::Protocol(error.to_string()))?;
             return Ok(acknowledgement);
         }
         let PeerExecutionSnapshot::Hot(before) = before else {
@@ -670,7 +799,7 @@ impl PeerService {
         };
         let record = self
             .executions
-            .request_peer_cancellation(authenticated_peer, request, self.now()?)
+            .request_peer_cancellation(caller, request, self.now()?)
             .map_err(map_execution_persistence)?;
         let acknowledgement = if matches!(before.phase, PeerExecutionPhase::Terminal { .. }) {
             PeerCancellationAcknowledgement {
@@ -678,7 +807,7 @@ impl PeerService {
                 execution: request.execution.clone(),
                 disposition: CancellationDisposition::TooLate,
                 terminal_boundary: true,
-                terminal_evidence: self.terminal_observation(authenticated_peer, &before)?,
+                terminal_evidence: self.terminal_observation(caller, &before)?,
                 detail: Some("terminal evidence was already durable".to_owned()),
             }
         } else if matches!(before.phase, PeerExecutionPhase::Uncertain { .. }) {
@@ -715,11 +844,12 @@ impl PeerService {
             }
         } else {
             let local = CancellationRequest::new(
-                record.request.request.invocation().clone(),
+                prepared::serving_invocation(&record)
+                    .map_err(|error| ServingError::Protocol(error.to_string()))?,
                 request.sequence,
                 request.reason.clone(),
             )
-            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+            .map_err(|error| ServingError::Protocol(error.to_string()))?;
             match self.capability_host.cancel_exact(&local) {
                 Ok(value) => PeerCancellationAcknowledgement {
                     request_id: request.request_id.clone(),
@@ -745,9 +875,9 @@ impl PeerService {
         };
         acknowledgement
             .validate()
-            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+            .map_err(|error| ServingError::Protocol(error.to_string()))?;
         self.executions
-            .acknowledge_peer_cancellation(authenticated_peer, &acknowledgement, self.now()?)
+            .acknowledge_peer_cancellation(caller, &acknowledgement, self.now()?)
             .map_err(map_execution_persistence)?;
         self.notify_workers();
         Ok(acknowledgement)
@@ -764,20 +894,20 @@ impl PeerService {
 }
 
 fn execution_identity(
-    peer: &PeerId,
-    request: &PeerInvocationRequest,
-) -> Result<PeerExecutionId, PeerHttpError> {
+    caller: &milkdrift_peer_protocol::ServingCaller,
+    request: &ServingInvocationRequest,
+) -> Result<PeerExecutionId, ServingError> {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"milkdrift.peer.execution.v1\0");
-    hasher.update(peer.as_str().as_bytes());
+    hasher.update(caller.storage_key().as_bytes());
     hasher.update(request.request_id.as_str().as_bytes());
     hasher.update(request.request_digest.as_bytes());
     PeerExecutionId::new(format!("exec:{}", &hasher.finalize().to_hex()[..40]))
-        .map_err(|error| PeerHttpError::Protocol(error.to_string()))
+        .map_err(|error| ServingError::Protocol(error.to_string()))
 }
 
 fn rejection(
-    request: &PeerInvocationRequest,
+    request: &ServingInvocationRequest,
     code: &str,
     detail: &str,
     retryable: bool,
@@ -840,22 +970,22 @@ fn bounded(value: &str, maximum: usize) -> String {
     milkdrift_contracts::truncate_utf8(value, maximum).to_owned()
 }
 
-fn map_execution_persistence(error: PersistenceError) -> PeerHttpError {
+fn map_execution_persistence(error: PersistenceError) -> ServingError {
     match error {
         PersistenceError::Storage {
             class: StorageFailureClass::ResourceExhausted,
             ..
-        } => PeerHttpError::Overloaded("durable peer owner capacity is exhausted".to_owned()),
+        } => ServingError::Overloaded("durable peer owner capacity is exhausted".to_owned()),
         PersistenceError::Storage {
             class: StorageFailureClass::Unavailable | StorageFailureClass::OwnerBusy,
             ..
-        } => PeerHttpError::Unavailable("durable peer storage is unavailable".to_owned()),
-        error => PeerHttpError::Persistence(error.to_string()),
+        } => ServingError::Unavailable("durable peer storage is unavailable".to_owned()),
+        error => ServingError::Persistence(error.to_string()),
     }
 }
 
-impl From<milkdrift_capability_host::HostError> for PeerHttpError {
-    fn from(error: milkdrift_capability_host::HostError) -> Self {
+impl From<crate::HostError> for ServingError {
+    fn from(error: crate::HostError) -> Self {
         Self::Unavailable(error.to_string())
     }
 }
@@ -883,10 +1013,10 @@ mod tests {
             class: StorageFailureClass::ResourceExhausted,
             message: "owner queue full".to_owned(),
         });
-        assert!(matches!(failure, PeerHttpError::Overloaded(_)));
+        assert!(matches!(failure, ServingError::Overloaded(_)));
         assert!(matches!(
-            PeerHttpError::from(PeerArtifactError::Overloaded("owner queue full".to_owned())),
-            PeerHttpError::Overloaded(_)
+            ServingError::from(PeerArtifactError::Overloaded("owner queue full".to_owned())),
+            ServingError::Overloaded(_)
         ));
     }
 

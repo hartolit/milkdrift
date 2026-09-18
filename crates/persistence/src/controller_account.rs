@@ -632,6 +632,14 @@ pub enum ControllerArtifactOwner {
     RunBinding,
     /// Consume the exact reservation committed at final adapter entry.
     InvocationReservation(ControllerReservationId),
+    /// Import remote output into the origin's already committed reservation. The transfer
+    /// remains its artifact owner; this is the single originating controller charge.
+    RemoteInvocationReservation {
+        /// Real local run whose immutable account binding authorized remote entry.
+        run: RunId,
+        /// Exact reservation carried by the delegated request.
+        reservation: ControllerReservationId,
+    },
 }
 
 /// Narrow durable read port; mutations occur only inside journal/artifact transactions.

@@ -37,9 +37,11 @@ production consumer boundary. Public semantic documents, adapter ports, and appl
 points must meet the classification above; private provider payloads, storage rows, daemon routes,
 and projections do not need exports merely for tests.
 
-Runtime `ManualClock`/`DeterministicExecutor` and capability-host secret/conformance helpers require
-non-default `test-support`. Redb fault hooks require `test-admin`; the provider parser measurement
-driver requires `operational-evidence`. Review these separately from default product surfaces.
+Runtime `ManualClock`/`DeterministicExecutor` and capability-host secret/conformance helpers,
+including unjournaled `SystemPeerClock` and `execute_exact` fixture entry, require non-default
+`test-support`. Production serving receives the embedding owner's durable clock. Redb fault hooks
+require `test-admin`; the provider parser measurement driver requires `operational-evidence`.
+Review these separately from default product surfaces.
 The evidence package is unpublished and must remain a development leaf. The CLI has no library API.
 
 ## Review method

@@ -10,6 +10,7 @@ use milkdrift_peer_protocol::{
 use super::{Lifecycle, Ordering, RemoteCapabilityAdapter};
 
 impl RemoteCapabilityAdapter {
+    #[allow(clippy::too_many_arguments)] // Exact transfer facts and bounded per-execution accounting stay explicit.
     pub(super) fn import_output(
         &self,
         execution: &PeerExecutionId,
@@ -17,6 +18,7 @@ impl RemoteCapabilityAdapter {
         deadline: u64,
         imported: &mut BTreeSet<String>,
         total_bytes: &mut u64,
+        controller: Option<&milkdrift_persistence::ControllerArtifactOwner>,
         reporter: &dyn AdapterReporter,
     ) -> Result<(), AdapterError> {
         let InvocationEventKind::Output { reference, .. } = observation.event.kind() else {
@@ -81,7 +83,12 @@ impl RemoteCapabilityAdapter {
             upload.direction = ArtifactTransferDirection::Upload;
             let (mut offset, local_limit) = match self
                 .artifacts
-                .negotiate(peer, &upload, self.relationship.maximum_artifact_bytes)
+                .negotiate(
+                    peer,
+                    &upload,
+                    self.relationship.maximum_artifact_bytes,
+                    controller,
+                )
                 .map_err(|error| AdapterError::external_failure(error.to_string()))?
             {
                 ArtifactTransferDecision::AlreadyPresent => return Ok(()),

@@ -61,7 +61,7 @@ mod scope;
 mod value;
 
 pub use artifact::{
-    ArtifactMetadata, ArtifactProvenance, ArtifactReference, ArtifactRetention,
+    ArtifactMetadata, ArtifactOwner, ArtifactProvenance, ArtifactReference, ArtifactRetention,
     ArtifactSensitivity, CausalReference, ContentDigest, MAX_MEDIA_TYPE_BYTES, MediaType,
     RetentionDeadline,
 };

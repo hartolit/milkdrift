@@ -36,15 +36,10 @@ fn placement_config(
 ) -> TestResult<DaemonConfig> {
     let mut config = configuration_document(root, host, remote, endpoint)?;
     config.adapters.process_profiles = vec![placement_profile(root, host, repository)?];
-    let PeerHostConfig::Enabled {
-        relationships,
-        serving,
-        ..
-    } = &mut config.peers
-    else {
+    let PeerHostConfig::Enabled { relationships, .. } = &mut config.peers else {
         return Err("peer mode disabled".into());
     };
-    serving.observation_hot_retention_ms = 30_000;
+    config.serving.observation_hot_retention_ms = 30_000;
     for relationship in relationships {
         relationship
             .actions

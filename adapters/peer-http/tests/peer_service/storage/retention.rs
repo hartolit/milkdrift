@@ -15,7 +15,7 @@ fn offline_restore_preserves_peer_tombstone_exact_replay_and_conflict() -> TestR
         now().saturating_add(600_000),
         Vec::new(),
     )?;
-    configure_store(&store, &peer, &catalog.digest, 1)?;
+    configure_store(&store, &target, &peer, &catalog.digest, 1)?;
     let first = request(
         &peer,
         &target,
@@ -29,7 +29,7 @@ fn offline_restore_preserves_peer_tombstone_exact_replay_and_conflict() -> TestR
     admit(&store, &peer, &first, &execution, 1)?;
     claim(&store, &WorkerId::new("offline-worker")?)?;
     store.append_peer_observation(
-        &peer,
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         &execution,
         &terminal_observation(&first, &execution, 1, TerminalStatus::Success)?,
     )?;
@@ -40,7 +40,10 @@ fn offline_restore_preserves_peer_tombstone_exact_replay_and_conflict() -> TestR
         limit: PageSize::new(1)?,
     })?;
     let before = store
-        .peer_execution(&peer, &execution)?
+        .peer_execution(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+            &execution,
+        )?
         .ok_or("tombstone")?;
     drop(store);
     let offline = OfflineStore::open(&root, parent.path())?;
@@ -67,7 +70,13 @@ fn offline_restore_preserves_peer_tombstone_exact_replay_and_conflict() -> TestR
     assert!(RedbStore::open(&restored).is_err());
     std::fs::remove_file(restored.join(milkdrift_redb_store::offline::INSPECTION_MARKER))?;
     let store = RedbStore::open(&restored)?;
-    assert_eq!(store.peer_execution(&peer, &execution)?, Some(before));
+    assert_eq!(
+        store.peer_execution(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+            &execution
+        )?,
+        Some(before)
+    );
     let changed = request(
         &peer,
         &target,
@@ -79,7 +88,7 @@ fn offline_restore_preserves_peer_tombstone_exact_replay_and_conflict() -> TestR
     )?;
     for (request, replay) in [(&first, true), (&changed, false)] {
         let result = store.admit_peer_execution(&PeerAdmission {
-            owner_peer: &peer,
+            caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
             request,
             authority: &allowed_decision(&peer)?,
             execution: &execution,
@@ -114,7 +123,7 @@ fn archived_tombstones_reclaim_hot_capacity_and_preserve_replay_conflict_and_his
         now().saturating_add(60_000),
         Vec::new(),
     )?;
-    configure_store(&store, &peer, &catalog.digest, 1)?;
+    configure_store(&store, &target, &peer, &catalog.digest, 1)?;
     let first = request(
         &peer,
         &target,
@@ -163,11 +172,11 @@ fn archived_tombstones_reclaim_hot_capacity_and_preserve_replay_conflict_and_his
                 Vec::new(),
             )?,
             source_peer: peer.clone(),
-            execution,
+            binding: milkdrift_peer_protocol::ArtifactTransferBinding::Execution { execution },
             expires_at_unix_ms: now().saturating_add(60_000),
         };
         assert!(matches!(
-            artifact_store.negotiate(&peer, &offer, 1_048_576)?,
+            artifact_store.negotiate(&peer, &offer, 1_048_576, None)?,
             ArtifactTransferDecision::Transfer { .. }
         ));
         assert_eq!(
@@ -187,7 +196,7 @@ fn archived_tombstones_reclaim_hot_capacity_and_preserve_replay_conflict_and_his
     let worker = WorkerId::new("retention-worker")?;
     claim(&store, &worker)?;
     store.append_peer_observation(
-        &peer,
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         &first_execution,
         &terminal_observation(&first, &first_execution, 1, TerminalStatus::Success)?,
     )?;
@@ -217,7 +226,7 @@ fn archived_tombstones_reclaim_hot_capacity_and_preserve_replay_conflict_and_his
 
     assert!(matches!(
         store.admit_peer_execution(&PeerAdmission {
-            owner_peer: &peer,
+            caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
             request: &first,
             authority: &allowed_decision(&peer)?,
             execution: &first_execution,
@@ -242,7 +251,7 @@ fn archived_tombstones_reclaim_hot_capacity_and_preserve_replay_conflict_and_his
     )?;
     assert!(matches!(
         store.admit_peer_execution(&PeerAdmission {
-            owner_peer: &peer,
+            caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
             request: &conflict,
             authority: &allowed_decision(&peer)?,
             execution: &PeerExecutionId::new("execution-retention-conflict")?,
@@ -256,7 +265,12 @@ fn archived_tombstones_reclaim_hot_capacity_and_preserve_replay_conflict_and_his
         })?,
         PeerAdmissionOutcome::Conflict(PeerExecutionSnapshot::Archived(_))
     ));
-    let observations = store.peer_observations(&peer, &first_execution, 0, PageSize::new(8)?)?;
+    let observations = store.peer_observations(
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+        &first_execution,
+        0,
+        PageSize::new(8)?,
+    )?;
     assert!(observations.observations.is_empty());
     assert!(matches!(
         observations.execution,
@@ -276,10 +290,12 @@ fn archived_tombstones_reclaim_hot_capacity_and_preserve_replay_conflict_and_his
             .provenance()
             .clone(),
         source_peer: target.clone(),
-        execution: first_execution.clone(),
+        binding: milkdrift_peer_protocol::ArtifactTransferBinding::Execution {
+            execution: first_execution.clone(),
+        },
         expires_at_unix_ms: now().saturating_add(60_000),
     };
-    artifact_store.negotiate(&peer, &retained_download, 1_048_576)?;
+    artifact_store.negotiate(&peer, &retained_download, 1_048_576, None)?;
     assert_eq!(
         artifact_store
             .read_chunk(&peer, &retained_download.transfer, 0, 1_048_576)?
@@ -298,7 +314,7 @@ fn archived_tombstones_reclaim_hot_capacity_and_preserve_replay_conflict_and_his
     )?;
     assert!(matches!(
         store.admit_peer_execution(&PeerAdmission {
-            owner_peer: &peer,
+            caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
             request: &second,
             authority: &allowed_decision(&peer)?,
             execution: &PeerExecutionId::new("execution-retention-second")?,
@@ -348,11 +364,11 @@ fn archival_fault_boundaries_are_atomic_restart_safe_and_idempotent() -> TestRes
         )?;
         {
             let store = RedbStore::open(root.path())?;
-            configure_store(&store, &peer, &catalog.digest, 1)?;
+            configure_store(&store, &target, &peer, &catalog.digest, 1)?;
             admit(&store, &peer, &request, &execution, 1)?;
             claim(&store, &WorkerId::new("archive-fault-worker")?)?;
             store.append_peer_observation(
-                &peer,
+                &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
                 &execution,
                 &terminal_observation(&request, &execution, 1, TerminalStatus::Success)?,
             )?;
@@ -382,7 +398,10 @@ fn archival_fault_boundaries_are_atomic_restart_safe_and_idempotent() -> TestRes
         );
         assert_eq!(
             matches!(
-                store.peer_execution(&peer, &execution)?,
+                store.peer_execution(
+                    &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+                    &execution
+                )?,
                 Some(PeerExecutionSnapshot::Archived(_))
             ),
             committed
@@ -426,7 +445,7 @@ fn uncertain_tombstone_replays_without_becoming_retryable_terminal_evidence() ->
         now().saturating_add(60_000),
         Vec::new(),
     )?;
-    configure_store(&store, &peer, &catalog.digest, 1)?;
+    configure_store(&store, &target, &peer, &catalog.digest, 1)?;
     let request = request(
         &peer,
         &target,
@@ -441,9 +460,9 @@ fn uncertain_tombstone_replays_without_becoming_retryable_terminal_evidence() ->
     let worker = WorkerId::new("uncertain-archive-worker")?;
     let claimed = claim(&store, &worker)?;
     let generation = claimed.phase.claim().ok_or("claim absent")?.generation;
-    enter(&store, &peer, &execution, &worker, generation)?;
+    enter(&store, &target, &peer, &execution, &worker, generation)?;
     store.mark_peer_uncertain(
-        &peer,
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         &execution,
         &worker,
         generation,
@@ -457,7 +476,7 @@ fn uncertain_tombstone_replays_without_becoming_retryable_terminal_evidence() ->
         limit: PageSize::new(1)?,
     })?;
     let replay = store.admit_peer_execution(&PeerAdmission {
-        owner_peer: &peer,
+        caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         request: &request,
         authority: &allowed_decision(&peer)?,
         execution: &execution,
@@ -520,14 +539,14 @@ fn peer_integrity_verification_detects_tombstone_index_and_counter_corruption() 
         )?;
         {
             let store = RedbStore::open(root.path())?;
-            configure_store(&store, &peer, &catalog.digest, 1)?;
+            configure_store(&store, &target, &peer, &catalog.digest, 1)?;
             admit(&store, &peer, &invocation, &execution, 1)?;
             claim(
                 &store,
                 &WorkerId::new(format!("integrity-worker-{ordinal}"))?,
             )?;
             store.append_peer_observation(
-                &peer,
+                &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
                 &execution,
                 &terminal_observation(&invocation, &execution, 1, TerminalStatus::Success)?,
             )?;
@@ -609,10 +628,13 @@ fn checksum_valid_peer_primary_and_tombstone_fact_corruption_is_rejected() -> Te
     let execution = PeerExecutionId::new("execution-fact-corruption")?;
     let record = {
         let store = RedbStore::open(root.path())?;
-        configure_store(&store, &peer, &catalog.digest, 1)?;
+        configure_store(&store, &target, &peer, &catalog.digest, 1)?;
         admit(&store, &peer, &request, &execution, 1)?;
         let snapshot = store
-            .peer_execution(&peer, &execution)?
+            .peer_execution(
+                &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+                &execution,
+            )?
             .ok_or("fact-corruption record missing")?;
         let PeerExecutionSnapshot::Hot(record) = snapshot else {
             return Err("fresh fact-corruption record was archived".into());
@@ -681,9 +703,10 @@ fn checksum_valid_peer_primary_and_tombstone_fact_corruption_is_rejected() -> Te
         "peer execution",
         &legacy,
     )?;
-    let legacy_store = RedbStore::open(root.path())?;
-    legacy_store.verify_peer_execution_integrity()?;
-    drop(legacy_store);
+    assert_peer_integrity_refuses(
+        root.path(),
+        "old execution schema cannot acquire a new caller meaning",
+    )?;
     overwrite_peer_document(
         root.path(),
         PEER_EXECUTIONS,
@@ -699,14 +722,21 @@ fn checksum_valid_peer_primary_and_tombstone_fact_corruption_is_rejected() -> Te
         let boundary = now().saturating_add(100);
         let mut terminal = terminal_observation(&request, &execution, 1, TerminalStatus::Success)?;
         terminal.observed_at_unix_ms = boundary;
-        store.append_peer_observation(&peer, &execution, &terminal)?;
+        store.append_peer_observation(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+            &execution,
+            &terminal,
+        )?;
         store.archive_peer_executions(&PeerRetentionRequest {
             terminal_before_or_at: TimestampMillis::new(boundary),
             archived_at: TimestampMillis::new(boundary),
             limit: PageSize::new(1)?,
         })?;
         let snapshot = store
-            .peer_execution(&peer, &execution)?
+            .peer_execution(
+                &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+                &execution,
+            )?
             .ok_or("fact-corruption tombstone missing")?;
         let PeerExecutionSnapshot::Archived(tombstone) = snapshot else {
             return Err("fact-corruption execution did not archive".into());

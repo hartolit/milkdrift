@@ -6,6 +6,66 @@ controller operations only for workflow `operator-starter`, finite budgets, no f
 access, and no artifact access. No external adapter is enabled. Its terminal-only starter proves setup
 without external work or broad authority.
 
+## Independent execution
+
+Copy [execution-only.toml](execution-only.toml) to a private directory as `daemon.toml` for a
+host that executes capabilities without workflow services. Retain its `host_id` across restarts.
+The example starts with no adapters and grants the named process/model operations and artifact
+access with finite limits. It includes restricted artifacts because uploads default to that
+classification and process/model outputs use it. The grant has no workflow restriction because
+direct invocations have no workflow lineage. Configure the reviewed process profile as described
+below, or the [local model profile](../../docs/guides/local-model-endpoint.md), and add the corresponding exact
+filesystem/network/secret scopes to the actor grant. Validate with `--check-config` before starting.
+
+This template explicitly opts into `dangerous_allow_broad_authority` because the model advertises
+unknown effects and newly uploaded artifact identities cannot be enumerated in advance. Its named
+capability/operation lists and sensitivity/resource bounds still apply. Review that grant for the
+installation before adding adapters.
+
+A direct model call requires a profile with known enforceable token and billing bounds. The local
+model profile deliberately starts with unknown bounds; configure byte-BPE input/output counting
+and either a declared tariff or explicitly unbilled operation for the actual endpoint. Discovery
+is not a promise that an unknown allowance can enter. The host never loads model weights itself.
+
+Use the same explicit endpoint and credential arguments for each command. For example in
+PowerShell, after starting the daemon:
+
+```powershell
+milkdrift --endpoint http://127.0.0.1:9734/ --token-env MILKDRIFT_TOKEN --json invocation catalog
+$uploaded = milkdrift --endpoint http://127.0.0.1:9734/ --token-env MILKDRIFT_TOKEN --json artifact upload ./input.txt --host host:execution --upload-id input-1 --media-type text/plain | ConvertFrom-Json
+$m = $uploaded.value
+@(@{name='source'; value=@{type='artifact'; reference=@{identity=$m.artifact_id; digest=$m.digest; media_type=$m.content_type; size_bytes=$m.size}}}) |
+  ConvertTo-Json -Depth 8 -AsArray | Set-Content -Encoding utf8 ./inputs.json
+milkdrift --endpoint http://127.0.0.1:9734/ --token-env MILKDRIFT_TOKEN --json invocation prepare operator-process process.execute --host host:execution --request-id process-1 --inputs ./inputs.json --output ./request.json
+$accepted = milkdrift --endpoint http://127.0.0.1:9734/ --token-env MILKDRIFT_TOKEN --json invocation submit ./request.json | ConvertFrom-Json
+milkdrift --endpoint http://127.0.0.1:9734/ --token-env MILKDRIFT_TOKEN --json --timeout-secs 60 invocation wait $accepted.value.execution
+milkdrift --endpoint http://127.0.0.1:9734/ --token-env MILKDRIFT_TOKEN --json invocation show $accepted.value.execution
+milkdrift --endpoint http://127.0.0.1:9734/ --token-env MILKDRIFT_TOKEN --json invocation observations $accepted.value.execution --after 0 --limit 128
+```
+
+The process profile must declare `source` as an input and consume it through an input argument or
+stdin. [direct-process-inputs.json](direct-process-inputs.json) demonstrates a small explicit inline
+value; materialization encodes that value as JSON. Use upload when the process needs exact file bytes.
+
+For a fresh model call, upload [direct-model-task.json](direct-model-task.json) with media type
+`application/json`, name its reference `milkdrift.model_task` in the inputs array, and prepare
+`operator-model model.generate`. Download an output artifact from its observation with
+`milkdrift --endpoint http://127.0.0.1:9734/ --token-env MILKDRIFT_TOKEN --json artifact get ARTIFACT --output ./result.txt`. The CLI verifies size and digest
+and requires a new destination file. Direct requests cannot reuse workflow continuation.
+
+`prepare` writes a new request file without admitting execution. It binds the selected host,
+catalog, operation, inputs, advertised ceilings and absolute deadline. Review it and submit promptly;
+stale discovery is refused. Preserve the file unchanged for replay after a lost reply or restart.
+Use `invocation lookup process-1` to recover acceptance; a new request identity could create new work.
+Cancellation uses `invocation cancel EXECUTION --request-id stop-1`; acknowledgement does not prove
+that the operation stopped. `wait` streams bounded pages and exits unsuccessfully for refusal,
+failure, retained uncertainty or timeout. Timeout does not release accepted work.
+
+Uploads accept at most 512 KiB each and publish only verified complete content. Repeating the same
+upload ID/content returns the same artifact; changing content conflicts. Cumulative per-actor input
+quotas survive restart. Use HTTPS for non-loopback endpoints with a distinct credential configured
+for the selected owner. Workflow use of the same host follows the [peer guide](../../docs/operations/peers.md).
+
 ## Startup and restart
 
 [peer-placement.json](peer-placement.json) is a two-task blueprint: repository A work requires
@@ -120,8 +180,11 @@ Update the existing capability authority selectors to identities
 `["operator-model", "milkdrift-workflow-control"]`, operations
 `["model.generate", "workflow.accept_result"]`, provider profiles `type = "any"`,
 trust zones `["operator-configured-local-model", "milkdrift-control"]`, and
-maximum side effect `"unknown"`. Keep the finite 4,000,000-unit grant ceiling: current generation-level resolution checks the model contract maximum even though this task requests only 64 output units. Retain the explicit dangerous acknowledgement: external model
-effects and cancellation cannot be proven absent. Use the workspace and artifact scopes above.
+maximum side effect `"unknown"`. The example's finite 4,000,000-unit grant covers the contract
+ceiling when the profile has unknown token bounds. With byte-BPE counting, generation resolution
+checks the profile's configured output maximum, even when this task requests only 64 output units.
+Retain the explicit dangerous acknowledgement: external model effects and cancellation cannot be
+proven absent. Use the workspace and artifact scopes above.
 Add exactly this network scope (adjust both fields when the endpoint/profile changes):
 
 The provider selector also admits the built-in control capability, which has no provider profile.

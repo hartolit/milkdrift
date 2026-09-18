@@ -4,7 +4,7 @@ use milkdrift_control_protocol::DaemonState;
 use milkdrift_persistence::{ApplicationReceiptStatus, TimestampMillis};
 
 use super::{Lifecycle, SharedHealth};
-use crate::config::{ApplicationReceiptConfig, PeerHostConfig, StoragePlan};
+use crate::config::{ApplicationReceiptConfig, StoragePlan};
 
 fn health() -> Arc<SharedHealth> {
     Arc::new(SharedHealth::new(
@@ -17,7 +17,8 @@ fn health() -> Arc<SharedHealth> {
             },
             security_audit_record_bound: 1,
         },
-        &PeerHostConfig::Disabled,
+        None,
+        milkdrift_control_protocol::HostRole::WorkflowEnabled,
     ))
 }
 

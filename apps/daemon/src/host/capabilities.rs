@@ -218,6 +218,7 @@ impl ControlArtifactAccess for ResultSink {
         let unavailable =
             || ControlError::InvalidContract("acceptance evidence unavailable".to_owned());
         let context = invocation.context().ok_or_else(unavailable)?;
+        let workflow = context.workflow().ok_or_else(unavailable)?;
         let basis = context.authority().ok_or_else(unavailable)?;
         let entry = context.entry_authorization().ok_or_else(unavailable)?;
         let reference = match input.value() {
@@ -230,7 +231,7 @@ impl ControlArtifactAccess for ResultSink {
             } => {
                 let reference: milkdrift_workspace::WorkspaceValueReference =
                     serde_json::from_str(identity).map_err(|_| unavailable())?;
-                if reference.scope().run() != context.run()
+                if reference.scope().run() != workflow.run()
                     || version != &reference.version().get().to_string()
                 {
                     return Err(unavailable());
@@ -256,8 +257,8 @@ impl ControlArtifactAccess for ResultSink {
                         AuthorityBudget::default(),
                         entry.request().evaluated_at,
                         AuthorityExecutionProvenance {
-                            revision: Some(context.revision().clone()),
-                            node: Some(context.node().clone()),
+                            revision: Some(workflow.revision().clone()),
+                            node: Some(workflow.node().clone()),
                             ..AuthorityExecutionProvenance::default()
                         },
                     ))
@@ -296,7 +297,7 @@ impl ControlArtifactAccess for ResultSink {
             return Err(unavailable());
         }
         let mut resources = RequestedResourceFacts::empty();
-        resources.revision = Some(context.revision().clone());
+        resources.revision = Some(workflow.revision().clone());
         resources.artifact = Some(identity);
         resources.artifact_sensitivity = Some(metadata.sensitivity());
         let decision = self
@@ -321,8 +322,8 @@ impl ControlArtifactAccess for ResultSink {
                 },
                 entry.request().evaluated_at,
                 AuthorityExecutionProvenance {
-                    revision: Some(context.revision().clone()),
-                    node: Some(context.node().clone()),
+                    revision: Some(workflow.revision().clone()),
+                    node: Some(workflow.node().clone()),
                     ..AuthorityExecutionProvenance::default()
                 },
             ))

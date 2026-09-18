@@ -3,6 +3,190 @@
 use super::support::*;
 
 #[test]
+fn request_bound_input_staging_precedes_acceptance_and_preserves_foreign_causes() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let core = Arc::new(RedbStore::open(root.path())?);
+    let peer = PeerId::new("input-origin")?;
+    let target = PeerId::new("input-host")?;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (host, descriptor) = host_with_adapter(Arc::new(TerminalAdapter {
+        capability: CapabilityId::new("test-capability")?,
+        delay: Duration::ZERO,
+        active: Arc::new(AtomicUsize::new(0)),
+        maximum: Arc::new(AtomicUsize::new(0)),
+        calls: calls.clone(),
+        requirements: CapabilityExecutionRequirements::default(),
+    }))?;
+    let clock = system_peer_clock();
+    let artifacts = Arc::new(CorePeerArtifactStore::new(
+        core.clone(),
+        8,
+        8,
+        clock.clone(),
+    )?);
+    let service = PeerService::new_with_artifacts(
+        server_config(peer.clone(), target.clone(), 1, 4)?,
+        host,
+        core.clone(),
+        artifacts.clone(),
+        clock,
+    )?;
+    service.recover(1024)?;
+    let catalog = service.catalog(&peer)?;
+    let base = request(
+        &peer,
+        &target,
+        &descriptor,
+        catalog.generation,
+        catalog.digest,
+        "staged-input",
+        "staged-call",
+    )?;
+    let bytes = b"contents";
+    let mut offer = input_offer(base, &peer, "staged-source", bytes)?;
+    let consuming = match &offer.binding {
+        milkdrift_peer_protocol::ArtifactTransferBinding::Input { request } => {
+            request.as_ref().clone()
+        }
+        _ => return Err("input binding missing".into()),
+    };
+    assert!(
+        core.peer_execution_by_request(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+            &consuming.request_id
+        )?
+        .is_none()
+    );
+    assert!(matches!(
+        service.negotiate_artifact(&peer, &offer)?,
+        ArtifactTransferDecision::Transfer { next_offset: 0, .. }
+    ));
+    assert!(core.metadata(offer.artifact.artifact())?.is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(
+        service
+            .negotiate_artifact(&PeerId::new("another-peer")?, &offer)
+            .is_err()
+    );
+    assert_eq!(
+        service.write_artifact_chunk(
+            &peer,
+            &ArtifactChunk {
+                transfer: offer.transfer.clone(),
+                offset: 0,
+                bytes: bytes.to_vec(),
+                final_chunk: true
+            }
+        )?,
+        ArtifactTransferDecision::AlreadyPresent
+    );
+    let metadata = core
+        .metadata(offer.artifact.artifact())?
+        .ok_or("input was not committed")?;
+    assert_eq!(
+        metadata.provenance().producer(),
+        &CausalReference::PeerClaim {
+            peer: peer.clone(),
+            reference: Box::new(offer.provenance.producer().clone())
+        }
+    );
+    assert!(
+        matches!(&metadata.provenance().causes()[0], CausalReference::PeerClaim { reference, .. } if matches!(reference.as_ref(), CausalReference::RunInput { .. }))
+    );
+    // Exact replay remains available even when this peer has consumed its entire byte quota.
+    assert_eq!(
+        service.negotiate_artifact(&peer, &offer)?,
+        ArtifactTransferDecision::AlreadyPresent
+    );
+    assert!(matches!(
+        service.invoke(&peer, consuming.clone())?,
+        InvocationAcceptance::Accepted { .. }
+    ));
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while calls.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let second = input_offer(consuming, &peer, "over-quota-source", b"x")?;
+    assert!(service.negotiate_artifact(&peer, &second).is_err());
+    assert!(core.metadata(second.artifact.artifact())?.is_none());
+    offer.artifact = ArtifactReference::new(
+        ArtifactId::new("forged-input")?,
+        ContentDigest::for_bytes(bytes),
+        MediaType::new("text/plain")?,
+        bytes.len() as u64,
+    );
+    assert!(service.negotiate_artifact(&peer, &offer).is_err());
+    assert!(service.shutdown_workers(Duration::from_secs(2)).clean);
+    core.verify_peer_execution_integrity()?;
+    Ok(())
+}
+
+fn input_offer(
+    base: ServingInvocationRequest,
+    peer: &PeerId,
+    identity: &str,
+    bytes: &[u8],
+) -> TestResult<ArtifactMetadataOffer> {
+    let artifact = ArtifactReference::new(
+        ArtifactId::new(identity)?,
+        ContentDigest::for_bytes(bytes),
+        MediaType::new("text/plain")?,
+        bytes.len() as u64,
+    );
+    let invocation = InvocationRequest::new(
+        base.request.invocation().clone(),
+        base.request.capability().clone(),
+        base.request.operation().clone(),
+        base.request.provider_profile().cloned(),
+        base.request.idempotency_key().cloned(),
+        vec![InputReference::new(
+            "source",
+            InvocationValueReference::Artifact {
+                reference: InvocationArtifactReference::new(
+                    identity,
+                    artifact.digest().to_hex(),
+                    Some("text/plain".to_owned()),
+                    Some(bytes.len() as u64),
+                )?,
+            },
+        )?],
+        BTreeMap::new(),
+    )?;
+    let request = ServingInvocationRequest::new(
+        base.request_id,
+        base.catalog_generation,
+        base.catalog_digest,
+        base.selection,
+        invocation,
+        base.limits,
+        base.deadline_unix_ms,
+        base.authorization,
+    )?;
+    Ok(ArtifactMetadataOffer {
+        transfer: TransferId::new(format!("transfer:{identity}"))?,
+        direction: ArtifactTransferDirection::Upload,
+        artifact,
+        sensitivity: ArtifactSensitivity::Restricted,
+        retention: ArtifactRetention::WhileReferenced,
+        provenance: ArtifactProvenance::new(
+            CausalReference::Invocation {
+                invocation: InvocationId::new("foreign-invocation")?,
+            },
+            vec![CausalReference::RunInput {
+                run: milkdrift_workspace::RunId::new("foreign-run")?,
+                key: milkdrift_workspace::ValueKey::new("foreign-key")?,
+            }],
+        )?,
+        source_peer: peer.clone(),
+        expires_at_unix_ms: request.deadline_unix_ms,
+        binding: milkdrift_peer_protocol::ArtifactTransferBinding::Input {
+            request: Box::new(request),
+        },
+    })
+}
+
+#[test]
 fn artifact_clock_failure_rejects_chunks_without_publishing_bytes() -> TestResult {
     let root = tempfile::tempdir()?;
     let peer = PeerId::new("peer-artifact-clock")?;
@@ -26,14 +210,16 @@ fn artifact_clock_failure_rejects_chunks_without_publishing_bytes() -> TestResul
             Vec::new(),
         )?,
         source_peer: peer.clone(),
-        execution: PeerExecutionId::new("execution-artifact-clock")?,
+        binding: milkdrift_peer_protocol::ArtifactTransferBinding::Execution {
+            execution: PeerExecutionId::new("execution-artifact-clock")?,
+        },
         expires_at_unix_ms: 1_000_000,
     };
     let clock = Arc::new(ControlledPeerClock::new(offer.expires_at_unix_ms));
     let core = Arc::new(RedbStore::open(root.path())?);
     let transfer = CorePeerArtifactStore::new(core.clone(), 1_048_576, 2_097_152, clock.clone())?;
     assert!(matches!(
-        transfer.negotiate(&peer, &offer, 1_048_576)?,
+        transfer.negotiate(&peer, &offer, 1_048_576, None)?,
         ArtifactTransferDecision::Transfer { next_offset: 0, .. }
     ));
 
@@ -87,7 +273,9 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
         retention: ArtifactRetention::Indefinite,
         provenance: provenance.clone(),
         source_peer: peer.clone(),
-        execution: execution.clone(),
+        binding: milkdrift_peer_protocol::ArtifactTransferBinding::Execution {
+            execution: execution.clone(),
+        },
         expires_at_unix_ms: now().saturating_add(60_000),
     };
 
@@ -96,18 +284,21 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
         CorePeerArtifactStore::new(core.clone(), 1_048_576, 2_097_152, system_peer_clock())?;
     assert!(
         transfer
-            .negotiate(&peer, &offer, u64::try_from(bytes.len())?.saturating_sub(1),)
+            .negotiate(
+                &peer,
+                &offer,
+                u64::try_from(bytes.len())?.saturating_sub(1),
+                None
+            )
             .is_err()
     );
     assert!(matches!(
-        transfer.negotiate(&peer, &offer, 1_048_576)?,
+        transfer.negotiate(&peer, &offer, 1_048_576, None)?,
         ArtifactTransferDecision::Transfer { next_offset: 0, .. }
     ));
-    assert!(
-        transfer
-            .abort(&PeerId::new("peer-foreign")?, &offer.transfer)
-            .is_err()
-    );
+    // Aborting an absent key in another caller's namespace is an idempotent no-op.
+    // The original caller can still write and resume its independently owned upload.
+    transfer.abort(&PeerId::new("peer-foreign")?, &offer.transfer)?;
     transfer.write_chunk(
         &peer,
         &ArtifactChunk {
@@ -126,7 +317,7 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
     let transfer =
         CorePeerArtifactStore::new(core.clone(), 1_048_576, 2_097_152, system_peer_clock())?;
     assert!(matches!(
-        transfer.negotiate(&peer, &offer, 1_048_576)?,
+        transfer.negotiate(&peer, &offer, 1_048_576, None)?,
         ArtifactTransferDecision::Transfer { next_offset: 8, .. }
     ));
     assert_eq!(
@@ -149,14 +340,14 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
     assert_eq!(metadata.retention(), &ArtifactRetention::Indefinite);
     assert_eq!(
         metadata.provenance().producer(),
-        &CausalReference::External {
-            source: CausalId::new("peer:peer-a/execution:execution-artifact")?,
+        &CausalReference::PeerClaim {
+            peer: peer.clone(),
+            reference: Box::new(provenance.producer().clone()),
         }
     );
-    assert_eq!(metadata.provenance().causes().len(), 1);
-    assert_eq!(&metadata.provenance().causes()[0], provenance.producer());
+    assert!(metadata.provenance().causes().is_empty());
     assert_eq!(
-        transfer.negotiate(&peer, &offer, 1_048_576)?,
+        transfer.negotiate(&peer, &offer, 1_048_576, None)?,
         ArtifactTransferDecision::AlreadyPresent
     );
 
@@ -168,10 +359,10 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
         retention: metadata.retention().clone(),
         provenance: metadata.provenance().clone(),
         source_peer: serving,
-        execution,
+        binding: milkdrift_peer_protocol::ArtifactTransferBinding::Execution { execution },
         expires_at_unix_ms: now().saturating_add(60_000),
     };
-    transfer.negotiate(&peer, &download, 1_048_576)?;
+    transfer.negotiate(&peer, &download, 1_048_576, None)?;
     let read = transfer.read_chunk(&peer, &download.transfer, 0, 1_048_576)?;
     assert_eq!(read.bytes, bytes);
     assert!(read.final_chunk);
@@ -192,10 +383,12 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
         retention: ArtifactRetention::Indefinite,
         provenance,
         source_peer: peer.clone(),
-        execution: PeerExecutionId::new("execution-corrupt-artifact")?,
+        binding: milkdrift_peer_protocol::ArtifactTransferBinding::Execution {
+            execution: PeerExecutionId::new("execution-corrupt-artifact")?,
+        },
         expires_at_unix_ms: now().saturating_add(60_000),
     };
-    transfer.negotiate(&peer, &corrupt_offer, 1_048_576)?;
+    transfer.negotiate(&peer, &corrupt_offer, 1_048_576, None)?;
     assert!(
         transfer
             .write_chunk(
@@ -243,12 +436,14 @@ fn empty_peer_output_commits_exactly_and_rejects_a_false_empty_digest() -> TestR
             Vec::new(),
         )?,
         source_peer: peer.clone(),
-        execution: PeerExecutionId::new("empty-execution")?,
+        binding: milkdrift_peer_protocol::ArtifactTransferBinding::Execution {
+            execution: PeerExecutionId::new("empty-execution")?,
+        },
         expires_at_unix_ms: now() + 60_000,
     };
     for _ in 0..2 {
         assert_eq!(
-            transfer.negotiate(&peer, &offer, 1024)?,
+            transfer.negotiate(&peer, &offer, 1024, None)?,
             ArtifactTransferDecision::AlreadyPresent
         );
     }
@@ -266,7 +461,7 @@ fn empty_peer_output_commits_exactly_and_rejects_a_false_empty_digest() -> TestR
         MediaType::new("text/plain")?,
         0,
     );
-    assert!(transfer.negotiate(&peer, &offer, 1024).is_err());
+    assert!(transfer.negotiate(&peer, &offer, 1024, None).is_err());
     assert!(core.metadata(offer.artifact.artifact())?.is_none());
     Ok(())
 }
@@ -289,15 +484,15 @@ fn entered_peer_execution_owns_output_budget_and_metadata_requires_live_download
     let catalog =
         milkdrift_peer_protocol::CatalogSnapshot::new(1, now(), now() + 60_000, Vec::new())?;
     core.set_peer_admission_open(true)?;
-    core.configure_peer_relationship(&PeerRelationshipState {
-        peer: peer.clone(),
+    core.configure_peer_relationship(&ServingCallerState {
+        caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         generation: 1,
         enabled: true,
         expires_at_unix_ms: config.relationships[0].expires_at_unix_ms,
         maximum_active: u32::from(config.relationships[0].maximum_concurrent),
     })?;
-    core.publish_peer_catalog(&PeerCatalogState {
-        peer: peer.clone(),
+    core.publish_peer_catalog(&ServingCatalogState {
+        caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         relationship_generation: 1,
         generation: 1,
         digest: catalog.digest.as_str().to_owned(),
@@ -314,7 +509,7 @@ fn entered_peer_execution_owns_output_budget_and_metadata_requires_live_download
         1,
     )?;
     request.limits.artifact_bytes = 4;
-    let request = PeerInvocationRequest::new(
+    let request = ServingInvocationRequest::new(
         request.request_id,
         request.catalog_generation,
         request.catalog_digest,
@@ -322,13 +517,16 @@ fn entered_peer_execution_owns_output_budget_and_metadata_requires_live_download
         request.request,
         request.limits,
         request.deadline_unix_ms,
-        request.delegation,
+        request.authorization,
     )?;
     let execution = PeerExecutionId::new("bounded-output-execution")?;
     admit(&core, &peer, &request, &execution, 1)?;
     let worker = WorkerId::new("output-worker")?;
     let claimed = claim(&core, &worker)?;
-    let origin = &request.delegation.provenance;
+    let accepted_origin = request.authorization.origin();
+    let origin = accepted_origin
+        .workflow()
+        .ok_or("workflow origin missing")?;
     let context = AdapterExecutionContext::new(
         milkdrift_workspace::RunId::new(&origin.run)?,
         serde_json::from_value(serde_json::Value::String(origin.revision.clone()))?,
@@ -336,21 +534,29 @@ fn entered_peer_execution_owns_output_budget_and_metadata_requires_live_download
         milkdrift_persistence::NodeExecutionId::new(&origin.execution)?,
         milkdrift_persistence::AttemptId::new(&origin.attempt)?,
     );
-    assert!(context.clone().with_peer_execution(&claimed).is_err());
+    assert!(
+        milkdrift_capability_host::conformance::entered_serving_context(context.clone(), &claimed)
+            .is_err()
+    );
     enter(
         &core,
+        &target,
         &peer,
         &execution,
         &worker,
         claimed.phase.claim().ok_or("claim missing")?.generation,
     )?;
     let PeerExecutionSnapshot::Hot(entered) = core
-        .peer_execution(&peer, &execution)?
+        .peer_execution(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+            &execution,
+        )?
         .ok_or("entry missing")?
     else {
         return Err("entry archived".into());
     };
-    let context = context.with_peer_execution(&entered)?;
+    let context =
+        milkdrift_capability_host::conformance::entered_serving_context(context, &entered)?;
     let access = StoreInvocationDataAccess::new(
         core.clone(),
         work.path(),
@@ -397,7 +603,7 @@ fn entered_peer_execution_owns_output_budget_and_metadata_requires_live_download
         "input and output share the accepted allowance"
     );
     core.append_peer_observation(
-        &peer,
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         &execution,
         &PeerObservation {
             execution: execution.clone(),
@@ -415,7 +621,7 @@ fn entered_peer_execution_owns_output_budget_and_metadata_requires_live_download
         },
     )?;
     core.append_peer_observation(
-        &peer,
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         &execution,
         &terminal_observation(&request, &execution, 2, TerminalStatus::Success)?,
     )?;

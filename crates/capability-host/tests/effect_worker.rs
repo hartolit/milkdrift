@@ -229,7 +229,10 @@ impl CapabilityAdapter for BlockingAdapter {
             || !entry.is_allowed()
             || resolution.request().grant != *basis.grant()
             || entry.request().grant_digest != *basis.grant_digest()
-            || entry.request().provenance.attempt.as_deref() != Some(context.attempt().as_str())
+            || entry.request().provenance.attempt.as_deref()
+                != context
+                    .workflow()
+                    .map(|workflow| workflow.attempt().as_str())
         {
             return Err(AdapterError::rejected(
                 "adapter authority provenance does not bind the exact attempt",

@@ -20,12 +20,12 @@ use milkdrift_capability::{
 };
 use milkdrift_peer_protocol::{
     CatalogDigest, CatalogSnapshot, DelegatedAuthorization, DelegationRef, ExecutionLimits,
-    ObservationCategory, PeerExecutionId, PeerInvocationRequest, PeerObservation, PeerRequestId,
+    ObservationCategory, PeerExecutionId, PeerObservation, PeerRequestId, ServingInvocationRequest,
 };
 use milkdrift_persistence::{
-    PageSize, PeerAdmission, PeerAdmissionOutcome, PeerAdmissionRejection, PeerCatalogState,
-    PeerClaimOutcome, PeerDispatchClaimRequest, PeerEntryOutcome, PeerEntryRequest,
-    PeerExecutionSnapshot, PeerExecutionStore, PeerRelationshipState, PeerRetentionRequest,
+    PageSize, PeerAdmission, PeerAdmissionOutcome, PeerAdmissionRejection, PeerClaimOutcome,
+    PeerDispatchClaimRequest, PeerEntryOutcome, PeerEntryRequest, PeerExecutionSnapshot,
+    PeerExecutionStore, PeerRetentionRequest, ServingCallerState, ServingCatalogState,
     TimestampMillis, WorkerId,
 };
 use milkdrift_redb_store::RedbStore;
@@ -63,7 +63,7 @@ pub(crate) fn peer_storage_turnover(executions: u32) -> EvidenceResult<PeerTurno
     let target = PeerId::new("peer-operational-target")?;
     let descriptor = descriptor()?;
     let catalog = CatalogSnapshot::new(1, BASE_TIME - 1, BASE_TIME + 60_000, Vec::new())?;
-    configure_store(&store, &owner, &catalog.digest)?;
+    configure_store(&store, &target, &owner, &catalog.digest)?;
     let mut observation_count = 0_u64;
     let mut peak_active = 0_u32;
     let mut peak_hot = 0_u64;
@@ -77,7 +77,7 @@ pub(crate) fn peer_storage_turnover(executions: u32) -> EvidenceResult<PeerTurno
         let execution = PeerExecutionId::new(format!("peer-execution-{index:04}"))?;
         let decision = allowed_decision(&owner, index)?;
         let admission = PeerAdmission {
-            owner_peer: &owner,
+            caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
             request: &request,
             authority: &decision,
             execution: &execution,
@@ -96,7 +96,10 @@ pub(crate) fn peer_storage_turnover(executions: u32) -> EvidenceResult<PeerTurno
             return Err(std::io::Error::other("fresh peer execution was not accepted").into());
         }
         let active = store
-            .peer_execution_by_request(&owner, &request.request_id)?
+            .peer_execution_by_request(
+                &milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
+                &request.request_id,
+            )?
             .ok_or_else(|| std::io::Error::other("active peer lookup was absent"))?;
         if !matches!(active, PeerExecutionSnapshot::Hot(_)) {
             return Err(std::io::Error::other("active peer lookup was not exact").into());
@@ -121,7 +124,7 @@ pub(crate) fn peer_storage_turnover(executions: u32) -> EvidenceResult<PeerTurno
             .generation;
         if !matches!(
             store.mark_peer_entered(&PeerEntryRequest {
-                owner: &owner,
+                owner: &milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
                 execution: &execution,
                 worker: &worker,
                 claim_generation,
@@ -137,18 +140,29 @@ pub(crate) fn peer_storage_turnover(executions: u32) -> EvidenceResult<PeerTurno
             let observation = progress_observation(&request, &execution, sequence)?;
             observation_logical_bytes = observation_logical_bytes
                 .saturating_add(u64::try_from(serde_json::to_vec(&observation)?.len())?);
-            store.append_peer_observation(&owner, &execution, &observation)?;
+            store.append_peer_observation(
+                &milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
+                &execution,
+                &observation,
+            )?;
             observation_count = observation_count.saturating_add(1);
         }
         let terminal_sequence = PROGRESS_PER_EXECUTION + 1;
         let terminal = terminal_observation(&request, &execution, terminal_sequence)?;
         observation_logical_bytes = observation_logical_bytes
             .saturating_add(u64::try_from(serde_json::to_vec(&terminal)?.len())?);
-        store.append_peer_observation(&owner, &execution, &terminal)?;
+        store.append_peer_observation(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
+            &execution,
+            &terminal,
+        )?;
         observation_count = observation_count.saturating_add(1);
 
         let hot = store
-            .peer_execution(&owner, &execution)?
+            .peer_execution(
+                &milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
+                &execution,
+            )?
             .ok_or_else(|| std::io::Error::other("terminal peer lookup was absent"))?;
         if !matches!(hot, PeerExecutionSnapshot::Hot(_)) {
             return Err(std::io::Error::other("terminal peer lookup was not hot").into());
@@ -158,9 +172,24 @@ pub(crate) fn peer_storage_turnover(executions: u32) -> EvidenceResult<PeerTurno
         let hot_status = store.peer_execution_status()?;
         peak_hot = peak_hot.max(hot_status.hot_terminal);
 
-        let first = store.peer_observations(&owner, &execution, 0, PageSize::new(8)?)?;
-        let second = store.peer_observations(&owner, &execution, 8, PageSize::new(8)?)?;
-        let third = store.peer_observations(&owner, &execution, 16, PageSize::new(8)?)?;
+        let first = store.peer_observations(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
+            &execution,
+            0,
+            PageSize::new(8)?,
+        )?;
+        let second = store.peer_observations(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
+            &execution,
+            8,
+            PageSize::new(8)?,
+        )?;
+        let third = store.peer_observations(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
+            &execution,
+            16,
+            PageSize::new(8)?,
+        )?;
         if first.observations.len() != 8
             || second.observations.len() != 8
             || third.observations.len() != 1
@@ -183,14 +212,22 @@ pub(crate) fn peer_storage_turnover(executions: u32) -> EvidenceResult<PeerTurno
             return Err(std::io::Error::other("peer tombstone replay changed").into());
         }
         let tombstone = store
-            .peer_execution(&owner, &execution)?
+            .peer_execution(
+                &milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
+                &execution,
+            )?
             .ok_or_else(|| std::io::Error::other("peer tombstone lookup was absent"))?;
         if !matches!(tombstone, PeerExecutionSnapshot::Archived(_)) {
             return Err(std::io::Error::other("peer tombstone replay changed").into());
         }
         tombstone_snapshot_logical_bytes =
             tombstone_snapshot_logical_bytes.saturating_add(snapshot_logical_bytes(&tombstone)?);
-        let archived_page = store.peer_observations(&owner, &execution, 0, PageSize::new(8)?)?;
+        let archived_page = store.peer_observations(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
+            &execution,
+            0,
+            PageSize::new(8)?,
+        )?;
         if !matches!(archived_page.execution, PeerExecutionSnapshot::Archived(_))
             || !archived_page.observations.is_empty()
         {
@@ -231,7 +268,7 @@ fn snapshot_logical_bytes(snapshot: &PeerExecutionSnapshot) -> EvidenceResult<u6
 
 fn verify_admission_rejection_dimensions() -> EvidenceResult {
     let future = BASE_TIME + 60_000;
-    type AlterAdmission = fn(&mut PeerRelationshipState, &mut PeerCatalogState);
+    type AlterAdmission = fn(&mut ServingCallerState, &mut ServingCatalogState);
     let cases: [(AlterAdmission, PeerAdmissionRejection); 6] = [
         (
             |relationship, _| relationship.enabled = false,
@@ -271,15 +308,15 @@ fn verify_admission_rejection_dimensions() -> EvidenceResult {
         let request = request(&owner, &target, &descriptor, catalog.digest.clone(), 0)?;
         let decision = allowed_decision(&owner, 0)?;
         store.set_peer_admission_open(true)?;
-        let mut relationship = PeerRelationshipState {
-            peer: owner.clone(),
+        let mut relationship = ServingCallerState {
+            caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
             generation: 1,
             enabled: true,
             expires_at_unix_ms: future,
             maximum_active: 4,
         };
-        let mut catalog_state = PeerCatalogState {
-            peer: owner.clone(),
+        let mut catalog_state = ServingCatalogState {
+            caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
             relationship_generation: 1,
             generation: 1,
             digest: catalog.digest.as_str().to_owned(),
@@ -292,7 +329,7 @@ fn verify_admission_rejection_dimensions() -> EvidenceResult {
         }
         let execution = PeerExecutionId::new("peer-admission-matrix-execution")?;
         let outcome = store.admit_peer_execution(&PeerAdmission {
-            owner_peer: &owner,
+            caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
             request: &request,
             authority: &decision,
             execution: &execution,
@@ -324,15 +361,15 @@ fn verify_admission_capacity_dimensions() -> EvidenceResult {
         let descriptor = descriptor()?;
         let catalog = CatalogSnapshot::new(1, BASE_TIME - 1, BASE_TIME + 60_000, Vec::new())?;
         store.set_peer_admission_open(true)?;
-        store.configure_peer_relationship(&PeerRelationshipState {
-            peer: owner.clone(),
+        store.configure_peer_relationship(&ServingCallerState {
+            caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
             generation: 1,
             enabled: true,
             expires_at_unix_ms: BASE_TIME + 60_000,
             maximum_active: relationship_maximum,
         })?;
-        store.publish_peer_catalog(&PeerCatalogState {
-            peer: owner.clone(),
+        store.publish_peer_catalog(&ServingCatalogState {
+            caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
             relationship_generation: 1,
             generation: 1,
             digest: catalog.digest.as_str().to_owned(),
@@ -343,7 +380,7 @@ fn verify_admission_capacity_dimensions() -> EvidenceResult {
             let decision = allowed_decision(&owner, index)?;
             let execution = PeerExecutionId::new(format!("peer-capacity-execution-{index}"))?;
             let outcome = store.admit_peer_execution(&PeerAdmission {
-                owner_peer: &owner,
+                caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
                 request: &request,
                 authority: &decision,
                 execution: &execution,
@@ -403,17 +440,22 @@ fn descriptor() -> EvidenceResult<CapabilityDescriptor> {
     .build()?)
 }
 
-fn configure_store(store: &RedbStore, peer: &PeerId, digest: &CatalogDigest) -> EvidenceResult {
+fn configure_store(
+    store: &RedbStore,
+    target: &PeerId,
+    peer: &PeerId,
+    digest: &CatalogDigest,
+) -> EvidenceResult {
     store.set_peer_admission_open(true)?;
-    store.configure_peer_relationship(&PeerRelationshipState {
-        peer: peer.clone(),
+    store.configure_peer_relationship(&ServingCallerState {
+        caller: milkdrift_peer_protocol::ServingCaller::peer(target, peer),
         generation: 1,
         enabled: true,
         expires_at_unix_ms: BASE_TIME + 60_000,
         maximum_active: 1,
     })?;
-    store.publish_peer_catalog(&PeerCatalogState {
-        peer: peer.clone(),
+    store.publish_peer_catalog(&ServingCatalogState {
+        caller: milkdrift_peer_protocol::ServingCaller::peer(target, peer),
         relationship_generation: 1,
         generation: 1,
         digest: digest.as_str().to_owned(),
@@ -466,7 +508,7 @@ fn request(
     descriptor: &CapabilityDescriptor,
     catalog_digest: CatalogDigest,
     index: u32,
-) -> EvidenceResult<PeerInvocationRequest> {
+) -> EvidenceResult<ServingInvocationRequest> {
     request_with_observation_limit(issuer, target, descriptor, catalog_digest, index, 100)
 }
 
@@ -477,7 +519,7 @@ fn request_with_observation_limit(
     catalog_digest: CatalogDigest,
     index: u32,
     observation_limit: u32,
-) -> EvidenceResult<PeerInvocationRequest> {
+) -> EvidenceResult<ServingInvocationRequest> {
     let operation = OperationId::new("evidence.execute")?;
     let selection = ResolvedCapabilitySnapshot::from_descriptor(descriptor, &operation)?;
     let invocation = InvocationRequest::new(
@@ -495,17 +537,21 @@ fn request_with_observation_limit(
         artifact_bytes: 1_048_576,
         duration_ms: 30_000,
         cost_micros: 0,
+        cost_currency: None,
+        input_units: None,
+        output_units: None,
         observations: observation_limit,
     };
-    Ok(PeerInvocationRequest::new(
+    Ok(ServingInvocationRequest::new(
         request_id.clone(),
         1,
         catalog_digest,
         selection,
         invocation,
-        limits,
+        limits.clone(),
         deadline,
         DelegatedAuthorization {
+            controller_reservation: None,
             reference: DelegationRef::new("delegation-operational-evidence")?,
             issuer_peer: issuer.clone(),
             actor: ActorRef::new(format!("peer:{}", issuer.as_str()))?,
@@ -516,19 +562,21 @@ fn request_with_observation_limit(
             limits,
             expires_at_unix_ms: deadline,
             nonce: format!("peer-nonce-{index:04}"),
-            provenance: milkdrift_peer_protocol::PeerExecutionProvenance {
-                run: "run-peer-operational-evidence".to_owned(),
-                revision: format!("rev_{}", "1".repeat(64)),
-                node: "node-peer-evidence".to_owned(),
-                execution: format!("execution-peer-evidence-{index}"),
-                attempt: format!("attempt-peer-evidence-{index}"),
+            origin: milkdrift_peer_protocol::InvocationOrigin::Workflow {
+                provenance: milkdrift_peer_protocol::PeerExecutionProvenance {
+                    run: "run-peer-operational-evidence".to_owned(),
+                    revision: format!("rev_{}", "1".repeat(64)),
+                    node: "node-peer-evidence".to_owned(),
+                    execution: format!("execution-peer-evidence-{index}"),
+                    attempt: format!("attempt-peer-evidence-{index}"),
+                },
             },
         },
     )?)
 }
 
 fn progress_observation(
-    request: &PeerInvocationRequest,
+    request: &ServingInvocationRequest,
     execution: &PeerExecutionId,
     sequence: u64,
 ) -> EvidenceResult<PeerObservation> {
@@ -550,7 +598,7 @@ fn progress_observation(
 }
 
 fn terminal_observation(
-    request: &PeerInvocationRequest,
+    request: &ServingInvocationRequest,
     execution: &PeerExecutionId,
     sequence: u64,
 ) -> EvidenceResult<PeerObservation> {

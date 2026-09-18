@@ -86,6 +86,8 @@ impl CapabilityHost {
         };
         let authority_requirements =
             lifecycle_call(|| Ok::<_, crate::AdapterError>(adapter.authority_requirements()))?;
+        let accepts_direct_inputs =
+            lifecycle_call(|| Ok::<_, crate::AdapterError>(adapter.accepts_direct_inputs()))?;
         let permit_limit = descriptor
             .admission()
             .max_concurrent()
@@ -110,6 +112,7 @@ impl CapabilityHost {
         state.generations.insert(
             key.clone(),
             Generation {
+                accepts_direct_inputs,
                 descriptor,
                 descriptor_digest,
                 adapter,

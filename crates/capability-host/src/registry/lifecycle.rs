@@ -10,6 +10,43 @@ use super::{
 };
 
 impl CapabilityHost {
+    /// Runs adapter shutdown under one caller-owned deadline. A timeout retains the host
+    /// on the lifecycle thread and returns `None`; it does not establish that work stopped.
+    /// A completed result joins that thread before returning.
+    pub fn shutdown_with_deadline(
+        &self,
+        force: bool,
+        timeout: std::time::Duration,
+    ) -> Result<Option<ShutdownReport>, HostError> {
+        if timeout.is_zero() {
+            return Ok(None);
+        }
+        let host = self.clone();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let join = std::thread::Builder::new()
+            .name("milkdrift-capability-shutdown".to_owned())
+            .spawn(move || {
+                let result = if force {
+                    host.force_shutdown()
+                } else {
+                    host.shutdown()
+                };
+                let _ = sender.send(result);
+            })
+            .map_err(|_| HostError::RegistryUnavailable)?;
+        match receiver.recv_timeout(timeout) {
+            Ok(result) => {
+                join.join().map_err(|_| HostError::RegistryUnavailable)?;
+                result.map(Some)
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = join.join();
+                Err(HostError::RegistryUnavailable)
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
+        }
+    }
+
     /// Marks an exact generation draining and removes it from new resolution.
     pub fn begin_drain(
         &self,
@@ -283,6 +320,7 @@ impl CapabilityHost {
                     })
             })
             .map(|(key, generation)| CatalogGenerationView {
+                accepts_direct_inputs: generation.accepts_direct_inputs,
                 descriptor: generation.descriptor.clone(),
                 authority_requirements: generation.authority_requirements.clone(),
                 observation: generation.observation.clone(),

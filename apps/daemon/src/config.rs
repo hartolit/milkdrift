@@ -4,9 +4,9 @@ mod redaction;
 mod wire;
 pub use wire::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, ControllerActivation, DaemonConfig, ModelProfileConfig, PeerHostConfig,
-    PeerRelationshipConfig, PeerServingConfig, PeerSideEffectConfig, RuntimeHostConfig,
-    SecretSourceConfig, ShutdownConfig, ShutdownEffectPolicy,
+    AuthorityPresetConfig, ClientServingConfig, ControllerActivation, DaemonConfig,
+    ModelProfileConfig, PeerHostConfig, PeerRelationshipConfig, PeerSideEffectConfig,
+    RuntimeHostConfig, SecretSourceConfig, ServingHostConfig, ShutdownConfig, ShutdownEffectPolicy,
 };
 
 use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
@@ -18,7 +18,7 @@ use milkdrift_local_secret::LocalSecretSource;
 use thiserror::Error;
 
 /// Current daemon configuration document version.
-pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 9;
+pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 10;
 
 /// Configuration load or deterministic validation failure.
 #[derive(Debug, Error)]
@@ -30,7 +30,7 @@ pub enum ConfigError {
     #[error("invalid daemon configuration TOML: {0}")]
     Toml(String),
     /// The schema version is unsupported.
-    #[error("unsupported daemon configuration version {0}; supported version is 9")]
+    #[error("unsupported daemon configuration version {0}; supported version is 10")]
     UnsupportedVersion(u32),
     /// A host-safety invariant is invalid.
     #[error("invalid daemon configuration: {0}")]
@@ -51,6 +51,9 @@ const CONFIG_DIGEST_LIMITS: JsonLimits = JsonLimits {
 /// worker plans; editing the source TOML afterward does not update a running host.
 #[derive(Clone, Debug)]
 pub struct DaemonPlan {
+    role: milkdrift_control_protocol::HostRole,
+    host_id: String,
+    serving: ServingHostConfig,
     bind: SocketAddr,
     storage: StoragePlan,
     authentication: AuthenticationPlan,
@@ -76,6 +79,9 @@ pub(crate) struct AuthenticationPlan {
 }
 
 pub(crate) struct DaemonPlanParts {
+    pub(crate) role: milkdrift_control_protocol::HostRole,
+    pub(crate) host_id: String,
+    pub(crate) serving: ServingHostConfig,
     pub(crate) storage: StoragePlan,
     pub(crate) authentication: AuthenticationPlan,
     pub(crate) runtime: RuntimeHostConfig,
@@ -105,6 +111,9 @@ impl DaemonPlan {
 
     pub(crate) fn into_parts(self) -> DaemonPlanParts {
         DaemonPlanParts {
+            role: self.role,
+            host_id: self.host_id,
+            serving: self.serving,
             storage: self.storage,
             authentication: self.authentication,
             runtime: self.runtime,

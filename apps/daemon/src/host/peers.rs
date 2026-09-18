@@ -8,16 +8,19 @@ use crate::{config::PeerHostConfig, config::PeerSideEffectConfig};
 use milkdrift_authority::SecretRef;
 use milkdrift_capability::{CapabilityId, PeerId, SideEffectClass};
 use milkdrift_capability_host::CapabilityHost;
+use milkdrift_capability_host::{
+    CorePeerArtifactStore, PeerAuthenticator, PeerRelationship, PeerServerConfig, PeerService,
+    PeerWorkerConfig,
+};
 use milkdrift_control_protocol::{ErrorCode, PeerRead};
 use milkdrift_local_secret::LocalSecretResolver;
 use milkdrift_peer_http::{
-    CorePeerArtifactStore, InsecureLoopbackMode, PeerAuthenticator, PeerClientConfig,
-    PeerCredentialSource, PeerHttpClient, PeerHttpError, PeerRegistry, PeerRelationship,
-    PeerServerConfig, PeerService, PeerWorkerConfig,
+    InsecureLoopbackMode, PeerClientConfig, PeerCredentialSource, PeerHttpClient, PeerHttpError,
+    PeerRegistry,
 };
 use milkdrift_peer_protocol::{
-    DelegationRef, ExecutionLimits, HardLimits, HeartbeatLease, PROTOCOL_MAJOR_V1, PeerAuthority,
-    ProtocolVersion, ProtocolVersionRange, SessionId,
+    DelegationRef, HardLimits, HeartbeatLease, PROTOCOL_MAJOR_V1, PeerAuthority, ProtocolVersion,
+    ProtocolVersionRange, SessionId,
 };
 use milkdrift_persistence::TimestampMillis;
 use milkdrift_redb_store::RedbStore;
@@ -153,7 +156,11 @@ pub(super) struct PeerRuntime {
     pub(super) clock: DurableClock,
 }
 
+#[allow(clippy::too_many_arguments)] // Composition supplies independent owners without a service-locator object.
 pub(super) fn build_peer_runtime(
+    host_id: &str,
+    serving: &crate::config::ServingHostConfig,
+    auth: &crate::auth::AuthRegistry,
     peers: &PeerHostConfig,
     execution_lease_ms: u64,
     host: &CapabilityHost,
@@ -162,20 +169,11 @@ pub(super) fn build_peer_runtime(
     owner_queue: OwnerQueue,
     clock: DurableClock,
 ) -> Result<PeerRuntime, String> {
-    let PeerHostConfig::Enabled {
-        local_peer_id,
-        relationships: configured_relationships,
-        serving,
-    } = peers
-    else {
-        return Ok(PeerRuntime {
-            service: None,
-            artifacts: None,
-            registries: BTreeMap::new(),
-            clock,
-        });
+    let configured_relationships = match peers {
+        PeerHostConfig::Disabled => &[][..],
+        PeerHostConfig::Enabled { relationships } => relationships.as_slice(),
     };
-    let local_peer = PeerId::new(local_peer_id.clone()).map_err(|error| error.to_string())?;
+    let local_peer = PeerId::new(host_id).map_err(|error| error.to_string())?;
     let mut session_hasher = blake3::Hasher::new();
     session_hasher.update(b"milkdrift.peer.session.v1\0");
     session_hasher.update(local_peer.as_str().as_bytes());
@@ -258,12 +256,7 @@ pub(super) fn build_peer_runtime(
             execution_network_profiles: configured.execution_network_profiles.clone(),
             execution_network_destinations: configured.execution_network_destinations.clone(),
             execution_secrets: configured.execution_secrets.clone(),
-            execution_limits: ExecutionLimits {
-                artifact_bytes: configured.maximum_artifact_bytes,
-                duration_ms: configured.maximum_duration_ms,
-                cost_micros: configured.maximum_cost_micros,
-                observations: configured.maximum_observations,
-            },
+            execution_limits: configured.execution_limits(),
             maximum_concurrent: configured.maximum_concurrent,
             maximum_requests_per_minute: configured.maximum_requests_per_minute,
             maximum_artifact_bytes: configured.maximum_artifact_bytes,
@@ -315,7 +308,8 @@ pub(super) fn build_peer_runtime(
                 .iter()
                 .map(|relationship| relationship.maximum_artifact_bytes)
                 .max()
-                .unwrap_or(1),
+                .unwrap_or(0)
+                .max(serving.clients.execution_limits.artifact_bytes),
             10 * 1_073_741_824,
             peer_clock.clone(),
         )
@@ -329,7 +323,22 @@ pub(super) fn build_peer_runtime(
         owner_queue,
         Arc::downgrade(&direct_artifacts),
     ));
-    let service = PeerService::new_with_artifacts_and_authenticator(
+    let mut registries = BTreeMap::new();
+    for (client, relationship) in clients {
+        let peer = relationship.remote_peer.clone();
+        let registry = Arc::new(
+            PeerRegistry::new(
+                host.clone(),
+                client,
+                relationship,
+                peer_clock.clone(),
+                artifacts.clone(),
+            )
+            .map_err(|error| error.to_string())?,
+        );
+        registries.insert(peer, registry);
+    }
+    let service = PeerService::with_clients(
         PeerServerConfig {
             local_peer,
             session,
@@ -361,24 +370,17 @@ pub(super) fn build_peer_runtime(
             resolver: secrets,
             relationships: authentication,
         })),
+        Some(milkdrift_capability_host::ServingClientPolicy {
+            grants: auth.grants(),
+            revocations: auth.revocations(),
+            execution_limits: serving.clients.execution_limits.clone(),
+            maximum_concurrent: serving.clients.maximum_concurrent,
+            maximum_requests_per_minute: serving.clients.maximum_requests_per_minute,
+            catalog_ttl_ms: serving.clients.catalog_ttl_ms,
+        }),
         peer_clock.clone(),
     )
     .map_err(|error| error.to_string())?;
-    let mut registries = BTreeMap::new();
-    for (client, relationship) in clients {
-        let peer = relationship.remote_peer.clone();
-        let registry = Arc::new(
-            PeerRegistry::new(
-                host.clone(),
-                client,
-                relationship,
-                peer_clock.clone(),
-                artifacts.clone(),
-            )
-            .map_err(|error| error.to_string())?,
-        );
-        registries.insert(peer, registry);
-    }
     Ok(PeerRuntime {
         service: Some(service),
         artifacts: Some(direct_artifacts),
@@ -437,7 +439,8 @@ pub(super) fn peer_unavailable() -> PublicFailure {
     PublicFailure::new(ErrorCode::Unavailable, "peer service is unavailable", true)
 }
 
-pub(super) fn public_peer(error: PeerHttpError) -> PublicFailure {
+pub(super) fn public_peer(error: impl Into<PeerHttpError>) -> PublicFailure {
+    let error = error.into();
     match error {
         PeerHttpError::Unauthenticated | PeerHttpError::Unauthorized(_) => unauthorized(),
         PeerHttpError::NotFound(_) => not_found(),

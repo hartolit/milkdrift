@@ -8,22 +8,22 @@ use crate::{
     schema::PEER_EXECUTION_LOCATIONS, schema::PEER_EXECUTION_TOMBSTONES, schema::PEER_EXECUTIONS,
     schema::PEER_RELATIONSHIPS, schema::PEER_TERMINAL_INDEX,
 };
-use milkdrift_capability::PeerId;
+
 use milkdrift_peer_protocol::{PeerExecutionId, PeerRequestId};
 use milkdrift_persistence::{
-    PeerCatalogState, PeerDispatchClaim, PeerExecutionPhase, PeerExecutionRecord,
-    PeerExecutionSnapshot, PeerExecutionTombstone, PeerRelationshipState, PersistenceError,
+    PeerDispatchClaim, PeerExecutionPhase, PeerExecutionRecord, PeerExecutionSnapshot,
+    PeerExecutionTombstone, PersistenceError, ServingCallerState, ServingCatalogState,
     StorageFailureClass, WorkerId,
 };
 
 pub(super) fn relationship_in_transaction(
     write: &redb::WriteTransaction,
-    peer: &PeerId,
-) -> Result<Option<PeerRelationshipState>, PersistenceError> {
+    peer: &milkdrift_peer_protocol::ServingCaller,
+) -> Result<Option<ServingCallerState>, PersistenceError> {
     write
         .open_table(PEER_RELATIONSHIPS)
         .map_err(error::redb)?
-        .get(peer.as_str())
+        .get(peer.storage_key().as_str())
         .map_err(error::redb)?
         .map(|bytes| json::decode(bytes.value(), "peer relationship"))
         .transpose()
@@ -31,12 +31,12 @@ pub(super) fn relationship_in_transaction(
 
 pub(super) fn catalog_in_transaction(
     write: &redb::WriteTransaction,
-    peer: &PeerId,
-) -> Result<Option<PeerCatalogState>, PersistenceError> {
+    peer: &milkdrift_peer_protocol::ServingCaller,
+) -> Result<Option<ServingCatalogState>, PersistenceError> {
     write
         .open_table(PEER_CATALOGS)
         .map_err(error::redb)?
-        .get(peer.as_str())
+        .get(peer.storage_key().as_str())
         .map_err(error::redb)?
         .map(|bytes| json::decode(bytes.value(), "peer catalog"))
         .transpose()
@@ -125,11 +125,11 @@ pub(super) fn parse_execution_id(execution: &str) -> Result<PeerExecutionId, Per
 
 pub(super) fn owned_execution_in_transaction(
     write: &redb::WriteTransaction,
-    owner: &PeerId,
+    owner: &milkdrift_peer_protocol::ServingCaller,
     execution: &PeerExecutionId,
 ) -> Result<PeerExecutionRecord, PersistenceError> {
     execution_optional_in_transaction(write, execution)?
-        .filter(|record| record.owner_peer == *owner)
+        .filter(|record| record.caller == *owner)
         .ok_or_else(|| missing("peer_execution", execution.as_str()))
 }
 
@@ -263,10 +263,10 @@ pub(super) fn remove_terminal_index(
 }
 
 pub(super) fn request_key(
-    owner: &PeerId,
+    owner: &milkdrift_peer_protocol::ServingCaller,
     request: &PeerRequestId,
 ) -> Result<Vec<u8>, PersistenceError> {
-    codec::pair(owner.as_str(), request.as_str())
+    codec::pair(owner.storage_key().as_str(), request.as_str())
 }
 
 pub(super) fn observation_key(

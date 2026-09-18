@@ -7,6 +7,7 @@ struct Fixture {
     _directory: tempfile::TempDir,
     store: RedbStore,
     owner: PeerId,
+    caller: milkdrift_peer_protocol::ServingCaller,
     target: PeerId,
     descriptor: CapabilityDescriptor,
     catalog: CatalogSnapshot,
@@ -21,15 +22,15 @@ impl Fixture {
         let descriptor = descriptor()?;
         let catalog = CatalogSnapshot::new(1, BASE_TIME - 1, catalog_expiry, Vec::new())?;
         store.set_peer_admission_open(true)?;
-        store.configure_peer_relationship(&PeerRelationshipState {
-            peer: owner.clone(),
+        store.configure_peer_relationship(&ServingCallerState {
+            caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
             generation: 1,
             enabled: true,
             expires_at_unix_ms: relationship_expiry,
             maximum_active: 4,
         })?;
-        store.publish_peer_catalog(&PeerCatalogState {
-            peer: owner.clone(),
+        store.publish_peer_catalog(&ServingCatalogState {
+            caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
             relationship_generation: 1,
             generation: 1,
             digest: catalog.digest.as_str().to_owned(),
@@ -38,6 +39,7 @@ impl Fixture {
         Ok(Self {
             _directory: directory,
             store,
+            caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &owner),
             owner,
             target,
             descriptor,
@@ -45,7 +47,7 @@ impl Fixture {
         })
     }
 
-    fn request(&self, index: u32, observations: u32) -> EvidenceResult<PeerInvocationRequest> {
+    fn request(&self, index: u32, observations: u32) -> EvidenceResult<ServingInvocationRequest> {
         request_with_observation_limit(
             &self.owner,
             &self.target,
@@ -59,14 +61,14 @@ impl Fixture {
 
 fn admission<'a>(
     fixture: &'a Fixture,
-    request: &'a PeerInvocationRequest,
+    request: &'a ServingInvocationRequest,
     authority: &'a AuthorityDecisionSnapshot,
     execution: &'a PeerExecutionId,
     accepted_at_unix_ms: u64,
     maximum_hot_terminal_records: u64,
 ) -> PeerAdmission<'a> {
     PeerAdmission {
-        owner_peer: &fixture.owner,
+        caller: &fixture.caller,
         request,
         authority,
         execution,
@@ -235,7 +237,7 @@ fn admission_expiry_boundaries_and_retention_reclamation_are_exact() -> Evidence
     fixture.store.admit_peer_execution(&first)?;
     let (worker, generation) = claim(&fixture, 111, BASE_TIME + 1, BASE_TIME + 100)?;
     fixture.store.mark_peer_entered(&PeerEntryRequest {
-        owner: &fixture.owner,
+        owner: &fixture.caller,
         execution: &first_execution,
         worker: &worker,
         claim_generation: generation,
@@ -244,7 +246,7 @@ fn admission_expiry_boundaries_and_retention_reclamation_are_exact() -> Evidence
         authority: &first_decision,
     })?;
     fixture.store.append_peer_observation(
-        &fixture.owner,
+        &fixture.caller,
         &first_execution,
         &terminal_observation(&first_request, &first_execution, 1)?,
     )?;
@@ -309,16 +311,16 @@ fn claim_entry_release_and_uncertainty_boundaries_are_independent() -> EvidenceR
     );
     let (worker, first_generation) = claim(&fixture, 120, BASE_TIME + 1, BASE_TIME + 100)?;
     fixture.store.release_peer_claim(
-        &fixture.owner,
+        &fixture.caller,
         &execution,
         &worker,
         first_generation,
         BASE_TIME + 2,
     )?;
-    let (worker, second_generation) = claim(&fixture, 121, BASE_TIME + 3, BASE_TIME + 100)?;
+    let (worker, second_generation) = claim(&fixture, 121, BASE_TIME + 3, BASE_TIME + 201)?;
     if !matches!(
         fixture.store.mark_peer_entered(&PeerEntryRequest {
-            owner: &fixture.owner,
+            owner: &fixture.caller,
             execution: &execution,
             worker: &worker,
             claim_generation: second_generation,
@@ -334,7 +336,7 @@ fn claim_entry_release_and_uncertainty_boundaries_are_independent() -> EvidenceR
         fixture
             .store
             .release_peer_claim(
-                &fixture.owner,
+                &fixture.caller,
                 &execution,
                 &worker,
                 second_generation,
@@ -346,7 +348,7 @@ fn claim_entry_release_and_uncertainty_boundaries_are_independent() -> EvidenceR
         fixture
             .store
             .mark_peer_uncertain(
-                &fixture.owner,
+                &fixture.caller,
                 &execution,
                 &worker,
                 second_generation,
@@ -359,7 +361,7 @@ fn claim_entry_release_and_uncertainty_boundaries_are_independent() -> EvidenceR
         fixture
             .store
             .mark_peer_uncertain(
-                &fixture.owner,
+                &fixture.caller,
                 &execution,
                 &worker,
                 second_generation,
@@ -372,7 +374,7 @@ fn claim_entry_release_and_uncertainty_boundaries_are_independent() -> EvidenceR
         fixture
             .store
             .mark_peer_uncertain(
-                &fixture.owner,
+                &fixture.caller,
                 &execution,
                 &worker,
                 second_generation,
@@ -382,7 +384,7 @@ fn claim_entry_release_and_uncertainty_boundaries_are_independent() -> EvidenceR
             .is_err()
     );
     fixture.store.mark_peer_uncertain(
-        &fixture.owner,
+        &fixture.caller,
         &execution,
         &worker,
         second_generation,
@@ -405,8 +407,8 @@ fn entry_relationship_checks_are_not_conflated() -> EvidenceResult {
         let (worker, generation) = claim(&fixture, 130, BASE_TIME + 1, BASE_TIME + 100)?;
         fixture
             .store
-            .configure_peer_relationship(&PeerRelationshipState {
-                peer: fixture.owner.clone(),
+            .configure_peer_relationship(&ServingCallerState {
+                caller: fixture.caller.clone(),
                 generation: 2,
                 enabled: !disabled,
                 expires_at_unix_ms: BASE_TIME + 60_000,
@@ -414,7 +416,7 @@ fn entry_relationship_checks_are_not_conflated() -> EvidenceResult {
             })?;
         assert!(matches!(
             fixture.store.mark_peer_entered(&PeerEntryRequest {
-                owner: &fixture.owner,
+                owner: &fixture.caller,
                 execution: &execution,
                 worker: &worker,
                 claim_generation: generation,
@@ -439,7 +441,7 @@ fn observation_quota_cancellation_replay_and_recovery_are_exact() -> EvidenceRes
     ))?;
     let (worker, generation) = claim(&fixture, 140, BASE_TIME + 1, BASE_TIME + 100)?;
     fixture.store.mark_peer_entered(&PeerEntryRequest {
-        owner: &fixture.owner,
+        owner: &fixture.caller,
         execution: &execution,
         worker: &worker,
         claim_generation: generation,
@@ -448,7 +450,7 @@ fn observation_quota_cancellation_replay_and_recovery_are_exact() -> EvidenceRes
         authority: &decision,
     })?;
     fixture.store.append_peer_observation(
-        &fixture.owner,
+        &fixture.caller,
         &execution,
         &progress_observation(&request, &execution, 1)?,
     )?;
@@ -456,14 +458,14 @@ fn observation_quota_cancellation_replay_and_recovery_are_exact() -> EvidenceRes
         fixture
             .store
             .append_peer_observation(
-                &fixture.owner,
+                &fixture.caller,
                 &execution,
                 &progress_observation(&request, &execution, 2)?,
             )
             .is_err()
     );
     fixture.store.append_peer_observation(
-        &fixture.owner,
+        &fixture.caller,
         &execution,
         &terminal_observation(&request, &execution, 2)?,
     )?;
@@ -495,22 +497,22 @@ fn observation_quota_cancellation_replay_and_recovery_are_exact() -> EvidenceRes
         assert!(
             fixture
                 .store
-                .request_peer_cancellation(&fixture.owner, &value, at)
+                .request_peer_cancellation(&fixture.caller, &value, at)
                 .is_err()
         );
     }
     let exact = cancellation(1, "x".repeat(512));
     fixture
         .store
-        .request_peer_cancellation(&fixture.owner, &exact, BASE_TIME + 11)?;
+        .request_peer_cancellation(&fixture.caller, &exact, BASE_TIME + 11)?;
     fixture
         .store
-        .request_peer_cancellation(&fixture.owner, &exact, BASE_TIME + 12)?;
+        .request_peer_cancellation(&fixture.caller, &exact, BASE_TIME + 12)?;
     let conflict = cancellation(1, "different".to_owned());
     assert!(
         fixture
             .store
-            .request_peer_cancellation(&fixture.owner, &conflict, BASE_TIME + 12)
+            .request_peer_cancellation(&fixture.caller, &conflict, BASE_TIME + 12)
             .is_err()
     );
     let cancellation_worker = WorkerId::new("peer-cancellation-worker")?;
@@ -537,7 +539,7 @@ fn observation_quota_cancellation_replay_and_recovery_are_exact() -> EvidenceRes
     assert_eq!(empty.uncertain, 0);
     assert!(!empty.more);
     fixture.store.append_peer_observation(
-        &fixture.owner,
+        &fixture.caller,
         &cancellation_execution,
         &terminal_observation(&cancellation_request, &cancellation_execution, 1)?,
     )?;
@@ -553,7 +555,7 @@ fn observation_quota_cancellation_replay_and_recovery_are_exact() -> EvidenceRes
     assert!(
         fixture
             .store
-            .acknowledge_peer_cancellation(&fixture.owner, &acknowledgement, 0)
+            .acknowledge_peer_cancellation(&fixture.caller, &acknowledgement, 0)
             .is_err()
     );
     let mut wrong_request = acknowledgement.clone();
@@ -561,16 +563,16 @@ fn observation_quota_cancellation_replay_and_recovery_are_exact() -> EvidenceRes
     assert!(
         fixture
             .store
-            .acknowledge_peer_cancellation(&fixture.owner, &wrong_request, BASE_TIME + 16,)
+            .acknowledge_peer_cancellation(&fixture.caller, &wrong_request, BASE_TIME + 16,)
             .is_err()
     );
     fixture.store.acknowledge_peer_cancellation(
-        &fixture.owner,
+        &fixture.caller,
         &acknowledgement,
         BASE_TIME + 16,
     )?;
     fixture.store.acknowledge_peer_cancellation(
-        &fixture.owner,
+        &fixture.caller,
         &acknowledgement,
         BASE_TIME + 17,
     )?;
@@ -580,7 +582,7 @@ fn observation_quota_cancellation_replay_and_recovery_are_exact() -> EvidenceRes
         fixture
             .store
             .acknowledge_peer_cancellation(
-                &fixture.owner,
+                &fixture.caller,
                 &conflicting_acknowledgement,
                 BASE_TIME + 17,
             )
@@ -600,7 +602,7 @@ fn entered_claim_recovery_is_uncertain_and_then_empty() -> EvidenceResult {
     ))?;
     let (worker, generation) = claim(&fixture, 150, BASE_TIME + 1, BASE_TIME + 100)?;
     fixture.store.mark_peer_entered(&PeerEntryRequest {
-        owner: &fixture.owner,
+        owner: &fixture.caller,
         execution: &execution,
         worker: &worker,
         claim_generation: generation,

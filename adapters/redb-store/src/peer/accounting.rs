@@ -1,6 +1,6 @@
 //! Durable global and per-peer admission accounting.
 
-use milkdrift_capability::PeerId;
+use milkdrift_peer_protocol::ServingCaller;
 use milkdrift_persistence::PersistenceError;
 use redb::ReadableTable;
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use crate::{
     schema::{PEER_EXECUTION_ACCOUNTING, PEER_EXECUTION_GLOBAL_ACCOUNTING_KEY},
 };
 
-pub(super) const PEER_ACCOUNTING_SCHEMA_VERSION: u32 = 2;
+pub(super) const PEER_ACCOUNTING_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -45,13 +45,13 @@ impl GlobalPeerAccounting {
 #[serde(deny_unknown_fields)]
 pub(super) struct PerPeerAccounting {
     pub(super) schema_version: u32,
-    pub(super) peer: PeerId,
+    pub(super) peer: ServingCaller,
     pub(super) active: u32,
     pub(super) revision: u64,
 }
 
 impl PerPeerAccounting {
-    fn empty(peer: &PeerId) -> Self {
+    fn empty(peer: &milkdrift_peer_protocol::ServingCaller) -> Self {
         Self {
             schema_version: PEER_ACCOUNTING_SCHEMA_VERSION,
             peer: peer.clone(),
@@ -116,12 +116,12 @@ pub(super) fn put_global_accounting(
 
 pub(super) fn peer_accounting(
     write: &redb::WriteTransaction,
-    peer: &PeerId,
+    peer: &milkdrift_peer_protocol::ServingCaller,
 ) -> Result<PerPeerAccounting, PersistenceError> {
     let value = write
         .open_table(PEER_EXECUTION_ACCOUNTING)
         .map_err(error::redb)?
-        .get(peer.as_str())
+        .get(peer.storage_key().as_str())
         .map_err(error::redb)?
         .map(|bytes| json::decode(bytes.value(), "peer relationship accounting"))
         .transpose()?
@@ -140,14 +140,14 @@ pub(super) fn put_peer_accounting(
     write
         .open_table(PEER_EXECUTION_ACCOUNTING)
         .map_err(error::redb)?
-        .insert(value.peer.as_str(), bytes.as_slice())
+        .insert(value.peer.storage_key().as_str(), bytes.as_slice())
         .map_err(error::redb)?;
     Ok(())
 }
 
 pub(super) fn release_active_accounting(
     write: &redb::WriteTransaction,
-    owner: &PeerId,
+    owner: &milkdrift_peer_protocol::ServingCaller,
     decrement_dispatch: bool,
 ) -> Result<(), PersistenceError> {
     let mut global = global_accounting(write)?;

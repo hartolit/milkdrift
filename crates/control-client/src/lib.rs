@@ -36,6 +36,8 @@ use serde::de::DeserializeOwned;
 use thiserror::Error;
 use url::Url;
 
+mod invocation;
+
 /// Default maximum artifact range materialized by one client call.
 pub const DEFAULT_MAX_ARTIFACT_RANGE_BYTES: usize = 8 * 1024 * 1024;
 /// Default bounded reconnect delay for resumable streams.
@@ -97,6 +99,17 @@ impl ClientConfig {
     }
 
     fn validate(&self) -> Result<(), ClientError> {
+        let loopback = match self.endpoint.host() {
+            Some(url::Host::Ipv4(address)) => address.is_loopback(),
+            Some(url::Host::Ipv6(address)) => address.is_loopback(),
+            Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
+            None => false,
+        };
+        if self.endpoint.scheme() == "http" && !loopback {
+            return Err(ClientError::Configuration(
+                "non-loopback control endpoints require HTTPS".to_owned(),
+            ));
+        }
         if self.endpoint.scheme() != "http" && self.endpoint.scheme() != "https" {
             return Err(ClientError::Configuration(
                 "control endpoint must use http or https".to_owned(),

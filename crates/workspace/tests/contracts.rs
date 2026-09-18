@@ -19,6 +19,38 @@ fn bounded(value: Value) -> Result<BoundedJson, Box<dyn std::error::Error>> {
     Ok(BoundedJson::new(value)?)
 }
 
+#[test]
+fn authenticated_foreign_causes_retain_exact_facts_and_refuse_excessive_depth()
+-> Result<(), Box<dyn std::error::Error>> {
+    let original = CausalReference::Invocation {
+        invocation: InvocationId::new("foreign-call")?,
+    };
+    let mut cause = original.clone();
+    for depth in 1..=4 {
+        cause = CausalReference::PeerClaim {
+            peer: milkdrift_capability::PeerId::new(format!("host-{depth}"))?,
+            reference: Box::new(cause),
+        };
+        let provenance = ArtifactProvenance::new(cause.clone(), vec![original.clone()])?;
+        let roundtrip: ArtifactProvenance =
+            serde_json::from_slice(&serde_json::to_vec(&provenance)?)?;
+        assert_eq!(roundtrip, provenance);
+    }
+    let excessive = CausalReference::PeerClaim {
+        peer: milkdrift_capability::PeerId::new("host-5")?,
+        reference: Box::new(cause),
+    };
+    assert!(ArtifactProvenance::new(excessive.clone(), vec![]).is_err());
+    assert!(ArtifactProvenance::new(original.clone(), vec![excessive.clone()]).is_err());
+    assert!(
+        serde_json::from_value::<ArtifactProvenance>(json!({
+            "producer": original, "causes": [excessive],
+        }))
+        .is_err()
+    );
+    Ok(())
+}
+
 fn artifact(content: &[u8]) -> Result<ArtifactMetadata, Box<dyn std::error::Error>> {
     let size = u64::try_from(content.len())?;
     let reference = ArtifactReference::new(

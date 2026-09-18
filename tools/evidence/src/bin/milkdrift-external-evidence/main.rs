@@ -455,6 +455,9 @@ fn configuration(
     ];
     let config = DaemonConfig {
         schema_version: milkdrift_daemon::DAEMON_CONFIG_SCHEMA_VERSION,
+        role: milkdrift_control_protocol::HostRole::WorkflowEnabled,
+        host_id: "host:local".to_owned(),
+        serving: Default::default(),
         data_root: session_root.join("data"),
         bind: reserve_endpoint().map_err(|error| error.to_string())?,
         secret_sources,

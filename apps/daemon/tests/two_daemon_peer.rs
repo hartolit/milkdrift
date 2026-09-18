@@ -24,8 +24,8 @@ use milkdrift_control_protocol::{Command, CommandRequest, PageRequest, ProtocolV
 use milkdrift_daemon::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
     AuthorityPresetConfig, DaemonConfig, DaemonHost, DaemonPlan, PeerHostConfig,
-    PeerRelationshipConfig, PeerServingConfig, PeerSideEffectConfig, RuntimeHostConfig,
-    SecretSourceConfig, ShutdownConfig, serve,
+    PeerRelationshipConfig, PeerSideEffectConfig, RuntimeHostConfig, SecretSourceConfig,
+    ServingHostConfig, ShutdownConfig, serve,
 };
 use milkdrift_peer_protocol::{
     DecodeLimits, FeatureSet, HandshakeRequest, HandshakeResponse, HardLimits, PeerAction,
@@ -191,12 +191,18 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
                 let peer_store = RedbStore::open(root_a.path().join("data"))?;
                 let record = peer_store
                     .peer_execution_by_request(
-                        &PeerId::new("peer-b")?,
+                        &milkdrift_peer_protocol::ServingCaller::peer(
+                            &PeerId::new("peer-a")?,
+                            &PeerId::new("peer-b")?,
+                        ),
                         &PeerRequestId::new(format!("request:{invocation}"))?,
                     )?
                     .ok_or("serving peer omitted accepted execution")?;
                 let observations = peer_store.peer_observations(
-                    &PeerId::new("peer-b")?,
+                    &milkdrift_peer_protocol::ServingCaller::peer(
+                        &PeerId::new("peer-a")?,
+                        &PeerId::new("peer-b")?,
+                    ),
                     record.execution(),
                     0,
                     PageSize::new(128)?,
@@ -369,7 +375,7 @@ async fn assert_peer_protocol_boundary(endpoint: &Url) -> TestResult {
         limits: HardLimits::default(),
     };
     let current = serde_json::to_value(ProtocolEnvelope::v1(request.clone()))?;
-    for minor in [1_u16, 2, 4] {
+    for minor in [1_u16, 2, 3, 5] {
         let mut incompatible = current.clone();
         incompatible["protocol"]["minor"] = serde_json::json!(minor);
         let response = client
@@ -390,8 +396,8 @@ async fn assert_peer_protocol_boundary(endpoint: &Url) -> TestResult {
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let envelope: ProtocolEnvelope<HandshakeResponse> =
         decode_envelope(&response.bytes().await?, DecodeLimits::default())?;
-    assert_eq!(envelope.protocol, PeerProtocolVersion::V1_3);
-    assert_eq!(envelope.message.selected_version, PeerProtocolVersion::V1_3);
+    assert_eq!(envelope.protocol, PeerProtocolVersion::V1_4);
+    assert_eq!(envelope.message.selected_version, PeerProtocolVersion::V1_4);
     Ok(())
 }
 
@@ -473,6 +479,23 @@ fn configuration_document(
     };
     Ok(DaemonConfig {
         schema_version: milkdrift_daemon::DAEMON_CONFIG_SCHEMA_VERSION,
+        host_id: local_peer.to_owned(),
+        serving: ServingHostConfig {
+            worker_threads: 2,
+            maximum_global_active: 2,
+            maximum_dispatch_queue: 2,
+            maximum_hot_terminal_records: 2,
+            archive_batch_size: 1,
+            observation_hot_retention_ms: 1,
+            recovery_page: 2,
+            poll_interval_ms: 5,
+            ..ServingHostConfig::default()
+        },
+        role: if local_peer == "peer-a" {
+            milkdrift_control_protocol::HostRole::ExecutionOnly
+        } else {
+            milkdrift_control_protocol::HostRole::WorkflowEnabled
+        },
         data_root: root.path().join("data"),
         bind: "127.0.0.1:0".parse()?,
         secret_sources: BTreeMap::from([
@@ -504,17 +527,6 @@ fn configuration_document(
             ..AdapterConfig::default()
         },
         peers: PeerHostConfig::Enabled {
-            local_peer_id: local_peer.to_owned(),
-            serving: PeerServingConfig {
-                worker_threads: 2,
-                maximum_global_active: 2,
-                maximum_dispatch_queue: 2,
-                maximum_hot_terminal_records: 2,
-                archive_batch_size: 1,
-                observation_hot_retention_ms: 1,
-                recovery_page: 2,
-                poll_interval_ms: 5,
-            },
             relationships: vec![PeerRelationshipConfig {
                 peer_id: remote_peer.to_owned(),
                 endpoint: remote_endpoint.to_string(),
@@ -526,6 +538,8 @@ fn configuration_document(
                     PeerAction::ReadCatalog,
                     PeerAction::Invoke,
                     PeerAction::Cancel,
+                    PeerAction::ArtifactUpload,
+                    PeerAction::ArtifactDownload,
                 ]),
                 capability_allow: BTreeSet::from(["golden-local-process".to_owned()]),
                 capability_deny: BTreeSet::new(),
@@ -547,9 +561,15 @@ fn configuration_document(
                 maximum_concurrent: 2,
                 maximum_requests_per_minute: 600,
                 maximum_artifact_bytes: 1_048_576,
-                artifact_sensitivities: BTreeSet::new(),
+                artifact_sensitivities: BTreeSet::from([
+                    milkdrift_workspace::ArtifactSensitivity::Internal,
+                    milkdrift_workspace::ArtifactSensitivity::Restricted,
+                ]),
                 maximum_duration_ms: 30_000,
                 maximum_cost_micros: 0,
+                cost_currency: None,
+                maximum_input_units: None,
+                maximum_output_units: None,
                 maximum_observations: 128,
                 catalog_ttl_ms: 30_000,
                 trust_zone: "two-daemon-test".to_owned(),

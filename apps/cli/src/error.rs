@@ -13,6 +13,8 @@ pub(crate) enum CliError {
     NotFound(String),
     #[error("run terminal outcome did not satisfy the requested success condition")]
     FailedTask(Box<RunRead>),
+    #[error("invocation was refused or did not complete successfully")]
+    InvocationFailed(Box<Value>),
     #[error("internal CLI failure: {0}")]
     Internal(String),
     #[error(
@@ -28,7 +30,7 @@ pub(crate) fn exit_code(error: &CliError) -> u8 {
         CliError::Invalid(_) => 2,
         CliError::NotFound(_) => 6,
         CliError::Internal(_) => 9,
-        CliError::FailedTask(_) => 8,
+        CliError::FailedTask(_) | CliError::InvocationFailed(_) => 8,
         CliError::Deadline => 10,
         CliError::Cancelled => 130,
         CliError::Client(ClientError::Configuration(_)) => 2,
@@ -53,6 +55,10 @@ pub(crate) fn emit_error(json: bool, operation: &str, command_id: Option<&str>, 
         CliError::FailedTask(_) => (
             "failed_terminal",
             "run terminal outcome did not satisfy the requested success condition",
+        ),
+        CliError::InvocationFailed(_) => (
+            "invocation_failed",
+            "invocation was refused or did not complete successfully; inspect retained evidence",
         ),
         CliError::Deadline => (
             "timeout",
@@ -104,6 +110,7 @@ pub(crate) fn emit_error(json: bool, operation: &str, command_id: Option<&str>, 
     };
     let value = match error {
         CliError::FailedTask(run) => serde_json::to_value(run).unwrap_or(Value::Null),
+        CliError::InvocationFailed(value) => (**value).clone(),
         _ => Value::Null,
     };
     let failure = json!({"classification": classification, "code": daemon_code.map_or_else(|| classification.to_owned(), |code| serde_json::to_value(code).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_else(|| classification.to_owned())), "daemon_code": daemon_code, "retryable": retryable, "detail": detail});

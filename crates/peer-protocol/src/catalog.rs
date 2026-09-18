@@ -47,7 +47,7 @@ impl CatalogEntry {
 
 /// What a serving host advertises to one relationship at a particular generation and expiry.
 ///
-/// The digest binds the complete observation used by a subsequent [`crate::PeerInvocationRequest`].
+/// The digest binds the complete observation used by a subsequent [`crate::ServingInvocationRequest`].
 /// This is discovery evidence, not a reservation: acceptance must recheck current authority and
 /// admission. Renewing the catalog cannot change an already accepted execution's selection.
 #[derive(Clone, Debug, PartialEq, Serialize)]

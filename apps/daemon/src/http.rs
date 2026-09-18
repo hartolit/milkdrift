@@ -12,6 +12,7 @@ use reads::{
     revision, revision_diff, revisions, run, runs, timeline, version,
 };
 mod artifacts;
+mod invocations;
 use artifacts::{artifact_content, artifact_metadata};
 mod streams;
 use reads::ListQuery;
@@ -91,6 +92,7 @@ struct AppState {
     host: DaemonHost,
     request_sequence: Arc<AtomicU64>,
     capability_feeds: Arc<tokio::sync::Mutex<BTreeMap<String, CapabilityFeed>>>,
+    serving_requests: Arc<tokio::sync::Semaphore>,
 }
 
 /// Builds the bounded protocol-2.3 router. CORS is intentionally absent.
@@ -100,6 +102,7 @@ pub(crate) fn router(host: DaemonHost) -> Router {
         host,
         request_sequence: Arc::new(AtomicU64::new(1)),
         capability_feeds: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
+        serving_requests: Arc::new(tokio::sync::Semaphore::new(256)),
     };
     let router = authorized_routes! { Router::new();
         "/v1/version" => post(version), RouteAuthorityMapping::Exact(AuthorityOperation::NegotiateControlProtocol), RouteResourceMapping::Daemon;
@@ -118,6 +121,12 @@ pub(crate) fn router(host: DaemonHost) -> Router {
         "/v1/runs/{run}/proposals" => get(proposals), RouteAuthorityMapping::Exact(AuthorityOperation::InspectProposal), RouteResourceMapping::Run;
         "/v1/runs/{run}/proposals/{proposal}" => get(proposal), RouteAuthorityMapping::Exact(AuthorityOperation::InspectProposal), RouteResourceMapping::Run;
         "/v1/capabilities" => get(capabilities), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Capability;
+        "/v1/execution/catalog" => get(invocations::catalog), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Capability;
+        "/v1/invocations" => post(invocations::invoke), RouteAuthorityMapping::Exact(AuthorityOperation::InvokeCapability), RouteResourceMapping::Capability;
+        "/v1/invocation-requests/{request}" => get(invocations::lookup), RouteAuthorityMapping::Exact(AuthorityOperation::Inspect), RouteResourceMapping::Capability;
+        "/v1/invocations/{execution}" => get(invocations::inspect), RouteAuthorityMapping::Exact(AuthorityOperation::Inspect), RouteResourceMapping::Capability;
+        "/v1/invocations/{execution}/observations" => get(invocations::observations), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Capability;
+        "/v1/invocations/{execution}/cancel" => post(invocations::cancel), RouteAuthorityMapping::Exact(AuthorityOperation::CancelCapability), RouteResourceMapping::Capability;
         "/v1/peers" => get(peers), RouteAuthorityMapping::Exact(AuthorityOperation::InspectPeer), RouteResourceMapping::Peer;
         "/v1/peers/{peer}" => get(peer), RouteAuthorityMapping::Exact(AuthorityOperation::InspectPeer), RouteResourceMapping::Peer;
         "/v1/peers/{peer}/connect" => post(peer_connect), RouteAuthorityMapping::Exact(AuthorityOperation::AdministerPeer), RouteResourceMapping::Peer;
@@ -127,6 +136,7 @@ pub(crate) fn router(host: DaemonHost) -> Router {
         "/v1/peers/{peer}/revoke" => post(peer_revoke), RouteAuthorityMapping::Exact(AuthorityOperation::AdministerPeer), RouteResourceMapping::Peer;
         "/v1/authority" => get(authority), RouteAuthorityMapping::Exact(AuthorityOperation::InspectOwnAuthority), RouteResourceMapping::Daemon;
         "/v1/artifacts/{artifact}" => get(artifact_metadata), RouteAuthorityMapping::Exact(AuthorityOperation::ReadArtifactMetadata), RouteResourceMapping::Artifact;
+        "/v1/artifact-inputs" => post(artifacts::upload_input), RouteAuthorityMapping::Exact(AuthorityOperation::PublishArtifact), RouteResourceMapping::Artifact;
         "/v1/artifacts/{artifact}/content" => get(artifact_content), RouteAuthorityMapping::Exact(AuthorityOperation::ReadArtifactContent), RouteResourceMapping::Artifact;
         "/v1/layouts/{workflow}/{revision}" => get(layout), RouteAuthorityMapping::Exact(AuthorityOperation::ReadLayout), RouteResourceMapping::Layout;
         "/v1/stream/health" => get(health_stream), RouteAuthorityMapping::Exact(AuthorityOperation::InspectDaemonHealth), RouteResourceMapping::Daemon;

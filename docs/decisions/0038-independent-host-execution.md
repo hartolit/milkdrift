@@ -83,9 +83,15 @@ this relationship to published internal runs.
 
 ## Compatibility and consequences
 
-This decision changes no current writer or supported reader. Assignment 01 must review invocation,
-context, producer/publication, peer execution, grants/delegation, account, configuration and public
-DTO versions against current constants and fixtures before changing their meaning. Preserve exact
+The implementation reviewed invocation, context, producer/publication, peer execution,
+grants/delegation, account, configuration and public DTO versions against their constants and fixtures.
+The serving request digest uses domain v2; hot serving records are schema 4 and tombstones schema 2.
+Artifact publication/accounting is schema 3. The store's internal format is 17 and physical schema
+is 12, which adds the durable installation identity. Daemon configuration is schema 10, control
+protocol is 2.8, and peer protocol is 1.4. These generations require coordinated producer/consumer
+updates; older store/configuration/protocol generations are refused before use. No migration or
+missing-field inference creates direct origin or new authority. Unchanged workflow context and
+runtime event families retain their owning readers. Preserve exact
 current replay within a supported store generation. Never infer new authority or direct origin
 from missing old fields. Unsupported pre-release stores refuse before mutation under the existing
 exact-current storage policy; retain original generations for offline preservation/inspection.

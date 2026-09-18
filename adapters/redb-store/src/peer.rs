@@ -34,19 +34,17 @@ use accounting::{
 use retention::archive_eligible_in_transaction;
 use validation::{validate_admission, validate_catalog, validate_record, validate_relationship};
 
-use milkdrift_capability::PeerId;
 use milkdrift_peer_protocol::{
     PeerCancellationAcknowledgement, PeerCancellationRequest, PeerExecutionId, PeerObservation,
     PeerRequestId,
 };
 use milkdrift_persistence::{
-    PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2, PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3,
     PeerAdmission, PeerAdmissionOutcome, PeerAdmissionRejection, PeerCancellationRecord,
-    PeerCatalogState, PeerClaimOutcome, PeerDispatchClaimRequest, PeerEntryOutcome,
-    PeerEntryRequest, PeerExecutionAccounting, PeerExecutionPhase, PeerExecutionRecord,
-    PeerExecutionSnapshot, PeerExecutionStatus, PeerExecutionStore, PeerObservationAppend,
-    PeerObservationPage, PeerRecoveryResult, PeerRelationshipState, PeerRetentionPage,
-    PeerRetentionRequest, PersistenceError, WorkerId,
+    PeerClaimOutcome, PeerDispatchClaimRequest, PeerEntryOutcome, PeerEntryRequest,
+    PeerExecutionAccounting, PeerExecutionPhase, PeerExecutionRecord, PeerExecutionSnapshot,
+    PeerExecutionStatus, PeerExecutionStore, PeerObservationAppend, PeerObservationPage,
+    PeerRecoveryResult, PeerRetentionPage, PeerRetentionRequest, PersistenceError,
+    SERVING_EXECUTION_RECORD_SCHEMA_VERSION, ServingCallerState, ServingCatalogState, WorkerId,
 };
 use redb::ReadableTable;
 
@@ -62,7 +60,40 @@ const LOCATION_HOT: u8 = 1;
 const LOCATION_ARCHIVED: u8 = 2;
 const OBSERVATION_DIGEST_DOMAIN: &[u8] = b"milkdrift.peer.observation-history.v1\0";
 
+fn bind_host_in_transaction(
+    write: &redb::WriteTransaction,
+    host: &milkdrift_capability::PeerId,
+) -> Result<(), PersistenceError> {
+    use redb::ReadableTableMetadata as _;
+    let mut table = write
+        .open_table(crate::schema::SERVING_HOST_IDENTITY)
+        .map_err(error::redb)?;
+    let existing = table
+        .get("host")
+        .map_err(error::redb)?
+        .map(|value| value.value().to_owned());
+    if table.len().map_err(error::redb)? != u64::from(existing.is_some()) {
+        return Err(corruption("serving installation identity table is invalid"));
+    }
+    match existing {
+        Some(existing) if existing == host.as_str() => Ok(()),
+        Some(_) => Err(PersistenceError::InvalidDocument("configured host_id differs from this store's serving installation; use its original identity".to_owned())),
+        None => {
+            table.insert("host", host.as_str()).map_err(error::redb)?;
+            Ok(())
+        }
+    }
+}
+
 impl PeerExecutionStore for RedbStore {
+    fn bind_serving_host(
+        &self,
+        host: &milkdrift_capability::PeerId,
+    ) -> Result<(), PersistenceError> {
+        let write = self.database().begin_write().map_err(error::redb)?;
+        bind_host_in_transaction(&write, host)?;
+        write.commit().map_err(error::redb)
+    }
     fn recover_peer_claims(
         &self,
         recovered_at_unix_ms: u64,
@@ -73,7 +104,7 @@ impl PeerExecutionStore for RedbStore {
 
     fn mark_peer_uncertain(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         worker: &WorkerId,
         claim_generation: u64,
@@ -92,7 +123,7 @@ impl PeerExecutionStore for RedbStore {
 
     fn extend_peer_claim(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         worker: &WorkerId,
         claim_generation: u64,
@@ -109,7 +140,7 @@ impl PeerExecutionStore for RedbStore {
 
     fn release_peer_claim(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         worker: &WorkerId,
         claim_generation: u64,
@@ -148,14 +179,15 @@ impl PeerExecutionStore for RedbStore {
 
     fn configure_peer_relationship(
         &self,
-        relationship: &PeerRelationshipState,
+        relationship: &ServingCallerState,
     ) -> Result<(), PersistenceError> {
         validate_relationship(relationship)?;
         let write = self.database().begin_write().map_err(error::redb)?;
-        let existing: Option<PeerRelationshipState> = {
+        bind_host_in_transaction(&write, &relationship.caller.host)?;
+        let existing: Option<ServingCallerState> = {
             let table = write.open_table(PEER_RELATIONSHIPS).map_err(error::redb)?;
             table
-                .get(relationship.peer.as_str())
+                .get(relationship.caller.storage_key().as_str())
                 .map_err(error::redb)?
                 .map(|bytes| json::decode(bytes.value(), "peer relationship"))
                 .transpose()?
@@ -167,7 +199,7 @@ impl PeerExecutionStore for RedbStore {
             if relationship.generation <= existing.generation {
                 return Err(PersistenceError::ImmutableConflict {
                     entity: "peer_relationship_generation",
-                    identity: relationship.peer.to_string(),
+                    identity: relationship.caller.to_string(),
                 });
             }
         }
@@ -175,23 +207,23 @@ impl PeerExecutionStore for RedbStore {
         write
             .open_table(PEER_RELATIONSHIPS)
             .map_err(error::redb)?
-            .insert(relationship.peer.as_str(), bytes.as_slice())
+            .insert(relationship.caller.storage_key().as_str(), bytes.as_slice())
             .map_err(error::redb)?;
         write.commit().map_err(error::redb)
     }
 
-    fn publish_peer_catalog(&self, catalog: &PeerCatalogState) -> Result<(), PersistenceError> {
+    fn publish_peer_catalog(&self, catalog: &ServingCatalogState) -> Result<(), PersistenceError> {
         validate_catalog(catalog)?;
         let write = self.database().begin_write().map_err(error::redb)?;
-        let relationship = relationship_in_transaction(&write, &catalog.peer)?
-            .ok_or_else(|| missing("peer_relationship", catalog.peer.as_str()))?;
+        let relationship = relationship_in_transaction(&write, &catalog.caller)?
+            .ok_or_else(|| missing("peer_relationship", catalog.caller.storage_key().as_str()))?;
         if !relationship.enabled || relationship.generation != catalog.relationship_generation {
             return Err(PersistenceError::ImmutableConflict {
                 entity: "peer_catalog_relationship_generation",
-                identity: catalog.peer.to_string(),
+                identity: catalog.caller.to_string(),
             });
         }
-        let existing = catalog_in_transaction(&write, &catalog.peer)?;
+        let existing = catalog_in_transaction(&write, &catalog.caller)?;
         if let Some(existing) = existing {
             if existing == *catalog {
                 return Ok(());
@@ -199,7 +231,7 @@ impl PeerExecutionStore for RedbStore {
             if catalog.generation <= existing.generation {
                 return Err(PersistenceError::ImmutableConflict {
                     entity: "peer_catalog_generation",
-                    identity: catalog.peer.to_string(),
+                    identity: catalog.caller.to_string(),
                 });
             }
         }
@@ -207,16 +239,19 @@ impl PeerExecutionStore for RedbStore {
         write
             .open_table(PEER_CATALOGS)
             .map_err(error::redb)?
-            .insert(catalog.peer.as_str(), bytes.as_slice())
+            .insert(catalog.caller.storage_key().as_str(), bytes.as_slice())
             .map_err(error::redb)?;
         write.commit().map_err(error::redb)
     }
 
-    fn peer_catalog(&self, peer: &PeerId) -> Result<Option<PeerCatalogState>, PersistenceError> {
+    fn peer_catalog(
+        &self,
+        peer: &milkdrift_peer_protocol::ServingCaller,
+    ) -> Result<Option<ServingCatalogState>, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
         read.open_table(PEER_CATALOGS)
             .map_err(error::redb)?
-            .get(peer.as_str())
+            .get(peer.storage_key().as_str())
             .map_err(error::redb)?
             .map(|bytes| json::decode(bytes.value(), "peer catalog"))
             .transpose()
@@ -231,7 +266,7 @@ impl PeerExecutionStore for RedbStore {
             .validate()
             .map_err(|cause| invalid(&cause.to_string()))?;
         let write = self.database().begin_write().map_err(error::redb)?;
-        let request_key = request_key(admission.owner_peer, &admission.request.request_id)?;
+        let request_key = request_key(admission.caller, &admission.request.request_id)?;
         let existing_execution = {
             let by_request = write
                 .open_table(PEER_EXECUTIONS_BY_REQUEST)
@@ -243,7 +278,7 @@ impl PeerExecutionStore for RedbStore {
         };
         if let Some(execution) = existing_execution {
             let existing = snapshot_in_transaction_text(&write, &execution)?;
-            if existing.owner_peer() != admission.owner_peer
+            if existing.caller() != admission.caller
                 || existing.request_id() != &admission.request.request_id
             {
                 return Err(corruption(
@@ -268,7 +303,7 @@ impl PeerExecutionStore for RedbStore {
             ));
         }
 
-        let Some(relationship) = relationship_in_transaction(&write, admission.owner_peer)? else {
+        let Some(relationship) = relationship_in_transaction(&write, admission.caller)? else {
             return Ok(PeerAdmissionOutcome::Rejected(
                 PeerAdmissionRejection::RelationshipUnavailable,
             ));
@@ -281,7 +316,7 @@ impl PeerExecutionStore for RedbStore {
                 PeerAdmissionRejection::RelationshipUnavailable,
             ));
         }
-        let catalog = catalog_in_transaction(&write, admission.owner_peer)?;
+        let catalog = catalog_in_transaction(&write, admission.caller)?;
         if catalog.as_ref().is_none_or(|state| {
             state.relationship_generation != admission.relationship_generation
                 || state.generation != admission.request.catalog_generation
@@ -293,7 +328,7 @@ impl PeerExecutionStore for RedbStore {
             ));
         }
 
-        let mut peer = peer_accounting(&write, admission.owner_peer)?;
+        let mut peer = peer_accounting(&write, admission.caller)?;
         if peer.active >= relationship.maximum_active {
             return Ok(PeerAdmissionOutcome::Rejected(
                 PeerAdmissionRejection::PeerCapacity,
@@ -360,8 +395,8 @@ impl PeerExecutionStore for RedbStore {
             .checked_add(1)
             .ok_or_else(|| corruption("per-peer accounting revision overflowed"))?;
         let record = PeerExecutionRecord {
-            schema_version: PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3,
-            owner_peer: admission.owner_peer.clone(),
+            schema_version: SERVING_EXECUTION_RECORD_SCHEMA_VERSION,
+            caller: admission.caller.clone(),
             relationship_generation: admission.relationship_generation,
             request: admission.request.clone(),
             authority: admission.authority.clone(),
@@ -411,7 +446,7 @@ impl PeerExecutionStore for RedbStore {
 
     fn peer_execution_by_request(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         request: &PeerRequestId,
     ) -> Result<Option<PeerExecutionSnapshot>, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
@@ -426,7 +461,7 @@ impl PeerExecutionStore for RedbStore {
             return Ok(None);
         };
         let record = snapshot_in_read_transaction_text(&read, &execution)?;
-        if record.owner_peer() != owner || record.request_id() != request {
+        if record.caller() != owner || record.request_id() != request {
             return Err(corruption(
                 "peer request lookup returned mismatched primary record",
             ));
@@ -436,12 +471,12 @@ impl PeerExecutionStore for RedbStore {
 
     fn peer_execution(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
     ) -> Result<Option<PeerExecutionSnapshot>, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
         let record = snapshot_optional_in_read_transaction(&read, execution)?;
-        Ok(record.filter(|record| record.owner_peer() == owner))
+        Ok(record.filter(|record| record.caller() == owner))
     }
 
     fn peer_execution_status(&self) -> Result<PeerExecutionStatus, PersistenceError> {
@@ -463,14 +498,14 @@ impl PeerExecutionStore for RedbStore {
 
     fn peer_observations(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         after_sequence: u64,
         limit: milkdrift_persistence::PageSize,
     ) -> Result<PeerObservationPage, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
         let snapshot = snapshot_optional_in_read_transaction(&read, execution)?
-            .filter(|record| record.owner_peer() == owner)
+            .filter(|record| record.caller() == owner)
             .ok_or_else(|| missing("peer_execution", execution.as_str()))?;
         if after_sequence > snapshot.last_observation_sequence() {
             return Err(PersistenceError::InvalidCursor(
@@ -511,7 +546,7 @@ impl PeerExecutionStore for RedbStore {
 
     fn append_peer_observation(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         execution: &PeerExecutionId,
         observation: &PeerObservation,
     ) -> Result<PeerObservationAppend, PersistenceError> {
@@ -571,16 +606,6 @@ impl PeerExecutionStore for RedbStore {
                 entity: "peer_execution_phase",
                 identity: execution.to_string(),
             });
-        }
-        if record.schema_version == PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2 {
-            record.accounting.artifact_bytes = record
-                .accounting
-                .artifact_bytes
-                .checked_add(record.request.input_artifact_bytes().map_err(|cause| {
-                    corruption(format!("stored peer input is invalid: {cause}"))
-                })?)
-                .ok_or_else(|| corruption("peer artifact accounting overflowed"))?;
-            record.schema_version = PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3;
         }
         let output_size = observation
             .event
@@ -684,7 +709,7 @@ impl PeerExecutionStore for RedbStore {
                 terminal_at_unix_ms: observation.observed_at_unix_ms,
             };
             if was_active {
-                release_active_accounting(&write, &record.owner_peer, was_pre_entry)?;
+                release_active_accounting(&write, &record.caller, was_pre_entry)?;
             }
             insert_terminal_index(&write, &record, observation.observed_at_unix_ms)?;
         }
@@ -698,7 +723,7 @@ impl PeerExecutionStore for RedbStore {
 
     fn request_peer_cancellation(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         request: &PeerCancellationRequest,
         requested_at_unix_ms: u64,
     ) -> Result<PeerExecutionRecord, PersistenceError> {
@@ -771,7 +796,7 @@ impl PeerExecutionStore for RedbStore {
 
     fn acknowledge_peer_cancellation(
         &self,
-        owner: &PeerId,
+        owner: &milkdrift_peer_protocol::ServingCaller,
         acknowledgement: &PeerCancellationAcknowledgement,
         acknowledged_at_unix_ms: u64,
     ) -> Result<PeerExecutionRecord, PersistenceError> {

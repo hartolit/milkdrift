@@ -55,6 +55,12 @@ impl CommitFailingArtifactStore {
 }
 
 impl ArtifactStore for CommitFailingArtifactStore {
+    fn artifact_usage(
+        &self,
+        owner: &milkdrift_workspace::ArtifactOwner,
+    ) -> Result<milkdrift_workspace::WorkspaceUsage, PersistenceError> {
+        self.inner.artifact_usage(owner)
+    }
     fn begin_publication(
         &self,
         request: &BeginArtifactPublication,

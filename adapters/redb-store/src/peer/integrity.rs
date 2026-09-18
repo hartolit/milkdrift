@@ -2,8 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use milkdrift_capability::PeerId;
 use milkdrift_peer_protocol::PeerObservation;
+use milkdrift_peer_protocol::ServingCaller;
 use milkdrift_persistence::{
     PeerDispatchClaim, PeerExecutionPhase, PeerExecutionRecord, PeerExecutionSnapshot,
     PersistenceError,
@@ -29,6 +29,51 @@ use crate::{
 
 pub(super) fn verify(store: &RedbStore) -> Result<(), PersistenceError> {
     let read = store.database().begin_read().map_err(error::redb)?;
+    let identity = read
+        .open_table(crate::schema::SERVING_HOST_IDENTITY)
+        .map_err(error::redb)?;
+    let host = identity
+        .get("host")
+        .map_err(error::redb)?
+        .map(|value| {
+            milkdrift_capability::PeerId::new(value.value())
+                .map_err(|_| corruption("invalid serving host identity"))
+        })
+        .transpose()?;
+    if identity.len().map_err(error::redb)? != u64::from(host.is_some()) {
+        return Err(corruption("invalid serving host identity membership"));
+    }
+    let callers = read
+        .open_table(crate::schema::PEER_RELATIONSHIPS)
+        .map_err(error::redb)?;
+    for row in callers.iter().map_err(error::redb)? {
+        let (key, bytes) = row.map_err(error::redb)?;
+        let state: milkdrift_persistence::ServingCallerState =
+            json::decode(bytes.value(), "peer relationship")?;
+        super::validate_relationship(&state)?;
+        if host.as_ref() != Some(&state.caller.host) || key.value() != state.caller.storage_key() {
+            return Err(corruption(
+                "serving caller belongs to another installation or key",
+            ));
+        }
+    }
+    let catalogs = read
+        .open_table(crate::schema::PEER_CATALOGS)
+        .map_err(error::redb)?;
+    for row in catalogs.iter().map_err(error::redb)? {
+        let (key, bytes) = row.map_err(error::redb)?;
+        let state: milkdrift_persistence::ServingCatalogState =
+            json::decode(bytes.value(), "peer catalog")?;
+        super::validate_catalog(&state)?;
+        if host.as_ref() != Some(&state.caller.host)
+            || key.value() != state.caller.storage_key()
+            || callers.get(key.value()).map_err(error::redb)?.is_none()
+        {
+            return Err(corruption(
+                "serving catalog has no exact caller installation",
+            ));
+        }
+    }
     let global = global_accounting_read(&read)?;
     let hot = read.open_table(PEER_EXECUTIONS).map_err(error::redb)?;
     let tombstones = read
@@ -50,7 +95,7 @@ pub(super) fn verify(store: &RedbStore) -> Result<(), PersistenceError> {
         .open_table(PEER_OBSERVATION_ARTIFACTS)
         .map_err(error::redb)?;
 
-    let mut active_by_peer = BTreeMap::<PeerId, u32>::new();
+    let mut active_by_peer = BTreeMap::<ServingCaller, u32>::new();
     let mut dispatch_count = 0_u32;
     let mut hot_terminal_count = 0_u64;
     let mut available_index_count = 0_u64;
@@ -61,6 +106,11 @@ pub(super) fn verify(store: &RedbStore) -> Result<(), PersistenceError> {
     for row in hot.iter().map_err(error::redb)? {
         let (key, bytes) = row.map_err(error::redb)?;
         let record = decode_record(bytes.value())?;
+        if host.as_ref() != Some(&record.caller.host) {
+            return Err(corruption(
+                "accepted invocation belongs to another serving installation",
+            ));
+        }
         if key.value() != record.execution.as_str()
             || locations
                 .get(record.execution.as_str())
@@ -76,7 +126,7 @@ pub(super) fn verify(store: &RedbStore) -> Result<(), PersistenceError> {
                 "peer hot record key/location/tombstone ownership is inconsistent",
             ));
         }
-        let request_index_key = request_key(&record.owner_peer, &record.request.request_id)?;
+        let request_index_key = request_key(&record.caller, &record.request.request_id)?;
         if requests
             .get(request_index_key.as_slice())
             .map_err(error::redb)?
@@ -134,7 +184,7 @@ pub(super) fn verify(store: &RedbStore) -> Result<(), PersistenceError> {
             ));
         }
         if record.phase.is_active() {
-            let peer_active = active_by_peer.entry(record.owner_peer.clone()).or_default();
+            let peer_active = active_by_peer.entry(record.caller.clone()).or_default();
             *peer_active = peer_active
                 .checked_add(1)
                 .ok_or_else(|| corruption("peer integrity per-peer count overflowed"))?;
@@ -198,6 +248,11 @@ pub(super) fn verify(store: &RedbStore) -> Result<(), PersistenceError> {
     for row in tombstones.iter().map_err(error::redb)? {
         let (key, bytes) = row.map_err(error::redb)?;
         let tombstone = decode_tombstone(bytes.value())?;
+        if host.as_ref() != Some(&tombstone.caller.host) {
+            return Err(corruption(
+                "archived invocation belongs to another serving installation",
+            ));
+        }
         tombstone_count = tombstone_count.saturating_add(1);
         if key.value() != tombstone.execution.as_str()
             || locations
@@ -214,7 +269,7 @@ pub(super) fn verify(store: &RedbStore) -> Result<(), PersistenceError> {
                 "peer tombstone key/location/hot ownership is inconsistent",
             ));
         }
-        let request_index_key = request_key(&tombstone.owner_peer, &tombstone.request_id)?;
+        let request_index_key = request_key(&tombstone.caller, &tombstone.request_id)?;
         if requests
             .get(request_index_key.as_slice())
             .map_err(error::redb)?
@@ -313,7 +368,7 @@ fn verify_terminal_index(
 
 fn verify_per_peer_accounting(
     read: &redb::ReadTransaction,
-    mut active_by_peer: BTreeMap<PeerId, u32>,
+    mut active_by_peer: BTreeMap<ServingCaller, u32>,
 ) -> Result<(), PersistenceError> {
     let accounting = read
         .open_table(PEER_EXECUTION_ACCOUNTING)
@@ -324,7 +379,7 @@ fn verify_per_peer_accounting(
             continue;
         }
         let value: PerPeerAccounting = json::decode(bytes.value(), "peer relationship accounting")?;
-        if value.peer.as_str() != key.value()
+        if value.peer.storage_key().as_str() != key.value()
             || value.schema_version != PEER_ACCOUNTING_SCHEMA_VERSION
         {
             return Err(corruption(
@@ -349,7 +404,7 @@ fn verify_peer_indexes(read: &redb::ReadTransaction) -> Result<(), PersistenceEr
     for row in requests.iter().map_err(error::redb)? {
         let (stored_key, execution) = row.map_err(error::redb)?;
         let snapshot = snapshot_in_read_transaction_text(read, execution.value())?;
-        if request_key(snapshot.owner_peer(), snapshot.request_id())? != stored_key.value() {
+        if request_key(snapshot.caller(), snapshot.request_id())? != stored_key.value() {
             return Err(corruption(
                 "peer request index key disagrees with its authority",
             ));

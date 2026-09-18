@@ -59,7 +59,7 @@ pub enum InspectionRecord {
     /// Durable remote execution/request link and conservative uncertainty classification.
     Peer {
         execution: String,
-        owner_peer: String,
+        caller: String,
         request: String,
         request_digest: String,
         archived: bool,
@@ -356,7 +356,7 @@ impl OfflineStore {
                 };
                 Ok(InspectionRecord::Peer {
                     execution: snapshot.execution().to_string(),
-                    owner_peer: snapshot.owner_peer().to_string(),
+                    caller: snapshot.caller().to_string(),
                     request: snapshot.request_id().to_string(),
                     request_digest: snapshot.request_digest().to_string(),
                     archived,

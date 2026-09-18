@@ -12,6 +12,7 @@ use milkdrift_capability::{
 use thiserror::Error;
 
 mod execution;
+pub(crate) use execution::PreparedHostInvocation;
 mod lifecycle;
 mod selection;
 
@@ -130,6 +131,8 @@ pub struct GenerationView {
 /// This is an observation of adapter-host state, never durable workflow truth.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CatalogGenerationView {
+    /// This exact adapter generation implements independently selected inputs.
+    pub accepts_direct_inputs: bool,
     /// Exact immutable descriptor generation.
     pub descriptor: CapabilityDescriptor,
     /// Immutable filesystem, network, secret, and budget facts declared by the adapter.
@@ -213,6 +216,7 @@ struct GenerationKey {
 }
 
 struct Generation {
+    accepts_direct_inputs: bool,
     descriptor: CapabilityDescriptor,
     descriptor_digest: String,
     adapter: Arc<dyn CapabilityAdapter>,

@@ -1,4 +1,4 @@
-//! Strict schema-9 TOML input and owner-specific configuration choices.
+//! Strict schema-10 TOML input and owner-specific configuration choices.
 use milkdrift_authority::{
     ArtifactAuthorityScope, AuthorityBudget, BoundaryTimeMillis, CapabilityAuthorityScope,
     DaemonAuthorityScope, FilesystemScope, LayoutAuthorityScope, NetworkProfileRef, NetworkScope,
@@ -226,19 +226,14 @@ pub struct AdapterConfig {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case", tag = "mode")]
 pub enum PeerHostConfig {
-    /// No peer authentication realm, relationships, workers, or remote registrations.
+    /// No peer authentication realm, relationships, or remote registrations.
     #[default]
     Disabled,
-    /// One exact local identity with explicit relationships and serving policy.
+    /// Explicit relationships using this daemon's host identity and common serving owner.
     Enabled {
-        /// Stable identity of this daemon.
-        local_peer_id: String,
         /// Explicit operator-configured relationships. Empty exposes nothing.
         #[serde(default)]
         relationships: Vec<PeerRelationshipConfig>,
-        /// Independent serving-peer worker, capacity, recovery, and observation-retention policy.
-        #[serde(default)]
-        serving: PeerServingConfig,
     },
 }
 
@@ -249,7 +244,10 @@ pub enum PeerHostConfig {
 /// expire. This retention policy is independent of local application receipts and artifacts.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct PeerServingConfig {
+pub struct ServingHostConfig {
+    /// Independent client admission policy; authentication supplies the grants separately.
+    #[serde(default)]
+    pub clients: ClientServingConfig,
     /// Fixed serving worker thread count.
     pub worker_threads: u16,
     /// Global accepted nonterminal ceiling.
@@ -268,9 +266,10 @@ pub struct PeerServingConfig {
     pub poll_interval_ms: u64,
 }
 
-impl Default for PeerServingConfig {
+impl Default for ServingHostConfig {
     fn default() -> Self {
         Self {
+            clients: ClientServingConfig::default(),
             worker_threads: 4,
             maximum_global_active: 256,
             maximum_dispatch_queue: 256,
@@ -279,6 +278,45 @@ impl Default for PeerServingConfig {
             observation_hot_retention_ms: 86_400_000,
             recovery_page: 128,
             poll_interval_ms: 100,
+        }
+    }
+}
+
+/// Finite limits shared by independent client calls on this host.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClientServingConfig {
+    /// Cumulative logical input-artifact count for each authenticated actor.
+    pub maximum_uploaded_artifacts: u64,
+    /// Cumulative logical input bytes for each actor, preserved across restart and replay.
+    pub maximum_uploaded_bytes: u64,
+    /// Maximum per-call artifact bytes, duration, cost and retained observations.
+    pub execution_limits: milkdrift_peer_protocol::ExecutionLimits,
+    /// Maximum active accepted calls per actor.
+    pub maximum_concurrent: u32,
+    /// Maximum requests per actor and fixed operation bucket each minute.
+    pub maximum_requests_per_minute: u32,
+    /// Maximum age of a discovered generation before new admission requires a refresh.
+    pub catalog_ttl_ms: u64,
+}
+
+impl Default for ClientServingConfig {
+    fn default() -> Self {
+        Self {
+            maximum_uploaded_artifacts: 1_024,
+            maximum_uploaded_bytes: 64 * 1_048_576,
+            execution_limits: milkdrift_peer_protocol::ExecutionLimits {
+                artifact_bytes: 16 * 1_048_576,
+                duration_ms: 300_000,
+                cost_micros: 0,
+                cost_currency: None,
+                input_units: Some(1_000_000),
+                output_units: Some(1_000_000),
+                observations: 4_096,
+            },
+            maximum_concurrent: 4,
+            maximum_requests_per_minute: 600,
+            catalog_ttl_ms: 30_000,
         }
     }
 }
@@ -349,6 +387,15 @@ pub struct PeerRelationshipConfig {
     /// Maximum observed cost in millionths.
     #[serde(default)]
     pub maximum_cost_micros: u64,
+    /// Exact billing currency; absent permits only explicitly unbilled operations.
+    #[serde(default)]
+    pub cost_currency: Option<String>,
+    /// Complete prompt token allowance; absent permits only non-token operations.
+    #[serde(default)]
+    pub maximum_input_units: Option<u64>,
+    /// Generated token allowance including reasoning.
+    #[serde(default)]
+    pub maximum_output_units: Option<u64>,
     /// Maximum semantic observations retained for one execution.
     #[serde(default = "default_peer_observations")]
     pub maximum_observations: u32,
@@ -367,6 +414,20 @@ pub struct PeerRelationshipConfig {
     /// False revokes authentication while retaining audit configuration.
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+impl PeerRelationshipConfig {
+    pub(crate) fn execution_limits(&self) -> milkdrift_peer_protocol::ExecutionLimits {
+        milkdrift_peer_protocol::ExecutionLimits {
+            artifact_bytes: self.maximum_artifact_bytes,
+            duration_ms: self.maximum_duration_ms,
+            cost_micros: self.maximum_cost_micros,
+            cost_currency: self.cost_currency.clone(),
+            input_units: self.maximum_input_units,
+            output_units: self.maximum_output_units,
+            observations: self.maximum_observations,
+        }
+    }
 }
 
 /// Configuration representation of the maximum permitted side effect.
@@ -472,6 +533,13 @@ pub enum ShutdownEffectPolicy {
 pub struct DaemonConfig {
     /// Exact configuration schema version.
     pub schema_version: u32,
+    /// Explicit startup composition; execution-only hosts never construct workflow services.
+    pub role: milkdrift_control_protocol::HostRole,
+    /// Stable installation identity; replay and artifact ownership remain scoped to this host.
+    pub host_id: String,
+    /// Common client/peer serving workers, admission bounds and retention policy.
+    #[serde(default)]
+    pub serving: ServingHostConfig,
     /// Owned redb/artifact/application-state root.
     pub data_root: PathBuf,
     /// Local plaintext HTTP listener.

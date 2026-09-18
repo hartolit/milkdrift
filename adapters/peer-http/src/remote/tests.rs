@@ -34,7 +34,8 @@ use serde::Serialize;
 use url::Url;
 
 use super::*;
-use crate::{InsecureLoopbackMode, PeerClientConfig, PeerClockError};
+use crate::{InsecureLoopbackMode, PeerClientConfig};
+use milkdrift_capability_host::PeerClockError;
 
 struct ControlledClock {
     now: AtomicU64,
@@ -123,7 +124,7 @@ fn serve_archived_execution(
                 peer: remote_peer,
                 session: SessionId::new("session-remote-conformance-server")
                     .map_err(|error| error.to_string())?,
-                selected_version: ProtocolVersion::V1_3,
+                selected_version: ProtocolVersion::V1_4,
                 features: FeatureSet {
                     resumable_observations: true,
                     resumable_artifacts: true,
@@ -142,7 +143,7 @@ fn serve_archived_execution(
 
         let (mut invocation_stream, _) = listener.accept().map_err(|error| error.to_string())?;
         let bytes = read_request_body(&mut invocation_stream)?;
-        let envelope: ProtocolEnvelope<PeerInvocationRequest> =
+        let envelope: ProtocolEnvelope<ServingInvocationRequest> =
             decode_envelope(&bytes, DecodeLimits::default()).map_err(|error| error.to_string())?;
         let request = envelope.message;
         let execution = PeerExecutionId::new("execution-remote-conformance")
@@ -237,6 +238,9 @@ fn remote_case(scenario: ConformanceScenario) -> Result<RemoteCase, Box<dyn std:
             artifact_bytes: 1_024,
             duration_ms: 1_000,
             cost_micros: 1_000,
+            cost_currency: Some("USD".to_owned()),
+            input_units: None,
+            output_units: None,
             observations: 8,
         },
         maximum_concurrent: 2,
@@ -294,7 +298,7 @@ fn remote_case(scenario: ConformanceScenario) -> Result<RemoteCase, Box<dyn std:
         remote_descriptor,
         local_capability,
         clock: Arc::new(ControlledClock::new(100)),
-        artifacts: Arc::new(crate::service::DisabledArtifactStore),
+        artifacts: milkdrift_capability_host::conformance::disabled_artifact_store(),
         active: Mutex::new(BTreeMap::new()),
         lifecycle: AtomicU8::new(Lifecycle::Created as u8),
     });
@@ -650,6 +654,9 @@ fn remote_catalog_registration_fails_closed_and_recovers_with_the_clock()
             artifact_bytes: 1,
             duration_ms: 1,
             cost_micros: 0,
+            cost_currency: None,
+            input_units: None,
+            output_units: None,
             observations: 1,
         },
         maximum_concurrent: 1,
@@ -678,7 +685,7 @@ fn remote_catalog_registration_fails_closed_and_recovers_with_the_clock()
         client,
         relationship,
         clock.clone(),
-        Arc::new(crate::service::DisabledArtifactStore),
+        milkdrift_capability_host::conformance::disabled_artifact_store(),
     )?;
     let descriptor = CapabilityDescriptorDocument::from_json(include_bytes!(
         "../../../../crates/capability/tests/fixtures/descriptor-v1.json"

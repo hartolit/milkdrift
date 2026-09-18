@@ -7,9 +7,9 @@ use super::{
     read_model::bounded,
 };
 use crate::config::ShutdownEffectPolicy;
+use milkdrift_capability_host::PeerWorkerShutdownReport;
 use milkdrift_capability_host::{EffectShutdownMode, EffectWorkerHost};
 use milkdrift_control_protocol::ErrorCode;
-use milkdrift_peer_http::PeerWorkerShutdownReport;
 use std::{sync::atomic::Ordering, time::Duration};
 use tracing::{info, warn};
 
@@ -18,7 +18,7 @@ impl DaemonHost {
     pub(crate) async fn begin_draining(&self) -> Result<(), HostError> {
         self.mutating_admission.store(false, Ordering::SeqCst);
         let durable = self
-            .dispatch(false, |owner| owner.begin_peer_drain())
+            .dispatch_draining(|owner| owner.begin_peer_drain())
             .await
             .map_err(|error| HostError::Shutdown(error.message));
         self.health.set_lifecycle(Lifecycle::Draining);
@@ -78,11 +78,29 @@ impl DaemonHost {
                     Err(_) => EffectShutdownOutcome::failed(),
                 }
             }
-            Ok(None) => EffectShutdownOutcome {
-                clean: true,
-                unresolved_invocations: 0,
-                outstanding_effects: 0,
-            },
+            Ok(None) => {
+                let deadline = self
+                    .shutdown_deadline
+                    .saturating_sub(shutdown_started.elapsed());
+                match self
+                    .dispatch_draining(|owner| Ok(owner.capability_host.clone()))
+                    .await
+                {
+                    Ok(host) => match tokio::task::spawn_blocking(move || {
+                        host.shutdown_with_deadline(false, deadline)
+                    })
+                    .await
+                    {
+                        Ok(Ok(Some(report))) => EffectShutdownOutcome {
+                            clean: report.unresolved_invocations.is_empty(),
+                            unresolved_invocations: report.unresolved_invocations.len(),
+                            outstanding_effects: 0,
+                        },
+                        _ => EffectShutdownOutcome::failed(),
+                    },
+                    Err(_) => EffectShutdownOutcome::failed(),
+                }
+            }
             Err(error) => {
                 warn!(
                     phase = "draining",
@@ -212,8 +230,10 @@ impl Owner {
     pub(super) fn take_effect_workers_for_shutdown(
         &mut self,
     ) -> Result<Option<(EffectWorkerHost, EffectShutdownMode)>, PublicFailure> {
-        self.runtime.begin_shutdown();
-        if self.recovery_controls {
+        if let Some(workflow) = &self.workflow {
+            workflow.runtime.begin_shutdown();
+        }
+        if self.recovery_controls || self.workflow.is_none() {
             return Ok(None);
         }
         let mode = match self.shutdown.effect_policy {
@@ -241,7 +261,9 @@ impl Owner {
     ) -> Result<ShutdownOutcome, PublicFailure> {
         info!(phase = "draining", "runtime owner closing admission");
         health.set_lifecycle(Lifecycle::Draining);
-        self.runtime.begin_shutdown();
+        if let Some(workflow) = &self.workflow {
+            workflow.runtime.begin_shutdown();
+        }
         if self.effect_workers.take().is_some() {
             health.failure("effect worker owner was not transferred before shutdown");
             effect_shutdown.clean = false;
@@ -251,7 +273,10 @@ impl Owner {
                 effect_shutdown.outstanding_effects.saturating_add(1);
         }
         let peer_retained = peer_shutdown.map_or(0, |report| report.retained_workers);
-        let clean = effect_shutdown.clean && peer_retained == 0 && !self.request_panicked;
+        let clean = effect_shutdown.clean
+            && peer_retained == 0
+            && peer_shutdown.is_none_or(|report| report.clean)
+            && !self.request_panicked;
         health.set_active_effects(if clean {
             0
         } else {

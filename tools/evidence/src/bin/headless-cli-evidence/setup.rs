@@ -22,6 +22,8 @@ use std::{
 pub(super) struct MockModel {
     pub(super) address: SocketAddr,
     pub(super) invocations: Arc<AtomicUsize>,
+    pub(super) direct_invocations: Arc<AtomicUsize>,
+    pub(super) disconnect_next: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<std::io::Result<()>>>,
 }
@@ -37,6 +39,10 @@ impl MockModel {
         listener.set_nonblocking(true)?;
         let stop = Arc::new(AtomicBool::new(false));
         let invocations = Arc::new(AtomicUsize::new(0));
+        let direct_invocations = Arc::new(AtomicUsize::new(0));
+        let disconnect_next = Arc::new(AtomicBool::new(false));
+        let disconnect = disconnect_next.clone();
+        let direct_entered = direct_invocations.clone();
         let stopped = stop.clone();
         let entered = invocations.clone();
         let worker = thread::spawn(move || {
@@ -49,8 +55,14 @@ impl MockModel {
                     }
                     Err(error) => return Err(error),
                 };
-                read_request(&mut stream)?;
+                let request = read_request(&mut stream)?;
+                if request.contains("explicit_inputs_only") {
+                    direct_entered.fetch_add(1, Ordering::SeqCst);
+                }
                 entered.fetch_add(1, Ordering::SeqCst);
+                if disconnect.swap(false, Ordering::SeqCst) {
+                    continue;
+                }
                 let body = format!(
                     "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
                     json!({"id":"operator-response-1","model":"operator-model","choices":[{"index":0,"delta":{"role":"assistant","content":text},"finish_reason":null}]}),
@@ -67,6 +79,8 @@ impl MockModel {
         Ok(Self {
             address,
             invocations,
+            direct_invocations,
+            disconnect_next,
             stop,
             worker: Some(worker),
         })
@@ -334,7 +348,11 @@ pub(super) fn configure(
     checked_config(directory, daemon, &config)
 }
 
-fn checked_config(directory: &Path, daemon: &Path, config: &Value) -> EvidenceResult<PathBuf> {
+pub(super) fn checked_config(
+    directory: &Path,
+    daemon: &Path,
+    config: &Value,
+) -> EvidenceResult<PathBuf> {
     let path = write_private(
         &directory.join("daemon.toml"),
         toml::to_string_pretty(config)?.as_bytes(),

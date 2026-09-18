@@ -8,34 +8,25 @@
 //! Construct the service with admission closed and call [`PeerService::recover`] after adapters
 //! are registered; [`peer_router`] exposes its HTTP routes.
 //!
-//! [`CorePeerArtifactStore`] connects explicit transfers to core artifact publication/read ports.
+//! [`CorePeerArtifactStore`](milkdrift_capability_host::CorePeerArtifactStore) connects explicit
+//! transfers to core artifact publication/read ports.
 //! Credentials and relationship scope are operator supplied. Session loss does not erase accepted
 //! work; clients use exact request lookup and resumable observation pages to recover knowledge.
 
-mod artifact;
 mod auth;
 mod client;
 mod config;
-mod dispatch;
 mod http;
 mod remote;
-mod service;
-mod store;
 
-pub use artifact::{
-    CorePeerArtifactStore, PeerArtifactError, PeerArtifactStore, PeerArtifactTransferFacts,
-    PeerCoreArtifactStore,
-};
-pub use auth::{PeerAuthenticator, PeerCredentialSource, StaticPeerCredential};
+pub use auth::{PeerCredentialSource, StaticPeerCredential};
 pub use client::PeerHttpClient;
-pub use config::{
-    InsecureLoopbackMode, PeerClientConfig, PeerRelationship, PeerServerConfig, PeerWorkerConfig,
-};
+pub use config::{InsecureLoopbackMode, PeerClientConfig};
 pub use http::peer_router;
-pub use remote::{PeerRegistry, PeerRegistryStatus, RemoteCapabilityProvenance};
-pub use service::{
-    PeerClock, PeerClockError, PeerService, PeerWorkerShutdownReport, SystemPeerClock,
+use milkdrift_capability_host::{
+    PeerArtifactStore, PeerClock, PeerRelationship, PeerService, ServingError,
 };
+pub use remote::{PeerRegistry, PeerRegistryStatus, RemoteCapabilityProvenance};
 
 use thiserror::Error;
 
@@ -69,4 +60,19 @@ pub enum PeerHttpError {
     /// Local adapter/registry service is unavailable.
     #[error("peer service unavailable: {0}")]
     Unavailable(String),
+}
+
+impl From<ServingError> for PeerHttpError {
+    fn from(error: ServingError) -> Self {
+        match error {
+            ServingError::Configuration(message) => Self::Configuration(message),
+            ServingError::Unauthenticated => Self::Unauthenticated,
+            ServingError::Unauthorized(message) => Self::Unauthorized(message),
+            ServingError::Protocol(message) => Self::Protocol(message),
+            ServingError::NotFound(message) => Self::NotFound(message),
+            ServingError::Overloaded(message) => Self::Overloaded(message),
+            ServingError::Persistence(message) => Self::Persistence(message),
+            ServingError::Unavailable(message) => Self::Unavailable(message),
+        }
+    }
 }

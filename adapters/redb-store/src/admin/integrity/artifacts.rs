@@ -1,9 +1,9 @@
 use super::super::{
     ARTIFACT_ACCOUNTING, ARTIFACT_DELETE_GUARDS, ARTIFACT_DIGEST_RESERVATIONS, ARTIFACT_MANIFEST,
-    ARTIFACT_METADATA, ARTIFACT_PATHS, ARTIFACT_PUBLICATIONS, ARTIFACT_PUBLICATIONS_BY_AGE,
-    ARTIFACT_REFERENCES, ARTIFACT_RESERVATIONS, ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS,
-    ARTIFACTS_BY_DIGEST, ArtifactMetadata, ArtifactPublicationId, ArtifactReference, Bound,
-    PersistenceError, RUN_ARTIFACT_OWNERSHIP, codec, error, json,
+    ARTIFACT_METADATA, ARTIFACT_OWNERSHIP, ARTIFACT_PATHS, ARTIFACT_PUBLICATIONS,
+    ARTIFACT_PUBLICATIONS_BY_AGE, ARTIFACT_REFERENCES, ARTIFACT_RESERVATIONS,
+    ARTIFACT_TEMP_MANIFEST, ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST, ArtifactMetadata,
+    ArtifactPublicationId, ArtifactReference, Bound, PersistenceError, codec, error, json,
 };
 use super::{ScanContext, phase};
 use crate::admin::cursor::{
@@ -17,9 +17,7 @@ pub(super) fn scan_committed(context: &mut ScanContext<'_, '_>) -> Result<(), Pe
     let manifest = read.open_table(ARTIFACT_MANIFEST).map_err(error::redb)?;
     let by_digest = read.open_table(ARTIFACTS_BY_DIGEST).map_err(error::redb)?;
     let references = read.open_table(ARTIFACT_REFERENCES).map_err(error::redb)?;
-    let ownership = read
-        .open_table(RUN_ARTIFACT_OWNERSHIP)
-        .map_err(error::redb)?;
+    let ownership = read.open_table(ARTIFACT_OWNERSHIP).map_err(error::redb)?;
     let temporary_manifest = read
         .open_table(ARTIFACT_TEMP_MANIFEST)
         .map_err(error::redb)?;
@@ -69,6 +67,7 @@ pub(super) fn scan_committed(context: &mut ScanContext<'_, '_>) -> Result<(), Pe
         "artifact_indexes",
         |key, bytes| {
             let (digest, artifact, run) = artifact_occurrence_key(key)?;
+            let _ = crate::artifact::owner::domain_owner(&run)?;
             let reference: ArtifactReference = json::decode(bytes, "artifact reference")?;
             if digest != reference.digest().to_hex() || artifact != reference.artifact().as_str() {
                 return Err(error::corruption(
@@ -80,7 +79,7 @@ pub(super) fn scan_committed(context: &mut ScanContext<'_, '_>) -> Result<(), Pe
                 .get(ownership_key.as_slice())
                 .map_err(error::redb)?
                 .ok_or_else(|| error::corruption("artifact occurrence has no ownership row"))?;
-            let owned: ArtifactReference = json::decode(owned.value(), "run artifact ownership")?;
+            let owned: ArtifactReference = json::decode(owned.value(), "artifact ownership")?;
             if owned != reference {
                 return Err(error::corruption(
                     "artifact occurrence disagrees with its ownership row",
@@ -95,11 +94,17 @@ pub(super) fn scan_committed(context: &mut ScanContext<'_, '_>) -> Result<(), Pe
         "artifact_indexes",
         |key, bytes| {
             let components = codec::decode_components(key, 3)?;
-            let reference: ArtifactReference = json::decode(bytes, "run artifact ownership")?;
+            let owner = crate::artifact::owner::domain_owner(components[0])?;
+            if crate::journal::validated_workspace_domain(read, &owner)?.is_none() {
+                return Err(error::corruption(
+                    "artifact ownership has no accounting domain",
+                ));
+            }
+            let reference: ArtifactReference = json::decode(bytes, "artifact ownership")?;
             let digest = reference.digest().to_hex();
             if components[1] != digest || components[2] != reference.artifact().as_str() {
                 return Err(error::corruption(
-                    "run artifact-ownership key does not match its checked document",
+                    "artifact-ownership key does not match its checked document",
                 ));
             }
             let prefix = codec::components(&[&digest, components[2], components[0]])?;

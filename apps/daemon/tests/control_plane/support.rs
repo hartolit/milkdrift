@@ -89,7 +89,15 @@ pub(super) async fn start(config: DaemonPlan, token: &str) -> TestResult<Running
         let _ = stopped.await;
     }));
     let client = client(&endpoint, token)?;
-    let health = client.readiness().await?;
+    let mut health = client.readiness().await;
+    for _ in 0..20 {
+        if !matches!(&health, Err(ClientError::Api(error)) if error.code == ErrorCode::Overload) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        health = client.readiness().await;
+    }
+    let health = health?;
     assert!(health.ready);
     Ok(RunningDaemon {
         endpoint,
@@ -134,6 +142,9 @@ pub(super) fn configuration_document_with_process_profiles(
     };
     Ok(DaemonConfig {
         schema_version: milkdrift_daemon::DAEMON_CONFIG_SCHEMA_VERSION,
+        role: milkdrift_control_protocol::HostRole::WorkflowEnabled,
+        host_id: "host:local".to_owned(),
+        serving: Default::default(),
         data_root: directory.path().join("data"),
         bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         secret_sources: BTreeMap::from([
@@ -213,6 +224,9 @@ pub(super) fn write_dogfood_process_profile(
 ) -> TestResult<std::path::PathBuf> {
     let bytes = fs::read(executable)?;
     let executable_root = executable.parent().ok_or("executable has no parent")?;
+    // This end-to-end fixture includes synchronous journal reporting under concurrent daemon
+    // tests. Use the maintained process example's ten-second budget; adapter timeout tests own
+    // the tighter termination checks independently of filesystem/reporting throughput.
     let value = serde_json::json!({
         "schema_version": 2,
         "profile": {
@@ -274,7 +288,7 @@ pub(super) fn write_dogfood_process_profile(
                 "artifact_chunk_bytes": 65536,
                 "max_output_files": 8,
                 "max_total_output_bytes": 4194304,
-                "wall_timeout_ms": 5000,
+                "wall_timeout_ms": 10000,
                 "graceful_termination_ms": 100,
                 "forced_termination_ms": 100,
                 "heartbeat_interval_ms": 1000
@@ -598,14 +612,33 @@ where
                     run,
                     &PageRequest {
                         cursor: None,
-                        limit: 100,
+                        limit: 1_000,
                     },
                 )
                 .await?;
+            let mut failed_attempts = Vec::new();
+            for item in &timeline.items {
+                if item
+                    .detail
+                    .get("outcome")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("failed")
+                    && let Some(attempt) = &item.attempt_id
+                {
+                    failed_attempts.push(client.attempt(run, attempt).await?);
+                }
+            }
             return Err(format!(
-                "unexpected workflow terminal {:?}; recent evidence={}",
+                "unexpected workflow terminal {:?}; failed attempts={}; recent evidence={}",
                 state.terminal,
-                serde_json::to_string(&timeline.items.iter().rev().take(8).collect::<Vec<_>>())?
+                serde_json::to_string(&failed_attempts)?,
+                serde_json::to_string(
+                    &timeline
+                        .items
+                        .iter()
+                        .filter(|item| item.detail.get("outcome").is_some())
+                        .collect::<Vec<_>>()
+                )?
             )
             .into());
         }

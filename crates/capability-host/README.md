@@ -6,11 +6,17 @@ generations, execution permits, and workers. Start here when changing that conne
 an adapter. Operators configure existing adapters through the
 [daemon guide](../../docs/operations/daemon.md).
 
-This is the current workflow/peer composition, not yet a public independent-call service.
-[ADR 0038](../../docs/decisions/0038-independent-host-execution.md) adopts shared prepared execution
-and durable direct/serving ownership. The current `execute_exact` helpers require their caller to
-own authorization and reporting and skip runtime's final account transaction; they are not a safe
-shortcut for implementing a direct endpoint. Local attempts must retain runtime-owned history.
+Local workflow, direct client and serving-peer execution share exact-generation acquisition, preparation, and
+one-shot entry. Runtime commits local workflow entry and controller reservations; this crate's
+serving owner commits direct/remote acceptance and entry. Ordinary builds expose no `execute_exact`
+shortcut; test-support helpers exercise preparation without a durable owner. Public direct calls
+use the [independent execution recipe](../../examples/operator/README.md#independent-execution).
+
+`DirectInputSelection` freezes only explicit inputs. Workflow context retains its required manifest,
+exact coordinates and continuation rules. An adapter opts into direct discovery only when it can
+consume that selection without workflow services; process and fresh model operations do so, while
+workflow control and remote registrations do not. Serving output names the real host invocation;
+the direct path creates no run, workflow account or duplicate local-runtime journal.
 
 ## Follow one task
 
@@ -21,7 +27,7 @@ generation. Re-registering the same descriptor replays the existing registration
 the live adapter. Changed facts need a new descriptor revision.
 
 The runtime reaches the host through `TaskExecutor`. The following shows the local runtime path;
-the [peer service](../../adapters/peer-http/README.md) supplies its own durable acceptance boundary.
+the [serving owner](src/serving.rs) supplies the remote durable acceptance boundary.
 
 ```text
 task requirement
@@ -68,7 +74,7 @@ if the worker later fails.
 
 `InvocationDataAccess` lets adapters read selected inputs, lease an isolated directory, and publish
 artifacts through persistence ports. `StoreInvocationDataAccess` verifies references and content,
-uses the run's accepted workspace budget, and attaches invocation/input provenance to restricted
+uses the accepted workflow or independent host-invocation budget, and attaches invocation/input provenance to restricted
 outputs. Callers supply authorized selections and artifact-read authority; this bridge is not a
 fresh actor/grant evaluator. Distinct input names may reference the same exact artifact; produced
 artifacts record that causal parent once while the invocation retains both bindings.
@@ -78,6 +84,12 @@ references at the authorized adapter boundary; its production implementation is
 [local-secret](../../adapters/local-secret/README.md).
 
 ## Cancellation and shutdown
+
+An execution-only embedding has no `EffectWorkerHost`. After joining serving workers, it still
+calls `CapabilityHost::shutdown_with_deadline` to close adapter lifecycle ownership. A completed
+result joins the lifecycle thread; timeout reports no completion and keeps the host alive on that
+thread. Both roles retain storage while owned workers can still report. The daemon applies its
+single shutdown deadline rather than granting each phase a fresh timeout.
 
 `EffectWorkerHost::start` creates fixed execution threads plus one cancellation thread. The owner
 calls `poll` to claim only as much work as its bounded queues can accept. The separate cancellation

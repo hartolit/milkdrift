@@ -1,12 +1,11 @@
 use super::{
     ARTIFACT_ACCOUNTING, ARTIFACT_ACCOUNTING_SCHEMA_VERSION, ARTIFACT_DIGEST_RESERVATIONS,
-    ARTIFACT_MANIFEST, ARTIFACT_METADATA, ARTIFACT_PUBLICATIONS, ARTIFACT_REFERENCES,
-    ARTIFACT_RESERVATIONS, ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST, ArtifactAccountingRecord,
-    ArtifactMetadata, ArtifactReference, BTreeSet, CausalReference, GLOBAL_ARTIFACT_BYTES_KEY,
-    PersistenceError, PublicationRecord, PublicationState, ROOT_SCOPES, RUN_ARTIFACT_OWNERSHIP,
-    RUN_EVENTS, ReadableTable, ReadableTableMetadata, RedbStore, RunId, SCOPES,
-    StorageFailureClass, VALUES, WORKSPACE_USAGE, WorkspaceUsage, WorkspaceValueEntry, codec,
-    error, json, verify_blob,
+    ARTIFACT_MANIFEST, ARTIFACT_METADATA, ARTIFACT_OWNERSHIP, ARTIFACT_PUBLICATIONS,
+    ARTIFACT_REFERENCES, ARTIFACT_RESERVATIONS, ARTIFACT_TEMP_OWNERS, ARTIFACTS_BY_DIGEST,
+    ArtifactAccountingRecord, ArtifactMetadata, ArtifactReference, BTreeSet, CausalReference,
+    GLOBAL_ARTIFACT_BYTES_KEY, PersistenceError, PublicationRecord, PublicationState, ROOT_SCOPES,
+    RUN_EVENTS, ReadableTable, ReadableTableMetadata, RedbStore, SCOPES, StorageFailureClass,
+    VALUES, WORKSPACE_USAGE, WorkspaceUsage, WorkspaceValueEntry, codec, error, json, verify_blob,
 };
 use super::{
     cleanup::{remove_publication_age_index, remove_temporary_manifest},
@@ -40,41 +39,43 @@ pub(crate) fn validate_artifact_state(
     Ok(stored)
 }
 
-pub(crate) fn validated_run_artifact_reference_in_transaction(
+pub(crate) fn validated_owner_artifact_reference_in_transaction(
     write: &redb::WriteTransaction,
-    run: &RunId,
+    owner: impl Into<milkdrift_workspace::ArtifactOwner>,
     reference: &ArtifactReference,
 ) -> Result<bool, PersistenceError> {
+    let owner = owner.into();
+    let owner_key = super::owner::domain_key(&owner)?;
     validate_artifact_state(write)?;
-    let usage = crate::journal::workspace_domain_in_transaction(write, run)?
+    let usage = crate::journal::workspace_domain_in_transaction(write, &owner)?
         .map_or(WorkspaceUsage::EMPTY, |(_budget, usage)| usage);
-    let ownership = write
-        .open_table(RUN_ARTIFACT_OWNERSHIP)
-        .map_err(error::redb)?;
-    validate_run_artifact_ownership(&ownership, run, usage)?;
+    let ownership = write.open_table(ARTIFACT_OWNERSHIP).map_err(error::redb)?;
+    validate_artifact_ownership(&ownership, &owner, usage)?;
     drop(ownership);
-    let indexed = indexed_run_artifact_reference(write, run, reference)?;
-    let authoritative = manifested_run_artifact_reference(write, run, reference)?;
+    let indexed = indexed_owner_artifact_reference(write, &owner, reference)?;
+    let authoritative = manifested_owner_artifact_reference(write, &owner, reference)?;
     if indexed != authoritative {
         return Err(error::corruption(format!(
-            "artifact-reference index disagrees with authoritative ownership for run {run} and artifact {}",
+            "artifact-reference index disagrees with authoritative ownership for owner {owner_key} and artifact {}",
             reference.artifact()
         )));
     }
     Ok(authoritative)
 }
 
-pub(crate) fn validate_run_artifact_ownership<T>(
+pub(crate) fn validate_artifact_ownership<T>(
     ownership: &T,
-    run: &RunId,
+    owner: impl Into<milkdrift_workspace::ArtifactOwner>,
     usage: WorkspaceUsage,
 ) -> Result<(), PersistenceError>
 where
     T: redb::ReadableTable<&'static [u8], &'static [u8]>,
 {
-    let prefix = codec::components(&[run.as_str()])?;
+    let owner = owner.into();
+    let owner_key = super::owner::domain_key(&owner)?;
+    let prefix = codec::components(&[owner_key.as_str()])?;
     let end = codec::prefix_end(prefix.clone())
-        .ok_or_else(|| error::corruption("run artifact-ownership prefix has no range end"))?;
+        .ok_or_else(|| error::corruption("artifact-ownership prefix has no range end"))?;
     let mut artifacts = BTreeSet::new();
     let mut bytes = 0_u64;
     for item in ownership
@@ -83,44 +84,46 @@ where
     {
         let (key, value) = item.map_err(error::redb)?;
         let components = codec::decode_components(key.value(), 3)?;
-        let reference: ArtifactReference = json::decode(value.value(), "run artifact ownership")?;
-        if components[0] != run.as_str()
+        let reference: ArtifactReference = json::decode(value.value(), "artifact ownership")?;
+        if components[0] != owner_key.as_str()
             || components[1] != reference.digest().to_hex()
             || components[2] != reference.artifact().as_str()
             || !artifacts.insert(reference.artifact().clone())
         {
             return Err(error::corruption(
-                "run artifact-ownership key, document, or unique identity is inconsistent",
+                "artifact-ownership key, document, or unique identity is inconsistent",
             ));
         }
         bytes = bytes
             .checked_add(reference.size_bytes())
-            .ok_or_else(|| error::corruption("run artifact-ownership bytes overflow"))?;
+            .ok_or_else(|| error::corruption("artifact-ownership bytes overflow"))?;
         let count = u64::try_from(artifacts.len())
-            .map_err(|_| error::corruption("run artifact-ownership count exceeds u64"))?;
+            .map_err(|_| error::corruption("artifact-ownership count exceeds u64"))?;
         if count > usage.artifacts() || bytes > usage.artifact_bytes() {
             return Err(error::corruption(
-                "run artifact ownership exceeds authoritative workspace usage",
+                "artifact ownership exceeds authoritative workspace usage",
             ));
         }
     }
     let count = u64::try_from(artifacts.len())
-        .map_err(|_| error::corruption("run artifact-ownership count exceeds u64"))?;
+        .map_err(|_| error::corruption("artifact-ownership count exceeds u64"))?;
     if count != usage.artifacts() || bytes != usage.artifact_bytes() {
         return Err(error::corruption(
-            "run artifact ownership does not equal authoritative workspace usage",
+            "artifact ownership does not equal authoritative workspace usage",
         ));
     }
     Ok(())
 }
 
-pub(crate) fn indexed_run_artifact_reference(
+pub(crate) fn indexed_owner_artifact_reference(
     write: &redb::WriteTransaction,
-    run: &RunId,
+    owner: impl Into<milkdrift_workspace::ArtifactOwner>,
     reference: &ArtifactReference,
 ) -> Result<bool, PersistenceError> {
+    let owner = owner.into();
+    let owner_key = super::owner::domain_key(&owner)?;
     let digest = reference.digest().to_hex();
-    let prefix = codec::components(&[&digest, reference.artifact().as_str(), run.as_str()])?;
+    let prefix = codec::components(&[&digest, reference.artifact().as_str(), owner_key.as_str()])?;
     let end = codec::prefix_end(prefix.clone())
         .ok_or_else(|| error::corruption("artifact-reference prefix has no range end"))?;
     let table = write.open_table(ARTIFACT_REFERENCES).map_err(error::redb)?;
@@ -137,7 +140,7 @@ pub(crate) fn indexed_run_artifact_reference(
         .or_else(|_| codec::decode_components(key.value(), 5))?;
     if components[0] != digest
         || components[1] != reference.artifact().as_str()
-        || components[2] != run.as_str()
+        || components[2] != owner_key.as_str()
     {
         return Err(error::corruption(
             "artifact-reference index key contradicts its lookup prefix",
@@ -152,23 +155,23 @@ pub(crate) fn indexed_run_artifact_reference(
     Ok(true)
 }
 
-pub(crate) fn manifested_run_artifact_reference(
+pub(crate) fn manifested_owner_artifact_reference(
     write: &redb::WriteTransaction,
-    run: &RunId,
+    owner: impl Into<milkdrift_workspace::ArtifactOwner>,
     reference: &ArtifactReference,
 ) -> Result<bool, PersistenceError> {
+    let owner = owner.into();
+    let owner_key = super::owner::domain_key(&owner)?;
     let digest = reference.digest().to_hex();
-    let key = codec::components(&[run.as_str(), &digest, reference.artifact().as_str()])?;
-    let ownership = write
-        .open_table(RUN_ARTIFACT_OWNERSHIP)
-        .map_err(error::redb)?;
+    let key = codec::components(&[owner_key.as_str(), &digest, reference.artifact().as_str()])?;
+    let ownership = write.open_table(ARTIFACT_OWNERSHIP).map_err(error::redb)?;
     let Some(bytes) = ownership.get(key.as_slice()).map_err(error::redb)? else {
         return Ok(false);
     };
-    let stored: ArtifactReference = json::decode(bytes.value(), "run artifact ownership")?;
+    let stored: ArtifactReference = json::decode(bytes.value(), "artifact ownership")?;
     if stored != *reference {
         return Err(error::corruption(
-            "run artifact-ownership key contradicts its stored document",
+            "artifact-ownership key contradicts its stored document",
         ));
     }
     Ok(true)
@@ -194,22 +197,22 @@ pub(crate) fn persist_artifact_reference_occurrence(
     Ok(())
 }
 
-pub(crate) fn persist_run_artifact_ownership(
+pub(crate) fn persist_artifact_ownership(
     write: &redb::WriteTransaction,
-    run: &RunId,
+    owner: impl Into<milkdrift_workspace::ArtifactOwner>,
     reference: &ArtifactReference,
 ) -> Result<(), PersistenceError> {
+    let owner = owner.into();
+    let owner_key = super::owner::domain_key(&owner)?;
     let digest = reference.digest().to_hex();
-    let key = codec::components(&[run.as_str(), &digest, reference.artifact().as_str()])?;
-    let bytes = json::encode(reference, "run artifact ownership")?;
-    let mut table = write
-        .open_table(RUN_ARTIFACT_OWNERSHIP)
-        .map_err(error::redb)?;
+    let key = codec::components(&[owner_key.as_str(), &digest, reference.artifact().as_str()])?;
+    let bytes = json::encode(reference, "artifact ownership")?;
+    let mut table = write.open_table(ARTIFACT_OWNERSHIP).map_err(error::redb)?;
     if let Some(previous) = table.get(key.as_slice()).map_err(error::redb)? {
-        let previous: ArtifactReference = json::decode(previous.value(), "run artifact ownership")?;
+        let previous: ArtifactReference = json::decode(previous.value(), "artifact ownership")?;
         if previous != *reference {
             return Err(error::corruption(
-                "existing run artifact ownership disagrees with its identity",
+                "existing artifact ownership disagrees with its identity",
             ));
         }
         return Ok(());
@@ -249,7 +252,7 @@ pub(crate) fn commit_artifact_metadata(
 
     crate::journal::advance_workspace_global_usage_in_transaction(
         write,
-        &record.run,
+        &record.owner,
         record.expected_usage,
         record.resulting_usage,
     )?;
@@ -347,23 +350,26 @@ pub(crate) fn commit_artifact_metadata(
     write
         .open_table(WORKSPACE_USAGE)
         .map_err(error::redb)?
-        .insert(record.run.as_str(), usage_bytes.as_slice())
+        .insert(
+            super::owner::domain_key(&record.owner)?.as_str(),
+            usage_bytes.as_slice(),
+        )
         .map_err(error::redb)?;
     crate::journal::persist_workspace_value_usage_accounting_in_transaction(
         write,
-        &record.run,
+        &record.owner,
         record.resulting_usage,
     )?;
 
     let reference_key = codec::components(&[
         &digest,
         record.metadata.reference().artifact().as_str(),
-        record.run.as_str(),
+        super::owner::domain_key(&record.owner)?.as_str(),
         "publication",
         record.publication.as_str(),
     ])?;
     persist_artifact_reference_occurrence(write, &reference_key, record.metadata.reference())?;
-    persist_run_artifact_ownership(write, &record.run, record.metadata.reference())?;
+    persist_artifact_ownership(write, &record.owner, record.metadata.reference())?;
     remove_publication_age_index(write, record)?;
 
     record.state = PublicationState::Committed {
@@ -379,7 +385,7 @@ pub(crate) fn commit_artifact_metadata(
     write
         .open_table(ARTIFACT_RESERVATIONS)
         .map_err(error::redb)?
-        .remove(record.run.as_str())
+        .remove(super::owner::domain_key(&record.owner)?.as_str())
         .map_err(error::redb)?;
     let temp_name = publication_temp_name(&record.publication);
     write
@@ -411,7 +417,7 @@ fn validate_artifact_provenance(
         .chain(record.metadata.provenance().causes())
     {
         match causal {
-            CausalReference::External { .. } => {}
+            CausalReference::External { .. } | CausalReference::PeerClaim { .. } => {}
             CausalReference::Artifact { reference } => {
                 let Some(metadata) =
                     validated_artifact_metadata_in_transaction(write, reference.artifact())?
@@ -470,7 +476,7 @@ fn validate_artifact_provenance(
                 )?;
             }
             CausalReference::RunInput { run, key } => {
-                if run != &record.run {
+                if record.owner.run() != Some(run) {
                     return Err(PersistenceError::InvalidDocument(
                         "artifact provenance run input belongs to another run".to_owned(),
                     ));
@@ -507,11 +513,38 @@ fn validate_artifact_provenance(
                 }
             }
             CausalReference::Invocation { invocation } => {
-                crate::journal::validate_invocation_fact_in_transaction(
-                    write,
-                    &record.run,
-                    invocation,
-                )?;
+                let run = record.owner.run().ok_or_else(|| {
+                    PersistenceError::InvalidDocument(
+                        "local invocation provenance requires a workflow owner".to_owned(),
+                    )
+                })?;
+                crate::journal::validate_invocation_fact_in_transaction(write, run, invocation)?;
+            }
+            CausalReference::HostInvocation { host, invocation } => {
+                if record.metadata.provenance().producer() == causal
+                    && record.owner
+                        != (milkdrift_workspace::ArtifactOwner::HostInvocation {
+                            host: host.clone(),
+                            invocation: invocation.clone(),
+                        })
+                {
+                    return Err(PersistenceError::InvalidDocument(
+                        "host invocation producer does not match publication owner".to_owned(),
+                    ));
+                }
+            }
+            CausalReference::ClientUpload { host, client, .. } => {
+                if record.metadata.provenance().producer() == causal
+                    && record.owner
+                        != (milkdrift_workspace::ArtifactOwner::ClientInput {
+                            host: host.clone(),
+                            client: client.clone(),
+                        })
+                {
+                    return Err(PersistenceError::InvalidDocument(
+                        "client upload producer does not match publication owner".to_owned(),
+                    ));
+                }
             }
         }
     }

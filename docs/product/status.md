@@ -16,6 +16,11 @@ This document owns current implementation, limitations, exact versions, and qual
   fails closed across restart; fresh clock sampling is serialized with watermark transactions.
   Peer startup refuses a recovery continuation that reports no recovered claims; admission stays
   closed instead of repeatedly requesting an empty page.
+- Independent hosts expose execution-only and workflow-enabled roles. Both admit authenticated
+  direct process and fresh-model calls with explicit inputs, bounded public upload/download,
+  durable replay and honest host-invocation artifacts. Execution-only composition constructs no
+  runtime, control service or workflow workers. Origin workflows can use the same serving
+  operations remotely with staged inputs and their existing controller reservation.
 - The CLI covers blueprint/sequence authoring, run/proposal/controller/peer/layout control,
   retained-work resolution, bounded inspection, verified create-new downloads, wait/follow deadlines,
   and stable machine output. [Production examples](../../examples/operator/README.md) provide
@@ -85,27 +90,32 @@ values; repository contracts check the version cells against source.
 | Authorized-command wrapper / command result | 1 / 2 | Result v1 reads only closed internal records. |
 | Projection snapshot envelope / runtime payload | 2 / 4 | Old/invalid optional checkpoints replay from journal. |
 | Administrative integrity cursor | 2 | Exact supported cursor. |
-| Peer hot record / compact tombstone | 3 / 1 | Hot v2 upgraded on next append. |
-| Redb internal document format / physical schema | 16 / 11 | Older/future stores refused; no migration. |
+| Peer hot record / compact tombstone | 4 / 2 | Exact current caller/origin meaning; older records refuse. |
+| Redb internal document format / physical schema | 17 / 12 | Older/future stores refused; no migration. |
 | Application command receipt / layout record | 1 / 1 | Exact supported contracts. |
 | Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
-| External control / authenticated cursor | 2.7 / 2 | Only the exact current protocol and cursor forms are accepted. |
-| Peer protocol and catalog messages | 1.3 | Earlier minors refused. |
-| Daemon configuration | 9 | TOML; JSON and earlier versions refused. |
+| External control / authenticated cursor | 2.8 / 2 | Only the exact current protocol and cursor forms are accepted. |
+| Peer protocol and catalog messages | 1.4 | Earlier minors refused. |
+| Daemon configuration | 10 | TOML; JSON and earlier versions refused. |
 | Layout document / CLI JSON output | 1 / 2 | CLI schema 1 refused. |
 
 ## Limitations now
 
-- Independent execution-only startup and public direct invocation/upload are not implemented.
-  Normal startup constructs runtime and control services. Adapter context and model selection
-  require workflow coordinates; serving peer output uses a run-shaped accounting key without
-  creating a serving-side workflow. Local prepared entry and serving peer entry still differ.
+- Execution-only startup omits runtime, control and workflow workers and can serve incoming peers.
+  Authenticated clients can discover, prepare, submit, inspect, cancel and follow direct process
+  and fresh-model invocations, and upload/download bounded artifacts through the public API/CLI.
+  Direct selection freezes explicit inputs without workflow coordinates; direct continuation refuses.
+  Local and serving work share prepared execution while retaining
+  their distinct durable owners. Serving artifacts use host-invocation accounting; imports retain
+  authenticated foreign provenance. Role removal refuses active workflow obligations and preserves
+  closed history for offline inspection. Managed deployment and real two-machine qualification
+  remain separate from the deterministic loopback binary evidence.
 - Managed installations, persistent resource inventories and generation holds, worker isolation,
   protected adaptive agreements, service-execution delegation, published invocation/run linkage,
   and evaluated method learning are not implemented. Existing prospective reconciliation and result
   acceptance do not establish those guarantees. The current risk classifier requires approval for
   node replacement and other elevated changes; it has no protected editable-scope policy.
-  [Architecture](../architecture.md) and ADRs 0038–0041 describe accepted additions, not supported APIs.
+  [Architecture](../architecture.md) and ADRs 0039–0041 describe these accepted additions, not supported APIs.
 - Earlier selection-policy-version-1 manifests remain readable, but omissions retaining ambiguous
   identities or sizes and stopped required evidence cannot authorize reuse. Retry and startup refuse
   those retained records without rewriting their bytes. An unsafe active lease prevents daemon
@@ -143,13 +153,15 @@ values; repository contracts check the version cells against source.
   timeout, response loss, and malformed/truncated streams preserve uncertainty rather than successful
   partial artifacts or automatic unsafe retry. Sequence stages are process-only; checkpoint
   capabilities and automatic distributed dogfood are absent.
-- There is no public local artifact upload, global event firehose, configuration/audit/shutdown
+- There is no global event firehose, configuration/audit/shutdown
   route, general plugin framework, context search service, or optimized lifetime attempt index.
   Retained attempts use verified occurrence anchors; retired attempts use bounded journal passes.
   Missing optional checkpoints can still require full projection replay.
 - Task placement supports exact peer sets and localities through admission, frozen selection, and
   entry. It provides no discovery, tag selector, shared checkout, or cluster scheduling. Remote output
-  observations use authorized core artifact transfer; input transfer remains explicit. The
+  observations use authorized core artifact transfer; exact artifact inputs and manifests are
+  staged before remote submission. Workspace-value references must first become explicit portable
+  inputs; remote adapters refuse them. The
   [peer guide](../operations/peers.md#pin-tasks-to-approved-hosts) explains the two-host workflow.
 - Active state grows with legitimate live obligations, not just elapsed history. Cold receipts and
   peer tombstones grow for the store generation. No storage migration, online destructive rotation,
@@ -160,13 +172,34 @@ values; repository contracts check the version cells against source.
 
 ## Current validation/evidence snapshot
 
+### Independent host execution
+
+Assignment 01 is reviewed and accepted on Windows x86_64/MSVC with
+Rust 1.95.0. The full gate checks pass: 832 workspace tests, 24 doctests, all 24 repository contracts,
+formatting, all-target/all-feature checking, warning-denying Clippy/rustdoc, dependency audits and
+test discovery. Five manual tests remain ignored. Commands and results are under
+`target/adaptive-hosts/review/`; the [assignment handoff](../development/virtual-office/adaptive-hosts/handoffs/01.md)
+records the resulting commit, corrected operator grant, final verification and initial timeout failures.
+Default/all-feature API inventories for fourteen affected libraries were reviewed against their
+actual consumers; fixture entry, conformance and unjournaled clock helpers remain outside the
+ordinary host API.
+
+The actual daemon/CLI independent-host scenario verifies direct process/fresh-model output,
+public input upload and artifact download, replay/restart, real remote workflow origins and
+controller settlement. A lost model response retains the exact outstanding allowance after
+restart without another external entry. The [evidence guide](../development/verification-evidence.md#independent-host-execution)
+owns reproduction and measured idle-role costs. This deterministic same-machine evidence does
+not qualify live models, non-loopback deployment, Linux resources or the physical UM790 scenario.
+
+### Retained operational qualification
+
 The integrated operational review is based on `f80cce80725777cc364b71db9ce81e2baff22a85`
 plus the reviewed operational changes on Windows x86_64/MSVC, Rust 1.95.0. Raw commands,
 source/binary identities, reports and logs are retained under `target/acceptance-08/` and
 `target/review-commit/`. The [verification guide](../development/verification-evidence.md)
 owns reproduction and evidence scope.
-The [roadmap](roadmap.md) authorizes a finite implementation sprint beyond this evidence snapshot.
-Direction adoption adds no execution, isolation, learning, or platform qualification to these results.
+These retained results remain scoped to their own source and environment; the
+[roadmap](roadmap.md) owns the remaining finite implementation work.
 
 ### Integrated operating decision
 
@@ -193,9 +226,9 @@ currency and no outstanding reservations. Accepted repair precedes the deliberat
 refusal; the final failed workflow is truthful stop evidence. The report retains exact source,
 binaries, profiles, observed server defaults, operator declarations and unknowns. Pre-run inspection
 of thinking enabled is not per-request attestation or a controlled thinking comparison. Agent-internal
-calls remain outside the direct-model meter. The current review reuses this real controller report.
+calls remain outside the direct-model meter. The integrated review reused this real controller report.
 
-### Current local checks
+### Retained integrated checks
 
 The acceptance checks exercise ordinary operator use, Fresh beside ExplicitContinuation, accepted
 result gates and model preparation refusal through actual binaries. Production-host tests cover two
@@ -215,12 +248,12 @@ occurrence's creation revision across later pins in both anchored and full-histo
 Windows fixture corrections explicitly restore blocking accepted TCP sockets and allow end-to-end
 peer scheduling variance while preserving process deadlines and every placement/entry assertion.
 
-The complete local gate passes: 802 workspace tests, 24 doctests, all 24 repository contracts,
+At that integrated review, the complete local gate passed: 802 workspace tests, 24 doctests, all 24 repository contracts,
 formatting, all-target/all-feature checking, warning-denying Clippy/rustdoc, dependency audits and
-test discovery. All three actual-binary scenarios pass in default builds. The remediation-history
+test discovery. All three actual-binary scenarios passed in default builds. The remediation-history
 regression fails before correction and passes afterward. Historical-owner and omitted-activation
 fault evidence remains in `target/acceptance-08/final/`; current commands/results are in
-`target/review-commit/`. Five manual longevity tests remain separate from ordinary discovery.
+`target/review-commit/`. Those results belong to that review's checkout. Five manual longevity tests remain separate from ordinary discovery.
 Regenerated default/all-feature daemon API inventories match the retained review with no exported
 changes.
 The evidence guide maps applicable retained longevity results and the finite controller checklist.
@@ -230,7 +263,7 @@ The evidence guide maps applicable retained longevity results and the finite con
 The earlier combined external session at clean candidate `8c6cdb9137bc8f688fd6cc800d3adf416d4f4625`
 qualifies its Windows Codex CLI `0.153.4` / LM Studio Bonsai configuration, selected context, linked
 artifacts and settled restarts. It does not qualify thinking mode, peers, graceful signals or power
-loss. Current ordinary smokes for `prism-ml/bonsai-27b` and `prism-ml/bonsai-27b:2` pass through
+loss. That review's ordinary smokes for `prism-ml/bonsai-27b` and `prism-ml/bonsai-27b:2` pass through
 the default daemon/CLI binaries with a requested 4,096-unit allowance. Both produce final text and
 usage, preserve selected/omitted context and reopen without another attempt. Reports are under
 `target/review-commit/bonsai-1/` and `bonsai-2/`. Server settings were unchanged and effective

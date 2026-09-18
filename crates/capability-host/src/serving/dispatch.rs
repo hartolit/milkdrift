@@ -12,10 +12,9 @@ use std::{
 
 use milkdrift_persistence::{PeerClaimOutcome, WorkerId};
 
-use crate::{
-    PeerHttpError,
+use super::{
+    PeerService, PeerUncertainty, PeerWorkerRecovery, PeerWorkerRun, ServingError,
     config::PeerWorkerConfig,
-    service::{PeerService, PeerUncertainty, PeerWorkerRecovery, PeerWorkerRun},
 };
 
 #[derive(Default)]
@@ -74,7 +73,7 @@ impl PeerDispatchWorkers {
     pub(crate) fn start(
         service: Weak<PeerService>,
         config: PeerWorkerConfig,
-    ) -> Result<Self, PeerHttpError> {
+    ) -> Result<Self, ServingError> {
         Self::start_with(service, config, |name, task| {
             thread::Builder::new().name(name).spawn(task)
         })
@@ -87,12 +86,12 @@ impl PeerDispatchWorkers {
             String,
             Box<dyn FnOnce() + Send>,
         ) -> std::io::Result<JoinHandle<()>>,
-    ) -> Result<Self, PeerHttpError> {
+    ) -> Result<Self, ServingError> {
         let signal = Arc::new(DispatchSignal::default());
         let mut handles = Vec::with_capacity(usize::from(config.threads));
         for index in 0..config.threads {
             let worker = WorkerId::new(format!("peer-worker-{index}"))
-                .map_err(|error| PeerHttpError::Configuration(error.to_string()))?;
+                .map_err(|error| ServingError::Configuration(error.to_string()))?;
             let service = service.clone();
             let thread_signal = signal.clone();
             let task =
@@ -105,7 +104,7 @@ impl PeerDispatchWorkers {
                     for handle in handles {
                         let _ = handle.join();
                     }
-                    return Err(PeerHttpError::Unavailable(format!(
+                    return Err(ServingError::Unavailable(format!(
                         "peer worker owner failed to spawn: {error}"
                     )));
                 }
@@ -243,7 +242,7 @@ mod tests {
                 }
             },
         );
-        assert!(matches!(result, Err(PeerHttpError::Unavailable(_))));
+        assert!(matches!(result, Err(ServingError::Unavailable(_))));
         assert_eq!(finished.load(Ordering::SeqCst), 1);
     }
 }

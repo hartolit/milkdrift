@@ -4,7 +4,8 @@ A Milkdrift peer performs an operation for another host while each host keeps it
 records. The origin owns workflow history; the serving host owns remote acceptance and observations.
 This crate defines the messages connecting those owners. Use it to understand peer semantics or
 validate messages without depending on HTTP, async execution, or a database. The
-[peer HTTP adapter](../../adapters/peer-http/README.md) implements the transport and service.
+[peer HTTP adapter](../../adapters/peer-http/README.md) implements transport; the
+[capability host](../capability-host/README.md) owns serving acceptance and lifecycle.
 
 ## Follow work between two hosts
 
@@ -14,7 +15,7 @@ origin                                      serving host
   <---------------------------------------- session facts and limits
   catalog query --------------------------> filtered live capability host
   <---------------------------------------- expiring catalog snapshot
-  exact PeerInvocationRequest ------------> durable acceptance
+  exact ServingInvocationRequest --------> durable acceptance
   <---------------------------------------- stable PeerExecutionId
   observations after sequence N ----------> durable execution record
   <---------------------------------------- contiguous page or archived summary
@@ -23,7 +24,7 @@ origin                                      serving host
 The handshake's claimed peer is a cross-check against transport authentication, not a way to choose
 an identity. A session identifies a daemon boot; it is not the lifetime of accepted work.
 `ProtocolVersionRange` offers version selection and `HardLimits::intersect` computes lower ceilings.
-Current codecs and the HTTP implementation accept only v1.3. The HTTP service reports its supported
+Current codecs and the HTTP implementation accept only v1.4. The HTTP service reports its supported
 feature flags and disables incremental catalogs; `CatalogUpdate` defines a message shape without
 making that transport path available.
 
@@ -34,10 +35,16 @@ to health or catalog availability do not rewrite an already accepted execution.
 
 ## Recover a missing reply
 
-`PeerInvocationRequest::new` binds the request identity, exact selection, catalog, inputs, deadline,
+`ServingInvocationRequest::new` binds the request identity, exact selection, catalog, inputs, deadline,
 limits, and delegated facts into one canonical digest. Resubmit those same facts when an acceptance
 reply is lost. Reusing the key with a different deadline or catalog is a different request and must
 conflict. A delegation reference narrows a configured relationship; it is not a bearer credential.
+
+`DirectInvocationRequest` supplies an independent client's explicit selection without actor or
+workflow claims. The serving authentication owner binds it to `ClientInvocationAuthorization`.
+Peer transport only accepts peer delegation, whose `InvocationOrigin` is explicitly direct or
+workflow-originated. `ServingCaller` keeps target host, caller realm and principal separate in
+replay keys, so equal client/peer request names cannot share accepted work.
 
 `InvocationAcceptance::Accepted` confirms durable acceptance, not adapter entry or success.
 `InvocationLookup` distinguishes no accepted record, a known execution, and unavailable outcome

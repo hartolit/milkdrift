@@ -67,8 +67,10 @@ fn cli_depends_only_on_external_control_and_local_authoring_owners() -> TestResu
     assert_eq!(
         dependencies,
         BTreeSet::from([
+            "milkdrift-capability",
             "milkdrift-control-client",
             "milkdrift-control-protocol",
+            "milkdrift-peer-protocol",
             "milkdrift-prompt-sequence"
         ])
     );

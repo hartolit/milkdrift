@@ -2,21 +2,21 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::CatalogGenerationView;
 use milkdrift_authority::{AuthorityBudget, AuthorityOperation, RequestedResourceFacts};
 use milkdrift_capability::{CapabilityDescriptor, DescriptorBuilder, PeerId};
-use milkdrift_capability_host::CatalogGenerationView;
 use milkdrift_peer_protocol::{CatalogEntry, CatalogSnapshot, DrainState};
-use milkdrift_persistence::PeerCatalogState;
+use milkdrift_persistence::ServingCatalogState;
 
+use super::config::PeerRelationship;
 use super::{
-    CachedCatalog, PeerHttpError, PeerService, bounded, map_execution_persistence,
+    CachedCatalog, PeerService, ServingError, bounded, map_execution_persistence,
     relationship_generation,
 };
-use crate::config::PeerRelationship;
 
 impl PeerService {
     /// Derives a complete filtered, expiring catalog from the live capability host.
-    pub fn catalog(&self, authenticated_peer: &PeerId) -> Result<CatalogSnapshot, PeerHttpError> {
+    pub fn catalog(&self, authenticated_peer: &PeerId) -> Result<CatalogSnapshot, ServingError> {
         let relationship = self.relationship(authenticated_peer)?;
         self.require_operation(
             &relationship,
@@ -49,7 +49,7 @@ impl PeerService {
         let mut catalogs = self
             .catalogs
             .lock()
-            .map_err(|_| PeerHttpError::Unavailable("catalog cache unavailable".to_owned()))?;
+            .map_err(|_| ServingError::Unavailable("catalog cache unavailable".to_owned()))?;
         if let Some(cached) = catalogs.get(authenticated_peer)
             && cached.fingerprint == fingerprint
             && cached.snapshot.is_live_at(now)
@@ -58,7 +58,7 @@ impl PeerService {
         }
         let durable_generation = self
             .executions
-            .peer_catalog(authenticated_peer)
+            .peer_catalog(&self.peer_caller(authenticated_peer))
             .map_err(map_execution_persistence)?
             .map_or(0, |catalog| catalog.generation);
         let generation = catalogs.get(authenticated_peer).map_or(
@@ -75,10 +75,10 @@ impl PeerService {
             .saturating_add(relationship.catalog_ttl_ms)
             .min(relationship.expires_at_unix_ms);
         let snapshot = CatalogSnapshot::new(generation, now, expires_at, entries)
-            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+            .map_err(|error| ServingError::Protocol(error.to_string()))?;
         self.executions
-            .publish_peer_catalog(&PeerCatalogState {
-                peer: authenticated_peer.clone(),
+            .publish_peer_catalog(&ServingCatalogState {
+                caller: self.peer_caller(authenticated_peer),
                 relationship_generation: relationship_generation(&relationship),
                 generation: snapshot.generation,
                 digest: snapshot.digest.as_str().to_owned(),
@@ -98,20 +98,31 @@ impl PeerService {
     fn catalog_entries(
         &self,
         relationship: &PeerRelationship,
-    ) -> Result<Vec<CatalogEntry>, PeerHttpError> {
+    ) -> Result<Vec<CatalogEntry>, ServingError> {
         if self.drain_state() != DrainState::Ready {
             return Ok(Vec::new());
         }
         let scope = &self
             .grants
             .get(&relationship.remote_peer)
-            .ok_or_else(|| PeerHttpError::Unauthorized("peer grant is absent".to_owned()))?
+            .ok_or_else(|| ServingError::Unauthorized("peer grant is absent".to_owned()))?
             .resources()
             .capability;
+        self.catalog_entries_in_scope(scope, false)
+    }
+
+    pub(super) fn catalog_entries_in_scope(
+        &self,
+        scope: &milkdrift_authority::CapabilityAuthorityScope,
+        direct_only: bool,
+    ) -> Result<Vec<CatalogEntry>, ServingError> {
         let generations = self.capability_host.catalog_generations(scope)?;
         let mut entries = Vec::new();
         for generation in generations {
-            if !generation.current || generation.draining {
+            if !generation.current
+                || generation.draining
+                || (direct_only && !generation.accepts_direct_inputs)
+            {
                 continue;
             }
             let Some(ref observation) = generation.observation else {
@@ -144,7 +155,7 @@ impl PeerService {
                 observation.current_load(),
                 bounded(observation.health_summary(), 512),
             )
-            .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+            .map_err(|error| ServingError::Protocol(error.to_string()))?;
             entries.push(CatalogEntry {
                 descriptor,
                 invocable_operations,
@@ -162,7 +173,7 @@ fn filtered_descriptor(
         milkdrift_capability::OperationId,
         milkdrift_capability::OperationContract,
     >,
-) -> Result<CapabilityDescriptor, PeerHttpError> {
+) -> Result<CapabilityDescriptor, ServingError> {
     DescriptorBuilder::new(
         generation.descriptor.identity().clone(),
         generation.descriptor.descriptor_revision(),
@@ -171,6 +182,7 @@ fn filtered_descriptor(
         generation.descriptor.locality(),
     )
     .provider_profile(generation.descriptor.provider_profile().cloned())
+    .peer(generation.descriptor.peer().cloned())
     .operations(operations)
     .trust_zones(generation.descriptor.trust_zones().clone())
     .execution_trust(generation.descriptor.execution_trust())
@@ -178,11 +190,11 @@ fn filtered_descriptor(
     .labels(generation.descriptor.labels().clone())
     .extensions(generation.descriptor.extensions().clone())
     .build()
-    .map_err(|error| PeerHttpError::Protocol(error.to_string()))
+    .map_err(|error| ServingError::Protocol(error.to_string()))
 }
 
-fn catalog_fingerprint(entries: &[CatalogEntry]) -> Result<String, PeerHttpError> {
+pub(super) fn catalog_fingerprint(entries: &[CatalogEntry]) -> Result<String, ServingError> {
     let bytes =
-        serde_json::to_vec(entries).map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
+        serde_json::to_vec(entries).map_err(|error| ServingError::Protocol(error.to_string()))?;
     Ok(blake3::hash(&bytes).to_hex().to_string())
 }

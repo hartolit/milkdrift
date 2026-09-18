@@ -3,22 +3,21 @@
 use milkdrift_authority::{AuthorityDecisionSnapshot, AuthorityOperation};
 use milkdrift_contracts::is_canonical_blake3_digest;
 use milkdrift_persistence::{
-    PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2, PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3,
-    PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1, PeerAdmission, PeerArchivedDisposition,
-    PeerCatalogState, PeerExecutionPhase, PeerExecutionRecord, PeerExecutionTombstone,
-    PeerRelationshipState, PersistenceError,
+    PeerAdmission, PeerArchivedDisposition, PeerExecutionPhase, PeerExecutionRecord,
+    PeerExecutionTombstone, PersistenceError, SERVING_EXECUTION_RECORD_SCHEMA_VERSION,
+    SERVING_EXECUTION_TOMBSTONE_SCHEMA_VERSION, ServingCallerState, ServingCatalogState,
 };
 
 use super::{MAX_UNCERTAINTY_REASON_BYTES, corruption, invalid};
 
-pub(super) fn validate_relationship(value: &PeerRelationshipState) -> Result<(), PersistenceError> {
+pub(super) fn validate_relationship(value: &ServingCallerState) -> Result<(), PersistenceError> {
     if value.generation == 0 || value.expires_at_unix_ms == 0 || value.maximum_active == 0 {
         return Err(invalid("peer relationship persistence facts are invalid"));
     }
     Ok(())
 }
 
-pub(super) fn validate_catalog(value: &PeerCatalogState) -> Result<(), PersistenceError> {
+pub(super) fn validate_catalog(value: &ServingCatalogState) -> Result<(), PersistenceError> {
     if value.relationship_generation == 0
         || value.generation == 0
         || value.expires_at_unix_ms == 0
@@ -37,11 +36,30 @@ pub(super) fn validate_admission(value: &PeerAdmission<'_>) -> Result<(), Persis
     let decision_request = value.authority.request();
     let resources = &decision_request.resources;
     let provenance = &decision_request.provenance;
-    let delegated = &value.request.delegation.provenance;
+    let origin = value.request.authorization.origin();
+    let delegated = origin.workflow();
+    let operation = match &value.request.authorization {
+        milkdrift_peer_protocol::ServingAuthorization::Peer(_) => {
+            AuthorityOperation::InvokePeerCapability
+        }
+        milkdrift_peer_protocol::ServingAuthorization::Client(client) => {
+            if decision_request.grant != client.grant
+                || decision_request.grant_revision != client.grant_revision
+                || decision_request.grant_digest != client.grant_digest
+                || decision_request.revocation_generation != client.revocation_generation
+            {
+                return Err(invalid(
+                    "client admission must retain its exact authenticated grant",
+                ));
+            }
+            AuthorityOperation::InvokeCapability
+        }
+    };
     if !value.authority.is_allowed()
-        || decision_request.operation != AuthorityOperation::InvokePeerCapability
-        || decision_request.actor != value.request.delegation.actor
-        || resources.peer.as_ref() != Some(value.owner_peer)
+        || decision_request.operation != operation
+        || &decision_request.actor != value.request.authorization.actor()
+        || &value.request.authorization.caller() != value.caller
+        || resources.peer.as_ref() != value.caller.peer_identity()
         || resources.capability.as_ref() != Some(value.request.selection.capability())
         || resources.capability_operation.as_ref() != Some(value.request.selection.operation())
         || provenance
@@ -49,11 +67,11 @@ pub(super) fn validate_admission(value: &PeerAdmission<'_>) -> Result<(), Persis
             .as_ref()
             .map(ToString::to_string)
             .as_deref()
-            != Some(delegated.revision.as_str())
+            != delegated.map(|value| value.revision.as_str())
         || provenance.node.as_ref().map(ToString::to_string).as_deref()
-            != Some(delegated.node.as_str())
-        || provenance.execution.as_deref() != Some(delegated.execution.as_str())
-        || provenance.attempt.as_deref() != Some(delegated.attempt.as_str())
+            != delegated.map(|value| value.node.as_str())
+        || provenance.execution.as_deref() != delegated.map(|value| value.execution.as_str())
+        || provenance.attempt.as_deref() != delegated.map(|value| value.attempt.as_str())
         || provenance.descriptor_revision != Some(value.request.selection.descriptor_revision())
         || value.relationship_generation == 0
         || value.accepted_at_unix_ms == 0
@@ -76,8 +94,8 @@ pub(super) fn validate_entry_authority(
     let accepted = record.authority.request();
     let entry = authority.request();
     if !authority.is_allowed()
-        || entry.operation != AuthorityOperation::InvokePeerCapability
-        || entry.actor != record.request.delegation.actor
+        || entry.operation != accepted.operation
+        || &entry.actor != record.request.authorization.actor()
         || entry.resources != accepted.resources
         || entry.budget != accepted.budget
         || entry.provenance != accepted.provenance
@@ -94,25 +112,30 @@ pub(super) fn validate_record(record: &PeerExecutionRecord) -> Result<(), Persis
         .request
         .validate()
         .map_err(|cause| corruption(format!("stored peer request is invalid: {cause}")))?;
-    if !matches!(
-        record.schema_version,
-        PEER_EXECUTION_RECORD_SCHEMA_VERSION_V2 | PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3
-    ) || record.relationship_generation == 0
+    if record.schema_version != SERVING_EXECUTION_RECORD_SCHEMA_VERSION
+        || record.relationship_generation == 0
         || record.acceptance_sequence == 0
         || record.accepted_at_unix_ms == 0
         || record.revision == 0
         || u64::from(record.accounting.observations) != record.last_observation_sequence
         || record.last_observation_sequence > u64::from(record.request.limits.observations)
         || record.accounting.artifact_bytes > record.request.limits.artifact_bytes
-        || (record.schema_version == PEER_EXECUTION_RECORD_SCHEMA_VERSION_V3
-            && record.accounting.artifact_bytes
-                < record.request.input_artifact_bytes().map_err(|cause| {
-                    corruption(format!("stored peer input is invalid: {cause}"))
-                })?)
+        || (record.accounting.artifact_bytes
+            < record
+                .request
+                .input_artifact_bytes()
+                .map_err(|cause| corruption(format!("stored peer input is invalid: {cause}")))?)
         || !is_canonical_blake3_digest(&record.observation_digest)
     {
         return Err(corruption(
             "stored peer execution primary facts are invalid",
+        ));
+    }
+    if record.caller != record.request.authorization.caller()
+        || &record.authority.request().actor != record.request.authorization.actor()
+    {
+        return Err(corruption(
+            "stored serving caller contradicts accepted authority",
         ));
     }
     if let PeerExecutionPhase::Terminal { sequence, .. } = record.phase
@@ -138,7 +161,14 @@ pub(super) fn validate_record(record: &PeerExecutionRecord) -> Result<(), Persis
 pub(super) fn validate_tombstone(
     tombstone: &PeerExecutionTombstone,
 ) -> Result<(), PersistenceError> {
-    if tombstone.schema_version != PEER_EXECUTION_TOMBSTONE_SCHEMA_VERSION_V1
+    if tombstone.caller != tombstone.authorization.caller()
+        || &tombstone.authority.actor != tombstone.authorization.actor()
+    {
+        return Err(corruption(
+            "archived serving caller contradicts accepted authority",
+        ));
+    }
+    if tombstone.schema_version != SERVING_EXECUTION_TOMBSTONE_SCHEMA_VERSION
         || tombstone.relationship_generation == 0
         || tombstone.acceptance_sequence == 0
         || tombstone.accepted_at_unix_ms == 0

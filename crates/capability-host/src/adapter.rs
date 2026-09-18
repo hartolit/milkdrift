@@ -1,15 +1,15 @@
+mod context;
+mod direct;
+pub use context::{AdapterExecutionContext, AdapterInputSelection, WorkflowExecutionContext};
+pub use direct::DirectInputSelection;
+
 use std::sync::Arc;
 
-use milkdrift_authority::{
-    AuthorityDecisionSnapshot, CapabilityExecutionRequirements, ExecutionAuthorityBasis,
-};
-use milkdrift_blueprint::{NodeId, RevisionId};
+use milkdrift_authority::CapabilityExecutionRequirements;
 use milkdrift_capability::{
     CancellationAcknowledgement, CancellationRequest, CapabilityObservation,
     InvocationAdmissionEnvelope, InvocationEvent, InvocationRequest, ResolvedCapabilitySnapshot,
 };
-use milkdrift_persistence::{AttemptId, ControllerReservationId, NodeExecutionId};
-use milkdrift_workspace::RunId;
 use thiserror::Error;
 
 /// Stable class of a bounded adapter failure summary.
@@ -128,187 +128,6 @@ impl AdapterError {
 #[error("adapter failure summary must contain 1..=512 bytes")]
 pub struct HostAdapterContractError;
 
-/// Exact durable execution provenance supplied to materializing adapters.
-#[derive(Clone, Debug, PartialEq)]
-pub struct AdapterExecutionContext {
-    run: RunId,
-    revision: RevisionId,
-    node: NodeId,
-    execution: NodeExecutionId,
-    attempt: AttemptId,
-    authority: Option<ExecutionAuthorityBasis>,
-    resolution_authorization: Option<AuthorityDecisionSnapshot>,
-    entry_authorization: Option<AuthorityDecisionSnapshot>,
-    controller_reservation: Option<ControllerReservationId>,
-    peer_artifacts: Option<(RunId, milkdrift_workspace::WorkspaceBudget)>,
-}
-
-impl AdapterExecutionContext {
-    /// Constructs exact durable provenance for an already validated execution dispatch.
-    #[must_use]
-    pub const fn new(
-        run: RunId,
-        revision: RevisionId,
-        node: NodeId,
-        execution: NodeExecutionId,
-        attempt: AttemptId,
-    ) -> Self {
-        Self {
-            run,
-            revision,
-            node,
-            execution,
-            attempt,
-            authority: None,
-            resolution_authorization: None,
-            entry_authorization: None,
-            controller_reservation: None,
-            peer_artifacts: None,
-        }
-    }
-
-    pub(crate) fn from_dispatch(
-        dispatch: &milkdrift_runtime::ExecutionDispatch,
-        controller_reservation: Option<&ControllerReservationId>,
-    ) -> Self {
-        Self {
-            run: dispatch.run().clone(),
-            revision: dispatch.revision().clone(),
-            node: dispatch.node().clone(),
-            execution: dispatch.execution().clone(),
-            attempt: dispatch.attempt().clone(),
-            authority: Some(dispatch.execution_authority().clone()),
-            resolution_authorization: Some(dispatch.resolution_authorization().clone()),
-            entry_authorization: Some(dispatch.entry_authorization().clone()),
-            controller_reservation: controller_reservation.cloned(),
-            peer_artifacts: None,
-        }
-    }
-
-    /// Binds artifact publication to the serving host's durably entered peer execution.
-    /// The accepted request owns this allowance; the originating run is not a local run.
-    pub fn with_peer_execution(
-        mut self,
-        record: &milkdrift_persistence::PeerExecutionRecord,
-    ) -> Result<Self, crate::InvocationDataError> {
-        let provenance = &record.request.delegation.provenance;
-        if !matches!(
-            record.phase,
-            milkdrift_persistence::PeerExecutionPhase::Entered { .. }
-        ) || record.owner_peer != record.request.delegation.issuer_peer
-            || provenance.run != self.run.as_str()
-            || provenance.revision != self.revision.as_str()
-            || provenance.node != self.node.as_str()
-            || provenance.execution != self.execution.as_str()
-            || provenance.attempt != self.attempt.as_str()
-            || self.authority.is_some()
-            || self.peer_artifacts.is_some()
-        {
-            return Err(crate::InvocationDataError::Rejected(
-                "peer publication requires the exact entered execution".to_owned(),
-            ));
-        }
-        record
-            .request
-            .validate()
-            .map_err(|error| crate::InvocationDataError::Rejected(error.to_string()))?;
-        let limits = record.request.limits;
-        let input_bytes = record
-            .request
-            .input_artifact_bytes()
-            .map_err(|error| crate::InvocationDataError::Rejected(error.to_string()))?;
-        let remaining = limits
-            .artifact_bytes
-            .checked_sub(input_bytes)
-            .ok_or_else(|| {
-                crate::InvocationDataError::Rejected("peer artifact allowance exhausted".to_owned())
-            })?;
-        let namespace = serde_json::to_vec(&(
-            &record.request.delegation.target_peer,
-            &record.owner_peer,
-            &record.execution,
-        ))
-        .map_err(|error| crate::InvocationDataError::Rejected(error.to_string()))?;
-        let run = RunId::new(format!("peer-output:{}", blake3::hash(&namespace)))
-            .map_err(|error| crate::InvocationDataError::Rejected(error.to_string()))?;
-        let budget = milkdrift_workspace::WorkspaceBudget::new(
-            0,
-            0,
-            0,
-            u64::from(limits.observations),
-            remaining,
-            remaining,
-        )
-        .map_err(|error| crate::InvocationDataError::Rejected(error.to_string()))?;
-        self.peer_artifacts = Some((run, budget));
-        Ok(self)
-    }
-
-    pub(crate) fn publication_run(&self) -> &RunId {
-        self.peer_artifacts
-            .as_ref()
-            .map_or(&self.run, |(run, _)| run)
-    }
-
-    pub(crate) fn peer_artifact_budget(&self) -> Option<&milkdrift_workspace::WorkspaceBudget> {
-        self.peer_artifacts.as_ref().map(|(_, budget)| budget)
-    }
-
-    /// Owning durable run.
-    #[must_use]
-    pub const fn run(&self) -> &RunId {
-        &self.run
-    }
-
-    /// Exact immutable workflow revision.
-    #[must_use]
-    pub const fn revision(&self) -> &RevisionId {
-        &self.revision
-    }
-
-    /// Stable semantic node identity.
-    #[must_use]
-    pub const fn node(&self) -> &NodeId {
-        &self.node
-    }
-
-    /// Logical node execution identity.
-    #[must_use]
-    pub const fn execution(&self) -> &NodeExecutionId {
-        &self.execution
-    }
-
-    /// Immutable execution-attempt identity.
-    #[must_use]
-    pub const fn attempt(&self) -> &AttemptId {
-        &self.attempt
-    }
-
-    /// Exact controller reservation committed before this adapter entry, when controlled.
-    #[must_use]
-    pub const fn controller_reservation(&self) -> Option<&ControllerReservationId> {
-        self.controller_reservation.as_ref()
-    }
-
-    /// Frozen actor/grant/policy basis inherited from run acceptance.
-    #[must_use]
-    pub const fn authority(&self) -> Option<&ExecutionAuthorityBasis> {
-        self.authority.as_ref()
-    }
-
-    /// Exact decision that allowed this capability generation to be selected.
-    #[must_use]
-    pub const fn resolution_authorization(&self) -> Option<&AuthorityDecisionSnapshot> {
-        self.resolution_authorization.as_ref()
-    }
-
-    /// Fresh decision committed immediately before adapter entry.
-    #[must_use]
-    pub const fn entry_authorization(&self) -> Option<&AuthorityDecisionSnapshot> {
-        self.entry_authorization.as_ref()
-    }
-}
-
 /// Narrow immutable invocation view supplied to a concrete adapter.
 pub struct AdapterInvocation<'a> {
     resolution: &'a ResolvedCapabilitySnapshot,
@@ -390,6 +209,12 @@ pub trait AdapterReporter: Send + Sync {
 /// idempotent no-resource behavior; resource-owning implementations must make replay, drain, and
 /// shutdown behavior explicit in their own state machine.
 pub trait CapabilityAdapter: Send + Sync + 'static {
+    /// Whether this adapter implements independent, explicitly selected inputs.
+    /// Workflow-only adapters remain absent from the independent invocation catalog.
+    fn accepts_direct_inputs(&self) -> bool {
+        false
+    }
+
     /// Prepares local request data without contacting an external capability.
     ///
     /// The host holds the exact generation permit while this runs. Local reads must be

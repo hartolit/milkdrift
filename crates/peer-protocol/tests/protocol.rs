@@ -13,11 +13,68 @@ use milkdrift_capability::{
 use milkdrift_peer_protocol::{
     ArchivedExecutionSummary, CatalogEntry, CatalogSnapshot, DecodeLimits, DelegatedAuthorization,
     DelegationRef, ExecutionLimits, InvocationLookup, ObservationHistory, ObservationPage,
-    PeerExecutionId, PeerInvocationRequest, PeerRequestId, ProtocolEnvelope, ProtocolVersion,
-    ProtocolVersionRange, RemoteExecutionStatus, decode_envelope, encode_envelope,
+    PeerExecutionId, PeerRequestId, ProtocolEnvelope, ProtocolVersion, ProtocolVersionRange,
+    RemoteExecutionStatus, ServingInvocationRequest, decode_envelope, encode_envelope,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+#[test]
+fn serving_allowance_requires_enforced_units_currency_and_input_plus_output_bytes() -> TestResult {
+    use milkdrift_capability::{
+        AdmissionBound, AdmissionMonetaryBound, AdmissionUnit, InvocationAdmissionEnvelope,
+    };
+    let limits = ExecutionLimits {
+        artifact_bytes: 13,
+        duration_ms: 100,
+        cost_micros: 3,
+        cost_currency: Some("USD".to_owned()),
+        input_units: Some(1),
+        output_units: Some(2),
+        observations: 8,
+    };
+    let prepared = InvocationAdmissionEnvelope::new(
+        AdmissionUnit::ModelTokens,
+        AdmissionBound::Bounded(1),
+        AdmissionBound::Bounded(2),
+        AdmissionBound::Bounded(10),
+        AdmissionBound::Bounded(AdmissionMonetaryBound::new(3, "USD")?),
+    );
+    assert!(limits.permits_prepared(&prepared, 3));
+    assert!(!limits.permits_prepared(&prepared, 4));
+    assert!(!limits.permits_prepared(&InvocationAdmissionEnvelope::unknown(), 0));
+    for changed in [
+        ExecutionLimits {
+            cost_currency: Some("EUR".to_owned()),
+            ..limits.clone()
+        },
+        ExecutionLimits {
+            input_units: Some(0),
+            ..limits.clone()
+        },
+        ExecutionLimits {
+            output_units: None,
+            ..limits.clone()
+        },
+        ExecutionLimits {
+            cost_micros: 2,
+            ..limits.clone()
+        },
+    ] {
+        assert!(!changed.permits_prepared(&prepared, 3));
+    }
+    let mut invalid = limits.clone();
+    invalid.cost_currency = None;
+    assert!(invalid.validate().is_err());
+    let mut changed_request = limits.clone();
+    changed_request.cost_currency = Some("EUR".to_owned());
+    assert!(!limits.contains(&changed_request));
+    assert_eq!(
+        limits.admission_envelope()?.input_units(),
+        prepared.input_units()
+    );
+    Ok(())
+}
 
 fn descriptor() -> TestResult<milkdrift_capability::CapabilityDescriptor> {
     let schema = || {
@@ -54,7 +111,7 @@ fn request_with_artifact_limit(
     suffix: &str,
     size_bytes: Option<u64>,
     artifact_limit: u64,
-) -> TestResult<PeerInvocationRequest> {
+) -> TestResult<ServingInvocationRequest> {
     let descriptor = descriptor()?;
     let operation = OperationId::new("test.execute")?;
     let request_id = PeerRequestId::new(format!("request-{suffix}"))?;
@@ -62,9 +119,12 @@ fn request_with_artifact_limit(
         artifact_bytes: artifact_limit,
         duration_ms: 10_000,
         cost_micros: 0,
+        cost_currency: None,
+        input_units: None,
+        output_units: None,
         observations: 10,
     };
-    PeerInvocationRequest::new(
+    ServingInvocationRequest::new(
         request_id.clone(),
         1,
         CatalogSnapshot::new(1, 1, 20_000, Vec::new())?.digest,
@@ -88,9 +148,10 @@ fn request_with_artifact_limit(
             )?],
             BTreeMap::new(),
         )?,
-        limits,
+        limits.clone(),
         15_000,
         DelegatedAuthorization {
+            controller_reservation: None,
             reference: DelegationRef::new(format!("delegation-{suffix}"))?,
             issuer_peer: PeerId::new("peer-a")?,
             actor: ActorRef::new("peer:peer-a")?,
@@ -98,15 +159,17 @@ fn request_with_artifact_limit(
             capability: descriptor.identity().clone(),
             operation,
             request: request_id,
-            limits,
+            limits: limits.clone(),
             expires_at_unix_ms: 20_000,
             nonce: format!("nonce-{suffix}"),
-            provenance: milkdrift_peer_protocol::PeerExecutionProvenance {
-                run: "run-1".to_owned(),
-                revision: "revision-1".to_owned(),
-                node: "node-1".to_owned(),
-                execution: "execution-1".to_owned(),
-                attempt: "attempt-1".to_owned(),
+            origin: milkdrift_peer_protocol::InvocationOrigin::Workflow {
+                provenance: milkdrift_peer_protocol::PeerExecutionProvenance {
+                    run: "run-1".to_owned(),
+                    revision: "revision-1".to_owned(),
+                    node: "node-1".to_owned(),
+                    execution: "execution-1".to_owned(),
+                    attempt: "attempt-1".to_owned(),
+                },
             },
         },
     )
@@ -116,7 +179,7 @@ fn request_with_artifact_limit(
 #[test]
 fn version_negotiation_fails_closed_on_unknown_major() -> TestResult {
     let local = ProtocolVersionRange::default();
-    assert_eq!(local.negotiate(local)?, ProtocolVersion::V1_3);
+    assert_eq!(local.negotiate(local)?, ProtocolVersion::V1_4);
     let unknown = ProtocolVersionRange::new(
         ProtocolVersion { major: 2, minor: 0 },
         ProtocolVersion { major: 2, minor: 1 },
@@ -183,7 +246,7 @@ fn decoder_rejects_bounds_duplicates_and_every_non_current_version() -> TestResu
         )
         .is_err()
     );
-    for minor in [0_u16, 1, 2, 4, u16::MAX] {
+    for minor in [0_u16, 1, 2, 3, 5, u16::MAX] {
         let bytes = format!(
             "{{\"protocol\":{{\"major\":1,\"minor\":{minor}}},\"message\":null,\"extensions\":{{}}}}"
         );
@@ -246,11 +309,15 @@ fn invocation_digest_binds_catalog_selection_delegation_and_request() -> TestRes
         artifact_bytes: 1024,
         duration_ms: 10_000,
         cost_micros: 0,
+        cost_currency: None,
+        input_units: None,
+        output_units: None,
         observations: 100,
     };
     let peer_a = PeerId::new("peer-a")?;
     let peer_b = PeerId::new("peer-b")?;
     let delegation = DelegatedAuthorization {
+        controller_reservation: None,
         reference: DelegationRef::new("delegation-1")?,
         issuer_peer: peer_a.clone(),
         actor: ActorRef::new("peer:peer-a")?,
@@ -258,31 +325,33 @@ fn invocation_digest_binds_catalog_selection_delegation_and_request() -> TestRes
         capability: descriptor.identity().clone(),
         operation,
         request: request_id.clone(),
-        limits,
+        limits: limits.clone(),
         expires_at_unix_ms: 20_000,
         nonce: "nonce-1".to_owned(),
-        provenance: milkdrift_peer_protocol::PeerExecutionProvenance {
-            run: "run-1".to_owned(),
-            revision: "revision-1".to_owned(),
-            node: "node-1".to_owned(),
-            execution: "execution-1".to_owned(),
-            attempt: "attempt-1".to_owned(),
+        origin: milkdrift_peer_protocol::InvocationOrigin::Workflow {
+            provenance: milkdrift_peer_protocol::PeerExecutionProvenance {
+                run: "run-1".to_owned(),
+                revision: "revision-1".to_owned(),
+                node: "node-1".to_owned(),
+                execution: "execution-1".to_owned(),
+                attempt: "attempt-1".to_owned(),
+            },
         },
     };
     let catalog = CatalogSnapshot::new(1, 1_000, 20_000, Vec::new())?;
-    let request = PeerInvocationRequest::new(
+    let request = ServingInvocationRequest::new(
         request_id,
         1,
         catalog.digest,
         selection,
         invocation,
-        limits,
+        limits.clone(),
         15_000,
         delegation,
     )?;
     let mut value = serde_json::to_value(&request)?;
     value["deadline_unix_ms"] = serde_json::json!(15_001);
-    assert!(serde_json::from_value::<PeerInvocationRequest>(value).is_err());
+    assert!(serde_json::from_value::<ServingInvocationRequest>(value).is_err());
     Ok(())
 }
 
@@ -300,6 +369,7 @@ fn archived_observation_history_is_typed_closed_and_truthfully_uncertain() -> Te
         ),
     };
     let page = ObservationPage {
+        status: RemoteExecutionStatus::OutcomeUnknown,
         execution: execution.clone(),
         after_sequence: 0,
         observations: Vec::new(),

@@ -6,9 +6,12 @@ use milkdrift_capability::{
 use milkdrift_contracts::is_canonical_blake3_digest;
 use serde::{Deserialize, Serialize};
 
-use crate::{CatalogDigest, DelegationRef, PeerExecutionId, PeerProtocolError, PeerRequestId};
+use crate::{
+    CatalogDigest, DelegationRef, InvocationOrigin, PeerExecutionId, PeerProtocolError,
+    PeerRequestId, ServingAuthorization,
+};
 
-const INVOCATION_DIGEST_DOMAIN: &[u8] = b"milkdrift.peer.invocation.v1\0";
+const INVOCATION_DIGEST_DOMAIN: &[u8] = b"milkdrift.serving.invocation.v2\0";
 const MAX_OBSERVATIONS_PER_PAGE: usize = 256;
 
 /// Exact originating workflow coordinates carried across the peer execution boundary.
@@ -28,7 +31,7 @@ pub struct PeerExecutionProvenance {
 }
 
 impl PeerExecutionProvenance {
-    fn validate(&self) -> Result<(), PeerProtocolError> {
+    pub(crate) fn validate(&self) -> Result<(), PeerProtocolError> {
         if [
             self.run.as_str(),
             self.revision.as_str(),
@@ -48,7 +51,7 @@ impl PeerExecutionProvenance {
 }
 
 /// Per-request resource ceilings checked before durable remote acceptance.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionLimits {
     /// Maximum total input plus output artifact bytes.
@@ -57,28 +60,113 @@ pub struct ExecutionLimits {
     pub duration_ms: u64,
     /// Maximum observed cost in millionths, when applicable.
     pub cost_micros: u64,
+    /// Exact currency for a monetary allowance; absent means billing is not allowed.
+    #[serde(default)]
+    pub cost_currency: Option<String>,
+    /// Maximum complete prompt tokens; absent means token consumption is not allowed.
+    #[serde(default)]
+    pub input_units: Option<u64>,
+    /// Maximum generated tokens including reasoning; absent forbids token consumption.
+    #[serde(default)]
+    pub output_units: Option<u64>,
     /// Maximum semantic observations retained and streamed.
     pub observations: u32,
 }
 
 impl ExecutionLimits {
     /// Requires nonzero duration and observation ceilings.
-    pub fn validate(self) -> Result<Self, PeerProtocolError> {
+    pub fn validate(&self) -> Result<(), PeerProtocolError> {
         if self.duration_ms == 0 || self.observations == 0 || self.observations > 1_000_000 {
             return Err(PeerProtocolError::InvalidContract(
                 "execution duration and observation limits must be bounded and nonzero".to_owned(),
             ));
         }
-        Ok(self)
+        if let Some(currency) = &self.cost_currency {
+            milkdrift_capability::AdmissionMonetaryBound::new(self.cost_micros, currency)
+                .map_err(|error| PeerProtocolError::InvalidContract(error.to_string()))?;
+        } else if self.cost_micros != 0 {
+            return Err(PeerProtocolError::InvalidContract(
+                "a monetary allowance requires its exact currency".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     /// True when every requested ceiling is no greater than this grant ceiling.
     #[must_use]
-    pub const fn contains(self, requested: Self) -> bool {
+    pub fn contains(&self, requested: &Self) -> bool {
         requested.artifact_bytes <= self.artifact_bytes
             && requested.duration_ms <= self.duration_ms
             && requested.cost_micros <= self.cost_micros
+            && (requested.cost_currency.is_none() || requested.cost_currency == self.cost_currency)
+            && requested
+                .input_units
+                .is_none_or(|value| self.input_units.is_some_and(|maximum| value <= maximum))
+            && requested
+                .output_units
+                .is_none_or(|value| self.output_units.is_some_and(|maximum| value <= maximum))
             && requested.observations <= self.observations
+    }
+
+    /// Allowance enforced against the prepared adapter before remote entry. An absent
+    /// dimension permits only an adapter that declares the resource inapplicable.
+    pub fn admission_envelope(
+        &self,
+    ) -> Result<milkdrift_capability::InvocationAdmissionEnvelope, PeerProtocolError> {
+        use milkdrift_capability::{
+            AdmissionBound, AdmissionMonetaryBound, AdmissionUnit, InvocationAdmissionEnvelope,
+        };
+        self.validate()?;
+        Ok(InvocationAdmissionEnvelope::new(
+            AdmissionUnit::ModelTokens,
+            self.input_units
+                .map_or(AdmissionBound::NotApplicable, AdmissionBound::Bounded),
+            self.output_units
+                .map_or(AdmissionBound::NotApplicable, AdmissionBound::Bounded),
+            AdmissionBound::Bounded(self.artifact_bytes),
+            self.cost_currency
+                .as_ref()
+                .map_or(Ok(AdmissionBound::NotApplicable), |currency| {
+                    AdmissionMonetaryBound::new(self.cost_micros, currency)
+                        .map(AdmissionBound::Bounded)
+                })
+                .map_err(|error| PeerProtocolError::InvalidContract(error.to_string()))?,
+        ))
+    }
+
+    /// Refuses entry unless the prepared adapter can enforce every accepted dimension.
+    pub fn permits_prepared(
+        &self,
+        prepared: &milkdrift_capability::InvocationAdmissionEnvelope,
+        input_artifact_bytes: u64,
+    ) -> bool {
+        use milkdrift_capability::{AdmissionBound, AdmissionUnit};
+        let permits_units = |bound: &AdmissionBound<u64>, maximum: Option<u64>| match bound {
+            AdmissionBound::NotApplicable => true,
+            AdmissionBound::Bounded(value) => {
+                prepared.unit() == AdmissionUnit::ModelTokens
+                    && maximum.is_some_and(|maximum| *value <= maximum)
+            }
+            AdmissionBound::Unknown => false,
+        };
+        let output_bytes = match prepared.artifact_bytes() {
+            AdmissionBound::NotApplicable => Some(0),
+            AdmissionBound::Bounded(value) => Some(*value),
+            AdmissionBound::Unknown => None,
+        };
+        permits_units(prepared.input_units(), self.input_units)
+            && permits_units(prepared.output_units(), self.output_units)
+            && output_bytes
+                .and_then(|value| value.checked_add(input_artifact_bytes))
+                .is_some_and(|value| value <= self.artifact_bytes)
+            && match prepared.monetary_cost() {
+                AdmissionBound::NotApplicable => true,
+                AdmissionBound::Bounded(value) => {
+                    self.cost_currency.as_deref() == Some(value.currency())
+                        && value.maximum_micros() <= self.cost_micros
+                }
+                AdmissionBound::Unknown => false,
+            }
     }
 }
 
@@ -106,15 +194,32 @@ pub struct DelegatedAuthorization {
     pub expires_at_unix_ms: u64,
     /// Non-reusable nonce bound to the server record.
     pub nonce: String,
-    /// Exact originating workflow coordinates used by materializing adapters.
-    pub provenance: PeerExecutionProvenance,
+    /// Validated direct or workflow origin, independently of peer transport.
+    pub origin: InvocationOrigin,
+    /// Origin-owned reservation committed before submission. The serving host retains
+    /// its linkage and enforces `limits`; it does not create a second controller charge.
+    pub controller_reservation: Option<String>,
 }
 
 impl DelegatedAuthorization {
     /// Validates non-secret bounded delegation facts.
     pub fn validate(&self) -> Result<(), PeerProtocolError> {
         self.limits.validate()?;
-        self.provenance.validate()?;
+        if let InvocationOrigin::Workflow { provenance } = &self.origin {
+            provenance.validate()?;
+        }
+        if self
+            .controller_reservation
+            .as_ref()
+            .is_some_and(|reservation| {
+                !safe_reference(reservation) || self.origin.workflow().is_none()
+            })
+        {
+            return Err(PeerProtocolError::InvalidContract(
+                "controller allowance requires exact workflow origin and reservation identity"
+                    .to_owned(),
+            ));
+        }
         if self.expires_at_unix_ms == 0
             || self.nonce.is_empty()
             || self.nonce.len() > 192
@@ -146,7 +251,7 @@ fn safe_reference(value: &str) -> bool {
 /// durable acceptance; this type checks the portable request's internal consistency.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct PeerInvocationRequest {
+pub struct ServingInvocationRequest {
     /// Locally generated immutable idempotency key.
     pub request_id: PeerRequestId,
     /// Exact selected catalog generation.
@@ -162,14 +267,14 @@ pub struct PeerInvocationRequest {
     /// Absolute remote admission/execution deadline.
     pub deadline_unix_ms: u64,
     /// Constrained authority reference; never an operator credential.
-    pub delegation: DelegatedAuthorization,
+    pub authorization: ServingAuthorization,
     /// Canonical digest used for same-key/different-request rejection.
     pub request_digest: String,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PeerInvocationRequestWire {
+struct ServingInvocationRequestWire {
     request_id: PeerRequestId,
     catalog_generation: u64,
     catalog_digest: CatalogDigest,
@@ -177,7 +282,7 @@ struct PeerInvocationRequestWire {
     request: InvocationRequest,
     limits: ExecutionLimits,
     deadline_unix_ms: u64,
-    delegation: DelegatedAuthorization,
+    authorization: ServingAuthorization,
     request_digest: String,
 }
 
@@ -189,17 +294,17 @@ struct InvocationDigestPayload<'a> {
     catalog_digest: &'a CatalogDigest,
     selection: &'a ResolvedCapabilitySnapshot,
     request: &'a InvocationRequest,
-    limits: ExecutionLimits,
+    limits: &'a ExecutionLimits,
     deadline_unix_ms: u64,
-    delegation: &'a DelegatedAuthorization,
+    authorization: &'a ServingAuthorization,
 }
 
-impl<'de> Deserialize<'de> for PeerInvocationRequest {
+impl<'de> Deserialize<'de> for ServingInvocationRequest {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        let wire = PeerInvocationRequestWire::deserialize(deserializer)?;
+        let wire = ServingInvocationRequestWire::deserialize(deserializer)?;
         let request = Self {
             request_id: wire.request_id,
             catalog_generation: wire.catalog_generation,
@@ -208,7 +313,7 @@ impl<'de> Deserialize<'de> for PeerInvocationRequest {
             request: wire.request,
             limits: wire.limits,
             deadline_unix_ms: wire.deadline_unix_ms,
-            delegation: wire.delegation,
+            authorization: wire.authorization,
             request_digest: wire.request_digest,
         };
         request.validate().map_err(serde::de::Error::custom)?;
@@ -216,9 +321,9 @@ impl<'de> Deserialize<'de> for PeerInvocationRequest {
     }
 }
 
-impl PeerInvocationRequest {
+impl ServingInvocationRequest {
     /// Constructs and canonically digests one exact peer request.
-    #[allow(clippy::too_many_arguments)] // Peer admission binds catalog selection, invocation, deadline, resource limits, and delegation in one digest.
+    #[allow(clippy::too_many_arguments)] // Peer admission binds catalog selection, invocation, deadline, resource limits, and authorization in one digest.
     pub fn new(
         request_id: PeerRequestId,
         catalog_generation: u64,
@@ -227,17 +332,18 @@ impl PeerInvocationRequest {
         request: InvocationRequest,
         limits: ExecutionLimits,
         deadline_unix_ms: u64,
-        delegation: DelegatedAuthorization,
+        authorization: impl Into<ServingAuthorization>,
     ) -> Result<Self, PeerProtocolError> {
+        let authorization = authorization.into();
         let request_digest = compute_request_digest(
             &request_id,
             catalog_generation,
             &catalog_digest,
             &selection,
             &request,
-            limits,
+            &limits,
             deadline_unix_ms,
-            &delegation,
+            &authorization,
         )?;
         let value = Self {
             request_id,
@@ -247,17 +353,34 @@ impl PeerInvocationRequest {
             request,
             limits,
             deadline_unix_ms,
-            delegation,
+            authorization,
             request_digest,
         };
         value.validate()?;
         Ok(value)
     }
 
-    /// Revalidates exact selection, delegation, bounds, and canonical digest.
+    /// Revalidates exact selection, authorization, bounds, and canonical digest.
     pub fn validate(&self) -> Result<(), PeerProtocolError> {
         self.limits.validate()?;
-        self.delegation.validate()?;
+        self.authorization.validate()?;
+        if matches!(self.authorization.origin(), InvocationOrigin::Direct)
+            && (self.request.context_manifest().is_some()
+                || self.request.inputs().iter().any(|input| {
+                    input.name() == milkdrift_capability::CONTEXT_MANIFEST_INPUT_NAME
+                        || input
+                            .name()
+                            .starts_with(milkdrift_capability::CONTEXT_ITEM_INPUT_PREFIX)
+                        || matches!(
+                            input.value(),
+                            milkdrift_capability::InvocationValueReference::WorkspaceValue { .. }
+                        )
+                }))
+        {
+            return Err(PeerProtocolError::InvalidContract(
+                "direct origin cannot carry workflow-selected inputs".to_owned(),
+            ));
+        }
         let _ = InvocationRequestDocument::new(self.request.clone())
             .to_canonical_json()
             .map_err(|error| PeerProtocolError::InvalidContract(error.to_string()))?;
@@ -266,14 +389,16 @@ impl PeerInvocationRequest {
             || self.request.capability() != self.selection.capability()
             || self.request.operation() != self.selection.operation()
             || self.request.provider_profile() != self.selection.provider_profile()
-            || self.delegation.request != self.request_id
-            || self.delegation.capability != *self.selection.capability()
-            || self.delegation.operation != *self.selection.operation()
-            || !self.delegation.limits.contains(self.limits)
+            || self.authorization.delegation().is_some_and(|delegation| {
+                delegation.request != self.request_id
+                    || delegation.capability != *self.selection.capability()
+                    || delegation.operation != *self.selection.operation()
+                    || !delegation.limits.contains(&self.limits)
+            })
             || !is_canonical_blake3_digest(self.catalog_digest.as_str())
         {
             return Err(PeerProtocolError::InvalidContract(
-                "peer invocation selection, catalog, request, or delegation mismatch".to_owned(),
+                "peer invocation selection, catalog, request, or authorization mismatch".to_owned(),
             ));
         }
         let expected = compute_request_digest(
@@ -282,9 +407,9 @@ impl PeerInvocationRequest {
             &self.catalog_digest,
             &self.selection,
             &self.request,
-            self.limits,
+            &self.limits,
             self.deadline_unix_ms,
-            &self.delegation,
+            &self.authorization,
         )?;
         if self.request_digest != expected {
             return Err(PeerProtocolError::DigestMismatch("invocation"));
@@ -329,13 +454,13 @@ fn compute_request_digest(
     catalog_digest: &CatalogDigest,
     selection: &ResolvedCapabilitySnapshot,
     request: &InvocationRequest,
-    limits: ExecutionLimits,
+    limits: &ExecutionLimits,
     deadline_unix_ms: u64,
-    delegation: &DelegatedAuthorization,
+    authorization: &ServingAuthorization,
 ) -> Result<String, PeerProtocolError> {
     let bytes = milkdrift_contracts::canonical_json_bytes(
         &InvocationDigestPayload {
-            schema_version: 1,
+            schema_version: 2,
             request_id,
             catalog_generation,
             catalog_digest,
@@ -343,7 +468,7 @@ fn compute_request_digest(
             request,
             limits,
             deadline_unix_ms,
-            delegation,
+            authorization,
         },
         milkdrift_contracts::JsonLimits {
             maximum_depth: 32,
@@ -412,7 +537,10 @@ pub enum InvocationAcceptance {
 
 impl InvocationAcceptance {
     /// Validates semantic bounds and binds the response to the exact submitted request.
-    pub fn validate_for(&self, request: &PeerInvocationRequest) -> Result<(), PeerProtocolError> {
+    pub fn validate_for(
+        &self,
+        request: &ServingInvocationRequest,
+    ) -> Result<(), PeerProtocolError> {
         let valid = match self {
             Self::Accepted {
                 request_id,
@@ -693,6 +821,8 @@ impl PeerObservation {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ObservationPage {
+    /// Current durable outcome, including uncertainty without a terminal event.
+    pub status: RemoteExecutionStatus,
     /// Exact remote execution.
     pub execution: PeerExecutionId,
     /// Exclusive resume cursor requested by the caller.
@@ -720,14 +850,19 @@ impl ObservationPage {
             });
         }
         match &self.history {
-            ObservationHistory::Hot if self.closed && !self.terminal => {
+            ObservationHistory::Hot
+                if self.closed
+                    && !self.terminal
+                    && self.status != RemoteExecutionStatus::OutcomeUnknown =>
+            {
                 return Err(PeerProtocolError::InvalidContract(
-                    "hot observation history closes only with terminal evidence".to_owned(),
+                    "hot observation history closes only with terminal evidence or durable uncertainty".to_owned(),
                 ));
             }
             ObservationHistory::Archived { summary } => {
                 summary.validate(&self.execution)?;
                 if !self.observations.is_empty()
+                    || self.status != summary.status
                     || !self.closed
                     || self.after_sequence > summary.last_sequence
                     || self.terminal != (summary.status == RemoteExecutionStatus::Terminal)
@@ -738,6 +873,11 @@ impl ObservationPage {
                 }
             }
             ObservationHistory::Hot => {}
+        }
+        if self.terminal && (!self.closed || self.status != RemoteExecutionStatus::Terminal) {
+            return Err(PeerProtocolError::InvalidContract(
+                "terminal observation page contradicts its durable status".to_owned(),
+            ));
         }
         let mut expected = self.after_sequence.saturating_add(1);
         for observation in &self.observations {

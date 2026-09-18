@@ -40,6 +40,8 @@ use thiserror::Error;
 mod command;
 mod layout;
 mod read;
+mod upload;
+pub use upload::{InputUploadRequest, MAX_INPUT_UPLOAD_BYTES};
 
 pub use command::{
     Command, CommandAccepted, CommandRequest, EvidenceRef, ProposalDecision, ResolveAction,
@@ -49,7 +51,7 @@ pub use read::{
     ApplicationReceiptHealthRead, ArtifactMetadataRead, AttemptOutputRead, AttemptRead,
     AttemptUsageRead, AuthorityDecisionRead, AuthorityRead, CapabilityOperationRead,
     CapabilityProvenanceRead, CapabilityRead, ContextManifestRead, DaemonState,
-    ExecutionAuthorityRead, HealthRead, ModelGenerationRead, NodeRead, Observation,
+    ExecutionAuthorityRead, HealthRead, HostRole, ModelGenerationRead, NodeRead, Observation,
     ObservationEnvelope, PeerCapabilityProvenanceRead, PeerExecutionHealthRead, PeerRead,
     ProposalRead, ResultAcceptanceRead, RevisionChange, RevisionDiffRead, RevisionRead,
     RevisionSummary, RunRead, TimelineCategory, TimelineEntry,
@@ -58,7 +60,7 @@ pub use read::{
 /// Supported control protocol major version.
 const PROTOCOL_MAJOR: u16 = 2;
 /// Supported control protocol minor version.
-const PROTOCOL_MINOR: u16 = 7;
+const PROTOCOL_MINOR: u16 = 8;
 /// Independent presentation-layout document version.
 const LAYOUT_SCHEMA_VERSION: u32 = 1;
 const AUTHENTICATED_CURSOR_SCHEMA_VERSION: u8 = 2;

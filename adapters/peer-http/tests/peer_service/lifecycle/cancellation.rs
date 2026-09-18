@@ -14,7 +14,7 @@ fn cancellation_before_entry_prevents_adapter_invocation_and_survives_claim_reco
         now().saturating_add(60_000),
         Vec::new(),
     )?;
-    configure_store(&store, &peer, &catalog.digest, 2)?;
+    configure_store(&store, &target, &peer, &catalog.digest, 2)?;
     let request = request(
         &peer,
         &target,
@@ -32,7 +32,11 @@ fn cancellation_before_entry_prevents_adapter_invocation_and_survives_claim_reco
         sequence: 1,
         reason: "operator cancellation".to_owned(),
     };
-    store.request_peer_cancellation(&peer, &cancellation, now())?;
+    store.request_peer_cancellation(
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+        &cancellation,
+        now(),
+    )?;
     let worker = WorkerId::new("cancel-worker")?;
     let claimed = store.claim_peer_dispatch(&PeerDispatchClaimRequest {
         worker: &worker,
@@ -46,7 +50,7 @@ fn cancellation_before_entry_prevents_adapter_invocation_and_survives_claim_reco
     assert!(
         store
             .mark_peer_entered(&PeerEntryRequest {
-                owner: &peer,
+                owner: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
                 execution: &execution,
                 worker: &worker,
                 claim_generation: 2,
@@ -89,8 +93,8 @@ fn cancellation_terminal_commit_fault_recovers_and_replays_the_exact_acknowledge
     let catalog_expiry = now().saturating_add(60_000);
     let catalog = milkdrift_peer_protocol::CatalogSnapshot::new(1, 1, catalog_expiry, Vec::new())?;
     store.set_peer_admission_open(true)?;
-    store.publish_peer_catalog(&PeerCatalogState {
-        peer: peer.clone(),
+    store.publish_peer_catalog(&ServingCatalogState {
+        caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         relationship_generation: 1,
         generation: catalog.generation,
         digest: catalog.digest.as_str().to_owned(),
@@ -113,13 +117,20 @@ fn cancellation_terminal_commit_fault_recovers_and_replays_the_exact_acknowledge
         sequence: 1,
         reason: "operator cancellation".to_owned(),
     };
-    store.request_peer_cancellation(&peer, &cancellation, now())?;
+    store.request_peer_cancellation(
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+        &cancellation,
+        now(),
+    )?;
 
     service.recover(1_024)?;
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     let acknowledgement = loop {
         let snapshot = store
-            .peer_execution(&peer, &execution)?
+            .peer_execution(
+                &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+                &execution,
+            )?
             .ok_or("cancelled execution disappeared")?;
         let PeerExecutionSnapshot::Hot(record) = snapshot else {
             return Err("cancelled execution archived before acknowledgement recovery".into());
@@ -164,7 +175,7 @@ fn post_entry_and_post_terminal_cancellation_and_revocation_preserve_truth() -> 
         now().saturating_add(60_000),
         Vec::new(),
     )?;
-    configure_store(&store, &peer, &catalog.digest, 3)?;
+    configure_store(&store, &target, &peer, &catalog.digest, 3)?;
 
     let entered_request = request(
         &peer,
@@ -180,14 +191,25 @@ fn post_entry_and_post_terminal_cancellation_and_revocation_preserve_truth() -> 
     let worker = WorkerId::new("cancel-entered-worker")?;
     let claimed = claim(&store, &worker)?;
     let generation = claimed.phase.claim().ok_or("claim missing")?.generation;
-    enter(&store, &peer, &entered_execution, &worker, generation)?;
+    enter(
+        &store,
+        &target,
+        &peer,
+        &entered_execution,
+        &worker,
+        generation,
+    )?;
     let entered_cancellation = PeerCancellationRequest {
         request_id: PeerRequestId::new("cancel-entered")?,
         execution: entered_execution.clone(),
         sequence: 1,
         reason: "disconnect after request".to_owned(),
     };
-    let requested = store.request_peer_cancellation(&peer, &entered_cancellation, now())?;
+    let requested = store.request_peer_cancellation(
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+        &entered_cancellation,
+        now(),
+    )?;
     assert!(matches!(
         requested.phase,
         PeerExecutionPhase::CancellationRequested {
@@ -223,14 +245,22 @@ fn post_entry_and_post_terminal_cancellation_and_revocation_preserve_truth() -> 
         1,
         TerminalStatus::Success,
     )?;
-    store.append_peer_observation(&peer, &terminal_execution, &terminal)?;
+    store.append_peer_observation(
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+        &terminal_execution,
+        &terminal,
+    )?;
     let terminal_cancellation = PeerCancellationRequest {
         request_id: PeerRequestId::new("cancel-terminal")?,
         execution: terminal_execution.clone(),
         sequence: 1,
         reason: "too late cancellation".to_owned(),
     };
-    let terminal_record = store.request_peer_cancellation(&peer, &terminal_cancellation, now())?;
+    let terminal_record = store.request_peer_cancellation(
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+        &terminal_cancellation,
+        now(),
+    )?;
     assert!(matches!(
         terminal_record.phase,
         PeerExecutionPhase::Terminal { .. }
@@ -244,8 +274,8 @@ fn post_entry_and_post_terminal_cancellation_and_revocation_preserve_truth() -> 
         &terminal_cancellation
     );
 
-    store.configure_peer_relationship(&PeerRelationshipState {
-        peer: peer.clone(),
+    store.configure_peer_relationship(&ServingCallerState {
+        caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         generation: 2,
         enabled: false,
         expires_at_unix_ms: now().saturating_add(600_000),
@@ -262,7 +292,7 @@ fn post_entry_and_post_terminal_cancellation_and_revocation_preserve_truth() -> 
     )?;
     assert!(matches!(
         store.admit_peer_execution(&PeerAdmission {
-            owner_peer: &peer,
+            caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
             request: &blocked_request,
             authority: &allowed_decision(&peer)?,
             execution: &PeerExecutionId::new("execution-after-revocation")?,
@@ -278,7 +308,10 @@ fn post_entry_and_post_terminal_cancellation_and_revocation_preserve_truth() -> 
     ));
     assert!(
         store
-            .peer_execution_by_request(&peer, &terminal_request.request_id)?
+            .peer_execution_by_request(
+                &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+                &terminal_request.request_id
+            )?
             .is_some()
     );
     let first_archive = store.archive_peer_executions(&PeerRetentionRequest {

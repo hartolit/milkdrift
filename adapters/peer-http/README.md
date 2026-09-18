@@ -2,7 +2,7 @@
 
 This package connects two configured Milkdrift hosts over authenticated HTTP. On the origin,
 `PeerRegistry` turns a remote catalog into ordinary local capability registrations. On the serving
-host, `PeerService` durably accepts requests and runs them on its capability host. Workflow
+host, capability-host's `PeerService` durably accepts requests and runs them on its capability host. Workflow
 scheduling remains with the origin's runtime; remote acceptance is a separate durable record.
 
 Operators should start with [peer operations](../../docs/operations/peers.md). For a production
@@ -38,11 +38,17 @@ and retains uncertainty for entered work without terminal evidence. A recovery c
 makes no progress is refused instead of looping indefinitely.
 
 The origin's remote adapter remaps its local capability identity to the pinned remote descriptor
-and constructs one `PeerInvocationRequest`. The server first checks for exact replay. Fresh requests
+and constructs one `ServingInvocationRequest` with a peer delegation and real workflow origin.
+It freezes explicit artifact inputs and the causal manifest before entry, then stages them against
+the final request, including its originating controller reservation, before submission. The server
+first checks for exact replay. Fresh requests
 must pass catalog and authority checks, then one store transaction binds acceptance, request digest,
 relationship/catalog generations, capacity, and dispatch availability. An acceptance response means
-that record is durable; a worker later claims it, rechecks authority, records entry, and calls the
-exact local adapter through `CapabilityHost::execute_exact_with_context`.
+that record is durable. The capability-host worker claims it, prepares the exact adapter, then
+rechecks authority, cancellation, claim expiry and selection before committing entry. Only that
+committed claim consumes the prepared handle. Adapter invocation and idempotency identities are
+scoped to the host, authenticated caller and durable acceptance; observation IDs retain the
+original accepted request identity.
 
 If the acceptance reply is lost, `PeerHttpClient::submit` retries the same request up to three times
 for transport/unavailable errors, then looks up the same key. It does not change the catalog or
@@ -61,8 +67,8 @@ side effects globally exactly once.
 
 ## Artifacts, cancellation, and retained history
 
-Artifact exchange is explicit: `PeerService` verifies that the transfer belongs to an accepted
-execution, then `PeerArtifactStore` negotiates metadata and handles chunks. `CorePeerArtifactStore`
+Artifact exchange is explicit: `PeerService` verifies an accepted output execution or an exact
+prospective input request, then `PeerArtifactStore` negotiates metadata and handles chunks. `CorePeerArtifactStore`
 uses the ordinary core publication/read ports, preserving sensitivity, retention, and source
 provenance while adding peer/execution origin. Uploads resume from exact offsets and become visible
 only after content verification and publication. Downloads use verified ranges. The remote adapter
@@ -95,7 +101,8 @@ Consequently, an archived execution can replay its final summary while a new dow
 through its old observation links is refused. Core artifact retention remains independently owned.
 
 For implementation changes, `remote` owns catalog registrations and the origin adapter; `client`
-and `http` own HTTP framing; `service` owns authorization, execution, recovery, and transfer decisions;
-`dispatch` owns fixed workers; `artifact` bridges content storage. The
+and `http` own HTTP framing. Capability-host's [serving module](../../crates/capability-host/src/serving.rs)
+owns authorization, execution, recovery, fixed workers and transfer decisions; its artifact bridge
+uses ordinary core storage. The
 [peer service suite](tests/peer_service.rs) and remote adapter conformance tests cover these boundaries
 with local fixtures. They do not qualify arbitrary external peer deployments.

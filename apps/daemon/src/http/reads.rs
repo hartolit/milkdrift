@@ -86,6 +86,7 @@ pub(super) async fn readiness(
     success(
         request_id,
         milkdrift_control_protocol::HealthRead {
+            role: health.role,
             state: health.state,
             live: health.live,
             ready: health.ready,

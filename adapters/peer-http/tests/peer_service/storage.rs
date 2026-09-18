@@ -137,8 +137,8 @@ fn admission_requires_a_live_exact_relationship_and_catalog() -> TestResult {
         )?;
         let authority = allowed_decision(&peer)?;
         let boundary = now();
-        let mut relationship = PeerRelationshipState {
-            peer: peer.clone(),
+        let mut relationship = ServingCallerState {
+            caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
             generation: 1,
             enabled: true,
             expires_at_unix_ms: boundary - u64::from(case == Case::ExpiredRelationship),
@@ -149,8 +149,8 @@ fn admission_requires_a_live_exact_relationship_and_catalog() -> TestResult {
             store.configure_peer_relationship(&relationship)?;
         }
         if !matches!(case, Case::MissingRelationship | Case::MissingCatalog) {
-            store.publish_peer_catalog(&PeerCatalogState {
-                peer: peer.clone(),
+            store.publish_peer_catalog(&ServingCatalogState {
+                caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
                 relationship_generation: 1,
                 generation: 1,
                 digest: catalog.digest.as_str().to_owned(),
@@ -169,7 +169,7 @@ fn admission_requires_a_live_exact_relationship_and_catalog() -> TestResult {
         };
         let execution = PeerExecutionId::new("execution-admission-current")?;
         let outcome = store.admit_peer_execution(&PeerAdmission {
-            owner_peer: &peer,
+            caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
             request: &request,
             authority: &authority,
             execution: &execution,
@@ -186,13 +186,27 @@ fn admission_requires_a_live_exact_relationship_and_catalog() -> TestResult {
                 matches!(outcome, PeerAdmissionOutcome::Rejected(actual) if actual == expected),
                 "unexpected admission result for {case:?}: {outcome:?}"
             );
-            assert!(store.peer_execution(&peer, &execution)?.is_none());
+            assert!(
+                store
+                    .peer_execution(
+                        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+                        &execution
+                    )?
+                    .is_none()
+            );
             let status = store.peer_execution_status()?;
             assert_eq!(status.active, 0);
             assert_eq!(status.dispatch_queued, 0);
         } else {
             assert!(matches!(outcome, PeerAdmissionOutcome::Accepted(_)));
-            assert!(store.peer_execution(&peer, &execution)?.is_some());
+            assert!(
+                store
+                    .peer_execution(
+                        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+                        &execution
+                    )?
+                    .is_some()
+            );
             assert_eq!(store.peer_execution_status()?.active, 1);
         }
     }
@@ -212,7 +226,7 @@ fn atomic_final_slot_and_idempotency_survive_reopen() -> TestResult {
         now().saturating_add(60_000),
         Vec::new(),
     )?;
-    configure_store(store.as_ref(), &peer, &catalog.digest, 1)?;
+    configure_store(store.as_ref(), &target, &peer, &catalog.digest, 1)?;
     let request_a = request(
         &peer,
         &target,
@@ -241,10 +255,11 @@ fn atomic_final_slot_and_idempotency_survive_reopen() -> TestResult {
         let peer = peer.clone();
         let barrier = barrier.clone();
         let authority = allowed_decision(&peer)?;
+        let target = target.clone();
         handles.push(thread::spawn(move || {
             barrier.wait();
             store.admit_peer_execution(&PeerAdmission {
-                owner_peer: &peer,
+                caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
                 request: &request,
                 authority: &authority,
                 execution: &execution,
@@ -295,7 +310,7 @@ fn atomic_final_slot_and_idempotency_survive_reopen() -> TestResult {
     let reopened = RedbStore::open(root.path())?;
     assert!(matches!(
         reopened.admit_peer_execution(&PeerAdmission {
-            owner_peer: &peer,
+            caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
             request: &accepted_request,
             authority: &allowed_decision(&peer)?,
             execution: &accepted_execution,
@@ -320,7 +335,7 @@ fn atomic_final_slot_and_idempotency_survive_reopen() -> TestResult {
     )?;
     assert!(matches!(
         reopened.admit_peer_execution(&PeerAdmission {
-            owner_peer: &peer,
+            caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
             request: &different,
             authority: &allowed_decision(&peer)?,
             execution: &accepted_execution,
@@ -371,7 +386,7 @@ fn request_index_with_one_mismatched_identity_is_rejected_as_corruption() -> Tes
     let second_execution = PeerExecutionId::new("execution-index-second")?;
     {
         let store = RedbStore::open(root.path())?;
-        configure_store(&store, &peer, &catalog.digest, 2)?;
+        configure_store(&store, &target, &peer, &catalog.digest, 2)?;
         admit(&store, &peer, &first, &first_execution, 2)?;
         admit(&store, &peer, &second, &second_execution, 2)?;
     }
@@ -396,7 +411,7 @@ fn request_index_with_one_mismatched_identity_is_rejected_as_corruption() -> Tes
 
     let reopened = RedbStore::open(root.path())?;
     let result = reopened.admit_peer_execution(&PeerAdmission {
-        owner_peer: &peer,
+        caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         request: &first,
         authority: &allowed_decision(&peer)?,
         execution: &first_execution,
@@ -436,7 +451,13 @@ fn commit_boundary_faults_preserve_acceptance_claim_and_observation_truth() -> T
         now().saturating_add(60_000),
         Vec::new(),
     )?;
-    configure_store(&admission_store, &peer, &admission_catalog.digest, 2)?;
+    configure_store(
+        &admission_store,
+        &target,
+        &peer,
+        &admission_catalog.digest,
+        2,
+    )?;
     let admission_request = request(
         &peer,
         &target,
@@ -450,7 +471,7 @@ fn commit_boundary_faults_preserve_acceptance_claim_and_observation_truth() -> T
     assert!(
         admission_store
             .admit_peer_execution(&PeerAdmission {
-                owner_peer: &peer,
+                caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
                 request: &admission_request,
                 authority: &allowed_decision(&peer)?,
                 execution: &admission_execution,
@@ -468,7 +489,7 @@ fn commit_boundary_faults_preserve_acceptance_claim_and_observation_truth() -> T
     let admission_store = RedbStore::open(admission_root.path())?;
     assert!(matches!(
         admission_store.admit_peer_execution(&PeerAdmission {
-            owner_peer: &peer,
+            caller: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
             request: &admission_request,
             authority: &allowed_decision(&peer)?,
             execution: &admission_execution,
@@ -488,7 +509,13 @@ fn commit_boundary_faults_preserve_acceptance_claim_and_observation_truth() -> T
         RedbStoreConfig::new(claim_root.path())
             .with_fault_injector(Arc::new(FailOnce::new(FaultPoint::BeforePeerClaimCommit))),
     )?;
-    configure_store(&claim_store, &peer, &admission_request.catalog_digest, 2)?;
+    configure_store(
+        &claim_store,
+        &target,
+        &peer,
+        &admission_request.catalog_digest,
+        2,
+    )?;
     let claim_request = request(
         &peer,
         &target,
@@ -516,6 +543,7 @@ fn commit_boundary_faults_preserve_acceptance_claim_and_observation_truth() -> T
     let claim = claimed.phase.claim().ok_or("claim missing")?.clone();
     enter(
         &claim_store,
+        &target,
         &peer,
         &claim_execution,
         &worker,
@@ -531,17 +559,29 @@ fn commit_boundary_faults_preserve_acceptance_claim_and_observation_truth() -> T
         terminal_observation(&claim_request, &claim_execution, 1, TerminalStatus::Success)?;
     assert!(
         observation_store
-            .append_peer_observation(&peer, &claim_execution, &terminal)
+            .append_peer_observation(
+                &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+                &claim_execution,
+                &terminal
+            )
             .is_err()
     );
     drop(observation_store);
     let observation_store = RedbStore::open(claim_root.path())?;
     assert!(matches!(
-        observation_store.append_peer_observation(&peer, &claim_execution, &terminal)?,
+        observation_store.append_peer_observation(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+            &claim_execution,
+            &terminal
+        )?,
         milkdrift_persistence::PeerObservationAppend::Replayed(_)
     ));
-    let observations =
-        observation_store.peer_observations(&peer, &claim_execution, 0, PageSize::new(1)?)?;
+    let observations = observation_store.peer_observations(
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+        &claim_execution,
+        0,
+        PageSize::new(1)?,
+    )?;
     assert_eq!(observations.observations, vec![terminal]);
     Ok(())
 }
@@ -559,7 +599,7 @@ fn claims_recover_at_truthful_entry_boundary_and_late_terminal_is_idempotent() -
         now().saturating_add(60_000),
         Vec::new(),
     )?;
-    configure_store(&store, &peer, &catalog.digest, 4)?;
+    configure_store(&store, &target, &peer, &catalog.digest, 4)?;
     let request = request(
         &peer,
         &target,
@@ -579,11 +619,21 @@ fn claims_recover_at_truthful_entry_boundary_and_late_terminal_is_idempotent() -
     let second = claim(&store, &worker)?;
     let second_claim = second.phase.claim().ok_or("second claim absent")?.clone();
     assert_ne!(first_generation, second_claim.generation);
-    enter(&store, &peer, &execution, &worker, second_claim.generation)?;
+    enter(
+        &store,
+        &target,
+        &peer,
+        &execution,
+        &worker,
+        second_claim.generation,
+    )?;
     let recovery = store.recover_peer_claims(now(), PageSize::new(8)?)?;
     assert_eq!(recovery.uncertain, 1);
     let uncertain = store
-        .peer_execution(&peer, &execution)?
+        .peer_execution(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+            &execution,
+        )?
         .ok_or("execution missing")?;
     let PeerExecutionSnapshot::Hot(uncertain) = uncertain else {
         return Err("uncertain execution archived unexpectedly".into());
@@ -596,14 +646,27 @@ fn claims_recover_at_truthful_entry_boundary_and_late_terminal_is_idempotent() -
 
     let terminal = terminal_observation(&request, &execution, 1, TerminalStatus::Success)?;
     assert!(matches!(
-        store.append_peer_observation(&peer, &execution, &terminal)?,
+        store.append_peer_observation(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+            &execution,
+            &terminal
+        )?,
         milkdrift_persistence::PeerObservationAppend::Appended(_)
     ));
     assert!(matches!(
-        store.append_peer_observation(&peer, &execution, &terminal)?,
+        store.append_peer_observation(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+            &execution,
+            &terminal
+        )?,
         milkdrift_persistence::PeerObservationAppend::Replayed(_)
     ));
-    let page = store.peer_observations(&peer, &execution, 0, PageSize::new(1)?)?;
+    let page = store.peer_observations(
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+        &execution,
+        0,
+        PageSize::new(1)?,
+    )?;
     assert_eq!(page.observations, vec![terminal]);
     let archived = store.archive_peer_executions(&PeerRetentionRequest {
         terminal_before_or_at: TimestampMillis::new(now().saturating_add(1)),
@@ -613,7 +676,10 @@ fn claims_recover_at_truthful_entry_boundary_and_late_terminal_is_idempotent() -
     assert_eq!(archived.archived, 1);
     assert!(
         store
-            .peer_execution_by_request(&peer, &request.request_id)?
+            .peer_execution_by_request(
+                &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+                &request.request_id
+            )?
             .is_some()
     );
     Ok(())
@@ -632,7 +698,7 @@ fn cumulative_output_artifacts_cannot_exceed_the_accepted_total_quota() -> TestR
         now().saturating_add(60_000),
         Vec::new(),
     )?;
-    configure_store(&store, &peer, &catalog.digest, 1)?;
+    configure_store(&store, &target, &peer, &catalog.digest, 1)?;
     let request = request_with_input_artifact(
         &peer,
         &target,
@@ -646,7 +712,10 @@ fn cumulative_output_artifacts_cannot_exceed_the_accepted_total_quota() -> TestR
     let execution = PeerExecutionId::new("execution-artifact-quota")?;
     admit(&store, &peer, &request, &execution, 1)?;
     let admitted = store
-        .peer_execution(&peer, &execution)?
+        .peer_execution(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+            &execution,
+        )?
         .ok_or("admitted execution missing")?;
     let PeerExecutionSnapshot::Hot(admitted) = admitted else {
         return Err("admitted execution archived unexpectedly".into());
@@ -655,12 +724,20 @@ fn cumulative_output_artifacts_cannot_exceed_the_accepted_total_quota() -> TestR
     let worker = WorkerId::new("artifact-quota-worker")?;
     let claimed = claim(&store, &worker)?;
     let generation = claimed.phase.claim().ok_or("claim missing")?.generation;
-    enter(&store, &peer, &execution, &worker, generation)?;
+    enter(&store, &target, &peer, &execution, &worker, generation)?;
 
     let first = output_observation(&request, &execution, 1, "first", 600_000, 'a')?;
-    store.append_peer_observation(&peer, &execution, &first)?;
+    store.append_peer_observation(
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+        &execution,
+        &first,
+    )?;
     let second = output_observation(&request, &execution, 2, "second", 1, 'b')?;
-    let Err(error) = store.append_peer_observation(&peer, &execution, &second) else {
+    let Err(error) = store.append_peer_observation(
+        &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+        &execution,
+        &second,
+    ) else {
         return Err("cumulative output bytes exceeded the accepted quota".into());
     };
     assert!(matches!(
@@ -671,7 +748,10 @@ fn cumulative_output_artifacts_cannot_exceed_the_accepted_total_quota() -> TestR
         }
     ));
     let snapshot = store
-        .peer_execution(&peer, &execution)?
+        .peer_execution(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+            &execution,
+        )?
         .ok_or("execution missing after bounded refusal")?;
     let PeerExecutionSnapshot::Hot(record) = snapshot else {
         return Err("active execution archived unexpectedly".into());
@@ -705,7 +785,7 @@ fn peer_integrity_requires_accounting_for_every_active_peer() -> TestResult {
     )?;
     {
         let store = RedbStore::open(root.path())?;
-        configure_store(&store, &peer, &catalog.digest, 1)?;
+        configure_store(&store, &target, &peer, &catalog.digest, 1)?;
         admit(&store, &peer, &invocation, &execution, 1)?;
         store.verify_peer_execution_integrity()?;
     }
@@ -714,7 +794,13 @@ fn peer_integrity_requires_accounting_for_every_active_peer() -> TestResult {
     let write = database.begin_write()?;
     let removed = {
         let mut accounting = write.open_table(PEER_EXECUTION_ACCOUNTING)?;
-        accounting.remove(peer.as_str())?.is_some()
+        accounting
+            .remove(
+                milkdrift_peer_protocol::ServingCaller::peer(&target, &peer)
+                    .storage_key()
+                    .as_str(),
+            )?
+            .is_some()
     };
     assert!(removed, "per-peer accounting row was absent");
     write.commit()?;

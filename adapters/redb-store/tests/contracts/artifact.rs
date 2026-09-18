@@ -1,4 +1,6 @@
 use super::*;
+#[path = "artifact/ownership.rs"]
+mod ownership;
 
 #[test]
 fn offline_artifact_inspection_and_backup_preserve_partial_corrupt_and_missing_content()
@@ -738,9 +740,22 @@ fn artifact_publication_resumes_deduplicates_verifies_and_cleans_orphans()
     assert!(first_commit.was_published());
     assert_eq!(first_commit.content_deduplicated(), Some(false));
     assert!(store.is_committed(metadata.reference())?);
-    assert!(store.is_referenced_by_run(request.run(), metadata.reference())?);
+    assert!(
+        store.is_referenced_by_run(
+            request
+                .owner()
+                .run()
+                .ok_or("fixture requires a workflow publication")?,
+            metadata.reference()
+        )?
+    );
     assert_eq!(
-        store.workspace_usage(request.run())?,
+        store.workspace_usage(
+            request
+                .owner()
+                .run()
+                .ok_or("fixture requires a workflow publication")?
+        )?,
         request.resulting_usage()
     );
     assert!(
@@ -770,7 +785,11 @@ fn artifact_publication_resumes_deduplicates_verifies_and_cleans_orphans()
     let second_metadata = artifact_metadata("artifact-two", content, ArtifactSensitivity::Public)?;
     let second = BeginArtifactPublication::new(
         ArtifactPublicationId::new("publication-two")?,
-        request.run().clone(),
+        request
+            .owner()
+            .run()
+            .ok_or("fixture requires a workflow publication")?
+            .clone(),
         second_metadata.clone(),
         budget,
         request.resulting_usage(),
@@ -787,9 +806,22 @@ fn artifact_publication_resumes_deduplicates_verifies_and_cleans_orphans()
     let second_commit = store.commit_publication(second.publication())?;
     assert!(second_commit.was_published());
     assert_eq!(second_commit.content_deduplicated(), Some(true));
-    assert!(store.is_referenced_by_run(request.run(), second_metadata.reference())?);
+    assert!(
+        store.is_referenced_by_run(
+            request
+                .owner()
+                .run()
+                .ok_or("fixture requires a workflow publication")?,
+            second_metadata.reference()
+        )?
+    );
     assert_eq!(
-        store.workspace_usage(request.run())?,
+        store.workspace_usage(
+            request
+                .owner()
+                .run()
+                .ok_or("fixture requires a workflow publication")?
+        )?,
         second.resulting_usage()
     );
     let read = ArtifactReadRequest::new(

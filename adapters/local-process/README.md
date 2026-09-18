@@ -1,6 +1,6 @@
 # Local process adapter
 
-Use this adapter to run a configured executable as a workflow task: a compiler, verifier, or
+Use this adapter to run a configured executable as a workflow task or independent invocation: a compiler, verifier, or
 coding agent, for example. A `ProcessProfile` fixes the executable's bytes, arguments, working
 directory, inputs, outputs, and limits. `LocalProcessAdapter` binds that profile to the machine and
 advertises the resulting generation to the [capability host](../../crates/capability-host/README.md).
@@ -14,9 +14,11 @@ paths before producing `descriptor()`. The daemon uses this path in
 [capability registration](../../apps/daemon/src/host/capabilities.rs). The adapter needs an injected
 `InvocationDataAccess` and `SecretResolver`, so it can use durable inputs without knowing store layout.
 
-After runtime authorizes entry, the adapter materializes only configured inputs, selects the working
-directory, expands argument placeholders, prepares stdin and the environment, then rechecks executable
-identity immediately before spawning. Each argument template produces one OS argument. A substituted
+During preparation, the adapter materializes only configured inputs, selects the working directory,
+expands argument placeholders, and freezes stdin and the environment. The runtime or serving owner
+then rechecks authority and durably authorizes entry. Only the consumed prepared handle can spawn,
+after rechecking executable identity. Direct inputs use their explicit selection and host-invocation
+artifact owner; workflow inputs retain their exact causal manifest. Each argument template produces one OS argument. A substituted
 value containing spaces or shell metacharacters stays in that argument; the adapter does not insert
 a shell. The configured executable still determines how it interprets those arguments.
 

@@ -1,8 +1,8 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 11;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 12;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
-pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 16;
+pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 17;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
 pub(crate) const CLOCK_WATERMARK_UNIX_MS_KEY: &str = "boundary_clock_high_water_unix_ms";
 pub(crate) const LEASE_SET_REVISION_KEY: &str = "lease_set_revision";
@@ -52,6 +52,8 @@ physical_tables! {
 // JSON owned by the inward contracts.
 // Physical-format markers and optimistic aggregate revisions.
 METADATA: &'static str, u64 = "milkdrift.v1.metadata";
+// Installation identity is independent of role, configured callers and process boot.
+SERVING_HOST_IDENTITY: &'static str, &'static str = "milkdrift.v1.serving.host_identity";
 // Authoritative immutable revision documents plus a derived and verifiable digest index.
 REVISIONS: &'static str, &'static [u8] = "milkdrift.v1.revisions.by_id";
 REVISIONS_BY_DIGEST: &'static [u8], &'static [u8] = "milkdrift.v1.revisions.by_digest_and_id";
@@ -117,7 +119,7 @@ ARTIFACT_DIGEST_RESERVATIONS: &'static [u8], u8 = "milkdrift.v1.artifacts.reserv
 ARTIFACTS_BY_DIGEST: &'static [u8], &'static [u8] = "milkdrift.v1.artifacts.by_digest_and_id";
 // Derived occurrence index plus authoritative per-run membership/accounting evidence.
 ARTIFACT_REFERENCES: &'static [u8], &'static [u8] = "milkdrift.v1.artifacts.references";
-RUN_ARTIFACT_OWNERSHIP: &'static [u8], &'static [u8] = "milkdrift.v1.artifacts.ownership_by_run";
+ARTIFACT_OWNERSHIP: &'static [u8], &'static [u8] = "milkdrift.v1.artifacts.ownership_by_run";
 ARTIFACT_ACCOUNTING: &'static str, &'static [u8] = "milkdrift.v1.artifacts.accounting";
 WORKSPACE_USAGE: &'static str, &'static [u8] = "milkdrift.v1.workspace.usage";
 WORKSPACE_BUDGETS: &'static str, &'static [u8] = "milkdrift.v1.workspace.budgets";

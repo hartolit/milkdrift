@@ -36,13 +36,30 @@ impl Owner {
         resources: RequestedResourceFacts,
         boundary: &str,
     ) -> Result<AuthorityDecisionSnapshot, PublicFailure> {
+        self.evaluate_authority_with_budget(
+            session,
+            operation,
+            resources,
+            AuthorityBudget::default(),
+            boundary,
+        )
+    }
+
+    pub(super) fn evaluate_authority_with_budget(
+        &self,
+        session: &ActorSession,
+        operation: AuthorityOperation,
+        resources: RequestedResourceFacts,
+        budget: AuthorityBudget,
+        boundary: &str,
+    ) -> Result<AuthorityDecisionSnapshot, PublicFailure> {
         let claim = session.context.authority();
         let now = self.now()?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"milkdrift.daemon-authority.v1\0");
         hasher.update(session.actor.as_str().as_bytes());
         hasher.update(boundary.as_bytes());
-        hasher.update(format!("{operation:?}{resources:?}{now}").as_bytes());
+        hasher.update(format!("{operation:?}{resources:?}{budget:?}{now}").as_bytes());
         let request = AuthorityRequest {
             decision: DecisionId::new(format!("decision:{}", hasher.finalize()))
                 .map_err(|error| invalid(&error.to_string()))?,
@@ -53,7 +70,7 @@ impl Owner {
             revocation_generation: claim.revocation_generation(),
             operation,
             resources,
-            budget: AuthorityBudget::default(),
+            budget,
             evaluated_at: BoundaryTimeMillis::new(now),
             provenance: AuthorityExecutionProvenance::default(),
         };

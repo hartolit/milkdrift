@@ -55,6 +55,8 @@ use serde_json::{Value, json};
 
 #[path = "mock_endpoints/continuation.rs"]
 mod continuation;
+#[path = "mock_endpoints/direct.rs"]
+mod direct;
 #[path = "mock_endpoints/effect_stages.rs"]
 mod effect_stages;
 #[path = "mock_endpoints/runtime_session.rs"]

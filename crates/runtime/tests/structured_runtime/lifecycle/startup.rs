@@ -592,6 +592,7 @@ impl SnapshotStore for StartupProbeStore {
 
 impl ArtifactStore for StartupProbeStore {
     forward_store_methods! {
+        fn artifact_usage(&self, owner: &milkdrift_workspace::ArtifactOwner) -> PersistenceResult<milkdrift_workspace::WorkspaceUsage>;
         fn begin_publication(
             &self,
             request: &BeginArtifactPublication,

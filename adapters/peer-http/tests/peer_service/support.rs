@@ -34,25 +34,25 @@ pub(super) use milkdrift_capability_host::{
     AdapterError, AdapterInvocation, AdapterReporter, CapabilityAdapter, CapabilityHost,
     CapabilitySelectionPolicy, HostConfig,
 };
-pub(super) use milkdrift_peer_http::{
-    CorePeerArtifactStore, InsecureLoopbackMode, PeerArtifactError, PeerArtifactStore,
-    PeerClientConfig, PeerClock, PeerClockError, PeerHttpError, PeerRelationship, PeerServerConfig,
-    PeerService, PeerWorkerConfig, SystemPeerClock,
+pub(super) use milkdrift_capability_host::{
+    CorePeerArtifactStore, PeerArtifactError, PeerArtifactStore, PeerClock, PeerClockError,
+    PeerRelationship, PeerServerConfig, PeerService, PeerWorkerConfig, SystemPeerClock,
 };
+pub(super) use milkdrift_peer_http::{InsecureLoopbackMode, PeerClientConfig};
 pub(super) use milkdrift_peer_protocol::{
     ArtifactChunk, ArtifactMetadataOffer, ArtifactTransferDecision, ArtifactTransferDirection,
     CancellationDisposition, CatalogDigest, DelegatedAuthorization, DelegationRef, ExecutionLimits,
     HardLimits, HeartbeatLease, InvocationAcceptance, ObservationCategory, ObservationHistory,
     PeerAction, PeerAuthority, PeerCancellationAcknowledgement, PeerCancellationRequest,
-    PeerExecutionId, PeerInvocationRequest, PeerObservation, PeerRequestId, ProtocolVersionRange,
-    SessionId, TransferId,
+    PeerExecutionId, PeerObservation, PeerRequestId, ProtocolVersionRange,
+    ServingInvocationRequest, SessionId, TransferId,
 };
 pub(super) use milkdrift_persistence::{
     ArtifactStore, PageSize, PeerAdmission, PeerAdmissionOutcome, PeerAdmissionRejection,
-    PeerArchivedDisposition, PeerCancellationRecord, PeerCatalogState, PeerClaimOutcome,
-    PeerDispatchClaimRequest, PeerEntryOutcome, PeerEntryRequest, PeerExecutionPhase,
-    PeerExecutionSnapshot, PeerExecutionStore, PeerExecutionTombstone, PeerRelationshipState,
-    PeerRetentionRequest, PersistenceError, StorageFailureClass, TimestampMillis, WorkerId,
+    PeerArchivedDisposition, PeerCancellationRecord, PeerClaimOutcome, PeerDispatchClaimRequest,
+    PeerEntryOutcome, PeerEntryRequest, PeerExecutionPhase, PeerExecutionSnapshot,
+    PeerExecutionStore, PeerExecutionTombstone, PeerRetentionRequest, PersistenceError,
+    ServingCallerState, ServingCatalogState, StorageFailureClass, TimestampMillis, WorkerId,
 };
 pub(super) use milkdrift_redb_store::{
     FaultInjector, FaultPoint, RedbStore, RedbStoreConfig, injected_failure,
@@ -265,6 +265,10 @@ impl CapabilityAdapter for ClockFailingAdapter {
 }
 
 impl CapabilityAdapter for TerminalAdapter {
+    fn accepts_direct_inputs(&self) -> bool {
+        true
+    }
+
     fn admission_envelope(
         &self,
         _invocation: &AdapterInvocation<'_>,
@@ -379,6 +383,9 @@ pub(super) fn relationship(
         artifact_bytes: 1_048_576,
         duration_ms: 30_000,
         cost_micros: 0,
+        cost_currency: None,
+        input_units: None,
+        output_units: None,
         observations: 100,
     };
     Ok(PeerRelationship {
@@ -402,7 +409,7 @@ pub(super) fn relationship(
         execution_network_profiles: BTreeSet::new(),
         execution_network_destinations: BTreeSet::new(),
         execution_secrets: BTreeSet::new(),
-        execution_limits: limits,
+        execution_limits: limits.clone(),
         maximum_concurrent,
         maximum_requests_per_minute: 10_000,
         maximum_artifact_bytes: limits.artifact_bytes,
@@ -452,20 +459,21 @@ pub(super) fn server_config(
 
 pub(super) fn configure_store(
     store: &RedbStore,
+    target: &PeerId,
     peer: &PeerId,
     digest: &CatalogDigest,
     maximum: u32,
 ) -> TestResult {
     store.set_peer_admission_open(true)?;
-    store.configure_peer_relationship(&PeerRelationshipState {
-        peer: peer.clone(),
+    store.configure_peer_relationship(&ServingCallerState {
+        caller: milkdrift_peer_protocol::ServingCaller::peer(target, peer),
         generation: 1,
         enabled: true,
         expires_at_unix_ms: now().saturating_add(600_000),
         maximum_active: maximum,
     })?;
-    store.publish_peer_catalog(&PeerCatalogState {
-        peer: peer.clone(),
+    store.publish_peer_catalog(&ServingCatalogState {
+        caller: milkdrift_peer_protocol::ServingCaller::peer(target, peer),
         relationship_generation: 1,
         generation: 1,
         digest: digest.as_str().to_owned(),
@@ -477,13 +485,13 @@ pub(super) fn configure_store(
 pub(super) fn admit(
     store: &RedbStore,
     peer: &PeerId,
-    request: &PeerInvocationRequest,
+    request: &ServingInvocationRequest,
     execution: &PeerExecutionId,
     maximum: u32,
 ) -> TestResult {
     assert!(matches!(
         store.admit_peer_execution(&PeerAdmission {
-            owner_peer: peer,
+            caller: &request.authorization.caller(),
             request,
             authority: &allowed_decision(peer)?,
             execution,
@@ -516,6 +524,7 @@ pub(super) fn claim(
 
 pub(super) fn enter(
     store: &RedbStore,
+    target: &PeerId,
     peer: &PeerId,
     execution: &PeerExecutionId,
     worker: &WorkerId,
@@ -523,7 +532,7 @@ pub(super) fn enter(
 ) -> TestResult {
     assert!(matches!(
         store.mark_peer_entered(&PeerEntryRequest {
-            owner: peer,
+            owner: &milkdrift_peer_protocol::ServingCaller::peer(target, peer),
             execution,
             worker,
             claim_generation,
@@ -582,7 +591,7 @@ pub(super) fn request(
     catalog_digest: CatalogDigest,
     request_identity: &str,
     invocation_identity: &str,
-) -> TestResult<PeerInvocationRequest> {
+) -> TestResult<ServingInvocationRequest> {
     request_with_optional_input_artifact(
         issuer,
         target,
@@ -605,7 +614,7 @@ pub(super) fn request_with_input_artifact(
     request_identity: &str,
     invocation_identity: &str,
     input_artifact_bytes: u64,
-) -> TestResult<PeerInvocationRequest> {
+) -> TestResult<ServingInvocationRequest> {
     request_with_optional_input_artifact(
         issuer,
         target,
@@ -628,7 +637,7 @@ pub(super) fn request_with_optional_input_artifact(
     request_identity: &str,
     invocation_identity: &str,
     input_artifact_bytes: Option<u64>,
-) -> TestResult<PeerInvocationRequest> {
+) -> TestResult<ServingInvocationRequest> {
     let operation = OperationId::new("test.execute")?;
     let selection = ResolvedCapabilitySnapshot::from_descriptor(descriptor, &operation)?;
     let inputs = input_artifact_bytes
@@ -662,17 +671,21 @@ pub(super) fn request_with_optional_input_artifact(
         artifact_bytes: 1_048_576,
         duration_ms: 30_000,
         cost_micros: 0,
+        cost_currency: None,
+        input_units: None,
+        output_units: None,
         observations: 100,
     };
-    Ok(PeerInvocationRequest::new(
+    Ok(ServingInvocationRequest::new(
         request_id.clone(),
         catalog_generation,
         catalog_digest,
         selection,
         invocation,
-        limits,
+        limits.clone(),
         deadline,
         DelegatedAuthorization {
+            controller_reservation: None,
             reference: DelegationRef::new("delegation-configured")?,
             issuer_peer: issuer.clone(),
             actor: ActorRef::new(format!("peer:{}", issuer.as_str()))?,
@@ -683,19 +696,21 @@ pub(super) fn request_with_optional_input_artifact(
             limits,
             expires_at_unix_ms: deadline,
             nonce: invocation_identity.to_owned(),
-            provenance: milkdrift_peer_protocol::PeerExecutionProvenance {
-                run: "run-peer-test".to_owned(),
-                revision: format!("rev_{}", "1".repeat(64)),
-                node: "node-peer-test".to_owned(),
-                execution: "execution-peer-test".to_owned(),
-                attempt: "attempt-peer-test".to_owned(),
+            origin: milkdrift_peer_protocol::InvocationOrigin::Workflow {
+                provenance: milkdrift_peer_protocol::PeerExecutionProvenance {
+                    run: "run-peer-test".to_owned(),
+                    revision: format!("rev_{}", "1".repeat(64)),
+                    node: "node-peer-test".to_owned(),
+                    execution: "execution-peer-test".to_owned(),
+                    attempt: "attempt-peer-test".to_owned(),
+                },
             },
         },
     )?)
 }
 
 pub(super) fn terminal_observation(
-    request: &PeerInvocationRequest,
+    request: &ServingInvocationRequest,
     execution: &PeerExecutionId,
     sequence: u64,
     status: TerminalStatus,
@@ -722,7 +737,7 @@ pub(super) fn terminal_observation(
 }
 
 pub(super) fn output_observation(
-    request: &PeerInvocationRequest,
+    request: &ServingInvocationRequest,
     execution: &PeerExecutionId,
     sequence: u64,
     name: &str,
@@ -751,7 +766,7 @@ pub(super) fn output_observation(
 }
 
 pub(super) fn progress_observation(
-    request: &PeerInvocationRequest,
+    request: &ServingInvocationRequest,
     execution: &PeerExecutionId,
     sequence: u64,
 ) -> TestResult<PeerObservation> {

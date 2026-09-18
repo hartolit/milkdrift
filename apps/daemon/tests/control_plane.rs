@@ -2,6 +2,8 @@
 
 #[path = "control_plane/control_workflows.rs"]
 mod control_workflows;
+#[path = "control_plane/direct.rs"]
+mod direct;
 #[path = "control_plane/durability.rs"]
 mod durability;
 #[path = "control_plane/operations.rs"]
@@ -10,5 +12,7 @@ mod operations;
 mod process;
 #[path = "control_plane/process_cleanup.rs"]
 mod process_cleanup;
+#[path = "control_plane/roles.rs"]
+mod roles;
 #[path = "control_plane/support.rs"]
 mod support;

@@ -1,7 +1,7 @@
 use super::*;
 
 fn fixture_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v9.toml")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v10.toml")
 }
 
 fn fixture_document() -> Result<DaemonConfig, Box<dyn std::error::Error>> {
@@ -71,7 +71,7 @@ fn maintained_operator_configuration_uses_the_production_reader()
 }
 
 #[test]
-fn schema_v9_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+fn schema_v10_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     let plan = DaemonConfig::load(&fixture_path())?;
     let document = fixture_document()?;
     let actor = &document.actors[0];
@@ -123,11 +123,11 @@ fn old_and_future_config_versions_are_rejected_truthfully() -> Result<(), Box<dy
 {
     let source = fs::read_to_string(fixture_path())?;
     for unsupported in [
-        1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 6_u32, 7_u32, 8_u32, 10_u32,
+        1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 6_u32, 7_u32, 8_u32, 9_u32, 11_u32,
     ] {
         let directory = tempfile::tempdir()?;
         let value = source.replacen(
-            "schema_version = 9",
+            "schema_version = 10",
             &format!("schema_version = {unsupported}"),
             1,
         );
@@ -146,7 +146,7 @@ fn duplicate_unknown_and_json_configuration_are_rejected() -> Result<(), Box<dyn
 {
     let directory = tempfile::tempdir()?;
     let duplicate = directory.path().join("duplicate.toml");
-    fs::write(&duplicate, "schema_version = 9\nschema_version = 9\n")?;
+    fs::write(&duplicate, "schema_version = 10\nschema_version = 10\n")?;
     assert!(matches!(
         DaemonConfig::load(&duplicate),
         Err(ConfigError::Toml(_))
@@ -163,8 +163,8 @@ fn duplicate_unknown_and_json_configuration_are_rejected() -> Result<(), Box<dyn
     fs::write(
         &unknown,
         fs::read_to_string(fixture_path())?.replacen(
-            "schema_version = 9",
-            "schema_version = 9\nunexpected = true",
+            "schema_version = 10",
+            "schema_version = 10\nunexpected = true",
             1,
         ),
     )?;
@@ -178,16 +178,16 @@ fn duplicate_unknown_and_json_configuration_are_rejected() -> Result<(), Box<dyn
 #[test]
 fn peer_mode_decodes_only_complete_explicit_states() -> Result<(), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(fixture_path())?;
-    let enabled = source.replacen(
-        "mode = \"disabled\"",
-        "mode = \"enabled\"\nlocal_peer_id = \"peer:local\"",
-        1,
-    );
+    let enabled = source.replacen("mode = \"disabled\"", "mode = \"enabled\"", 1);
     let document: DaemonConfig = toml::from_str(&enabled)?;
     assert!(matches!(document.peers, PeerHostConfig::Enabled { .. }));
 
-    let incomplete = source.replacen("mode = \"disabled\"", "mode = \"enabled\"", 1);
-    assert!(toml::from_str::<DaemonConfig>(&incomplete).is_err());
+    let nested_identity = enabled.replacen(
+        "mode = \"enabled\"",
+        "mode = \"enabled\"\nlocal_peer_id = \"obsolete\"",
+        1,
+    );
+    assert!(toml::from_str::<DaemonConfig>(&nested_identity).is_err());
 
     let legacy = source.replacen("mode = \"disabled\"", "enabled = true", 1);
     assert!(toml::from_str::<DaemonConfig>(&legacy).is_err());
@@ -298,22 +298,16 @@ fn peer_execution_retention_is_independent_from_application_receipts()
     let mut config = fixture_document()?;
     config.application_receipts.hot_receipt_bound = 1;
     config.application_receipts.archive_batch_size = 1;
-    config.peers = PeerHostConfig::Enabled {
-        local_peer_id: "peer:test".to_owned(),
-        relationships: Vec::new(),
-        serving: PeerServingConfig {
-            maximum_global_active: 64,
-            maximum_dispatch_queue: 32,
-            maximum_hot_terminal_records: 77,
-            archive_batch_size: 7,
-            ..PeerServingConfig::default()
-        },
+    config.serving = ServingHostConfig {
+        maximum_global_active: 64,
+        maximum_dispatch_queue: 32,
+        maximum_hot_terminal_records: 77,
+        archive_batch_size: 7,
+        ..ServingHostConfig::default()
     };
     let directory = tempfile::tempdir()?;
     let validated = config.validate(directory.path())?;
-    let PeerHostConfig::Enabled { serving, .. } = &validated.peers else {
-        return Err("peer serving plan absent".into());
-    };
+    let serving = &validated.serving;
     assert_eq!(serving.maximum_hot_terminal_records, 77);
     assert_eq!(serving.archive_batch_size, 7);
     assert_eq!(validated.storage.application_receipts.hot_receipt_bound, 1);
@@ -327,6 +321,9 @@ fn non_loopback_plaintext_is_rejected_before_storage() -> Result<(), Box<dyn std
     fs::write(&secret, "secret")?;
     let config = DaemonConfig {
         schema_version: DAEMON_CONFIG_SCHEMA_VERSION,
+        role: milkdrift_control_protocol::HostRole::WorkflowEnabled,
+        host_id: "host:local".to_owned(),
+        serving: Default::default(),
         data_root: directory.path().join("data"),
         bind: "0.0.0.0:9734".parse()?,
         secret_sources: BTreeMap::from([(

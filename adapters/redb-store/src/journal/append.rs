@@ -626,7 +626,7 @@ pub(crate) fn validate_artifact_accounting_references(
     let newly_referenced: BTreeSet<_> = request.newly_referenced_artifacts().iter().collect();
     for reference in request.required_artifacts() {
         let previously_referenced =
-            crate::artifact::validated_run_artifact_reference_in_transaction(
+            crate::artifact::validated_owner_artifact_reference_in_transaction(
                 write,
                 request.receipt().run(),
                 reference,
@@ -680,12 +680,14 @@ pub(crate) fn validate_workspace_accounting(
 
 pub(crate) fn workspace_domain_in_transaction(
     write: &redb::WriteTransaction,
-    run: &RunId,
+    owner: impl Into<milkdrift_workspace::ArtifactOwner>,
 ) -> Result<Option<(milkdrift_workspace::WorkspaceBudget, WorkspaceUsage)>, PersistenceError> {
+    let owner = owner.into();
+    let key = crate::artifact::owner::domain_key(&owner)?;
     let budget: Option<milkdrift_workspace::WorkspaceBudget> = {
         let table = write.open_table(WORKSPACE_BUDGETS).map_err(error::redb)?;
         table
-            .get(run.as_str())
+            .get(key.as_str())
             .map_err(error::redb)?
             .map(|bytes| json::decode(bytes.value(), "workspace budget"))
             .transpose()?
@@ -693,7 +695,7 @@ pub(crate) fn workspace_domain_in_transaction(
     let usage = {
         let table = write.open_table(WORKSPACE_USAGE).map_err(error::redb)?;
         table
-            .get(run.as_str())
+            .get(key.as_str())
             .map_err(error::redb)?
             .map(|bytes| json::decode(bytes.value(), "workspace usage"))
             .transpose()?
@@ -714,10 +716,11 @@ pub(crate) fn workspace_domain_in_transaction(
 
 pub(crate) fn persist_workspace_value_usage_accounting_in_transaction(
     write: &redb::WriteTransaction,
-    run: &RunId,
+    owner: impl Into<milkdrift_workspace::ArtifactOwner>,
     usage: WorkspaceUsage,
 ) -> Result<(), PersistenceError> {
-    let Some((_budget, stored_usage)) = workspace_domain_in_transaction(write, run)? else {
+    let owner = owner.into();
+    let Some((_budget, stored_usage)) = workspace_domain_in_transaction(write, &owner)? else {
         return Err(error::corruption("workspace accounting domain is absent"));
     };
     if stored_usage != usage {
@@ -730,16 +733,17 @@ pub(crate) fn persist_workspace_value_usage_accounting_in_transaction(
 
 pub(crate) fn validate_workspace_domain_in_transaction(
     write: &redb::WriteTransaction,
-    run: &RunId,
+    owner: impl Into<milkdrift_workspace::ArtifactOwner>,
     supplied: &milkdrift_workspace::WorkspaceBudget,
 ) -> Result<WorkspaceUsage, PersistenceError> {
-    let Some((budget, usage)) = workspace_domain_in_transaction(write, run)? else {
+    let owner = owner.into();
+    let Some((budget, usage)) = workspace_domain_in_transaction(write, &owner)? else {
         return Err(error::corruption("workspace accounting domain is absent"));
     };
     if &budget != supplied {
         return Err(PersistenceError::ImmutableConflict {
             entity: "workspace_budget",
-            identity: run.to_string(),
+            identity: crate::artifact::owner::domain_key(&owner)?,
         });
     }
     budget.validate_usage(&usage).map_err(|cause| {
@@ -752,10 +756,12 @@ pub(crate) fn validate_workspace_domain_in_transaction(
 
 pub(crate) fn validate_or_initialize_workspace_domain(
     write: &redb::WriteTransaction,
-    run: &RunId,
+    owner: impl Into<milkdrift_workspace::ArtifactOwner>,
     supplied: &milkdrift_workspace::WorkspaceBudget,
 ) -> Result<WorkspaceUsage, PersistenceError> {
-    match workspace_domain_in_transaction(write, run)? {
+    let owner = owner.into();
+    let key = crate::artifact::owner::domain_key(&owner)?;
+    match workspace_domain_in_transaction(write, &owner)? {
         None => {
             supplied
                 .validate_usage(&WorkspaceUsage::EMPTY)
@@ -769,26 +775,29 @@ pub(crate) fn validate_or_initialize_workspace_domain(
             write
                 .open_table(WORKSPACE_BUDGETS)
                 .map_err(error::redb)?
-                .insert(run.as_str(), budget_bytes.as_slice())
+                .insert(key.as_str(), budget_bytes.as_slice())
                 .map_err(error::redb)?;
             write
                 .open_table(WORKSPACE_USAGE)
                 .map_err(error::redb)?
-                .insert(run.as_str(), usage_bytes.as_slice())
+                .insert(key.as_str(), usage_bytes.as_slice())
                 .map_err(error::redb)?;
             Ok(WorkspaceUsage::EMPTY)
         }
-        Some((_budget, _usage)) => validate_workspace_domain_in_transaction(write, run, supplied),
+        Some((_budget, _usage)) => {
+            validate_workspace_domain_in_transaction(write, &owner, supplied)
+        }
     }
 }
 
 pub(crate) fn advance_workspace_global_usage_in_transaction(
     write: &redb::WriteTransaction,
-    run: &RunId,
+    owner: impl Into<milkdrift_workspace::ArtifactOwner>,
     expected: WorkspaceUsage,
     resulting: WorkspaceUsage,
 ) -> Result<(), PersistenceError> {
-    let Some((budget, actual)) = workspace_domain_in_transaction(write, run)? else {
+    let owner = owner.into();
+    let Some((budget, actual)) = workspace_domain_in_transaction(write, &owner)? else {
         return Err(error::corruption("workspace accounting domain is absent"));
     };
     if actual != expected {

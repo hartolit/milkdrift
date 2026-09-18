@@ -8,6 +8,7 @@ mod capability;
 mod controller;
 mod daemon;
 mod inspection;
+mod invocation;
 mod layout;
 mod peer;
 mod proposal;
@@ -34,6 +35,8 @@ impl Cli {
             self.command,
             TopCommand::Run {
                 command: crate::RunCommand::Wait { .. }
+            } | TopCommand::Invocation {
+                command: crate::InvocationCommand::Wait { .. }
             }
         )
     }
@@ -45,6 +48,16 @@ impl Cli {
             RunCommand, SequenceCommand,
         };
         match &self.command {
+            TopCommand::Invocation { command } => match command {
+                crate::InvocationCommand::Catalog => "invocation.catalog",
+                crate::InvocationCommand::Prepare { .. } => "invocation.prepare",
+                crate::InvocationCommand::Submit { .. } => "invocation.submit",
+                crate::InvocationCommand::Lookup { .. } => "invocation.lookup",
+                crate::InvocationCommand::Show { .. } => "invocation.show",
+                crate::InvocationCommand::Observations { .. } => "invocation.observations",
+                crate::InvocationCommand::Wait { .. } => "invocation.wait",
+                crate::InvocationCommand::Cancel { .. } => "invocation.cancel",
+            },
             TopCommand::Daemon { command } => match command {
                 DaemonCommand::Health(_) => "daemon.health",
                 DaemonCommand::Readiness => "daemon.readiness",
@@ -112,6 +125,7 @@ impl Cli {
                 PeerCommand::Revoke { .. } => "peer.revoke",
             },
             TopCommand::Artifact { command } => match command {
+                ArtifactCommand::Upload { .. } => "artifact.upload",
                 ArtifactCommand::Metadata { .. } => "artifact.metadata",
                 ArtifactCommand::Get { .. } => "artifact.get",
             },
@@ -174,6 +188,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<(), CliError> {
     }
     let session = CliSession::connect(cli).await?;
     match &session.cli().command {
+        TopCommand::Invocation { command } => invocation::execute(&session, command).await,
         TopCommand::Daemon { command } => daemon::execute(&session, command).await,
         TopCommand::Blueprint { command } => blueprint::execute(&session, command).await,
         TopCommand::Sequence { command } => sequence::execute(&session, command).await,
