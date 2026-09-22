@@ -18,6 +18,9 @@ pub(super) struct Arguments {
     /// Rootless Quadlet search directory (normally ~/.config/containers/systemd/milkdrift).
     #[arg(long)]
     quadlet_directory: PathBuf,
+    /// Rootless systemd unit search directory (normally ~/.config/systemd/user).
+    #[arg(long)]
+    systemd_directory: PathBuf,
     /// One strict recipe with exact operator-supplied image and optional model inputs.
     #[arg(long)]
     recipe: PathBuf,
@@ -41,6 +44,7 @@ pub(super) fn run(args: Arguments) -> Result<(), Box<dyn std::error::Error>> {
     let manager = LinuxManagerConfig {
         state_root: args.root.join("manager"),
         quadlet_directory: args.quadlet_directory.clone(),
+        systemd_directory: args.systemd_directory.clone(),
         recipes: vec![args.root.join("recipe.json")],
     };
     manager.validate()?;
@@ -86,6 +90,10 @@ pub(super) fn run(args: Arguments) -> Result<(), Box<dyn std::error::Error>> {
             &manager.quadlet_directory,
             BTreeSet::from([AccessMode::Read, AccessMode::Write]),
         )?,
+        FilesystemScope::from_canonical_host_path(
+            &manager.systemd_directory,
+            BTreeSet::from([AccessMode::Read, AccessMode::Write]),
+        )?,
     ];
     let mut profiles = Vec::new();
     let mut destinations = Vec::new();
@@ -123,7 +131,7 @@ pub(super) fn run(args: Arguments) -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "{}",
             serde_json::to_string_pretty(
-                &json!({"recipe":reference,"configuration":config,"required_operator_prerequisites":["rootless Podman 5.4..5.x and preloaded exact images","user systemd session with lingering and cgroup v2 delegation","subordinate UID/GID mappings and private manager directories"],"platform_effects":"none; prepare/apply use the authenticated resource API"})
+                &json!({"recipe":reference,"configuration":config,"required_operator_prerequisites":["rootless Podman 5.4..6.x and preloaded exact images","user systemd session with lingering and cgroup v2 delegation","subordinate UID/GID mappings and private manager directories"],"platform_effects":"none; prepare/apply use the authenticated resource API"})
             )?
         );
         return Ok(());
@@ -131,6 +139,10 @@ pub(super) fn run(args: Arguments) -> Result<(), Box<dyn std::error::Error>> {
     private_directory(&args.root)?;
     private_directory(&manager.state_root)?;
     private_directory(&manager.quadlet_directory)?;
+    // The shared systemd search root may be readable; each owned drop-in is private.
+    if !manager.systemd_directory.exists() {
+        private_directory(&manager.systemd_directory)?;
+    }
     write_exact(
         &args.root.join("recipe.json"),
         &serde_json::to_vec_pretty(&recipe)?,
@@ -224,6 +236,7 @@ mod tests {
         let args = |preview| Arguments {
             root: root.clone(),
             quadlet_directory: quadlet.clone(),
+            systemd_directory: directory.path().join("systemd"),
             recipe: recipe.clone(),
             installation: "slotbook".to_owned(),
             preview,

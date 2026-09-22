@@ -674,8 +674,20 @@ GPU inference or shared-memory pressure on the UM790.
 
 The 2026-09-22 review's full gate and API results are retained under
 `target/adaptive-hosts/managed-02-review/`; the [handoff](virtual-office/adaptive-hosts/handoffs/02.md)
-records the optimization settings and unsupported physical prerequisites. The actual daemon/CLI
+records the optimization settings and the initial physical gaps. The follow-up evidence under
+`target/adaptive-hosts/managed-02-qualification/` closes desktop Podman 6.1.2 worker and owned-CPU
+lifecycle qualification, actual kernel limits, supervisor recovery without Milkdrift, ID-bound
+cleanup under a real foreign-container collision, and the complete daemon/CLI path. It includes
+concurrent model progress, busy-removal refusal, replay/restart and preserved data. The physical
+lane retains its store on failure. Machine reboot and managed UM790/Vulkan qualification remain
+explicit in the linked handoff and hardware issue. The actual daemon/CLI
 Gemma smoke is negative evidence: one entered attempt remains uncertain, without another entry,
 when the strict response reader encounters LM Studio's unmapped `reasoning_content` deltas.
 `gemma-final.log` and its retained session store preserve the result; `gemma-diagnostic-sse.txt`
 records a separate bounded diagnostic request. No provider mapping or server setting was changed.
+
+The follow-up desktop Ornith and Drifty smoke reports use an explicit per-request
+`reasoning_effort: "none"`; their passing text streams do not qualify the default reasoning format.
+Drifty uses an authenticated SSH forward to its NetBird-bound listener. The managed desktop model
+call additionally passes finite-accounting admission and terminal settlement. Unknown optional
+reasoning fields remain refused, and no remote-termination or inference-throughput claim is made.

@@ -65,6 +65,7 @@ fn attached_model_adapter_passes_shared_conformance_with_durable_holds() -> Resu
         std::fs::write(&path, serde_json::to_vec(&recipe)?)?;
         let platform = Arc::new(LinuxManagedPlatform::new(LinuxManagerConfig {
             state_root: directory.path().to_path_buf(),
+            systemd_directory: quadlet.clone(),
             quadlet_directory: quadlet,
             recipes: vec![path],
         })?);

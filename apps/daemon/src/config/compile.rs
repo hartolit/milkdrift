@@ -154,6 +154,7 @@ impl DaemonConfig {
         if let Some(managed) = &mut self.adapters.managed_linux {
             managed.state_root = normalize_owned_path(&base, &managed.state_root)?;
             managed.quadlet_directory = normalize_owned_path(&base, &managed.quadlet_directory)?;
+            managed.systemd_directory = normalize_owned_path(&base, &managed.systemd_directory)?;
             for recipe in &mut managed.recipes {
                 *recipe = normalize_existing_file(&base, recipe)?;
             }

@@ -116,7 +116,7 @@ its resource use ended. Offline inspection/preservation remains available if sta
 
 New resource records and journal actions need versioned readers, integrity/backup coverage and
 hand-reviewed fixtures in 02; 04 adds exact published-child linkage. The implementation uses managed schema 1, physical redb schema 13/internal document format 18,
-and daemon configuration 11. Older stores/configurations refuse before mutation; no migration is supplied. Preserve supported history and refuse incompatible
+and daemon configuration 12. Older stores/configurations refuse before mutation; no migration is supplied. Preserve supported history and refuse incompatible
 stores before mutation as in [0038](0038-independent-host-execution.md).
 
 02 tests transfer transitions, conflicting writers, uncertain use and fault recovery using real
@@ -135,8 +135,11 @@ Milkdrift does not acquire a service supervisor or generic installation language
 ## Implemented mechanism and format boundary
 
 The first adapter accepts strict `slotbook-v1` recipes, preloaded exact images and typed server/model
-inputs. Podman 5.4..5.x is the checked mechanism range; the installed Quadlet generator validates
-owned definitions. Worker claims use rootless auto user namespaces, one owned working mount and
+inputs. Podman 5.4..6.x is the accepted mechanism range, with physical evidence on 6.1.2. The installed
+Quadlet generator validates owned definitions; an exact systemd drop-in replaces cleanup by name
+with cleanup by the service-created container ID. Linux mechanism version 2 binds that drop-in
+search directory into the approved deployment and refuses version-1 deployments. Daemon schema 12
+requires `systemd_directory` alongside `quadlet_directory`; old configuration is not reinterpreted. Worker claims use rootless auto user namespaces, one owned working mount and
 explicit cgroup/network/device restrictions. Actual enforcement is checked during apply; deterministic
 fault maps do not qualify it. See [operations](../operations/managed-linux.md) for the physical lane.
 

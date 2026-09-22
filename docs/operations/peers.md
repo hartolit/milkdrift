@@ -10,7 +10,7 @@ Milkdrift consumes a URL you configure; it does not discover peers or make them 
 
 For any non-loopback URL, use HTTPS with certificates managed by your platform or reverse proxy. Milkdrift does not issue certificates or run a CA. Keep the daemon listener on loopback behind the proxy unless a later hardened listener explicitly supports your deployment. The named insecure development option accepts only loopback/localhost and is disabled by default.
 
-Peer state is explicit in TOML schema 11. Both roles require a top-level stable `host_id` and share
+Peer state is explicit in TOML schema 12. Both roles require a top-level stable `host_id` and share
 the top-level `serving` policy. `[peers] mode = "disabled"` excludes relationships; `mode = "enabled"`
 permits explicit relationship tables. Configure both sides with different host identities and inverse
 relationship entries. The origin uses `workflow_enabled`; the target may use `execution_only`.

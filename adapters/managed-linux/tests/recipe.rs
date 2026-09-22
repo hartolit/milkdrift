@@ -93,6 +93,7 @@ fn manager_namespace_is_exclusive_and_changed_generation_is_exact() -> Result {
     write_private(&path, &serde_json::to_vec(&recipe)?)?;
     let config = LinuxManagerConfig {
         state_root: root.path().to_path_buf(),
+        systemd_directory: quadlets.path().to_path_buf(),
         quadlet_directory: quadlets.path().to_path_buf(),
         recipes: vec![path],
     };
@@ -220,6 +221,7 @@ fn attached_model_profile_retains_exact_service_dependency_and_never_owns_endpoi
     write_private(&path, &serde_json::to_vec(&recipe)?)?;
     let platform = LinuxManagedPlatform::new(LinuxManagerConfig {
         state_root: root.path().to_path_buf(),
+        systemd_directory: quadlets.path().to_path_buf(),
         quadlet_directory: quadlets.path().to_path_buf(),
         recipes: vec![path],
     })?;

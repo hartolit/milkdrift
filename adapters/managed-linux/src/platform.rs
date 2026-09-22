@@ -27,6 +27,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod prerequisites;
+use prerequisites::{
+    verify_controllers, verify_model, verify_podman_version, verify_subordinate_ids,
+};
+
 #[cfg(test)]
 mod tests;
 
@@ -51,6 +56,7 @@ impl LinuxManagedPlatform {
         }
         private_directory(&config.state_root)?;
         private_directory(&config.quadlet_directory)?;
+        units::systemd_directory(&config.systemd_directory)?;
         let lock_path = config.state_root.join("manager.lock");
         if lock_path.exists() {
             regular_file(&lock_path, 0)?;
@@ -85,10 +91,11 @@ impl LinuxManagedPlatform {
     }
     pub(crate) fn check_owner(&self, setup: &ApprovedSetup) -> Result<Deployment, ManagedError> {
         let d = units::deployment(setup)?;
-        if setup.mechanism != "linux-quadlet-v1"
+        if setup.mechanism != "linux-quadlet-v2"
             || setup.platform_owner != self.owner
             || d.manager_root != self.config.state_root
             || d.quadlet_directory != self.config.quadlet_directory
+            || d.systemd_directory != self.config.systemd_directory
             || owner_identity(&self.config.state_root)? != self.owner
         {
             return Err(rejected(
@@ -123,6 +130,7 @@ impl LinuxManagedPlatform {
         }
         private_directory(&self.config.state_root)?;
         private_directory(&self.config.quadlet_directory)?;
+        units::systemd_directory(&self.config.systemd_directory)?;
         Ok(d)
     }
     pub(crate) fn podman(args: &[String]) -> Result<Vec<u8>, ManagedError> {
@@ -245,6 +253,7 @@ impl LinuxManagedPlatform {
         let Some(text) = units::unit_text(setup, running)? else {
             return Ok(());
         };
+        units::install_cleanup(setup)?;
         let path = d.quadlet_directory.join(format!("{}.container", d.unit));
         if path.exists() {
             regular_file(&path, 65_536)?;
@@ -257,6 +266,7 @@ impl LinuxManagedPlatform {
             if existing == text {
                 Self::verify_generator(&d)?;
                 Self::systemctl(&["daemon-reload".to_owned()])?;
+                units::verify_effective_cleanup(&d)?;
                 return Ok(());
             }
         } else if fs::symlink_metadata(&path).is_ok() {
@@ -276,6 +286,7 @@ impl LinuxManagedPlatform {
             .map_err(platform_error)?;
         Self::verify_generator(&d)?;
         Self::systemctl(&["daemon-reload".to_owned()])?;
+        units::verify_effective_cleanup(&d)?;
         Ok(())
     }
     fn verify_generator(d: &Deployment) -> Result<(), ManagedError> {
@@ -342,17 +353,27 @@ impl LinuxManagedPlatform {
         if !matches!(d.recipe.model_service, ModelService::Owned { .. }) {
             return Ok(());
         }
+        units::verify_cleanup(setup)?;
         let path = d.quadlet_directory.join(format!("{}.container", d.unit));
-        if !path.exists() {
+        if !path.try_exists().map_err(platform_error)? {
+            if fs::symlink_metadata(&path).is_ok() {
+                return Err(platform_error("symlink at owned Quadlet path"));
+            }
             return Ok(());
         }
         regular_file(&path, 65_536)?;
+        regular_file(
+            &d.systemd_directory
+                .join(format!("{}.service.d/50-milkdrift.conf", d.unit)),
+            65_536,
+        )?;
         let text = fs::read_to_string(path).map_err(platform_error)?;
         if Some(text.clone()) != units::unit_text(setup, true)?
             && Some(text) != units::unit_text(setup, false)?
         {
             return Err(platform_error("owned unit drift detected"));
         }
+        units::verify_effective_cleanup(&d)?;
         Ok(())
     }
     fn remove_configuration(&self, setup: &ApprovedSetup) -> Result<(), ManagedError> {
@@ -369,7 +390,11 @@ impl LinuxManagedPlatform {
         let path = d.quadlet_directory.join(format!("{}.container", d.unit));
         if path.exists() {
             fs::remove_file(path).map_err(platform_error)?;
+            fs::File::open(&d.quadlet_directory)
+                .and_then(|directory| directory.sync_all())
+                .map_err(platform_error)?;
         }
+        units::remove_cleanup(setup)?;
         Self::systemctl(&["daemon-reload".to_owned()])?;
         Ok(())
     }
@@ -470,11 +495,12 @@ impl ManagedPlatform for LinuxManagedPlatform {
             volume_prefix: prefix.clone(),
             manager_root: self.config.state_root.clone(),
             quadlet_directory: self.config.quadlet_directory.clone(),
+            systemd_directory: self.config.systemd_directory.clone(),
         };
         let resources = resources(&d)?;
         let mut setup = ApprovedSetup {
             recipe: reference.clone(),
-            mechanism: "linux-quadlet-v1".to_owned(),
+            mechanism: "linux-quadlet-v2".to_owned(),
             configuration: BoundedJson::new(serde_json::to_value(&d).map_err(rejected)?)
                 .map_err(rejected)?,
             platform_owner: self.owner.clone(),
@@ -498,17 +524,7 @@ impl ManagedPlatform for LinuxManagedPlatform {
             .or_else(|| info.pointer("/version/version"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| rejected("Podman version unavailable"))?;
-        let parts: Vec<_> = version.split('.').collect();
-        if parts.first() != Some(&"5")
-            || parts
-                .get(1)
-                .and_then(|p| p.parse::<u32>().ok())
-                .is_none_or(|minor| minor < 4)
-        {
-            return Err(rejected(
-                "supported mechanism requires Podman 5.4..5.x; consult its installed manual before extending support",
-            ));
-        }
+        verify_podman_version(version)?;
         if info
             .pointer("/host/security/rootless")
             .and_then(|v| v.as_bool())
@@ -520,6 +536,7 @@ impl ManagedPlatform for LinuxManagedPlatform {
                 "rootless Podman, cgroup v2 and systemd delegation are required",
             ));
         }
+        verify_controllers(&info)?;
         Self::systemctl(&["show-environment".to_owned()])?;
         verify_subordinate_ids(&info, &d.recipe.model_service)?;
         #[cfg(target_os = "linux")]
@@ -744,6 +761,13 @@ impl ManagedPlatform for LinuxManagedPlatform {
             )
             .map_err(rejected)?,
         );
+        requirements.filesystem.push(
+            FilesystemScope::from_canonical_host_path(
+                &self.config.systemd_directory,
+                std::collections::BTreeSet::from([AccessMode::Read, AccessMode::Write]),
+            )
+            .map_err(rejected)?,
+        );
         if let ModelService::Owned { model, port, .. } = &d.recipe.model_service {
             requirements.filesystem.push(
                 FilesystemScope::from_canonical_host_path(
@@ -838,36 +862,6 @@ impl ManagedPlatform for LinuxManagedPlatform {
     }
 }
 
-fn verify_subordinate_ids(
-    info: &serde_json::Value,
-    service: &ModelService,
-) -> Result<(), ManagedError> {
-    // The owned model and a worker need separate simultaneous auto user namespaces.
-    let required = if matches!(service, ModelService::Owned { .. }) {
-        131_072
-    } else {
-        65_536
-    };
-    for mapping in ["/host/idMappings/uidmap", "/host/idMappings/gidmap"] {
-        if !info
-            .pointer(mapping)
-            .and_then(|v| v.as_array())
-            .is_some_and(|maps| {
-                maps.iter().any(|m| {
-                    m.get("size")
-                        .and_then(|n| n.as_u64())
-                        .is_some_and(|size| size >= required)
-                })
-            })
-        {
-            return Err(rejected(
-                "rootless setup requires 65536 subordinate UIDs/GIDs per simultaneous worker and owned service",
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn start_owned(
     setup: &ApprovedSetup,
     container: Option<&serde_json::Value>,
@@ -943,36 +937,6 @@ pub(crate) fn regular_file(path: &Path, max: u64) -> Result<(), ManagedError> {
                 "manager input cannot be hardlinked or writable by another identity",
             ));
         }
-    }
-    Ok(())
-}
-fn verify_model(path: &Path, expected: &str, size: u64) -> Result<(), ManagedError> {
-    regular_file(path, size)?;
-    let mut file = fs::File::open(path).map_err(rejected)?;
-    if file.metadata().map_err(rejected)?.len() != size {
-        return Err(rejected("model size differs"));
-    }
-    let mut hasher = blake3::Hasher::new();
-    let mut chunk = [0; 1_048_576];
-    use std::io::Read;
-    let deadline = Instant::now() + Duration::from_secs(300);
-    let mut total = 0_u64;
-    loop {
-        if Instant::now() >= deadline {
-            return Err(rejected("model verification exceeded five minutes"));
-        }
-        let n = file.read(&mut chunk).map_err(rejected)?;
-        if n == 0 {
-            break;
-        }
-        total = total.saturating_add(n as u64);
-        if total > size {
-            return Err(rejected("model changed during bounded verification"));
-        }
-        hasher.update(&chunk[..n]);
-    }
-    if format!("b3_{}", hasher.finalize()) != expected {
-        return Err(rejected("model bytes differ from approved digest"));
     }
     Ok(())
 }

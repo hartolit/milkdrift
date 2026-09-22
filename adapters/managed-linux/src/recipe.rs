@@ -244,6 +244,8 @@ pub struct LinuxManagerConfig {
     pub state_root: PathBuf,
     /// Existing private rootless Quadlet search directory.
     pub quadlet_directory: PathBuf,
+    /// Rootless systemd user unit directory for exact container-ID cleanup drop-ins.
+    pub systemd_directory: PathBuf,
     /// Exact approved recipe document paths. Startup freezes their normalized bytes.
     pub recipes: Vec<PathBuf>,
 }
@@ -252,6 +254,7 @@ impl LinuxManagerConfig {
     pub fn validate(&self) -> Result<(), ManagedError> {
         if !safe_absolute(&self.state_root)
             || !safe_absolute(&self.quadlet_directory)
+            || !safe_absolute(&self.systemd_directory)
             || self.recipes.is_empty()
             || self.recipes.len() > 32
             || self.recipes.iter().any(|p| !safe_absolute(p))
@@ -317,4 +320,5 @@ pub(crate) struct Deployment {
     pub volume_prefix: String,
     pub manager_root: PathBuf,
     pub quadlet_directory: PathBuf,
+    pub systemd_directory: PathBuf,
 }

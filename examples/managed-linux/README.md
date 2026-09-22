@@ -22,8 +22,8 @@ python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); p["worker_image"]=s
 
 For an attachment, select the exact endpoint and its accounting contracts. For example, Drifty's
 operator-supplied API base is `http://drifty.hartolit.internal:8080/v1` and model alias is `ornith`;
-its declared provider billing is unbilled. The host needs NetBird connectivity. Local LM Studio
-uses `http://127.0.0.1:1234/v1` with the exact loaded model identifier. Neither connection detail
+its declared provider billing is unbilled. The host needs NetBird connectivity. The desktop llama.cpp
+endpoint uses `http://127.0.0.1:8080/v1` with model alias `ornith-9b`. Neither connection detail
 establishes a tokenizer/template/output contract.
 
 The attached object requires `type`, `api_base`, `model_alias`, `billing` and `token_limits`.
@@ -32,6 +32,11 @@ Supply an operator-supported finite token contract and explicit billing terms; u
 managed recipes because the independent host must bound prepared calls before entry. Do not copy
 another model's tokenizer or template assumptions. For a self-hosted service with the stated billing,
 `billing` can be `{"type":"unbilled","source":"Operator declaration: selected service has no provider charge"}`.
+
+For the exercised Ornith llama.cpp instances, request `reasoning_effort: "none"` through the
+existing OpenAI request extension on the model task. See the
+[endpoint guide](../../docs/guides/local-model-endpoint.md#llamacpp-reasoning-stream-compatibility).
+This is an explicit per-request choice; it does not change the server's defaults.
 
 Worker networking can remain `none` because Milkdrift invokes the model through its scoped provider
 adapter. Removal never stops or deletes an attachment. Existing standalone provider profiles remain

@@ -589,10 +589,7 @@ pub(crate) fn verify_container(
             .get("NetworkMode")
             .and_then(|v| v.as_str())
             .is_none_or(|n| n == "host")
-        || host
-            .get("UsernsMode")
-            .and_then(|v| v.as_str())
-            .is_none_or(|u| !u.starts_with("auto"))
+        || !private_id_mappings(host.get("IDMappings"))
     {
         return Err(platform_error(
             "actual container namespace/resource enforcement differs from approved profile",
@@ -695,10 +692,10 @@ pub(crate) fn verify_container(
     } else if devices.is_some_and(|d| !d.is_empty()) {
         return Err(platform_error("container has unapproved devices"));
     }
-    if value
+    // Podman serializes an empty capability set as either null or []; absence is not evidence.
+    if !value
         .get("EffectiveCaps")
-        .and_then(|v| v.as_array())
-        .is_none_or(|caps| !caps.is_empty())
+        .is_some_and(|caps| caps.is_null() || caps.as_array().is_some_and(Vec::is_empty))
     {
         return Err(platform_error(
             "effective container capabilities are not empty",
@@ -706,6 +703,46 @@ pub(crate) fn verify_container(
     }
     Ok(())
 }
+
+fn private_id_mappings(value: Option<&serde_json::Value>) -> bool {
+    // Inspect reports mappings in the rootless parent namespace. Offset zero is the manager's
+    // identity; every container ID must instead map into subordinate IDs. UsernsMode is empty
+    // in Podman 6 even for --userns=auto, so verify the realized maps rather than that hint.
+    ["UidMap", "GidMap"].into_iter().all(|key| {
+        value
+            .and_then(|v| v.get(key))
+            .and_then(|v| v.as_array())
+            .is_some_and(|ranges| {
+                let mut next = 0_u64;
+                !ranges.is_empty()
+                    && ranges.iter().all(|range| {
+                        let Some(range) = range.as_str() else {
+                            return false;
+                        };
+                        let parts: Vec<_> = range.split(':').map(str::parse::<u64>).collect();
+                        let [Ok(container), Ok(host), Ok(size)] = parts.as_slice() else {
+                            return false;
+                        };
+                        if *container != next
+                            || *host == 0
+                            || *size == 0
+                            || host.checked_add(*size).is_none()
+                        {
+                            return false;
+                        }
+                        let Some(end) = next.checked_add(*size) else {
+                            return false;
+                        };
+                        next = end;
+                        true
+                    })
+                    && next >= 65_536
+            })
+    })
+}
+
+#[cfg(test)]
+mod tests;
 
 pub(crate) fn verify_setup(
     platform: &LinuxManagedPlatform,

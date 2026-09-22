@@ -177,6 +177,12 @@ impl EndpointProfile {
                 // choices, extra generation, alternate limits, or server-side prompt expansion.
                 let root = wire.as_object().ok_or("model request is not an object")?;
                 if root.keys().any(|key| {
+                    // Explicitly disabling reasoning adds no extra generation allowance. The
+                    // frozen tokenizer/template contract still covers the complete request and
+                    // max_tokens/max_completion_tokens still bounds all generated tokens.
+                    if key == "reasoning_effort" && root[key].as_str() == Some("none") {
+                        return false;
+                    }
                     !matches!(
                         key.as_str(),
                         "model"

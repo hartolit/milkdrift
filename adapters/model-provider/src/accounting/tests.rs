@@ -66,6 +66,35 @@ fn whole_request_bound_includes_utf8_context_and_template_and_rejects_underminin
 }
 
 #[test]
+fn explicit_reasoning_none_preserves_the_frozen_total_generation_bound() -> TestResult {
+    let profile = profile(json!({"type":"unbilled","source":"operator fixture declaration v1"}))?;
+    let mut wire = wire();
+    wire["reasoning_effort"] = json!("none");
+    let bytes = serde_json::to_vec(&wire)?;
+    let envelope = profile.prepared_envelope(&wire, &bytes)?;
+    assert_eq!(
+        envelope.input_units(),
+        &AdmissionBound::Bounded(bytes.len() as u64 + 128)
+    );
+    assert_eq!(envelope.output_units(), &AdmissionBound::Bounded(100));
+    for invalid in [
+        json!("low"),
+        json!("high"),
+        json!("disabled"),
+        json!(0),
+        json!(null),
+    ] {
+        wire["reasoning_effort"] = invalid;
+        assert!(
+            profile
+                .prepared_envelope(&wire, &serde_json::to_vec(&wire)?)
+                .is_err()
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn tariff_uses_exact_currency_conservative_rounding_and_checked_arithmetic() -> TestResult {
     let profile = profile(tariff())?;
     let wire = wire();

@@ -5,7 +5,7 @@ The credential selects an actor; its grant must cover both the command and later
 For example, permission to start a workflow does not by itself permit its process to execute or
 let the caller download restricted output.
 
-Daemon configuration schema 11 requires every actor binding to contain an explicit `authority`
+Daemon configuration schema 12 requires every actor binding to contain an explicit `authority`
 table. Preset names deterministically expand to typed operation sets; they do not imply resource
 access and are not retained as executable session policy. The resource scope, numeric ceilings,
 validity interval, grant identity/revision, and revocation generation are independent inputs to the

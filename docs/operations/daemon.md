@@ -5,7 +5,7 @@ adapters and, when enabled, workflow execution; clients use its authenticated AP
 refused while the first holds the domain lock. Start with the
 [operator recipe](../../examples/operator/README.md) for configuration, credentials, and a first run.
 
-Configuration is TOML schema 11. `--check-config` validates it and resolves paths relative to the
+Configuration is TOML schema 12. `--check-config` validates it and resolves paths relative to the
 configuration file; `--print-effective-config` prints normalized, redacted TOML. Neither starts
 adapters or proves storage recovery. The running host uses an immutable compiled plan, so changes
 to grants, profile sources, worker limits, or peer relationships require validation and restart.

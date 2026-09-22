@@ -14,8 +14,8 @@ not established by this setup.
 
 ## Prepare the host and configuration
 
-The mechanism requires a non-root Linux account, Podman 5.4 through 5.x, user systemd, cgroup v2
-with systemd delegation and preloaded exact images. Reserve at least 65,536 subordinate UIDs and
+The mechanism requires a non-root Linux account, Podman 5.4 through 6.x, user systemd, cgroup v2
+with delegated CPU, memory and PID controllers and preloaded exact images. Reserve at least 65,536 subordinate UIDs and
 GIDs for a worker, or 131,072 of each when an owned model service and worker run together.
 An owned persistent service also requires operator-enabled user lingering. `prepare` checks these
 facts, available shared RAM, free storage, and exact model inputs. An unsupported version or missing
@@ -25,11 +25,11 @@ protection refuses; there is no privileged-container or native-process fallback.
 Install prerequisites through your operating system before bootstrap. This command creates private
 Milkdrift configuration and a credential file; it does not install packages, enable lingering, change
 SSH/NetBird/firewall settings or start any service. Select a fresh absolute product directory and a
-subdirectory of the account's normal rootless Quadlet search directory. Review the preview first:
+subdirectory of the account's normal rootless Quadlet search directory and the account's systemd user unit search directory. Review the preview first:
 
 ```sh
-milkdrift-daemon managed-bootstrap --root /home/operator/milkdrift-slotbook --quadlet-directory /home/operator/.config/containers/systemd/milkdrift --recipe /home/operator/approved-slotbook.json --preview
-milkdrift-daemon managed-bootstrap --root /home/operator/milkdrift-slotbook --quadlet-directory /home/operator/.config/containers/systemd/milkdrift --recipe /home/operator/approved-slotbook.json
+milkdrift-daemon managed-bootstrap --root /home/operator/milkdrift-slotbook --quadlet-directory /home/operator/.config/containers/systemd/milkdrift --systemd-directory /home/operator/.config/systemd/user --recipe /home/operator/approved-slotbook.json --preview
+milkdrift-daemon managed-bootstrap --root /home/operator/milkdrift-slotbook --quadlet-directory /home/operator/.config/containers/systemd/milkdrift --systemd-directory /home/operator/.config/systemd/user --recipe /home/operator/approved-slotbook.json
 milkdrift-daemon --config /home/operator/milkdrift-slotbook/daemon.toml --check-config
 milkdrift-daemon --config /home/operator/milkdrift-slotbook/daemon.toml
 ```
@@ -129,8 +129,10 @@ exact candidate, including its replacement paths and network requirements. It do
 data automatically.
 
 `preserve` keeps owned volumes on removal. Add `--delete-on-removal` only when their contents are
-deliberately disposable. Service start checks existing container ownership and disables automatic replacement, so a name
-collision cannot authorize deletion. Removal stops owned services, removes their exact definitions and deletes
+deliberately disposable. Service start checks existing container ownership and disables automatic replacement. A private systemd drop-in
+overrides Quadlet cleanup to use the exact container ID written by that service, so a failed start
+cannot delete another container with the same name. The effective stop commands are verified before
+activation; the declared systemd directory must be in the user manager's unit search path. Removal stops owned services, removes their exact definitions and deletes
 only owned volumes whose saved policy permits it. Shared images/toolchains/model files and attached
 endpoints remain untouched. A removed namespace is a retained tombstone and cannot be reused.
 Preserved volumes keep ownership labels and identities in that tombstone for deliberate offline
@@ -161,7 +163,8 @@ now; the published-invocation association and integrated single-worker method te
 
 ## Protection and retained state
 
-The manager account owns configuration, credentials, store, Quadlets and engine/systemd sockets.
+The manager account owns configuration, credentials, store, Quadlets, exact service cleanup drop-ins
+and engine/systemd sockets. Existing files in the shared systemd search directory are not overwritten.
 Temporary workers receive one owned volume at `/workspace`, a read-only image root, private user
 mapping, dropped capabilities, no-new-privileges, default seccomp, bounded memory/swap/CPU/processes
 and a bounded `/tmp`. The apply probe checks actual mounts, kernel limits, effective capabilities,
@@ -184,7 +187,7 @@ there is no automatic historical pruning. Serving observation archival does not 
 ownership, unresolved use or command replay.
 
 A store backup includes inventory, approved generated configuration, receipts, holds and lineage.
-It does **not** include Podman volumes/images, host Quadlet files, external model files, credentials
+It does **not** include Podman volumes/images, host Quadlet files and cleanup drop-ins, external model files, credentials
 or attached-service data. Preserve those separately under their owners' quiescence/backup procedures.
 Offline `managed` inspection remains available when ordinary startup fails. Restore retains the
 existing inspection-only marker and refuses execution, and the manager root has an exclusive lock.
@@ -199,21 +202,40 @@ Those tests establish no container or hardware isolation. Run the actual Linux l
 explicit private recipe and a private directory inside systemd's rootless Quadlet search path:
 
 ```sh
-MILKDRIFT_LINUX_RECIPE=/home/operator/approved-slotbook.json MILKDRIFT_QUADLET_TEST_PARENT=/home/operator/.config/containers/systemd/milkdrift-tests cargo test -p milkdrift-managed-linux --test linux_mechanism --all-features -- --ignored --exact real_linux_worker_conformance_reapply_restart_and_preserved_removal --nocapture
+MILKDRIFT_LINUX_RECIPE=/home/operator/approved-slotbook.json MILKDRIFT_QUADLET_TEST_PARENT=/home/operator/.config/containers/systemd/milkdrift-tests MILKDRIFT_SYSTEMD_TEST_DIRECTORY=/home/operator/.config/systemd/user cargo test -p milkdrift-managed-linux --test linux_mechanism --all-features -- --ignored --exact real_linux_worker_conformance_reapply_restart_and_preserved_removal --nocapture
 ```
 
-The lane invokes real Podman, verifies the worker, runs common worker conformance, preserves mutable
-content across reapply, reopens Milkdrift while any owned service stays supervised, and removes with
-preserved-volume inspection. It prints exact retained volume identities for later operator handling.
-Use an owned recipe to qualify service persistence and an attached recipe to qualify attachment
-preservation. Physical reboot/power loss, supervisor recovery while Milkdrift is absent, real GPU
-inference and UM790 memory pressure remain separate operator qualification. They have not been run
-in this review. Podman 6.1.2 is installed, outside the supported 5.x range; no preloaded image or
-delegated CPU controller was available. Windows/macOS refuse this mechanism
-and retain existing native adapters; no new runtime portability result is claimed.
+The lane invokes real Podman, checks worker enforcement, runs common worker conformance, preserves
+files and an installed tool across reapply/reopen, and removes with preserved-volume inspection.
+With an owned recipe it checks the service's actual kernel limits, proves identical reapply retains
+its container ID, and kills that test container after dropping every Milkdrift owner. Systemd must
+restart it and pass health checks before Milkdrift reopens. A new container after that deliberate
+crash is expected; reopening Milkdrift must not create another one.
 
-The generated options were reviewed against the [Podman 5.4.2 Quadlet manual](https://docs.podman.io/en/v5.4.2/markdown/podman-systemd.unit.5.html),
-[container execution manual](https://docs.podman.io/en/v5.4.2/markdown/podman-run.1.html), and
-[engine API security boundary](https://docs.podman.io/en/stable/markdown/podman-system-service.1.html#security).
-The installed generator also validates each owned definition before activation. Extending the
-supported version range requires reviewing that version and rerunning physical enforcement checks.
+Set `MILKDRIFT_SYSTEMD_TEST_DIRECTORY` to the account's systemd user unit search directory for both
+physical tests. Optionally set `MILKDRIFT_LINUX_EVIDENCE_PARENT` to an existing private evidence
+parent. The lifecycle lane retains its store and prints its evidence directory, Quadlet directory
+and preserved volume identities, including on failure. Inspect/recover against those exact records;
+never substitute a prune command for cleanup.
+
+The separate collision regression starts an owned generated unit while a foreign test container
+already holds its name, then verifies the failed start leaves that container's ID and running state
+unchanged:
+
+```sh
+MILKDRIFT_LINUX_RECIPE=/home/operator/approved-slotbook.json MILKDRIFT_QUADLET_TEST_PARENT=/home/operator/.config/containers/systemd/milkdrift-tests MILKDRIFT_SYSTEMD_TEST_DIRECTORY=/home/operator/.config/systemd/user cargo test -p milkdrift-managed-linux --lib --all-features real_quadlet_failed_start_preserves_a_foreign_container -- --ignored --nocapture
+```
+
+Arch Linux with Podman 6.1.2, systemd 261.3 and kernel 7.2.6 has passed worker and owned CPU-model
+lifecycle tests, supervisor recovery without Milkdrift, actual kernel-limit checks and the collision
+regression. The daemon/CLI evidence and exact inputs are recorded in the
+[assignment handoff](../development/virtual-office/adaptive-hosts/handoffs/02.md).
+This does not qualify a machine reboot, power loss, managed Vulkan, or UM790 memory pressure; the
+[hardware qualification issue](../development/virtual-office/whiteboard/issues/managed-linux-hardware-qualification.md)
+records the remaining work. Windows/macOS continue to refuse this Linux mechanism.
+
+The installed 6.1.2 Quadlet and container manuals and generator were checked against the
+[upstream Quadlet documentation](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html).
+Podman 6's generated name-based removal is deliberately replaced by the ID-bound drop-in.
+The adapter accepts 5.4..6.x and checks realized mappings, limits and generated/effective definitions;
+other major versions require mechanism review. The executed host qualification is specifically 6.1.2.

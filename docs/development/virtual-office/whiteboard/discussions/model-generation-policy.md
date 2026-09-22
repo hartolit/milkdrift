@@ -96,3 +96,16 @@ sprint: traced current request, harness, and adapter owners after the operator q
 above are proposals; this contribution did not implement or qualify them.
 The operator requested explicit purpose questions so later evaluation can reject or narrow the
 proposal instead of treating its presence on the board as agreement.
+
+
+2026-09-22 — Birch-20260922-a (agent pseudonym), assignment 02 review follow-up: both the former
+LM Studio Gemma endpoint and the current desktop Ornith llama.cpp instance emit separate
+`reasoning_content` deltas which the strict response mapping refuses. The desktop default test
+retained uncertainty; a separate request with explicit `reasoning_effort: "none"` emitted a compatible
+stream and passed daemon/CLI evidence. Drifty passed the same requested mode through an authenticated
+tunnel. The finite-accounting reader now permits this exact disabling value without relaxing the
+total-generation cap. No server defaults were changed. Whether to add a bounded, provenance-bearing
+mapping for separate reasoning output remains a product question: silently dropping it would lose
+semantics, while preserving it requires deciding what may enter continuation and artifact context.
+The existing explicit configuration is sufficient for the exercised text-only managed use; it does
+not qualify default thinking streams. Evidence is under `target/adaptive-hosts/managed-02-qualification/`.

@@ -268,3 +268,33 @@ one accepted terminal, verified output artifact digests/linkage, and usage/respo
 when supplied by the server. This model-only smoke never qualifies the repository's strict
 external-evidence gate; that separate gate also requires a real byte-pinned coding agent and is
 documented in [`external-evidence.md`](external-evidence.md).
+
+## llama.cpp reasoning stream compatibility
+
+The exercised Ornith servers emit nonstandard `reasoning_content` fields by default. Milkdrift's
+strict OpenAI-compatible response reader refuses those unmapped message semantics; after request
+entry the result remains uncertain, with no fabricated response or automatic retry. Switching from
+LM Studio to llama.cpp alone does not remove that mismatch.
+
+For these llama.cpp instances, the existing namespaced request extension can explicitly select the
+server's documented `reasoning_effort: "none"` behavior. Put this in a fresh model task's
+`request.extensions`, or in the endpoint profile's `provider_options`:
+
+```json
+{"org.milkdrift.openai/request":{"reasoning_effort":"none"}}
+```
+
+The finite byte-BPE accounting path accepts this exact value while preserving the configured
+complete-request input bound and total-output cap. Other reasoning values and options that add
+unaccounted generation still refuse. Template and output-enforcement declarations remain the
+operator's responsibility. This choice is supported by
+[llama.cpp's chat endpoint](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md);
+it is not a portable promise for every OpenAI-compatible server.
+
+Desktop `ornith-9b` and Drifty `ornith` passed the actual daemon/CLI smoke with this explicit choice.
+The desktop also passed a managed direct call with finite accounting. Drifty was reached through
+an authenticated SSH tunnel to its NetBird listener; no non-loopback HTTP policy was weakened.
+These results qualify the exercised request configuration, not default reasoning streams or
+termination of remote work after disconnect. The
+[generation-policy discussion](../development/virtual-office/whiteboard/discussions/model-generation-policy.md)
+retains the broader choice of how to preserve and replay separate reasoning output.

@@ -53,6 +53,7 @@ async fn configured_resource_owner_retains_exact_failed_platform_intent_across_r
     let mut config = configuration_document_with_process_profiles(&directory, 16, Vec::new())?;
     config.adapters.managed_linux = Some(milkdrift_managed_linux::LinuxManagerConfig {
         state_root: manager,
+        systemd_directory: quadlets.clone(),
         quadlet_directory: quadlets,
         recipes: vec![path],
     });

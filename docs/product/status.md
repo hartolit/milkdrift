@@ -104,7 +104,7 @@ values; repository contracts check the version cells against source.
 | Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
 | External control / authenticated cursor | 2.8 / 2 | Only the exact current protocol and cursor forms are accepted. |
 | Peer protocol and catalog messages | 1.4 | Earlier minors refused. |
-| Daemon configuration | 11 | TOML; JSON and earlier versions refused. |
+| Daemon configuration | 12 | TOML; JSON and earlier versions refused. |
 | Managed resource request / inventory | 1 | Exact schema, bounded typed recipe references, preserved receipts and guarded transitions. |
 | Layout document / CLI JSON output | 1 / 2 | CLI schema 1 refused. |
 
@@ -180,25 +180,38 @@ values; repository contracts check the version cells against source.
 
 ## Current validation/evidence snapshot
 
-### Managed Linux resource review
+### Managed Linux resource qualification
 
-Assignment 02's implementation review passes the full local gate on Arch Linux x86_64, Rust 1.95.0:
-868 workspace tests, 24 doctests and all 24 repository contracts, with six intentionally ignored
-manual cases. Formatting, all-target/all-feature checking, warning-denying Clippy/rustdoc, dependency
-audits, discovery and sixteen default/all-feature API inventories also pass. This uses optimization
-level 1 with debug assertions enabled; it does not establish a default unoptimized gate result on
-this host. The [handoff](../development/virtual-office/adaptive-hosts/handoffs/02.md) records exact
-settings and review corrections to concurrent drivers, manager-root ownership, pre-start container
-checks, namespace capacity and generated TOML configuration. Raw evidence is under
-`target/adaptive-hosts/managed-02-review/`.
+Assignment 02 now has executed desktop Arch Linux qualification with Podman 6.1.2, systemd 261.3
+and kernel 7.2.6. The adapter accepts 5.4..6.x and checks actual controller delegation, private
+UID/GID mappings and effective definitions. Real worker tests cover kernel CPU/memory/PID/swap
+limits, denied manager/rootfs access, installed tools, retained files, reapply/reopen and removal.
+The owned CPU llama-server test verifies kernel enforcement and service identity, and systemd
+restarts the deliberately killed test service while every Milkdrift manager is absent. A failed
+supervisor start preserves a foreign container with the same name; cleanup is bound to the created
+container ID through an owned systemd drop-in.
 
-Physical qualification remains pending: this host's Podman 6.1.2 is outside the supported 5.x range,
-with no preloaded approved image or delegated CPU controller. Drifty health passed without a
-model generation. The actual daemon/CLI Gemma smoke retained one uncertain attempt and no retry;
-LM Studio emits `reasoning_content` deltas unsupported by the current strict response mapping.
-It does not qualify Gemma interoperability or managed-service enforcement. Server settings were
-unchanged. [Managed operations](../operations/managed-linux.md#platform-qualification) owns the
-remaining real-host lane.
+Actual bootstrap/daemon/CLI evidence exercises worker and model publication, a model completing
+while the working-area invocation is still active, busy-removal refusal, exact replay after
+restart, retained data and attachment-preserving removal. Desktop `ornith-9b` and Drifty `ornith`
+also pass the daemon/CLI model smoke with explicit per-request `reasoning_effort: "none"`.
+The default `reasoning_content` stream still refuses and retains uncertainty; neither these results
+nor the earlier failed Gemma smoke qualify default reasoning-mode interoperability. Server defaults
+were unchanged. Drifty uses an authenticated SSH tunnel to its NetBird listener.
+
+The full local gate passes: 871 workspace tests, 24 doctests, all 24 repository contracts,
+warning-denying Clippy/rustdoc, dependency audits, formatting, checks and discovery. Seven manual
+tests are ignored by that gate; both physical Linux cases were executed separately. Six follow-up
+default/all-feature API inventories pass. This uses optimization level 1 with debug assertions
+enabled; a default unoptimized full-gate pass is not established on this host.
+
+The [handoff](../development/virtual-office/adaptive-hosts/handoffs/02.md) binds exact images, model
+inputs, commands, full-gate/API results and local profile settings. Raw follow-up evidence is under
+`target/adaptive-hosts/managed-02-qualification/`; the earlier review remains under
+`target/adaptive-hosts/managed-02-review/`. Machine reboot, power loss, managed Vulkan and UM790
+pressure remain in the [hardware qualification issue](../development/virtual-office/whiteboard/issues/managed-linux-hardware-qualification.md).
+The passing desktop tests do not establish those hardware claims. [Managed operations](../operations/managed-linux.md#platform-qualification)
+owns the runnable physical lanes.
 
 ### Independent host execution
 

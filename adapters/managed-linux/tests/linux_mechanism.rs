@@ -15,6 +15,62 @@ use std::{
 };
 use support::Result;
 
+fn service_container(setup: &ApprovedSetup) -> Result<Option<serde_json::Value>> {
+    let Some(service) = setup.resources.iter().find(|r| {
+        r.kind == ManagedResourceKind::Service && r.ownership == ResourceOwnership::Owned
+    }) else {
+        return Ok(None);
+    };
+    let output = std::process::Command::new("/usr/bin/podman")
+        .args(["inspect", &service.identity])
+        .output()?;
+    if !output.status.success() {
+        return Err("owned service inspection failed".into());
+    }
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    Ok(Some(value[0].clone()))
+}
+
+fn service_enforcement(
+    value: &serde_json::Value,
+    recipe: &LinuxRecipe,
+    root: &std::path::Path,
+) -> Result {
+    let pid = value
+        .pointer("/State/Pid")
+        .and_then(|v| v.as_u64())
+        .ok_or("service PID missing")?;
+    let cgroup = std::fs::read_to_string(format!("/proc/{pid}/cgroup"))?;
+    let path = cgroup
+        .lines()
+        .find_map(|v| v.strip_prefix("0::"))
+        .ok_or("service cgroup missing")?;
+    let mut observed = serde_json::Map::new();
+    for field in ["memory.max", "memory.swap.max", "pids.max", "cpu.max"] {
+        let text = std::fs::read_to_string(format!("/sys/fs/cgroup{path}/{field}"))?;
+        observed.insert(field.to_owned(), serde_json::json!(text.trim()));
+    }
+    assert_eq!(observed["memory.max"], recipe.memory_bytes.to_string());
+    assert_eq!(observed["memory.swap.max"], "0");
+    assert_eq!(observed["pids.max"], recipe.pids.to_string());
+    let quota: Vec<u64> = observed["cpu.max"]
+        .as_str()
+        .ok_or("CPU quota missing")?
+        .split_whitespace()
+        .map(str::parse)
+        .collect::<std::result::Result<_, _>>()?;
+    assert_eq!(quota[0] * 100, quota[1] * u64::from(recipe.cpu_percent));
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status"))?;
+    assert!(status.lines().any(|v| v == "CapEff:\t0000000000000000"));
+    assert!(status.lines().any(|v| v == "NoNewPrivs:\t1"));
+    assert!(status.lines().any(|v| v == "Seccomp:\t2"));
+    std::fs::write(
+        root.join("service-enforcement.json"),
+        serde_json::to_vec_pretty(&observed)?,
+    )?;
+    Ok(())
+}
+
 struct Authority;
 impl AuthorityEvaluator for Authority {
     fn evaluate(
@@ -121,29 +177,42 @@ fn check_retained(
 }
 
 #[test]
-#[ignore = "requires explicitly supplied preloaded recipe, rootless Podman 5.4..5.x, cgroup v2 and systemd user session"]
+#[ignore = "requires explicitly supplied preloaded recipe, rootless Podman 5.4..6.x, cgroup v2 and systemd user session"]
 fn real_linux_worker_conformance_reapply_restart_and_preserved_removal() -> Result {
     if !cfg!(target_os = "linux") {
         return Err("this lane requires Linux".into());
     }
     let recipe_file = PathBuf::from(std::env::var("MILKDRIFT_LINUX_RECIPE")?);
     let recipe = LinuxRecipe::from_json(&std::fs::read(&recipe_file)?)?;
-    let root = tempfile::tempdir()?;
+    // Physical failures must leave their durable inventory available for diagnosis/recovery.
+    let evidence_parent = std::env::var_os("MILKDRIFT_LINUX_EVIDENCE_PARENT")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let root = tempfile::Builder::new()
+        .prefix("milkdrift-linux-")
+        .tempdir_in(evidence_parent)?
+        .keep();
     let parent = PathBuf::from(std::env::var("MILKDRIFT_QUADLET_TEST_PARENT")?);
-    let quadlet = tempfile::tempdir_in(parent)?;
+    let quadlet = tempfile::tempdir_in(parent)?.keep();
+    eprintln!(
+        "physical evidence root: {}; Quadlet directory: {}",
+        root.display(),
+        quadlet.display()
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700))?;
-        std::fs::set_permissions(quadlet.path(), std::fs::Permissions::from_mode(0o700))?;
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
+        std::fs::set_permissions(&quadlet, std::fs::Permissions::from_mode(0o700))?;
     }
     let config = LinuxManagerConfig {
-        state_root: root.path().to_path_buf(),
-        quadlet_directory: quadlet.path().to_path_buf(),
+        state_root: root.clone(),
+        quadlet_directory: quadlet.clone(),
+        systemd_directory: PathBuf::from(std::env::var("MILKDRIFT_SYSTEMD_TEST_DIRECTORY")?),
         recipes: vec![recipe_file],
     };
     let platform = Arc::new(LinuxManagedPlatform::new(config.clone())?);
-    let store = Arc::new(RedbStore::open(root.path().join("store"))?);
+    let store = Arc::new(RedbStore::open(root.as_path().join("store"))?);
     let manager = owner(store.clone(), platform.clone());
     let installation = ManagedName::new("physical-test")?;
     operation(
@@ -181,7 +250,7 @@ fn real_linux_worker_conformance_reapply_restart_and_preserved_removal() -> Resu
         .clone();
     let data = Arc::new(StoreInvocationDataAccess::new(
         store.clone(),
-        root.path().join("temporary"),
+        root.as_path().join("temporary"),
         ArtifactReadAuthority::PublicOnly,
     )?);
     let sequence = AtomicUsize::new(0);
@@ -245,6 +314,10 @@ fn real_linux_worker_conformance_reapply_restart_and_preserved_removal() -> Resu
         }))
     })?;
     let before = platform.observe(&setup)?;
+    let service_before = service_container(&setup)?;
+    if let Some(value) = &service_before {
+        service_enforcement(value, &recipe, &root)?;
+    }
     operation(
         &manager,
         &store,
@@ -262,12 +335,16 @@ fn real_linux_worker_conformance_reapply_restart_and_preserved_removal() -> Resu
             .is_none()
     );
     assert_eq!(platform.observe(&setup)?.running, before.running);
+    assert_eq!(
+        service_container(&setup)?.as_ref().map(|v| &v["Id"]),
+        service_before.as_ref().map(|v| &v["Id"])
+    );
     check_retained(
         &manager,
         store.clone(),
         platform.clone(),
         &setup,
-        root.path(),
+        root.as_path(),
         "retained-reapply",
     )?;
     // Drop every Milkdrift manager and reopen the same store. Systemd owns any persistent service.
@@ -275,8 +352,51 @@ fn real_linux_worker_conformance_reapply_restart_and_preserved_removal() -> Resu
     drop(manager);
     drop(platform);
     drop(store);
+    // Systemd must recover the exact owned service while every Milkdrift owner is absent.
+    let mut service_after = service_before.clone();
+    if let Some(value) = &service_before {
+        let id = value["Id"].as_str().ok_or("service ID missing")?;
+        assert!(
+            std::process::Command::new("/usr/bin/podman")
+                .args(["kill", "--signal=KILL", id])
+                .status()?
+                .success()
+        );
+        let ModelService::Owned { port, .. } = recipe.model_service else {
+            return Err("owned service recipe missing".into());
+        };
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .no_proxy()
+            .build()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        loop {
+            if let Ok(Some(current)) = service_container(&setup)
+                && current["Id"] != value["Id"]
+                && current.pointer("/State/Running").and_then(|v| v.as_bool()) == Some(true)
+                && client
+                    .get(format!("http://127.0.0.1:{port}/health"))
+                    .send()
+                    .is_ok_and(|r| r.status().is_success())
+            {
+                service_enforcement(&current, &recipe, &root)?;
+                service_after = Some(current);
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("systemd did not recover the owned service without Milkdrift".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        std::fs::write(
+            root.join("supervisor-recovery.json"),
+            serde_json::to_vec_pretty(
+                &serde_json::json!({"before":value["Id"],"after":service_after.as_ref().map(|v| &v["Id"]),"milkdrift_running":false}),
+            )?,
+        )?;
+    }
     let platform = Arc::new(LinuxManagedPlatform::new(config)?);
-    let store = Arc::new(RedbStore::open(root.path().join("store"))?);
+    let store = Arc::new(RedbStore::open(root.as_path().join("store"))?);
     let manager = owner(store.clone(), platform.clone());
     manager.recover_startup()?;
     check_retained(
@@ -284,10 +404,14 @@ fn real_linux_worker_conformance_reapply_restart_and_preserved_removal() -> Resu
         store.clone(),
         platform.clone(),
         &setup,
-        root.path(),
+        root.as_path(),
         "retained-restart",
     )?;
     assert_eq!(platform.observe(&setup)?.running, before.running);
+    assert_eq!(
+        service_container(&setup)?.as_ref().map(|v| &v["Id"]),
+        service_after.as_ref().map(|v| &v["Id"])
+    );
     assert_eq!(
         store
             .managed_installation(&installation)?
