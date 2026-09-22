@@ -98,6 +98,7 @@ pub struct AdapterConformanceCase {
     expectations: AdapterConformanceExpectations,
     cleanup: Option<Box<dyn FnOnce() -> Result<(), String> + Send>>,
     keepalive: Vec<Box<dyn Any + Send>>,
+    serving_allowance: Option<milkdrift_peer_protocol::ExecutionLimits>,
 }
 
 impl AdapterConformanceCase {
@@ -128,7 +129,31 @@ impl AdapterConformanceCase {
             expectations,
             cleanup: None,
             keepalive: Vec::new(),
+            serving_allowance: None,
         })
+    }
+
+    /// Also apply ordinary independent-host final admission to the exact prepared envelope.
+    #[must_use]
+    pub fn with_serving_allowance(
+        mut self,
+        allowance: milkdrift_peer_protocol::ExecutionLimits,
+    ) -> Self {
+        self.serving_allowance = Some(allowance);
+        self
+    }
+
+    fn check_serving_allowance(
+        &self,
+        prepared: &crate::PreparedAdapterExecution,
+    ) -> Result<(), AdapterConformanceError> {
+        if let Some(allowance) = &self.serving_allowance {
+            require(
+                allowance.permits_prepared(prepared.envelope(), 0),
+                "prepared adapter does not fit its accepted serving allowance",
+            )?;
+        }
+        Ok(())
     }
 
     /// Installs mechanism-specific cleanup, such as joining a bounded mock listener.
@@ -309,6 +334,7 @@ where
             .clone()
             .prepare(&case.invocation())
             .map_err(adapter_failure)?;
+        case.check_serving_allowance(&prepared)?;
         let error = match prepared.enter(&case.invocation(), &reporter) {
             Ok(()) => {
                 return Err(AdapterConformanceError::new(
@@ -326,10 +352,13 @@ where
         )?;
     } else {
         let reporter = RecordingReporter::default();
-        case.adapter
+        let prepared = case
+            .adapter
             .clone()
             .prepare(&case.invocation())
-            .map_err(adapter_failure)?
+            .map_err(adapter_failure)?;
+        case.check_serving_allowance(&prepared)?;
+        prepared
             .enter(&case.invocation(), &reporter)
             .map_err(adapter_failure)?;
         reporter.assert_complete(case.request.invocation())?;

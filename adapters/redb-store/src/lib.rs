@@ -23,6 +23,7 @@ mod error;
 mod fault;
 mod journal;
 mod json;
+mod managed;
 pub mod offline;
 mod peer;
 mod revision;

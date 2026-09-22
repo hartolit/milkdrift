@@ -49,3 +49,6 @@ pub use worker::{
     EffectPollReport, EffectShutdownMode, EffectWorkerConfig, EffectWorkerError,
     EffectWorkerHealth, EffectWorkerHost, EffectWorkerShutdown,
 };
+
+/// Persistent installations, resource-use coordination and their shared lifecycle owner.
+pub mod managed;

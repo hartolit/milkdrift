@@ -419,6 +419,7 @@ impl PeerExecutionStore for RedbStore {
             revision: 1,
         };
         validate_record(&record)?;
+        crate::managed::accept_serving_resources(&write, &record)?;
         put_execution(&write, &record)?;
         write
             .open_table(PEER_EXECUTIONS_BY_REQUEST)
@@ -675,6 +676,7 @@ impl PeerExecutionStore for RedbStore {
             .checked_add(1)
             .ok_or_else(|| corruption("peer observation accounting overflowed"))?;
         if is_terminal {
+            crate::managed::terminal_serving_resources(&write, &record)?;
             let was_active = record.phase.is_active();
             let was_pre_entry = record.phase.entry_evidence().is_none()
                 && !matches!(record.phase, PeerExecutionPhase::Uncertain { .. });

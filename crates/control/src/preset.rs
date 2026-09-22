@@ -123,6 +123,7 @@ impl AuthorityPreset {
                     Terminate,
                     WriteLayout,
                     AdministerPeer,
+                    AuthorityOperation::AdministerCapabilities,
                 ])
                 .collect(),
             Self::Autonomous => reads

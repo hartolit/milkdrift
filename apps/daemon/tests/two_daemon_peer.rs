@@ -523,6 +523,7 @@ fn configuration_document(
             ..RuntimeHostConfig::default()
         },
         adapters: AdapterConfig {
+            managed_linux: None,
             process_profiles,
             ..AdapterConfig::default()
         },

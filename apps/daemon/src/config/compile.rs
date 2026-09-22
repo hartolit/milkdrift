@@ -151,6 +151,16 @@ impl DaemonConfig {
             validate_safe_identity("model capability", &model.capability_id)?;
             model.profile = normalize_existing_file(&base, &model.profile)?;
         }
+        if let Some(managed) = &mut self.adapters.managed_linux {
+            managed.state_root = normalize_owned_path(&base, &managed.state_root)?;
+            managed.quadlet_directory = normalize_owned_path(&base, &managed.quadlet_directory)?;
+            for recipe in &mut managed.recipes {
+                *recipe = normalize_existing_file(&base, recipe)?;
+            }
+            managed
+                .validate()
+                .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+        }
         validate_safe_identity("host_id", &self.host_id)?;
         validate_serving(&self.serving)?;
         validate_peers(&self.peers, &self.host_id, &self.secret_sources)?;

@@ -91,6 +91,7 @@ enum Family {
     Peers,
     PeerTombstones,
     Artifacts,
+    Managed,
 }
 impl From<Family> for InspectionFamily {
     fn from(value: Family) -> Self {
@@ -102,6 +103,7 @@ impl From<Family> for InspectionFamily {
             Family::Peers => Self::Peers,
             Family::PeerTombstones => Self::PeerTombstones,
             Family::Artifacts => Self::Artifacts,
+            Family::Managed => Self::Managed,
         }
     }
 }

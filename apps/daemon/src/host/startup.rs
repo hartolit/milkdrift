@@ -155,7 +155,11 @@ impl DaemonHost {
             })
             .map_err(|error| HostError::Startup(error.to_string()))?;
         match startup_receiver.recv() {
-            Ok(Ok(peer_runtime)) => Ok(Self {
+            Ok(Ok(StartedServices {
+                peer: peer_runtime,
+                managed,
+            })) => Ok(Self {
+                managed,
                 sender,
                 health,
                 auth,
@@ -179,6 +183,11 @@ impl DaemonHost {
             }
         }
     }
+}
+
+pub(super) struct StartedServices {
+    peer: PeerRuntime,
+    managed: Option<Arc<super::managed::ManagedHost>>,
 }
 
 pub(super) struct OwnerPlan {
@@ -235,7 +244,7 @@ impl Owner {
         health: Arc<SharedHealth>,
         sender: Weak<SyncSender<OwnerRequest>>,
         clock_source: Arc<dyn DaemonClockSource>,
-    ) -> Result<(Self, PeerRuntime), String> {
+    ) -> Result<(Self, StartedServices), String> {
         let OwnerPlan {
             role,
             host_id,
@@ -419,11 +428,14 @@ impl Owner {
                     peer_registries: BTreeMap::new(),
                     clock: clock.clone(),
                 },
-                PeerRuntime {
-                    service: None,
-                    artifacts: None,
-                    registries: BTreeMap::new(),
-                    clock,
+                StartedServices {
+                    peer: PeerRuntime {
+                        service: None,
+                        artifacts: None,
+                        registries: BTreeMap::new(),
+                        clock,
+                    },
+                    managed: None,
                 },
             ));
         }
@@ -476,6 +488,21 @@ impl Owner {
                 startup_now,
             )?;
         }
+        let managed = adapters
+            .managed_linux
+            .clone()
+            .map(|config| {
+                super::managed::ManagedHost::open(
+                    config,
+                    capability_host.clone(),
+                    store.clone(),
+                    data.clone(),
+                    authority.clone(),
+                    auth.resolver(),
+                    clock.clone(),
+                )
+            })
+            .transpose()?;
         capabilities::register_configured(
             &adapters,
             &capability_host,
@@ -547,7 +574,10 @@ impl Owner {
                 peer_registries: peer_runtime.registries.clone(),
                 clock,
             },
-            peer_runtime,
+            StartedServices {
+                peer: peer_runtime,
+                managed,
+            },
         ))
     }
 }

@@ -5,7 +5,7 @@ adapters and, when enabled, workflow execution; clients use its authenticated AP
 refused while the first holds the domain lock. Start with the
 [operator recipe](../../examples/operator/README.md) for configuration, credentials, and a first run.
 
-Configuration is TOML schema 10. `--check-config` validates it and resolves paths relative to the
+Configuration is TOML schema 11. `--check-config` validates it and resolves paths relative to the
 configuration file; `--print-effective-config` prints normalized, redacted TOML. Neither starts
 adapters or proves storage recovery. The running host uses an immutable compiled plan, so changes
 to grants, profile sources, worker limits, or peer relationships require validation and restart.
@@ -21,6 +21,9 @@ input uploads; use `milkdrift invocation catalog` to discover the exact callable
 Workflow-control capabilities are absent from execution-only hosts and from direct discovery.
 Set a stable required `host_id`; an existing store refuses a different identity on restart.
 
+Managed installations use the same host in either role. Follow [managed Linux operations](managed-linux.md)
+for the approved recipe, bootstrap, resource commands and separate physical qualification.
+
 ## Startup and readiness
 
 Startup establishes what can continue before it admits new work:
@@ -35,7 +38,9 @@ Startup establishes what can continue before it admits new work:
 4. Reclaim interrupted public input uploads through bounded pages, preserving resumable peer and
    workflow publications. Register and health-check configured process/model adapters, plus
    workflow-control when its role exists, then build configured peer relationships.
-5. Start fixed effect workers only for the workflow role. Recover the common serving owner and
+5. Recover bounded managed inventory and exact pending changes when configured; rebuild verified
+   resource capabilities before opening execution admission.
+6. Start fixed effect workers only for the workflow role. Recover the common serving owner and
    open admission only after the other startup steps succeed, then return a ready host to HTTP.
 
 The executable begins serving requests only after host startup succeeds. While it is starting,
@@ -157,7 +162,7 @@ them. Unknown root components, links/reparse points and special files are refuse
 Keep configuration, secret-source files and unrelated directories outside this data-root policy.
 Backup never fetches referenced external files or resolves credentials.
 
-Only physical schema 12 and internal document format 17 are supported by the
+Only physical schema 13 and internal document format 18 are supported by the
 [current readers](../product/status.md), including offline. For other formats, preserve the untouched
 root and its producer binary/source; inspection requires matching offline readers, which this
 command does not supply. No migration, schema-marker patching, row editing or automatic repair occurs.

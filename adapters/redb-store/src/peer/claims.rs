@@ -147,6 +147,7 @@ impl RedbStore {
             entered_at_unix_ms: request.entered_at_unix_ms,
             authority: request.authority.clone(),
         };
+        crate::managed::enter_serving_resources(&write, &record)?;
         record.phase = PeerExecutionPhase::Entered { claim, evidence };
         bump_record(&mut record)?;
         global.dispatch_queued = global

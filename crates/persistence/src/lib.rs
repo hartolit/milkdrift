@@ -118,3 +118,6 @@ pub use snapshot::{
     ProjectionCheckpoint, SNAPSHOT_ENVELOPE_SCHEMA_VERSION_V2, SnapshotDocument, SnapshotLoad,
     SnapshotStore, history_digest, history_genesis_digest, history_link_digest,
 };
+
+/// Managed resource inventory and atomic lifetime/editing ownership ports.
+pub mod managed;

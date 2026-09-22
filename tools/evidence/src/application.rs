@@ -504,6 +504,7 @@ pub fn write_config(
             ..RuntimeHostConfig::default()
         },
         adapters: AdapterConfig {
+            managed_linux: None,
             process_profiles: inputs.process_profiles,
             model_profiles: inputs.model_profiles,
         },

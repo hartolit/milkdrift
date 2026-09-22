@@ -1,7 +1,7 @@
 use super::*;
 
 fn fixture_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v10.toml")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v11.toml")
 }
 
 fn fixture_document() -> Result<DaemonConfig, Box<dyn std::error::Error>> {
@@ -71,7 +71,7 @@ fn maintained_operator_configuration_uses_the_production_reader()
 }
 
 #[test]
-fn schema_v10_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+fn schema_v11_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     let plan = DaemonConfig::load(&fixture_path())?;
     let document = fixture_document()?;
     let actor = &document.actors[0];
@@ -123,11 +123,11 @@ fn old_and_future_config_versions_are_rejected_truthfully() -> Result<(), Box<dy
 {
     let source = fs::read_to_string(fixture_path())?;
     for unsupported in [
-        1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 6_u32, 7_u32, 8_u32, 9_u32, 11_u32,
+        1_u32, 2_u32, 3_u32, 4_u32, 5_u32, 6_u32, 7_u32, 8_u32, 9_u32, 10_u32, 12_u32,
     ] {
         let directory = tempfile::tempdir()?;
         let value = source.replacen(
-            "schema_version = 10",
+            "schema_version = 11",
             &format!("schema_version = {unsupported}"),
             1,
         );
@@ -146,7 +146,7 @@ fn duplicate_unknown_and_json_configuration_are_rejected() -> Result<(), Box<dyn
 {
     let directory = tempfile::tempdir()?;
     let duplicate = directory.path().join("duplicate.toml");
-    fs::write(&duplicate, "schema_version = 10\nschema_version = 10\n")?;
+    fs::write(&duplicate, "schema_version = 11\nschema_version = 11\n")?;
     assert!(matches!(
         DaemonConfig::load(&duplicate),
         Err(ConfigError::Toml(_))
@@ -163,8 +163,8 @@ fn duplicate_unknown_and_json_configuration_are_rejected() -> Result<(), Box<dyn
     fs::write(
         &unknown,
         fs::read_to_string(fixture_path())?.replacen(
-            "schema_version = 10",
-            "schema_version = 10\nunexpected = true",
+            "schema_version = 11",
+            "schema_version = 11\nunexpected = true",
             1,
         ),
     )?;
@@ -359,3 +359,11 @@ use milkdrift_authority::{
 };
 use milkdrift_capability::SideEffectClass;
 use std::{collections::BTreeSet, fs};
+#[test]
+fn administrator_configuration_roundtrips_through_toml() -> Result<(), Box<dyn std::error::Error>> {
+    let authority = ActorGrantConfig::dangerous_administrator();
+    let text = toml::to_string_pretty(&authority)?;
+    let decoded: ActorGrantConfig = toml::from_str(&text)?;
+    assert_eq!(decoded, authority);
+    Ok(())
+}

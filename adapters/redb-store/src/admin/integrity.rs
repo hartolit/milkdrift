@@ -10,6 +10,7 @@ use crate::{
 mod application;
 mod artifacts;
 mod controller;
+mod managed;
 mod revisions;
 mod run;
 mod scheduler;
@@ -66,6 +67,12 @@ pub(super) mod phase {
     pub(super) const CONTROLLER_TRANSITIONS: u8 = 44;
     pub(super) const CONTROLLER_ARTIFACT_CHARGES: u8 = 45;
     pub(super) const CONTROLLER_ACCOUNT_REVISIONS: u8 = 46;
+    pub(super) const MANAGED_INSTALLATIONS: u8 = 47;
+    pub(super) const MANAGED_USES: u8 = 48;
+    pub(super) const MANAGED_RECEIPTS: u8 = 49;
+    pub(super) const MANAGED_TRANSITIONS: u8 = 50;
+    pub(super) const MANAGED_LOCAL_USES: u8 = 51;
+    pub(super) const MANAGED_LINKS: u8 = 52;
 }
 
 /// Shared state for one ordered scan page. Domain modules own tables and validation.
@@ -325,5 +332,6 @@ pub(crate) fn scan_index_integrity(
     snapshots::scan(&mut context)?;
     artifacts::scan_publications(&mut context)?;
     application::scan(&mut context)?;
-    controller::scan(&mut context)
+    controller::scan(&mut context)?;
+    managed::scan(&mut context)
 }

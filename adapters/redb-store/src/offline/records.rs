@@ -29,6 +29,8 @@ pub enum InspectionFamily {
     PeerTombstones,
     /// Artifact identity, size and digest; content is never exported here.
     Artifacts,
+    /// Installation state and blockers without executable configuration or secret values.
+    Managed,
 }
 
 /// One decoded observation; error records retain their cursor position so an operator
@@ -37,6 +39,10 @@ pub enum InspectionFamily {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[allow(missing_docs)] // Each variant documents its complete diagnostic projection.
 pub enum InspectionRecord {
+    /// Verified resource inventory projection; platform data remains outside store backups.
+    Managed {
+        installation: milkdrift_capability::managed::ManagedResponse,
+    },
     /// Existing verifiable lease discovery evidence, never a renewed lease.
     Lease { lease: LeaseIndexEntry },
     /// Resource totals and exact unresolved reservations, without raw provider evidence.
@@ -138,6 +144,7 @@ impl OfflineStore {
         count!(Peers, PEER_EXECUTIONS);
         count!(PeerTombstones, PEER_EXECUTION_TOMBSTONES);
         count!(Artifacts, ARTIFACT_METADATA);
+        count!(Managed, MANAGED_INSTALLATIONS);
         Ok(StorageOverview {
             storage_schema: schema::STORAGE_SCHEMA_VERSION,
             document_format: schema::INTERNAL_DOCUMENT_FORMAT_VERSION,
@@ -285,6 +292,7 @@ impl OfflineStore {
             InspectionFamily::Peers => text_table!(PEER_EXECUTIONS),
             InspectionFamily::PeerTombstones => text_table!(PEER_EXECUTION_TOMBSTONES),
             InspectionFamily::Artifacts => text_table!(ARTIFACT_METADATA),
+            InspectionFamily::Managed => text_table!(MANAGED_INSTALLATIONS),
         }
         Ok(result)
     }
@@ -299,6 +307,15 @@ impl OfflineStore {
         let text_key =
             || std::str::from_utf8(key).map_err(|_| error::corruption("invalid record key"));
         match family {
+            InspectionFamily::Managed => {
+                let record = crate::managed::decode_record(bytes)?;
+                if record.name.as_str() != text_key()? {
+                    return Err(error::corruption("managed inventory key differs"));
+                }
+                Ok(InspectionRecord::Managed {
+                    installation: record.view(),
+                })
+            }
             InspectionFamily::Leases => {
                 let lease: LeaseIndexEntry = json::decode(bytes, "lease entry")?;
                 if crate::codec::pair(lease.run.as_str(), lease.lease.as_str())? != key {

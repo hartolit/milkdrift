@@ -59,7 +59,8 @@ pub(crate) use discovery::{
     timer_order_key, validate_runnable_head,
 };
 pub(crate) use queries::{
-    validate_signal_receipt_row, validated_run_head, validated_run_head_in_transaction,
+    decode_stored_event, validate_signal_receipt_row, validated_run_head,
+    validated_run_head_in_transaction,
 };
 pub(crate) use workspace::{
     validate_owning_workspace_scope, validate_scope_lineage_in_transaction,

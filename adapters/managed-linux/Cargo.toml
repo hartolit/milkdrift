@@ -1,0 +1,34 @@
+[package]
+name = "milkdrift-managed-linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+blake3.workspace = true
+milkdrift-authority.workspace = true
+milkdrift-capability.workspace = true
+milkdrift-capability-host.workspace = true
+milkdrift-contracts.workspace = true
+milkdrift-persistence.workspace = true
+milkdrift-model-provider.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+tempfile.workspace = true
+url.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", features = ["process", "fs"] }
+
+[dev-dependencies]
+milkdrift-peer-protocol.workspace = true
+milkdrift-model.workspace = true
+milkdrift-capability-host = { workspace = true, features = ["test-support"] }
+milkdrift-redb-store = { workspace = true, features = ["test-admin"] }
+milkdrift-runtime.workspace = true
+
+[lints]
+workspace = true

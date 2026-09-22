@@ -14,6 +14,8 @@ mod event_page;
 mod fault_reopen;
 #[path = "contracts/journal_workspace.rs"]
 mod journal_workspace;
+#[path = "contracts/managed.rs"]
+mod managed;
 
 use std::sync::Arc;
 

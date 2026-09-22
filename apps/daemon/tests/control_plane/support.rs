@@ -185,6 +185,7 @@ pub(super) fn configuration_document_with_process_profiles(
         ],
         runtime,
         adapters: AdapterConfig {
+            managed_linux: None,
             process_profiles,
             ..AdapterConfig::default()
         },

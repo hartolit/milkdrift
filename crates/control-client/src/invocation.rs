@@ -8,6 +8,19 @@ use milkdrift_peer_protocol::{
 use reqwest::Method;
 
 impl ControlClient {
+    /// Execute a typed lifecycle request once. Preserve its exact command document for replay;
+    /// an acceptance receipt and the later inspected installation state have separate meanings.
+    pub async fn manage_resources(
+        &self,
+        request: &milkdrift_capability::managed::ManagedRequest,
+    ) -> Result<milkdrift_capability::managed::ManagedResponse, ClientError> {
+        request.validate().map_err(protocol)?;
+        let response: milkdrift_capability::managed::ManagedResponse = self
+            .json_request(Method::POST, "v1/resources", Some(request), false)
+            .await?;
+        response.validate_for(request).map_err(protocol)?;
+        Ok(response)
+    }
     /// Publishes one bounded input atomically. Replay the exact request after a lost reply.
     pub async fn upload_input(
         &self,

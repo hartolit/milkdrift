@@ -3,7 +3,7 @@
 `milkdrift-daemon` runs workflows and retains their accepted history in one data root. Operators
 configure it once, then use the [CLI](../cli/README.md) or
 [control client](../../crates/control-client/README.md) to submit work and inspect results. It
-starts the configured external capability adapters; model servers remain separately managed.
+starts the configured external capability adapters; configured owned model services use external systemd supervision; attached model servers retain their existing owner.
 
 Configuration explicitly selects `workflow_enabled` or `execution_only`. Execution-only startup
 constructs common storage, authority and capability owners without runtime, control or workflow
@@ -84,3 +84,7 @@ The `control_plane`, `configuration_cli`, and `two_daemon_peer` tests check publ
 configuration, recovery, authority, and peer behavior. The
 [verification policy](../../docs/development/workflow.md#choose-verification-for-the-change)
 selects the required checks for a change.
+
+The optional [managed Linux setup](../../docs/operations/managed-linux.md) composes the shared resource
+owner and Linux adapter in both roles. `managed-bootstrap` generates private configuration; lifecycle
+authority remains in the authenticated API and ordinary capability path after startup.

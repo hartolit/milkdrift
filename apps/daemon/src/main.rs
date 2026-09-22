@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use milkdrift_daemon::{DaemonConfig, DaemonHost, serve};
 use tracing_subscriber::EnvFilter;
+mod managed_bootstrap;
 mod storage_admin;
 
 #[derive(Parser)]
@@ -34,6 +35,8 @@ struct Arguments {
 
 #[derive(clap::Subcommand)]
 enum Command {
+    /// Preview or generate private configuration for one approved managed Linux recipe.
+    ManagedBootstrap(managed_bootstrap::Arguments),
     /// Offline inspection/backup under OS file-owner authority; never starts a host.
     StorageAdmin(storage_admin::Arguments),
 }
@@ -54,8 +57,10 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let arguments = Arguments::parse();
-    if let Some(Command::StorageAdmin(arguments)) = arguments.command {
-        return storage_admin::run(arguments);
+    match arguments.command {
+        Some(Command::StorageAdmin(arguments)) => return storage_admin::run(arguments),
+        Some(Command::ManagedBootstrap(arguments)) => return managed_bootstrap::run(arguments),
+        None => {}
     }
     let config = DaemonConfig::load(arguments.config.as_ref().ok_or("--config is required")?)?;
     if arguments.print_effective_config {

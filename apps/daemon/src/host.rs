@@ -46,6 +46,7 @@ mod definitions;
 mod health;
 mod layouts;
 mod maintenance;
+mod managed;
 mod peer_store;
 mod peers;
 mod proposals;
@@ -129,6 +130,7 @@ pub struct DaemonHost {
     peer_registries: Arc<BTreeMap<PeerId, Arc<PeerRegistry>>>,
     revoked_peers: Arc<Mutex<BTreeSet<PeerId>>>,
     clock: DurableClock,
+    managed: Option<Arc<managed::ManagedHost>>,
 }
 
 impl std::fmt::Debug for DaemonHost {

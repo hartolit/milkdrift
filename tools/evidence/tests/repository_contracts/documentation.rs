@@ -399,6 +399,10 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
             .collect::<TestResult<Vec<_>>>()?;
         expected.insert(family.to_owned(), versions.join(" / "));
     }
+    expected.insert(
+        "Managed resource request / inventory".to_owned(),
+        numeric_const("crates/capability/src/managed.rs", "MANAGED_SCHEMA_VERSION")?.to_string(),
+    );
     let control = format!(
         "{}.{}",
         numeric_const("crates/control-protocol/src/lib.rs", "PROTOCOL_MAJOR")?,
@@ -518,7 +522,14 @@ fn every_maintained_example_has_a_production_reader() -> TestResult {
             "headless-dogfood-sequence.md" => {
                 milkdrift_prompt_sequence::PromptSequenceDocument::from_bytes(&bytes)?;
             }
-            "operator/README.md" | "external-evidence/README.md" => {}
+            "managed-linux/slotbook.json" => {
+                milkdrift_managed_linux::LinuxRecipe::from_json(&bytes)?;
+            }
+            "managed-linux/Containerfile" => {
+                let text = std::str::from_utf8(&bytes)?;
+                assert!(text.contains("ARG TOOLCHAIN_IMAGE\nFROM ${TOOLCHAIN_IMAGE}"));
+            }
+            "operator/README.md" | "external-evidence/README.md" | "managed-linux/README.md" => {}
             _ => {
                 return Err(
                     format!("maintained example has no production reader: {relative}").into(),
@@ -611,6 +622,9 @@ fn control_reference_json_uses_current_wire_readers_and_versions() -> TestResult
             } else {
                 decode_json::<VersionRequest>(bytes)?;
             }
+        } else if value.get("installation").is_some() {
+            let request: milkdrift_capability::managed::ManagedRequest = decode_json(bytes)?;
+            request.validate()?;
         } else {
             assert_eq!(
                 value["schema_version"].as_u64(),

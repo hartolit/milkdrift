@@ -21,6 +21,14 @@ This document owns current implementation, limitations, exact versions, and qual
   durable replay and honest host-invocation artifacts. Execution-only composition constructs no
   runtime, control service or workflow workers. Origin workflows can use the same serving
   operations remotely with staged inputs and their existing controller reservation.
+- Managed installation commands share one semantic owner through the authenticated API/client/CLI
+  and `milkdrift.resources` capability. Approved recipes, exact generation holds, transferable editing
+  claims, pending changes and command receipts survive restart in redb. The production Linux adapter
+  prepares Slotbook working storage, temporary workers, and optional owned Quadlet llama-server or
+  attached endpoint. It requires explicit resource protection and refuses unsupported prerequisites.
+  Deterministic lifecycle/ledger/conformance/backup tests are distinct from the gated real-Podman
+  lane. Podman, real GPU enforcement and UM790/reboot qualification remain pending; see
+  [managed operations](../operations/managed-linux.md).
 - The CLI covers blueprint/sequence authoring, run/proposal/controller/peer/layout control,
   retained-work resolution, bounded inspection, verified create-new downloads, wait/follow deadlines,
   and stable machine output. [Production examples](../../examples/operator/README.md) provide
@@ -91,12 +99,13 @@ values; repository contracts check the version cells against source.
 | Projection snapshot envelope / runtime payload | 2 / 4 | Old/invalid optional checkpoints replay from journal. |
 | Administrative integrity cursor | 2 | Exact supported cursor. |
 | Peer hot record / compact tombstone | 4 / 2 | Exact current caller/origin meaning; older records refuse. |
-| Redb internal document format / physical schema | 17 / 12 | Older/future stores refused; no migration. |
+| Redb internal document format / physical schema | 18 / 13 | Older/future stores refused; no migration. |
 | Application command receipt / layout record | 1 / 1 | Exact supported contracts. |
 | Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
 | External control / authenticated cursor | 2.8 / 2 | Only the exact current protocol and cursor forms are accepted. |
 | Peer protocol and catalog messages | 1.4 | Earlier minors refused. |
-| Daemon configuration | 10 | TOML; JSON and earlier versions refused. |
+| Daemon configuration | 11 | TOML; JSON and earlier versions refused. |
+| Managed resource request / inventory | 1 | Exact schema, bounded typed recipe references, preserved receipts and guarded transitions. |
 | Layout document / CLI JSON output | 1 / 2 | CLI schema 1 refused. |
 
 ## Limitations now
@@ -110,12 +119,11 @@ values; repository contracts check the version cells against source.
   authenticated foreign provenance. Role removal refuses active workflow obligations and preserves
   closed history for offline inspection. Managed deployment and real two-machine qualification
   remain separate from the deterministic loopback binary evidence.
-- Managed installations, persistent resource inventories and generation holds, worker isolation,
-  protected adaptive agreements, service-execution delegation, published invocation/run linkage,
+- Protected adaptive agreements, service-execution delegation, published invocation/run linkage,
   and evaluated method learning are not implemented. Existing prospective reconciliation and result
   acceptance do not establish those guarantees. The current risk classifier requires approval for
   node replacement and other elevated changes; it has no protected editable-scope policy.
-  [Architecture](../architecture.md) and ADRs 0039–0041 describe these accepted additions, not supported APIs.
+  [Architecture](../architecture.md) and ADRs 0040–0041 describe these accepted additions, not supported APIs.
 - Earlier selection-policy-version-1 manifests remain readable, but omissions retaining ambiguous
   identities or sizes and stopped required evidence cannot authorize reuse. Retry and startup refuse
   those retained records without rewriting their bytes. An unsafe active lease prevents daemon
@@ -171,6 +179,26 @@ values; repository contracts check the version cells against source.
   hosted Linux runner; forced Windows child termination does not qualify that platform claim.
 
 ## Current validation/evidence snapshot
+
+### Managed Linux resource review
+
+Assignment 02's implementation review passes the full local gate on Arch Linux x86_64, Rust 1.95.0:
+868 workspace tests, 24 doctests and all 24 repository contracts, with six intentionally ignored
+manual cases. Formatting, all-target/all-feature checking, warning-denying Clippy/rustdoc, dependency
+audits, discovery and sixteen default/all-feature API inventories also pass. This uses optimization
+level 1 with debug assertions enabled; it does not establish a default unoptimized gate result on
+this host. The [handoff](../development/virtual-office/adaptive-hosts/handoffs/02.md) records exact
+settings and review corrections to concurrent drivers, manager-root ownership, pre-start container
+checks, namespace capacity and generated TOML configuration. Raw evidence is under
+`target/adaptive-hosts/managed-02-review/`.
+
+Physical qualification remains pending: this host's Podman 6.1.2 is outside the supported 5.x range,
+with no preloaded approved image or delegated CPU controller. Drifty health passed without a
+model generation. The actual daemon/CLI Gemma smoke retained one uncertain attempt and no retry;
+LM Studio emits `reasoning_content` deltas unsupported by the current strict response mapping.
+It does not qualify Gemma interoperability or managed-service enforcement. Server settings were
+unchanged. [Managed operations](../operations/managed-linux.md#platform-qualification) owns the
+remaining real-host lane.
 
 ### Independent host execution
 

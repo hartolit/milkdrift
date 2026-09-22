@@ -1074,6 +1074,7 @@ version = "0.1.0"
 dependencies = [
  "async-stream",
  "futures-util",
+ "milkdrift-capability",
  "milkdrift-control-protocol",
  "milkdrift-peer-protocol",
  "reqwest",
@@ -1115,6 +1116,7 @@ dependencies = [
  "milkdrift-control-protocol",
  "milkdrift-local-process",
  "milkdrift-local-secret",
+ "milkdrift-managed-linux",
  "milkdrift-model",
  "milkdrift-model-provider",
  "milkdrift-peer-http",
@@ -1158,6 +1160,7 @@ dependencies = [
  "milkdrift-control-protocol",
  "milkdrift-daemon",
  "milkdrift-local-process",
+ "milkdrift-managed-linux",
  "milkdrift-model",
  "milkdrift-model-provider",
  "milkdrift-peer-protocol",
@@ -1205,6 +1208,29 @@ dependencies = [
  "milkdrift-capability-host",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "milkdrift-managed-linux"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "milkdrift-authority",
+ "milkdrift-capability",
+ "milkdrift-capability-host",
+ "milkdrift-contracts",
+ "milkdrift-model",
+ "milkdrift-model-provider",
+ "milkdrift-peer-protocol",
+ "milkdrift-persistence",
+ "milkdrift-redb-store",
+ "milkdrift-runtime",
+ "reqwest",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "url",
 ]
 
 [[package]]

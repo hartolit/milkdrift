@@ -27,6 +27,8 @@ mod descriptor;
 mod document;
 mod identity;
 mod invocation;
+/// Installation lifecycle contracts shared by clients, persistence and host adapters.
+pub mod managed;
 mod placement;
 mod resolved;
 

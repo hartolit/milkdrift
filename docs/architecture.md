@@ -41,14 +41,15 @@ the executable system. Development methods belong in the [practices](development
   bounded import/template compiled into ordinary revisions. **Layout:** presentation state outside
   semantic identity. **Peer:** remote execution host with its own accepted invocation records.
 
-The adopted additions below are not yet implemented (see [status](product/status.md)):
-
-- **Agreement:** immutable obligations, effect prerequisites and adaptation limits accepted for a
-  scope. **Method adaptation:** a prospective revision inside those limits, not a change to them.
 - **Installation:** durable approved setup and owned resources. **Managed working area:** ordinary
   mutable files with a resource generation, lifetime holds and one editing owner; distinct from
   logical workspace values and temporary materialization. **Attachment:** access to a resource
   owned elsewhere, without permission to delete it.
+
+The adopted additions below are not yet implemented (see [status](product/status.md)):
+
+- **Agreement:** immutable obligations, effect prerequisites and adaptation limits accepted for a
+  scope. **Method adaptation:** a prospective revision inside those limits, not a change to them.
 - **Published method:** a callable version binding an exact starting blueprint, agreement,
   adaptation policy and constrained service identity. **Promotion:** selection for future calls,
   distinct from repairing a run or approving a changed agreement.
@@ -62,20 +63,21 @@ executable, which is `milkdrift`. Private children organize each owner's impleme
 | Package directory | Owned responsibility and principal modules |
 | --- | --- |
 | `crates/contracts` | Shared canonical/bounded JSON, validated-string, digest-lexical, UTF-8 truncation, and validating-deserialization mechanics. Domains own meaning and wire shapes. |
-| `crates/capability` | Identities, requirements, descriptors, pure matching, resolved snapshots, invocation/observation/cancellation contracts (`descriptor`, `invocation`, `document`). |
+| `crates/capability` | Identities, requirements, descriptors, pure matching, resolved snapshots, invocation/observation/cancellation and managed-resource request contracts (`descriptor`, `invocation`, `document`, `managed`). |
 | `crates/blueprint` | Immutable graph, structured definitions, task/context policy, validation, revisions, mutation (`model`, `validation`, `revision`, `mutation`, `context`). |
 | `crates/workspace` | Scope lineage, values, artifact metadata, provenance, and workspace budgets. |
 | `crates/authority` | Actors, grants, resource selectors, decisions, frozen execution basis, pure evaluation, and secret references (`model`, `evaluator`, `document`, `secret`). |
 | `crates/model` | Provider-neutral task/response and exact causal-manifest contracts (`task`, `context`, `document`). |
 | `crates/persistence` | Durable documents and narrow journal/revision/workspace/artifact/application/peer/clock ports; controller account validation and transitions. |
 | `crates/runtime` | Commands, scheduling, final entry/reporting, structured work, projection, recovery, reconciliation, and causal discovery/selection (`engine`, `projection`, `context`). |
-| `crates/capability-host` | Live generations, selection/permits, prepared adapter entry, direct/peer serving lifecycle, bounded workers, secrets/materialization ports, and `RuntimeStore` bridge (`registry`, `serving`, `worker`, `materialization`). |
+| `crates/capability-host` | Live generations, selection/permits, prepared adapter entry, direct/peer serving lifecycle, bounded workers, secrets/materialization ports, and `RuntimeStore` bridge (`registry`, `serving`, `worker`, `materialization`, `managed`). |
 | `crates/control` | Proposals, deterministic risk, grants/presets, controller lifecycle, application orchestration, and ordinary workflow-control adapter (`service`, `policy`, `controller`, `adapter`). |
 | `crates/prompt-sequence` | Strict JSON/Markdown imports, ordinary blueprint compilation, stage association, and prospective remediation; no executor or storage. |
 | `crates/control-protocol` | External command/read/layout DTOs, codecs, negotiation, authenticated cursors; no HTTP/runtime/storage types. |
 | `crates/control-client` | Typed authenticated HTTP, bounded safe-query retries and artifact ranges, exact-cursor SSE reconnect. |
 | `crates/peer-protocol` | Transport-neutral session/catalog/execution/cancellation/artifact contracts and strict codecs. |
 | `adapters/local-process` | Profile validation and byte identity; direct argv, preparation, streams, monitoring, outputs, and platform process ownership (`config`, `process`). |
+| `adapters/managed-linux` | Strict Slotbook recipes, rootless Podman effects, generated user Quadlets, owned temporary workers and model-service use adapters. |
 | `adapters/model-provider` | Endpoint policy, feature negotiation, bounded HTTP/SSE, independent OpenAI-compatible and Anthropic mappings, artifact publication. |
 | `adapters/local-secret` | Explicit environment/restricted-file references; no enumeration or retained secret values. |
 | `adapters/peer-http` | Authentication, configured transport, catalogs, remote capability adapters, and artifact transfer framing. Capability-host owns serving lifecycle. |
@@ -363,7 +365,7 @@ safe metadata and integrity evidence; compaction never silently deletes artifact
 
 ## Managed resources and editing ownership
 
-This is accepted design for 02, not current process isolation. Capability-host's resource owner
+Capability-host's `managed` resource owner
 retains approved recipe/configuration, exact platform identity, generation, ownership/preservation
 policy, use and pending changes. Persistence/redb atomically record guarded intent and affected
 admission before a platform action. A later transaction records observed completion against the
@@ -391,6 +393,20 @@ uncertain, including after restart. Other resources can progress. Authorized blo
 and resolution extend the existing command/read plane; a disruption records risk and requires
 physical fencing before reuse, without pretending to establish the old operation's result.
 [ADR 0039](decisions/0039-managed-resource-ownership.md) owns the precise handoff and recovery rules.
+Local `NodeScheduled` acceptance and direct/peer serving acceptance acquire the descriptor's exact
+`org.milkdrift/managed-resources` dependencies in their existing redb transactions. The resource
+index projects those facts; it does not schedule an independent execution. Final-entry evidence
+permits physical entry under the current claim. A terminal event releases unentered reservations,
+but entered work needs adapter stop evidence. Accepted subworkflow journal links identify the exact
+parent logical execution and inherited authority; published invocation links remain work for 04.
+
+The current maintenance policy refuses busy state immediately. Successful acceptance commits a
+bounded transition and closes admission; each platform result is separately guarded by transition
+identity and step. The immutable acceptance receipt never becomes the mutable inventory. Startup
+resumes pending steps, retains explicitly uncertain steps, and rebuilds registry projections without
+creating replacement identities. Linux recipe generation includes exact image/model/configuration
+inputs. [Managed operations](operations/managed-linux.md) owns the usable path, ownership boundary,
+retained disk state, backup exclusions and pending physical enforcement qualification.
 
 ## Agreements at effects and published methods
 

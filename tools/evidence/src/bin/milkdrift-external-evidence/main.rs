@@ -467,6 +467,7 @@ fn configuration(
             ..RuntimeHostConfig::default()
         },
         adapters: AdapterConfig {
+            managed_linux: None,
             process_profiles: vec![
                 agent.path.clone(),
                 helpers.weak_verifier.clone(),

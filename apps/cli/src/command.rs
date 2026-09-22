@@ -12,6 +12,7 @@ mod invocation;
 mod layout;
 mod peer;
 mod proposal;
+mod resource;
 mod run;
 mod sequence;
 mod stream;
@@ -48,6 +49,7 @@ impl Cli {
             RunCommand, SequenceCommand,
         };
         match &self.command {
+            TopCommand::Resource(_) => "resource.manage",
             TopCommand::Invocation { command } => match command {
                 crate::InvocationCommand::Catalog => "invocation.catalog",
                 crate::InvocationCommand::Prepare { .. } => "invocation.prepare",
@@ -188,6 +190,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<(), CliError> {
     }
     let session = CliSession::connect(cli).await?;
     match &session.cli().command {
+        TopCommand::Resource(args) => resource::execute(&session, args).await,
         TopCommand::Invocation { command } => invocation::execute(&session, command).await,
         TopCommand::Daemon { command } => daemon::execute(&session, command).await,
         TopCommand::Blueprint { command } => blueprint::execute(&session, command).await,

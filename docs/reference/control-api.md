@@ -351,3 +351,51 @@ remains protocol-owned. Credentials come from a bounded restricted `--token-file
 Artifact and canonical-document file output uses create-new semantics and removes partial output on
 failure. Artifact completion verifies exact size and the workspace owner’s canonical 64-hex BLAKE3
 content digest.
+
+## Managed installation commands
+
+Both host roles expose `POST /v1/resources` when the managed Linux adapter is configured.
+`ControlClient::manage_resources` accepts `milkdrift_capability::managed::ManagedRequest` and
+validates the returned `ManagedResponse` against its target. The HTTP response uses the ordinary
+success/error envelope. The inner command/inventory schema is independently versioned at 1.
+
+```json
+{
+  "schema_version": 1,
+  "command": "inspect-one",
+  "installation": "slotbook",
+  "expected_version": 0,
+  "action": { "type": "inspect" }
+}
+```
+
+The same document is the inline `request` input to `milkdrift.resources` / `resource.manage`.
+`prepare` and `inspect` evaluate `InspectHealth`; mutations evaluate `AdministerCapabilities`.
+All target capability identity `managed.INSTALLATION` and the exact operation selector
+`resource.ACTION`, plus configuration-derived filesystem/network requirements. Preparation/inspection
+require read access to those filesystem roots. A capability invocation also needs ordinary permission
+to invoke `milkdrift.resources`. Bootstrap grants the exact chosen installation and worker/model
+identities; resource commands do not confer raw Podman or systemd access.
+
+Actions are `prepare { recipe }`, `apply { recipe }`, `inspect`, `start`, `stop`,
+`update { recipe, allow_interruption }`, `preserve { disposition }`, `remove`, `recover`,
+`resolve { use_id, expected_claim }`, `handoff { transfer }`, and
+`return { transfer, resume_parent }`. A recipe is `{ name, digest }`, with a canonical `b3_` digest
+of already approved strict recipe content. A transfer binds installation, generation, parent and
+child use IDs, both claims, and exact accepted association. Disposition is `preserve` or
+`delete_on_removal`. Names use 1–64 lowercase letters, digits or hyphens and begin with a letter.
+Use IDs are 64 lowercase hexadecimal characters; claims and generations are nonzero.
+
+Mutations compare `expected_version`; prepare/inspect use it only as retained request data.
+The actor's `command` key binds the complete canonical request and accepted authority. Exact replay
+returns the immutable acceptance response even if current state has advanced. Inspect is the current
+view. Admission closes in the same store transaction as accepted intent. Busy resource state and
+version conflicts refuse before platform effects; no waiting queue or cross-platform atomicity is
+promised. The client does not automatically retry mutations.
+
+A response includes `schema_version`, installation/version/generation, state, desired and observed
+running state, approved recipe, resource identities/ownership/disposition, blockers, pending change,
+verified capability candidates and bounded diagnostics. Candidates become registry entries only
+after verification; use discovery and health for availability. Entered blockers remain after an
+unknown operation outcome. Resolution proves or fences resource use without changing that outcome.
+See [managed operations](../operations/managed-linux.md) for exact CLI use and recovery consequences.

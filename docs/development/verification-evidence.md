@@ -649,3 +649,33 @@ levels, or production traffic capacity. OS time remains trusted during daemon do
 store size is a trend observation rather than a portable quota; benchmarks are neither universal
 throughput guarantees nor allocator/network/TLS profiles. Keep raw reports, API inventories, and
 timings outside source control. Report unavailable credentials, profiles, tools, or runners explicitly.
+
+## Managed Linux installations
+
+Run `cargo test -p milkdrift-managed-linux --all-features` and the redb `managed::` contract cases
+for deterministic intent/action/result faults, exact receipt replay, guarded child transfer,
+physical-evidence refusal, cancellation and restored-store fencing. Recovery permission tests use a
+replacement with different resource requirements; transaction tests independently enforce originating
+scope when a command key already exists. Concurrent-command regression checks prevent duplicate
+platform drivers; service-start checks refuse foreign ownership before invoking the supervisor,
+platform names and labels separate identical requests under different manager roots, and
+prerequisite tests require enough UID/GID ranges for a worker beside its owned model. The lifecycle and attached-model
+adapters use common conformance with real serving acceptance/artifact storage, prepared-envelope
+allowance checks and a bounded model HTTP fixture. These establish contracts, not Linux containment.
+
+The opt-in actual Podman/Quadlet lane and its exact environment variables are in
+[managed operations](../operations/managed-linux.md#platform-qualification). It includes common
+worker conformance through the production resource/adapter path. Normal CI does not silently skip
+missing prerequisites within that lane: an explicitly invoked lane fails without its recipe,
+rootless engine or user session. Qualification must retain the actual image/model digests, Podman
+and systemd versions, observed kernel limits/devices/backend, and preservation/removal outcomes.
+A daemon reopen is not a host reboot; GPU configuration/log evidence does not alone qualify useful
+GPU inference or shared-memory pressure on the UM790.
+
+The 2026-09-22 review's full gate and API results are retained under
+`target/adaptive-hosts/managed-02-review/`; the [handoff](virtual-office/adaptive-hosts/handoffs/02.md)
+records the optimization settings and unsupported physical prerequisites. The actual daemon/CLI
+Gemma smoke is negative evidence: one entered attempt remains uncertain, without another entry,
+when the strict response reader encounters LM Studio's unmapped `reasoning_content` deltas.
+`gemma-final.log` and its retained session store preserve the result; `gemma-diagnostic-sse.txt`
+records a separate bounded diagnostic request. No provider mapping or server setting was changed.

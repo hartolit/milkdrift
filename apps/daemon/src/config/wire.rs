@@ -90,6 +90,9 @@ impl ActorGrantConfig {
     /// Deliberately constructs visually broad administration for migration/tests.
     #[must_use]
     pub fn dangerous_administrator() -> Self {
+        // This is a daemon configuration value: TOML integers are signed 64-bit even though
+        // authority contracts use u64. Keep the constructor writable and readable by its owner.
+        const MAX_CONFIG_INTEGER: u64 = i64::MAX as u64;
         #[cfg(unix)]
         let filesystem = vec![FilesystemScope::dangerous_all_access_unix_root()];
         #[cfg(windows)]
@@ -110,15 +113,15 @@ impl ActorGrantConfig {
                 workspace: WorkspaceAuthorityScope::dangerous_all_in_run(),
             },
             budget: AuthorityBudget {
-                cost_minor: Some(u64::MAX),
-                duration_ms: Some(u64::MAX),
-                invocations: Some(u64::MAX),
-                artifact_bytes: Some(u64::MAX),
-                units: Some(u64::MAX),
+                cost_minor: Some(MAX_CONFIG_INTEGER),
+                duration_ms: Some(MAX_CONFIG_INTEGER),
+                invocations: Some(MAX_CONFIG_INTEGER),
+                artifact_bytes: Some(MAX_CONFIG_INTEGER),
+                units: Some(MAX_CONFIG_INTEGER),
                 concurrency: Some(u32::MAX),
             },
             valid_from: BoundaryTimeMillis::new(0),
-            valid_until: BoundaryTimeMillis::new(u64::MAX),
+            valid_until: BoundaryTimeMillis::new(MAX_CONFIG_INTEGER),
             dangerous_allow_broad_authority: true,
         }
     }
@@ -220,6 +223,9 @@ pub struct AdapterConfig {
     pub process_profiles: Vec<PathBuf>,
     /// Model capability identity/profile sources.
     pub model_profiles: Vec<ModelProfileConfig>,
+    /// Optional approved managed Linux recipes and private manager paths.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_linux: Option<milkdrift_managed_linux::LinuxManagerConfig>,
 }
 
 /// Explicit peer-host deployment state.

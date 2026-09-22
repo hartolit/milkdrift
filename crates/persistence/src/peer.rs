@@ -730,3 +730,37 @@ pub trait PeerExecutionStore: Send + Sync {
         sequence: u64,
     ) -> Result<Option<ArtifactReference>, PersistenceError>;
 }
+
+impl PeerExecutionRecord {
+    /// Exact executor-facing identity derived from the accepted host, caller and serving operation.
+    /// Resource holds and the serving adapter bridge use this same canonical namespace.
+    pub fn managed_invocation(
+        &self,
+    ) -> Result<milkdrift_capability::InvocationId, PersistenceError> {
+        serving_invocation_identity(
+            self.request.authorization.host(),
+            &self.caller,
+            &self.execution,
+        )
+    }
+}
+
+impl PeerExecutionTombstone {
+    /// Same executor-facing identity after detailed serving observations have been archived.
+    pub fn managed_invocation(
+        &self,
+    ) -> Result<milkdrift_capability::InvocationId, PersistenceError> {
+        serving_invocation_identity(self.authorization.host(), &self.caller, &self.execution)
+    }
+}
+
+fn serving_invocation_identity(
+    host: &milkdrift_capability::PeerId,
+    caller: &milkdrift_peer_protocol::ServingCaller,
+    execution: &PeerExecutionId,
+) -> Result<milkdrift_capability::InvocationId, PersistenceError> {
+    let bytes = serde_json::to_vec(&(host, caller, execution))
+        .map_err(|error| PersistenceError::InvalidDocument(error.to_string()))?;
+    milkdrift_capability::InvocationId::new(format!("serving:{}", blake3::hash(&bytes)))
+        .map_err(|error| PersistenceError::InvalidDocument(error.to_string()))
+}

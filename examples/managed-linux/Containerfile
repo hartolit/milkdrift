@@ -1,0 +1,6 @@
+# Supply an exact, already reviewed Rust image digest containing Git and a C linker.
+# No package resolution runs while applying an accepted Milkdrift generation.
+ARG TOOLCHAIN_IMAGE
+FROM ${TOOLCHAIN_IMAGE}
+RUN git --version && rustc --version && cargo --version && cc --version
+WORKDIR /workspace

@@ -214,6 +214,7 @@ impl AdapterExecutionContext {
             remaining,
         )
         .map_err(|error| crate::InvocationDataError::Rejected(error.to_string()))?;
+        self.entry_authorization = record.phase.entry_evidence().map(|e| e.authority.clone());
         self.peer_artifacts = Some((owner, budget));
         Ok(self)
     }

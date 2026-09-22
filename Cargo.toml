@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "adapters/local-process",
+    "adapters/managed-linux",
     "adapters/model-provider",
     "adapters/peer-http",
     "adapters/redb-store",
@@ -48,6 +49,7 @@ milkdrift-control = { version = "=0.1.0", path = "crates/control" }
 milkdrift-control-client = { version = "=0.1.0", path = "crates/control-client" }
 milkdrift-control-protocol = { version = "=0.1.0", path = "crates/control-protocol" }
 milkdrift-daemon = { version = "=0.1.0", path = "apps/daemon" }
+milkdrift-managed-linux = { version = "=0.1.0", path = "adapters/managed-linux" }
 milkdrift-local-process = { version = "=0.1.0", path = "adapters/local-process" }
 milkdrift-local-secret = { version = "=0.1.0", path = "adapters/local-secret" }
 milkdrift-model = { version = "=0.1.0", path = "crates/model" }

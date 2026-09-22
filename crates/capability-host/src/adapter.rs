@@ -313,6 +313,24 @@ impl PreparedAdapterExecution {
         }
     }
 
+    /// Add an adapter's resource-entry guard around already prepared work without preparing again.
+    /// The host invokes the wrapper only after final authority and durable entry. The wrapped
+    /// one-shot entry cannot escape before that boundary, and the original admission envelope stays fixed.
+    pub fn with_entry_wrapper(
+        self,
+        wrapper: impl FnOnce(
+            &AdapterInvocation<'_>,
+            &dyn AdapterReporter,
+            AdapterEntry,
+        ) -> Result<(), AdapterError>
+        + Send
+        + 'static,
+    ) -> Self {
+        Self::new(self.envelope, move |invocation, reporter| {
+            wrapper(invocation, reporter, self.entry)
+        })
+    }
+
     pub(crate) fn envelope(&self) -> &InvocationAdmissionEnvelope {
         &self.envelope
     }

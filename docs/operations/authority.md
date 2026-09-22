@@ -5,7 +5,7 @@ The credential selects an actor; its grant must cover both the command and later
 For example, permission to start a workflow does not by itself permit its process to execute or
 let the caller download restricted output.
 
-Daemon configuration schema 10 requires every actor binding to contain an explicit `authority`
+Daemon configuration schema 11 requires every actor binding to contain an explicit `authority`
 table. Preset names deterministically expand to typed operation sets; they do not imply resource
 access and are not retained as executable session policy. The resource scope, numeric ceilings,
 validity interval, grant identity/revision, and revocation generation are independent inputs to the
@@ -134,7 +134,7 @@ shortcut for generating hidden wildcard facts. Broad grants remain limited by th
 written in the configuration.
 
 Older configuration and authority-grant schemas are rejected. JSON configuration has no fallback
-reader. Migration is manual: start from a reviewed schema-10 TOML configuration, replace every
+reader. Migration is manual: start from a reviewed schema-11 TOML configuration, replace every
 legacy capability and artifact array with an
 explicit `Any` or nonempty `Only` selector, retain `DenyAll` where no invocation or presentation
 access is intended, choose finite limits,

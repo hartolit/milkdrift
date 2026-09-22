@@ -235,7 +235,7 @@ paths are resolved before the generated daemon configuration is written.
 
 If the profile names `secret:model-token`, add
 `--secret-source secret:model-token=/absolute/private/model.token`. Unix secret files must be
-private regular files. The lane derives a schema-10 daemon configuration and canonical ordinary
+private regular files. The lane derives a schema-11 daemon configuration and canonical ordinary
 blueprints from their owning Rust contracts, then uses the actual CLI for these structural actions:
 
 ```sh

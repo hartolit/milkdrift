@@ -41,6 +41,7 @@ toml.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+milkdrift-managed-linux.workspace = true
 divan = "=0.1.21"
 proc-macro2 = { version = "=1.0.107", features = ["span-locations"] }
 

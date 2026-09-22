@@ -188,7 +188,7 @@ pub(crate) fn index_cursor_position(
             "index integrity cursor has no phase".to_owned(),
         ));
     };
-    if phase > 46 || key.is_empty() {
+    if phase > 52 || key.is_empty() {
         return Err(PersistenceError::InvalidCursor(
             "index integrity cursor has an unknown phase or empty key".to_owned(),
         ));
@@ -561,6 +561,37 @@ pub(crate) fn index_integrity_cursor_exists(
             .map(|row| row.is_some()),
         46 => read
             .open_table(CONTROLLER_ACCOUNT_REVISIONS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        47 => read
+            .open_table(crate::schema::MANAGED_INSTALLATIONS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        48 => read
+            .open_table(crate::schema::MANAGED_USES)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        49 => binary_cursor_exists(read, crate::schema::MANAGED_RECEIPTS, key),
+        50 => read
+            .open_table(crate::schema::MANAGED_TRANSITIONS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        51 => read
+            .open_table(crate::schema::MANAGED_LOCAL_USES)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        52 => read
+            .open_table(crate::schema::MANAGED_LINKS)
             .map_err(error::redb)?
             .get(string_key()?)
             .map_err(error::redb)

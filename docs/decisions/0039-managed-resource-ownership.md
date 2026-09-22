@@ -1,6 +1,6 @@
 # 0039 — Managed resources retain lifetime protection and transferable editing ownership
 
-- Status: accepted direction; resource implementation assigned to adaptive-hosts 02, published child integration to 04
+- Status: accepted direction; resource implementation in adaptive-hosts 02; physical qualification pending; published child integration to 04
 - Date: 2026-09-18
 - Extends: [0010](0010-host-owned-materialization.md), [0022](0022-redb-owned-daemon-application-state.md), [0024](0024-peer-execution-hot-retention-and-tombstones.md)
 - Preserves: trusted-process limits in [0021](0021-byte-pinned-trusted-host-processes.md)
@@ -106,7 +106,7 @@ than one active mutator, but other resources and unrelated model calls can proce
 
 Expose blockers, lineage, exact claims, last evidence and pending transition through the existing
 authorized command/read plane. Extend its retained-work resolution approach with resource-specific
-inspection and resolution in 02; these resource operations do not exist yet. An authorized operator
+inspection and resolution in 02; the implemented typed operations share the resource owner. An authorized operator
 may supply validated stop/absence evidence, resume the exact safe step, or explicitly fence/disrupt
 the owned resource and record the deviation. A risk acknowledgement without physical fencing cannot
 enable another writer. Resolution can preserve an invocation's unknown outcome while proving that
@@ -115,8 +115,8 @@ its resource use ended. Offline inspection/preservation remains available if sta
 ## Compatibility, acceptance and alternatives
 
 New resource records and journal actions need versioned readers, integrity/backup coverage and
-hand-reviewed fixtures in 02; 04 adds exact published-child linkage. No current resource schema,
-numeric future version or migration is claimed. Preserve supported history and refuse incompatible
+hand-reviewed fixtures in 02; 04 adds exact published-child linkage. The implementation uses managed schema 1, physical redb schema 13/internal document format 18,
+and daemon configuration 11. Older stores/configurations refuse before mutation; no migration is supplied. Preserve supported history and refuse incompatible
 stores before mutation as in [0038](0038-independent-host-execution.md).
 
 02 tests transfer transitions, conflicting writers, uncertain use and fault recovery using real
@@ -131,3 +131,19 @@ or physical quiescence. One operation per host would hide the problem by disabli
 Reconsider the initial one-mutator-per-area rule only with a concrete consumer and equivalent
 generation, isolation, recovery and deletion evidence. External supervision remains the mechanism;
 Milkdrift does not acquire a service supervisor or generic installation language.
+
+## Implemented mechanism and format boundary
+
+The first adapter accepts strict `slotbook-v1` recipes, preloaded exact images and typed server/model
+inputs. Podman 5.4..5.x is the checked mechanism range; the installed Quadlet generator validates
+owned definitions. Worker claims use rootless auto user namespaces, one owned working mount and
+explicit cgroup/network/device restrictions. Actual enforcement is checked during apply; deterministic
+fault maps do not qualify it. See [operations](../operations/managed-linux.md) for the physical lane.
+
+Managed inventory, receipts, step evidence and use/link indexes are part of the existing redb store.
+No local journal event schema changes were needed: acquisition consumes exact scheduled snapshots,
+entry decisions, terminal facts and attached-subworkflow association events already owned by runtime.
+A return grants a new physical entry claim only to a still-live parent under its current inherited
+basis. Explicit resolution commits fencing before external cleanup and preserves the old outcome.
+The new portable request/inventory documents use version 1; accepted exact configuration is retained
+independently of the approved recipe source files and serving-detail archival.

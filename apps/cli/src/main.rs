@@ -81,6 +81,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum TopCommand {
+    /// Approved persistent installation lifecycle, shared with workflow capabilities.
+    Resource(ResourceArgs),
     /// Independent execution on the explicitly selected daemon endpoint.
     Invocation {
         #[command(subcommand)]
@@ -148,6 +150,79 @@ enum TopCommand {
         #[command(subcommand)]
         command: LayoutCommand,
     },
+}
+
+#[derive(clap::Args)]
+struct ResourceArgs {
+    #[arg(long)]
+    installation: String,
+    #[arg(long, default_value_t = 0)]
+    expected_version: u64,
+    #[command(subcommand)]
+    command: ResourceCommand,
+}
+
+#[derive(Subcommand)]
+enum ResourceCommand {
+    Handoff(EditingArgs),
+    Return {
+        #[command(flatten)]
+        transfer: EditingArgs,
+        #[arg(long)]
+        resume_parent: bool,
+    },
+    Prepare {
+        #[arg(long)]
+        recipe: String,
+        #[arg(long)]
+        digest: String,
+    },
+    Apply {
+        #[arg(long)]
+        recipe: String,
+        #[arg(long)]
+        digest: String,
+    },
+    Inspect,
+    Start,
+    Stop,
+    Update {
+        #[arg(long)]
+        recipe: String,
+        #[arg(long)]
+        digest: String,
+        #[arg(long)]
+        allow_interruption: bool,
+    },
+    Preserve {
+        /// Permit deletion of owned data during removal; default retains data.
+        #[arg(long)]
+        delete_on_removal: bool,
+    },
+    Remove,
+    Recover,
+    Resolve {
+        #[arg(long)]
+        use_id: String,
+        #[arg(long)]
+        expected_claim: u64,
+    },
+}
+
+#[derive(clap::Args)]
+struct EditingArgs {
+    #[arg(long)]
+    generation: u64,
+    #[arg(long)]
+    parent: String,
+    #[arg(long)]
+    child: String,
+    #[arg(long)]
+    parent_claim: u64,
+    #[arg(long)]
+    child_claim: u64,
+    #[arg(long)]
+    association: String,
 }
 
 #[derive(Subcommand)]
@@ -675,6 +750,52 @@ fn parse_evidence_reference(value: &str) -> Result<EvidenceRef, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resource_commands_use_the_shared_identity_and_exact_version()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for verb in ["inspect", "start", "stop", "remove", "recover", "preserve"] {
+            let cli = Cli::try_parse_from([
+                "milkdrift",
+                "--command-id",
+                "resource-one",
+                "resource",
+                "--installation",
+                "slotbook",
+                "--expected-version",
+                "7",
+                verb,
+            ])?;
+            assert_eq!(cli.command_id.as_deref(), Some("resource-one"));
+            let TopCommand::Resource(args) = cli.command else {
+                return Err("wrong command".into());
+            };
+            assert_eq!(args.expected_version, 7);
+        }
+        let cli = Cli::try_parse_from([
+            "milkdrift",
+            "resource",
+            "--installation",
+            "slotbook",
+            "update",
+            "--recipe",
+            "slotbook",
+            "--digest",
+            "digest",
+            "--allow-interruption",
+        ])?;
+        assert!(matches!(
+            cli.command,
+            TopCommand::Resource(ResourceArgs {
+                command: ResourceCommand::Update {
+                    allow_interruption: true,
+                    ..
+                },
+                ..
+            })
+        ));
+        Ok(())
+    }
 
     #[test]
     fn command_families_retain_their_clap_shapes() -> Result<(), Box<dyn std::error::Error>> {

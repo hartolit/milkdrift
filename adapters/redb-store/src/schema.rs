@@ -1,8 +1,8 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 12;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 13;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
-pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 17;
+pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 18;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
 pub(crate) const CLOCK_WATERMARK_UNIX_MS_KEY: &str = "boundary_clock_high_water_unix_ms";
 pub(crate) const LEASE_SET_REVISION_KEY: &str = "lease_set_revision";
@@ -47,6 +47,13 @@ macro_rules! physical_tables {
 }
 
 physical_tables! {
+MANAGED_LOCAL_USES: &'static str, &'static str = "milkdrift.v1.managed.local_uses";
+// Resource authority outlives serving observation compaction and invocation leases.
+MANAGED_INSTALLATIONS: &'static str, &'static [u8] = "milkdrift.v1.managed.installations";
+MANAGED_RECEIPTS: &'static [u8], &'static [u8] = "milkdrift.v1.managed.receipts";
+MANAGED_TRANSITIONS: &'static str, &'static [u8] = "milkdrift.v1.managed.transitions";
+MANAGED_USES: &'static str, &'static str = "milkdrift.v1.managed.uses";
+MANAGED_LINKS: &'static str, &'static [u8] = "milkdrift.v1.managed.links";
 // Every durable family has a distinct, permanently named table. Keys that need
 // ordering use the closed binary encodings in `codec`; documents are canonical
 // JSON owned by the inward contracts.

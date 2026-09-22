@@ -63,3 +63,15 @@ The default-feature comparison is required for packages with test/evidence featu
 needs a named category, real consumer, validating construction where invalid state is possible,
 and tests at the owning boundary. A smaller item count is diagnostic evidence, not permission to
 hide an actual port, schema, or semantic type.
+
+The managed boundary adds three intentional surfaces: `capability::managed` is the portable
+request/inspection and descriptor-binding contract used by CLI, client and adapters;
+`persistence::managed` is durable inventory plus transactional use/lifecycle ports implemented by
+redb; `capability_host::managed` is the workspace semantic owner, platform/publication ports and
+ordinary lifecycle adapter consumed by daemon and managed-linux. Linux recipe/platform/worker/model
+constructors are adapter contracts consumed by daemon. Redb tables, indexes and Linux command/unit
+helpers stay private. `PreparedAdapterExecution::with_entry_wrapper` lets the managed model adapter
+add a use claim around frozen provider bytes; only final host entry receives that wrapper. The
+entered-serving fixture helper and optional prepared-serving allowance assertion remain under
+`test-support`. Review their default/all-feature inventories with those consumers; none promises a
+separately versioned third-party Rust API.

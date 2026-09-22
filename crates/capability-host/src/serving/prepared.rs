@@ -88,13 +88,8 @@ impl PreparedServingExecution {
 pub(crate) fn serving_invocation(
     record: &PeerExecutionRecord,
 ) -> Result<InvocationId, ExecutorError> {
-    let bytes = serde_json::to_vec(&(
-        record.request.authorization.host(),
-        &record.caller,
-        &record.execution,
-    ))
-    .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))?;
-    InvocationId::new(format!("serving:{}", blake3::hash(&bytes)))
+    record
+        .managed_invocation()
         .map_err(|error| ExecutorError::InvalidDispatch(error.to_string()))
 }
 

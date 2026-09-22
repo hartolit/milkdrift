@@ -13,6 +13,7 @@ use reads::{
 };
 mod artifacts;
 mod invocations;
+mod resources;
 use artifacts::{artifact_content, artifact_metadata};
 mod streams;
 use reads::ListQuery;
@@ -109,6 +110,7 @@ pub(crate) fn router(host: DaemonHost) -> Router {
         "/v1/health" => get(health), RouteAuthorityMapping::Exact(AuthorityOperation::InspectDaemonHealth), RouteResourceMapping::Daemon;
         "/v1/readiness" => get(readiness), RouteAuthorityMapping::Exact(AuthorityOperation::ReadReadiness), RouteResourceMapping::Daemon;
         "/v1/commands" => post(command), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Run;
+        "/v1/resources" => post(resources::manage), RouteAuthorityMapping::CommandDerived, RouteResourceMapping::Capability;
         "/v1/revisions" => get(revisions), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRevision), RouteResourceMapping::WorkflowRevision;
         "/v1/revisions/{revision}" => get(revision), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRevision), RouteResourceMapping::WorkflowRevision;
         "/v1/revisions/{from}/diff/{to}" => get(revision_diff), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRevision), RouteResourceMapping::WorkflowRevision;

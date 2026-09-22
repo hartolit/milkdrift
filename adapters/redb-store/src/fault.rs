@@ -8,6 +8,10 @@ use milkdrift_persistence::StorageFailureClass;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum FaultPoint {
+    /// Before a managed resource transaction becomes durable.
+    BeforeManagedCommit,
+    /// After a managed transaction committed but before the caller receives its reply.
+    AfterManagedCommit,
     /// After schema rows are prepared, immediately before the initializing commit.
     BeforeSchemaCommit,
     /// Immediately after the schema-initialization transaction commits.
