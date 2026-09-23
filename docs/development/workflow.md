@@ -33,8 +33,12 @@ assignment's responsibility and exclusions.
 ### Before finishing
 
 1. Search again for old types, helpers, literals, factories, readers, call paths, and terminology.
-2. Confirm that the new design is used throughout its declared scope.
-3. Confirm that no production-local implementation competes with an adopted adapter.
+2. Confirm that the canonical design is used throughout its declared scope and no production-local
+   implementation competes with an adopted adapter.
+3. Exercise the changed behavior through the supported consumer entry point, including relevant
+   failure and recovery paths. Confirm that the consumer can supply necessary choices, obtain the
+   promised outcome, and act on safe, useful diagnostics without undocumented source edits,
+   privileged shortcuts, or knowledge hidden in the implementation.
 4. Run all relevant quality, contract, failure, and architecture checks.
 5. Once the affected behavior and structure have settled, review the final structure and
    explanation from the perspective of a new contributor. Follow the affected operation through
@@ -46,11 +50,12 @@ assignment's responsibility and exclusions.
 
 ## Findings beyond the assignment
 
-Scope follows an assigned responsibility and its acceptance criteria, not a file count. Complete
-necessary corrections, callers, tests, and documentation within that responsibility even when
-the plan did not anticipate them. Update the file list as they are discovered. Coordinate shared
-files with other workers; respect explicit user exclusions and separately assigned ownership.
-A genuine conflict needs a narrow scope decision, not an unfinished result disguised as a new issue.
+Scope follows the assigned responsibility, not a file count. Listed acceptance cases do not
+exhaust correctness within that scope. Complete necessary corrections, callers, tests, and
+documentation within that responsibility even when the plan did not anticipate them. Update the
+file list as they are discovered. Coordinate shared files with other workers; respect explicit
+user exclusions and separately assigned ownership. A genuine conflict needs a narrow scope
+decision, not an unfinished result disguised as a new issue.
 
 Use the [whiteboard](virtual-office/whiteboard/README.md) for problems or ideas requiring a broader
 decision, another responsibility, or work excluded by the assignment. Explain the evidence or
@@ -64,17 +69,17 @@ owns investigation and carryover; the [office procedure](virtual-office/README.m
 
 ## Definition of done
 
-A task is not complete because a diff exists or tests pass. It is complete when the intended
-design is applied throughout its scope, the previous design is removed, and the result is
-demonstrably better. Leave code that works and an explanation that lets the next contributor
-understand and use it.
+A task is not complete because a diff exists or tests pass. It is complete when the supported
+operation delivers its promised behavior, the design is applied throughout its scope, and
+superseded paths are removed. Leave code that works and an explanation that lets the next
+contributor understand and use it.
 
 A change is complete only when every applicable row is true.
 
 | Check | Required result |
 | --- | --- |
 | Intent | The problem, intended rule, owner, and scope are clear. |
-| Correctness | Required behavior and failure behavior are implemented. |
+| Correctness | Required behavior holds through the supported consumer path, including relevant failures and recovery. |
 | Simplicity | No simpler complete design is being avoided to reduce the diff. |
 | Ownership | Each concept and policy has one owner. |
 | Coherence | One canonical representation and operation path remain. |
@@ -83,7 +88,7 @@ A change is complete only when every applicable row is true.
 | Removal | Superseded code, aliases, fallbacks, configuration, and tests are deleted. |
 | Interface | Public APIs are minimal, typed, and do not leak unrelated mechanisms. |
 | Lifecycle | Resources, cancellation, shutdown, and bounds have explicit outcomes. |
-| Evidence | Tests and checks prove the rule and important failure cases. |
+| Evidence | Tests and checks challenge material assumptions and establish required behavior and important failure cases. |
 | Documentation | A new reader can explain the purpose, follow a supported use, and understand important limits from the maintained prose, package README, and API docs. Claims match source and tests; links and examples work. See the [documentation practice](practices/documentation.md). |
 | Final search | No conflicting implementation remains in the declared scope. |
 

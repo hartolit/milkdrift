@@ -44,9 +44,16 @@ one canonical representation
 one normal operation path
 ```
 
-Equivalent implementations in several locations are competing sources of truth. Choose one owner, migrate every applicable caller, and delete the alternatives.
+Equivalent implementations are competing sources of truth. Choose one owner, migrate every
+applicable caller, and delete the alternatives.
 
-Different entry points may adapt input differently, but they must not apply different validation, defaults, construction, business rules, or lifecycle behavior.
+Different entry points may adapt input, but must reuse the owner's validation, defaults,
+construction, and behavior. Trace supported choices and guarantees from input through execution
+to outcome. Composition must preserve their meaning: do not silently ignore accepted
+configuration, weaken enforcement, or discard actionable failures.
+
+A narrower interface is valid when its restrictions are explicit and enforced. It must not
+create a reduced competing implementation of the shared rules.
 
 ### 1.3 Prefer the simplest complete solution
 
@@ -197,17 +204,32 @@ Use RAII guards or owned handles when a resource must be released exactly once.
 
 ### 1.11 Treat bounds and nondeterminism as design concerns
 
-Queues, retries, pages, buffers, concurrency, recursion, retention, document size, and shutdown waits must be bounded when unbounded growth or waiting is possible. Define what happens when a bound is reached.
+Queues, retries, pages, buffers, concurrency, recursion, retention, document size, and shutdown
+waits must be bounded when unbounded growth or waiting is possible. Define exhaustion and cleanup
+behavior.
 
-Time, randomness, identifiers, environment access, filesystem discovery, network state, and external responses should enter through clear owning boundaries when they affect important behavior or tests.
+Enforce each bound where the governed consumption, waiting, or effect occurs. Validate early
+enough to prevent work that already exceeds the allowance; rejecting the eventual result is not
+a substitute. State whether an allowance covers one operation, one component, or their combined
+use, and preserve that scope when composing work. Slow or stalled dependencies must not block
+progress that unrelated operations are required to make.
 
-Do not scatter direct system calls with inconsistent fallback behavior across the codebase.
+Time, randomness, identifiers, environment access, filesystem discovery, network state, and
+external responses should enter through clear owning boundaries when they affect important
+behavior or tests. Do not scatter direct system calls with inconsistent fallback behavior.
 
 ### 1.12 Prove and enforce the rule
 
-Tests should prove behavior and invariants, not restate an implementation.
+Choose tests from the promised behavior, not the implementation's current branches or fixtures.
+Use independently determined expectations, relevant variation within the supported contract,
+and failure cases that could disprove the design's assumptions.
 
-Every open interface with multiple implementations should have one reusable conformance suite. Each implementation runs that suite plus mechanism-specific tests.
+Exercise the production decision path. Test doubles may control external dependencies, but must
+not replace the decision logic being verified. Source-shape checks establish structural
+conventions, not runtime behavior.
+
+Every open interface with multiple implementations should have one reusable conformance suite.
+Each implementation runs that suite plus mechanism-specific tests.
 
 Repeatedly violated rules should become tooling or CI checks where practical, including:
 
@@ -246,6 +268,11 @@ Do not create a trait for every struct or a macro for ordinary business logic. D
 
 ### 2.2 Constants, defaults, and configuration are different
 
+Establish why a restriction exists before choosing its representation. Ground it in the
+supported contract, a mechanism constraint, measured behavior, or explicit product policy.
+Naming a literal or labeling it a hard ceiling does not justify it. Choices made for one example
+or environment are not universal requirements.
+
 | Kind of value | Representation | Meaning |
 | --- | --- | --- |
 | Semantic invariant | `const`, associated constant, enum, or invariant-bearing type | Cannot vary without changing meaning. |
@@ -265,10 +292,11 @@ hard ceiling >= configured value >= minimum valid value
 
 Rules:
 
-- Own each default once; do not copy its literal through tests, templates, and examples.
+- Own defaults and derived values once; consumers must not maintain competing copies.
+- Keep example-specific choices in declared example inputs, not reusable implementation.
 - `Default::default()` must return a complete, safe value.
 - Do not implement `Default` for required identity, secrets, broad authority, or ambiguous intent.
-- Use configuration only for choices an operator should make.
+- Use configuration only for choices a caller or operator needs to make; not every literal needs a setting.
 - Human-authored Rust application configuration should normally use TOML.
 - Use one accepted format per boundary unless an explicit compatibility contract requires more.
 - Parse configuration once into validated, normalized, owner-specific construction plans.
