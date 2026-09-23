@@ -28,9 +28,6 @@ use std::{
 };
 
 mod prerequisites;
-use prerequisites::{
-    verify_controllers, verify_model, verify_podman_version, verify_subordinate_ids,
-};
 
 #[cfg(test)]
 mod tests;
@@ -91,7 +88,7 @@ impl LinuxManagedPlatform {
     }
     pub(crate) fn check_owner(&self, setup: &ApprovedSetup) -> Result<Deployment, ManagedError> {
         let d = units::deployment(setup)?;
-        if setup.mechanism != "linux-quadlet-v2"
+        if setup.mechanism != "linux-quadlet-v3"
             || setup.platform_owner != self.owner
             || d.manager_root != self.config.state_root
             || d.quadlet_directory != self.config.quadlet_directory
@@ -324,7 +321,18 @@ impl LinuxManagedPlatform {
         if !unit_path.exists() {
             self.write_unit(setup, false)?;
         }
-        Self::systemctl(&["stop".to_owned(), format!("{}.service", d.unit)])?;
+        let ModelService::Owned { timeouts, .. } = &d.recipe.model_service else {
+            return Ok(());
+        };
+        command::checked_with_timeout(
+            "/usr/bin/systemctl",
+            &[
+                "--user".to_owned(),
+                "stop".to_owned(),
+                format!("{}.service", d.unit),
+            ],
+            Duration::from_secs(timeouts.stop_seconds()) + command::HELPER_TIMEOUT,
+        )?;
         let state = Self::systemctl(&[
             "show".to_owned(),
             format!("{}.service", d.unit),
@@ -500,7 +508,7 @@ impl ManagedPlatform for LinuxManagedPlatform {
         let resources = resources(&d)?;
         let mut setup = ApprovedSetup {
             recipe: reference.clone(),
-            mechanism: "linux-quadlet-v2".to_owned(),
+            mechanism: "linux-quadlet-v3".to_owned(),
             configuration: BoundedJson::new(serde_json::to_value(&d).map_err(rejected)?)
                 .map_err(rejected)?,
             platform_owner: self.owner.clone(),
@@ -515,102 +523,12 @@ impl ManagedPlatform for LinuxManagedPlatform {
         setup.validate().map_err(rejected)?;
         Ok(setup)
     }
-    fn diagnose(&self, setup: &ApprovedSetup) -> Result<Vec<String>, ManagedError> {
-        let d = self.check_owner(setup)?;
-        let bytes = Self::podman(&["info".to_owned(), "--format=json".to_owned()])?;
-        let info: serde_json::Value = serde_json::from_slice(&bytes).map_err(platform_error)?;
-        let version = info
-            .pointer("/version/Version")
-            .or_else(|| info.pointer("/version/version"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| rejected("Podman version unavailable"))?;
-        verify_podman_version(version)?;
-        if info
-            .pointer("/host/security/rootless")
-            .and_then(|v| v.as_bool())
-            != Some(true)
-            || info.pointer("/host/cgroupVersion").and_then(|v| v.as_str()) != Some("v2")
-            || info.pointer("/host/cgroupManager").and_then(|v| v.as_str()) != Some("systemd")
-        {
-            return Err(rejected(
-                "rootless Podman, cgroup v2 and systemd delegation are required",
-            ));
-        }
-        verify_controllers(&info)?;
-        Self::systemctl(&["show-environment".to_owned()])?;
-        verify_subordinate_ids(&info, &d.recipe.model_service)?;
-        #[cfg(target_os = "linux")]
-        if matches!(d.recipe.model_service, ModelService::Owned { .. }) {
-            let lingering = command::checked(
-                "/usr/bin/loginctl",
-                &[
-                    "show-user".to_owned(),
-                    rustix::process::getuid().as_raw().to_string(),
-                    "--property=Linger".to_owned(),
-                    "--value".to_owned(),
-                ],
-            )?;
-            if lingering != b"yes\n" {
-                return Err(rejected(
-                    "persistent owned services require explicitly enabled systemd user lingering",
-                ));
-            }
-        }
-        let memory = fs::read_to_string("/proc/meminfo")
-            .map_err(rejected)?
-            .lines()
-            .find_map(|line| {
-                line.strip_prefix("MemAvailable:")
-                    .and_then(|v| v.split_whitespace().next())
-                    .and_then(|v| v.parse::<u64>().ok())
-            })
-            .ok_or_else(|| rejected("available shared RAM could not be observed"))?
-            .saturating_mul(1024);
-        if d.recipe.memory_bytes > memory {
-            return Err(rejected(
-                "approved memory exceeds observed available shared RAM; GPU reservation is not additional memory",
-            ));
-        }
-        #[cfg(target_os = "linux")]
-        {
-            let stat = rustix::fs::statvfs(&self.config.state_root).map_err(rejected)?;
-            if stat.f_bavail.saturating_mul(stat.f_frsize) < d.recipe.minimum_free_bytes {
-                return Err(rejected("insufficient free storage for the approved setup"));
-            }
-        }
-        Self::podman(&[
-            "image".to_owned(),
-            "inspect".to_owned(),
-            d.recipe.worker_image.clone(),
-        ])?;
-        if let ModelService::Owned {
-            image,
-            model,
-            model_digest,
-            model_bytes,
-            backend,
-            ..
-        } = &d.recipe.model_service
-        {
-            Self::podman(&["image".to_owned(), "inspect".to_owned(), image.clone()])?;
-            verify_model(model, model_digest, *model_bytes)?;
-            if let crate::InferenceBackend::Vulkan { render_device } = backend {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::FileTypeExt;
-                    if !fs::metadata(render_device)
-                        .map_err(rejected)?
-                        .file_type()
-                        .is_char_device()
-                    {
-                        return Err(rejected(
-                            "configured Vulkan render node is not a character device",
-                        ));
-                    }
-                }
-            }
-        }
-        Ok(vec![format!("Podman {version}; rootless systemd/cgroup v2; available shared RAM {memory} bytes"), "Only named working storage is writable by the worker; mutable tool experiments require explicit image promotion".to_owned(), format!("worker network: {:?}; model backend: {:?}", d.recipe.worker_network, match &d.recipe.model_service { ModelService::Owned { backend, .. } => Some(backend), _ => None })])
+    fn diagnose(
+        &self,
+        setup: &ApprovedSetup,
+        current: Option<&ApprovedSetup>,
+    ) -> Result<Vec<String>, ManagedError> {
+        self.diagnose_setup(setup, current)
     }
     fn reconcile(
         &self,
@@ -625,7 +543,7 @@ impl ManagedPlatform for LinuxManagedPlatform {
         let d = self.check_owner(setup)?;
         match step {
             ManagedStep::Prerequisites => {
-                self.diagnose(setup)?;
+                self.diagnose_setup(setup, record.current.as_ref())?;
             }
             ManagedStep::PrepareStorage => {
                 self.storage(setup, false)?;
@@ -649,7 +567,11 @@ impl ManagedPlatform for LinuxManagedPlatform {
                             // removal refuses if it started meanwhile; never replace a running one.
                             Self::podman(&["rm".to_owned(), d.unit.clone()])?;
                         }
-                        Self::systemctl(&["start".to_owned(), format!("{}.service", d.unit)])?;
+                        Self::systemctl(&[
+                            "start".to_owned(),
+                            "--no-block".to_owned(),
+                            format!("{}.service", d.unit),
+                        ])?;
                         Ok(())
                     })?;
                 }
@@ -698,7 +620,12 @@ impl ManagedPlatform for LinuxManagedPlatform {
         let d = self.check_owner(setup)?;
         self.verify_unit(setup)?;
         let mut running = false;
-        if let ModelService::Owned { port, .. } = &d.recipe.model_service {
+        if let ModelService::Owned {
+            port,
+            endpoint_limits,
+            ..
+        } = &d.recipe.model_service
+        {
             match Self::inspect("container", &d.unit)? {
                 Some(value) => {
                     Self::verify_labels(&value, setup, Some(&setup.recipe.digest))?;
@@ -707,7 +634,7 @@ impl ManagedPlatform for LinuxManagedPlatform {
                     if running {
                         crate::worker::verify_container(&value, setup, false)?;
                         let client = reqwest::blocking::Client::builder()
-                            .timeout(Duration::from_secs(5))
+                            .timeout(Duration::from_millis(endpoint_limits.connect_timeout_ms))
                             .no_proxy()
                             .redirect(reqwest::redirect::Policy::none())
                             .build()

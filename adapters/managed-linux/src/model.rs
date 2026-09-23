@@ -12,8 +12,8 @@ use milkdrift_capability_host::{
     SecretResolver, managed::ManagedError,
 };
 use milkdrift_model_provider::{
-    AuthMode, BillingTerms, EndpointLimits, EndpointProfile, ModelEndpointAdapter, ModelFeature,
-    ProviderProtocol, ProxyPolicy, RedirectPolicy, TlsPolicy, descriptor_for_profile,
+    AuthMode, BillingTerms, EndpointProfile, ModelEndpointAdapter, ModelFeature, ProviderProtocol,
+    ProxyPolicy, RedirectPolicy, TlsPolicy, descriptor_for_profile,
 };
 use milkdrift_persistence::managed::{
     ApprovedSetup, ManagedResourceStore, QuiescenceEvidence, managed_use_id,
@@ -25,56 +25,70 @@ use std::{
 
 fn profile(setup: &ApprovedSetup) -> Result<Option<EndpointProfile>, ManagedError> {
     let d = units::deployment(setup)?;
-    let (base, alias, billing, token_limits) = match &d.recipe.model_service {
+    profile_for_service(&d.recipe.model_service, &d.installation, d.generation)
+}
+
+pub(crate) fn profile_for_service(
+    service: &ModelService,
+    installation: &ManagedName,
+    generation: u64,
+) -> Result<Option<EndpointProfile>, ManagedError> {
+    let (base, alias, billing, token_limits, endpoint_limits) = match service {
         ModelService::Disabled {} => return Ok(None),
         ModelService::Attached {
             api_base,
             model_alias,
             billing,
             token_limits,
+            endpoint_limits,
         } => (
             format!("{}/", api_base.trim_end_matches('/')),
             model_alias.clone(),
             billing.clone(),
             token_limits.clone(),
+            *endpoint_limits,
         ),
         ModelService::Owned {
-            port, token_limits, ..
+            port,
+            token_limits,
+            model_alias,
+            endpoint_limits,
+            ..
         } => (
             format!("http://127.0.0.1:{port}/v1/"),
-            "ornith".to_owned(),
+            model_alias.clone(),
             BillingTerms::Unbilled {
-                source: format!("owned self-hosted service recipe {}", setup.recipe.digest),
+                source: "Owned self-hosted service; no provider billing".to_owned(),
             },
             token_limits.clone(),
+            *endpoint_limits,
         ),
     };
+    if matches!(billing, BillingTerms::Unknown)
+        || matches!(
+            token_limits,
+            milkdrift_model_provider::ModelTokenLimits::Unknown
+        )
+    {
+        return Err(rejected(
+            "model_service requires explicit finite billing and token contracts",
+        ));
+    }
     let host = url::Url::parse(&base)
         .map_err(rejected)?
         .host_str()
         .ok_or_else(|| rejected("model endpoint requires a host"))?
         .to_owned();
     EndpointProfile::new(
-        ProviderProfileRef::new(format!("managed.{}.model", d.installation)).map_err(rejected)?,
-        d.generation,
+        ProviderProfileRef::new(format!("managed.{installation}.model")).map_err(rejected)?,
+        generation,
         ProviderProtocol::OpenAiCompatible {
             path: "chat/completions".to_owned(),
         },
         base,
         alias,
         AuthMode::NoAuth,
-        EndpointLimits {
-            connect_timeout_ms: 5000,
-            request_timeout_ms: 120_000,
-            idle_timeout_ms: 120_000,
-            max_headers: 64,
-            max_header_bytes: 16_384,
-            max_request_bytes: 1_048_576,
-            max_response_bytes: 1_048_576,
-            max_stream_line_bytes: 65_536,
-            max_stream_event_bytes: 131_072,
-            max_fragment_bytes: 4096,
-        },
+        endpoint_limits,
         RedirectPolicy::Deny,
         TlsPolicy::WebPkiRoots,
         ProxyPolicy::Disabled,
@@ -297,7 +311,9 @@ impl ManagedModelAdapter {
             .ok_or_else(|| fail("model service identity absent"))?;
         {
             let mut active = self.platform.active.lock().map_err(fail)?;
-            if active.len() >= 128 || active.contains_key(&id) {
+            if active.len() >= milkdrift_capability::managed::MAX_MANAGED_USES
+                || active.contains_key(&id)
+            {
                 return Err(fail("model creator is duplicated or capacity is exhausted"));
             }
             active.insert(id.clone(), Arc::new(AtomicBool::new(false)));

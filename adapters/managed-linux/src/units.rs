@@ -26,13 +26,18 @@ pub(crate) fn systemd_directory(path: &Path) -> Result<(), ManagedError> {
     Ok(())
 }
 
-fn cleanup_text(setup: &ApprovedSetup) -> String {
+fn cleanup_text(setup: &ApprovedSetup) -> Result<String, ManagedError> {
+    let d = deployment(setup)?;
+    let ModelService::Owned { timeouts, .. } = &d.recipe.model_service else {
+        return Err(rejected("cleanup requires an owned service"));
+    };
+    let stop_seconds = timeouts.stop_seconds();
     // Quadlet 6 appends removal by name, even after custom [Service] directives. A systemd
     // drop-in is applied afterwards, so a failed creation can never delete a name collision.
-    format!(
-        "# Milkdrift ownership={} recipe={}\n[Service]\nRuntimeDirectory=milkdrift-%N\nRuntimeDirectoryMode=0700\nExecStop=\nExecStop=/usr/bin/podman stop --ignore --time=10 --cidfile=%t/milkdrift-%N/container.cid\nExecStopPost=\nExecStopPost=/usr/bin/podman rm --force --ignore --cidfile=%t/milkdrift-%N/container.cid\n",
+    Ok(format!(
+        "# Milkdrift ownership={} recipe={}\n[Service]\nRuntimeDirectory=milkdrift-%N\nRuntimeDirectoryMode=0700\nExecStop=\nExecStop=/usr/bin/podman stop --ignore --time={stop_seconds} --cidfile=%t/milkdrift-%N/container.cid\nExecStopPost=\nExecStopPost=/usr/bin/podman rm --force --ignore --cidfile=%t/milkdrift-%N/container.cid\n",
         setup.ownership, setup.recipe.digest
-    )
+    ))
 }
 
 pub(crate) fn verify_cleanup(setup: &ApprovedSetup) -> Result<(), ManagedError> {
@@ -55,7 +60,7 @@ pub(crate) fn verify_cleanup(setup: &ApprovedSetup) -> Result<(), ManagedError> 
     let path = directory.join("50-milkdrift.conf");
     if path.try_exists().map_err(platform_error)? {
         crate::platform::regular_file(&path, 65_536)?;
-        if fs::read_to_string(&path).map_err(platform_error)? != cleanup_text(setup) {
+        if fs::read_to_string(&path).map_err(platform_error)? != cleanup_text(setup)? {
             return Err(platform_error(
                 "owned service cleanup configuration drift detected",
             ));
@@ -84,7 +89,7 @@ pub(crate) fn install_cleanup(setup: &ApprovedSetup) -> Result<(), ManagedError>
     let path = directory.join("50-milkdrift.conf");
     if !path.exists() {
         let mut file = tempfile::NamedTempFile::new_in(&directory).map_err(platform_error)?;
-        file.write_all(cleanup_text(setup).as_bytes())
+        file.write_all(cleanup_text(setup)?.as_bytes())
             .map_err(platform_error)?;
         file.as_file().sync_all().map_err(platform_error)?;
         file.persist_noclobber(path).map_err(platform_error)?;
@@ -117,9 +122,15 @@ pub(crate) fn remove_cleanup(setup: &ApprovedSetup) -> Result<(), ManagedError> 
 
 pub(crate) fn verify_effective_cleanup(d: &Deployment) -> Result<(), ManagedError> {
     let runtime = std::env::var("XDG_RUNTIME_DIR").map_err(rejected)?;
+    let ModelService::Owned { timeouts, .. } = &d.recipe.model_service else {
+        return Err(rejected("cleanup requires an owned service"));
+    };
     for (property, verb) in [
-        ("ExecStop", "stop --ignore --time=10"),
-        ("ExecStopPost", "rm --force --ignore"),
+        (
+            "ExecStop",
+            format!("stop --ignore --time={}", timeouts.stop_seconds()),
+        ),
+        ("ExecStopPost", "rm --force --ignore".to_owned()),
     ] {
         let output = command::run(
             Path::new("/usr/bin/systemctl"),
@@ -192,38 +203,38 @@ pub(crate) fn unit_text(
         context_tokens,
         threads,
         backend,
+        model_alias,
+        limits,
+        timeouts,
         ..
     } = &d.recipe.model_service
     else {
         return Ok(None);
     };
+    let ids = crate::recipe::PRIVATE_USER_IDS;
+    let cpus = limits.cpus();
+    let temporary = limits.temporary_mount();
+    let stop_seconds = timeouts.stop_seconds();
+    let gpu_layers = match backend {
+        InferenceBackend::Cpu {} => 0,
+        InferenceBackend::Vulkan { gpu_layers, .. } => *gpu_layers,
+    };
     let mut text = format!(
-        "# Milkdrift ownership={} recipe={}\n[Unit]\nDescription=Milkdrift owned llama-server\n[Container]\nImage={}\nPull=never\nContainerName={}\nLabel=org.milkdrift.owner={}\nLabel=org.milkdrift.platform={}\nLabel=org.milkdrift.recipe={}\nReadOnly=true\nNoNewPrivileges=true\nEnvironment=XDG_CACHE_HOME=/tmp\nDropCapability=all\nUserNS=auto:size=65536\nNetwork=pasta:--no-map-gw\nPublishPort=127.0.0.1:{}:8080\nVolume={}:/models/model.gguf:ro\nEntrypoint={}\nExec=--model /models/model.gguf --host 0.0.0.0 --port 8080 --ctx-size {} --threads {} --parallel 1 --alias ornith\nPodmanArgs=--replace=false --cidfile=%t/milkdrift-%N/container.cid --read-only-tmpfs=false --tmpfs=/tmp:rw,nodev,nosuid,size=256m --memory={} --memory-swap={} --cpus={} --pids-limit={} --security-opt=no-new-privileges\n[Service]\nRestart=on-failure\nTimeoutStartSec=40\nTimeoutStopSec=20\n",
-        setup.ownership,
-        setup.recipe.digest,
-        image,
-        d.unit,
-        setup.ownership,
-        setup.platform_owner,
-        setup.recipe.digest,
-        port,
-        model.display(),
-        executable,
-        context_tokens,
-        threads,
-        d.recipe.memory_bytes,
-        d.recipe.memory_bytes,
-        f64::from(d.recipe.cpu_percent) / 100.0,
-        d.recipe.pids
+        "# Milkdrift ownership={owner} recipe={recipe}\n[Unit]\nDescription=Milkdrift owned llama-server\n[Container]\nImage={image}\nPull=never\nContainerName={unit}\nLabel=org.milkdrift.owner={owner}\nLabel=org.milkdrift.platform={platform}\nLabel=org.milkdrift.recipe={recipe}\nReadOnly=true\nNoNewPrivileges=true\nEnvironment=XDG_CACHE_HOME=/tmp\nDropCapability=all\nUserNS=auto:size={ids}\nNetwork=pasta:--no-map-gw\nPublishPort=127.0.0.1:{port}:8080\nVolume={model}:/models/model.gguf:ro\nEntrypoint={executable}\nExec=--model /models/model.gguf --host 0.0.0.0 --port 8080 --ctx-size {context_tokens} --threads {threads} --n-gpu-layers {gpu_layers} --parallel 1 --alias {model_alias}\nPodmanArgs=--replace=false --cidfile=%t/milkdrift-%N/container.cid --read-only-tmpfs=false --tmpfs={temporary} --memory={memory} --memory-swap={memory} --cpus={cpus} --pids-limit={pids} --security-opt=no-new-privileges\n[Service]\nRestart=on-failure\nTimeoutStartSec={startup_ms}ms\nTimeoutStopSec={stop_seconds}s\n",
+        owner = setup.ownership,
+        recipe = setup.recipe.digest,
+        platform = setup.platform_owner,
+        unit = d.unit,
+        model = model.display(),
+        memory = limits.memory_bytes,
+        pids = limits.pids,
+        startup_ms = timeouts.startup_ms,
     );
-    if let InferenceBackend::Vulkan { render_device } = backend {
-        // Insert only the validated exact device; additional groups are owned by the rootless
-        // runtime and must pass the real-host verification before this profile is usable.
+    if let InferenceBackend::Vulkan { render_device, .. } = backend {
         text = text.replace(
             "ReadOnly=true\n",
             &format!("AddDevice={}\nReadOnly=true\n", render_device.display()),
         );
-        text = text.replace(" --parallel 1", " --n-gpu-layers 999 --parallel 1");
     }
     if running {
         text.push_str("[Install]\nWantedBy=default.target\n");

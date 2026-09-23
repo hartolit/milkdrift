@@ -127,19 +127,38 @@ fn parse(invocation: &AdapterInvocation<'_>) -> Result<WorkerRequest, AdapterErr
     let request: WorkerRequest =
         serde_json::from_value(value.value().clone()).map_err(adapter_failure)?;
     if request.argv.is_empty()
-        || request.argv.len() > 64
-        || request.argv.iter().map(String::len).sum::<usize>() > 32_768
         || request.argv.iter().any(|a| a.contains('\0'))
         || !request.argv[0].starts_with('/')
     {
         return Err(AdapterError::rejected(
-            "worker command needs an absolute container executable and bounded argv",
+            "worker command needs an absolute container executable and NUL-free arguments",
         ));
     }
     Ok(request)
 }
 fn adapter_failure(e: impl std::fmt::Display) -> AdapterError {
     AdapterError::rejected(e.to_string())
+}
+
+fn result_document(
+    stdout: &str,
+    stderr: &str,
+    success: bool,
+    exit_code: Option<i32>,
+) -> serde_json::Value {
+    serde_json::json!({"stdout":stdout,"stderr":stderr,"success":success,"exit_code":exit_code,"mutable_tooling":"workspace experiments require explicit image promotion"})
+}
+
+pub(crate) fn output_artifact_limit(raw: u64) -> Result<u64, ManagedError> {
+    // Each input byte needs at most six JSON bytes, including invalid UTF-8 replacement. False
+    // and the smallest signed exit code give the longest fixed fields in this result document.
+    let overhead = serde_json::to_vec(&result_document("", "", false, Some(i32::MIN)))
+        .map_err(rejected)?
+        .len() as u64;
+    raw.checked_mul(6)
+        .and_then(|n| n.checked_add(overhead))
+        .filter(|n| *n <= isize::MAX as u64)
+        .ok_or_else(|| rejected("output_bytes cannot fit its encoded result allocation"))
 }
 
 impl CapabilityAdapter for ManagedWorkerAdapter {
@@ -156,7 +175,9 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
             AdmissionUnit::Unknown,
             AdmissionBound::NotApplicable,
             AdmissionBound::NotApplicable,
-            AdmissionBound::Bounded(d.recipe.output_bytes.saturating_mul(6).saturating_add(4096)),
+            AdmissionBound::Bounded(
+                output_artifact_limit(d.recipe.output_bytes).map_err(adapter_failure)?,
+            ),
             AdmissionBound::NotApplicable,
         ))
     }
@@ -196,7 +217,9 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
                 .active
                 .lock()
                 .map_err(|_| AdapterError::unavailable("worker ownership unavailable"))?;
-            if active.len() >= 128 || active.contains_key(&id) {
+            if active.len() >= milkdrift_capability::managed::MAX_MANAGED_USES
+                || active.contains_key(&id)
+            {
                 return Err(AdapterError::rejected("duplicate or excess active worker"));
             }
             active.insert(id.clone(), cancel.clone());
@@ -228,7 +251,14 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
                 "worker cancelled before platform creation; resource use remains retained",
             ));
         }
-        let output = run_task(&self.setup, &task.name, &request.argv, Some(&cancel));
+        let output = run_task(
+            &self.setup,
+            &task.name,
+            &request.argv,
+            Some(&cancel),
+            Duration::from_millis(d.recipe.task_timeout_ms),
+            d.recipe.output_bytes as usize,
+        );
         let cleanup = cleanup_task(&self.setup, &task.name);
         if let Err(error) = cleanup {
             return Err(AdapterError::external_failure(error.to_string()));
@@ -254,9 +284,16 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
         let mut sequence = 1;
         let (status, failure) = match output {
             Ok(output) => {
-                let bytes = serde_json::to_vec(&serde_json::json!({"stdout":String::from_utf8_lossy(&output.stdout),"stderr":String::from_utf8_lossy(&output.stderr),"success":output.success,"exit_code":output.exit_code,"mutable_tooling":"workspace experiments require explicit image promotion"})).map_err(adapter_failure)?;
+                let bytes = serde_json::to_vec(&result_document(
+                    &String::from_utf8_lossy(&output.stdout),
+                    &String::from_utf8_lossy(&output.stderr),
+                    output.success,
+                    output.exit_code,
+                ))
+                .map_err(adapter_failure)?;
                 // JSON escaping can expand raw output; reserve and enforce the encoded maximum.
-                let limit = d.recipe.output_bytes.saturating_mul(6).saturating_add(4096);
+                let limit =
+                    output_artifact_limit(d.recipe.output_bytes).map_err(adapter_failure)?;
                 let artifact = self
                     .data
                     .publish_bytes(
@@ -446,11 +483,11 @@ fn task_arguments(
         "--read-only-tmpfs=false".to_owned(),
         "--cap-drop=all".to_owned(),
         "--security-opt=no-new-privileges".to_owned(),
-        "--userns=auto:size=65536".to_owned(),
-        format!("--memory={}", d.recipe.memory_bytes),
-        format!("--memory-swap={}", d.recipe.memory_bytes),
-        format!("--cpus={}", f64::from(d.recipe.cpu_percent) / 100.0),
-        format!("--pids-limit={}", d.recipe.pids),
+        format!("--userns=auto:size={}", crate::recipe::PRIVATE_USER_IDS),
+        format!("--memory={}", d.recipe.worker_limits.memory_bytes),
+        format!("--memory-swap={}", d.recipe.worker_limits.memory_bytes),
+        format!("--cpus={}", d.recipe.worker_limits.cpus()),
+        format!("--pids-limit={}", d.recipe.worker_limits.pids),
         "--network".to_owned(),
         match d.recipe.worker_network {
             WorkerNetwork::None => "none",
@@ -461,11 +498,7 @@ fn task_arguments(
         format!("{}:/workspace:rw,U", volume.identity),
         "--workdir=/workspace".to_owned(),
         "--env=HOME=/workspace/home".to_owned(),
-        "--env=CARGO_HOME=/workspace/home/.cargo".to_owned(),
-        "--env=RUSTUP_HOME=/usr/local/rustup".to_owned(),
-        "--env=PATH=/workspace/home/.cargo/bin:/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin"
-            .to_owned(),
-        "--tmpfs=/tmp:rw,nodev,nosuid,size=256m".to_owned(),
+        format!("--tmpfs={}", d.recipe.worker_limits.temporary_mount()),
         "--entrypoint".to_owned(),
         argv.first()
             .cloned()
@@ -480,6 +513,8 @@ fn run_task(
     name: &str,
     argv: &[String],
     cancel: Option<&AtomicBool>,
+    timeout: Duration,
+    output_limit: usize,
 ) -> Result<command::CommandOutput, ManagedError> {
     let d = units::deployment(setup)?;
     let working = format!("{}-working", d.volume_prefix);
@@ -501,8 +536,8 @@ fn run_task(
         Path::new("/usr/bin/podman"),
         &["start".to_owned(), "--attach".to_owned(), name.to_owned()],
         &[],
-        Duration::from_millis(d.recipe.task_timeout_ms),
-        d.recipe.output_bytes as usize,
+        timeout,
+        output_limit,
         cancel,
     )
 }
@@ -525,6 +560,14 @@ pub(crate) fn verify_container(
     worker: bool,
 ) -> Result<(), ManagedError> {
     let d = units::deployment(setup)?;
+    let limits = if worker {
+        &d.recipe.worker_limits
+    } else {
+        match &d.recipe.model_service {
+            crate::ModelService::Owned { limits, .. } => limits,
+            _ => return Err(platform_error("service inspection requires an owned model")),
+        }
+    };
     let image = if worker {
         &d.recipe.worker_image
     } else {
@@ -564,6 +607,23 @@ pub(crate) fn verify_container(
     let host = value
         .get("HostConfig")
         .ok_or_else(|| platform_error("container enforcement inspection missing"))?;
+    let temporary = host.get("Tmpfs").and_then(|v| v.as_object());
+    let options = temporary
+        .and_then(|v| v.get("/tmp"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .split(',')
+        .collect::<BTreeSet<_>>();
+    let size = format!("size={}", limits.temporary_bytes);
+    if temporary.is_none_or(|v| v.len() != 1)
+        || !["rw", "nodev", "nosuid", size.as_str()]
+            .into_iter()
+            .all(|v| options.contains(v))
+    {
+        return Err(platform_error(
+            "actual temporary filesystem differs from its independent configured limit",
+        ));
+    }
     let has_no_new_privileges = host
         .get("SecurityOpt")
         .and_then(|v| v.as_array())
@@ -575,14 +635,14 @@ pub(crate) fn verify_container(
         });
     if host.get("Privileged").and_then(|v| v.as_bool()) != Some(false)
         || host.get("ReadonlyRootfs").and_then(|v| v.as_bool()) != Some(true)
-        || host.get("Memory").and_then(|v| v.as_u64()) != Some(d.recipe.memory_bytes)
-        || host.get("PidsLimit").and_then(|v| v.as_u64()) != Some(u64::from(d.recipe.pids))
+        || host.get("Memory").and_then(|v| v.as_u64()) != Some(limits.memory_bytes)
+        || host.get("PidsLimit").and_then(|v| v.as_u64()) != Some(u64::from(limits.pids))
         || host
             .get("CpuQuota")
             .and_then(|v| v.as_u64())
             .zip(host.get("CpuPeriod").and_then(|v| v.as_u64()))
             .is_none_or(|(quota, period)| {
-                quota.saturating_mul(100) != period.saturating_mul(u64::from(d.recipe.cpu_percent))
+                quota.saturating_mul(100) != period.saturating_mul(u64::from(limits.cpu_percent))
             })
         || !has_no_new_privileges
         || host
@@ -634,7 +694,7 @@ pub(crate) fn verify_container(
             "offline worker has an unexpected network attachment",
         ));
     }
-    if host.get("MemorySwap").and_then(|v| v.as_u64()) != Some(d.recipe.memory_bytes) {
+    if host.get("MemorySwap").and_then(|v| v.as_u64()) != Some(limits.memory_bytes) {
         return Err(platform_error(
             "swap limit differs from the approved memory budget",
         ));
@@ -672,7 +732,7 @@ pub(crate) fn verify_container(
     let expected_device = match (&d.recipe.model_service, worker) {
         (
             crate::ModelService::Owned {
-                backend: crate::InferenceBackend::Vulkan { render_device },
+                backend: crate::InferenceBackend::Vulkan { render_device, .. },
                 ..
             },
             false,
@@ -736,7 +796,7 @@ fn private_id_mappings(value: Option<&serde_json::Value>) -> bool {
                         next = end;
                         true
                     })
-                    && next >= 65_536
+                    && next >= crate::recipe::PRIVATE_USER_IDS
             })
     })
 }
@@ -760,20 +820,12 @@ pub(crate) fn verify_setup(
         }
         cleanup_task(setup, &name)?;
     }
+    // Platform setup creates only the writable home. Applications initialize their own content
+    // through ordinary authorized worker commands; reapply never copies an embedded brief.
     let initialize_script = if initialize {
-        "mkdir -p /workspace/source /workspace/output /workspace/docs /workspace/home; if [ ! -e /workspace/README.md ]; then printf '%s\\n' 'Slotbook working area' 'source/: mutable application source; docs/: scoped knowledge and decisions; output/: useful build results.' 'Keep authentication, privacy, capacity, cancellation and durable bookings requirements from the operator brief.' 'Tool experiments in home/ are mutable and require an approved pinned image before promotion.' 'Staging, deployment data and manager controls are separate resources.' > /workspace/README.md; fi;"
+        "mkdir -p /workspace/home;"
     } else {
         ""
-    };
-    // Both positive useful tooling and negative manager/filesystem access are observed through the
-    // same actual mechanism used by worker invocations, before a generation can be published.
-    let knowledge = if initialize {
-        format!(
-            "if [ ! -e /workspace/docs/slotbook.md ]; then cat > /workspace/docs/slotbook.md <<'MILKDRIFT_SLOTBOOK_BRIEF'\n{}\nMILKDRIFT_SLOTBOOK_BRIEF\nfi;",
-            include_str!("../../../docs/guides/adaptive-method-example.md")
-        )
-    } else {
-        String::new()
     };
     let network_probe = if d.recipe.worker_network == WorkerNetwork::None {
         "test $(wc -l < /proc/net/route) -eq 1;"
@@ -782,27 +834,48 @@ pub(crate) fn verify_setup(
     };
     let enforcement = format!(
         "test $(cat /sys/fs/cgroup/memory.max) -eq {}; test $(cat /sys/fs/cgroup/memory.swap.max) -eq 0; test $(cat /sys/fs/cgroup/pids.max) -eq {}; set -- $(cat /sys/fs/cgroup/cpu.max); test $((100 * $1)) -eq $(({} * $2)); grep -Eq '^CapEff:[[:space:]]+0+$' /proc/self/status; grep -Eq '^NoNewPrivs:[[:space:]]+1$' /proc/self/status; grep -Eq '^Seccomp:[[:space:]]+2$' /proc/self/status; if touch /etc/milkdrift-worker-denial 2>/dev/null; then exit 70; fi; {network_probe}",
-        d.recipe.memory_bytes, d.recipe.pids, d.recipe.cpu_percent
+        d.recipe.worker_limits.memory_bytes,
+        d.recipe.worker_limits.pids,
+        d.recipe.worker_limits.cpu_percent
     );
+    let runtime = std::env::var("XDG_RUNTIME_DIR").map_err(rejected)?;
+    if !crate::recipe::safe_absolute(Path::new(&runtime)) {
+        return Err(rejected(
+            "systemd runtime directory must be a safe absolute path",
+        ));
+    }
     let script = format!(
-        "set -eu; {initialize_script} {knowledge} {enforcement} git --version; rustc --version; cargo --version; cc --version; test -w /workspace; test ! -w /etc; test ! -e /run/podman/podman.sock; test ! -e /run/user/1000/podman/podman.sock; test ! -e {}; test ! -e {}; test -r /sys/fs/cgroup/memory.max; test -r /sys/fs/cgroup/pids.max; test -r /sys/fs/cgroup/cpu.max; printf 'managed-protection-ok\\n'",
+        "set -eux; {initialize_script} {enforcement} test -w /workspace; test ! -e /run/podman/podman.sock; test ! -e {runtime}/podman/podman.sock; test ! -e {}; test ! -e {}; test ! -e {}; test -r /sys/fs/cgroup/memory.max; test -r /sys/fs/cgroup/pids.max; test -r /sys/fs/cgroup/cpu.max; printf 'managed-protection-ok\\n'",
         d.manager_root.display(),
-        d.quadlet_directory.display()
+        d.quadlet_directory.display(),
+        d.systemd_directory.display()
     );
     let result = run_task(
         setup,
         &name,
         &["/bin/sh".to_owned(), "-c".to_owned(), script],
         None,
+        command::HELPER_TIMEOUT,
+        command::HELPER_OUTPUT_BYTES,
     );
     let cleanup = cleanup_task(setup, &name);
     cleanup?;
     let output = result?;
     if !output.success || !String::from_utf8_lossy(&output.stdout).contains("managed-protection-ok")
     {
-        return Err(platform_error(
-            "real worker tool/protection verification failed; generation remains unpublished",
-        ));
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+        let tail: String = diagnostic
+            .chars()
+            .rev()
+            .take(300)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        return Err(platform_error(format!(
+            "worker protection probe failed (exit {:?}); generation remains unpublished: {}",
+            output.exit_code, tail
+        )));
     }
     Ok(())
 }

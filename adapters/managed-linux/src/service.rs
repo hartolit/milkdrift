@@ -13,29 +13,40 @@ pub(crate) fn verify(
     setup: &ApprovedSetup,
 ) -> Result<ManagedObservation, ManagedError> {
     let d = units::deployment(setup)?;
-    let ModelService::Owned { port, backend, .. } = d.recipe.model_service else {
+    let ModelService::Owned {
+        port,
+        backend,
+        ref model_alias,
+        endpoint_limits,
+        ..
+    } = d.recipe.model_service
+    else {
         return platform.observe(setup);
     };
     let observation = ready(platform, setup)?;
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(120))
-        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_millis(
+            endpoint_limits
+                .request_timeout_ms
+                .min(endpoint_limits.idle_timeout_ms),
+        ))
+        .connect_timeout(Duration::from_millis(endpoint_limits.connect_timeout_ms))
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(platform_error)?;
     let response = client.post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
-        .json(&serde_json::json!({"model":"ornith","messages":[{"role":"user","content":"Reply OK."}],"max_tokens":1,"stream":false,"temperature":0}))
+        .json(&serde_json::json!({"model":model_alias,"messages":[{"role":"user","content":"Reply OK."}],"max_tokens":1,"stream":false,"temperature":0}))
         .send().map_err(|_| platform_error("owned inference probe did not return a complete response"))?;
     if !response.status().is_success() {
         return Err(platform_error("owned inference probe was refused"));
     }
     let mut bytes = Vec::new();
     response
-        .take(65_537)
+        .take(endpoint_limits.max_response_bytes + 1)
         .read_to_end(&mut bytes)
         .map_err(platform_error)?;
-    if bytes.len() > 65_536 {
+    if bytes.len() as u64 > endpoint_limits.max_response_bytes {
         return Err(platform_error(
             "owned inference probe exceeded its response bound",
         ));
@@ -93,19 +104,46 @@ pub(crate) fn ready(
     platform: &LinuxManagedPlatform,
     setup: &ApprovedSetup,
 ) -> Result<ManagedObservation, ManagedError> {
-    let deadline = Instant::now() + Duration::from_secs(120);
-    let observation = loop {
-        if let Ok(observation) = platform.observe(setup)
-            && observation.running
-        {
-            break observation;
-        }
-        if Instant::now() >= deadline {
-            return Err(platform_error(
-                "owned model did not become ready within 120 seconds",
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(500));
+    let d = units::deployment(setup)?;
+    let ModelService::Owned {
+        port,
+        timeouts,
+        endpoint_limits,
+        ..
+    } = &d.recipe.model_service
+    else {
+        return platform.observe(setup);
     };
-    Ok(observation)
+    let deadline = Instant::now()
+        .checked_add(Duration::from_millis(timeouts.startup_ms))
+        .ok_or_else(|| platform_error("startup deadline cannot be represented"))?;
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(platform_error)?;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(platform_error(format!(
+                "owned model readiness exceeded configured startup_ms={}; service state must be inspected before recovery",
+                timeouts.startup_ms
+            )));
+        }
+        // Only health polling consumes the readiness wait. Full ownership/enforcement inspection
+        // follows a healthy response and retains the administrative helper bounds.
+        if client
+            .get(format!("http://127.0.0.1:{port}/health"))
+            .timeout(remaining.min(Duration::from_millis(endpoint_limits.connect_timeout_ms)))
+            .send()
+            .is_ok_and(|response| response.status().is_success())
+        {
+            return platform.observe(setup);
+        }
+        std::thread::sleep(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(100)),
+        );
+    }
 }

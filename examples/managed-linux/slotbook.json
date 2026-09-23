@@ -1,15 +1,19 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "slotbook",
-  "family": "slotbook-v1",
   "worker_image": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
   "worker_network": "none",
-  "memory_bytes": 4294967296,
-  "cpu_percent": 200,
-  "pids": 256,
   "task_timeout_ms": 300000,
   "output_bytes": 262144,
   "minimum_free_bytes": 10737418240,
   "data_disposition": "preserve",
-  "model_service": { "type": "disabled" }
+  "model_service": {
+    "type": "disabled"
+  },
+  "worker_limits": {
+    "memory_bytes": 4294967296,
+    "cpu_percent": 200,
+    "pids": 256,
+    "temporary_bytes": 268435456
+  }
 }

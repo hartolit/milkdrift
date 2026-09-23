@@ -1,4 +1,13 @@
 use crate::rejected;
+mod limits;
+pub use limits::{ContainerLimits, ServiceTimeouts};
+
+/// Current strict managed Linux recipe format. Earlier formats require explicit reconfiguration.
+pub const LINUX_RECIPE_SCHEMA_VERSION: u32 = 2;
+// Bounds the human-authored recipe and its durable deployment, not workload output.
+pub(crate) const MAX_RECIPE_BYTES: usize = 65_536;
+// One complete Linux 16-bit user/group ID space, disjoint from the manager identity.
+pub(crate) const PRIVATE_USER_IDS: u64 = 65_536;
 use milkdrift_capability::managed::{DataDisposition, ManagedName, RecipeReference};
 use milkdrift_capability_host::managed::ManagedError;
 use serde::{Deserialize, Serialize};
@@ -27,6 +36,8 @@ pub enum InferenceBackend {
     Vulkan {
         /// Canonical render device such as /dev/dri/renderD128.
         render_device: PathBuf,
+        /// Positive number of layers to offload, selected for this model and device.
+        gpu_layers: u32,
     },
 }
 
@@ -42,6 +53,8 @@ pub enum ModelService {
         api_base: String,
         /// Exact operator-declared API model identifier.
         model_alias: String,
+        /// Transport and stream bounds validated by the existing model-provider owner.
+        endpoint_limits: milkdrift_model_provider::EndpointLimits,
         /// Exact operator-established provider billing contract.
         billing: milkdrift_model_provider::BillingTerms,
         /// Finite tokenizer/template/output contract used at ordinary serving admission.
@@ -49,6 +62,14 @@ pub enum ModelService {
     },
     /// A pinned llama-server image and exact local GGUF input.
     Owned {
+        /// Single API model identifier shared by the server and its published capability.
+        model_alias: String,
+        /// Transport and stream bounds validated by the existing model-provider owner.
+        endpoint_limits: milkdrift_model_provider::EndpointLimits,
+        /// Independent service container limits; worker limits are configured separately.
+        limits: ContainerLimits,
+        /// Preparation, startup and shutdown waits for this server/model combination.
+        timeouts: ServiceTimeouts,
         /// Exact OCI reference or local sha256 image identity.
         image: String,
         /// Absolute image-internal server executable.
@@ -61,7 +82,7 @@ pub enum ModelService {
         model_bytes: u64,
         /// Host loopback-only port, without a worker route to the manager's loopback interface.
         port: u16,
-        /// Configured context, bounded by the approved memory budget.
+        /// Configured llama-server context; container memory is enforced separately.
         context_tokens: u32,
         /// Operator-established tokenizer/template/output contract for this exact server/model.
         token_limits: milkdrift_model_provider::ModelTokenLimits,
@@ -72,27 +93,21 @@ pub enum ModelService {
     },
 }
 
-/// One maintained recipe with finite typed choices. Experimental workspace tool installs remain
+/// Approved working environment with finite typed choices, independent of application content. Experimental workspace tool installs remain
 /// mutable working data; promotion requires building and approving a new exact image input.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LinuxRecipe {
     /// Exact supported recipe schema.
     pub schema_version: u32,
-    /// Operator-selected recipe name, separate from the maintained recipe family.
+    /// Operator-selected recipe name.
     pub name: ManagedName,
-    /// Must be `slotbook-v1`; arbitrary recipe interpreters are not supported.
-    pub family: String,
-    /// Exact preloaded Git/Rust/build image. Floating tags never resolve at apply time.
+    /// Exact preloaded worker image. Floating tags never resolve at apply time.
     pub worker_image: String,
     /// Worker network choice.
     pub worker_network: WorkerNetwork,
-    /// Shared memory limit in bytes; GPU reservations are not added to host RAM.
-    pub memory_bytes: u64,
-    /// CPU quota as a nonzero number of hundredths of a CPU.
-    pub cpu_percent: u32,
-    /// Process count limit including descendants.
-    pub pids: u32,
+    /// Independent limits for the temporary worker container.
+    pub worker_limits: ContainerLimits,
     /// Maximum single worker command duration.
     pub task_timeout_ms: u64,
     /// Maximum combined worker stdout/stderr bytes; overflow is a failure.
@@ -108,10 +123,17 @@ pub struct LinuxRecipe {
 impl LinuxRecipe {
     /// Decode strict bounded JSON through the production reader.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ManagedError> {
-        if bytes.len() > 65_536 {
+        if bytes.len() > MAX_RECIPE_BYTES {
             return Err(rejected("recipe exceeds 64 KiB"));
         }
         let value = milkdrift_contracts::parse_json_without_duplicates(bytes).map_err(rejected)?;
+        if value.get("schema_version").and_then(|v| v.as_u64())
+            != Some(u64::from(LINUX_RECIPE_SCHEMA_VERSION))
+        {
+            return Err(rejected(format!(
+                "unsupported recipe schema; expected {LINUX_RECIPE_SCHEMA_VERSION}"
+            )));
+        }
         let recipe: Self = serde_json::from_value(value).map_err(rejected)?;
         recipe.validate()?;
         Ok(recipe)
@@ -135,103 +157,125 @@ impl LinuxRecipe {
         })
     }
     fn validate(&self) -> Result<(), ManagedError> {
-        if self.schema_version != 1
-            || self.family != "slotbook-v1"
-            || !exact_image(&self.worker_image)
-            || !(268_435_456..=137_438_953_472).contains(&self.memory_bytes)
-            || !(1..=12_800).contains(&self.cpu_percent)
-            || !(16..=4096).contains(&self.pids)
-            || !(1000..=3_600_000).contains(&self.task_timeout_ms)
-            || !(1024..=1_048_576).contains(&self.output_bytes)
-            || self.minimum_free_bytes == 0
-        {
+        if self.schema_version != LINUX_RECIPE_SCHEMA_VERSION {
+            return Err(rejected(format!(
+                "unsupported recipe schema {}; expected {}",
+                self.schema_version, LINUX_RECIPE_SCHEMA_VERSION
+            )));
+        }
+        if !exact_image(&self.worker_image) {
             return Err(rejected(
-                "unsupported recipe family, unpinned image or invalid resource bounds",
+                "worker_image must be an exact preloaded sha256 identity",
             ));
         }
-        match &self.model_service {
-            ModelService::Disabled {} => {}
-            ModelService::Attached {
-                api_base,
-                model_alias,
-                billing,
-                token_limits,
-            } => {
-                if matches!(billing, milkdrift_model_provider::BillingTerms::Unknown)
-                    || matches!(
-                        token_limits,
-                        milkdrift_model_provider::ModelTokenLimits::Unknown
-                    )
-                {
-                    return Err(rejected(
-                        "managed model calls require explicit finite billing and token contracts",
-                    ));
-                }
-                let url = url::Url::parse(api_base).map_err(rejected)?;
-                if !matches!(url.scheme(), "http" | "https")
-                    || !url.username().is_empty()
-                    || url.password().is_some()
-                    || url.query().is_some()
-                    || url.fragment().is_some()
-                    || url.host_str().is_none()
-                    || api_base.len() > 2048
-                {
-                    return Err(rejected(
-                        "attachment must be a credential-free HTTP(S) base",
-                    ));
-                }
-                if model_alias.is_empty()
-                    || model_alias.len() > 256
-                    || model_alias.chars().any(char::is_control)
-                {
-                    return Err(rejected("attachment requires a bounded exact model alias"));
-                }
-            }
-            ModelService::Owned {
-                image,
-                executable,
-                model,
-                model_digest,
-                model_bytes,
-                port,
-                context_tokens,
-                threads,
-                backend,
-                token_limits,
-            } => {
-                if matches!(
-                    token_limits,
-                    milkdrift_model_provider::ModelTokenLimits::Unknown
-                ) {
-                    return Err(rejected(
-                        "managed model calls require an explicit finite token contract",
-                    ));
-                }
-                if !exact_image(image)
-                    || !safe_absolute(Path::new(executable))
-                    || !safe_absolute(model)
-                    || !milkdrift_contracts::is_canonical_blake3_digest(model_digest)
-                    || *model_bytes == 0
-                    || *model_bytes > 137_438_953_472
-                    || *port < 1024
-                    || !(512..=131_072).contains(context_tokens)
-                    || !(1..=128).contains(threads)
-                {
-                    return Err(rejected("invalid pinned llama-server/model configuration"));
-                }
-                if let InferenceBackend::Vulkan { render_device } = backend {
-                    let text = render_device.to_str().unwrap_or("");
-                    if !text
-                        .strip_prefix("/dev/dri/renderD")
-                        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-                    {
-                        return Err(rejected(
-                            "Vulkan profile requires exactly one render device",
-                        ));
-                    }
-                }
-            }
+        self.worker_limits.validate("worker_limits")?;
+        limits::validate_timeout(self.task_timeout_ms, "task_timeout_ms")?;
+        if self.output_bytes == 0 {
+            return Err(rejected("output_bytes must be positive"));
         }
+        crate::worker::output_artifact_limit(self.output_bytes)?;
+        if self.minimum_free_bytes == 0 || self.minimum_free_bytes > i64::MAX as u64 {
+            return Err(rejected(
+                "minimum_free_bytes must be positive signed-64-bit bytes",
+            ));
+        }
+        if let ModelService::Owned {
+            image,
+            executable,
+            model,
+            model_digest,
+            model_bytes,
+            port,
+            context_tokens,
+            threads,
+            backend,
+            limits,
+            timeouts,
+            model_alias,
+            ..
+        } = &self.model_service
+        {
+            limits.validate("model_service.limits")?;
+            timeouts.validate()?;
+            // --alias accepts a comma-separated list. This contract publishes exactly one name,
+            // with no shell/systemd interpolation or argument syntax.
+            if model_alias.is_empty()
+                || !model_alias.as_bytes()[0].is_ascii_alphanumeric()
+                || !model_alias.bytes().all(|b| {
+                    b.is_ascii_alphanumeric() || matches!(b, b'/' | b':' | b'.' | b'_' | b'-')
+                })
+            {
+                return Err(rejected(
+                    "model_service.model_alias must be one identifier using letters, digits, / : . _ -, beginning with a letter or digit",
+                ));
+            }
+            if !exact_image(image) {
+                return Err(rejected(
+                    "model_service.image must be an exact sha256 identity",
+                ));
+            }
+            if !safe_absolute(Path::new(executable)) {
+                return Err(rejected(
+                    "model_service.executable must be a safe absolute container path",
+                ));
+            }
+            if !safe_absolute(model) {
+                return Err(rejected(
+                    "model_service.model must be a safe absolute host path",
+                ));
+            }
+            if !milkdrift_contracts::is_canonical_blake3_digest(model_digest) {
+                return Err(rejected(
+                    "model_service.model_digest must be a canonical BLAKE3 digest",
+                ));
+            }
+            if *model_bytes == 0 || *model_bytes > i64::MAX as u64 {
+                return Err(rejected(
+                    "model_service.model_bytes must be positive signed-64-bit bytes",
+                ));
+            }
+            if *port < 1024 {
+                return Err(rejected(
+                    "model_service.port must be an unprivileged port (1024 or higher)",
+                ));
+            }
+            if *context_tokens == 0 || *context_tokens > i32::MAX as u32 {
+                return Err(rejected(
+                    "model_service.context_tokens must fit llama-server's positive signed context size",
+                ));
+            }
+            if *threads == 0 {
+                return Err(rejected("model_service.threads must be positive"));
+            }
+            if let InferenceBackend::Vulkan {
+                render_device,
+                gpu_layers,
+            } = backend
+            {
+                if !render_device
+                    .to_str()
+                    .unwrap_or("")
+                    .strip_prefix("/dev/dri/renderD")
+                    .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+                {
+                    return Err(rejected(
+                        "model_service.backend.render_device must identify exactly one /dev/dri/renderD device",
+                    ));
+                }
+                if *gpu_layers == 0 || *gpu_layers > i32::MAX as u32 {
+                    return Err(rejected(
+                        "model_service.backend.gpu_layers must be a positive signed layer count",
+                    ));
+                }
+            }
+            self.worker_limits
+                .memory_bytes
+                .checked_add(limits.memory_bytes)
+                .ok_or_else(|| rejected("combined worker and service memory overflows bytes"))?;
+        }
+        // The provider owns endpoint, transport and accounting validation. Use the same constructor
+        // here and at publication so accepted configuration cannot be ignored later.
+        crate::model::profile_for_service(&self.model_service, &self.name, 1)?;
         Ok(())
     }
 }
@@ -302,7 +346,6 @@ pub(crate) fn exact_image(value: &str) -> bool {
                 .is_some_and(u8::is_ascii_alphanumeric)
                 && prefix.bytes().filter(|b| *b == b'@').count() == 1
                 && prefix.ends_with('@')
-                && prefix.len() <= 200
                 && prefix.bytes().all(|b| {
                     b.is_ascii_lowercase()
                         || b.is_ascii_digit()

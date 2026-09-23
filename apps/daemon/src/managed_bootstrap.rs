@@ -24,8 +24,9 @@ pub(super) struct Arguments {
     /// One strict recipe with exact operator-supplied image and optional model inputs.
     #[arg(long)]
     recipe: PathBuf,
-    #[arg(long, default_value = "slotbook")]
-    installation: String,
+    /// Installation name; defaults to the approved recipe name.
+    #[arg(long)]
+    installation: Option<String>,
     /// Print generated non-secret configuration and recipe identity without writing files.
     #[arg(long)]
     preview: bool,
@@ -35,12 +36,16 @@ pub(super) fn run(args: Arguments) -> Result<(), Box<dyn std::error::Error>> {
     if !cfg!(target_os = "linux") {
         return Err("managed bootstrap requires Linux".into());
     }
-    let installation = ManagedName::new(args.installation)?;
     let mut bytes = Vec::new();
     fs::File::open(&args.recipe)?
         .take(65_537)
         .read_to_end(&mut bytes)?;
     let recipe = LinuxRecipe::from_json(&bytes)?;
+    let installation = args
+        .installation
+        .map(ManagedName::new)
+        .transpose()?
+        .unwrap_or_else(|| recipe.name.clone());
     let manager = LinuxManagerConfig {
         state_root: args.root.join("manager"),
         quadlet_directory: args.quadlet_directory.clone(),
@@ -238,7 +243,7 @@ mod tests {
             quadlet_directory: quadlet.clone(),
             systemd_directory: directory.path().join("systemd"),
             recipe: recipe.clone(),
-            installation: "slotbook".to_owned(),
+            installation: None,
             preview,
         };
         run(args(true))?;

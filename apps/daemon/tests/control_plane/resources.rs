@@ -67,6 +67,17 @@ async fn configured_resource_owner_retains_exact_failed_platform_intent_across_r
             recipe: recipe.reference()?,
         },
     };
+    let prepare = ManagedRequest {
+        command: ManagedName::new("prepare-diagnostic")?,
+        action: ManagedAction::Prepare {
+            recipe: recipe.reference()?,
+        },
+        ..request.clone()
+    };
+    let diagnosis = daemon.client.manage_resources(&prepare).await?;
+    assert_eq!(diagnosis.state, "unprepared");
+    assert!(!diagnosis.diagnostics.is_empty());
+    assert!(diagnosis.pending.is_none());
     let accepted = daemon.client.manage_resources(&request).await?;
     assert!(accepted.pending.is_some());
     assert_eq!(daemon.client.manage_resources(&request).await?, accepted);

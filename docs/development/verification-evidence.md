@@ -691,3 +691,17 @@ The follow-up desktop Ornith and Drifty smoke reports use an explicit per-reques
 Drifty uses an authenticated SSH forward to its NetBird-bound listener. The managed desktop model
 call additionally passes finite-accounting admission and terminal settlement. Unknown optional
 reasoning fields remain refused, and no remote-termination or inference-throughput claim is made.
+
+
+Post-02 evidence for recipe schema 2 and mechanism v3 is retained under
+`target/adaptive-hosts/post-02/`. It repeats the physical worker/owned-CPU and collision lanes with
+independent container limits, a configurable alias and a BusyBox worker that has no Git/Rust/C
+suite. The maintained Slotbook image binds its initial brief; actual daemon/CLI execution checks
+its ordinary initializer and preservation of edited files. Both product paths exercise exact
+replay after restart, headroom diagnosis, incompatible apply refusal, explicit update and safe
+removal. Short varied deadline/cancellation and combined-output tests complement the existing
+retained-uncertainty and lifecycle fault cases. Alternate model inputs and larger configuration
+values have deterministic reader/generation coverage; only the recorded Ornith weights have new
+owned physical evidence. The [02 handoff](virtual-office/adaptive-hosts/handoffs/02.md) identifies
+commands, inputs, final gate and API review. This supersedes recipe-1 evidence for changed
+configuration consumers and leaves the existing hardware issue open.

@@ -1,12 +1,14 @@
 # Post-02 execution plan — reusable managed Linux environments
 
 Prepared 2026-09-23 against `6e09339` following the design review of assignment 02.
-State: prepared; corrective implementation has not begun. Execution owner: unassigned.
+State: executed against `b3c698c`, 2026-09-23. Execution owner: Codex.
+Completion and qualification evidence: [02 handoff](handoffs/02.md).
 
 This is corrective work within [02](02-managed-linux-environments.md), to complete before advancing
 to 03. The [02 handoff](handoffs/02.md) retains the implemented behavior and executed qualification.
-Passing lifecycle and physical tests does not settle the design and usability findings below.
-This document assigns the corrections; it does not claim they have been implemented.
+The findings below describe the pre-correction implementation at `6e09339` and retain the assignment
+criteria. Their implemented resolution and executed checks are in the handoff; the separately owned
+hardware qualifications remain open.
 
 ## Intended result and scope
 
@@ -28,7 +30,7 @@ and the [verification policy](../../workflow.md#choose-verification-for-the-chan
 source and consumers before choosing replacement types or versions. This plan is scoped to the
 demonstrated problems below, not general architectural cleanup.
 
-## Findings to resolve
+## Findings at the original review
 
 ### 1. The example controls production behavior
 
@@ -192,5 +194,6 @@ instructions satisfy the checks above. Leave any genuinely unavailable hardware 
 explicitly open with its existing owner. Do not defer a known design, ownership or usability defect
 to 06 merely because the original example passes.
 
-Preparing and committing this plan requires the documentation checks in the workflow. It executes
-none of the implementation or hardware acceptance work described here.
+Execution is complete for the corrective scope above. The [02 handoff](handoffs/02.md) records
+configuration-only reuse, actual product paths, physical enforcement, the full local gate and the
+remaining hardware qualification.

@@ -77,7 +77,7 @@ executable, which is `milkdrift`. Private children organize each owner's impleme
 | `crates/control-client` | Typed authenticated HTTP, bounded safe-query retries and artifact ranges, exact-cursor SSE reconnect. |
 | `crates/peer-protocol` | Transport-neutral session/catalog/execution/cancellation/artifact contracts and strict codecs. |
 | `adapters/local-process` | Profile validation and byte identity; direct argv, preparation, streams, monitoring, outputs, and platform process ownership (`config`, `process`). |
-| `adapters/managed-linux` | Strict Slotbook recipes, rootless Podman effects, generated user Quadlets, owned temporary workers and model-service use adapters. |
+| `adapters/managed-linux` | Strict workload-independent Linux recipes, rootless Podman effects, generated user Quadlets, owned temporary workers and model-service use adapters. |
 | `adapters/model-provider` | Endpoint policy, feature negotiation, bounded HTTP/SSE, independent OpenAI-compatible and Anthropic mappings, artifact publication. |
 | `adapters/local-secret` | Explicit environment/restricted-file references; no enumeration or retained secret values. |
 | `adapters/peer-http` | Authentication, configured transport, catalogs, remote capability adapters, and artifact transfer framing. Capability-host owns serving lifecycle. |
@@ -405,7 +405,11 @@ bounded transition and closes admission; each platform result is separately guar
 identity and step. The immutable acceptance receipt never becomes the mutable inventory. Startup
 resumes pending steps, retains explicitly uncertain steps, and rebuilds registry projections without
 creating replacement identities. Linux recipe generation includes exact image/model/configuration
-inputs. [Managed operations](operations/managed-linux.md) owns the usable path, ownership boundary,
+inputs. The Linux recipe separates worker and owned-service container budgets, supplies one model
+alias and reuses provider endpoint limits. Application initialization lives in an approved image or
+ordinary worker operations; the Slotbook example has no privileged production path. Preparation
+receives the saved current generation for headroom accounting and returns authorized diagnostics
+without effects. [Managed operations](operations/managed-linux.md) owns the usable path, ownership boundary,
 retained disk state, backup exclusions and pending physical enforcement qualification.
 
 ## Agreements at effects and published methods

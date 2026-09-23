@@ -5,7 +5,7 @@ capability. Optional llama-server runs under user systemd, so closing a client o
 does not stop the service. Resource commands record intended changes before asking Podman or
 systemd to act. Inspection distinguishes accepted intent, verified state, blockers and uncertainty.
 
-Start with the [Slotbook inputs](../../examples/managed-linux/README.md). The recipe supports a
+For the maintained example, start with the [Slotbook inputs](../../examples/managed-linux/README.md). The recipe supports a
 preloaded exact tool image, a model-free setup, an external endpoint attachment, or an owned
 llama-server with exact local weights. A worker can install experimental tools under
 `/workspace/home`, edit source and keep outputs. Those files remain mutable working data; publishing
@@ -43,14 +43,89 @@ each other's resources. The daemon
 loads at most 32 approved recipes. Model recipes also require the existing provider contract for
 finite token accounting and explicit billing; unknown terms refuse instead of advertising a model
 that the independent host cannot admit. To approve another recipe, add its absolute private file
-to `adapters.managed_linux.recipes`, validate configuration, and restart. Updates select its exact
+to `adapters.managed_linux.recipes` under a distinct recipe name, validate configuration, and restart.
+The installation name remains stable across these recipe updates. Bootstrap defaults the installation
+name to the initial recipe name; `--installation` selects another name explicitly. Updates select its exact
 name and digest; caller-supplied mounts, engine flags and unit directives are not accepted.
+Obtain the new normalized digest with a preview of that file, retaining the installation name:
+
+```sh
+milkdrift-daemon managed-bootstrap --root /home/operator/milkdrift-slotbook --quadlet-directory /home/operator/.config/containers/systemd/milkdrift --systemd-directory /home/operator/.config/systemd/user --recipe /home/operator/approved-slotbook-v2.json --installation slotbook --preview
+```
+
+Use the printed recipe reference for update. Compare its proposed filesystem/network scopes with
+the current operator grant when changing a model path, endpoint or networking. Add only the needed
+scopes to the existing daemon configuration along with the approved recipe path. Preview writes
+nothing; rerunning creation is not the procedure for modifying an existing configuration.
 
 Set `MILKDRIFT_TOKEN_FILE` to the generated credential path and `MILKDRIFT_ENDPOINT` to the daemon's
 loopback URL, following the ordinary [client configuration](../../examples/operator/README.md).
 For a remote host use an authenticated tunnel to loopback. A model attachment may independently
 use NetBird, but the provider contract still requires HTTPS for non-loopback endpoints. An explicit
 loopback development profile accepts HTTP. Neither choice exposes Milkdrift's control listener.
+
+## Choose operating budgets
+
+Recipe schema 2 separates `worker_limits` from an owned model's `limits`. Each contains memory
+bytes, CPU quota in hundredths of one CPU (`250` means 2.5 CPUs), a process/thread limit and `/tmp`
+bytes. Swap is disabled. `/tmp` is memory-backed and consumes that container's memory allowance.
+Preparation requires memory and temporary-storage byte values to be multiples of the actual host
+page size, so kernel rounding cannot silently change the selected cap. These are two independently
+enforced container caps. They do not create an aggregate cgroup or
+reserve memory. An attached service retains its external owner's resource policy.
+
+Preparation compares simultaneous worker plus owned-service demand with observed `MemAvailable`.
+On reapply or replacement it credits anonymous resident memory of the exact current owned service;
+reclaimable file cache is already included in `MemAvailable` and is not credited again. A changed
+container identity makes that observation fail. Apply/update repeat the check against the saved
+current generation before effects. Headroom can still change after the check; it is not a promise
+that another process cannot consume RAM. UM790 CPU and iGPU use the same physical pool.
+
+Choose `task_timeout_ms` and combined stdout/stderr `output_bytes` for worker commands. Capture
+stops on overflow; it does not silently truncate successful output. Admission reserves the worst
+encoded result size (including JSON escaping) from the same result representation used to publish
+it. Larger recipe budgets also need suitable actor, workflow/serving and artifact allowances in the
+daemon configuration. These existing authorization ceilings remain independent; bootstrap does not
+expand them to authorize every recipe value. A CLI wait has its own observation deadline and does
+not extend or cancel accepted work.
+
+For an owned server, `timeouts.model_verification_ms` bounds model hashing, `startup_ms` bounds
+readiness polling and the generated systemd startup wait, and `shutdown_ms` controls graceful stop.
+Podman takes whole stop seconds, so the grace is rounded up. Startup milliseconds must also fit
+the [systemd time parser](https://github.com/systemd/systemd/blob/main/src/basic/time-util.c)
+without reaching its reserved infinity boundary. Hashing checks the deadline between
+regular-file reads; it cannot interrupt a stalled kernel filesystem read. Administrative commands
+and protection probes retain separate short bounds; making a task budget tiny does not disable
+platform verification. Model `endpoint_limits` uses the existing provider contract for both owned
+and attached endpoints. The current blocking transport applies the smaller of request and idle
+limits to the whole request; it does not reset an idle timer after each fragment. Owned inference
+verification uses the same configured endpoint deadline and response bound.
+
+The Linux recipe no longer imposes the old 128 GiB memory/model, 128 CPU/thread, one-hour task,
+131,072-token context, or 1 MiB worker-output ceilings. Positive representable values are still
+required. The remaining restrictions have these owners and purposes:
+
+| Restriction | Reason and consequence |
+| --- | --- |
+| Container memory and model bytes fit signed 64-bit bytes; context and explicit Vulkan layer count fit positive signed 32-bit arguments; shutdown fits Podman's signed whole seconds | Preserve the representation accepted by OCI/llama-server/Podman. A positive value does not prove the host or model can run it; prepare and physical verification remain necessary. |
+| Positive finite durations, checked memory/output arithmetic, `/tmp` no larger than its container memory | Refuse disabled limits, unrepresentable waits and storage/output promises that the configured boundary cannot cover. |
+| One worker mutator and one concurrent model generation per installation | Preserve the existing working-area exclusion and single-server-slot policy. Different resources can run concurrently. This is product policy, not a measured hardware limit. |
+| 65,536 private subordinate IDs for each simultaneous worker/service | Covers the image's 16-bit Linux UID/GID space without mapping the manager identity; owned service plus worker needs two complete ranges. |
+| At most 32 approved recipe paths; recipe at most 64 KiB with bounded canonical JSON | Bounds the trusted startup catalog and retained deployment input. These are document/catalog policies, not workload capacity estimates. Worker argv uses the existing bounded inline-input contract, without an additional Linux-specific argument count cap. |
+| Safe absolute paths; owned alias is one identifier starting with a letter/digit, using letters, digits, `/ : . _ -` | Generated units accept no interpolation or raw directives. Commas would declare multiple llama aliases. Provider validation supplies the alias length and endpoint/accounting bounds. |
+| Administrative command capture at most 1 MiB and 45 seconds, shorter existence/generator/cleanup checks, finite 50-second in-process fencing wait | Bounds manager-side observation and cleanup. Exceeding these mechanism limits yields an explicit failure or retained uncertainty; it does not authorize a weaker check. These are administrative policies, not inference deadlines or throughput claims. |
+
+The [maintained inputs](../../examples/managed-linux/README.md) show complete service configuration.
+Use host-appropriate limits; fixture and example values do not establish model memory requirements.
+
+Recipe schema 1 and `linux-quadlet-v1/v2` deployments are unsupported by this correction. Schema 2
+and mechanism `linux-quadlet-v3` bind the separate limits, alias and initialization semantics into
+new approvals. Daemon configuration remains version 12 and portable inventory remains version 1.
+Do not edit saved inventory or reinterpret an old approval. Before upgrading an active older
+installation, use its matching binary to inspect, preserve and remove it; retain its labeled volumes
+and shared inputs. Approve a schema-2 recipe in a fresh installation namespace. If already upgraded,
+the offline `managed` inspection/backup path remains available; return to the matching binary for
+lifecycle changes. This is explicit development-format refusal, not automatic migration or adoption.
 
 ## Apply, inspect and use
 
@@ -65,7 +140,10 @@ milkdrift --json --command-id inspect-one resource --installation slotbook inspe
 milkdrift --json invocation catalog
 ```
 
-`prepare` diagnoses and previews; it reserves nothing. `apply` returns an immutable **acceptance
+`prepare` diagnoses and previews; it reserves nothing. Check its returned `state`: `prepared` means
+the observation passed, while `unprepared` carries bounded failure diagnostics after authorization.
+For example, insufficient headroom identifies the required and observed bytes. It neither changes
+an existing generation nor records a transition. Host conditions can change before apply. `apply` returns an immutable **acceptance
 receipt**, even when the bounded platform driver has since finished or recorded uncertainty.
 Inspect to obtain the current version, last verified generation, desired/observed service state,
 capability candidates, exact owned/shared/attached resources, blockers and pending transition.
@@ -79,10 +157,12 @@ Successful verification registers `managed.slotbook.worker` (`workspace.execute`
 its catalog and health show current availability. The worker accepts the named inline input `command`:
 
 ```json
-[{"name":"command","value":{"type":"inline","value":{"argv":["/bin/sh","-c","cd /workspace/source && git status --short"]}}}]
+[{"name":"command","value":{"type":"inline","value":{"argv":["/usr/local/bin/initialize-slotbook"]}}}]
 ```
 
-Save that JSON as `worker-inputs.json`, then use ordinary durable direct execution:
+For the maintained Slotbook image, this creates the application directories and initial brief;
+repeated initialization preserves edits. Another image supplies its own ordinary commands. Save
+that JSON as `worker-inputs.json`, then use ordinary durable direct execution:
 
 ```sh
 milkdrift invocation prepare managed.slotbook.worker workspace.execute --host host:slotbook --request-id worker-one --inputs worker-inputs.json --output worker-request.json
@@ -120,7 +200,7 @@ milkdrift --command-id remove-one resource --installation slotbook --expected-ve
 ```
 
 The numbers illustrate optimistic guards; use the actual inspected version. Identical reapply checks
-protection and useful tools without restarting a healthy service or overwriting retained files.
+protection without restarting a healthy service or overwriting retained files.
 Drift is reported and never silently adopted. Pending steps after a daemon crash resume against their
 saved identities. A recorded uncertain step needs an authorized `recover`; the same step may already
 have happened, so recovery checks labels, exact definitions and physical state first. A failed update
@@ -168,7 +248,9 @@ and engine/systemd sockets. Existing files in the shared systemd search director
 Temporary workers receive one owned volume at `/workspace`, a read-only image root, private user
 mapping, dropped capabilities, no-new-privileges, default seccomp, bounded memory/swap/CPU/processes
 and a bounded `/tmp`. The apply probe checks actual mounts, kernel limits, effective capabilities,
-read-only denial and absence of manager paths/sockets, and runs Git/Rust/C tooling before publication.
+read-only denial and absence of manager paths/sockets before publication. Application tools and
+initial files belong to the chosen image and ordinary
+worker commands; the [Slotbook initializer](../../examples/managed-linux/README.md) is one example.
 Helpers have finite output/deadlines and retained child ownership through termination. Persistent
 services remain systemd-owned across Milkdrift shutdown; temporary tasks remain invocation-owned.
 

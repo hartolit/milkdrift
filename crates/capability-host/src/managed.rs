@@ -61,8 +61,13 @@ pub trait ManagedPlatform: Send + Sync {
         ownership: &str,
         generation: u64,
     ) -> Result<ApprovedSetup, ManagedError>;
-    /// Inspect prerequisites and effective state without changing resources.
-    fn diagnose(&self, setup: &ApprovedSetup) -> Result<Vec<String>, ManagedError>;
+    /// Inspect prerequisites without changing resources. The saved current generation permits
+    /// accounting for resources that reapply retains or an authorized update would replace.
+    fn diagnose(
+        &self,
+        setup: &ApprovedSetup,
+        current: Option<&ApprovedSetup>,
+    ) -> Result<Vec<String>, ManagedError>;
     /// Execute or recover one specifically replay-safe boundary, verifying ownership first.
     fn reconcile(
         &self,
@@ -338,13 +343,21 @@ impl ManagedResources {
             return Ok(view);
         }
         if matches!(request.action, ManagedAction::Prepare { .. }) {
-            let diagnostics = self.platform.diagnose(&candidate)?;
+            // Preparation is an authorized observation. Like inspection, it returns bounded
+            // diagnostics even when the platform cannot qualify the proposed configuration.
+            let (state, diagnostics) = match self
+                .platform
+                .diagnose(&candidate, record.as_ref().and_then(|r| r.current.as_ref()))
+            {
+                Ok(diagnostics) => ("prepared", diagnostics),
+                Err(error) => ("unprepared", vec![bounded(&error.to_string())]),
+            };
             return Ok(ManagedResponse {
                 schema_version: MANAGED_SCHEMA_VERSION,
                 installation: request.installation.clone(),
                 version: record.as_ref().map_or(0, |r| r.version),
                 generation,
-                state: "prepared".to_owned(),
+                state: state.to_owned(),
                 desired_running: None,
                 observed_running: None,
                 recipe: Some(candidate.recipe),

@@ -9,14 +9,16 @@ type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn recipe() -> Result<LinuxRecipe> {
     Ok(LinuxRecipe {
-        schema_version: 1,
+        schema_version: 2,
         name: ManagedName::new("slotbook")?,
-        family: "slotbook-v1".to_owned(),
         worker_image: format!("sha256:{}", "a".repeat(64)),
         worker_network: WorkerNetwork::None,
-        memory_bytes: 536_870_912,
-        cpu_percent: 100,
-        pids: 64,
+        worker_limits: milkdrift_managed_linux::ContainerLimits {
+            memory_bytes: 536_870_912,
+            cpu_percent: 100,
+            pids: 64,
+            temporary_bytes: 67_108_864,
+        },
         task_timeout_ms: 30000,
         output_bytes: 65536,
         minimum_free_bytes: 1_073_741_824,
@@ -199,6 +201,18 @@ fn attached_model_profile_retains_exact_service_dependency_and_never_owns_endpoi
     recipe.model_service = ModelService::Attached {
         api_base: "http://127.0.0.1:1234/v1".to_owned(),
         model_alias: "google/gemma-4-12b-qat".to_owned(),
+        endpoint_limits: milkdrift_model_provider::EndpointLimits {
+            connect_timeout_ms: 1000,
+            request_timeout_ms: 3000,
+            idle_timeout_ms: 3000,
+            max_headers: 32,
+            max_header_bytes: 8192,
+            max_request_bytes: 65_536,
+            max_response_bytes: 65_536,
+            max_stream_line_bytes: 8192,
+            max_stream_event_bytes: 16_384,
+            max_fragment_bytes: 1024,
+        },
         billing: milkdrift_model_provider::BillingTerms::Unbilled {
             source: "local deterministic fixture, no provider charge".to_owned(),
         },
@@ -247,6 +261,115 @@ fn attached_model_profile_retains_exact_service_dependency_and_never_owns_endpoi
                 .extensions()
                 .keys()
                 .any(|k| k.as_str() == MANAGED_BINDING_EXTENSION)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn workload_and_model_choices_are_not_example_restrictions() -> Result {
+    let mut value: serde_json::Value =
+        serde_json::from_slice(include_bytes!("fixtures/owned-recipe-v2.json"))?;
+    value["name"] = serde_json::json!("data-analysis");
+    value["worker_limits"]["memory_bytes"] = serde_json::json!(274_877_906_944_u64);
+    value["worker_limits"]["cpu_percent"] = serde_json::json!(25_000);
+    value["model_service"]["context_tokens"] = serde_json::json!(262_144);
+    value["model_service"]["threads"] = serde_json::json!(256);
+    value["model_service"]["model_bytes"] = serde_json::json!(274_877_906_944_u64);
+    let first = LinuxRecipe::from_json(&serde_json::to_vec(&value)?)?;
+    assert_eq!(first.task_timeout_ms, 7_200_000);
+    let mut changed = value.clone();
+    changed["model_service"]["model_alias"] = serde_json::json!("another-org/other-model:Q4");
+    changed["model_service"]["model_digest"] = serde_json::json!(format!("b3_{}", "d".repeat(64)));
+    assert_ne!(
+        first.reference()?,
+        LinuxRecipe::from_json(&serde_json::to_vec(&changed)?)?.reference()?
+    );
+    let roundtrip = LinuxRecipe::from_json(&serde_json::to_vec(&first)?)?;
+    assert_eq!(roundtrip, first);
+    for legacy in [0, 1, 3] {
+        let mut old = value.clone();
+        old["schema_version"] = serde_json::json!(legacy);
+        assert!(
+            LinuxRecipe::from_json(&serde_json::to_vec(&old)?)
+                .err()
+                .ok_or("old schema accepted")?
+                .to_string()
+                .contains("unsupported recipe schema")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn recipe_diagnostics_identify_invalid_operating_choices() -> Result {
+    let base: serde_json::Value =
+        serde_json::from_slice(include_bytes!("fixtures/owned-recipe-v2.json"))?;
+    for (pointer, bad, diagnostic) in [
+        (
+            "/worker_limits/memory_bytes",
+            serde_json::json!(0),
+            "worker_limits.memory_bytes",
+        ),
+        (
+            "/worker_limits/temporary_bytes",
+            serde_json::json!(1_073_741_824),
+            "worker_limits.temporary_bytes",
+        ),
+        (
+            "/model_service/limits/pids",
+            serde_json::json!(0),
+            "model_service.limits.pids",
+        ),
+        (
+            "/task_timeout_ms",
+            serde_json::json!(u64::MAX),
+            "task_timeout_ms",
+        ),
+        ("/output_bytes", serde_json::json!(u64::MAX), "output_bytes"),
+        (
+            "/model_service/timeouts/startup_ms",
+            serde_json::json!(0),
+            "startup_ms",
+        ),
+        (
+            "/model_service/timeouts/startup_ms",
+            serde_json::json!(u64::MAX / 1000),
+            "startup_ms",
+        ),
+        (
+            "/model_service/timeouts/shutdown_ms",
+            serde_json::json!(u64::MAX),
+            "shutdown_ms",
+        ),
+        (
+            "/model_service/endpoint_limits/max_request_bytes",
+            serde_json::json!(0),
+            "endpoint limits",
+        ),
+    ] {
+        let mut value = base.clone();
+        *value.pointer_mut(pointer).ok_or("fixture path missing")? = bad;
+        let error = LinuxRecipe::from_json(&serde_json::to_vec(&value)?)
+            .err()
+            .ok_or("invalid recipe accepted")?;
+        assert!(error.to_string().contains(diagnostic), "{pointer}: {error}");
+    }
+    for alias in [
+        "",
+        "--model",
+        "two,models",
+        "x\nExecStart=/bin/sh",
+        "model %t",
+        "$HOME",
+        "x;true",
+        "a\"b",
+    ] {
+        let mut value = base.clone();
+        value["model_service"]["model_alias"] = serde_json::json!(alias);
+        assert!(
+            LinuxRecipe::from_json(&serde_json::to_vec(&value)?).is_err(),
+            "{alias}"
         );
     }
     Ok(())

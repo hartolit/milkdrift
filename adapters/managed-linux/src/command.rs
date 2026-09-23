@@ -9,6 +9,12 @@ use std::{
     time::Instant,
 };
 
+// Administrative metadata/cleanup helpers have a separate bounded wait from configured task and
+// service lifetimes. Calls that wait for service shutdown pass that grace explicitly.
+pub(crate) const HELPER_TIMEOUT: Duration = Duration::from_secs(45);
+// Engine inspection and fixed protection probes are bounded control-plane documents.
+pub(crate) const HELPER_OUTPUT_BYTES: usize = 1_048_576;
+
 pub(crate) struct CommandOutput {
     pub(crate) success: bool,
     pub(crate) exit_code: Option<i32>,
@@ -88,7 +94,9 @@ pub(crate) fn run(
             fcntl_getfl(&stderr).map_err(platform_error)? | OFlags::NONBLOCK,
         )
         .map_err(platform_error)?;
-        let deadline = Instant::now() + timeout;
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .ok_or_else(|| rejected("helper timeout cannot be represented"))?;
         let mut out = Vec::new();
         let mut err = Vec::new();
         let mut out_eof = false;
@@ -107,18 +115,21 @@ pub(crate) fn run(
             }
             let read_pipe = |pipe: &mut dyn Read,
                              bytes: &mut Vec<u8>,
-                             eof: &mut bool|
+                             eof: &mut bool,
+                             other_bytes: usize|
              -> Result<(), ManagedError> {
                 let mut chunk = [0; 8192];
                 // Finite reads per pass keep cancellation/deadline checks responsive under output flood.
                 for _ in 0..16 {
-                    match pipe.read(&mut chunk) {
+                    let remaining = limit.saturating_sub(other_bytes.saturating_add(bytes.len()));
+                    let read_bound = chunk.len().min(remaining.saturating_add(1));
+                    match pipe.read(&mut chunk[..read_bound]) {
                         Ok(0) => {
                             *eof = true;
                             break;
                         }
                         Ok(n) => {
-                            if bytes.len().saturating_add(n) > limit {
+                            if n > remaining {
                                 return Err(platform_error("helper output limit exceeded"));
                             }
                             bytes.extend_from_slice(&chunk[..n]);
@@ -136,11 +147,8 @@ pub(crate) fn run(
                 }
                 Ok(())
             };
-            read_pipe(&mut stdout, &mut out, &mut out_eof)?;
-            read_pipe(&mut stderr, &mut err, &mut err_eof)?;
-            if out.len().saturating_add(err.len()) > limit {
-                return Err(platform_error("combined helper output limit exceeded"));
-            }
+            read_pipe(&mut stdout, &mut out, &mut out_eof, err.len())?;
+            read_pipe(&mut stderr, &mut err, &mut err_eof, out.len())?;
             if !exited {
                 use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
                 // Keep the leader unreaped until pipes close. Its reserved PID prevents a timeout
@@ -187,12 +195,20 @@ impl Drop for OwnedChild {
 }
 
 pub(crate) fn checked(program: &str, args: &[String]) -> Result<Vec<u8>, ManagedError> {
+    checked_with_timeout(program, args, HELPER_TIMEOUT)
+}
+
+pub(crate) fn checked_with_timeout(
+    program: &str,
+    args: &[String],
+    timeout: Duration,
+) -> Result<Vec<u8>, ManagedError> {
     let output = run(
         Path::new(program),
         args,
         &[],
-        Duration::from_secs(45),
-        1_048_576,
+        timeout,
+        HELPER_OUTPUT_BYTES,
         None,
     )?;
     if !output.success {
@@ -204,3 +220,6 @@ pub(crate) fn checked(program: &str, args: &[String]) -> Result<Vec<u8>, Managed
     }
     Ok(output.stdout)
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests;

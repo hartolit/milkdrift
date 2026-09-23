@@ -36,6 +36,9 @@ fn service_enforcement(
     recipe: &LinuxRecipe,
     root: &std::path::Path,
 ) -> Result {
+    let ModelService::Owned { limits, .. } = &recipe.model_service else {
+        return Err("service limits absent".into());
+    };
     let pid = value
         .pointer("/State/Pid")
         .and_then(|v| v.as_u64())
@@ -50,16 +53,16 @@ fn service_enforcement(
         let text = std::fs::read_to_string(format!("/sys/fs/cgroup{path}/{field}"))?;
         observed.insert(field.to_owned(), serde_json::json!(text.trim()));
     }
-    assert_eq!(observed["memory.max"], recipe.memory_bytes.to_string());
+    assert_eq!(observed["memory.max"], limits.memory_bytes.to_string());
     assert_eq!(observed["memory.swap.max"], "0");
-    assert_eq!(observed["pids.max"], recipe.pids.to_string());
+    assert_eq!(observed["pids.max"], limits.pids.to_string());
     let quota: Vec<u64> = observed["cpu.max"]
         .as_str()
         .ok_or("CPU quota missing")?
         .split_whitespace()
         .map(str::parse)
         .collect::<std::result::Result<_, _>>()?;
-    assert_eq!(quota[0] * 100, quota[1] * u64::from(recipe.cpu_percent));
+    assert_eq!(quota[0] * 100, quota[1] * u64::from(limits.cpu_percent));
     let status = std::fs::read_to_string(format!("/proc/{pid}/status"))?;
     assert!(status.lines().any(|v| v == "CapEff:\t0000000000000000"));
     assert!(status.lines().any(|v| v == "NoNewPrivs:\t1"));
@@ -132,7 +135,7 @@ fn check_retained(
         descriptor,
         key,
         "command",
-        serde_json::json!({"argv":["/bin/sh","-c","set -eu; test $(cat /workspace/retained) = retained; test $(/workspace/home/bin/tool) = tool-ok; test -s /workspace/docs/slotbook.md"]}),
+        serde_json::json!({"argv":["/bin/sh","-c","set -eu; test $(cat /workspace/retained) = retained; test $(/workspace/home/bin/tool) = tool-ok"]}),
     )?;
     let data = Arc::new(StoreInvocationDataAccess::new(
         store.clone(),
@@ -258,7 +261,7 @@ fn real_linux_worker_conformance_reapply_restart_and_preserved_removal() -> Resu
         let key = format!("physical-{}", sequence.fetch_add(1, Ordering::SeqCst));
         // The scoped working directory permits tool installation; manager files/sockets/devices
         // and rootfs writes must remain denied by the effective mounts/namespaces verified at apply.
-        let script = "set -eu; mkdir -p /workspace/home/bin; printf '#!/bin/sh\nprintf tool-ok' > /workspace/home/bin/tool; chmod +x /workspace/home/bin/tool; /workspace/home/bin/tool; printf retained > /workspace/retained; test -s /workspace/docs/slotbook.md; test ! -e /run/podman/podman.sock; test ! -e /dev/dri; if touch /etc/forbidden 2>/dev/null; then exit 71; fi; git --version; rustc --version; cargo --version";
+        let script = "set -eu; mkdir -p /workspace/home/bin; printf '#!/bin/sh\nprintf tool-ok' > /workspace/home/bin/tool; chmod +x /workspace/home/bin/tool; /workspace/home/bin/tool; printf retained > /workspace/retained; test ! -e /run/podman/podman.sock; test ! -e /dev/dri; if touch /etc/forbidden 2>/dev/null; then exit 71; fi; test ! -e /workspace/docs/slotbook.md";
         let (request, context, record) = support::entered(
             &store,
             &descriptor,

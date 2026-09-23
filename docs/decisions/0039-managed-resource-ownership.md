@@ -134,14 +134,36 @@ Milkdrift does not acquire a service supervisor or generic installation language
 
 ## Implemented mechanism and format boundary
 
-The first adapter accepts strict `slotbook-v1` recipes, preloaded exact images and typed server/model
-inputs. Podman 5.4..6.x is the accepted mechanism range, with physical evidence on 6.1.2. The installed
-Quadlet generator validates owned definitions; an exact systemd drop-in replaces cleanup by name
-with cleanup by the service-created container ID. Linux mechanism version 2 binds that drop-in
-search directory into the approved deployment and refuses version-1 deployments. Daemon schema 12
-requires `systemd_directory` alongside `quadlet_directory`; old configuration is not reinterpreted. Worker claims use rootless auto user namespaces, one owned working mount and
-explicit cgroup/network/device restrictions. Actual enforcement is checked during apply; deterministic
-fault maps do not qualify it. See [operations](../operations/managed-linux.md) for the physical lane.
+The adapter accepts strict workload-independent Linux recipes, preloaded exact images and typed
+server/model inputs. Podman 5.4..6.x is the accepted mechanism range, with physical evidence on
+6.1.2. The installed Quadlet generator validates owned definitions; an exact systemd drop-in replaces
+cleanup by name with cleanup by the service-created container ID. Actual enforcement is checked
+during apply; deterministic fault maps do not qualify it. See
+[operations](../operations/managed-linux.md) for the physical lane.
+
+Recipe schema 2 and mechanism `linux-quadlet-v3` replace the initial recipe's application-family
+and coupled-budget assumptions. Worker and owned model receive separate typed container limits;
+there is no aggregate memory reservation. Preflight sums simultaneous demand and accounts for the
+saved current service's anonymous resident memory on reapply/update. The semantic owner supplies
+that generation to diagnosis; a candidate cannot claim an existing allocation by matching a name.
+An authorized prepare observation returns `unprepared` with bounded diagnostics when qualification
+fails. This adds a response state to the current managed response contract without changing saved
+requests, receipts or inventory meanings. Clients upgrade with the workspace.
+
+Owned model identity is an explicit single alias, used by arguments, verification and the existing
+provider profile. Exact image/model bytes remain separate provenance. The recipe reuses provider
+`EndpointLimits`; operator-selected worker and service deadlines replace workload-specific hard
+ceilings. Linux/OCI numeric representations and bounded input/output remain enforced. Application
+content and tool environment belong to the approved image and ordinary worker initialization. The
+maintained Slotbook image binds its brief and preserves edited files on repeated initialization.
+There is no recipe interpreter, raw engine-argument escape hatch, or second provisioning owner.
+
+Older recipe/mechanism generations explicitly refuse, with no silent inventory rewrite or adoption.
+Their matching binary retains the preservation/removal path and offline inventory remains
+inspectable. Daemon schema 12 still requires `systemd_directory` alongside `quadlet_directory`;
+its shape did not change in this correction. The portable managed request/inventory formats and
+redb physical/document formats remain unchanged. Worker claims use rootless auto user namespaces,
+one owned working mount and explicit cgroup/network/device restrictions.
 
 Managed inventory, receipts, step evidence and use/link indexes are part of the existing redb store.
 No local journal event schema changes were needed: acquisition consumes exact scheduled snapshots,

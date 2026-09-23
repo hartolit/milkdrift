@@ -311,7 +311,8 @@ pub struct ManagedResponse {
     pub version: u64,
     /// Last verified deployed generation; candidates do not replace it early.
     pub generation: u64,
-    /// Lifecycle or preview result.
+    /// Lifecycle or preview result. Preparation returns `prepared` or `unprepared`; a failed
+    /// preview carries diagnostics without changing the installation or recording a transition.
     pub state: String,
     /// Last committed desired service state; absent for a preparation preview.
     pub desired_running: Option<bool>,
@@ -365,8 +366,10 @@ impl ManagedResponse {
             || self.installation != request.installation
             || !matches!(
                 self.state.as_str(),
-                "prepared" | "running" | "stopped" | "pending" | "removed" | "drift"
+                "prepared" | "unprepared" | "running" | "stopped" | "pending" | "removed" | "drift"
             )
+            || (self.state == "unprepared"
+                && !matches!(request.action, ManagedAction::Prepare { .. }))
             || self.resources.len() > MAX_MANAGED_RESOURCES
             || self.blockers.len() > MAX_MANAGED_USES
             || self.capabilities.len() > 8

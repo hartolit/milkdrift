@@ -24,3 +24,20 @@ fn realized_user_maps_exclude_the_manager_identity() {
     assert!(!private_id_mappings(None));
     assert!(!private_id_mappings(Some(&serde_json::json!({}))));
 }
+
+#[test]
+fn encoded_output_bound_covers_escaping_replacement_and_extreme_exit_codes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let stdout = [0, 1, b'"', b'\\', 255];
+    let stderr = [254, 0];
+    let document = super::result_document(
+        &String::from_utf8_lossy(&stdout),
+        &String::from_utf8_lossy(&stderr),
+        false,
+        Some(i32::MIN),
+    );
+    let bound = super::output_artifact_limit((stdout.len() + stderr.len()) as u64)?;
+    assert!(serde_json::to_vec(&document)?.len() as u64 <= bound);
+    assert!(super::output_artifact_limit(u64::MAX).is_err());
+    Ok(())
+}

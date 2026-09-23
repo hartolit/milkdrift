@@ -358,6 +358,10 @@ Both host roles expose `POST /v1/resources` when the managed Linux adapter is co
 `ControlClient::manage_resources` accepts `milkdrift_capability::managed::ManagedRequest` and
 validates the returned `ManagedResponse` against its target. The HTTP response uses the ordinary
 success/error envelope. The inner command/inventory schema is independently versioned at 1.
+An authorized `prepare` returns a preview state of `prepared` or `unprepared`. The latter includes
+bounded prerequisite diagnostics without recording a transition or changing an installation; it is
+not an accepted apply. Authentication, scope and malformed-request failures still use the error
+envelope. Clients must examine the preview state before proposing a change.
 
 ```json
 {

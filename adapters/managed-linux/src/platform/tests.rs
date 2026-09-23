@@ -1,57 +1,14 @@
-use super::{start_owned, verify_controllers, verify_podman_version, verify_subordinate_ids};
-use crate::{InferenceBackend, LinuxRecipe, ModelService, recipe::Deployment, units};
+use super::start_owned;
+use crate::{LinuxRecipe, ModelService, recipe::Deployment, units};
 use milkdrift_capability::{BoundedJson, managed::ManagedName};
 use milkdrift_persistence::managed::ApprovedSetup;
 use std::cell::Cell;
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-#[test]
-fn current_podman_and_required_delegation_are_checked_before_effects() -> Result {
-    for version in ["5.4.0", "5.9.2", "6.0.0", "6.1.2"] {
-        verify_podman_version(version)?;
-    }
-    for version in ["4.9.0", "5.3.2", "6", "6.bad", "7.0.0"] {
-        assert!(verify_podman_version(version).is_err(), "{version}");
-    }
-    verify_controllers(&serde_json::json!({"host":{"cgroupControllers":["cpu","memory","pids"]}}))?;
-    for controllers in [
-        serde_json::json!(["memory", "pids"]),
-        serde_json::json!(["cpu", "pids"]),
-        serde_json::json!(["cpu", "memory"]),
-        serde_json::json!(null),
-    ] {
-        assert!(
-            verify_controllers(&serde_json::json!({"host":{"cgroupControllers":controllers}}))
-                .is_err()
-        );
-    }
-    Ok(())
-}
-
-fn owned_setup() -> Result<ApprovedSetup> {
-    let mut recipe = LinuxRecipe::from_json(include_bytes!(
-        "../../../../examples/managed-linux/slotbook.json"
-    ))?;
-    recipe.model_service = ModelService::Owned {
-        image: format!("sha256:{}", "a".repeat(64)),
-        executable: "/usr/bin/llama-server".to_owned(),
-        model: "/models/approved.gguf".into(),
-        model_digest: format!("b3_{}", "b".repeat(64)),
-        model_bytes: 1024,
-        port: 8080,
-        context_tokens: 4096,
-        token_limits: milkdrift_model_provider::ModelTokenLimits::ByteBpe {
-            template_tokens_per_message: 8,
-            template_tokens_per_request: 8,
-            maximum_input_tokens: 4096,
-            maximum_output_tokens: 128,
-            output_control: milkdrift_model_provider::OutputTokenControl::MaxTokens,
-            source: "deterministic unit-generation fixture".to_owned(),
-        },
-        threads: 1,
-        backend: InferenceBackend::Cpu {},
-    };
+pub(super) fn owned_setup() -> Result<ApprovedSetup> {
+    let recipe =
+        LinuxRecipe::from_json(include_bytes!("../../tests/fixtures/owned-recipe-v2.json"))?;
     let ownership = format!("b3_{}", "c".repeat(64));
     let prefix = units::volume_prefix("fixture", &ownership);
     let reference = recipe.reference()?;
@@ -67,7 +24,7 @@ fn owned_setup() -> Result<ApprovedSetup> {
     };
     Ok(ApprovedSetup {
         recipe: reference,
-        mechanism: "linux-quadlet-v2".to_owned(),
+        mechanism: "linux-quadlet-v3".to_owned(),
         configuration: BoundedJson::new(serde_json::to_value(deployment)?)?,
         platform_owner: "fixture".to_owned(),
         ownership,
@@ -111,31 +68,6 @@ fn service_name_collision_cannot_reach_the_supervisor() -> Result {
     // The engine must also refuse a container appearing after the identity check.
     let definition = units::unit_text(&setup, true)?.ok_or("owned unit missing")?;
     assert!(definition.contains("PodmanArgs=--replace=false "));
-    Ok(())
-}
-
-#[test]
-fn owned_model_leaves_a_private_user_namespace_for_the_worker() -> Result {
-    let setup = owned_setup()?;
-    let deployment = units::deployment(&setup)?;
-    let mut info = serde_json::json!({"host":{"idMappings":{
-        "uidmap":[{"container_id":1,"host_id":100000,"size":65536}],
-        "gidmap":[{"container_id":1,"host_id":100000,"size":65536}]
-    }}});
-    verify_subordinate_ids(&info, &ModelService::Disabled {})?;
-    assert!(verify_subordinate_ids(&info, &deployment.recipe.model_service).is_err());
-    info["host"]["idMappings"]["uidmap"][0]["size"] = serde_json::json!(131072);
-    assert!(verify_subordinate_ids(&info, &deployment.recipe.model_service).is_err());
-    info["host"]["idMappings"]["gidmap"][0]["size"] = serde_json::json!(131072);
-    verify_subordinate_ids(&info, &deployment.recipe.model_service)?;
-    for key in ["uidmap", "gidmap"] {
-        info["host"]["idMappings"][key] = serde_json::json!([
-            {"container_id":0,"host_id":1000,"size":1},
-            {"container_id":1,"host_id":100000,"size":65536},
-            {"container_id":65537,"host_id":165536,"size":65536}
-        ]);
-    }
-    verify_subordinate_ids(&info, &deployment.recipe.model_service)?;
     Ok(())
 }
 
@@ -247,5 +179,27 @@ fn real_quadlet_failed_start_preserves_a_foreign_container() -> Result {
         observed.pointer("/State/Running").and_then(|v| v.as_bool()),
         Some(true)
     );
+    Ok(())
+}
+
+#[test]
+fn generated_service_uses_the_owned_policy_and_model_identity() -> Result {
+    let setup = owned_setup()?;
+    let unit = units::unit_text(&setup, true)?.ok_or("unit absent")?;
+    assert!(unit.contains("--alias research/model-v2\n"));
+    assert!(
+        unit.contains("--memory=1073741824 --memory-swap=1073741824 --cpus=2.50 --pids-limit=96")
+    );
+    assert!(unit.contains("size=134217728"));
+    assert!(unit.contains("TimeoutStartSec=180000ms\nTimeoutStopSec=13s"));
+    assert!(unit.contains("--n-gpu-layers 0"));
+    let d = units::deployment(&setup)?;
+    let profile =
+        crate::model::profile_for_service(&d.recipe.model_service, &d.installation, d.generation)?
+            .ok_or("profile absent")?;
+    let profile = serde_json::to_value(profile)?;
+    assert_eq!(profile["model"], "research/model-v2");
+    assert_eq!(profile["limits"]["request_timeout_ms"], 600000);
+    assert_eq!(profile["limits"]["max_response_bytes"], 65536);
     Ok(())
 }

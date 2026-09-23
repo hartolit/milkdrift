@@ -21,7 +21,7 @@ tempfile.workspace = true
 url.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1.4", features = ["process", "fs"] }
+rustix = { version = "1.1.4", features = ["process", "fs", "param"] }
 
 [dev-dependencies]
 milkdrift-peer-protocol.workspace = true

@@ -1,4 +1,4 @@
-//! Prepare and maintain Slotbook working environments through rootless Podman and user Quadlets.
+//! Prepare and maintain approved working environments through rootless Podman and user Quadlets.
 //!
 //! The host resource owner commits intent and use claims. This adapter checks exact platform
 //! identities, creates bounded definitions and asks systemd to supervise persistent services.
@@ -14,7 +14,10 @@ mod units;
 mod worker;
 pub use model::ManagedModelAdapter;
 pub use platform::LinuxManagedPlatform;
-pub use recipe::{InferenceBackend, LinuxManagerConfig, LinuxRecipe, ModelService, WorkerNetwork};
+pub use recipe::{
+    ContainerLimits, InferenceBackend, LINUX_RECIPE_SCHEMA_VERSION, LinuxManagerConfig,
+    LinuxRecipe, ModelService, ServiceTimeouts, WorkerNetwork,
+};
 pub use worker::ManagedWorkerAdapter;
 
 use milkdrift_capability_host::managed::ManagedError;

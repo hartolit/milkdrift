@@ -24,10 +24,10 @@ This document owns current implementation, limitations, exact versions, and qual
 - Managed installation commands share one semantic owner through the authenticated API/client/CLI
   and `milkdrift.resources` capability. Approved recipes, exact generation holds, transferable editing
   claims, pending changes and command receipts survive restart in redb. The production Linux adapter
-  prepares Slotbook working storage, temporary workers, and optional owned Quadlet llama-server or
+  prepares workload-independent working storage, temporary workers, and optional owned Quadlet llama-server or
   attached endpoint. It requires explicit resource protection and refuses unsupported prerequisites.
   Deterministic lifecycle/ledger/conformance/backup tests are distinct from the gated real-Podman
-  lane. Podman, real GPU enforcement and UM790/reboot qualification remain pending; see
+  lane. Desktop Podman 6.1.2 is exercised; managed GPU and UM790/reboot qualification remain pending; see
   [managed operations](../operations/managed-linux.md).
 - The CLI covers blueprint/sequence authoring, run/proposal/controller/peer/layout control,
   retained-work resolution, bounded inspection, verified create-new downloads, wait/follow deadlines,
@@ -182,36 +182,48 @@ values; repository contracts check the version cells against source.
 
 ### Managed Linux resource qualification
 
-Assignment 02 now has executed desktop Arch Linux qualification with Podman 6.1.2, systemd 261.3
-and kernel 7.2.6. The adapter accepts 5.4..6.x and checks actual controller delegation, private
-UID/GID mappings and effective definitions. Real worker tests cover kernel CPU/memory/PID/swap
-limits, denied manager/rootfs access, installed tools, retained files, reapply/reopen and removal.
-The owned CPU llama-server test verifies kernel enforcement and service identity, and systemd
-restarts the deliberately killed test service while every Milkdrift manager is absent. A failed
-supervisor start preserves a foreign container with the same name; cleanup is bound to the created
-container ID through an owned systemd drop-in.
+Assignment 02 and its post-execution corrections have desktop Arch Linux qualification with
+Podman 6.1.2, systemd 261.3 and kernel 7.2.6. The adapter accepts 5.4..6.x and checks actual
+controller delegation, private UID/GID mappings and effective definitions. Recipe schema 2 and
+mechanism v3 separate worker/service budgets and make the owned model alias, endpoint bounds and
+service deadlines configurable. Platform preparation no longer depends on Slotbook content or a
+Git/Rust/C tool suite. The maintained image initializes Slotbook through an ordinary worker command.
 
-Actual bootstrap/daemon/CLI evidence exercises worker and model publication, a model completing
-while the working-area invocation is still active, busy-removal refusal, exact replay after
-restart, retained data and attachment-preserving removal. Desktop `ornith-9b` and Drifty `ornith`
-also pass the daemon/CLI model smoke with explicit per-request `reasoning_effort: "none"`.
-The default `reasoning_content` stream still refuses and retains uncertainty; neither these results
-nor the earlier failed Gemma smoke qualify default reasoning-mode interoperability. Server defaults
-were unchanged. Drifty uses an authenticated SSH tunnel to its NetBird listener.
+Real BusyBox and owned CPU-model tests cover simultaneous independent kernel limits, denied
+manager/rootfs access, retained files, reapply/reopen and preservation-aware removal. Systemd
+restarts a deliberately killed owned service while every Milkdrift owner is absent. A failed
+supervisor start preserves a foreign same-name container through exact container-ID cleanup.
+Preparation accounts for the saved current service's resident memory and refuses byte limits that
+would be rounded by the host. An unsuccessful authorized preview returns `unprepared` with useful
+diagnostics and no effects.
 
-The full local gate passes: 871 workspace tests, 24 doctests, all 24 repository contracts,
+Fresh daemon/CLI runs cover Slotbook initialization and Rust compilation, unrelated text analysis,
+attached and differently named owned inference, busy-removal refusal, exact replay after restart,
+retained edits, headroom diagnosis, incompatible apply refusal, explicit update and safe removal.
+The owned model alias changes through update without Rust changes. A second model input and larger
+operating choices have deterministic configuration coverage; a second GGUF was not physically
+loaded in the corrective run.
+
+The full local gate passes with 880 workspace tests, 24 doctests, all 24 repository contracts,
 warning-denying Clippy/rustdoc, dependency audits, formatting, checks and discovery. Seven manual
-tests are ignored by that gate; both physical Linux cases were executed separately. Six follow-up
-default/all-feature API inventories pass. This uses optimization level 1 with debug assertions
-enabled; a default unoptimized full-gate pass is not established on this host.
+tests remain ignored by that gate; both physical Linux cases were executed separately. Eight
+default/all-feature API inventories were reviewed. The local gate uses optimization level 1 with
+debug assertions enabled; an unoptimized full-gate pass is not established on this host.
+
+Actual model calls use explicit per-request `reasoning_effort: "none"`. Earlier desktop `ornith-9b`
+and Drifty `ornith` daemon/CLI smoke evidence remains valid for those recorded inputs; Drifty uses
+an authenticated SSH tunnel to its NetBird listener. Default `reasoning_content` streams still
+refuse and retain uncertainty. Neither the corrected owned CPU run nor the earlier failed Gemma
+smoke qualifies default reasoning-mode interoperability. Native server settings were unchanged.
 
 The [handoff](../development/virtual-office/adaptive-hosts/handoffs/02.md) binds exact images, model
-inputs, commands, full-gate/API results and local profile settings. Raw follow-up evidence is under
-`target/adaptive-hosts/managed-02-qualification/`; the earlier review remains under
-`target/adaptive-hosts/managed-02-review/`. Machine reboot, power loss, managed Vulkan and UM790
-pressure remain in the [hardware qualification issue](../development/virtual-office/whiteboard/issues/managed-linux-hardware-qualification.md).
-The passing desktop tests do not establish those hardware claims. [Managed operations](../operations/managed-linux.md#platform-qualification)
-owns the runnable physical lanes.
+inputs, commands, full-gate/API results and profile settings. Corrective evidence lives under
+`target/adaptive-hosts/post-02/`; predecessor results remain under
+`target/adaptive-hosts/managed-02-qualification/` and `target/adaptive-hosts/managed-02-review/`.
+Machine reboot, power loss, managed Vulkan and UM790 pressure remain in the
+[hardware qualification issue](../development/virtual-office/whiteboard/issues/managed-linux-hardware-qualification.md).
+The passing desktop tests do not establish those hardware claims.
+[Managed operations](../operations/managed-linux.md#platform-qualification) owns the runnable lanes.
 
 ### Independent host execution
 

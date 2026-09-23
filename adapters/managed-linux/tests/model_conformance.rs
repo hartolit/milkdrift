@@ -32,14 +32,16 @@ fn attached_model_adapter_passes_shared_conformance_with_durable_holds() -> Resu
         listener.set_nonblocking(true)?;
         let base = format!("http://{}/v1", listener.local_addr()?);
         let recipe = LinuxRecipe {
-            schema_version: 1,
+            schema_version: 2,
             name: ManagedName::new("recipe")?,
-            family: "slotbook-v1".to_owned(),
             worker_image: format!("sha256:{}", "a".repeat(64)),
             worker_network: WorkerNetwork::None,
-            memory_bytes: 536_870_912,
-            cpu_percent: 100,
-            pids: 64,
+            worker_limits: milkdrift_managed_linux::ContainerLimits {
+                memory_bytes: 536_870_912,
+                cpu_percent: 100,
+                pids: 64,
+                temporary_bytes: 67_108_864,
+            },
             task_timeout_ms: 10_000,
             output_bytes: 65_536,
             minimum_free_bytes: 1,
@@ -47,6 +49,18 @@ fn attached_model_adapter_passes_shared_conformance_with_durable_holds() -> Resu
             model_service: ModelService::Attached {
                 api_base: base,
                 model_alias: "mock-model".to_owned(),
+                endpoint_limits: milkdrift_model_provider::EndpointLimits {
+                    connect_timeout_ms: 1000,
+                    request_timeout_ms: 3000,
+                    idle_timeout_ms: 3000,
+                    max_headers: 32,
+                    max_header_bytes: 8192,
+                    max_request_bytes: 65_536,
+                    max_response_bytes: 65_536,
+                    max_stream_line_bytes: 8192,
+                    max_stream_event_bytes: 16_384,
+                    max_fragment_bytes: 1024,
+                },
                 billing: milkdrift_model_provider::BillingTerms::Unbilled {
                     source: "local deterministic fixture, no provider charge".to_owned(),
                 },

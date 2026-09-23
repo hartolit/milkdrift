@@ -81,6 +81,8 @@ struct Physical {
     content: String,
     interrupt: Option<(ManagedStep, bool)>,
     calls: usize,
+    diagnosis_failure: bool,
+    diagnosed_current: Option<RecipeReference>,
 }
 #[derive(Default)]
 struct Platform(
@@ -147,7 +149,18 @@ impl ManagedPlatform for Platform {
             capabilities: Vec::new(),
         })
     }
-    fn diagnose(&self, _: &ApprovedSetup) -> std::result::Result<Vec<String>, ManagedError> {
+    fn diagnose(
+        &self,
+        _: &ApprovedSetup,
+        current: Option<&ApprovedSetup>,
+    ) -> std::result::Result<Vec<String>, ManagedError> {
+        let mut physical = self.0.lock().map_err(failure)?;
+        physical.diagnosed_current = current.map(|s| s.recipe.clone());
+        if physical.diagnosis_failure {
+            return Err(ManagedError::Rejected(
+                "insufficient observed host headroom".to_owned(),
+            ));
+        }
         Ok(vec!["deterministic test, no OS claim".to_owned()])
     }
     fn reconcile(
@@ -636,6 +649,61 @@ fn recovery_authorizes_pending_replacement_instead_of_old_approved_resources() -
 }
 
 mod support;
+#[test]
+fn preparation_reports_failure_without_effects_and_uses_the_saved_generation() -> Result {
+    let directory = tempfile::tempdir()?;
+    let store = Arc::new(RedbStore::open(directory.path())?);
+    let platform = Arc::new(Platform::default());
+    let manager = owner(store.clone(), platform.clone());
+    manager.execute(
+        &caller()?,
+        &request(
+            "apply-first",
+            0,
+            ManagedAction::Apply {
+                recipe: reference('1')?,
+            },
+        )?,
+    )?;
+    let before = current(&store)?;
+    let calls = platform.0.lock().map_err(|e| e.to_string())?.calls;
+    platform
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .diagnosis_failure = true;
+    let result = manager.execute(
+        &caller()?,
+        &request(
+            "preview-replacement",
+            before.version,
+            ManagedAction::Prepare {
+                recipe: reference('2')?,
+            },
+        )?,
+    )?;
+    assert_eq!(result.state, "unprepared");
+    result.validate_for(&request(
+        "preview-replacement",
+        before.version,
+        ManagedAction::Prepare {
+            recipe: reference('2')?,
+        },
+    )?)?;
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.contains("insufficient observed host headroom"))
+    );
+    assert_eq!(result.recipe, Some(reference('2')?));
+    assert_eq!(current(&store)?, before);
+    let physical = platform.0.lock().map_err(|e| e.to_string())?;
+    assert_eq!(physical.calls, calls);
+    assert_eq!(physical.diagnosed_current, Some(reference('1')?));
+    Ok(())
+}
+
 #[test]
 fn lifecycle_adapter_passes_shared_conformance_through_entered_serving_context() -> Result {
     use milkdrift_capability_host::{StoreInvocationDataAccess, conformance::*, managed::*};
