@@ -73,7 +73,7 @@ pub(crate) fn descriptor(setup: &ApprovedSetup) -> Result<CapabilityDescriptor, 
     };
     let schema = SchemaContract::new(
         SchemaId::new("milkdrift.managed.worker").map_err(rejected)?,
-        1,
+        2,
         BoundedJson::new(serde_json::json!({"type":"object"})).map_err(rejected)?,
     )
     .map_err(rejected)?;
@@ -111,6 +111,8 @@ pub(crate) fn descriptor(setup: &ApprovedSetup) -> Result<CapabilityDescriptor, 
 #[serde(deny_unknown_fields)]
 struct WorkerRequest {
     argv: Vec<String>,
+    #[serde(default)]
+    stdout_artifact: bool,
 }
 fn parse(invocation: &AdapterInvocation<'_>) -> Result<WorkerRequest, AdapterError> {
     let input = invocation
@@ -169,14 +171,23 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
         &self,
         invocation: &AdapterInvocation<'_>,
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
-        parse(invocation)?;
+        let request = parse(invocation)?;
         let d = units::deployment(&self.setup).map_err(adapter_failure)?;
         Ok(InvocationAdmissionEnvelope::new(
             AdmissionUnit::Unknown,
             AdmissionBound::NotApplicable,
             AdmissionBound::NotApplicable,
             AdmissionBound::Bounded(
-                output_artifact_limit(d.recipe.output_bytes).map_err(adapter_failure)?,
+                output_artifact_limit(d.recipe.output_bytes)
+                    .map_err(adapter_failure)?
+                    .checked_add(if request.stdout_artifact {
+                        d.recipe.output_bytes
+                    } else {
+                        0
+                    })
+                    .ok_or_else(|| {
+                        AdapterError::rejected("combined worker artifact bound overflow")
+                    })?,
             ),
             AdmissionBound::NotApplicable,
         ))
@@ -324,6 +335,38 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
                     .map_err(adapter_failure)?,
                 )?;
                 sequence += 1;
+                if output.success && request.stdout_artifact {
+                    let artifact = self
+                        .data
+                        .publish_bytes(
+                            context,
+                            invocation.request(),
+                            "stdout",
+                            "application/octet-stream",
+                            &output.stdout,
+                            MaterializationLimits {
+                                max_files: 1,
+                                max_file_bytes: d.recipe.output_bytes,
+                                max_total_bytes: d.recipe.output_bytes,
+                                max_path_bytes: 256,
+                                max_directory_depth: 8,
+                                chunk_bytes: 262_144,
+                            },
+                        )
+                        .map_err(adapter_failure)?;
+                    reporter.invocation(
+                        InvocationEvent::new(
+                            invocation.request().invocation().clone(),
+                            sequence,
+                            InvocationEventKind::Output {
+                                name: "stdout".to_owned(),
+                                reference: artifact,
+                            },
+                        )
+                        .map_err(adapter_failure)?,
+                    )?;
+                    sequence += 1;
+                }
                 if output.success {
                     (TerminalStatus::Success, None)
                 } else {
@@ -576,85 +619,8 @@ pub(crate) fn verify_container(
             _ => return Err(platform_error("service inspection requires an owned model")),
         }
     };
-    let expected: serde_json::Value = serde_json::from_slice(&LinuxManagedPlatform::podman(&[
-        "image".to_owned(),
-        "inspect".to_owned(),
-        image.clone(),
-    ])?)
-    .map_err(platform_error)?;
-    let normalize = |identity: &str| {
-        identity
-            .strip_prefix("sha256:")
-            .unwrap_or(identity)
-            .to_owned()
-    };
-    if value
-        .get("Image")
-        .and_then(|v| v.as_str())
-        .map(normalize)
-        .zip(
-            expected
-                .pointer("/0/Id")
-                .and_then(|v| v.as_str())
-                .map(normalize),
-        )
-        .is_none_or(|(actual, expected)| actual != expected)
-    {
-        return Err(platform_error(
-            "container uses a different image than the approved exact input",
-        ));
-    }
-    let host = value
-        .get("HostConfig")
-        .ok_or_else(|| platform_error("container enforcement inspection missing"))?;
-    let temporary = host.get("Tmpfs").and_then(|v| v.as_object());
-    let options = temporary
-        .and_then(|v| v.get("/tmp"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .split(',')
-        .collect::<BTreeSet<_>>();
-    let size = format!("size={}", limits.temporary_bytes);
-    if temporary.is_none_or(|v| v.len() != 1)
-        || !["rw", "nodev", "nosuid", size.as_str()]
-            .into_iter()
-            .all(|v| options.contains(v))
-    {
-        return Err(platform_error(
-            "actual temporary filesystem differs from its independent configured limit",
-        ));
-    }
-    let has_no_new_privileges = host
-        .get("SecurityOpt")
-        .and_then(|v| v.as_array())
-        .is_some_and(|a| {
-            a.iter().any(|v| {
-                v.as_str()
-                    .is_some_and(|s| s.starts_with("no-new-privileges"))
-            })
-        });
-    if host.get("Privileged").and_then(|v| v.as_bool()) != Some(false)
-        || host.get("ReadonlyRootfs").and_then(|v| v.as_bool()) != Some(true)
-        || host.get("Memory").and_then(|v| v.as_u64()) != Some(limits.memory_bytes)
-        || host.get("PidsLimit").and_then(|v| v.as_u64()) != Some(u64::from(limits.pids))
-        || host
-            .get("CpuQuota")
-            .and_then(|v| v.as_u64())
-            .zip(host.get("CpuPeriod").and_then(|v| v.as_u64()))
-            .is_none_or(|(quota, period)| {
-                quota.saturating_mul(100) != period.saturating_mul(u64::from(limits.cpu_percent))
-            })
-        || !has_no_new_privileges
-        || host
-            .get("NetworkMode")
-            .and_then(|v| v.as_str())
-            .is_none_or(|n| n == "host")
-        || !private_id_mappings(host.get("IDMappings"))
-    {
-        return Err(platform_error(
-            "actual container namespace/resource enforcement differs from approved profile",
-        ));
-    }
+    LinuxManagedPlatform::verify_image(value, image)?;
+    let host = verify_limits(value, limits)?;
     if !worker {
         let crate::ModelService::Owned { port, .. } = d.recipe.model_service else {
             return Err(platform_error("owned service configuration missing"));
@@ -762,6 +728,74 @@ pub(crate) fn verify_container(
         ));
     }
     Ok(())
+}
+
+// Shared observed kernel contract for worker, model and protected application containers.
+pub(crate) fn verify_limits<'a>(
+    value: &'a serde_json::Value,
+    limits: &crate::ContainerLimits,
+) -> Result<&'a serde_json::Value, ManagedError> {
+    let host = value
+        .get("HostConfig")
+        .ok_or_else(|| platform_error("container enforcement inspection missing"))?;
+    let temporary = host.get("Tmpfs").and_then(|v| v.as_object());
+    let options = temporary
+        .and_then(|v| v.get("/tmp"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .split(',')
+        .collect::<BTreeSet<_>>();
+    let size = format!("size={}", limits.temporary_bytes);
+    if temporary.is_none_or(|v| v.len() != 1)
+        || !["rw", "nodev", "nosuid", size.as_str()]
+            .into_iter()
+            .all(|v| options.contains(v))
+    {
+        return Err(platform_error(
+            "actual temporary filesystem differs from its independent configured limit",
+        ));
+    }
+    let has_no_new_privileges = host
+        .get("SecurityOpt")
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| {
+            a.iter().any(|v| {
+                v.as_str()
+                    .is_some_and(|s| s.starts_with("no-new-privileges"))
+            })
+        });
+    if host.get("Privileged").and_then(|v| v.as_bool()) != Some(false)
+        || host.get("ReadonlyRootfs").and_then(|v| v.as_bool()) != Some(true)
+        || host.get("Memory").and_then(|v| v.as_u64()) != Some(limits.memory_bytes)
+        || host.get("PidsLimit").and_then(|v| v.as_u64()) != Some(u64::from(limits.pids))
+        || host
+            .get("CpuQuota")
+            .and_then(|v| v.as_u64())
+            .zip(host.get("CpuPeriod").and_then(|v| v.as_u64()))
+            .is_none_or(|(quota, period)| {
+                quota.saturating_mul(100) != period.saturating_mul(u64::from(limits.cpu_percent))
+            })
+        || !has_no_new_privileges
+        || host
+            .get("NetworkMode")
+            .and_then(|v| v.as_str())
+            .is_none_or(|n| n == "host")
+        || !private_id_mappings(host.get("IDMappings"))
+    {
+        return Err(platform_error(
+            "actual container namespace/resource enforcement differs from approved profile",
+        ));
+    }
+    if host.get("MemorySwap").and_then(|v| v.as_u64()) != Some(limits.memory_bytes)
+        || !value
+            .get("EffectiveCaps")
+            .is_some_and(|v| v.is_null() || v.as_array().is_some_and(Vec::is_empty))
+    {
+        return Err(platform_error(
+            "actual swap or effective capabilities differ from the protected profile",
+        ));
+    }
+    Ok(host)
 }
 
 fn private_id_mappings(value: Option<&serde_json::Value>) -> bool {

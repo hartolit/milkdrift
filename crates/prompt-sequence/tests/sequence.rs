@@ -147,11 +147,11 @@ fn json_import_compiles_to_only_ordinary_blueprint_primitives() -> TestResult {
     );
     assert_eq!(
         revision.content_digest().to_string(),
-        "b3_e4c818e619fafe6e5cd714bbaccdcd53a5432b81cc00d5d903e8f537782c863b"
+        "b3_01843f400f229589e37279790b6143a7fb0882928564c2cdd6efb74124df3775"
     );
     assert_eq!(
         revision.id().as_str(),
-        "rev_2e15bc701bee8eee10507ff2c740ed967ad2f3b426fe17f4aa1c5c5e5b5946f3"
+        "rev_9fb4346e79a0bfe67964d94fb05140af7ed3a5c4ac19ff078a89c14333a8f382"
     );
     // A stored revision's authored label is part of its identity. The blueprint reader
     // must preserve it, even when a current compiler would supply another import label.
@@ -393,11 +393,11 @@ fn remediation_is_a_digest_bound_prospective_ordinary_revision() -> TestResult {
     )?;
     assert_eq!(
         prospective.content_digest().to_string(),
-        "b3_d0e69459ddfc3f9820ae6fe2e66f346a4bb42d3cd3727c366737354fbd1aece9"
+        "b3_ef3ee3b69e6d751da56556486e6baed8d2d4a29e23a6e48753d7856a3612b9bf"
     );
     assert_eq!(
         prospective.id().as_str(),
-        "rev_d6574e9156797b99852a8b62bb0c938fccd5d109f44cdcaa07645ea72ceec651"
+        "rev_22d630ba231a6dda0f40c63446e9d5feef92d9e88ecefd0bd6390563ae329d2b"
     );
     assert_eq!(
         proposal.proposal().mutation().id().as_str(),

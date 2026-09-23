@@ -9,7 +9,8 @@ use super::run::RunProjection;
 impl RunProjection {
     pub(super) fn apply_kind(&mut self, event: &RunEventEnvelope) -> Result<(), RuntimeError> {
         match event.kind() {
-            RunEventKind::RunCreated { .. }
+            RunEventKind::AgreementAccepted { .. }
+            | RunEventKind::RunCreated { .. }
             | RunEventKind::ExecutionAuthorityEstablished { .. }
             | RunEventKind::RevisionPinned { .. }
             | RunEventKind::RunStarted

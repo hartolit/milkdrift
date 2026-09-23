@@ -52,7 +52,7 @@ pub fn entered(
     let operation = descriptor
         .operations()
         .keys()
-        .next()
+        .find(|operation| input != "request" || operation.as_str() == "resource.manage")
         .ok_or("operation missing")?
         .clone();
     let key_value =

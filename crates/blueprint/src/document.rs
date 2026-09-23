@@ -10,7 +10,7 @@ use milkdrift_contracts::{
 };
 
 use crate::{
-    AuthorRef, BLUEPRINT_SCHEMA_VERSION_V2, BlueprintId, BlueprintMetadata, BlueprintRevision,
+    AuthorRef, BLUEPRINT_SCHEMA_VERSION_V3, BlueprintId, BlueprintMetadata, BlueprintRevision,
     ContentDigest, Edge, EdgeId, MutationError, Node, NodeFingerprint, NodeId, RevisionId,
     SemanticBlueprint, ValidationError, WorkflowId, WorkflowInterface,
 };
@@ -85,6 +85,7 @@ struct SemanticWire {
     interface: WorkflowInterface,
     nodes: BTreeMap<NodeId, Node>,
     edges: BTreeMap<EdgeId, Edge>,
+    agreement: Option<crate::GoverningAgreement>,
 }
 
 impl From<&SemanticBlueprint> for SemanticWire {
@@ -96,6 +97,7 @@ impl From<&SemanticBlueprint> for SemanticWire {
             interface: semantic.interface().clone(),
             nodes: semantic.nodes().clone(),
             edges: semantic.edges().clone(),
+            agreement: semantic.agreement().cloned(),
         }
     }
 }
@@ -149,7 +151,7 @@ impl BlueprintRevisionDocument {
     #[must_use]
     pub fn new(revision: &BlueprintRevision) -> Self {
         Self {
-            schema_version: BLUEPRINT_SCHEMA_VERSION_V2,
+            schema_version: BLUEPRINT_SCHEMA_VERSION_V3,
             revision: RevisionWire::from_revision(revision),
         }
     }
@@ -184,17 +186,17 @@ impl BlueprintRevisionDocument {
             .and_then(Value::as_u64)
             .and_then(|value| u32::try_from(value).ok())
             .ok_or_else(|| DocumentError::Integrity("missing numeric schema_version".to_owned()))?;
-        if version != BLUEPRINT_SCHEMA_VERSION_V2 {
+        if version != BLUEPRINT_SCHEMA_VERSION_V3 {
             return Err(DocumentError::UnsupportedVersion {
                 found: version,
-                supported: BLUEPRINT_SCHEMA_VERSION_V2,
+                supported: BLUEPRINT_SCHEMA_VERSION_V3,
             });
         }
         let wire: BlueprintDocumentWire = serde_json::from_value(value)?;
-        if wire.schema_version != BLUEPRINT_SCHEMA_VERSION_V2 {
+        if wire.schema_version != BLUEPRINT_SCHEMA_VERSION_V3 {
             return Err(DocumentError::UnsupportedVersion {
                 found: wire.schema_version,
-                supported: BLUEPRINT_SCHEMA_VERSION_V2,
+                supported: BLUEPRINT_SCHEMA_VERSION_V3,
             });
         }
         let semantic = SemanticBlueprint::from_parts(
@@ -204,6 +206,7 @@ impl BlueprintRevisionDocument {
             wire.revision.semantic.interface,
             wire.revision.semantic.nodes,
             wire.revision.semantic.edges,
+            wire.revision.semantic.agreement,
         );
         let revision = BlueprintRevision::from_verified_parts(
             wire.revision.id,

@@ -199,3 +199,34 @@ fn inline_analysis_is_bounded_and_model_schema_is_strict() -> TestResult {
     assert!(WorkflowProposalDocument::from_model_response(&malformed).is_err());
     Ok(())
 }
+
+#[test]
+fn strict_draft_derives_the_same_identity_and_rejects_ambiguous_envelopes() -> TestResult {
+    let canonical = proposal_document()?;
+    let value: serde_json::Value = serde_json::from_slice(&canonical.to_canonical_json()?)?;
+    let mut body = value["proposal"].clone();
+    body.as_object_mut()
+        .ok_or("missing proposal")?
+        .remove("digest");
+    body["mutation"] = body["mutation"]["operations"].clone();
+    let draft = serde_json::json!({"schema_version":1,"draft":body});
+    assert_eq!(
+        WorkflowProposalDocument::from_json(&serde_json::to_vec(&draft)?)?,
+        canonical
+    );
+    for (key, extra) in [
+        ("proposal", value["proposal"].clone()),
+        ("unknown", serde_json::json!(true)),
+    ] {
+        let mut mixed = draft.clone();
+        mixed[key] = extra;
+        assert!(WorkflowProposalDocument::from_json(&serde_json::to_vec(&mixed)?).is_err());
+    }
+    let duplicate = serde_json::to_string(&draft)?.replacen(
+        "\"schema_version\":1",
+        "\"schema_version\":1,\"schema_version\":1",
+        1,
+    );
+    assert!(WorkflowProposalDocument::from_json(duplicate.as_bytes()).is_err());
+    Ok(())
+}

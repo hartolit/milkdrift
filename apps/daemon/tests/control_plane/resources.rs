@@ -7,7 +7,7 @@ async fn resource_client_roundtrip_requires_configuration_and_authentication() -
     let directory = tempfile::tempdir()?;
     let daemon = start(configuration(&directory, 16)?, CONTROLLER_TOKEN).await?;
     let request = ManagedRequest {
-        schema_version: 1,
+        schema_version: milkdrift_capability::managed::MANAGED_SCHEMA_VERSION,
         command: ManagedName::new("inspect")?,
         installation: ManagedName::new("slotbook")?,
         expected_version: 0,
@@ -59,7 +59,7 @@ async fn configured_resource_owner_retains_exact_failed_platform_intent_across_r
     });
     let daemon = start(config.clone().validate(directory.path())?, CONTROLLER_TOKEN).await?;
     let request = ManagedRequest {
-        schema_version: 1,
+        schema_version: milkdrift_capability::managed::MANAGED_SCHEMA_VERSION,
         command: ManagedName::new("apply-exact")?,
         installation: ManagedName::new("slotbook")?,
         expected_version: 0,

@@ -1,3 +1,4 @@
+mod draft;
 use std::collections::BTreeSet;
 
 use milkdrift_authority::ActorRef;
@@ -485,6 +486,8 @@ impl WorkflowProposalDocument {
     }
 
     /// Performs lexical preflight, duplicate-safe decode, version validation, and digest checks.
+    /// A strict `draft` authoring form supplies ordered mutations; this owner derives canonical
+    /// identities before the same authority/classification path. Canonical output always uses `proposal`.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ControlError> {
         if bytes.len() > MAX_PROPOSAL_DOCUMENT_BYTES {
             return Err(ControlError::Bounds {
@@ -510,6 +513,9 @@ impl WorkflowProposalDocument {
                 found: version,
                 supported: PROPOSAL_SCHEMA_VERSION_V1,
             });
+        }
+        if value.get("draft").is_some() {
+            return draft::decode(value);
         }
         let wire: ProposalDocumentWire = serde_json::from_value(value)?;
         if wire.schema_version != PROPOSAL_SCHEMA_VERSION_V1 {

@@ -9,7 +9,7 @@ use crate::{CapabilityId, ContractError};
 use serde::{Deserialize, Serialize};
 
 /// Current installation command and inspection document version.
-pub const MANAGED_SCHEMA_VERSION: u32 = 1;
+pub const MANAGED_SCHEMA_VERSION: u32 = 2;
 /// Maximum resources in one installation and one coherent use acquisition.
 pub const MAX_MANAGED_RESOURCES: usize = 16;
 /// Maximum simultaneous unresolved uses of one installation.
@@ -53,6 +53,21 @@ pub enum DataDisposition {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ManagedAction {
+    /// Evaluate immutable candidate bytes with the target's operator-configured verifier.
+    Evaluate {
+        /// Exact artifact reference; the owner rechecks read and sensitivity authority.
+        candidate: crate::ArtifactReference,
+    },
+    /// Activate the exact candidate from one trusted evaluation, under current authority.
+    Publish {
+        /// Host evaluation identity; uploaded reports are never accepted here.
+        evaluation: String,
+    },
+    /// Inspect a retained evaluation, including failures and incomplete observations.
+    Evidence {
+        /// Host evaluation identity.
+        evaluation: String,
+    },
     /// Preview the exact setup and prerequisite diagnosis without accepting effects.
     Prepare {
         /// Approved recipe to inspect.
@@ -128,6 +143,23 @@ impl ManagedRequest {
         if self.schema_version != MANAGED_SCHEMA_VERSION {
             return Err(invalid("unsupported managed request version"));
         }
+        if let ManagedAction::Publish { evaluation } | ManagedAction::Evidence { evaluation } =
+            &self.action
+            && !milkdrift_contracts::is_canonical_blake3_digest(evaluation)
+        {
+            return Err(invalid(
+                "evaluation identity must be a canonical BLAKE3 digest",
+            ));
+        }
+        if let ManagedAction::Evaluate { candidate } = &self.action
+            && candidate
+                .size_bytes()
+                .is_none_or(|size| size == 0 || size > 16_777_216)
+        {
+            return Err(invalid(
+                "candidate needs an exact bounded nonzero byte size",
+            ));
+        }
         let recipe = match &self.action {
             ManagedAction::Prepare { recipe }
             | ManagedAction::Apply { recipe }
@@ -176,6 +208,9 @@ impl ManagedRequest {
     #[must_use]
     pub const fn operation(&self) -> &'static str {
         match self.action {
+            ManagedAction::Evaluate { .. } => "resource.evaluate",
+            ManagedAction::Publish { .. } => "resource.publish",
+            ManagedAction::Evidence { .. } => "resource.evidence",
             ManagedAction::Prepare { .. } => "resource.prepare",
             ManagedAction::Apply { .. } => "resource.apply",
             ManagedAction::Inspect {} => "resource.inspect",
@@ -300,9 +335,13 @@ pub struct ManagedBlocker {
 }
 
 /// Bounded diagnosis and current resource inventory returned through both caller paths.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManagedResponse {
+    /// Trusted evaluation selected by the installed candidate, if publication completed.
+    pub accepted_evaluation: Option<String>,
+    /// Candidate evaluation projected from its workspace-owned document, when requested.
+    pub evaluation: Option<crate::BoundedJson>,
     /// Current response schema.
     pub schema_version: u32,
     /// Requested installation.
@@ -364,9 +403,21 @@ impl ManagedResponse {
     pub fn validate_for(&self, request: &ManagedRequest) -> Result<(), ContractError> {
         if self.schema_version != MANAGED_SCHEMA_VERSION
             || self.installation != request.installation
+            || self
+                .accepted_evaluation
+                .as_ref()
+                .is_some_and(|id| !milkdrift_contracts::is_canonical_blake3_digest(id))
             || !matches!(
                 self.state.as_str(),
-                "prepared" | "unprepared" | "running" | "stopped" | "pending" | "removed" | "drift"
+                "prepared"
+                    | "unprepared"
+                    | "running"
+                    | "stopped"
+                    | "pending"
+                    | "removed"
+                    | "drift"
+                    | "evaluating"
+                    | "evaluated"
             )
             || (self.state == "unprepared"
                 && !matches!(request.action, ManagedAction::Prepare { .. }))
@@ -399,5 +450,34 @@ impl ManagedResponse {
             return Err(invalid("invalid or mismatched managed response"));
         }
         Ok(())
+    }
+}
+
+/// Fixed target envelope for dataflow evaluation/publication operations. The capability operation
+/// selects the action; a candidate or verifier-result artifact arrives through a separate input.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManagedTarget {
+    /// Exact supported managed contract.
+    pub schema_version: u32,
+    /// Stable command identity, retained across retry.
+    pub command: ManagedName,
+    /// Protected target selected by the immutable enclosing method.
+    pub installation: ManagedName,
+    /// Installation version observed by the authorizing caller.
+    pub expected_version: u64,
+}
+impl ManagedTarget {
+    /// Construct the same canonical request used by direct API and CLI consumers.
+    pub fn request(&self, action: ManagedAction) -> Result<ManagedRequest, ContractError> {
+        let request = ManagedRequest {
+            schema_version: self.schema_version,
+            command: self.command.clone(),
+            installation: self.installation.clone(),
+            expected_version: self.expected_version,
+            action,
+        };
+        request.validate()?;
+        Ok(request)
     }
 }

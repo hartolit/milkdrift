@@ -164,6 +164,27 @@ struct ResourceArgs {
 
 #[derive(Subcommand)]
 enum ResourceCommand {
+    /// Run the target's fixed trusted verifier against an immutable candidate artifact.
+    Evaluate {
+        #[arg(long)]
+        artifact: String,
+        #[arg(long)]
+        digest: String,
+        #[arg(long)]
+        media_type: String,
+        #[arg(long)]
+        size_bytes: u64,
+    },
+    /// Inspect retained trusted verification observations, including failed/unknown checks.
+    Evidence {
+        #[arg(long)]
+        evaluation: String,
+    },
+    /// Publish the exact verified candidate under the current protected target policy.
+    Publish {
+        #[arg(long)]
+        evaluation: String,
+    },
     Handoff(EditingArgs),
     Return {
         #[command(flatten)]
@@ -324,6 +345,38 @@ enum SequenceCommand {
 
 #[derive(Subcommand)]
 enum BlueprintCommand {
+    /// Create an immutable method from an ordered JSON array of structured mutations.
+    Create {
+        file: PathBuf,
+        #[arg(long)]
+        workflow: String,
+        #[arg(long)]
+        author: String,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Validate an operator-owned effect policy and print its exact agreement reference.
+    EffectPolicy { file: PathBuf },
+    /// Seal an immutable agreement around a local method and write a new revision.
+    Govern {
+        /// Complete ungoverned revision document.
+        file: PathBuf,
+        /// Strict adaptation scope JSON document.
+        #[arg(long)]
+        scope: PathBuf,
+        /// Logical agreement name.
+        #[arg(long)]
+        name: String,
+        /// Exact operator-owned effect policy digest.
+        #[arg(long)]
+        effect_policy: String,
+        /// Revision author; this label grants no authority.
+        #[arg(long)]
+        author: String,
+        /// New output file; existing files are never overwritten.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Validate one exact versioned blueprint JSON document without storing it.
     Validate { file: PathBuf },
     /// Import one exact versioned blueprint JSON document.
@@ -600,6 +653,8 @@ enum PeerCommand {
 
 #[derive(Subcommand)]
 enum ArtifactCommand {
+    /// Hash a bounded local candidate or verifier file without uploading or executing it.
+    Digest { file: PathBuf },
     /// Publish one complete input file (at most 512 KiB) with authenticated provenance.
     Upload {
         file: PathBuf,

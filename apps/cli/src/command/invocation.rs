@@ -22,8 +22,8 @@ pub(super) async fn execute(
             output,
         } => {
             use milkdrift_capability::{
-                InputReference, InvocationId, InvocationRequest, InvocationValueReference,
-                OperationId, ResolvedCapabilitySnapshot,
+                IdempotencyKey, InputReference, InvocationId, InvocationRequest,
+                InvocationValueReference, OperationId, ResolvedCapabilitySnapshot, SideEffectClass,
             };
             let invalid = |error: &dyn std::fmt::Display| CliError::Invalid(error.to_string());
             let inputs: Vec<InputReference> = serde_json::from_value(
@@ -74,22 +74,28 @@ pub(super) async fn execute(
                 .ok_or_else(|| {
                     CliError::Invalid("invocation deadline exceeds the clock range".to_owned())
                 })?;
+            let selection =
+                ResolvedCapabilitySnapshot::from_descriptor(&entry.descriptor, &operation)
+                    .map_err(|error| invalid(&error))?;
+            // The saved request ID is already the caller's stable replay identity. Operations
+            // promising idempotent writes also require a key at adapter entry.
+            let key = (selection.operation_contract().side_effect()
+                == SideEffectClass::IdempotentWrite)
+                .then(|| IdempotencyKey::new(request_id))
+                .transpose()
+                .map_err(|error| invalid(&error))?;
             let request = DirectInvocationRequest {
                 host: discovery.host,
                 request_id: PeerRequestId::new(request_id).map_err(|error| invalid(&error))?,
                 catalog_generation: discovery.catalog.generation,
                 catalog_digest: discovery.catalog.digest,
-                selection: ResolvedCapabilitySnapshot::from_descriptor(
-                    &entry.descriptor,
-                    &operation,
-                )
-                .map_err(|error| invalid(&error))?,
+                selection,
                 request: InvocationRequest::new(
                     InvocationId::new(request_id).map_err(|error| invalid(&error))?,
                     entry.descriptor.identity().clone(),
                     operation,
                     entry.descriptor.provider_profile().cloned(),
-                    None,
+                    key,
                     inputs,
                     Default::default(),
                 )
@@ -97,6 +103,10 @@ pub(super) async fn execute(
                 limits: discovery.limits,
                 deadline_unix_ms,
             };
+            request
+                .selection
+                .validate_request(&request.request)
+                .map_err(|error| invalid(&error))?;
             let bytes = serde_json::to_vec_pretty(&request).map_err(|error| invalid(&error))?;
             session.write_exact_document(Some(output), &bytes)?;
             session.output(

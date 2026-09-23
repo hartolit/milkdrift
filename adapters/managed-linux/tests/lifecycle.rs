@@ -62,7 +62,7 @@ fn reference(ch: char) -> Result<RecipeReference> {
 }
 fn request(key: &str, version: u64, action: ManagedAction) -> Result<ManagedRequest> {
     Ok(ManagedRequest {
-        schema_version: 1,
+        schema_version: milkdrift_capability::managed::MANAGED_SCHEMA_VERSION,
         installation: ManagedName::new("slotbook")?,
         command: ManagedName::new(key)?,
         expected_version: version,
@@ -139,6 +139,7 @@ impl ManagedPlatform for Platform {
         })
         .collect::<std::result::Result<Vec<_>, ManagedError>>()?;
         Ok(ApprovedSetup {
+            protection: None,
             recipe: recipe.clone(),
             mechanism: "deterministic-test".to_owned(),
             configuration: BoundedJson::new(serde_json::json!({"exact":recipe.digest}))
@@ -863,3 +864,6 @@ fn interrupted_capability_publication_rebuilds_without_repeating_platform_change
     assert_eq!(reopened.execute(&caller()?, &apply)?.state, "pending");
     Ok(())
 }
+
+#[path = "lifecycle/protected.rs"]
+mod protected;

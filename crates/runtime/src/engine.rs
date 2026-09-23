@@ -29,7 +29,7 @@ use tracing::{debug, info, info_span, warn};
 
 use crate::projection::RunProjection;
 use crate::query::{
-    RUN_PROJECTION_SNAPSHOT_SCHEMA_V4, load_bounded_history, project_from_latest_snapshot,
+    RUN_PROJECTION_SNAPSHOT_SCHEMA_V5, load_bounded_history, project_from_latest_snapshot,
 };
 use crate::{
     BoundaryClock, CommandAuthorityClaim, ControllerLifecycle, IdGenerator, RetryPolicy,
@@ -530,7 +530,7 @@ impl RuntimeService {
             run.clone(),
             projection.sequence(),
             history_digest,
-            RUN_PROJECTION_SNAPSHOT_SCHEMA_V4,
+            RUN_PROJECTION_SNAPSHOT_SCHEMA_V5,
             payload,
         )?)?;
         Ok(())

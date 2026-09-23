@@ -11,6 +11,9 @@ pub(super) async fn execute(
     command: &ArtifactCommand,
 ) -> Result<(), CliError> {
     match command {
+        ArtifactCommand::Digest { .. } => Err(CliError::Internal(
+            "local digest reached a connected session".to_owned(),
+        )),
         ArtifactCommand::Upload {
             file,
             host,

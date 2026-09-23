@@ -146,6 +146,18 @@ impl RunProjection {
         self.execution_authority.as_ref()
     }
 
+    /// Cumulative adoptions charged to the immutable agreement, retained during compaction.
+    #[must_use]
+    pub const fn agreement_adoptions(&self) -> u16 {
+        self.agreement_adoptions
+    }
+
+    /// Outermost immutable governing agreement, retained across compaction and descendants.
+    #[must_use]
+    pub const fn accepted_agreement(&self) -> Option<&milkdrift_persistence::AcceptedAgreement> {
+        self.accepted_agreement.as_ref()
+    }
+
     /// Workspace scopes still referenced by active state or retained values.
     #[must_use]
     pub const fn scopes(&self) -> &BTreeMap<ScopeReference, WorkspaceScope> {

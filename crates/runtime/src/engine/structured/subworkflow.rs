@@ -121,6 +121,17 @@ impl RuntimeService {
                 "structured child has no parent execution-authority basis".to_owned(),
             )
         })?;
+        let inheritance = || {
+            let mut plan = CommandPlan::one(RunEventKind::ExecutionAuthorityEstablished {
+                basis: parent_authority.clone(),
+            });
+            if let Some(binding) = parent.accepted_agreement() {
+                plan.events.push(RunEventKind::AgreementAccepted {
+                    binding: binding.clone(),
+                });
+            }
+            plan
+        };
         if child_head != RunSequence::ZERO {
             let existing = self.projection(&child.run)?;
             // The parent's pin binds creation, not every later authorized prospective revision.
@@ -160,6 +171,14 @@ impl RuntimeService {
                     ));
                 }
             }
+            if existing.execution_authority().is_some()
+                && parent.accepted_agreement().is_some()
+                && existing.accepted_agreement() != parent.accepted_agreement()
+            {
+                return Err(RuntimeError::InvalidHistory(
+                    "child lost its inherited agreement binding".to_owned(),
+                ));
+            }
             return match existing.execution_authority() {
                 Some(existing) if existing == parent_authority => Ok(child_head),
                 Some(_) => Err(RuntimeError::InvalidHistory(
@@ -170,9 +189,7 @@ impl RuntimeService {
                         &child.run,
                         now,
                         SystemTransition::InheritExecutionAuthority,
-                        CommandPlan::one(RunEventKind::ExecutionAuthorityEstablished {
-                            basis: parent_authority.clone(),
-                        }),
+                        inheritance(),
                     )?;
                     Ok(execution.result().resulting_sequence())
                 }
@@ -207,9 +224,7 @@ impl RuntimeService {
             &child.run,
             now,
             SystemTransition::InheritExecutionAuthority,
-            CommandPlan::one(RunEventKind::ExecutionAuthorityEstablished {
-                basis: parent_authority.clone(),
-            }),
+            inheritance(),
         )?;
         Ok(execution.result().resulting_sequence())
     }

@@ -146,6 +146,17 @@ impl RuntimeService {
             .reference()
             .clone();
         let mut plan = CommandPlan::one(RunEventKind::RunStarted);
+        if projection.accepted_agreement().is_none() && revision.semantic().agreement().is_some() {
+            let run = projection.run_id().ok_or_else(|| {
+                RuntimeError::InvalidHistory("created run has no identity".to_owned())
+            })?;
+            plan.events.insert(
+                0,
+                RunEventKind::AgreementAccepted {
+                    binding: milkdrift_persistence::AcceptedAgreement::new(run.clone(), &revision)?,
+                },
+            );
+        }
         for node in entry_nodes(&revision) {
             let node_view = revision.semantic().nodes().get(node).ok_or_else(|| {
                 RuntimeError::InvalidHistory("entry node is absent from its revision".to_owned())
@@ -157,7 +168,11 @@ impl RuntimeService {
                 mode: node_execution_mode(node_view),
             });
         }
-        if plan.events.len() == 1 {
+        if !plan
+            .events
+            .iter()
+            .any(|event| matches!(event, RunEventKind::NodeBecameEligible { .. }))
+        {
             return Err(RuntimeError::InvalidTransition(
                 "pinned revision has no entry node".to_owned(),
             ));

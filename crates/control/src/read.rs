@@ -177,6 +177,10 @@ pub struct AttemptInspection {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunInspection {
+    /// Immutable outer agreement accepted for this scope, including its original run/revision.
+    pub governing_agreement: Option<milkdrift_persistence::AcceptedAgreement>,
+    /// Cumulative prospective revisions charged to that accepted scope.
+    pub agreement_adoptions: u16,
     /// Explicitly inactive for ordinary runs; otherwise the canonical cumulative account.
     pub controller_accounting: ControllerAccountingRead,
     /// Exact aggregate.

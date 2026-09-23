@@ -1,7 +1,9 @@
 //! Generate one inspectable private host configuration; platform installation remains API-owned.
 use milkdrift_authority::{AccessMode, FilesystemScope};
 use milkdrift_capability::managed::ManagedName;
-use milkdrift_managed_linux::{LinuxManagerConfig, LinuxRecipe, ModelService, WorkerNetwork};
+use milkdrift_managed_linux::{
+    LinuxManagerConfig, LinuxRecipe, ModelService, ProtectedServiceRecipe, WorkerNetwork,
+};
 use serde_json::json;
 use std::{
     collections::BTreeSet,
@@ -40,12 +42,39 @@ pub(super) fn run(args: Arguments) -> Result<(), Box<dyn std::error::Error>> {
     fs::File::open(&args.recipe)?
         .take(65_537)
         .read_to_end(&mut bytes)?;
-    let recipe = LinuxRecipe::from_json(&bytes)?;
+    let protected = serde_json::from_slice::<serde_json::Value>(&bytes)?
+        .get("kind")
+        .and_then(|v| v.as_str())
+        == Some("protected_service");
+    let recipe = if protected {
+        None
+    } else {
+        Some(LinuxRecipe::from_json(&bytes)?)
+    };
+    let protected = if protected {
+        Some(ProtectedServiceRecipe::from_json(&bytes)?)
+    } else {
+        None
+    };
+    let (name, reference, recipe_value) = if let Some(recipe) = &recipe {
+        (
+            recipe.name.clone(),
+            recipe.reference()?,
+            serde_json::to_value(recipe)?,
+        )
+    } else {
+        let recipe = protected.as_ref().ok_or("recipe absent")?;
+        (
+            recipe.name.clone(),
+            recipe.reference()?,
+            serde_json::to_value(recipe)?,
+        )
+    };
     let installation = args
         .installation
         .map(ManagedName::new)
         .transpose()?
-        .unwrap_or_else(|| recipe.name.clone());
+        .unwrap_or(name);
     let manager = LinuxManagerConfig {
         state_root: args.root.join("manager"),
         quadlet_directory: args.quadlet_directory.clone(),
@@ -70,6 +99,11 @@ pub(super) fn run(args: Arguments) -> Result<(), Box<dyn std::error::Error>> {
     ]);
     scope["capability"]["operations"]["values"] = json!([
         "resource.manage",
+        "resource.evaluate",
+        "resource.evidence",
+        "resource.publish",
+        "resource.evaluate_candidate",
+        "resource.publish_candidate",
         "resource.prepare",
         "resource.apply",
         "resource.inspect",
@@ -102,13 +136,16 @@ pub(super) fn run(args: Arguments) -> Result<(), Box<dyn std::error::Error>> {
     ];
     let mut profiles = Vec::new();
     let mut destinations = Vec::new();
-    if recipe.worker_network == WorkerNetwork::Outbound {
+    if recipe
+        .as_ref()
+        .is_some_and(|r| r.worker_network == WorkerNetwork::Outbound)
+    {
         profiles.push("managed.outbound".to_owned());
     }
-    let endpoint = match &recipe.model_service {
-        ModelService::Disabled {} => None,
-        ModelService::Attached { api_base, .. } => Some(api_base.clone()),
-        ModelService::Owned { model, port, .. } => {
+    let endpoint = match recipe.as_ref().map(|r| &r.model_service) {
+        None | Some(ModelService::Disabled {}) => None,
+        Some(ModelService::Attached { api_base, .. }) => Some(api_base.clone()),
+        Some(ModelService::Owned { model, port, .. }) => {
             filesystem.push(FilesystemScope::from_canonical_host_path(
                 model,
                 BTreeSet::from([AccessMode::Read]),
@@ -131,7 +168,6 @@ pub(super) fn run(args: Arguments) -> Result<(), Box<dyn std::error::Error>> {
     scope["filesystem"] = serde_json::to_value(filesystem)?;
     scope["network"] = json!({"profiles":profiles,"destinations":destinations});
     let config_text = toml::to_string_pretty(&config)?;
-    let reference = recipe.reference()?;
     if args.preview {
         println!(
             "{}",
@@ -150,7 +186,7 @@ pub(super) fn run(args: Arguments) -> Result<(), Box<dyn std::error::Error>> {
     }
     write_exact(
         &args.root.join("recipe.json"),
-        &serde_json::to_vec_pretty(&recipe)?,
+        &serde_json::to_vec_pretty(&recipe_value)?,
     )?;
     let token_path = args.root.join("operator.token");
     if !token_path.exists() {

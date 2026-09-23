@@ -55,18 +55,16 @@ fn current_podman_and_required_delegation_are_checked_before_effects() -> Result
 
 #[test]
 fn owned_model_leaves_a_private_user_namespace_for_the_worker() -> Result {
-    let setup = super::super::tests::owned_setup()?;
-    let deployment = units::deployment(&setup)?;
     let mut info = serde_json::json!({"host":{"idMappings":{
         "uidmap":[{"container_id":1,"host_id":100000,"size":65536}],
         "gidmap":[{"container_id":1,"host_id":100000,"size":65536}]
     }}});
-    verify_subordinate_ids(&info, &ModelService::Disabled {})?;
-    assert!(verify_subordinate_ids(&info, &deployment.recipe.model_service).is_err());
+    verify_subordinate_ids(&info, 1)?;
+    assert!(verify_subordinate_ids(&info, 2).is_err());
     info["host"]["idMappings"]["uidmap"][0]["size"] = serde_json::json!(131072);
-    assert!(verify_subordinate_ids(&info, &deployment.recipe.model_service).is_err());
+    assert!(verify_subordinate_ids(&info, 2).is_err());
     info["host"]["idMappings"]["gidmap"][0]["size"] = serde_json::json!(131072);
-    verify_subordinate_ids(&info, &deployment.recipe.model_service)?;
+    verify_subordinate_ids(&info, 2)?;
     for key in ["uidmap", "gidmap"] {
         info["host"]["idMappings"][key] = serde_json::json!([
             {"container_id":0,"host_id":1000,"size":1},
@@ -74,7 +72,7 @@ fn owned_model_leaves_a_private_user_namespace_for_the_worker() -> Result {
             {"container_id":65537,"host_id":165536,"size":65536}
         ]);
     }
-    verify_subordinate_ids(&info, &deployment.recipe.model_service)?;
+    verify_subordinate_ids(&info, 2)?;
     Ok(())
 }
 

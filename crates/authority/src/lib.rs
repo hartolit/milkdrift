@@ -32,3 +32,6 @@ pub use model::{
 };
 pub use secret::SensitiveSecret;
 pub use selection::{MAX_SELECTION_ITEMS, Selection};
+
+mod protected_effect;
+pub use protected_effect::ProtectedEffectPolicy;

@@ -73,3 +73,6 @@ pub use identity::{
 };
 pub use scope::{MAX_SCOPE_DEPTH, ScopeKind, ScopeLineage, ScopeReference, WorkspaceScope};
 pub use value::{ValueOrigin, WorkspaceValue, WorkspaceValueEntry, WorkspaceValueReference};
+
+mod candidate;
+pub use candidate::{CandidateCheck, CandidateEvaluation, CandidateSubject};

@@ -93,6 +93,12 @@ pub(super) fn public_run(
     )
     .unwrap_or(u32::MAX);
     Ok(RunRead {
+        governing_agreement: value
+            .governing_agreement
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|_| internal())?,
+        agreement_adoptions: value.agreement_adoptions,
         controller_accounting: serde_json::to_value(value.controller_accounting)
             .map_err(|_| internal())?,
         run_id: value.run.as_str().to_owned(),

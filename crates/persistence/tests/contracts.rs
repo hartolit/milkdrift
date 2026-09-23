@@ -42,7 +42,7 @@ fn revision_id() -> Result<RevisionId, PersistenceError> {
 }
 
 #[test]
-fn legacy_schema_v1_remains_readable_and_current_writes_use_v3()
+fn legacy_schema_v1_remains_readable_and_current_writes_use_v4()
 -> Result<(), Box<dyn std::error::Error>> {
     let event = sample_event(1)?;
     let encoded = event.to_canonical_json()?;
@@ -52,7 +52,7 @@ fn legacy_schema_v1_remains_readable_and_current_writes_use_v3()
         .unwrap_or(fixture_with_newline);
     let legacy = RunEventEnvelope::from_json(fixture)?;
     assert_eq!(legacy.schema_version(), 1);
-    assert_eq!(event.schema_version(), 3);
+    assert_eq!(event.schema_version(), 4);
     assert_ne!(encoded, fixture);
     assert_eq!(RunEventEnvelope::from_json(&encoded)?, event);
     Ok(())
@@ -93,14 +93,14 @@ fn future_and_malformed_versions_fail_before_interpretation()
 -> Result<(), Box<dyn std::error::Error>> {
     let bytes = sample_event(1)?.to_canonical_json()?;
     let mut value: serde_json::Value = serde_json::from_slice(&bytes)?;
-    value["schema_version"] = json!(4);
+    value["schema_version"] = json!(5);
     let future = serde_json::to_vec(&value)?;
     assert!(matches!(
         RunEventEnvelope::from_json(&future),
         Err(PersistenceError::UnsupportedVersion {
             document: "run_event",
-            found: 4,
-            supported: 3
+            found: 5,
+            supported: 4
         })
     ));
 
@@ -678,3 +678,26 @@ mod snapshots;
 
 #[path = "contracts/atomic_commands.rs"]
 mod atomic_commands;
+
+#[test]
+fn accepted_agreement_event_preserves_identity_and_refuses_older_schema_meaning()
+-> Result<(), Box<dyn std::error::Error>> {
+    let bytes = include_bytes!("fixtures/run-event-agreement-v4.json").trim_ascii_end();
+    let event = RunEventEnvelope::from_json(bytes)?;
+    assert_eq!(event.schema_version(), 4);
+    assert_eq!(event.to_canonical_json()?, bytes);
+    let RunEventKind::AgreementAccepted { binding } = event.kind() else {
+        return Err("wrong fixture event".into());
+    };
+    assert_eq!(binding.origin_run().as_str(), "run-governed");
+    assert_eq!(binding.agreement_digest(), format!("b3_{}", "a".repeat(64)));
+    for version in [1, 2, 3] {
+        let mut value: serde_json::Value = serde_json::from_slice(bytes)?;
+        value["schema_version"] = json!(version);
+        assert!(
+            matches!(RunEventEnvelope::from_json(&serde_json::to_vec(&value)?),
+            Err(PersistenceError::InvalidDocument(reason)) if reason.contains("require run-event schema v4"))
+        );
+    }
+    Ok(())
+}

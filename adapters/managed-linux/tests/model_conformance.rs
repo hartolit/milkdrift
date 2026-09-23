@@ -92,7 +92,7 @@ fn attached_model_adapter_passes_shared_conformance_with_durable_holds() -> Resu
         )?;
         let store = Arc::new(RedbStore::open(directory.path().join("store"))?);
         let request = ManagedRequest {
-            schema_version: 1,
+            schema_version: milkdrift_capability::managed::MANAGED_SCHEMA_VERSION,
             command: ManagedName::new("apply")?,
             installation: install.clone(),
             expected_version: 0,
@@ -109,6 +109,7 @@ fn attached_model_adapter_passes_shared_conformance_with_durable_holds() -> Resu
             &request,
             &support::decision(authority)?,
             &ManagedChange {
+                entry_authorization: None,
                 identity: identity.clone(),
                 candidate: setup.clone(),
                 generation: 1,

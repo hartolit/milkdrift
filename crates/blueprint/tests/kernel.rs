@@ -731,10 +731,10 @@ fn hostile_depth_path_and_future_version_are_rejected() -> TestResult {
         .collect();
     assert!(PathSelector::new(segments).is_err());
 
-    let future = br#"{"schema_version":3,"revision":{}}"#;
+    let future = br#"{"schema_version":4,"revision":{}}"#;
     assert!(matches!(
         BlueprintRevisionDocument::from_json(future),
-        Err(DocumentError::UnsupportedVersion { found: 3, .. })
+        Err(DocumentError::UnsupportedVersion { found: 4, .. })
     ));
     let mut nested = "null".to_owned();
     for _ in 0..70 {
@@ -895,7 +895,11 @@ proptest! {
 fn blueprint_golden_fixture_is_exact_and_canonical() -> TestResult {
     let revision = simple_sequence("golden", false)?;
     let bytes = BlueprintRevisionDocument::new(&revision).to_canonical_json()?;
-    let fixture = include_bytes!("fixtures/revision-v2.json").trim_ascii_end();
+    let fixture = include_bytes!("fixtures/revision-v3.json").trim_ascii_end();
+    assert!(matches!(
+        BlueprintRevisionDocument::from_json(include_bytes!("fixtures/revision-v2.json")),
+        Err(DocumentError::UnsupportedVersion { found: 2, .. })
+    ));
     if fixture.is_empty() {
         eprintln!("{}", String::from_utf8(bytes.clone())?);
     }
@@ -957,7 +961,7 @@ fn workflow_interface_rejects_duplicate_output_fields() -> Result<(), Box<dyn st
 fn placement_changes_revision_identity_and_roundtrips_without_reinterpreting_old_revisions()
 -> TestResult {
     use milkdrift_capability::{Locality, PeerId, PlacementRequirement};
-    let old_bytes = include_bytes!("fixtures/revision-v2.json");
+    let old_bytes = include_bytes!("fixtures/revision-v3.json");
     let (old_document, old) = BlueprintRevisionDocument::from_json(old_bytes)?;
     assert_eq!(
         old_document.to_canonical_json()?,

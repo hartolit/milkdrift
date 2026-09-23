@@ -704,3 +704,6 @@ use revision_and_lifecycle::create_and_start;
 mod progress;
 
 use milkdrift_capability_host::conformance::RecordingReporter;
+
+#[path = "control_service/agreements.rs"]
+mod agreements;

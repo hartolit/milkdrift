@@ -39,7 +39,9 @@ impl CliSession {
             tokio::task::spawn_blocking(move || load_credential(token_file.as_deref(), &token_env))
                 .await
                 .map_err(|_| CliError::Internal("credential reader failed".to_owned()))??;
-        let client = ControlClient::new(ClientConfig::new(cli.endpoint.clone()), credential)?;
+        let mut config = ClientConfig::new(cli.endpoint.clone());
+        config.request_timeout = std::time::Duration::from_secs(cli.timeout_secs.unwrap_or(60));
+        let client = ControlClient::new(config, credential)?;
         let _ = client.negotiate().await?;
         Ok(Self {
             cli,

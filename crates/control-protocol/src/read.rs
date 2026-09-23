@@ -181,6 +181,10 @@ pub struct RevisionChange {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunRead {
+    /// Accepted outer agreement binding, projected from the persistence-owned contract.
+    pub governing_agreement: Option<Value>,
+    /// Cumulative prospective revisions retained through restart and history compaction.
+    pub agreement_adoptions: u16,
     /// Cumulative controller accounting: explicit `inactive`, or the authorized canonical
     /// account with declaration, lineage, revision, settled/reserved/committed use and remainder.
     /// The persistence/control owners define this bounded document; permission budgets and

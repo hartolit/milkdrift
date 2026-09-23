@@ -1,5 +1,6 @@
 use crate::rejected;
 mod limits;
+pub(crate) use limits::validate_timeout;
 pub use limits::{ContainerLimits, ServiceTimeouts};
 
 /// Current strict managed Linux recipe format. Earlier formats require explicit reconfiguration.

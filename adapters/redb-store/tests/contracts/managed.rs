@@ -16,7 +16,7 @@ fn name(value: &str) -> TestResult<ManagedName> {
 }
 fn command(store: &RedbStore, key: &str, action: ManagedAction) -> TestResult<ManagedRequest> {
     Ok(ManagedRequest {
-        schema_version: 1,
+        schema_version: milkdrift_capability::managed::MANAGED_SCHEMA_VERSION,
         command: name(key)?,
         installation: name("installation")?,
         expected_version: store
@@ -82,6 +82,7 @@ fn setup(store: &RedbStore) -> TestResult<CapabilityDescriptor> {
         digest: digest(),
     };
     let approved = ApprovedSetup {
+        protection: None,
         recipe: recipe.clone(),
         mechanism: "test-verified".to_owned(),
         configuration: BoundedJson::new(json!({}))?,
@@ -110,6 +111,7 @@ fn setup(store: &RedbStore) -> TestResult<CapabilityDescriptor> {
         &request,
         &authority(&request, AuthorityOperation::AdministerCapabilities)?,
         &ManagedChange {
+            entry_authorization: None,
             identity: digest(),
             candidate: approved,
             generation: 1,
@@ -139,6 +141,7 @@ fn receipt_replay_rechecks_scope_inside_the_acceptance_transaction() -> TestResu
         .managed_receipt("actor-test", &name("install")?)?
         .ok_or("receipt missing")?;
     let change = ManagedChange {
+        entry_authorization: None,
         identity: digest(),
         candidate: store
             .managed_installation(&name("installation")?)?
@@ -331,6 +334,7 @@ fn journal_acceptance_and_resource_hold_commit_or_refuse_together() -> TestResul
                 &maintenance,
                 &authority(&maintenance, AuthorityOperation::AdministerCapabilities)?,
                 &ManagedChange {
+                    entry_authorization: None,
                     identity: format!("b3_{}", "2".repeat(64)),
                     candidate: current.current.ok_or("setup absent")?,
                     generation: 1,

@@ -333,6 +333,8 @@ pub struct RunProjection {
     pub(super) inputs: Vec<WorkspaceValueReference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) execution_authority: Option<ExecutionAuthorityBasis>,
+    pub(super) agreement_adoptions: u16,
+    pub(super) accepted_agreement: Option<milkdrift_persistence::AcceptedAgreement>,
     #[serde(with = "super::serde_map")]
     pub(super) scopes: BTreeMap<ScopeReference, WorkspaceScope>,
     pub(super) workspace_values: BTreeSet<WorkspaceValueReference>,

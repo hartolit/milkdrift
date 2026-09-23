@@ -122,7 +122,8 @@ impl ManagedHost {
             clock: clock.clone(),
         });
         let resources = Arc::new(
-            ManagedResources::new(store, platform, authority, clock.runtime_adapter())
+            ManagedResources::new(store.clone(), platform, authority, clock.runtime_adapter())
+                .with_artifacts(store)
                 .with_publisher(Arc::downgrade(&publisher)),
         );
         resources.recover_startup().map_err(|e| e.to_string())?;

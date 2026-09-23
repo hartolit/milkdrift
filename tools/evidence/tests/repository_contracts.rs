@@ -35,11 +35,6 @@ const PRODUCTION_COHESION_EXCEPTIONS: &[CohesionException] = &[
         rationale: "exact endpoint entry binds selected context materialization to bounded HTTP observations and refuses successful publication after incomplete provider responses",
     },
     CohesionException {
-        path: "crates/blueprint/src/validation.rs",
-        ceiling: 1_090,
-        rationale: "graph validation combines bounded diagnostics with acyclic reachability, schema-compatible edges, and exact fork/join and subworkflow interface ownership",
-    },
-    CohesionException {
         path: "crates/control/src/service.rs",
         ceiling: 1_290,
         rationale: "proposal submission and approval preserve candidate validation, actor authority, controller assessment, revision storage, and prospective runtime acceptance ordering",
@@ -67,6 +62,8 @@ fn cli_depends_only_on_external_control_and_local_authoring_owners() -> TestResu
     assert_eq!(
         dependencies,
         BTreeSet::from([
+            "milkdrift-blueprint",
+            "milkdrift-authority",
             "milkdrift-capability",
             "milkdrift-control-client",
             "milkdrift-control-protocol",

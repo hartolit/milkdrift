@@ -18,7 +18,7 @@ use tracing::warn;
 
 use crate::{RunProjection, RuntimeError};
 
-pub(crate) const RUN_PROJECTION_SNAPSHOT_SCHEMA_V4: u32 = 4;
+pub(crate) const RUN_PROJECTION_SNAPSHOT_SCHEMA_V5: u32 = 5;
 const PROJECTION_PAYLOAD_JSON_LIMITS: JsonLimits = JsonLimits {
     maximum_depth: 64,
     maximum_string_bytes: 1_048_576,
@@ -221,7 +221,7 @@ where
         SnapshotLoad::Verified(snapshot) => snapshot,
     };
 
-    if snapshot.projection_payload_schema() != RUN_PROJECTION_SNAPSHOT_SCHEMA_V4 {
+    if snapshot.projection_payload_schema() != RUN_PROJECTION_SNAPSHOT_SCHEMA_V5 {
         discard_optional_snapshot(
             store,
             run,
@@ -268,7 +268,7 @@ where
         );
         return project_complete_history(store, run);
     }
-    if payload.schema_version != RUN_PROJECTION_SNAPSHOT_SCHEMA_V4
+    if payload.schema_version != RUN_PROJECTION_SNAPSHOT_SCHEMA_V5
         || payload.projection.run_id() != Some(run)
         || payload.projection.sequence() != snapshot.covered_sequence()
         || payload.projection.history_compacted_through() != snapshot.covered_sequence()
@@ -311,7 +311,7 @@ pub(crate) fn encode_projection_snapshot(
     }
     projection.validate_compacted_state()?;
     Ok(serde_json::to_vec(&ProjectionSnapshotPayloadRef {
-        schema_version: RUN_PROJECTION_SNAPSHOT_SCHEMA_V4,
+        schema_version: RUN_PROJECTION_SNAPSHOT_SCHEMA_V5,
         projection,
     })?)
 }

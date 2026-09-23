@@ -16,6 +16,7 @@
 //! Storage adapters implement these synchronous contracts without exposing database types.
 
 mod admin;
+mod agreement;
 mod application;
 mod artifact;
 mod bounded;
@@ -35,6 +36,7 @@ pub use admin::{
     MAX_INTEGRITY_SCAN_CURSOR_KEY_BYTES, StorageAdmin, StorageComponentHealth, StorageHealth,
     StorageHealthStatus, StorageSchemaCompatibility, StorageSchemaInfo,
 };
+pub use agreement::AcceptedAgreement;
 pub use application::{
     APPLICATION_COMMAND_RECEIPT_SCHEMA_VERSION_V1, APPLICATION_LAYOUT_RECORD_SCHEMA_VERSION_V1,
     ApplicationCommandCommit, ApplicationCommandCommitOutcome, ApplicationCommandEffect,
@@ -67,7 +69,7 @@ pub use controller_account::{
 };
 pub use document::{
     MAX_EVENT_DOCUMENT_BYTES, RUN_EVENT_SCHEMA_VERSION_V1, RUN_EVENT_SCHEMA_VERSION_V2,
-    RUN_EVENT_SCHEMA_VERSION_V3, RunEventEnvelope,
+    RUN_EVENT_SCHEMA_VERSION_V3, RUN_EVENT_SCHEMA_VERSION_V4, RunEventEnvelope,
 };
 pub use error::{PersistenceError, StorageFailureClass};
 pub use event::{

@@ -4,7 +4,7 @@ use super::*;
 fn run_accounting_distinguishes_legacy_unavailable_from_explicit_inactive()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut document = serde_json::json!({"run_id":"ordinary", "sequence":1, "lifecycle":"created", "terminal":null,
-        "workflow_id":"workflow", "revision_id":null, "semantic_digest":null, "nodes":[], "uncertainty_count":0});
+        "workflow_id":"workflow", "revision_id":null, "semantic_digest":null, "nodes":[], "governing_agreement": null, "agreement_adoptions": 0, "uncertainty_count":0});
     let legacy: RunRead = decode_json(&serde_json::to_vec(&document)?)?;
     assert!(legacy.controller_accounting.is_null());
     document["controller_accounting"] = serde_json::json!({"state":"inactive"});

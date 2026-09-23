@@ -86,26 +86,26 @@ values; repository contracts check the version cells against source.
 | --- | --- | --- |
 | Capability descriptor/events/cancellation / resolved snapshot | 1 / 3 | Only snapshot v3 is supported; exact typed placement is required. |
 | Invocation request | 2 | Context-free v1 migrates unambiguously. |
-| Blueprint revision and mutation | 2 | v1 refused. |
+| Blueprint revision and mutation | 3 | v1/v2 refused; agreement absence is explicit. |
 | Context manifest | 2 | v1 refused; model envelope remains independent. |
 | Model document / task / response / endpoint profile | 1 / 1 / 1 / 2 | Endpoint v1 refused; explicit billing and counting required. |
 | Explicit continuation companion | 1 | Exact artifacts and journal anchors; unknown/future documents refused. |
 | Proposal / workflow-control command / risk policy / controller policy | 1 / 1 / 1 / 2 | Controller policy v1 refused; currency is explicit or absent. |
 | Prompt-sequence import | 3 | v1/v2 refused; existing blueprint history unchanged. |
 | Result acceptance contract / decision | 1 / 1 | Explicit purpose; no implicit policy on generic model tasks. |
-| Run command / run event | 1 / 3 | Supported event v1/v2 variants remain readable; obsolete nested snapshots are refused. |
+| Run command / run event | 1 / 4 | Supported event v1/v2/v3 variants remain readable; obsolete nested snapshots are refused. |
 | Authority grant / authorization decision | 4 / 2 | Earlier grants refused. |
 | Authorized-command wrapper / command result | 1 / 2 | Result v1 reads only closed internal records. |
-| Projection snapshot envelope / runtime payload | 2 / 4 | Old/invalid optional checkpoints replay from journal. |
+| Projection snapshot envelope / runtime payload | 2 / 5 | Old/invalid optional checkpoints replay from journal. |
 | Administrative integrity cursor | 2 | Exact supported cursor. |
 | Peer hot record / compact tombstone | 4 / 2 | Exact current caller/origin meaning; older records refuse. |
-| Redb internal document format / physical schema | 18 / 13 | Older/future stores refused; no migration. |
+| Redb internal document format / physical schema | 19 / 14 | Older/future stores refused; no migration. |
 | Application command receipt / layout record | 1 / 1 | Exact supported contracts. |
 | Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
-| External control / authenticated cursor | 2.8 / 2 | Only the exact current protocol and cursor forms are accepted. |
+| External control / authenticated cursor | 2.9 / 2 | Only the exact current protocol and cursor forms are accepted. |
 | Peer protocol and catalog messages | 1.4 | Earlier minors refused. |
 | Daemon configuration | 12 | TOML; JSON and earlier versions refused. |
-| Managed resource request / inventory | 1 | Exact schema, bounded typed recipe references, preserved receipts and guarded transitions. |
+| Managed resource request / inventory | 2 | Exact schema, bounded typed recipe references, preserved receipts and guarded transitions. |
 | Layout document / CLI JSON output | 1 / 2 | CLI schema 1 refused. |
 
 ## Limitations now
@@ -119,11 +119,15 @@ values; repository contracts check the version cells against source.
   authenticated foreign provenance. Role removal refuses active workflow obligations and preserves
   closed history for offline inspection. Managed deployment and real two-machine qualification
   remain separate from the deterministic loopback binary evidence.
-- Protected adaptive agreements, service-execution delegation, published invocation/run linkage,
-  and evaluated method learning are not implemented. Existing prospective reconciliation and result
-  acceptance do not establish those guarantees. The current risk classifier requires approval for
-  node replacement and other elevated changes; it has no protected editable-scope policy.
-  [Architecture](../architecture.md) and ADRs 0040–0041 describe these accepted additions, not supported APIs.
+- Governed methods preserve immutable enclosing definitions while permitting bounded ordinary task
+  edits under exact capability envelopes. Accepted agreement identity and cumulative adoption counts
+  survive replay; child pins stay protected. The managed owner evaluates immutable candidate artifacts
+  with an operator-pinned verifier and retains failed/unknown evidence. Publication binds exact bytes,
+  configuration, policy, target generation and fresh authority. Raw start/update cannot substitute a
+  candidate. The finite [Slotbook example](../../examples/adaptive-slotbook/README.md) is the supported
+  authoring and inspection path. It is not a general application correctness or security guarantee.
+  Catalog publication, service delegation and evaluated reuse remain assigned to 04–05; no live
+  model repair, second-host protected deployment or reboot qualification is claimed here.
 - Earlier selection-policy-version-1 manifests remain readable, but omissions retaining ambiguous
   identities or sizes and stopped required evidence cannot authorize reuse. Retry and startup refuse
   those retained records without rewriting their bytes. An unsafe active lease prevents daemon
@@ -179,6 +183,33 @@ values; repository contracts check the version cells against source.
   hosted Linux runner; forced Windows child termination does not qualify that platform claim.
 
 ## Current validation/evidence snapshot
+
+### Protected adaptive method verification
+
+Assignment 03's reviewed full gate passes with 896 workspace tests, 24 doctests and all 24 repository
+contracts. Eight environment-specific tests remain ignored by that gate. Twenty-four default and
+all-feature API inventories were reviewed. Deliberately disabling protected-graph validation,
+failed-check enforcement or candidate-file validation before activation makes the respective refusal
+test fail. The build uses optimization level 1 with debug
+assertions enabled; no unoptimized full-gate result is claimed.
+
+The finite [Slotbook qualification](../../examples/adaptive-slotbook/README.md) uses immutable Python
+source artifacts and the operator-owned six-check verifier. Actual daemon/CLI execution retained
+initial authentication/persistence failures, rejected an uploaded forged positive report, automatically
+adopted a scoped prospective repair, completed all six new checks and served exactly the checked bytes.
+Direct lifecycle updates cannot remove protection. Reopen preserved the agreement, adoption count,
+private verification and target generation. A new authorized request renewed verification of the same
+bytes without overwriting earlier evidence. A separately authorized direct publication reached
+generation 3; exact replay after
+another reopen preserved its generation, version, container ID and start time. Both test installations
+were removed through their owner, retaining declared data volumes. The handoff records exact candidate
+identities and evidence paths. The native verifier test also covers detached-container cleanup after
+completion, timeout and platform reopen, plus changed candidate-file refusal before activation.
+Protected preparation shares the Podman version, controller delegation, subordinate-ID and lingering
+checks used by other managed services. Live model repair belongs to assignment 06; the fixtures in 03
+do not represent observed model choices. Interrupted verification retains unknown evidence and refuses
+publication. This desktop qualification does not establish second-host operation,
+power-loss persistence or general application correctness/security.
 
 ### Managed Linux resource qualification
 

@@ -135,7 +135,7 @@ fn run_state(terminal: Option<&str>) -> Value {
         "revision_id": "revision-one",
         "semantic_digest": null,
         "nodes": [],
-        "uncertainty_count": 0
+        "governing_agreement": null, "agreement_adoptions": 0, "uncertainty_count": 0
     })
 }
 
@@ -380,6 +380,121 @@ fn cli_refuses_mismatched_negotiation_success_and_error_versions() -> TestResult
             assert_eq!(records[0]["final"], true);
             assert!(!records[0].to_string().contains("unsupported-error-fixture"));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn prepared_direct_requests_satisfy_each_operations_idempotency_contract() -> TestResult {
+    use milkdrift_capability::{
+        AdmissionConstraints, BoundedJson, CancellationBehavior, CapabilityCategory, CapabilityId,
+        CapabilityObservation, DescriptorBuilder, IdempotencyBehavior, Locality, OperationContract,
+        OperationId, PeerId, SchemaContract, SchemaId, SideEffectClass, StreamingMode,
+    };
+    use milkdrift_peer_protocol::{
+        CatalogEntry, CatalogSnapshot, DirectDiscovery, DirectInvocationRequest, ExecutionLimits,
+    };
+    use std::collections::{BTreeMap, BTreeSet};
+    for (effect, idempotency, expected_key) in [
+        (
+            SideEffectClass::IdempotentWrite,
+            IdempotencyBehavior::CapabilityScoped,
+            Some("stable-request"),
+        ),
+        (
+            SideEffectClass::ReadOnly,
+            IdempotencyBehavior::Unsupported,
+            None,
+        ),
+        (
+            SideEffectClass::NonIdempotentWrite,
+            IdempotencyBehavior::Unsupported,
+            None,
+        ),
+    ] {
+        let operation = OperationId::new("test.execute")?;
+        let capability = CapabilityId::new("test-capability")?;
+        let schema = SchemaContract::new(
+            SchemaId::new("test.input")?,
+            1,
+            BoundedJson::new(json!({"type":"object"}))?,
+        )?;
+        let descriptor = DescriptorBuilder::new(
+            capability.clone(),
+            1,
+            CapabilityCategory::Tool,
+            AdmissionConstraints::new(1, 0)?,
+            Locality::Local,
+        )
+        .operations(BTreeMap::from([(
+            operation.clone(),
+            OperationContract::new(
+                schema.clone(),
+                schema,
+                BTreeSet::from([StreamingMode::None]),
+                CancellationBehavior::Unsupported,
+                idempotency,
+                effect,
+                BTreeMap::new(),
+            )?,
+        )]))
+        .build()?;
+        let discovery = DirectDiscovery {
+            host: PeerId::new("host-test")?,
+            limits: ExecutionLimits {
+                artifact_bytes: 4096,
+                duration_ms: 1000,
+                cost_micros: 0,
+                cost_currency: None,
+                input_units: None,
+                output_units: None,
+                observations: 16,
+            },
+            catalog: CatalogSnapshot::new(
+                1,
+                1,
+                1000,
+                vec![CatalogEntry {
+                    descriptor,
+                    invocable_operations: BTreeSet::from([operation]),
+                    observation: CapabilityObservation::new(capability, 1, true, 0, "available")?,
+                    draining: false,
+                }],
+            )?,
+        };
+        let server = Server::new(vec![
+            negotiation(),
+            response(serde_json::to_value(discovery)?),
+        ])?;
+        let directory = tempfile::tempdir()?;
+        let inputs = directory.path().join("inputs.json");
+        let output = directory.path().join("request.json");
+        std::fs::write(&inputs, b"[]")?;
+        let (exit, records, errors) = invoke(
+            &server.endpoint,
+            &[
+                "invocation",
+                "prepare",
+                "test-capability",
+                "test.execute",
+                "--host",
+                "host-test",
+                "--request-id",
+                "stable-request",
+                "--inputs",
+                inputs.to_str().ok_or("input path")?,
+                "--output",
+                output.to_str().ok_or("output path")?,
+            ],
+            false,
+        )?;
+        assert_eq!(exit, 0, "{records:?}: {errors}");
+        let prepared: DirectInvocationRequest = serde_json::from_slice(&std::fs::read(output)?)?;
+        prepared.selection.validate_request(&prepared.request)?;
+        assert_eq!(
+            prepared.request.idempotency_key().map(|key| key.as_str()),
+            expected_key
+        );
     }
     Ok(())
 }

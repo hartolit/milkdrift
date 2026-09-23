@@ -46,7 +46,7 @@ the executable system. Development methods belong in the [practices](development
   logical workspace values and temporary materialization. **Attachment:** access to a resource
   owned elsewhere, without permission to delete it.
 
-The adopted additions below are not yet implemented (see [status](product/status.md)):
+Agreements and protected managed publication are implemented; published methods remain assigned work (see [status](product/status.md)):
 
 - **Agreement:** immutable obligations, effect prerequisites and adaptation limits accepted for a
   scope. **Method adaptation:** a prospective revision inside those limits, not a change to them.
@@ -116,7 +116,7 @@ Transport-independent serving acceptance, preparation, entry and recovery live i
 local workflow history stays in runtime. Further accepted dependency changes preserve that inward
 direction. Host resource policy belongs in a narrow module
 with typed persistence actions and an adopted Linux mechanism adapter. Blueprint owns agreement
-semantics, authority owns verifier/service delegation decisions, and control owns publication and
+structure; authority owns verifier policy and the assigned service delegation decisions, and control owns publication and
 proposal orchestration. Host consumes a continuation port implemented by control, avoiding a
 host-to-control dependency cycle. Shared producer meaning stays in workspace, with one artifact
 store. These moves are required by concrete direct/resource/publication consumers; no new crate
@@ -164,7 +164,7 @@ work. Terminal/started work, side effects, profile/trust expansion, subworkflow/
 cancellation, and elevated changes require recorded approval. Approval links exact proposal,
 revision/effect, approver, and policy. Preset names expand into grants rather than runtime roles.
 
-The adopted adaptive-method design refines that coarse approval rule inside explicit governed
+The structural adaptive-method boundary refines that coarse approval rule inside explicit governed
 scopes. A run binds an immutable agreement separately from the revision region an agent may edit.
 Blueprint validates preserved responsibilities and interfaces; control classifies the actual delta;
 runtime applies it prospectively under the retained authority/account. Useful repair, investigation
@@ -172,7 +172,12 @@ and dependency edits within that region can be preauthorized. The same grant can
 agreement, verifier, target, completion requirements or its own limits. Outside such scopes the
 existing approval policy remains. Agreement changes require a distinct authorized decision and
 cannot relabel old failure as compliance. This checks protected structure and effect prerequisites,
-not equivalence of arbitrary programs; implementation belongs to 03 under ADR 0040.
+not equivalence of arbitrary programs. Authority owns the finite verifier policy, workspace owns
+its exact candidate observations, and capability-host requires private journal evidence at managed
+publication entry under ADR 0040. An `AgreementAccepted` event retains the originating run,
+revision and agreement digest; structured children inherit it unchanged. A governed child pin is
+protected even from a separate direct adoption command. A new agreement is accepted by a separate
+run, never by relabelling the original scope.
 
 ## One command and external-effect path
 
@@ -414,7 +419,7 @@ retained disk state, backup exclusions and pending physical enforcement qualific
 
 ## Agreements at effects and published methods
 
-These are accepted additions for 03–05. Required verifier evidence binds immutable candidate/build
+Protected managed publication requires verifier evidence bound to immutable candidate/build
 bytes, material configuration, target generation, agreement/policy, verifier identity and validity.
 Authority establishes verifier trust separately from content integrity. The resource operation
 checks these prerequisites after preparation at consequential entry for every caller, including
@@ -422,7 +427,7 @@ direct/raw update paths. Repair workers cannot write served content or use an un
 credential or native tool to bypass the operation. The existing result-acceptance capability retains
 its finite documented meaning; it is not by itself this effect protection.
 
-Control publishes exact starting methods and adaptation policies through the normal registry. A
+The assigned publication extension will let control publish exact starting methods and adaptation policies through the normal registry. A
 published version binds a service principal/grant and input/target narrowing policy, allowing a
 caller to invoke deployment without owning its internal administrative grant union. Caller authority,
 inherited restrictions, agreement and budgets remain applicable; caller-supplied paths or context

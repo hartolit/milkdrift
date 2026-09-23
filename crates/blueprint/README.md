@@ -6,9 +6,14 @@ inspected, saved, and submitted to the runtime. A revision describes intended wo
 later record which tasks actually executed and under which revision.
 
 A blueprint is the reusable method; one run may prospectively adopt several revisions of it.
-The accepted [adaptive-method design](../../docs/decisions/0040-protected-adaptive-methods.md)
-adds separately protected agreements and editable scopes. Current graph validation does not yet
-enforce those agreements; do not mistake an immutable revision for an unchangeable method.
+A [`GoverningAgreement`](src/agreement.rs) freezes an enclosing program separately from its
+editable task region. Graph validation preserves that structure while permitting task replacement
+and investigation inside the declared scope. The
+[adaptive-method design](../../docs/decisions/0040-protected-adaptive-methods.md) connects this structure
+to runtime’s accepted binding and cumulative revision limit. Authority and the managed effect owner
+separately enforce trusted evidence and exact candidate publication. A graph fingerprint alone grants
+no effect permission. The [Slotbook example](../../examples/adaptive-slotbook/README.md) authors the
+complete method through ordinary CLI readers.
 
 The [prompt-sequence compiler](../prompt-sequence/README.md) is a concrete author of these
 definitions. It emits ordinary nodes and edges, using the same mutation and validation APIs as
@@ -87,3 +92,32 @@ Definition construction needs no daemon or endpoint and has no feature flags. Th
 cover graph construction, refusal, revision identity, and document round trips. Use the
 [verification policy](../../docs/development/workflow.md#choose-verification-for-the-change) for
 changes, and the [operator examples](../../examples/operator/README.md) to run a complete workflow.
+
+## Author a structural agreement
+
+Construct `AdaptationScope` with a node prefix ending in `.`, a maximum task count and exact allowed
+capability requirements. `GoverningAgreement::seal` fingerprints an ungoverned revision's interface,
+metadata, enclosing nodes and all edges touching the enclosing region. Attach that value through
+`Mutation::SetAgreement`; its independent digest remains unchanged when internal tasks change.
+All structured nodes, terminal outcomes and subworkflow pins belong outside the editable region.
+Internal dependencies may change; boundary dependencies may not. Permission and cumulative resource
+accounting remain with the existing authority and controller owners.
+
+The CLI provides the same authoring operation without a Rust program:
+
+```sh
+milkdrift blueprint govern method.json --scope adaptation-scope.json \
+  --name method-agreement --effect-policy b3_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --author human:operator --output governed.json
+```
+
+The policy value above demonstrates digest syntax only; it does not identify a real verifier policy.
+The scope file is strict JSON with `node_prefix`, `maximum_nodes`, and `requirements`, where each
+requirement uses the same production shape as a task. The command writes a new file and reports the
+revision and agreement identities. Import the baseline before its governed descendant, because
+storage verifies ancestry. Authoring grants no run or effect authority.
+
+A running method cannot replace, remove or acquire an agreement through adoption. An explicit
+requirement change is authored as a new agreement and accepted by a separate run, retaining the
+original run's outcome. Children inherit the outer agreement and cannot adopt a replacement of
+protected child work. This does not yet complete the deployment path described in ADR 0040.

@@ -30,3 +30,5 @@ fn platform_error(value: impl std::fmt::Display) -> ManagedError {
 fn digest(value: impl AsRef<[u8]>) -> String {
     format!("b3_{}", blake3::hash(value.as_ref()))
 }
+
+pub use platform::ProtectedServiceRecipe;

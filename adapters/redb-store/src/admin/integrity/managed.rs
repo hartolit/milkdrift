@@ -51,5 +51,13 @@ pub(super) fn scan(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceE
         &read.open_table(MANAGED_LINKS).map_err(error::redb)?,
         "managed_links",
         |key, bytes| crate::managed::verify_link(read, key, bytes),
+    )?;
+    context.string_bytes(
+        phase::MANAGED_EVALUATIONS,
+        &read
+            .open_table(crate::schema::MANAGED_EVALUATIONS)
+            .map_err(error::redb)?,
+        "managed_evaluations",
+        |key, bytes| crate::managed::evaluation::decode(key, bytes).map(|_| ()),
     )
 }

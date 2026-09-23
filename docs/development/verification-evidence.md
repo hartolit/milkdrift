@@ -47,6 +47,46 @@ disabled. Both detected one forbidden external entry instead of zero; both passe
 the guard. The targeted commands and failure assertions are retained under
 `target/adaptive-hosts/prepared-allowance-mutant.log` and `prepared-allowance-restored.log`.
 
+## Governed Slotbook method and publication
+
+Run the [maintained CLI qualification](../../examples/adaptive-slotbook/README.md) on a provisioned
+rootless Linux host. It freezes the HTTP/API representation, uses explicitly seeded fixture failures,
+submits a structured prospective repair, and obtains fresh trusted observations before deploying
+immutable source. Its files preserve the original failure, proposal identity, accepted agreement,
+new candidate and target generation. A fresh direct evaluation/publication and request replay after
+reopen separately exercise the managed owner outside a workflow. Container identity/start time and
+mounted bytes support the replay and exact-candidate observations. This does not qualify arbitrary
+application behavior, model reasoning, power loss, hostile host administration or another machine.
+
+`cargo test -p milkdrift-blueprint --test agreements` covers indirect dependency/interface/terminal
+and scope edits. `cargo test -p milkdrift-control --test control_service agreements::` covers ordinary
+automatic proposals, raw adoption refusal, inherited child pins and cumulative limits after reopen.
+`cargo test -p milkdrift-managed-linux --test lifecycle protected::` supplies real redb transactions
+and deterministic external-effect counters. It checks private failed/unknown evidence, artifact read
+authority, concurrent revocation during preparation, policy changes at final entry, expiration,
+wrong generation, exact bytes, lost effect responses and before/after evaluation-commit failures.
+Those deterministic tests establish owner behavior without making an OS-isolation claim.
+
+The opt-in `protected_verification` target exercises actual detached test containers and filesystem
+state. Set `MILKDRIFT_PROTECTED_TEST_IMAGE` to an approved preloaded Python image identity, and
+optionally `MILKDRIFT_LINUX_EVIDENCE_PARENT` to the directory for retained evidence, then run:
+
+```sh
+cargo test -p milkdrift-managed-linux --test protected_verification -- --ignored --nocapture
+```
+
+It checks fresh evaluations of unchanged bytes, cleanup after a verifier that omits its own cleanup,
+cleanup after timeout, fencing a retained container on platform reopen, and candidate-file drift
+refusal before configuration or startup. The CLI qualification separately proves that new evaluation
+requests retain the prior evidence and can publish, including with a registry-qualified image digest.
+
+Three deliberate guard removals in a disposable worktree made the graph-protection, failed-evidence
+publication and candidate-file entry tests fail at their refusal assertions. Original code remained
+unchanged. Commands, mutated diffs and failures are retained under
+`target/adaptive-hosts/03-review/mutation-*`; successful owner suites are in the same directory's
+final gate. The handoff records the exact execution profile
+and physical observations so later publication/reuse work can preserve their finite provenance.
+
 ## Local process reporting cleanup
 
 Run `cargo test -p milkdrift-local-process --all-features` for adapter conformance and lifecycle

@@ -202,7 +202,7 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
         ),
         (
             "Blueprint revision and mutation",
-            vec![("crates/blueprint/src/lib.rs", "BLUEPRINT_SCHEMA_VERSION_V2")],
+            vec![("crates/blueprint/src/lib.rs", "BLUEPRINT_SCHEMA_VERSION_V3")],
         ),
         (
             "Context manifest",
@@ -276,7 +276,7 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
                 ),
                 (
                     "crates/persistence/src/document.rs",
-                    "RUN_EVENT_SCHEMA_VERSION_V3",
+                    "RUN_EVENT_SCHEMA_VERSION_V4",
                 ),
             ],
         ),
@@ -315,7 +315,7 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
                 ),
                 (
                     "crates/runtime/src/query.rs",
-                    "RUN_PROJECTION_SNAPSHOT_SCHEMA_V4",
+                    "RUN_PROJECTION_SNAPSHOT_SCHEMA_V5",
                 ),
             ],
         ),
@@ -530,7 +530,19 @@ fn every_maintained_example_has_a_production_reader() -> TestResult {
                 // a local string assertion cannot qualify its build or ignore-file semantics.
                 std::str::from_utf8(&bytes)?;
             }
-            "operator/README.md" | "external-evidence/README.md" | "managed-linux/README.md" => {}
+            "adaptive-slotbook/prepare.py"
+            | "adaptive-slotbook/qualify.py"
+            | "adaptive-slotbook/verifier.py"
+            | "adaptive-slotbook/seeded.py"
+            | "adaptive-slotbook/repaired.py" => {
+                // Python owns executable input; CLI authoring tests run the factory through the
+                // production readers, and the separately gated qualification runs the HTTP harness.
+                std::str::from_utf8(&bytes)?;
+            }
+            "adaptive-slotbook/README.md"
+            | "operator/README.md"
+            | "external-evidence/README.md"
+            | "managed-linux/README.md" => {}
             _ => {
                 return Err(
                     format!("maintained example has no production reader: {relative}").into(),

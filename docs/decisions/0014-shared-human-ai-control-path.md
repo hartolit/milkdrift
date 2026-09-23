@@ -5,7 +5,8 @@
 
 [ADR 0040](0040-protected-adaptive-methods.md) adopts scoped preauthorized adaptation under a
 protected agreement. It supersedes coarse approval classification as the sole intended adaptation
-boundary, while preserving this shared command path. Current classification remains until 03.
+boundary, while preserving this shared command path. The implemented agreement policy refines
+classification only inside the accepted editable scope; unrelated changes retain the coarse rule.
 
 ## Context
 

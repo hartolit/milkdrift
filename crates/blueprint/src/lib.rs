@@ -68,6 +68,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+mod agreement;
 mod condition;
 mod context;
 mod document;
@@ -77,6 +78,9 @@ mod mutation;
 mod revision;
 mod validation;
 
+pub use agreement::{
+    AGREEMENT_SCHEMA_VERSION, AdaptationScope, GoverningAgreement, validate_agreement_adoption,
+};
 pub use condition::{
     Comparison, Condition, ConditionError, ConditionOperand, PathSegment, PathSelector,
 };
@@ -105,4 +109,4 @@ pub use revision::BlueprintRevision;
 pub use validation::{Diagnostic, DiagnosticCode, ValidationError};
 
 /// Portable blueprint document schema with explicit task context policy.
-pub(crate) const BLUEPRINT_SCHEMA_VERSION_V2: u32 = 2;
+pub(crate) const BLUEPRINT_SCHEMA_VERSION_V3: u32 = 3;

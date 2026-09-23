@@ -1,4 +1,5 @@
 //! Same-store resource transactions and execution-owned lifetime holds.
+pub(crate) mod evaluation;
 mod execution;
 pub(crate) mod integrity;
 mod uses;
@@ -161,6 +162,26 @@ fn save_transition(
 }
 
 impl ManagedResourceStore for RedbStore {
+    fn begin_managed_evaluation(
+        &self,
+        request: &ManagedRequest,
+        authorization: &AuthorityDecisionSnapshot,
+        evidence: &milkdrift_workspace::CandidateEvaluation,
+    ) -> Result<ResourceReceipt, PersistenceError> {
+        evaluation::begin(self, request, authorization, evidence)
+    }
+    fn finish_managed_evaluation(
+        &self,
+        evidence: &milkdrift_workspace::CandidateEvaluation,
+    ) -> Result<(), PersistenceError> {
+        evaluation::finish(self, evidence)
+    }
+    fn managed_evaluation(
+        &self,
+        identity: &str,
+    ) -> Result<Option<milkdrift_workspace::CandidateEvaluation>, PersistenceError> {
+        evaluation::read(self, identity)
+    }
     fn managed_installation(
         &self,
         name: &ManagedName,
@@ -314,6 +335,20 @@ impl ManagedResourceStore for RedbStore {
                 phase: ManagedChangePhase::Pending {},
             });
         }
+        // Recovery above already compared the entire saved intent. It resumes that exact
+        // publication; it cannot substitute a newly supplied candidate or authorization.
+        if !matches!(request.action, ManagedAction::Recover {})
+            && let Some(current) = &record.current
+        {
+            check_protected_change(
+                &write,
+                current,
+                record.generation,
+                request,
+                authorization,
+                change,
+            )?;
+        }
         record.admission_open = false;
         bump(&mut record)?;
         let receipt = ResourceReceipt {
@@ -457,4 +492,62 @@ impl ManagedResourceStore for RedbStore {
     fn verify_managed_integrity(&self) -> Result<(), PersistenceError> {
         integrity::verify(self)
     }
+}
+
+fn check_protected_change(
+    write: &redb::WriteTransaction,
+    current: &milkdrift_persistence::managed::ApprovedSetup,
+    generation: u64,
+    request: &ManagedRequest,
+    authorization: &AuthorityDecisionSnapshot,
+    change: &ManagedChange,
+) -> Result<(), PersistenceError> {
+    let Some(protected) = &current.protection else {
+        if change.candidate.protection.is_some() {
+            return Err(conflict("protect a distinct new installation"));
+        }
+        return Ok(());
+    };
+    let candidate = change
+        .candidate
+        .protection
+        .as_ref()
+        .ok_or_else(|| conflict("protected target cannot become unprotected"))?;
+    if candidate.agreement != protected.agreement
+        || candidate.policy != protected.policy
+        || change.candidate.recipe != current.recipe
+    {
+        return Err(conflict(
+            "protected target policy cannot be changed by lifecycle update",
+        ));
+    }
+    if let ManagedAction::Publish { evaluation } = &request.action {
+        let table = write
+            .open_table(crate::schema::MANAGED_EVALUATIONS)
+            .map_err(error::redb)?;
+        let evidence = table
+            .get(evaluation.as_str())
+            .map_err(error::redb)?
+            .map(|b| evaluation::decode(evaluation, b.value()))
+            .transpose()?
+            .ok_or_else(|| conflict("unknown trusted evaluation"))?;
+        protected
+            .policy
+            .require_pass(&evidence, authorization.request().evaluated_at.get())
+            .map_err(|e| invalid(&e.to_string()))?;
+        if change.entry_authorization.as_ref() != Some(authorization)
+            || evidence.subject.generation != generation
+            || candidate.evidence.as_ref() != Some(&evidence)
+            || evidence.subject.target != request.installation
+            || evidence.subject.generation.checked_add(1) != Some(change.generation)
+            || evidence.subject.configuration != current.recipe.digest
+        {
+            return Err(conflict(
+                "publication candidate, target or generation differs",
+            ));
+        }
+    } else if candidate != protected {
+        return Err(conflict("raw lifecycle cannot replace protected candidate"));
+    }
+    Ok(())
 }

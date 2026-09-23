@@ -19,7 +19,7 @@ pub struct ContainerLimits {
 }
 
 impl ContainerLimits {
-    pub(super) fn validate(&self, field: &str) -> Result<(), ManagedError> {
+    pub(crate) fn validate(&self, field: &str) -> Result<(), ManagedError> {
         // OCI/Linux memory limits are signed bytes; zero would disable the limit.
         if self.memory_bytes == 0 || self.memory_bytes > i64::MAX as u64 {
             return Err(rejected(format!(
@@ -80,7 +80,7 @@ pub struct ServiceTimeouts {
     pub model_verification_ms: u64,
 }
 impl ServiceTimeouts {
-    pub(super) fn validate(&self) -> Result<(), ManagedError> {
+    pub(crate) fn validate(&self) -> Result<(), ManagedError> {
         for (name, value) in [
             ("startup_ms", self.startup_ms),
             ("shutdown_ms", self.shutdown_ms),
@@ -108,7 +108,7 @@ impl ServiceTimeouts {
     }
 }
 
-pub(super) fn validate_timeout(value: u64, field: &str) -> Result<(), ManagedError> {
+pub(crate) fn validate_timeout(value: u64, field: &str) -> Result<(), ManagedError> {
     if value == 0
         || value > i64::MAX as u64
         || Instant::now()

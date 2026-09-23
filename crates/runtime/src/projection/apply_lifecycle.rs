@@ -19,6 +19,15 @@ impl RunProjection {
     ) -> Result<(), RuntimeError> {
         let sequence = event.sequence();
         match event.kind() {
+            RunEventKind::AgreementAccepted { binding } => {
+                if self.lifecycle != RunLifecycle::Created || self.accepted_agreement.is_some() {
+                    return Err(invalid_at(
+                        event,
+                        "agreement acceptance must occur exactly once before start",
+                    ));
+                }
+                self.accepted_agreement = Some(binding.clone());
+            }
             RunEventKind::RunCreated {
                 workflow,
                 revision,
@@ -140,6 +149,14 @@ impl RunProjection {
                     .collect();
                 self.revision = Some(revision.clone());
                 self.revision_digest = Some(revision_digest.clone());
+                if self.accepted_agreement.is_some() {
+                    self.agreement_adoptions =
+                        self.agreement_adoptions.checked_add(1).ok_or_else(|| {
+                            RuntimeError::InvalidHistory(
+                                "agreement adoption count overflow".to_owned(),
+                            )
+                        })?;
+                }
                 self.pins.clear();
                 self.pins.push(RevisionPin {
                     revision: revision.clone(),

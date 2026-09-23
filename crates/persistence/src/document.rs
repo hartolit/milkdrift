@@ -15,8 +15,10 @@ use crate::{
 pub const RUN_EVENT_SCHEMA_VERSION_V1: u32 = 1;
 /// Readable run-event schema with controller, attributed reconciliation, and child-usage facts.
 pub const RUN_EVENT_SCHEMA_VERSION_V2: u32 = 2;
-/// Current run-event envelope schema with atomic controller final-entry admission facts.
+/// Readable run-event envelope schema with atomic controller final-entry admission facts.
 pub const RUN_EVENT_SCHEMA_VERSION_V3: u32 = 3;
+/// Current run-event envelope schema with immutable accepted agreement bindings.
+pub const RUN_EVENT_SCHEMA_VERSION_V4: u32 = 4;
 /// Maximum encoded event size. Larger content belongs in workspace/artifact storage.
 pub const MAX_EVENT_DOCUMENT_BYTES: usize = 1_048_576;
 const MAX_DOCUMENT_DEPTH: usize = 64;
@@ -25,6 +27,7 @@ const MAX_STRING_BYTES: usize = 65_536;
 const EVENT_CHECKSUM_DOMAIN_V1: &str = "milkdrift.run-event-envelope.v1";
 const EVENT_CHECKSUM_DOMAIN_V2: &str = "milkdrift.run-event-envelope.v2";
 const EVENT_CHECKSUM_DOMAIN_V3: &str = "milkdrift.run-event-envelope.v3";
+const EVENT_CHECKSUM_DOMAIN_V4: &str = "milkdrift.run-event-envelope.v4";
 const PERSISTENCE_JSON_LIMITS: JsonLimits = JsonLimits {
     maximum_depth: MAX_DOCUMENT_DEPTH,
     maximum_string_bytes: MAX_STRING_BYTES,
@@ -83,9 +86,9 @@ impl RunEventEnvelope {
             ));
         }
         kind.validate_for_run(&run_id)?;
-        validate_event_schema_semantics(&kind, RUN_EVENT_SCHEMA_VERSION_V3)?;
+        validate_event_schema_semantics(&kind, RUN_EVENT_SCHEMA_VERSION_V4)?;
         let checksum = calculate_event_checksum(
-            RUN_EVENT_SCHEMA_VERSION_V3,
+            RUN_EVENT_SCHEMA_VERSION_V4,
             &event_id,
             &run_id,
             sequence,
@@ -93,7 +96,7 @@ impl RunEventEnvelope {
             &kind,
         )?;
         let envelope = Self {
-            schema_version: RUN_EVENT_SCHEMA_VERSION_V3,
+            schema_version: RUN_EVENT_SCHEMA_VERSION_V4,
             event_id,
             run_id,
             sequence,
@@ -179,12 +182,15 @@ impl RunEventEnvelope {
             })?;
         if !matches!(
             version,
-            RUN_EVENT_SCHEMA_VERSION_V1 | RUN_EVENT_SCHEMA_VERSION_V2 | RUN_EVENT_SCHEMA_VERSION_V3
+            RUN_EVENT_SCHEMA_VERSION_V1
+                | RUN_EVENT_SCHEMA_VERSION_V2
+                | RUN_EVENT_SCHEMA_VERSION_V3
+                | RUN_EVENT_SCHEMA_VERSION_V4
         ) {
             return Err(PersistenceError::UnsupportedVersion {
                 document: "run_event",
                 found: version,
-                supported: RUN_EVENT_SCHEMA_VERSION_V3,
+                supported: RUN_EVENT_SCHEMA_VERSION_V4,
             });
         }
         validate_event_schema_shape(&value, version)?;
@@ -234,11 +240,12 @@ fn calculate_event_checksum(
         RUN_EVENT_SCHEMA_VERSION_V1 => EVENT_CHECKSUM_DOMAIN_V1,
         RUN_EVENT_SCHEMA_VERSION_V2 => EVENT_CHECKSUM_DOMAIN_V2,
         RUN_EVENT_SCHEMA_VERSION_V3 => EVENT_CHECKSUM_DOMAIN_V3,
+        RUN_EVENT_SCHEMA_VERSION_V4 => EVENT_CHECKSUM_DOMAIN_V4,
         _ => {
             return Err(PersistenceError::UnsupportedVersion {
                 document: "run_event",
                 found: schema_version,
-                supported: RUN_EVENT_SCHEMA_VERSION_V3,
+                supported: RUN_EVENT_SCHEMA_VERSION_V4,
             });
         }
     };
@@ -298,7 +305,7 @@ fn validate_event_schema_shape(value: &Value, version: u32) -> Result<(), Persis
                     "run-event schema v{version} cannot contain controller final-entry admission"
                 )));
             }
-            (RUN_EVENT_SCHEMA_VERSION_V3, false) => {
+            (RUN_EVENT_SCHEMA_VERSION_V3 | RUN_EVENT_SCHEMA_VERSION_V4, false) => {
                 return Err(PersistenceError::InvalidDocument(
                     "run-event schema v3 final-entry decision requires controller admission"
                         .to_owned(),
@@ -333,6 +340,12 @@ fn validate_event_schema_semantics(
     version: u32,
 ) -> Result<(), PersistenceError> {
     match (version, kind) {
+        (
+            RUN_EVENT_SCHEMA_VERSION_V1 | RUN_EVENT_SCHEMA_VERSION_V2 | RUN_EVENT_SCHEMA_VERSION_V3,
+            RunEventKind::AgreementAccepted { .. },
+        ) => Err(PersistenceError::InvalidDocument(
+            "accepted agreements require run-event schema v4".to_owned(),
+        )),
         (RUN_EVENT_SCHEMA_VERSION_V1, RunEventKind::ControllerAssessmentRecorded { .. }) => {
             Err(PersistenceError::InvalidDocument(
                 "controller assessment requires run-event schema v2".to_owned(),
@@ -402,7 +415,7 @@ fn validate_event_schema_semantics(
             "controller account declaration requires run-event schema v3".to_owned(),
         )),
         (
-            RUN_EVENT_SCHEMA_VERSION_V3,
+            RUN_EVENT_SCHEMA_VERSION_V3 | RUN_EVENT_SCHEMA_VERSION_V4,
             RunEventKind::ControllerAssessmentRecorded {
                 account_declaration: None,
                 ..
@@ -411,7 +424,7 @@ fn validate_event_schema_semantics(
             "run-event schema v3 controller assessment requires an account declaration".to_owned(),
         )),
         (
-            RUN_EVENT_SCHEMA_VERSION_V3,
+            RUN_EVENT_SCHEMA_VERSION_V3 | RUN_EVENT_SCHEMA_VERSION_V4,
             RunEventKind::RevisionAdoptionRequested {
                 requested_by: None, ..
             },
@@ -419,7 +432,7 @@ fn validate_event_schema_semantics(
             "run-event schema v3 revision adoption requires actor attribution".to_owned(),
         )),
         (
-            RUN_EVENT_SCHEMA_VERSION_V3,
+            RUN_EVENT_SCHEMA_VERSION_V3 | RUN_EVENT_SCHEMA_VERSION_V4,
             RunEventKind::SubworkflowTerminal {
                 cost_micros, usage, ..
             },

@@ -110,3 +110,55 @@ Unconditional human approval is too restrictive; unrestricted auto-apply removes
 boundary. Graph labels alone cannot protect an effect. Arbitrary semantic equivalence is neither
 required nor claimed. Reconsider a protected scope when a concrete useful adaptation cannot be
 expressed while preserving its obligations; do not weaken the agreement to make a candidate pass.
+
+## Implemented contracts and compatibility
+
+Blueprint/mutation schema 3 carries an independently digest-bound agreement alongside the semantic
+method. Its protected fingerprint covers workflow/package identity, interface, metadata, noneditable
+nodes and every edge incident to them. Editable regions admit ordinary tasks under exact declared
+capability envelopes, a maximum node count and a cumulative revision limit. Structured work and child
+pins remain protected. This deliberately avoids inferring program equivalence. Active adoption cannot
+introduce, remove or replace an agreement, even with proposal approval. Legitimate requirement changes
+use a distinct agreement, target and run; no administrative deviation operation is implemented.
+
+Runtime records the outer accepted binding with a schema-4 `AgreementAccepted` event before start
+and inherits it into child work. Snapshot payload 5 retains binding and adoption count. Existing
+v1–v3 event meanings remain readable where nested contracts are supported; they cannot contain
+agreement acceptance. Blueprint v1/v2 refuse rather than infer an agreement. Redb internal format 19
+and physical schema 14 refuse older stores before writes; there is no migration.
+
+Control records scoped classification under `milkdrift.agreement-adaptation` version 1. Ordinary
+`milkdrift.control-risk` version 1 is unchanged. A strict proposal draft reader derives mutation and
+proposal identities before the same authorized submission path. Draft notes and provenance remain
+untrusted. Control protocol 2.9 exposes accepted agreement and cumulative adoption count.
+
+Authority's version-1 protected effect policy fixes all required checks, producer, verifier digest,
+byte ceiling and lifetime. Workspace's version-1 evaluation binds those observations to an immutable
+artifact, agreement, effective recipe, target and prior generation. The private redb evaluation table
+records an incomplete result before calling the verifier and completes it once. Failed or unknown
+results persist; uploaded reports can only select an identity, never confer evaluator trust. A hard
+4096-record bound refuses new evaluations instead of discarding failures or replay evidence.
+
+Managed contract 2 adds evaluate, evidence and publish to the existing owner. Every call, including
+raw CLI and serving adapter calls, uses the same checks. Publication creates generation N+1 only from
+a passing evaluation of N, reauthorizes after candidate preparation and checks policy, expiry and
+authority before configuration/start. The accepted change and authorization are durable before any
+service action. Exact replay returns its original receipt; inspection reports current completion or
+uncertainty. Recovery is a separate authorized command over the exact saved intent. Reporting loss
+cannot turn the receipt into a fresh deployment permission.
+
+The Linux protected-service mechanism owns data and a fixed user-systemd service with an immutable
+image, read-only candidate/configuration, and declared kernel limits. It exposes no raw worker for
+the served target. The separate managed worker has no engine socket, production credential or served
+content mount. Operator recipe removal/change and verifier/credential changes revoke new entry.
+The verifier is pinned by its source and native Python executable digest; the OS and Python standard
+library remain trusted host prerequisites, not a claim of a hermetic verifier runtime. Successful
+service restart preserves the previously accepted generation; policy expiry limits new controlled
+entry, not retrospective deletion of an already running service.
+
+The finite Slotbook harness tests the fixed HTTP contract, authenticated mutation, capacity and
+interval behavior, restart persistence, cancellation, and exact deployment. Unknown engine/network
+observations never count as passes. See the [maintained example](../../examples/adaptive-slotbook/README.md)
+for the frozen API and ordinary product commands. No generic semantic scanner or mandatory approval
+exception is inferred from a passing report; separately required command approvals and grant checks
+remain applicable. Generic task result acceptance remains independent.

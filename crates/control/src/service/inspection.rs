@@ -108,6 +108,8 @@ impl ControlService {
             .current()
             .map(|request| status_from_projection(&projection, request));
         Ok(RunInspection {
+            governing_agreement: projection.accepted_agreement().cloned(),
+            agreement_adoptions: projection.agreement_adoptions(),
             controller_accounting: crate::ControllerAccountingRead::from_account(
                 self.runtime.controller_account_for_run(run)?.as_ref(),
             )?,

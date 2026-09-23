@@ -24,6 +24,7 @@ pub(in crate::engine) fn command_kind_name(command: &RunCommand) -> &'static str
 
 pub(in crate::engine) fn event_kind_name(event: &RunEventKind) -> &'static str {
     match event {
+        RunEventKind::AgreementAccepted { .. } => "agreement_accepted",
         RunEventKind::RunCreated { .. } => "run_created",
         RunEventKind::ExecutionAuthorityEstablished { .. } => "execution_authority_established",
         RunEventKind::RevisionPinned { .. } => "revision_pinned",

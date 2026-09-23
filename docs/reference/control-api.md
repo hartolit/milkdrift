@@ -1,4 +1,4 @@
-# Local control API 2.8
+# Local control API 2.9
 
 Use this reference for exact requests, replies, routes, and CLI machine output. For setup, begin
 with the [operator examples](../../examples/operator/README.md); for Rust integration, use the
@@ -12,10 +12,10 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":8}}
+{"protocol":{"major":2,"minor":9}}
 ```
 
-Version 2.8 is required on both sides. Older and newer major/minor versions are refused with
+Version 2.9 is required on both sides. Older and newer major/minor versions are refused with
 `unsupported_version`; update the client and daemon together. There is no protocol downgrade.
 Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
@@ -23,7 +23,7 @@ the negotiated envelope version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 8},
+  "protocol": {"major": 2, "minor": 9},
   "request_id": "req-1",
   "value": {}
 }
@@ -37,7 +37,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 8},
+  "protocol": {"major": 2, "minor": 9},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -74,7 +74,11 @@ The ordinary artifact metadata/range routes download both inputs and outputs.
 
 Use the [independent execution recipe](../../examples/operator/README.md#independent-execution).
 `invocation prepare` obtains discovery and writes a create-new exact request file without execution.
-Keep it for submission/replay. Explicit `--endpoint`, credentials and `--host` prevent silently
+For an idempotent-write operation it derives the operation's idempotency key from the supplied
+stable request ID; operations that do not accept that key leave it absent. Keep the saved file for
+submission/replay. Discovery is not a reservation: a typed `catalog_stale` refusal with no known
+execution permits preparing a fresh request, while response loss requires recovering the original
+request's acceptance before deciding what to do next. Explicit `--endpoint`, credentials and `--host` prevent silently
 selecting another owner. Direct continuation and implicit workflow/workspace input discovery refuse.
 
 Workflow, run, proposal, controller, and layout commands use `POST /v1/commands`. Peer lifecycle
@@ -82,7 +86,7 @@ administration uses the separate routes below. A command envelope has no actor f
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 8},
+  "protocol": {"major": 2, "minor": 9},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -365,7 +369,7 @@ envelope. Clients must examine the preview state before proposing a change.
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "command": "inspect-one",
   "installation": "slotbook",
   "expected_version": 0,
@@ -403,3 +407,24 @@ verified capability candidates and bounded diagnostics. Candidates become regist
 after verification; use discovery and health for availability. Entered blockers remain after an
 unknown operation outcome. Resolution proves or fences resource use without changing that outcome.
 See [managed operations](../operations/managed-linux.md) for exact CLI use and recovery consequences.
+
+## Governed methods and protected publication
+
+Protocol 2.9 run reads include `governing_agreement` (the accepted origin binding or null) and
+`agreement_adoptions` (the cumulative prospective adoption count). These project runtime history;
+clients cannot update them. Blueprint schema 3 includes an explicit agreement or null.
+
+Proposal version 1 also accepts a strict authoring `draft` envelope. Its fields match the canonical
+proposal except that the owner derives `digest` and derives the mutation batch identity from a
+`mutation` array. This form uses the same submission, authority, risk and reconciliation checks.
+It cannot be combined with a canonical `proposal` envelope. Normal receipts retain canonical identity.
+
+Managed schema 2 adds `evaluate { candidate }`, `evidence { evaluation }`, and
+`publish { evaluation }`. Candidate is an exact artifact reference; evaluation is its host-derived
+`b3_` journal identity. `resource.evaluate_candidate` and `resource.publish_candidate` accept an
+inline target (`schema_version`, `command`, `installation`, `expected_version`) plus a selected
+`candidate` or `evaluation` artifact input. They resolve selected workspace values through the same
+artifact owner. Every API, CLI, workflow and serving call enters the managed owner; an uploaded
+report is only an identity selector. The private journal and current target policy decide permission.
+Responses contain optional `evaluation`; pending intent, completed evidence, running service and
+workflow terminal remain distinct. See the [runnable example](../../examples/adaptive-slotbook/README.md).

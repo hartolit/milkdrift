@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    BLUEPRINT_SCHEMA_VERSION_V2, BlueprintMetadata, Diagnostic, DiagnosticCode, Edge, EdgeId,
+    BLUEPRINT_SCHEMA_VERSION_V3, BlueprintMetadata, Diagnostic, DiagnosticCode, Edge, EdgeId,
     MutationBatchId, Node, NodeId, NodeKind, PinnedSubworkflow, RevisionId, SemanticBlueprint,
     ValidationError, WorkflowInterface, validation::validate_semantic,
 };
@@ -12,10 +12,16 @@ use crate::{
 const MAX_BATCH_OPERATIONS: usize = 512;
 const MAX_MERGE_PARENTS: usize = 16;
 
-/// Closed schema-v2 command set for every semantic blueprint edit.
+/// Closed schema-v3 command set for every semantic blueprint edit.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum Mutation {
+    /// Attach a separately identified agreement when authoring a new governed method.
+    /// Runtime refuses agreement changes during adoption by an already accepted run.
+    SetAgreement {
+        /// Complete immutable agreement, or an explicitly ungoverned new definition.
+        agreement: Option<crate::GoverningAgreement>,
+    },
     /// Insert a new node identity.
     AddNode {
         /// Complete validated local node value.
@@ -99,10 +105,10 @@ struct MutationBatchWire {
 }
 
 milkdrift_contracts::deserialize_via!(MutationBatch, MutationBatchWire, |wire| {
-    if wire.schema_version != BLUEPRINT_SCHEMA_VERSION_V2 {
+    if wire.schema_version != BLUEPRINT_SCHEMA_VERSION_V3 {
         Err(format!(
             "unsupported mutation schema version {}; supported version is {}",
-            wire.schema_version, BLUEPRINT_SCHEMA_VERSION_V2
+            wire.schema_version, BLUEPRINT_SCHEMA_VERSION_V3
         ))
     } else {
         Self::from_parts(wire.id, wire.operations).map_err(|error| error.to_string())
@@ -129,7 +135,7 @@ impl MutationBatch {
             )));
         }
         let batch = Self {
-            schema_version: BLUEPRINT_SCHEMA_VERSION_V2,
+            schema_version: BLUEPRINT_SCHEMA_VERSION_V3,
             id,
             operations,
         };
@@ -215,6 +221,7 @@ fn apply_operation(
     operation: &Mutation,
 ) -> Result<(), Diagnostic> {
     match operation {
+        Mutation::SetAgreement { agreement } => semantic.set_agreement(agreement.clone()),
         Mutation::AddNode { node } => {
             if semantic.nodes().contains_key(node.id()) {
                 return Err(duplicate("nodes", node.id().to_string()));

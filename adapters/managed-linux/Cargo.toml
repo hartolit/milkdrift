@@ -13,6 +13,7 @@ milkdrift-capability.workspace = true
 milkdrift-capability-host.workspace = true
 milkdrift-contracts.workspace = true
 milkdrift-persistence.workspace = true
+milkdrift-workspace.workspace = true
 milkdrift-model-provider.workspace = true
 serde.workspace = true
 serde_json.workspace = true

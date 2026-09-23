@@ -73,6 +73,7 @@ pub(super) mod phase {
     pub(super) const MANAGED_TRANSITIONS: u8 = 50;
     pub(super) const MANAGED_LOCAL_USES: u8 = 51;
     pub(super) const MANAGED_LINKS: u8 = 52;
+    pub(super) const MANAGED_EVALUATIONS: u8 = 53;
 }
 
 /// Shared state for one ordered scan page. Domain modules own tables and validation.

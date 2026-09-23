@@ -23,8 +23,9 @@ pub(super) fn owned_setup() -> Result<ApprovedSetup> {
         quadlet_directory: "/quadlets".into(),
     };
     Ok(ApprovedSetup {
+        protection: None,
         recipe: reference,
-        mechanism: "linux-quadlet-v3".to_owned(),
+        mechanism: "linux-quadlet-v4".to_owned(),
         configuration: BoundedJson::new(serde_json::to_value(deployment)?)?,
         platform_owner: "fixture".to_owned(),
         ownership,

@@ -3,7 +3,7 @@
 use super::super::RuntimeService;
 use super::super::support::{CommandPlan, collect_required_artifacts, event_kind_name};
 use crate::projection::{RunLifecycle, RunProjection};
-use crate::query::{RUN_PROJECTION_SNAPSHOT_SCHEMA_V4, encode_projection_snapshot};
+use crate::query::{RUN_PROJECTION_SNAPSHOT_SCHEMA_V5, encode_projection_snapshot};
 use crate::{RunCommandDocument, RuntimeError};
 use milkdrift_authority::AuthorityDecisionSnapshot;
 use milkdrift_capability::BoundedJson;
@@ -113,7 +113,7 @@ impl RuntimeService {
             .transpose()?;
         let projection_checkpoint = projection_payload
             .as_deref()
-            .map(|payload| ProjectionCheckpoint::new(RUN_PROJECTION_SNAPSHOT_SCHEMA_V4, payload))
+            .map(|payload| ProjectionCheckpoint::new(RUN_PROJECTION_SNAPSHOT_SCHEMA_V5, payload))
             .transpose()?;
         let mut request = AtomicRunCommitRequest::new(
             receipt,

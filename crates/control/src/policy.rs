@@ -68,6 +68,10 @@ pub enum RiskConstraint {
     MergeLineageChanged,
     /// The proposal contains no recognized low-risk prospective change.
     UnclassifiedChange,
+    /// Future tasks changed inside the exact immutable agreement's declared region.
+    ScopedMethodAdaptation,
+    /// An accepted governing boundary was changed or replaced.
+    GoverningAgreementChanged,
 }
 
 /// Complete deterministic policy evidence persisted or returned with a decision.
@@ -149,6 +153,10 @@ pub fn classify_proposal(
                 constraints.insert(RiskConstraint::InterfaceOrSubworkflowChanged);
                 classify_live_node(node, projection, &mut constraints, &mut risk);
             }
+            Mutation::SetAgreement { .. } => {
+                elevate(&mut risk, RiskClass::ApprovalRequired);
+                constraints.insert(RiskConstraint::GoverningAgreementChanged);
+            }
             Mutation::SetInterface { .. } => {
                 elevate(&mut risk, RiskClass::ApprovalRequired);
                 constraints.insert(RiskConstraint::InterfaceOrSubworkflowChanged);
@@ -182,8 +190,26 @@ pub fn classify_proposal(
         constraints.insert(RiskConstraint::UnclassifiedChange);
     }
 
+    if projection.is_some() && old.semantic().agreement().is_some() {
+        if milkdrift_blueprint::validate_agreement_adoption(old, new).is_err() {
+            risk = RiskClass::Forbidden;
+            constraints.insert(RiskConstraint::GoverningAgreementChanged);
+        } else if new.parents() == [old.id().clone()]
+            && proposal.requested_action().is_none()
+            && !constraints.contains(&RiskConstraint::RunningWorkAffected)
+            && !constraints.contains(&RiskConstraint::StartedDescendantAffected)
+            && !constraints.contains(&RiskConstraint::MergeLineageChanged)
+        {
+            risk = RiskClass::Low;
+            constraints.insert(RiskConstraint::ScopedMethodAdaptation);
+        }
+    }
     PolicyClassification {
-        policy: CONTROL_RISK_POLICY_ID.to_owned(),
+        policy: if old.semantic().agreement().is_some() && projection.is_some() {
+            "milkdrift.agreement-adaptation".to_owned()
+        } else {
+            CONTROL_RISK_POLICY_ID.to_owned()
+        },
         policy_version: CONTROL_RISK_POLICY_VERSION_V1,
         risk,
         constraints: constraints.into_iter().collect(),

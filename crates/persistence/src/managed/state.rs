@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApprovedSetup {
+    /// Protected target contract, absent for ordinary development resources.
+    pub protection: Option<ProtectedDeployment>,
     /// Immutable approved input reference.
     pub recipe: RecipeReference,
     /// Closed adapter protocol identifier, distinct from a general deployment language.
@@ -31,6 +33,9 @@ pub struct ApprovedSetup {
 impl ApprovedSetup {
     /// Validate portable bounds; the platform additionally validates typed mechanism configuration.
     pub fn validate(&self) -> Result<(), PersistenceError> {
+        if let Some(protection) = &self.protection {
+            protection.validate()?;
+        }
         if self.resources.is_empty()
             || self.resources.len() > MAX_MANAGED_RESOURCES
             || self.capabilities.len() > 8
@@ -98,6 +103,8 @@ pub struct ManagedObservation {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManagedChange {
+    /// Exact accepted authority, rechecked for protected service entry and recovery.
+    pub entry_authorization: Option<AuthorityDecisionSnapshot>,
     /// Exact deterministic transition identity.
     pub identity: String,
     /// Complete candidate; the previous setup remains retained until verified completion.
@@ -239,6 +246,13 @@ impl InstallationRecord {
             .as_ref()
             .or_else(|| self.pending.as_ref().map(|p| &p.change.candidate));
         ManagedResponse {
+            accepted_evaluation: self
+                .current
+                .as_ref()
+                .and_then(|s| s.protection.as_ref())
+                .and_then(|p| p.evidence.as_ref())
+                .map(|e| e.identity.clone()),
+            evaluation: None,
             schema_version: MANAGED_SCHEMA_VERSION,
             installation: self.name.clone(),
             version: self.version,
@@ -312,6 +326,48 @@ impl ManagedObservation {
             return Err(PersistenceError::InvalidDocument(
                 "invalid managed observation".to_owned(),
             ));
+        }
+        Ok(())
+    }
+}
+
+/// Immutable protection attached to a resource's durable inventory. Raw lifecycle changes cannot
+/// remove it; only an accepted publication can replace its candidate/evidence pair.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProtectedDeployment {
+    /// Exact accepted agreement; changing requirements requires a distinct target/run.
+    pub agreement: String,
+    /// Operator-owned check and producer policy.
+    pub policy: milkdrift_authority::ProtectedEffectPolicy,
+    /// Most recently published exact candidate, if any.
+    pub evidence: Option<milkdrift_workspace::CandidateEvaluation>,
+}
+impl ProtectedDeployment {
+    /// Validate policy and evidence identities before retaining or recovering configuration.
+    pub fn validate(&self) -> Result<(), PersistenceError> {
+        self.policy
+            .validate()
+            .map_err(|e| PersistenceError::InvalidDocument(e.to_string()))?;
+        if !milkdrift_contracts::is_canonical_blake3_digest(&self.agreement) {
+            return Err(PersistenceError::InvalidDocument(
+                "invalid protected agreement".to_owned(),
+            ));
+        }
+        if let Some(e) = &self.evidence {
+            e.validate()
+                .map_err(|e| PersistenceError::InvalidDocument(e.to_string()))?;
+            if e.subject.agreement != self.agreement
+                || e.subject.policy
+                    != self
+                        .policy
+                        .digest()
+                        .map_err(|e| PersistenceError::InvalidDocument(e.to_string()))?
+            {
+                return Err(PersistenceError::InvalidDocument(
+                    "protected evidence binding differs".to_owned(),
+                ));
+            }
         }
         Ok(())
     }

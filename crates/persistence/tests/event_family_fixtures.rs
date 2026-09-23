@@ -172,7 +172,7 @@ fn current_fixtures() -> TestResult<[(&'static str, RunEventEnvelope, &'static [
                     outcome: ControllerAssessmentOutcome::Continue,
                 },
             )?,
-            include_bytes!("fixtures/run-event-controller-assessment-v3.json"),
+            include_bytes!("fixtures/run-event-controller-assessment-v4.json"),
         ),
         (
             "subworkflow-usage",
@@ -187,7 +187,7 @@ fn current_fixtures() -> TestResult<[(&'static str, RunEventEnvelope, &'static [
                     usage,
                 },
             )?,
-            include_bytes!("fixtures/run-event-subworkflow-usage-v3.json"),
+            include_bytes!("fixtures/run-event-subworkflow-usage-v4.json"),
         ),
         (
             "attributed-reconciliation",
@@ -201,7 +201,7 @@ fn current_fixtures() -> TestResult<[(&'static str, RunEventEnvelope, &'static [
                     policy: ReconciliationPolicy::RequireAuthority,
                 },
             )?,
-            include_bytes!("fixtures/run-event-attributed-reconciliation-v3.json"),
+            include_bytes!("fixtures/run-event-attributed-reconciliation-v4.json"),
         ),
         (
             "final-entry-admission",
@@ -213,13 +213,13 @@ fn current_fixtures() -> TestResult<[(&'static str, RunEventEnvelope, &'static [
                     controller_admission: ControllerAdmissionOutcome::NotControlled,
                 },
             )?,
-            include_bytes!("fixtures/run-event-final-entry-admission-v3.json"),
+            include_bytes!("fixtures/run-event-final-entry-admission-v4.json"),
         ),
     ])
 }
 
 #[test]
-fn durable_event_families_retain_exact_v1_and_review_current_v3_goldens() -> TestResult {
+fn durable_event_families_retain_exact_v1_and_review_current_v4_goldens() -> TestResult {
     for (name, fixture) in legacy_fixtures() {
         let fixture = fixture.strip_suffix(b"\n").unwrap_or(fixture);
         let event = RunEventEnvelope::from_json(fixture)?;
@@ -236,9 +236,20 @@ fn durable_event_families_retain_exact_v1_and_review_current_v3_goldens() -> Tes
             "schema-v2 fixture {name}"
         );
     }
+    for fixture in [
+        include_bytes!("fixtures/run-event-controller-assessment-v3.json").as_slice(),
+        include_bytes!("fixtures/run-event-subworkflow-usage-v3.json").as_slice(),
+        include_bytes!("fixtures/run-event-attributed-reconciliation-v3.json").as_slice(),
+        include_bytes!("fixtures/run-event-final-entry-admission-v3.json").as_slice(),
+    ] {
+        let fixture = fixture.trim_ascii_end();
+        let event = RunEventEnvelope::from_json(fixture)?;
+        assert_eq!(event.schema_version(), 3);
+        assert_eq!(event.to_canonical_json()?, fixture);
+    }
     for (name, event, fixture) in current_fixtures()? {
         let fixture = fixture.strip_suffix(b"\n").unwrap_or(fixture);
-        assert_eq!(event.schema_version(), 3, "current fixture {name}");
+        assert_eq!(event.schema_version(), 4, "current fixture {name}");
         assert_eq!(
             event.to_canonical_json()?,
             fixture,

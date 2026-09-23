@@ -8,7 +8,7 @@ mod state;
 mod uses;
 pub use state::{
     ApprovedSetup, InstallationRecord, ManagedChange, ManagedChangePhase, ManagedObservation,
-    ManagedStep, ManagedTransition, ResourceReceipt,
+    ManagedStep, ManagedTransition, ProtectedDeployment, ResourceReceipt,
 };
 pub use uses::{ManagedExecution, ManagedUse, ManagedUsePhase, QuiescenceEvidence, managed_use_id};
 
@@ -18,6 +18,23 @@ use milkdrift_capability::managed::{ManagedName, ManagedRequest};
 
 /// Narrow same-store resource port. Implementations commit all guards and mutations together.
 pub trait ManagedResourceStore: Send + Sync {
+    /// Retain an incomplete evaluation and exact actor receipt before invoking its verifier.
+    fn begin_managed_evaluation(
+        &self,
+        request: &ManagedRequest,
+        authorization: &AuthorityDecisionSnapshot,
+        evidence: &milkdrift_workspace::CandidateEvaluation,
+    ) -> Result<ResourceReceipt, PersistenceError>;
+    /// Append the sole terminal evaluation observation; incomplete replay never reruns a verifier.
+    fn finish_managed_evaluation(
+        &self,
+        evidence: &milkdrift_workspace::CandidateEvaluation,
+    ) -> Result<(), PersistenceError>;
+    /// Read a host-produced evaluation. No public upload operation can write this journal.
+    fn managed_evaluation(
+        &self,
+        identity: &str,
+    ) -> Result<Option<milkdrift_workspace::CandidateEvaluation>, PersistenceError>;
     /// Read one bounded inventory, including unresolved holds and pending transitions.
     fn managed_installation(
         &self,

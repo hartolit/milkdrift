@@ -30,6 +30,7 @@ use tempfile::TempDir;
 use thiserror::Error;
 
 use crate::AdapterExecutionContext;
+mod reference;
 
 /// Stable version of the host materialization contract.
 pub const MATERIALIZATION_SCHEMA_VERSION_V1: u32 = 1;
@@ -157,6 +158,18 @@ pub trait InvocationDataAccess: Send + Sync {
     ) -> Result<Vec<u8>, InvocationDataError> {
         Err(InvocationDataError::Rejected(
             "direct input reading is unsupported by this data-access implementation".to_owned(),
+        ))
+    }
+
+    /// Resolve a selected artifact-valued workspace output to its immutable content reference.
+    /// This returns no bytes and grants no read authority to a later effect owner.
+    fn resolve_artifact_reference(
+        &self,
+        _context: &AdapterExecutionContext,
+        _input: &InputReference,
+    ) -> Result<CapabilityArtifactReference, InvocationDataError> {
+        Err(InvocationDataError::Rejected(
+            "artifact reference resolution is unsupported".to_owned(),
         ))
     }
 
@@ -547,6 +560,14 @@ impl StoreInvocationDataAccess {
 }
 
 impl InvocationDataAccess for StoreInvocationDataAccess {
+    fn resolve_artifact_reference(
+        &self,
+        context: &AdapterExecutionContext,
+        input: &InputReference,
+    ) -> Result<CapabilityArtifactReference, InvocationDataError> {
+        self.resolve_selected_artifact(context, input)
+    }
+
     fn read_input_bytes(
         &self,
         context: &AdapterExecutionContext,

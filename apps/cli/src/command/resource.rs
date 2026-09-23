@@ -15,6 +15,26 @@ impl ResourceArgs {
             })
         };
         let action = match &self.command {
+            ResourceCommand::Evaluate {
+                artifact,
+                digest,
+                media_type,
+                size_bytes,
+            } => ManagedAction::Evaluate {
+                candidate: milkdrift_capability::ArtifactReference::new(
+                    artifact.clone(),
+                    digest.clone(),
+                    Some(media_type.clone()),
+                    Some(*size_bytes),
+                )
+                .map_err(|e| CliError::Invalid(e.to_string()))?,
+            },
+            ResourceCommand::Evidence { evaluation } => ManagedAction::Evidence {
+                evaluation: evaluation.clone(),
+            },
+            ResourceCommand::Publish { evaluation } => ManagedAction::Publish {
+                evaluation: evaluation.clone(),
+            },
             ResourceCommand::Handoff(transfer) => ManagedAction::Handoff {
                 transfer: transfer.document(name(&self.installation)?),
             },

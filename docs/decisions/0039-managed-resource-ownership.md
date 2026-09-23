@@ -115,7 +115,7 @@ its resource use ended. Offline inspection/preservation remains available if sta
 ## Compatibility, acceptance and alternatives
 
 New resource records and journal actions need versioned readers, integrity/backup coverage and
-hand-reviewed fixtures in 02; 04 adds exact published-child linkage. The implementation uses managed schema 1, physical redb schema 13/internal document format 18,
+hand-reviewed fixtures in 02; 04 adds exact published-child linkage. The implementation uses managed schema 2, physical redb schema 14/internal document format 19,
 and daemon configuration 12. Older stores/configurations refuse before mutation; no migration is supplied. Preserve supported history and refuse incompatible
 stores before mutation as in [0038](0038-independent-host-execution.md).
 
@@ -141,7 +141,7 @@ cleanup by name with cleanup by the service-created container ID. Actual enforce
 during apply; deterministic fault maps do not qualify it. See
 [operations](../operations/managed-linux.md) for the physical lane.
 
-Recipe schema 2 and mechanism `linux-quadlet-v3` replace the initial recipe's application-family
+Recipe schema 2 and mechanism `linux-quadlet-v4` replace the initial recipe's application-family
 and coupled-budget assumptions. Worker and owned model receive separate typed container limits;
 there is no aggregate memory reservation. Preflight sums simultaneous demand and accounts for the
 saved current service's anonymous resident memory on reapply/update. The semantic owner supplies

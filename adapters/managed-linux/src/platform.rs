@@ -28,6 +28,8 @@ use std::{
 };
 
 mod prerequisites;
+mod protected;
+pub use protected::ProtectedServiceRecipe;
 
 #[cfg(test)]
 mod tests;
@@ -37,6 +39,7 @@ mod tests;
 pub struct LinuxManagedPlatform {
     config: LinuxManagerConfig,
     recipes: BTreeMap<ManagedName, LinuxRecipe>,
+    protected_recipes: BTreeMap<ManagedName, ProtectedServiceRecipe>,
     owner: String,
     pub(crate) active: Mutex<BTreeMap<String, Arc<AtomicBool>>>,
     pub(crate) quiescent: Condvar,
@@ -69,17 +72,41 @@ impl LinuxManagedPlatform {
         lock.try_lock()
             .map_err(|_| rejected("another manager owns this platform root"))?;
         let mut recipes = BTreeMap::new();
+        let mut protected_recipes = BTreeMap::new();
         for path in &config.recipes {
             regular_file(path, 65_536)?;
-            let recipe = LinuxRecipe::from_json(&fs::read(path).map_err(rejected)?)?;
+            let bytes = fs::read(path).map_err(rejected)?;
+            if serde_json::from_slice::<serde_json::Value>(&bytes)
+                .map_err(rejected)?
+                .get("kind")
+                .and_then(|v| v.as_str())
+                == Some("protected_service")
+            {
+                let recipe = ProtectedServiceRecipe::from_json(&bytes)?;
+                if protected_recipes
+                    .insert(recipe.name.clone(), recipe)
+                    .is_some()
+                {
+                    return Err(rejected("duplicate protected recipe"));
+                }
+                continue;
+            }
+            let recipe = LinuxRecipe::from_json(&bytes)?;
             if recipes.insert(recipe.name.clone(), recipe).is_some() {
                 return Err(rejected("duplicate managed recipe name"));
             }
+        }
+        if recipes
+            .keys()
+            .any(|name| protected_recipes.contains_key(name))
+        {
+            return Err(rejected("recipe names overlap"));
         }
         let owner = owner_identity(&config.state_root)?;
         Ok(Self {
             config,
             recipes,
+            protected_recipes,
             owner,
             active: Mutex::new(BTreeMap::new()),
             quiescent: Condvar::new(),
@@ -88,7 +115,7 @@ impl LinuxManagedPlatform {
     }
     pub(crate) fn check_owner(&self, setup: &ApprovedSetup) -> Result<Deployment, ManagedError> {
         let d = units::deployment(setup)?;
-        if setup.mechanism != "linux-quadlet-v3"
+        if setup.mechanism != "linux-quadlet-v4"
             || setup.platform_owner != self.owner
             || d.manager_root != self.config.state_root
             || d.quadlet_directory != self.config.quadlet_directory
@@ -170,6 +197,35 @@ impl LinuxManagedPlatform {
             .map(Some)
             .ok_or_else(|| platform_error("platform inspection returned no identity"))
     }
+    pub(crate) fn image_identity(image: &str) -> Result<String, ManagedError> {
+        let expected: serde_json::Value = serde_json::from_slice(&Self::podman(&[
+            "image".to_owned(),
+            "inspect".to_owned(),
+            image.to_owned(),
+        ])?)
+        .map_err(platform_error)?;
+        expected
+            .pointer("/0/Id")
+            .and_then(|v| v.as_str())
+            .map(|id| id.strip_prefix("sha256:").unwrap_or(id).to_owned())
+            .ok_or_else(|| platform_error("approved image inspection has no identity"))
+    }
+
+    pub(crate) fn verify_image(value: &serde_json::Value, image: &str) -> Result<(), ManagedError> {
+        let expected = Self::image_identity(image)?;
+        if value
+            .get("Image")
+            .and_then(|v| v.as_str())
+            .map(|id| id.strip_prefix("sha256:").unwrap_or(id))
+            != Some(expected.as_str())
+        {
+            return Err(platform_error(
+                "container uses a different image than the approved exact input",
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn verify_labels(
         value: &serde_json::Value,
         setup: &ApprovedSetup,
@@ -475,6 +531,30 @@ fn resources(d: &Deployment) -> Result<Vec<ManagedResourceView>, ManagedError> {
 }
 
 impl ManagedPlatform for LinuxManagedPlatform {
+    fn recover_verifications(&self) -> Result<(), ManagedError> {
+        protected::recover_verifications(self)
+    }
+
+    fn check_protected_policy(&self, setup: &ApprovedSetup) -> Result<(), ManagedError> {
+        protected::active_policy(self, setup)
+    }
+    fn evaluate_candidate(
+        &self,
+        setup: &ApprovedSetup,
+        evaluation: &milkdrift_workspace::CandidateEvaluation,
+        bytes: &[u8],
+    ) -> Result<Vec<milkdrift_workspace::CandidateCheck>, ManagedError> {
+        protected::evaluate(self, setup, evaluation, bytes)
+    }
+    fn prepare_publication(
+        &self,
+        setup: &ApprovedSetup,
+        evidence: &milkdrift_workspace::CandidateEvaluation,
+        bytes: &[u8],
+        generation: u64,
+    ) -> Result<ApprovedSetup, ManagedError> {
+        protected::prepare(self, setup, evidence, bytes, generation)
+    }
     fn plan(
         &self,
         installation: &ManagedName,
@@ -486,6 +566,12 @@ impl ManagedPlatform for LinuxManagedPlatform {
             return Err(rejected(
                 "exact ownership digest and nonzero generation required",
             ));
+        }
+        if let Some(recipe) = self.protected_recipes.get(&reference.name) {
+            if recipe.reference()? != *reference {
+                return Err(rejected("approved protected recipe differs"));
+            }
+            return protected::plan(self, installation, recipe, ownership, generation);
         }
         let recipe = self
             .recipes
@@ -507,8 +593,9 @@ impl ManagedPlatform for LinuxManagedPlatform {
         };
         let resources = resources(&d)?;
         let mut setup = ApprovedSetup {
+            protection: None,
             recipe: reference.clone(),
-            mechanism: "linux-quadlet-v3".to_owned(),
+            mechanism: "linux-quadlet-v4".to_owned(),
             configuration: BoundedJson::new(serde_json::to_value(&d).map_err(rejected)?)
                 .map_err(rejected)?,
             platform_owner: self.owner.clone(),
@@ -528,6 +615,9 @@ impl ManagedPlatform for LinuxManagedPlatform {
         setup: &ApprovedSetup,
         current: Option<&ApprovedSetup>,
     ) -> Result<Vec<String>, ManagedError> {
+        if setup.protection.is_some() {
+            return protected::diagnose(self, setup);
+        }
         self.diagnose_setup(setup, current)
     }
     fn reconcile(
@@ -535,6 +625,13 @@ impl ManagedPlatform for LinuxManagedPlatform {
         record: &InstallationRecord,
         step: ManagedStep,
     ) -> Result<ManagedObservation, ManagedError> {
+        if record
+            .pending
+            .as_ref()
+            .is_some_and(|p| p.change.candidate.protection.is_some())
+        {
+            return protected::reconcile(self, record, step);
+        }
         let p = record
             .pending
             .as_ref()
@@ -617,6 +714,9 @@ impl ManagedPlatform for LinuxManagedPlatform {
         })
     }
     fn observe(&self, setup: &ApprovedSetup) -> Result<ManagedObservation, ManagedError> {
+        if setup.protection.is_some() {
+            return protected::observe(self, setup);
+        }
         let d = self.check_owner(setup)?;
         self.verify_unit(setup)?;
         let mut running = false;
@@ -670,6 +770,9 @@ impl ManagedPlatform for LinuxManagedPlatform {
         &self,
         setup: &ApprovedSetup,
     ) -> Result<CapabilityExecutionRequirements, ManagedError> {
+        if setup.protection.is_some() {
+            return protected::requirements(self, setup);
+        }
         let d = self.check_owner(setup)?;
         let mut requirements = CapabilityExecutionRequirements::default();
         // These are administrative permissions. Workers use the separately scoped process

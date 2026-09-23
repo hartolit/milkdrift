@@ -108,7 +108,7 @@ fn operation(
     Ok(manager.execute(
         &support::caller()?,
         &ManagedRequest {
-            schema_version: 1,
+            schema_version: milkdrift_capability::managed::MANAGED_SCHEMA_VERSION,
             command: ManagedName::new(key)?,
             installation: name.clone(),
             expected_version: store.managed_installation(name)?.map_or(0, |r| r.version),

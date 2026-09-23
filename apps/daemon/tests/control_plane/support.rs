@@ -501,7 +501,7 @@ pub(super) fn request(
 pub(super) fn blueprint() -> TestResult<serde_json::Value> {
     decode_json(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../crates/blueprint/tests/fixtures/revision-v2.json"
+        "/../../crates/blueprint/tests/fixtures/revision-v3.json"
     )))
     .map_err(Into::into)
 }

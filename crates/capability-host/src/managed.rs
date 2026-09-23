@@ -5,6 +5,7 @@
 //! its later success or uncertainty. Recovery inspects the saved identities, never a matching name.
 
 mod adapter;
+mod protected;
 pub use adapter::{ManagedLifecycleAdapter, managed_lifecycle_descriptor};
 
 use milkdrift_authority::{
@@ -53,6 +54,41 @@ pub enum ManagedError {
 /// Adopted platform mechanism. Implementations validate bounded typed recipe configuration;
 /// raw engine/unit administration never crosses this interface as a worker capability.
 pub trait ManagedPlatform: Send + Sync {
+    /// Fence verifier resources left by an interrupted host before admission opens.
+    /// Retained incomplete evaluations stay unknown and are never rerun by recovery.
+    fn recover_verifications(&self) -> Result<(), ManagedError> {
+        Ok(())
+    }
+
+    /// Recheck active operator policy and verifier implementation immediately before entry.
+    fn check_protected_policy(&self, _setup: &ApprovedSetup) -> Result<(), ManagedError> {
+        Err(rejected(
+            "protected service evaluation is unsupported by this platform",
+        ))
+    }
+    /// Run the separate trusted implementation against the immutable candidate in isolation.
+    fn evaluate_candidate(
+        &self,
+        _setup: &ApprovedSetup,
+        _evaluation: &milkdrift_workspace::CandidateEvaluation,
+        _bytes: &[u8],
+    ) -> Result<Vec<milkdrift_workspace::CandidateCheck>, ManagedError> {
+        Err(rejected(
+            "trusted candidate verification is unsupported by this platform",
+        ))
+    }
+    /// Prepare exact read-only candidate bytes and a new service generation, without starting it.
+    fn prepare_publication(
+        &self,
+        _setup: &ApprovedSetup,
+        _evidence: &milkdrift_workspace::CandidateEvaluation,
+        _bytes: &[u8],
+        _generation: u64,
+    ) -> Result<ApprovedSetup, ManagedError> {
+        Err(rejected(
+            "protected publication is unsupported by this platform",
+        ))
+    }
     /// Compile one exact operator-approved recipe without changing platform resources.
     fn plan(
         &self,
@@ -99,6 +135,7 @@ pub trait ManagedGenerationPublisher: Send + Sync {
 /// Semantic owner. Stores/platforms are supplied by a production composition root.
 pub struct ManagedResources {
     store: Arc<dyn ManagedResourceStore>,
+    artifacts: Option<Arc<dyn milkdrift_persistence::ArtifactStore>>,
     platform: Arc<dyn ManagedPlatform>,
     authority: Arc<dyn AuthorityEvaluator>,
     clock: Arc<dyn BoundaryClock>,
@@ -132,12 +169,23 @@ impl ManagedResources {
     ) -> Self {
         Self {
             store,
+            artifacts: None,
             platform,
             authority,
             clock,
             publisher: None,
             transitions: Mutex::new(BTreeSet::new()),
         }
+    }
+
+    /// Supply the existing artifact owner; protected candidates always require scoped reads.
+    #[must_use]
+    pub fn with_artifacts(
+        mut self,
+        artifacts: Arc<dyn milkdrift_persistence::ArtifactStore>,
+    ) -> Self {
+        self.artifacts = Some(artifacts);
+        self
     }
 
     /// Install the production registry projection before startup recovery.
@@ -179,6 +227,7 @@ impl ManagedResources {
     /// pending. Uncertain transitions remain closed until an authorized recovery request.
     pub fn recover_startup(&self) -> Result<(), ManagedError> {
         self.store.verify_managed_integrity()?;
+        self.platform.recover_verifications()?;
         let mut after = None;
         loop {
             let page = self
@@ -227,7 +276,9 @@ impl ManagedResources {
         }
         let _driver = if matches!(
             request.action,
-            ManagedAction::Inspect {} | ManagedAction::Prepare { .. }
+            ManagedAction::Inspect {}
+                | ManagedAction::Prepare { .. }
+                | ManagedAction::Evidence { .. }
         ) {
             None
         } else {
@@ -300,7 +351,7 @@ impl ManagedResources {
         let generation = record.as_ref().map_or(1, |r| {
             r.generation.saturating_add(u64::from(matches!(
                 request.action,
-                ManagedAction::Update { .. }
+                ManagedAction::Update { .. } | ManagedAction::Publish { .. }
             )))
         });
         let mut candidate = match &request.action {
@@ -319,7 +370,65 @@ impl ManagedResources {
                 .cloned()
                 .ok_or_else(|| ManagedError::Rejected("installation does not exist".to_owned()))?,
         };
+        if let ManagedAction::Publish { evaluation } = &request.action {
+            self.authorize(caller, request, &candidate)?;
+            candidate = self.publication_candidate(
+                caller,
+                request,
+                record.as_ref().ok_or_else(|| rejected("target absent"))?,
+                &candidate,
+                evaluation,
+            )?;
+        }
         let authorization = self.authorize(caller, request, &candidate)?;
+        if let ManagedAction::Evaluate { .. } = &request.action {
+            return self.evaluate_candidate(
+                caller,
+                request,
+                record.as_ref().ok_or_else(|| rejected("target absent"))?,
+                &candidate,
+            );
+        }
+        if let ManagedAction::Evidence { evaluation } = &request.action {
+            return self.evidence_view(
+                request,
+                record.as_ref().ok_or_else(|| rejected("target absent"))?,
+                evaluation,
+            );
+        }
+        if let Some(protected) = &candidate.protection {
+            if matches!(
+                request.action,
+                ManagedAction::Apply { .. }
+                    | ManagedAction::Start {}
+                    | ManagedAction::Recover {}
+                    | ManagedAction::Publish { .. }
+            ) {
+                self.platform.check_protected_policy(&candidate)?;
+            }
+            if matches!(request.action, ManagedAction::Update { .. }) {
+                return Err(rejected(
+                    "protected target changes require a distinct agreement/installation",
+                ));
+            }
+            if matches!(request.action, ManagedAction::Start {})
+                || (matches!(request.action, ManagedAction::Recover {})
+                    && record
+                        .as_ref()
+                        .and_then(|r| r.pending.as_ref())
+                        .is_some_and(|p| p.change.running))
+            {
+                let evidence = protected
+                    .evidence
+                    .as_ref()
+                    .ok_or_else(|| rejected("protected target has no accepted candidate"))?;
+                protected
+                    .policy
+                    .require_pass(evidence, self.clock.now().map_err(rejected)?.get())
+                    .map_err(rejected)?;
+            }
+        }
+
         if matches!(request.action, ManagedAction::Inspect {}) {
             let record = record
                 .ok_or_else(|| ManagedError::Rejected("installation does not exist".to_owned()))?;
@@ -353,6 +462,8 @@ impl ManagedResources {
                 Err(error) => ("unprepared", vec![bounded(&error.to_string())]),
             };
             return Ok(ManagedResponse {
+                accepted_evaluation: None,
+                evaluation: None,
                 schema_version: MANAGED_SCHEMA_VERSION,
                 installation: request.installation.clone(),
                 version: record.as_ref().map_or(0, |r| r.version),
@@ -441,7 +552,18 @@ impl ManagedResources {
                     ManagedStep::StartService,
                     ManagedStep::Verify,
                 ],
-                owns_service,
+                owns_service && candidate.protection.is_none(),
+            ),
+            ManagedAction::Publish { .. } => (
+                vec![
+                    ManagedStep::Prerequisites,
+                    ManagedStep::StopService,
+                    ManagedStep::RemoveConfiguration,
+                    ManagedStep::Configure,
+                    ManagedStep::StartService,
+                    ManagedStep::Verify,
+                ],
+                true,
             ),
             ManagedAction::Update {
                 allow_interruption, ..
@@ -526,6 +648,7 @@ impl ManagedResources {
             }
         }
         let change = ManagedChange {
+            entry_authorization: Some(authorization.clone()),
             identity: digest(
                 &serde_json::to_string(&(caller.actor.clone(), request)).map_err(rejected)?,
             ),
@@ -553,7 +676,9 @@ impl ManagedResources {
         let mut authority = caller.clone();
         authority.operation = if matches!(
             request.action,
-            ManagedAction::Prepare { .. } | ManagedAction::Inspect {}
+            ManagedAction::Prepare { .. }
+                | ManagedAction::Inspect {}
+                | ManagedAction::Evidence { .. }
         ) {
             AuthorityOperation::InspectCapabilityHealth
         } else {
@@ -573,7 +698,9 @@ impl ManagedResources {
             Some(OperationId::new(request.operation()).map_err(rejected)?);
         authority.resources.side_effect = if matches!(
             request.action,
-            ManagedAction::Prepare { .. } | ManagedAction::Inspect {}
+            ManagedAction::Prepare { .. }
+                | ManagedAction::Inspect {}
+                | ManagedAction::Evidence { .. }
         ) {
             SideEffectClass::ReadOnly
         } else {
@@ -583,7 +710,9 @@ impl ManagedResources {
         authority.resources.filesystem = requirements.filesystem;
         if matches!(
             request.action,
-            ManagedAction::Prepare { .. } | ManagedAction::Inspect {}
+            ManagedAction::Prepare { .. }
+                | ManagedAction::Inspect {}
+                | ManagedAction::Evidence { .. }
         ) {
             authority.resources.filesystem = authority
                 .resources
@@ -629,6 +758,50 @@ impl ManagedResources {
                 .steps
                 .get(index as usize)
                 .ok_or_else(|| ManagedError::Conflict("invalid transition step".to_owned()))?;
+            if let Some(protected) = &pending.change.candidate.protection
+                && matches!(step, ManagedStep::Configure | ManagedStep::StartService)
+                && pending.change.running
+            {
+                let checked = (|| {
+                    self.platform
+                        .check_protected_policy(&pending.change.candidate)?;
+                    let evidence = protected
+                        .evidence
+                        .as_ref()
+                        .ok_or_else(|| rejected("protected start requires candidate evidence"))?;
+                    let now = self.clock.now().map_err(rejected)?.get();
+                    protected
+                        .policy
+                        .require_pass(evidence, now)
+                        .map_err(rejected)?;
+                    let mut request = pending
+                        .change
+                        .entry_authorization
+                        .as_ref()
+                        .ok_or_else(|| rejected("protected entry authority absent"))?
+                        .request()
+                        .clone();
+                    request.evaluated_at = BoundaryTimeMillis::new(now);
+                    if !self
+                        .authority
+                        .evaluate(&request)
+                        .map_err(rejected)?
+                        .is_allowed()
+                    {
+                        return Err(ManagedError::Unauthorized);
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = checked {
+                    self.store.fail_managed_change(
+                        &record.name,
+                        &identity,
+                        index,
+                        &bounded(&error.to_string()),
+                    )?;
+                    return Ok(());
+                }
+            }
             match self.platform.reconcile(&record, step) {
                 Ok(observation) => {
                     record = self.store.advance_managed_change(

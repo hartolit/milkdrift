@@ -33,6 +33,11 @@ use super::model::{
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 #[allow(clippy::large_enum_variant)] // Durable facts remain direct typed schema fields.
 pub enum RunEventKind {
+    /// An immutable outer agreement was accepted or inherited before this scope started.
+    AgreementAccepted {
+        /// Exact originating agreement, carried unchanged through descendants and restart.
+        binding: crate::AcceptedAgreement,
+    },
     /// A run aggregate was created and pinned to an exact revision.
     RunCreated {
         /// Workflow lineage.

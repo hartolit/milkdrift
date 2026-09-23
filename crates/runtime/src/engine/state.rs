@@ -271,7 +271,29 @@ impl RuntimeService {
         let revision = projection
             .revision()
             .ok_or_else(|| RuntimeError::InvalidHistory("run has no pinned revision".to_owned()))?;
-        self.load_validated_revision(revision, projection.workflow())
+        let current = self.load_validated_revision(revision, projection.workflow())?;
+        if !projection.lifecycle().is_pending() {
+            if let Some(binding) = projection.accepted_agreement() {
+                let origin = self.load_validated_revision(binding.origin_revision(), None)?;
+                if origin
+                    .semantic()
+                    .agreement()
+                    .map(|agreement| agreement.digest())
+                    != Some(binding.agreement_digest())
+                    || (projection.run_id() == Some(binding.origin_run())
+                        && current.semantic().agreement() != origin.semantic().agreement())
+                {
+                    return Err(RuntimeError::InvalidHistory(
+                        "accepted agreement binding differs from immutable definition".to_owned(),
+                    ));
+                }
+            } else if current.semantic().agreement().is_some() {
+                return Err(RuntimeError::InvalidHistory(
+                    "governed run has no accepted agreement binding".to_owned(),
+                ));
+            }
+        }
+        Ok(current)
     }
 
     pub(super) fn revision_for_execution(

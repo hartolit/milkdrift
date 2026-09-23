@@ -119,7 +119,7 @@ The [maintained inputs](../../examples/managed-linux/README.md) show complete se
 Use host-appropriate limits; fixture and example values do not establish model memory requirements.
 
 Recipe schema 1 and `linux-quadlet-v1/v2` deployments are unsupported by this correction. Schema 2
-and mechanism `linux-quadlet-v3` bind the separate limits, alias and initialization semantics into
+and mechanism `linux-quadlet-v4` bind the separate limits, alias and initialization semantics into
 new approvals. Daemon configuration remains version 12 and portable inventory remains version 1.
 Do not edit saved inventory or reinterpret an old approval. Before upgrading an active older
 installation, use its matching binary to inspect, preserve and remove it; retain its labeled volumes
@@ -321,3 +321,53 @@ The installed 6.1.2 Quadlet and container manuals and generator were checked aga
 Podman 6's generated name-based removal is deliberately replaced by the ID-bound drop-in.
 The adapter accepts 5.4..6.x and checks realized mappings, limits and generated/effective definitions;
 other major versions require mechanism review. The executed host qualification is specifically 6.1.2.
+
+
+## Protected application candidates
+
+Use a `protected_service` recipe when served application bytes must satisfy fixed checks before
+activation. This distinct schema-1 recipe pins an image/interpreter, kernel limits, application
+configuration, credential digest, trusted verifier source/native runtime and version-1 effect policy.
+The policy fixes the producer, check names, maximum candidate bytes and validity interval. It is
+committed by the blueprint agreement. Operator files stay outside the editable worker's mounts.
+The [adaptive Slotbook example](../../examples/adaptive-slotbook/README.md) generates complete input
+files and runs the supported authoring, failure, repair, verification, publication and reopen path.
+
+Initial `resource apply` creates an empty protected target without starting application code.
+`resource evaluate` reads an exact authorized artifact and records incomplete evidence before
+running the configured verifier. `resource evidence` returns the durable observation; the acceptance
+receipt itself remains the original incomplete record for exact replay. `resource publish` consumes
+only trusted passing evidence for the current target generation and publishes those immutable bytes.
+`resource inspect` exposes `accepted_evaluation` after installation; use that identity with the
+evidence command to inspect candidate/configuration/check applicability. A receipt accepts an intent;
+verify `pending`, `desired_running` and `observed_running` before claiming deployment completion.
+
+Raw start requires an accepted unexpired candidate; update cannot replace a protected policy or
+candidate. Stop, preservation and removal retain their existing meanings. After an uncertain effect,
+inspect and explicitly recover the saved intent with current authority; exact replay never initiates
+new work. A changed policy, verifier, credential, candidate, target or generation requires new evidence
+or a distinct approved target. An expired evaluation cannot authorize new controlled entry. Systemd
+can restart the already accepted immutable generation with the same data; this does not erase old
+failures or manufacture a new acceptance.
+
+Protected preparation, evaluation and publication use the same supported Podman-version, delegated
+CPU/memory/pids controller, private UID/GID mapping and persistent-user-session checks as the other
+managed services. The protected service and its verifier need two simultaneous private namespaces.
+
+Verification scratch belongs to each accepted evaluation request. A new authorized request may
+reevaluate the same immutable candidate and target generation; this permits renewal after expiry
+without changing bytes or replacing the old observation. Exact replay still returns its original
+receipt. The Linux owner removes the evaluation's exact labeled container after verifier completion
+or timeout, and fences leftovers before startup opens admission. Cleanup failure retains an unknown
+result. Known refusals before an accepted managed intent produce a rejected invocation with their reason.
+Failures after an accepted intent preserve uncertainty. The configured `verification_timeout_ms`
+bounds the verifier process; fencing uses the
+separate bounded administrative-helper timeout. Preserved scratch remains available for inspection.
+Both bare image IDs and registry-qualified digest references resolve through Podman's local image
+identity; verification and service observation compare the actual container against that identity.
+
+Managed worker schema 2 supports `stdout_artifact: true` in `command`. On successful execution it
+publishes raw bounded stdout separately from `worker_result`. The raw artifact is suitable for an
+immutable source candidate; it is not trusted verification evidence. Mechanism `linux-quadlet-v4`
+binds this contract, and older worker mechanisms require a new installation rather than silent reuse.
+The worker's normal output cap applies to both capture and admission accounting.

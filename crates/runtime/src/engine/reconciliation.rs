@@ -17,6 +17,40 @@ use milkdrift_persistence::{
 use milkdrift_workspace::RunId;
 
 impl RuntimeService {
+    fn check_inherited_agreement_adaptation(
+        &self,
+        projection: &RunProjection,
+    ) -> Result<(), RuntimeError> {
+        if let Some(binding) = projection.accepted_agreement() {
+            if projection.run_id() != Some(binding.origin_run()) {
+                return Err(RuntimeError::Reconciliation(
+                    "a governed enclosing method pins child work; adaptation must occur in its declared task region".to_owned(),
+                ));
+            }
+            let accepted = self.load_validated_revision(binding.origin_revision(), None)?;
+            if accepted.semantic().agreement().map(|a| a.digest())
+                != Some(binding.agreement_digest())
+            {
+                return Err(RuntimeError::InvalidHistory(
+                    "accepted agreement definition differs".to_owned(),
+                ));
+            }
+            if accepted.semantic().agreement().is_some_and(|agreement| {
+                projection.agreement_adoptions() >= agreement.scope().maximum_revisions()
+            }) {
+                return Err(RuntimeError::Reconciliation(
+                    "accepted agreement adaptation budget exhausted".to_owned(),
+                ));
+            }
+            milkdrift_blueprint::validate_agreement_adoption(
+                &accepted,
+                &self.current_revision(projection)?,
+            )
+            .map_err(|error| RuntimeError::Reconciliation(error.to_string()))?;
+        }
+        Ok(())
+    }
+
     pub(super) fn plan_revision_adoption(
         &self,
         projection: &RunProjection,
@@ -34,11 +68,14 @@ impl RuntimeService {
                     .to_owned(),
             ));
         }
+        self.check_inherited_agreement_adaptation(projection)?;
         let old = self.current_revision(projection)?;
         let workflow = projection
             .workflow()
             .ok_or_else(|| RuntimeError::InvalidHistory("run has no workflow".to_owned()))?;
         let new = self.load_validated_revision(requested_revision, Some(workflow))?;
+        milkdrift_blueprint::validate_agreement_adoption(&old, &new)
+            .map_err(|error| RuntimeError::Reconciliation(error.to_string()))?;
         let history = reconciliation_history(projection, &old, &new)?;
         let plan_id = self.next_plan_id()?;
         let plan = plan_reconciliation(
@@ -176,7 +213,13 @@ impl RuntimeService {
                 }
             },
         )?;
+        self.check_inherited_agreement_adaptation(projection)?;
         let next = self.load_validated_revision(plan_view.to_revision(), projection.workflow())?;
+        milkdrift_blueprint::validate_agreement_adoption(
+            &self.current_revision(projection)?,
+            &next,
+        )
+        .map_err(|error| RuntimeError::Reconciliation(error.to_string()))?;
         let mut result = CommandPlan::default();
         for item in plan_view.items() {
             match item.action {

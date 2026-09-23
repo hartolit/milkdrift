@@ -40,16 +40,7 @@ fn verify_controllers(info: &serde_json::Value) -> Result<(), ManagedError> {
     Ok(())
 }
 
-fn verify_subordinate_ids(
-    info: &serde_json::Value,
-    service: &ModelService,
-) -> Result<(), ManagedError> {
-    // The owned model and a worker need separate simultaneous auto user namespaces.
-    let required = if matches!(service, ModelService::Owned { .. }) {
-        2
-    } else {
-        1
-    };
+fn verify_subordinate_ids(info: &serde_json::Value, required: u64) -> Result<(), ManagedError> {
     for mapping in ["/host/idMappings/uidmap", "/host/idMappings/gidmap"] {
         if !info
             .pointer(mapping)
@@ -69,7 +60,7 @@ fn verify_subordinate_ids(
             })
         {
             return Err(rejected(
-                "rootless setup requires 65536 subordinate UIDs/GIDs per simultaneous worker and owned service",
+                "rootless setup requires 65536 subordinate UIDs/GIDs per simultaneous isolated container",
             ));
         }
     }
@@ -115,22 +106,13 @@ fn verify_model(
 }
 
 impl LinuxManagedPlatform {
-    pub(super) fn diagnose_setup(
-        &self,
-        setup: &ApprovedSetup,
-        replacing: Option<&ApprovedSetup>,
-    ) -> Result<Vec<String>, ManagedError> {
-        let d = self.check_owner(setup)?;
-        #[cfg(target_os = "linux")]
-        {
-            let page_size = rustix::param::page_size() as u64;
-            d.recipe
-                .worker_limits
-                .validate_page_alignment(page_size, "worker_limits")?;
-            if let ModelService::Owned { limits, .. } = &d.recipe.model_service {
-                limits.validate_page_alignment(page_size, "model_service.limits")?;
-            }
-        }
+    /// Shared prerequisites for all managed containers; resource-specific inputs stay with their recipe.
+    pub(super) fn diagnose_host(
+        simultaneous_containers: u64,
+        persistent_service: bool,
+    ) -> Result<String, ManagedError> {
+        #[cfg(not(target_os = "linux"))]
+        let _ = persistent_service;
         let bytes = Self::podman(&["info".to_owned(), "--format=json".to_owned()])?;
         let info: serde_json::Value = serde_json::from_slice(&bytes).map_err(platform_error)?;
         let version = info
@@ -152,9 +134,9 @@ impl LinuxManagedPlatform {
         }
         verify_controllers(&info)?;
         Self::systemctl(&["show-environment".to_owned()])?;
-        verify_subordinate_ids(&info, &d.recipe.model_service)?;
+        verify_subordinate_ids(&info, simultaneous_containers)?;
         #[cfg(target_os = "linux")]
-        if matches!(d.recipe.model_service, ModelService::Owned { .. }) {
+        if persistent_service {
             let lingering = command::checked(
                 "/usr/bin/loginctl",
                 &[
@@ -170,6 +152,28 @@ impl LinuxManagedPlatform {
                 ));
             }
         }
+        Ok(version.to_owned())
+    }
+
+    pub(super) fn diagnose_setup(
+        &self,
+        setup: &ApprovedSetup,
+        replacing: Option<&ApprovedSetup>,
+    ) -> Result<Vec<String>, ManagedError> {
+        let d = self.check_owner(setup)?;
+        #[cfg(target_os = "linux")]
+        {
+            let page_size = rustix::param::page_size() as u64;
+            d.recipe
+                .worker_limits
+                .validate_page_alignment(page_size, "worker_limits")?;
+            if let ModelService::Owned { limits, .. } = &d.recipe.model_service {
+                limits.validate_page_alignment(page_size, "model_service.limits")?;
+            }
+        }
+        let persistent_service = matches!(d.recipe.model_service, ModelService::Owned { .. });
+        let version =
+            Self::diagnose_host(if persistent_service { 2 } else { 1 }, persistent_service)?;
         let memory = bounded_text("/proc/meminfo")?
             .lines()
             .find_map(|line| {

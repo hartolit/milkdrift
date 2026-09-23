@@ -162,7 +162,7 @@ them. Unknown root components, links/reparse points and special files are refuse
 Keep configuration, secret-source files and unrelated directories outside this data-root policy.
 Backup never fetches referenced external files or resolves credentials.
 
-Only physical schema 13 and internal document format 18 are supported by the
+Only physical schema 14 and internal document format 19 are supported by the
 [current readers](../product/status.md), including offline. For other formats, preserve the untouched
 root and its producer binary/source; inspection requires matching offline readers, which this
 command does not supply. No migration, schema-marker patching, row editing or automatic repair occurs.

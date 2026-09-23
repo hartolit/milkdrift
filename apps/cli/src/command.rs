@@ -66,6 +66,9 @@ impl Cli {
                 DaemonCommand::Authority => "daemon.authority",
             },
             TopCommand::Blueprint { command } => match command {
+                BlueprintCommand::Govern { .. } => "blueprint.govern",
+                BlueprintCommand::Create { .. } => "blueprint.create",
+                BlueprintCommand::EffectPolicy { .. } => "blueprint.effect-policy",
                 BlueprintCommand::Validate { .. } => "blueprint.validate",
                 BlueprintCommand::Import { .. } => "blueprint.import",
                 BlueprintCommand::Show { .. } => "blueprint.show",
@@ -129,6 +132,7 @@ impl Cli {
             TopCommand::Artifact { command } => match command {
                 ArtifactCommand::Upload { .. } => "artifact.upload",
                 ArtifactCommand::Metadata { .. } => "artifact.metadata",
+                ArtifactCommand::Digest { .. } => "artifact.digest",
                 ArtifactCommand::Get { .. } => "artifact.get",
             },
             TopCommand::Layout { command } => match command {
@@ -140,6 +144,26 @@ impl Cli {
 }
 
 pub(crate) async fn execute(cli: Cli) -> Result<(), CliError> {
+    if let TopCommand::Artifact {
+        command: crate::ArtifactCommand::Digest { file },
+    } = &cli.command
+    {
+        let bytes = crate::input::read_bounded(file, 16_777_216, "candidate or verifier").await?;
+        return crate::output::success(
+            &cli,
+            "artifact.digest",
+            &serde_json::json!({"digest":blake3::hash(&bytes).to_hex().to_string(),"size":bytes.len()}),
+        );
+    }
+    if let TopCommand::Blueprint {
+        command:
+            crate::BlueprintCommand::Govern { .. }
+            | crate::BlueprintCommand::Create { .. }
+            | crate::BlueprintCommand::EffectPolicy { .. },
+    } = &cli.command
+    {
+        return blueprint::author(&cli).await;
+    }
     if cli.json
         && matches!(
             &cli.command,

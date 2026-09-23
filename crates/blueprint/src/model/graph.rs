@@ -98,6 +98,7 @@ pub struct SemanticBlueprint {
     interface: WorkflowInterface,
     nodes: BTreeMap<NodeId, Node>,
     edges: BTreeMap<EdgeId, Edge>,
+    agreement: Option<crate::GoverningAgreement>,
 }
 
 impl SemanticBlueprint {
@@ -112,6 +113,7 @@ impl SemanticBlueprint {
             interface: WorkflowInterface::new([], [])?,
             nodes: BTreeMap::new(),
             edges: BTreeMap::new(),
+            agreement: None,
         })
     }
 
@@ -122,6 +124,7 @@ impl SemanticBlueprint {
         interface: WorkflowInterface,
         nodes: BTreeMap<NodeId, Node>,
         edges: BTreeMap<EdgeId, Edge>,
+        agreement: Option<crate::GoverningAgreement>,
     ) -> Self {
         Self {
             workflow,
@@ -130,6 +133,7 @@ impl SemanticBlueprint {
             interface,
             nodes,
             edges,
+            agreement,
         }
     }
 
@@ -167,6 +171,16 @@ impl SemanticBlueprint {
     #[must_use]
     pub const fn edges(&self) -> &BTreeMap<EdgeId, Edge> {
         &self.edges
+    }
+
+    /// Immutable enclosing agreement, independent of editable task definitions.
+    #[must_use]
+    pub const fn agreement(&self) -> Option<&crate::GoverningAgreement> {
+        self.agreement.as_ref()
+    }
+
+    pub(crate) fn set_agreement(&mut self, agreement: Option<crate::GoverningAgreement>) {
+        self.agreement = agreement;
     }
 
     pub(crate) fn nodes_mut(&mut self) -> &mut BTreeMap<NodeId, Node> {
