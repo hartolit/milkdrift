@@ -121,7 +121,7 @@ fn persist_rejection(
     }
 }
 
-fn command_fingerprint(
+pub(super) fn command_fingerprint(
     session: &ActorSession,
     request: &CommandRequest,
 ) -> Result<IntegrityDigest, PublicFailure> {
@@ -278,7 +278,11 @@ fn command_run_identity(command: &Command) -> Option<&str> {
         | Command::ContinueController { run_id, .. }
         | Command::DecideProposal { run_id, .. }
         | Command::ApplyProposal { run_id, .. } => Some(run_id),
-        Command::ImportBlueprint { .. }
+        Command::PublishMethod { .. }
+        | Command::InspectMethod { .. }
+        | Command::ListMethods { .. }
+        | Command::RetireMethod { .. }
+        | Command::ImportBlueprint { .. }
         | Command::ValidateBlueprint { .. }
         | Command::ImportPromptSequence { .. }
         | Command::ValidatePromptSequence { .. }

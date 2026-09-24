@@ -112,6 +112,27 @@ pub(super) fn validate_record(record: &PeerExecutionRecord) -> Result<(), Persis
         .request
         .validate()
         .map_err(|cause| corruption(format!("stored peer request is invalid: {cause}")))?;
+    if let Some(plan) = &record.published_invocation {
+        plan.validate()?;
+        if plan.source
+            != (milkdrift_persistence::published::PublishedInvocationSource::Serving {
+                caller: record.caller.clone(),
+                execution: record.execution.clone(),
+            })
+            || plan.invocation != record.managed_invocation()?
+            || plan.capability != *record.request.selection.capability()
+            || plan.generation != record.request.selection.descriptor_revision()
+            || plan.request.inputs() != record.request.request.inputs()
+            || record.phase.entry_evidence().is_none()
+                && !matches!(record.phase, PeerExecutionPhase::Terminal { .. })
+        {
+            return Err(corruption(
+                "published serving link differs from accepted operation",
+            ));
+        }
+    } else if matches!(record.phase, PeerExecutionPhase::AwaitingWorkflow { .. }) {
+        return Err(corruption("pending published operation has no association"));
+    }
     if record.schema_version != SERVING_EXECUTION_RECORD_SCHEMA_VERSION
         || record.relationship_generation == 0
         || record.acceptance_sequence == 0
@@ -119,6 +140,8 @@ pub(super) fn validate_record(record: &PeerExecutionRecord) -> Result<(), Persis
         || record.revision == 0
         || u64::from(record.accounting.observations) != record.last_observation_sequence
         || record.last_observation_sequence > u64::from(record.request.limits.observations)
+        || record.accounting.outputs > 256
+        || record.accounting.outputs > record.accounting.observations
         || record.accounting.artifact_bytes > record.request.limits.artifact_bytes
         || (record.accounting.artifact_bytes
             < record
@@ -161,6 +184,43 @@ pub(super) fn validate_record(record: &PeerExecutionRecord) -> Result<(), Persis
 pub(super) fn validate_tombstone(
     tombstone: &PeerExecutionTombstone,
 ) -> Result<(), PersistenceError> {
+    if let Some(plan) = &tombstone.published_invocation {
+        plan.validate()?;
+        if plan.source
+            != (milkdrift_persistence::published::PublishedInvocationSource::Serving {
+                caller: tombstone.caller.clone(),
+                execution: tombstone.execution.clone(),
+            })
+            || plan.invocation != tombstone.managed_invocation()?
+            || plan.capability != tombstone.capability
+            || plan.generation != tombstone.capability_generation
+        {
+            return Err(corruption(
+                "archived published operation lost exact linkage",
+            ));
+        }
+    }
+    if tombstone.output_observations.len() != tombstone.accounting.outputs as usize
+        || tombstone.output_observations.len() > 256
+    {
+        return Err(corruption(
+            "archived output manifest contradicts its bounded accounting",
+        ));
+    }
+    let mut prior = 0;
+    for output in &tombstone.output_observations {
+        output
+            .validate()
+            .map_err(|error| corruption(error.to_string()))?;
+        if output.execution != tombstone.execution
+            || output.sequence <= prior
+            || output.sequence > tombstone.last_observation_sequence
+            || output.event.kind().output().is_none()
+        {
+            return Err(corruption("archived output identity or order is invalid"));
+        }
+        prior = output.sequence;
+    }
     if tombstone.caller != tombstone.authorization.caller()
         || &tombstone.authority.actor != tombstone.authorization.actor()
     {

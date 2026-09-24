@@ -93,6 +93,11 @@ pub(super) fn public_run(
     )
     .unwrap_or(u32::MAX);
     Ok(RunRead {
+        published_source: value
+            .published_source
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|_| internal())?,
         governing_agreement: value
             .governing_agreement
             .map(serde_json::to_value)
@@ -284,6 +289,13 @@ pub(super) fn public_attempt_usage(
     usage: &milkdrift_persistence::AttemptUsage,
 ) -> milkdrift_control_protocol::AttemptUsageRead {
     milkdrift_control_protocol::AttemptUsageRead {
+        nested_work: usage.nested_work.map(|nested| {
+            milkdrift_control_protocol::NestedWorkUsageRead {
+                process_admissions: nested.invocations().process(),
+                model_admissions: nested.invocations().model(),
+                artifact_bytes: nested.artifact_bytes(),
+            }
+        }),
         input_units: usage.input_units,
         output_units: usage.output_units,
         duration_ms: usage.duration_ms,

@@ -28,6 +28,7 @@ mod event;
 mod identity;
 mod journal;
 mod peer;
+pub mod published;
 mod revision;
 mod snapshot;
 
@@ -69,7 +70,8 @@ pub use controller_account::{
 };
 pub use document::{
     MAX_EVENT_DOCUMENT_BYTES, RUN_EVENT_SCHEMA_VERSION_V1, RUN_EVENT_SCHEMA_VERSION_V2,
-    RUN_EVENT_SCHEMA_VERSION_V3, RUN_EVENT_SCHEMA_VERSION_V4, RunEventEnvelope,
+    RUN_EVENT_SCHEMA_VERSION_V3, RUN_EVENT_SCHEMA_VERSION_V4, RUN_EVENT_SCHEMA_VERSION_V5,
+    RunEventEnvelope,
 };
 pub use error::{PersistenceError, StorageFailureClass};
 pub use event::{

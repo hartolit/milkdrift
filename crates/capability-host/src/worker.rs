@@ -498,7 +498,8 @@ fn cancellation_worker(
 fn execute_contained(runtime: &RuntimeService, action: EffectAction, shared: &WorkerShared) {
     match catch_unwind(AssertUnwindSafe(|| runtime.execute_effect(action))) {
         Ok(Ok(
-            EffectExecutionResult::Completed { .. }
+            EffectExecutionResult::Pending
+            | EffectExecutionResult::Completed { .. }
             | EffectExecutionResult::Uncertain { .. }
             | EffectExecutionResult::CancellationAcknowledged
             | EffectExecutionResult::CancellationDeferred,

@@ -131,6 +131,7 @@ async fn direct_process_upload_replay_and_restart_have_no_workflow_records() -> 
             BTreeMap::new(),
         )?,
         limits: milkdrift_peer_protocol::ExecutionLimits {
+            nested_invocations: None,
             artifact_bytes: 4096,
             duration_ms: 3000,
             cost_micros: 0,

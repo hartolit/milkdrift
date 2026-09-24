@@ -137,6 +137,7 @@ pub(super) fn verify(store: &RedbStore) -> Result<(), PersistenceError> {
             return Err(corruption("peer hot record request index is inconsistent"));
         }
         let mut recomputed_digest = observation_genesis_digest();
+        let mut outputs = 0;
         observation_count = observation_count
             .checked_add(record.last_observation_sequence)
             .ok_or_else(|| corruption("peer integrity observation count overflowed"))?;
@@ -157,6 +158,7 @@ pub(super) fn verify(store: &RedbStore) -> Result<(), PersistenceError> {
                 .map_err(error::redb)?;
             match (observation.event.kind().output(), stored_artifact) {
                 (Some((_name, expected)), Some(stored)) => {
+                    outputs += 1;
                     let stored: milkdrift_capability::ArtifactReference =
                         json::decode(stored.value(), "peer observation artifact")?;
                     if stored != *expected {
@@ -178,6 +180,11 @@ pub(super) fn verify(store: &RedbStore) -> Result<(), PersistenceError> {
             }
             recomputed_digest = observation_link_digest(&recomputed_digest, stored.value())?;
         }
+        if outputs != record.accounting.outputs {
+            return Err(corruption(
+                "peer output count differs from retained observations",
+            ));
+        }
         if recomputed_digest != record.observation_digest {
             return Err(corruption(
                 "peer observation history digest is inconsistent",
@@ -190,6 +197,14 @@ pub(super) fn verify(store: &RedbStore) -> Result<(), PersistenceError> {
                 .ok_or_else(|| corruption("peer integrity per-peer count overflowed"))?;
         }
         match &record.phase {
+            PeerExecutionPhase::AwaitingWorkflow { .. }
+            | PeerExecutionPhase::CancellationRequested {
+                claim: None,
+                evidence: Some(_),
+            } if record.published_invocation.is_some() => {}
+            PeerExecutionPhase::AwaitingWorkflow { .. } => {
+                return Err(corruption("pending workflow has no saved association"));
+            }
             PeerExecutionPhase::DispatchAvailable { .. }
             | PeerExecutionPhase::CancellationRequested {
                 claim: None,

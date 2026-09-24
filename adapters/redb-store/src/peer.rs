@@ -86,6 +86,38 @@ fn bind_host_in_transaction(
 }
 
 impl PeerExecutionStore for RedbStore {
+    fn published_serving_page(
+        &self,
+        after: Option<&PeerExecutionId>,
+        limit: milkdrift_persistence::PageSize,
+    ) -> Result<(Vec<PeerExecutionRecord>, Option<PeerExecutionId>), PersistenceError> {
+        let read = self.database().begin_read().map_err(error::redb)?;
+        let table = read
+            .open_table(crate::schema::PEER_EXECUTIONS)
+            .map_err(error::redb)?;
+        let range = match after {
+            Some(after) => table.range::<&str>((
+                std::ops::Bound::Excluded(after.as_str()),
+                std::ops::Bound::Unbounded,
+            )),
+            None => table.range::<&str>(..),
+        }
+        .map_err(error::redb)?;
+        let mut result = Vec::new();
+        let mut last = None;
+        let mut count = 0;
+        for row in range.take(limit.get() as usize) {
+            let (_, bytes) = row.map_err(error::redb)?;
+            let record = decode_record(bytes.value())?;
+            count += 1;
+            last = Some(record.execution.clone());
+            if record.published_invocation.is_some() && record.phase.is_active() {
+                result.push(record);
+            }
+        }
+        Ok((result, if count == limit.get() { last } else { None }))
+    }
+
     fn bind_serving_host(
         &self,
         host: &milkdrift_capability::PeerId,
@@ -395,6 +427,7 @@ impl PeerExecutionStore for RedbStore {
             .checked_add(1)
             .ok_or_else(|| corruption("per-peer accounting revision overflowed"))?;
         let record = PeerExecutionRecord {
+            published_invocation: None,
             schema_version: SERVING_EXECUTION_RECORD_SCHEMA_VERSION,
             caller: admission.caller.clone(),
             relationship_generation: admission.relationship_generation,
@@ -591,17 +624,18 @@ impl PeerExecutionStore for RedbStore {
             });
         }
         let is_terminal = observation.event.kind().terminal().is_some();
-        let phase_allows = match &record.phase {
-            PeerExecutionPhase::Entered { .. } => true,
-            PeerExecutionPhase::CancellationRequested { evidence, .. } => {
-                evidence.is_some() || is_terminal
-            }
-            PeerExecutionPhase::DispatchClaimed { .. } => is_terminal,
-            PeerExecutionPhase::Uncertain { .. } => true,
-            PeerExecutionPhase::DispatchAvailable { .. } | PeerExecutionPhase::Terminal { .. } => {
-                false
-            }
-        };
+        let phase_allows =
+            match &record.phase {
+                PeerExecutionPhase::Entered { .. }
+                | PeerExecutionPhase::AwaitingWorkflow { .. } => true,
+                PeerExecutionPhase::CancellationRequested { evidence, .. } => {
+                    evidence.is_some() || is_terminal
+                }
+                PeerExecutionPhase::DispatchClaimed { .. } => is_terminal,
+                PeerExecutionPhase::Uncertain { .. } => true,
+                PeerExecutionPhase::DispatchAvailable { .. }
+                | PeerExecutionPhase::Terminal { .. } => false,
+            };
         if !phase_allows {
             return Err(PersistenceError::ImmutableConflict {
                 entity: "peer_execution_phase",
@@ -634,6 +668,17 @@ impl PeerExecutionStore for RedbStore {
                     .to_owned(),
             });
         }
+        if output_size.is_some() {
+            record.accounting.outputs = record
+                .accounting
+                .outputs
+                .checked_add(1)
+                .filter(|count| *count <= 256)
+                .ok_or_else(|| PersistenceError::Bounds {
+                    location: "peer_output_manifest",
+                    reason: "accepted execution already retains 256 named outputs".to_owned(),
+                })?;
+        }
         let key = observation_key(execution, observation.sequence)?;
         let bytes = json::encode(observation, "peer observation")?;
         let replaced = {
@@ -665,6 +710,19 @@ impl PeerExecutionStore for RedbStore {
         if let Some(terminal) = observation.event.kind().terminal()
             && let Some(usage) = terminal.usage()
         {
+            if !record.request.limits.permits_usage(usage)
+                || usage.nested_work().is_some_and(|nested| {
+                    record
+                        .accounting
+                        .artifact_bytes
+                        .checked_add(nested.artifact_bytes())
+                        .is_none_or(|bytes| bytes > record.request.limits.artifact_bytes)
+                })
+            {
+                return Err(PersistenceError::InvalidDocument(
+                    "terminal usage exceeds the accepted serving allowance".to_owned(),
+                ));
+            }
             record.accounting.duration_ms = usage.duration_ms();
             record.accounting.cost_micros = usage.cost_micros();
         }
@@ -766,6 +824,12 @@ impl PeerExecutionStore for RedbStore {
                 Some(PeerExecutionPhase::CancellationRequested {
                     claim: None,
                     evidence: None,
+                })
+            }
+            PeerExecutionPhase::AwaitingWorkflow { evidence } => {
+                Some(PeerExecutionPhase::CancellationRequested {
+                    claim: None,
+                    evidence: Some(evidence.clone()),
                 })
             }
             PeerExecutionPhase::Entered { claim, evidence } => {

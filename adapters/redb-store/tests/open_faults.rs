@@ -87,7 +87,7 @@ fn a_multimap_only_database_is_not_reinitialized() -> Result<(), Box<dyn std::er
 #[test]
 fn older_and_future_internal_document_formats_are_refused_without_migration()
 -> Result<(), Box<dyn std::error::Error>> {
-    for found in [16, 17, 18, 20] {
+    for found in [16, 17, 18, 19, 21] {
         let directory = TempDir::new()?;
         drop(RedbStore::open(directory.path())?);
 
@@ -105,7 +105,7 @@ fn older_and_future_internal_document_formats_are_refused_without_migration()
             Err(PersistenceError::UnsupportedVersion {
                 document: "redb internal document envelope",
                 found: observed,
-                supported: 19,
+                supported: 20,
             }) if observed == found as u32
         ));
     }

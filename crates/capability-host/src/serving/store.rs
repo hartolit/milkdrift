@@ -101,6 +101,7 @@ pub(crate) const fn public_status(record: &PeerExecutionRecord) -> RemoteExecuti
             RemoteExecutionStatus::Accepted
         }
         PeerExecutionPhase::Entered { .. }
+        | PeerExecutionPhase::AwaitingWorkflow { .. }
         | PeerExecutionPhase::CancellationRequested {
             evidence: Some(_), ..
         } => RemoteExecutionStatus::Running,
@@ -133,6 +134,7 @@ pub(crate) fn archived_summary(tombstone: &PeerExecutionTombstone) -> ArchivedEx
         ),
     };
     ArchivedExecutionSummary {
+        output_observations: tombstone.output_observations.clone(),
         status,
         last_sequence: tombstone.last_observation_sequence,
         observation_digest: tombstone.observation_digest.clone(),

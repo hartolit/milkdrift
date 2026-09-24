@@ -125,6 +125,11 @@ impl RuntimeService {
             let mut plan = CommandPlan::one(RunEventKind::ExecutionAuthorityEstablished {
                 basis: parent_authority.clone(),
             });
+            if let Some(source) = parent.published_source() {
+                plan.events.push(RunEventKind::PublishedRunBound {
+                    source: source.clone(),
+                });
+            }
             if let Some(binding) = parent.accepted_agreement() {
                 plan.events.push(RunEventKind::AgreementAccepted {
                     binding: binding.clone(),

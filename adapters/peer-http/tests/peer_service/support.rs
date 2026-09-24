@@ -380,6 +380,7 @@ pub(super) fn relationship(
     maximum_concurrent: u16,
 ) -> TestResult<PeerRelationship> {
     let limits = ExecutionLimits {
+        nested_invocations: None,
         artifact_bytes: 1_048_576,
         duration_ms: 30_000,
         cost_micros: 0,
@@ -532,6 +533,7 @@ pub(super) fn enter(
 ) -> TestResult {
     assert!(matches!(
         store.mark_peer_entered(&PeerEntryRequest {
+            published_invocation: None,
             owner: &milkdrift_peer_protocol::ServingCaller::peer(target, peer),
             execution,
             worker,
@@ -668,6 +670,7 @@ pub(super) fn request_with_optional_input_artifact(
     let request_id = PeerRequestId::new(request_identity)?;
     let deadline = now().saturating_add(120_000);
     let limits = ExecutionLimits {
+        nested_invocations: None,
         artifact_bytes: 1_048_576,
         duration_ms: 30_000,
         cost_micros: 0,
@@ -685,6 +688,7 @@ pub(super) fn request_with_optional_input_artifact(
         limits.clone(),
         deadline,
         DelegatedAuthorization {
+            publication_ancestry: Vec::new(),
             controller_reservation: None,
             reference: DelegationRef::new("delegation-configured")?,
             issuer_peer: issuer.clone(),

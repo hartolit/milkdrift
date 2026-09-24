@@ -4,8 +4,8 @@ mod execution;
 pub(crate) mod integrity;
 mod uses;
 pub(crate) use execution::{
-    accept_serving_resources, apply_run_resources, enter_serving_resources,
-    terminal_serving_resources,
+    accept_serving_resources, apply_run_resources, enter_serving_resources, link_published,
+    pending_publication, terminal_serving_resources,
 };
 
 use crate::{
@@ -78,18 +78,29 @@ pub(crate) fn verify_link(
     bytes: &[u8],
 ) -> Result<(), PersistenceError> {
     let link: execution::ChildLink = json::decode(bytes, "managed child link")?;
-    let table = read
-        .open_table(crate::schema::RUN_EVENTS)
-        .map_err(error::redb)?;
-    let key = codec::run_sequence(link.parent.as_str(), link.sequence)?;
-    let bytes = table
-        .get(key.as_slice())
-        .map_err(error::redb)?
-        .ok_or_else(|| invalid("child link lost authoritative event"))?;
-    let event = crate::journal::decode_stored_event(bytes.value())?;
-    if !matches!(event.kind(), milkdrift_persistence::RunEventKind::SubworkflowCreated { child_run, .. } if child_run.as_str() == child)
-    {
-        return Err(invalid("managed child link conflicts with runtime event"));
+    match link {
+        execution::ChildLink::Subworkflow { parent, sequence } => {
+            let table = read
+                .open_table(crate::schema::RUN_EVENTS)
+                .map_err(error::redb)?;
+            let key = codec::run_sequence(parent.as_str(), sequence)?;
+            let bytes = table
+                .get(key.as_slice())
+                .map_err(error::redb)?
+                .ok_or_else(|| invalid("child link lost authoritative event"))?;
+            let event = crate::journal::decode_stored_event(bytes.value())?;
+            if !matches!(event.kind(), milkdrift_persistence::RunEventKind::SubworkflowCreated { child_run, .. } if child_run.as_str() == child)
+            {
+                return Err(invalid("managed child link conflicts with runtime event"));
+            }
+        }
+        execution::ChildLink::Published { source } => {
+            let plan = crate::published::association_read(read, &source)?
+                .ok_or_else(|| invalid("published resource link lost its accepted invocation"))?;
+            if plan.child_run.as_str() != child {
+                return Err(invalid("published resource link names a different child"));
+            }
+        }
     }
     Ok(())
 }

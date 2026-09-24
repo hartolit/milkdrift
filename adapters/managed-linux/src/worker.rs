@@ -279,7 +279,7 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
             .quiesce_managed_use(
                 &id,
                 usage.claim,
-                &QuiescenceEvidence {
+                &QuiescenceEvidence::PhysicalStop {
                     physical_identity: task.name.clone(),
                     observation_digest: digest(format!(
                         "{}:{}:absent",

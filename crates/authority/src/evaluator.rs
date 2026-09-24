@@ -297,6 +297,7 @@ fn operation_uses_workflow_scope(operation: crate::AuthorityOperation) -> bool {
             | crate::AuthorityOperation::InspectProviderProfile
             | crate::AuthorityOperation::AdministerCapabilities
             | crate::AuthorityOperation::ReadArtifactMetadata
+            | crate::AuthorityOperation::ReadCapabilityOutput
             | crate::AuthorityOperation::ReadArtifactContent
             | crate::AuthorityOperation::PublishArtifact
             | crate::AuthorityOperation::ExportArtifact

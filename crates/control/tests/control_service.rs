@@ -86,14 +86,21 @@ fn runtime_tick(runtime: &RuntimeService) -> Result<SchedulerTickResult, Runtime
                 scheduled.uncertain = scheduled.uncertain.saturating_add(1);
             }
             EffectExecutionResult::CancellationAcknowledged
-            | EffectExecutionResult::CancellationDeferred => {}
+            | EffectExecutionResult::CancellationDeferred
+            | EffectExecutionResult::Pending => {}
         }
     }
     Ok(scheduled)
 }
 
+type PreparationHook = Box<dyn FnOnce() -> Result<(), AdapterError> + Send>;
+
 #[derive(Default)]
-struct CountingProcessAdapter(AtomicU64, std::sync::atomic::AtomicBool);
+struct CountingProcessAdapter(
+    AtomicU64,
+    std::sync::atomic::AtomicBool,
+    Mutex<Option<PreparationHook>>,
+);
 
 struct TerminalCancellationExecutor {
     resolver: DeterministicExecutor,
@@ -213,6 +220,14 @@ impl CapabilityAdapter for CountingProcessAdapter {
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
         if self.1.load(Ordering::SeqCst) {
             return Err(AdapterError::rejected("injected local preparation refusal"));
+        }
+        if let Some(hook) = self
+            .2
+            .lock()
+            .map_err(|_| AdapterError::unavailable("preparation hook lock"))?
+            .take()
+        {
+            hook()?;
         }
         Ok(InvocationAdmissionEnvelope::not_applicable())
     }
@@ -707,3 +722,6 @@ use milkdrift_capability_host::conformance::RecordingReporter;
 
 #[path = "control_service/agreements.rs"]
 mod agreements;
+
+#[path = "control_service/published.rs"]
+mod published;

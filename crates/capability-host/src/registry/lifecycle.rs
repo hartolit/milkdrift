@@ -97,8 +97,10 @@ impl CapabilityHost {
                         "generation must be draining before removal".to_owned(),
                     ));
                 }
-                if generation.active != 0 {
-                    return Err(HostError::InFlight(generation.active));
+                if generation.active != 0 || generation.pending != 0 {
+                    return Err(HostError::InFlight(
+                        generation.active.saturating_add(generation.pending),
+                    ));
                 }
                 let generation = state.generations.remove(&key).ok_or_else(|| {
                     HostError::GenerationUnavailable {
@@ -134,10 +136,12 @@ impl CapabilityHost {
                 let unresolved = state
                     .in_flight
                     .iter()
+                    .chain(state.pending.iter())
                     .filter(|(_invocation, owner)| *owner == &key)
                     .map(|(invocation, _owner)| invocation.clone())
                     .collect::<Vec<_>>();
                 state.in_flight.retain(|_invocation, owner| owner != &key);
+                state.pending.retain(|_invocation, owner| owner != &key);
                 update_current(&mut state, capability);
                 (generation.adapter, unresolved)
             };
@@ -180,12 +184,13 @@ impl CapabilityHost {
             let active = state
                 .generations
                 .values()
-                .map(|generation| generation.active)
+                .map(|generation| generation.active.saturating_add(generation.pending))
                 .sum::<u32>();
             if active != 0 {
                 return Err(HostError::InFlight(active));
             }
             state.in_flight.clear();
+            state.pending.clear();
             std::mem::take(&mut state.generations)
                 .into_values()
                 .map(|generation| generation.adapter)
@@ -208,8 +213,14 @@ impl CapabilityHost {
             if !state.starting.is_empty() {
                 return Err(HostError::RegistrationInProgress(state.starting.len()));
             }
-            let unresolved_invocations = state.in_flight.keys().cloned().collect::<Vec<_>>();
+            let unresolved_invocations = state
+                .in_flight
+                .keys()
+                .chain(state.pending.keys())
+                .cloned()
+                .collect::<Vec<_>>();
             state.in_flight.clear();
+            state.pending.clear();
             state.current.clear();
             let adapters = std::mem::take(&mut state.generations)
                 .into_values()
@@ -287,6 +298,7 @@ impl CapabilityHost {
                     .as_ref()
                     .map(CapabilityObservation::available),
                 active_permits: generation.active,
+                pending_workflows: generation.pending,
                 permit_limit: generation.permit_limit,
                 last_failure: generation.last_failure.clone(),
             })

@@ -272,12 +272,29 @@ pub(super) fn validate_lineage_transaction_contract(
             ));
         }
     }
-    let activations = assessments
+    let mut activations = assessments
         .iter()
         .filter_map(|(boundary, declaration)| {
             (*boundary == ControllerAssessmentBoundary::Activation).then_some(*declaration)
         })
         .collect::<Vec<_>>();
+    let mut published_allowance = None;
+    for event in request.events() {
+        if let RunEventKind::PublishedRunBound { source } = event.kind() {
+            let association = crate::published::association_in_transaction(write, source)?
+                .ok_or_else(|| {
+                    error::corruption("published child lost its accepted association")
+                })?;
+            if association.child_run == *request.receipt().run()
+                && published_allowance.replace(association.allowance).is_some()
+            {
+                return Err(error::corruption("duplicate published allowance binding"));
+            }
+        }
+    }
+    if let Some(declaration) = &published_allowance {
+        activations.push(declaration);
+    }
     if activations.len() > 1 {
         return Err(PersistenceError::InvalidDocument(
             "one command cannot record multiple controller activations".to_owned(),
@@ -434,6 +451,7 @@ fn terminal_usage(
                 None => None,
             };
             Ok(AttemptUsage {
+                nested_work: usage.nested_work(),
                 input_units: usage.input_units(),
                 output_units: usage.output_units(),
                 duration_ms: usage.duration_ms(),

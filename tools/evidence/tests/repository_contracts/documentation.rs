@@ -276,7 +276,7 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
                 ),
                 (
                     "crates/persistence/src/document.rs",
-                    "RUN_EVENT_SCHEMA_VERSION_V4",
+                    "RUN_EVENT_SCHEMA_VERSION_V5",
                 ),
             ],
         ),
@@ -315,7 +315,7 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
                 ),
                 (
                     "crates/runtime/src/query.rs",
-                    "RUN_PROJECTION_SNAPSHOT_SCHEMA_V5",
+                    "RUN_PROJECTION_SNAPSHOT_SCHEMA_V6",
                 ),
             ],
         ),
@@ -402,6 +402,14 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
     expected.insert(
         "Managed resource request / inventory".to_owned(),
         numeric_const("crates/capability/src/managed.rs", "MANAGED_SCHEMA_VERSION")?.to_string(),
+    );
+    let publication = numeric_const(
+        "crates/persistence/src/published.rs",
+        "PUBLISHED_METHOD_SCHEMA_VERSION",
+    )?;
+    expected.insert(
+        "Published method / invocation association".to_owned(),
+        format!("{publication} / {publication}"),
     );
     let control = format!(
         "{}.{}",
@@ -532,6 +540,7 @@ fn every_maintained_example_has_a_production_reader() -> TestResult {
             }
             "adaptive-slotbook/prepare.py"
             | "adaptive-slotbook/qualify.py"
+            | "adaptive-slotbook/publication.py"
             | "adaptive-slotbook/verifier.py"
             | "adaptive-slotbook/seeded.py"
             | "adaptive-slotbook/repaired.py" => {
@@ -799,7 +808,7 @@ fn peer_protocol_version_is_exact_from_config_through_transport() -> TestResult 
     );
 
     let codec = read(root()?.join("crates/peer-protocol/src/document.rs"))?;
-    assert!(codec.contains("protocol != ProtocolVersion::V1_4"));
+    assert!(codec.contains("protocol != ProtocolVersion::V1_5"));
     let client = read(root()?.join("adapters/peer-http/src/client.rs"))?;
     assert!(
         client.contains("peer response envelope does not match the negotiated protocol version")

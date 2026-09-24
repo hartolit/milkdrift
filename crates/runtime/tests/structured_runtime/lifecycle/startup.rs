@@ -663,3 +663,13 @@ impl StorageAdmin for StartupProbeStore {
         self.inner.scan_integrity(request)
     }
 }
+
+impl milkdrift_persistence::published::PublishedInvocationStore for StartupProbeStore {
+    forward_store_methods! {
+        fn published_local_pending(&self, source: &milkdrift_persistence::published::PublishedInvocationSource) -> PersistenceResult<bool>;
+        fn published_invocation(&self, source: &milkdrift_persistence::published::PublishedInvocationSource)
+            -> PersistenceResult<Option<milkdrift_persistence::published::PublishedInvocationPlan>>;
+        fn published_local_page(&self, after: Option<&milkdrift_persistence::published::PublishedInvocationSource>, limit: PageSize)
+            -> PersistenceResult<(Vec<milkdrift_persistence::published::PublishedInvocationPlan>, Option<milkdrift_persistence::published::PublishedInvocationSource>)>;
+    }
+}

@@ -375,7 +375,7 @@ impl PeerService {
     }
 }
 
-pub(super) fn adapter_execution_context(
+pub(crate) fn adapter_execution_context(
     request: &ServingInvocationRequest,
 ) -> Result<AdapterExecutionContext, ServingError> {
     let origin = request.authorization.origin();
@@ -506,7 +506,13 @@ pub(super) fn peer_authority_grant(
         duration_ms: Some(relationship.execution_limits.duration_ms),
         invocations: Some(1),
         artifact_bytes: Some(relationship.maximum_artifact_bytes),
-        units: relationship.execution_limits.output_units,
+        // Units cover both logical prompt and generated work; a composed method reserves both.
+        units: relationship
+            .execution_limits
+            .input_units
+            .into_iter()
+            .chain(relationship.execution_limits.output_units)
+            .reduce(u64::saturating_add),
         concurrency: Some(u32::from(relationship.maximum_concurrent)),
     })
     .validity(

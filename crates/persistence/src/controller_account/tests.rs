@@ -33,6 +33,7 @@ fn unbilled_models_settle_successively_without_currency_and_never_bypass_token_l
         state.settle_terminal(
             &id,
             Some(&AttemptUsage {
+                nested_work: None,
                 input_units: Some(3),
                 output_units: Some(3),
                 duration_ms: Some(1),
@@ -510,6 +511,7 @@ fn missing_usage_blocks_and_late_evidence_settles_the_original_reservation_once(
     state.settle_terminal(
         &reservation,
         Some(&AttemptUsage {
+            nested_work: None,
             input_units: Some(3),
             output_units: None,
             duration_ms: None,
@@ -547,6 +549,7 @@ fn terminal_cost_currency_and_partial_dimension_retention_are_exact() -> TestRes
     matching.settle_terminal(
         &matching_reservation,
         Some(&AttemptUsage {
+            nested_work: None,
             input_units: None,
             output_units: None,
             duration_ms: None,
@@ -573,6 +576,7 @@ fn terminal_cost_currency_and_partial_dimension_retention_are_exact() -> TestRes
     mismatching.settle_terminal(
         &mismatching_reservation,
         Some(&AttemptUsage {
+            nested_work: None,
             input_units: None,
             output_units: None,
             duration_ms: None,
@@ -612,6 +616,7 @@ fn terminal_cost_currency_and_partial_dimension_retention_are_exact() -> TestRes
     partial.settle_terminal(
         &partial_reservation,
         Some(&AttemptUsage {
+            nested_work: None,
             input_units: Some(2),
             output_units: None,
             duration_ms: None,
@@ -697,6 +702,7 @@ fn over_contract_usage_records_actual_evidence_and_blocks() -> TestResult {
     state.settle_terminal(
         &reservation,
         Some(&AttemptUsage {
+            nested_work: None,
             input_units: Some(5),
             output_units: Some(4),
             duration_ms: None,
@@ -779,3 +785,5 @@ fn controller_artifact_owner_wire_is_strict_and_preserves_run_binding_compatibil
     );
     Ok(())
 }
+
+mod published;

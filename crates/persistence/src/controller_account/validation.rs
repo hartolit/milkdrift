@@ -28,6 +28,16 @@ impl ControllerAccountState {
                         .to_owned(),
                 ));
             }
+            if let Some(nested) = &reservation.nested {
+                summed.process_admissions = checked_add(
+                    summed.process_admissions,
+                    nested.process.remaining().unwrap_or(0),
+                )?;
+                summed.model_admissions = checked_add(
+                    summed.model_admissions,
+                    nested.model.remaining().unwrap_or(0),
+                )?;
+            }
             summed.input_units = checked_add(
                 summed.input_units,
                 reservation.input.remaining().unwrap_or(0),
@@ -49,8 +59,8 @@ impl ControllerAccountState {
             || summed.input_units != self.outstanding.input_units
             || summed.output_units != self.outstanding.output_units
             || summed.artifact_bytes != self.outstanding.artifact_bytes
-            || self.outstanding.process_admissions != 0
-            || self.outstanding.model_admissions != 0
+            || self.outstanding.process_admissions != summed.process_admissions
+            || self.outstanding.model_admissions != summed.model_admissions
         {
             return Err(PersistenceError::InvalidDocument(
                 "controller outstanding totals disagree with exact reservations".to_owned(),
@@ -85,7 +95,12 @@ fn validate_account_block(block: Option<&ControllerAccountBlock>) -> Result<(), 
             | ControllerAccountBlock::ContractViolation { dimension, .. },
         ) if !matches!(
             dimension.as_str(),
-            "input_units" | "output_units" | "artifact_bytes" | "monetary_cost"
+            "input_units"
+                | "output_units"
+                | "artifact_bytes"
+                | "monetary_cost"
+                | "process_admissions"
+                | "model_admissions"
         ) =>
         {
             Err(PersistenceError::InvalidDocument(

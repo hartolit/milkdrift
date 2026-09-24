@@ -86,14 +86,23 @@ pub enum ManagedUsePhase {
 
 /// Bound proof from an enforcing adapter, never from a caller's cancellation acknowledgement.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct QuiescenceEvidence {
-    /// Exact physical identity from entry intent.
-    pub physical_identity: String,
-    /// Digest of inspected identity/absence and supervisor state.
-    pub observation_digest: String,
-    /// True when authorized fencing stopped resource use without establishing its outcome.
-    pub disrupted: bool,
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum QuiescenceEvidence {
+    /// An enforcing adapter inspected the exact entered physical process or service.
+    PhysicalStop {
+        /// Exact physical identity from entry intent.
+        physical_identity: String,
+        /// Digest of inspected identity/absence and supervisor state.
+        observation_digest: String,
+        /// Fencing ended resource use without establishing the prior operation outcome.
+        disrupted: bool,
+    },
+    /// The caller transaction selected durable continuation and never entered adapter code.
+    /// Only that transaction can establish this fact; adapter stop reports cannot manufacture it.
+    NoExternalEntry {
+        /// Exact authoritative publication acceptance that owns the waiting resource hold.
+        source: crate::published::PublishedInvocationSource,
+    },
 }
 
 /// A lifetime hold and zero or more exclusive editing claims acquired coherently.
@@ -165,11 +174,15 @@ impl ManagedUse {
                 Some(evidence)
             }
         };
-        if evidence.is_some_and(|e| {
-            e.physical_identity.is_empty()
-                || e.physical_identity.len() > 4096
-                || !milkdrift_contracts::is_canonical_blake3_digest(&e.observation_digest)
-        }) {
+        if let Some(QuiescenceEvidence::PhysicalStop {
+            physical_identity,
+            observation_digest,
+            ..
+        }) = evidence
+            && (physical_identity.is_empty()
+                || physical_identity.len() > 4096
+                || !milkdrift_contracts::is_canonical_blake3_digest(observation_digest))
+        {
             return Err(invalid());
         }
         Ok(())

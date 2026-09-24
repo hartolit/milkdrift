@@ -51,16 +51,16 @@ pub use read::{
     ApplicationReceiptHealthRead, ArtifactMetadataRead, AttemptOutputRead, AttemptRead,
     AttemptUsageRead, AuthorityDecisionRead, AuthorityRead, CapabilityOperationRead,
     CapabilityProvenanceRead, CapabilityRead, ContextManifestRead, DaemonState,
-    ExecutionAuthorityRead, HealthRead, HostRole, ModelGenerationRead, NodeRead, Observation,
-    ObservationEnvelope, PeerCapabilityProvenanceRead, PeerExecutionHealthRead, PeerRead,
-    ProposalRead, ResultAcceptanceRead, RevisionChange, RevisionDiffRead, RevisionRead,
-    RevisionSummary, RunRead, TimelineCategory, TimelineEntry,
+    ExecutionAuthorityRead, HealthRead, HostRole, ModelGenerationRead, NestedWorkUsageRead,
+    NodeRead, Observation, ObservationEnvelope, PeerCapabilityProvenanceRead,
+    PeerExecutionHealthRead, PeerRead, ProposalRead, ResultAcceptanceRead, RevisionChange,
+    RevisionDiffRead, RevisionRead, RevisionSummary, RunRead, TimelineCategory, TimelineEntry,
 };
 
 /// Supported control protocol major version.
 const PROTOCOL_MAJOR: u16 = 2;
 /// Supported control protocol minor version.
-const PROTOCOL_MINOR: u16 = 9;
+const PROTOCOL_MINOR: u16 = 10;
 /// Independent presentation-layout document version.
 const LAYOUT_SCHEMA_VERSION: u32 = 1;
 const AUTHENTICATED_CURSOR_SCHEMA_VERSION: u8 = 2;

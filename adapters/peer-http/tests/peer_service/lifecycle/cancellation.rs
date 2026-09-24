@@ -50,6 +50,7 @@ fn cancellation_before_entry_prevents_adapter_invocation_and_survives_claim_reco
     assert!(
         store
             .mark_peer_entered(&PeerEntryRequest {
+                published_invocation: None,
                 owner: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
                 execution: &execution,
                 worker: &worker,

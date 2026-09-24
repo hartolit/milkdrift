@@ -117,15 +117,19 @@ impl PeerService {
                 .map_err(|error| ServingError::Protocol(error.to_string()))?,
             )
             .map_err(map_execution_persistence)?;
-        for observation in &page.observations {
-            if let Some((_, reference)) = observation.event.kind().output() {
-                self.authorize_client_artifact(actor, reference)?;
-            }
-            if let Some(terminal) = observation.event.kind().terminal() {
-                for reference in terminal.outputs() {
-                    self.authorize_client_artifact(actor, reference)?;
-                }
-            }
+        if page.observations.iter().any(|item| {
+            item.event.kind().output().is_some()
+                || item
+                    .event
+                    .kind()
+                    .terminal()
+                    .is_some_and(|terminal| !terminal.outputs().is_empty())
+        }) {
+            self.require_client_execution(
+                actor,
+                &record,
+                AuthorityOperation::ReadCapabilityOutput,
+            )?;
         }
         store::observation_page(
             page,
@@ -419,14 +423,22 @@ impl PeerService {
                 resources.capability = Some(record.capability.clone());
                 resources.capability_operation = Some(record.operation.clone());
                 resources.side_effect = record.side_effect;
-                if let Some(terminal) = record.disposition.terminal_observation()
-                    && let Some(terminal) = terminal.event.kind().terminal()
-                {
-                    for reference in terminal.outputs() {
-                        self.authorize_client_artifact(actor, reference)?;
-                    }
-                }
             }
+        }
+        // Archived lookup/replay embeds the retained terminal summary. Its output references
+        // require the same current result permission as a hot observation page.
+        if operation == AuthorityOperation::Inspect
+            && matches!(execution, PeerExecutionSnapshot::Archived(record)
+                if !record.output_observations.is_empty() || record.disposition.terminal_observation().is_some_and(|observation|
+                    observation.event.kind().terminal().is_some_and(|terminal| !terminal.outputs().is_empty())))
+        {
+            self.evaluate_client(
+                actor,
+                AuthorityOperation::ReadCapabilityOutput,
+                resources.clone(),
+                AuthorityBudget::default(),
+                AuthorityExecutionProvenance::default(),
+            )?;
         }
         self.evaluate_client(
             actor,

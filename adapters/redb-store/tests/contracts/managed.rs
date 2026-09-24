@@ -293,7 +293,7 @@ fn enter(store: &RedbStore, run: &RunId, suffix: &str, id: &str, claim: u64) -> 
     Ok(())
 }
 fn stopped(id: &str) -> QuiescenceEvidence {
-    QuiescenceEvidence {
+    QuiescenceEvidence::PhysicalStop {
         physical_identity: format!("mdtask-{id}"),
         observation_digest: digest(),
         disrupted: false,

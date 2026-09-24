@@ -96,6 +96,7 @@ pub fn entered(
         ResolvedCapabilitySnapshot::from_descriptor(descriptor, &operation)?,
         request.clone(),
         ExecutionLimits {
+            nested_invocations: None,
             artifact_bytes: 16_777_216,
             duration_ms: 300_000,
             cost_micros: 0,
@@ -156,6 +157,7 @@ pub fn entered(
         return Err("claim missing".into());
     };
     let PeerEntryOutcome::Entered(record) = store.mark_peer_entered(&PeerEntryRequest {
+        published_invocation: None,
         owner: &caller,
         execution: &execution,
         worker: &worker,

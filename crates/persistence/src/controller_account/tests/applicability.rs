@@ -6,6 +6,7 @@ fn not_applicable_dimensions_reject_contradictory_positive_usage() -> TestResult
         (
             "input_units",
             AttemptUsage {
+                nested_work: None,
                 input_units: Some(1),
                 output_units: None,
                 duration_ms: None,
@@ -15,6 +16,7 @@ fn not_applicable_dimensions_reject_contradictory_positive_usage() -> TestResult
         (
             "output_units",
             AttemptUsage {
+                nested_work: None,
                 input_units: None,
                 output_units: Some(1),
                 duration_ms: None,
@@ -24,6 +26,7 @@ fn not_applicable_dimensions_reject_contradictory_positive_usage() -> TestResult
         (
             "monetary_cost",
             AttemptUsage {
+                nested_work: None,
                 input_units: None,
                 output_units: None,
                 duration_ms: None,

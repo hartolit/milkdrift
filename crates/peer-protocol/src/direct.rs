@@ -89,3 +89,20 @@ impl DirectInvocationRequest {
         )
     }
 }
+
+/// One bounded range of a caller's declared capability output, including its exact metadata.
+/// This does not grant access to arbitrary artifacts or the implementation's internal workspace.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InvocationOutputChunk {
+    /// Exact public execution whose retained output list authorizes this disclosure.
+    pub execution: crate::PeerExecutionId,
+    /// Immutable output metadata; sensitivity is preserved.
+    pub metadata: milkdrift_workspace::ArtifactMetadata,
+    /// First returned byte.
+    pub offset: u64,
+    /// At most 65,536 bytes. JSON framing remains below the control document ceiling.
+    pub bytes: Vec<u8>,
+    /// True exactly when this range reaches the immutable size.
+    pub complete: bool,
+}

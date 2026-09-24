@@ -29,7 +29,7 @@ use tracing::{debug, info, info_span, warn};
 
 use crate::projection::RunProjection;
 use crate::query::{
-    RUN_PROJECTION_SNAPSHOT_SCHEMA_V5, load_bounded_history, project_from_latest_snapshot,
+    RUN_PROJECTION_SNAPSHOT_SCHEMA_V6, load_bounded_history, project_from_latest_snapshot,
 };
 use crate::{
     BoundaryClock, CommandAuthorityClaim, ControllerLifecycle, IdGenerator, RetryPolicy,
@@ -59,6 +59,7 @@ pub trait RuntimeStore:
     + ArtifactStore
     + ControllerAccountStore
     + StorageAdmin
+    + milkdrift_persistence::published::PublishedInvocationStore
 {
 }
 
@@ -72,6 +73,7 @@ impl<T> RuntimeStore for T where
         + ArtifactStore
         + ControllerAccountStore
         + StorageAdmin
+        + milkdrift_persistence::published::PublishedInvocationStore
 {
 }
 
@@ -240,6 +242,8 @@ pub struct RuntimeService {
     structured_cursor: Mutex<Option<RunSummaryCursor>>,
     reconciliation_cursor: Mutex<Option<RunSummaryCursor>>,
     child_cursor: Mutex<Option<RunSummaryCursor>>,
+    published_cursor: Mutex<Option<milkdrift_persistence::published::PublishedInvocationSource>>,
+    published_gate: Mutex<()>,
     cancellation_cursor: Mutex<Option<RunSummaryCursor>>,
     structured_eligible_cursors: Mutex<BTreeMap<RunId, NodeExecutionId>>,
     structured_branch_cursors: Mutex<BTreeMap<RunId, BranchId>>,
@@ -406,6 +410,8 @@ impl RuntimeService {
             structured_cursor: Mutex::new(None),
             reconciliation_cursor: Mutex::new(None),
             child_cursor: Mutex::new(None),
+            published_cursor: Mutex::new(None),
+            published_gate: Mutex::new(()),
             cancellation_cursor: Mutex::new(None),
             structured_eligible_cursors: Mutex::new(BTreeMap::new()),
             structured_branch_cursors: Mutex::new(BTreeMap::new()),
@@ -530,7 +536,7 @@ impl RuntimeService {
             run.clone(),
             projection.sequence(),
             history_digest,
-            RUN_PROJECTION_SNAPSHOT_SCHEMA_V5,
+            RUN_PROJECTION_SNAPSHOT_SCHEMA_V6,
             payload,
         )?)?;
         Ok(())

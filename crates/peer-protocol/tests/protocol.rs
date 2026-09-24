@@ -25,6 +25,7 @@ fn serving_allowance_requires_enforced_units_currency_and_input_plus_output_byte
         AdmissionBound, AdmissionMonetaryBound, AdmissionUnit, InvocationAdmissionEnvelope,
     };
     let limits = ExecutionLimits {
+        nested_invocations: None,
         artifact_bytes: 13,
         duration_ms: 100,
         cost_micros: 3,
@@ -45,18 +46,22 @@ fn serving_allowance_requires_enforced_units_currency_and_input_plus_output_byte
     assert!(!limits.permits_prepared(&InvocationAdmissionEnvelope::unknown(), 0));
     for changed in [
         ExecutionLimits {
+            nested_invocations: None,
             cost_currency: Some("EUR".to_owned()),
             ..limits.clone()
         },
         ExecutionLimits {
+            nested_invocations: None,
             input_units: Some(0),
             ..limits.clone()
         },
         ExecutionLimits {
+            nested_invocations: None,
             output_units: None,
             ..limits.clone()
         },
         ExecutionLimits {
+            nested_invocations: None,
             cost_micros: 2,
             ..limits.clone()
         },
@@ -116,6 +121,7 @@ fn request_with_artifact_limit(
     let operation = OperationId::new("test.execute")?;
     let request_id = PeerRequestId::new(format!("request-{suffix}"))?;
     let limits = ExecutionLimits {
+        nested_invocations: None,
         artifact_bytes: artifact_limit,
         duration_ms: 10_000,
         cost_micros: 0,
@@ -151,6 +157,7 @@ fn request_with_artifact_limit(
         limits.clone(),
         15_000,
         DelegatedAuthorization {
+            publication_ancestry: Vec::new(),
             controller_reservation: None,
             reference: DelegationRef::new(format!("delegation-{suffix}"))?,
             issuer_peer: PeerId::new("peer-a")?,
@@ -179,7 +186,7 @@ fn request_with_artifact_limit(
 #[test]
 fn version_negotiation_fails_closed_on_unknown_major() -> TestResult {
     let local = ProtocolVersionRange::default();
-    assert_eq!(local.negotiate(local)?, ProtocolVersion::V1_4);
+    assert_eq!(local.negotiate(local)?, ProtocolVersion::V1_5);
     let unknown = ProtocolVersionRange::new(
         ProtocolVersion { major: 2, minor: 0 },
         ProtocolVersion { major: 2, minor: 1 },
@@ -246,7 +253,7 @@ fn decoder_rejects_bounds_duplicates_and_every_non_current_version() -> TestResu
         )
         .is_err()
     );
-    for minor in [0_u16, 1, 2, 3, 5, u16::MAX] {
+    for minor in [0_u16, 1, 2, 3, 4, 6, u16::MAX] {
         let bytes = format!(
             "{{\"protocol\":{{\"major\":1,\"minor\":{minor}}},\"message\":null,\"extensions\":{{}}}}"
         );
@@ -306,6 +313,7 @@ fn invocation_digest_binds_catalog_selection_delegation_and_request() -> TestRes
     )?;
     let request_id = PeerRequestId::new("request-1")?;
     let limits = ExecutionLimits {
+        nested_invocations: None,
         artifact_bytes: 1024,
         duration_ms: 10_000,
         cost_micros: 0,
@@ -317,6 +325,7 @@ fn invocation_digest_binds_catalog_selection_delegation_and_request() -> TestRes
     let peer_a = PeerId::new("peer-a")?;
     let peer_b = PeerId::new("peer-b")?;
     let delegation = DelegatedAuthorization {
+        publication_ancestry: Vec::new(),
         controller_reservation: None,
         reference: DelegationRef::new("delegation-1")?,
         issuer_peer: peer_a.clone(),
@@ -359,6 +368,7 @@ fn invocation_digest_binds_catalog_selection_delegation_and_request() -> TestRes
 fn archived_observation_history_is_typed_closed_and_truthfully_uncertain() -> TestResult {
     let execution = PeerExecutionId::new("execution-archived")?;
     let summary = ArchivedExecutionSummary {
+        output_observations: Vec::new(),
         status: RemoteExecutionStatus::OutcomeUnknown,
         last_sequence: 0,
         observation_digest: format!("b3_{}", "0".repeat(64)),
@@ -385,5 +395,39 @@ fn archived_observation_history_is_typed_closed_and_truthfully_uncertain() -> Te
     invalid.closed = false;
     assert!(invalid.validate(8).is_err());
     summary.validate(&execution)?;
+    Ok(())
+}
+
+#[test]
+fn delegated_publication_depth_ceiling_is_retained_and_cannot_be_omitted() -> TestResult {
+    use milkdrift_capability::PublicationAncestor;
+    let request = request_with_artifact_limit("depth", Some(1), 1024)?;
+    let milkdrift_peer_protocol::ServingAuthorization::Peer(mut delegation) = request.authorization
+    else {
+        return Err("expected peer delegation".into());
+    };
+    let ancestor = PublicationAncestor::new(CapabilityId::new("method:outer")?, 1, 1)?;
+    delegation.publication_ancestry.push(ancestor.clone());
+    delegation.validate()?;
+    let mut value = serde_json::to_value(&delegation)?;
+    let decoded: DelegatedAuthorization = serde_json::from_value(value.clone())?;
+    decoded.validate()?;
+    assert_eq!(decoded.publication_ancestry, vec![ancestor]);
+    value["publication_ancestry"][0]
+        .as_object_mut()
+        .ok_or("ancestor object")?
+        .remove("maximum_depth");
+    assert!(serde_json::from_value::<DelegatedAuthorization>(value).is_err());
+    delegation
+        .publication_ancestry
+        .push(PublicationAncestor::new(
+            CapabilityId::new("method:inner")?,
+            1,
+            32,
+        )?);
+    assert!(
+        delegation.validate().is_err(),
+        "a permissive descendant cannot widen the retained ceiling"
+    );
     Ok(())
 }

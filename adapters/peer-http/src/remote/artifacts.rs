@@ -172,3 +172,56 @@ impl RemoteCapabilityAdapter {
         Ok(())
     }
 }
+
+impl RemoteCapabilityAdapter {
+    // Remote sequence addresses retained output facts; local sequence is contiguous even when
+    // progress between those outputs has already been compacted by the serving owner.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn recover_archived_outputs(
+        &self,
+        execution: &PeerExecutionId,
+        deadline: u64,
+        controller: Option<&milkdrift_persistence::ControllerArtifactOwner>,
+        imported: &mut BTreeSet<String>,
+        bytes: &mut u64,
+        invocation: &milkdrift_capability::InvocationId,
+        mut sequence: u64,
+        side_effect: milkdrift_capability::SideEffectClass,
+        summary: &milkdrift_peer_protocol::ArchivedExecutionSummary,
+        reporter: &dyn AdapterReporter,
+    ) -> Result<(), AdapterError> {
+        let after = sequence.saturating_sub(1);
+        for output in summary
+            .output_observations
+            .iter()
+            .filter(|output| output.sequence > after)
+        {
+            if output.event.invocation() != invocation {
+                return Err(AdapterError::external_failure(
+                    "archived output targets another invocation",
+                ));
+            }
+            if let Err(error) = self.import_output(
+                execution, output, deadline, imported, bytes, controller, reporter,
+            ) {
+                return super::report_uncertainty(
+                    invocation,
+                    sequence,
+                    side_effect,
+                    &format!("archived output could not be materialized: {error}"),
+                    reporter,
+                );
+            }
+            reporter.invocation(
+                milkdrift_capability::InvocationEvent::new(
+                    invocation.clone(),
+                    sequence,
+                    output.event.kind().clone(),
+                )
+                .map_err(|error| AdapterError::external_failure(error.to_string()))?,
+            )?;
+            sequence = sequence.saturating_add(1);
+        }
+        super::report_archived_summary(invocation, sequence, side_effect, summary, reporter)
+    }
+}

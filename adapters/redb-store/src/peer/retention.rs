@@ -170,8 +170,23 @@ fn tombstone_from_record(
         },
         _ => return Err(corruption("active peer record cannot become a tombstone")),
     };
+    let mut output_observations = Vec::new();
+    let observations = write.open_table(PEER_OBSERVATIONS).map_err(error::redb)?;
+    for sequence in 1..=record.last_observation_sequence {
+        let key = observation_key(&record.execution, sequence)?;
+        let row = observations
+            .get(key.as_slice())
+            .map_err(error::redb)?
+            .ok_or_else(|| corruption("archived observation is missing"))?;
+        let observation: PeerObservation = json::decode(row.value(), "peer observation")?;
+        if observation.event.kind().output().is_some() {
+            output_observations.push(observation);
+        }
+    }
     let operation = record.request.selection.operation_contract();
     let tombstone = PeerExecutionTombstone {
+        output_observations,
+        published_invocation: record.published_invocation.clone(),
         schema_version: SERVING_EXECUTION_TOMBSTONE_SCHEMA_VERSION,
         caller: record.caller.clone(),
         authorization: record.request.authorization.clone(),

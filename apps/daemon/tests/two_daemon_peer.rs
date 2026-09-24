@@ -4,6 +4,8 @@
 mod placement;
 #[path = "support/process.rs"]
 mod process;
+#[path = "two_daemon_peer/published.rs"]
+mod published;
 use process::configured_process_profile;
 
 use std::{
@@ -375,7 +377,7 @@ async fn assert_peer_protocol_boundary(endpoint: &Url) -> TestResult {
         limits: HardLimits::default(),
     };
     let current = serde_json::to_value(ProtocolEnvelope::v1(request.clone()))?;
-    for minor in [1_u16, 2, 3, 5] {
+    for minor in [1_u16, 2, 3, 4, 6] {
         let mut incompatible = current.clone();
         incompatible["protocol"]["minor"] = serde_json::json!(minor);
         let response = client
@@ -396,8 +398,8 @@ async fn assert_peer_protocol_boundary(endpoint: &Url) -> TestResult {
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let envelope: ProtocolEnvelope<HandshakeResponse> =
         decode_envelope(&response.bytes().await?, DecodeLimits::default())?;
-    assert_eq!(envelope.protocol, PeerProtocolVersion::V1_4);
-    assert_eq!(envelope.message.selected_version, PeerProtocolVersion::V1_4);
+    assert_eq!(envelope.protocol, PeerProtocolVersion::V1_5);
+    assert_eq!(envelope.message.selected_version, PeerProtocolVersion::V1_5);
     Ok(())
 }
 
@@ -529,6 +531,7 @@ fn configuration_document(
         },
         peers: PeerHostConfig::Enabled {
             relationships: vec![PeerRelationshipConfig {
+                nested_invocations: None,
                 peer_id: remote_peer.to_owned(),
                 endpoint: remote_endpoint.to_string(),
                 credential_ref: "credential:peer".to_owned(),

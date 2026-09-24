@@ -88,8 +88,8 @@ def worker(identity, argv, capture=False):
 
 def effect(identity, operation, selected):
     req = dict(requirement, categories=[{'type': 'tool'}], exact_capability='milkdrift.resources', maximum_side_effect='idempotent_write', operation=operation)
-    target = {'schema_version': 2, 'command': identity, 'installation': 'slotbook-test', 'expected_version': args.target_version}
-    result = task(identity, req, 'target', target, {'id': 'milkdrift.managed.command', 'version': 2}, ['resource_result'])
+    target = {'schema_version': 3, 'command': identity, 'installation': 'slotbook-test', 'expected_version': args.target_version}
+    result = task(identity, req, 'target', target, {'id': 'milkdrift.managed.command', 'version': 3}, ['resource_result'])
     result['data_inputs'][selected] = port('Input', artifact_schema, required=True)
     return result
 

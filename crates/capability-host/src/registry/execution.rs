@@ -85,11 +85,15 @@ impl CapabilityHost {
             let state = self.core.state.lock().map_err(|_error| {
                 ExecutorError::BoundaryBeforeEntry("registry unavailable".to_owned())
             })?;
-            let key = state.in_flight.get(request.invocation()).ok_or_else(|| {
-                ExecutorError::Unavailable(
-                    "no exact generation owns the cancellation invocation".to_owned(),
-                )
-            })?;
+            let key = state
+                .in_flight
+                .get(request.invocation())
+                .or_else(|| state.pending.get(request.invocation()))
+                .ok_or_else(|| {
+                    ExecutorError::Unavailable(
+                        "no exact generation owns the cancellation invocation".to_owned(),
+                    )
+                })?;
             state
                 .generations
                 .get(key)
@@ -134,7 +138,9 @@ impl CapabilityHost {
         if !state.admission_open || state.shutdown {
             return Err(ExecutorError::AdmissionClosed);
         }
-        if state.in_flight.contains_key(request.invocation()) {
+        if state.in_flight.contains_key(request.invocation())
+            || state.pending.contains_key(request.invocation())
+        {
             return Err(ExecutorError::Overloaded(
                 "invocation already owns a generation permit".to_owned(),
             ));
@@ -146,7 +152,11 @@ impl CapabilityHost {
             }
         })?;
         snapshot.validate_against(&generation.descriptor)?;
-        if generation.active >= generation.permit_limit {
+        if generation.active >= generation.permit_limit
+            || generation
+                .pending_limit
+                .is_some_and(|limit| generation.active.saturating_add(generation.pending) >= limit)
+        {
             return Err(ExecutorError::Overloaded(format!(
                 "{}/{}",
                 key.capability, key.revision
@@ -164,12 +174,50 @@ impl CapabilityHost {
                 key,
                 invocation: request.invocation().clone(),
                 failure: None,
+                transferred: false,
             },
         ))
     }
 }
 
 impl TaskExecutor for CapabilityHost {
+    fn published_serving_entry_allowed(
+        &self,
+        plan: &milkdrift_persistence::published::PublishedInvocationPlan,
+    ) -> Result<bool, ExecutorError> {
+        let owner = self
+            .core
+            .published_serving
+            .lock()
+            .map_err(|_| {
+                ExecutorError::Unavailable("published serving owner lock unavailable".to_owned())
+            })?
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
+            .ok_or_else(|| {
+                ExecutorError::Unavailable("published serving owner is unavailable".to_owned())
+            })?;
+        owner
+            .published_entry_allowed(plan)
+            .map_err(|error| ExecutorError::Unavailable(error.to_string()))
+    }
+
+    fn continue_published(
+        &self,
+        plan: &milkdrift_persistence::published::PublishedInvocationPlan,
+        cancel: bool,
+        next_sequence: u64,
+    ) -> Result<Option<InvocationEvent>, ExecutorError> {
+        self.continue_published_invocation(plan, cancel, next_sequence)
+    }
+
+    fn complete_published(
+        &self,
+        plan: &milkdrift_persistence::published::PublishedInvocationPlan,
+    ) -> Result<(), ExecutorError> {
+        self.release_published_invocation(plan)
+    }
+
     fn resolve(
         &self,
         _requirement: &CapabilityRequirement,
@@ -197,6 +245,14 @@ impl TaskExecutor for CapabilityHost {
         let context = AdapterExecutionContext::from_dispatch(dispatch, None);
         let prepared =
             self.prepare_invocation(dispatch.resolution(), dispatch.request(), Some(&context))?;
+        if let Some(plan) = prepared.published_plan() {
+            return Ok(PreparedExecution::published(
+                dispatch,
+                prepared.envelope().clone(),
+                plan.clone(),
+                move || prepared.accept_published(),
+            ));
+        }
         Ok(PreparedExecution::new_with_controller_reservation(
             dispatch,
             prepared.envelope().clone(),
@@ -224,6 +280,28 @@ pub(crate) struct PreparedHostInvocation {
 }
 
 impl PreparedHostInvocation {
+    pub(crate) fn accept_published(mut self) -> Result<(), ExecutorError> {
+        if self.prepared.published_plan().is_none() {
+            return Err(ExecutorError::InvalidDispatch(
+                "prepared work has no continuation".to_owned(),
+            ));
+        }
+        let host = CapabilityHost {
+            core: self.permit.core.clone(),
+        };
+        host.transfer_published_invocation(self.prepared.published_plan().ok_or_else(|| {
+            ExecutorError::InvalidDispatch("prepared continuation absent".to_owned())
+        })?)?;
+        self.permit.transferred = true;
+        Ok(())
+    }
+
+    pub(crate) fn published_plan(
+        &self,
+    ) -> Option<&milkdrift_persistence::published::PublishedInvocationPlan> {
+        self.prepared.published_plan()
+    }
+
     pub(crate) fn envelope(&self) -> &milkdrift_capability::InvocationAdmissionEnvelope {
         self.prepared.envelope()
     }
@@ -288,6 +366,7 @@ struct Permit {
     key: GenerationKey,
     invocation: InvocationId,
     failure: Option<String>,
+    transferred: bool,
 }
 
 impl Permit {
@@ -298,10 +377,15 @@ impl Permit {
 
 impl Drop for Permit {
     fn drop(&mut self) {
+        if self.transferred {
+            return;
+        }
         let Ok(mut state) = self.core.state.lock() else {
             return;
         };
-        state.in_flight.remove(&self.invocation);
+        if state.in_flight.remove(&self.invocation).as_ref() != Some(&self.key) {
+            return;
+        }
         if let Some(generation) = state.generations.get_mut(&self.key) {
             generation.active = generation.active.saturating_sub(1);
             if let Some(failure) = self.failure.take() {

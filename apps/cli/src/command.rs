@@ -10,6 +10,7 @@ mod daemon;
 mod inspection;
 mod invocation;
 mod layout;
+mod method;
 mod peer;
 mod proposal;
 mod resource;
@@ -49,6 +50,12 @@ impl Cli {
             RunCommand, SequenceCommand,
         };
         match &self.command {
+            TopCommand::Method { command } => match command {
+                crate::MethodCommand::Publish { .. } => "method.publish",
+                crate::MethodCommand::Show { .. } => "method.inspect",
+                crate::MethodCommand::List { .. } => "method.list",
+                crate::MethodCommand::Retire { .. } => "method.retire",
+            },
             TopCommand::Resource(_) => "resource.manage",
             TopCommand::Invocation { command } => match command {
                 crate::InvocationCommand::Catalog => "invocation.catalog",
@@ -59,6 +66,7 @@ impl Cli {
                 crate::InvocationCommand::Observations { .. } => "invocation.observations",
                 crate::InvocationCommand::Wait { .. } => "invocation.wait",
                 crate::InvocationCommand::Cancel { .. } => "invocation.cancel",
+                crate::InvocationCommand::Output { .. } => "invocation.output",
             },
             TopCommand::Daemon { command } => match command {
                 DaemonCommand::Health(_) => "daemon.health",
@@ -214,6 +222,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<(), CliError> {
     }
     let session = CliSession::connect(cli).await?;
     match &session.cli().command {
+        TopCommand::Method { command } => method::execute(&session, command).await,
         TopCommand::Resource(args) => resource::execute(&session, args).await,
         TopCommand::Invocation { command } => invocation::execute(&session, command).await,
         TopCommand::Daemon { command } => daemon::execute(&session, command).await,

@@ -177,6 +177,8 @@ pub struct AttemptInspection {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunInspection {
+    /// Exact public acceptance that owns this internal run, visible only with run inspection authority.
+    pub published_source: Option<milkdrift_persistence::published::PublishedInvocationSource>,
     /// Immutable outer agreement accepted for this scope, including its original run/revision.
     pub governing_agreement: Option<milkdrift_persistence::AcceptedAgreement>,
     /// Cumulative prospective revisions charged to that accepted scope.

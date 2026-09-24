@@ -12,6 +12,7 @@ use milkdrift_capability::{
 use thiserror::Error;
 
 mod execution;
+mod published;
 pub(crate) use execution::PreparedHostInvocation;
 mod lifecycle;
 mod selection;
@@ -120,6 +121,8 @@ pub struct GenerationView {
     pub available: Option<bool>,
     /// Actual held permits.
     pub active_permits: u32,
+    /// Accepted workflow continuations retaining this exact generation without a worker.
+    pub pending_workflows: u32,
     /// Enforced concurrent permit limit.
     pub permit_limit: u32,
     /// Bounded last failure summary.
@@ -224,6 +227,8 @@ struct Generation {
     observation: Option<CapabilityObservation>,
     draining: bool,
     active: u32,
+    pending: u32,
+    pending_limit: Option<u32>,
     permit_limit: u32,
     last_failure: Option<String>,
 }
@@ -235,9 +240,12 @@ struct RegistryState {
     generations: BTreeMap<GenerationKey, Generation>,
     current: BTreeMap<CapabilityId, u64>,
     in_flight: BTreeMap<InvocationId, GenerationKey>,
+    pending: BTreeMap<InvocationId, GenerationKey>,
 }
 
 struct HostCore {
+    published: Mutex<Option<std::sync::Weak<dyn crate::PublishedWorkflowContinuation>>>,
+    published_serving: Mutex<Option<std::sync::Weak<crate::PeerService>>>,
     config: HostConfig,
     policy: CapabilitySelectionPolicy,
     state: Mutex<RegistryState>,

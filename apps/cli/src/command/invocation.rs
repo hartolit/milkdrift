@@ -10,6 +10,54 @@ pub(super) async fn execute(
 ) -> Result<(), CliError> {
     let client = session.client();
     match command {
+        InvocationCommand::Output {
+            execution,
+            artifact,
+            destination,
+        } => {
+            let execution = PeerExecutionId::new(execution)
+                .map_err(|error| CliError::Invalid(error.to_string()))?;
+            let mut file = crate::output::PendingFile::create(destination)?;
+            let mut offset = 0;
+            let mut hash = blake3::Hasher::new();
+            let mut expected = None;
+            loop {
+                let chunk = client
+                    .invocation_output(&execution, artifact, offset, 65_536)
+                    .await?;
+                if expected
+                    .as_ref()
+                    .is_some_and(|value| value != &chunk.metadata)
+                {
+                    return Err(CliError::Internal(
+                        "output metadata changed between ranges".to_owned(),
+                    ));
+                }
+                if chunk.bytes.is_empty() && !chunk.complete {
+                    return Err(CliError::Internal(
+                        "output download made no progress".to_owned(),
+                    ));
+                }
+                std::io::Write::write_all(&mut file, &chunk.bytes)
+                    .map_err(|error| CliError::Internal(error.to_string()))?;
+                hash.update(&chunk.bytes);
+                offset += chunk.bytes.len() as u64;
+                let reference = chunk.metadata.reference();
+                if chunk.complete {
+                    if hash.finalize().to_hex().as_str() != reference.digest().to_hex() {
+                        return Err(CliError::Internal(
+                            "output bytes contradict the immutable digest".to_owned(),
+                        ));
+                    }
+                    file.commit()
+                        .map_err(|error| CliError::Internal(error.to_string()))?;
+                    return session.output("invocation.output", &serde_json::json!({
+                        "execution": execution, "artifact": reference, "destination": destination
+                    }));
+                }
+                expected = Some(chunk.metadata);
+            }
+        }
         InvocationCommand::Catalog => {
             session.output("invocation.catalog", &client.execution_discovery().await?)
         }

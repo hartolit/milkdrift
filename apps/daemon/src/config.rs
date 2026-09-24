@@ -18,7 +18,7 @@ use milkdrift_local_secret::LocalSecretSource;
 use thiserror::Error;
 
 /// Current daemon configuration document version.
-pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 12;
+pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 13;
 
 /// Configuration load or deterministic validation failure.
 #[derive(Debug, Error)]

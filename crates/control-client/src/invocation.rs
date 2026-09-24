@@ -123,6 +123,39 @@ impl ControlClient {
         Ok(page)
     }
 
+    /// Read bytes only from the retained terminal outputs of this caller's accepted capability.
+    pub async fn invocation_output(
+        &self,
+        execution: &PeerExecutionId,
+        artifact: &str,
+        offset: u64,
+        maximum: u32,
+    ) -> Result<milkdrift_peer_protocol::InvocationOutputChunk, ClientError> {
+        let chunk: milkdrift_peer_protocol::InvocationOutputChunk = self
+            .safe_get(&format!(
+                "v1/invocations/{}/outputs/{}?offset={offset}&maximum={maximum}",
+                super::path_segment(execution.as_str())?,
+                super::path_segment(artifact)?
+            ))
+            .await?;
+        if chunk.execution != *execution
+            || chunk.metadata.reference().artifact().as_str() != artifact
+            || chunk.offset != offset
+            || chunk.bytes.len() > maximum as usize
+            || offset
+                .checked_add(chunk.bytes.len() as u64)
+                .is_none_or(|end| {
+                    end > chunk.metadata.reference().size_bytes()
+                        || chunk.complete != (end == chunk.metadata.reference().size_bytes())
+                })
+        {
+            return Err(protocol(
+                "output chunk differs from its requested execution, artifact or range",
+            ));
+        }
+        Ok(chunk)
+    }
+
     /// Requests cancellation once. The acknowledgement does not prove terminal completion.
     pub async fn cancel_invocation(
         &self,

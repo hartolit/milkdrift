@@ -29,6 +29,14 @@ This document owns current implementation, limitations, exact versions, and qual
   Deterministic lifecycle/ledger/conformance/backup tests are distinct from the gated real-Podman
   lane. Desktop Podman 6.1.2 is exercised; managed GPU and UM790/reboot qualification remain pending; see
   [managed operations](../operations/managed-linux.md).
+- Workflow-enabled hosts publish exact governed methods through ordinary capability discovery and
+  invocation. Local attempts and direct/peer serving records retain one recoverable internal run,
+  configured service authority, bounded continuation and cumulative internal allowances. Waiting
+  publications release execution workers and transfer managed editing only through their exact
+  accepted association. Invoke-only callers can read their declared public results without access
+  to internal runs or administrative capabilities. Retirement preserves accepted calls; ancestry,
+  caller revocation, cancellation and deadlines constrain future internal entry. See
+  [published methods](../guides/published-methods.md).
 - The CLI covers blueprint/sequence authoring, run/proposal/controller/peer/layout control,
   retained-work resolution, bounded inspection, verified create-new downloads, wait/follow deadlines,
   and stable machine output. [Production examples](../../examples/operator/README.md) provide
@@ -93,19 +101,20 @@ values; repository contracts check the version cells against source.
 | Proposal / workflow-control command / risk policy / controller policy | 1 / 1 / 1 / 2 | Controller policy v1 refused; currency is explicit or absent. |
 | Prompt-sequence import | 3 | v1/v2 refused; existing blueprint history unchanged. |
 | Result acceptance contract / decision | 1 / 1 | Explicit purpose; no implicit policy on generic model tasks. |
-| Run command / run event | 1 / 4 | Supported event v1/v2/v3 variants remain readable; obsolete nested snapshots are refused. |
+| Run command / run event | 1 / 5 | Supported event v1/v2/v3/v4 variants remain readable; obsolete nested snapshots are refused. |
 | Authority grant / authorization decision | 4 / 2 | Earlier grants refused. |
 | Authorized-command wrapper / command result | 1 / 2 | Result v1 reads only closed internal records. |
-| Projection snapshot envelope / runtime payload | 2 / 5 | Old/invalid optional checkpoints replay from journal. |
-| Administrative integrity cursor | 2 | Exact supported cursor. |
-| Peer hot record / compact tombstone | 4 / 2 | Exact current caller/origin meaning; older records refuse. |
-| Redb internal document format / physical schema | 19 / 14 | Older/future stores refused; no migration. |
+| Projection snapshot envelope / runtime payload | 2 / 6 | Old/invalid optional checkpoints replay from journal. |
+| Administrative integrity cursor | 3 | Exact supported cursor. |
+| Peer hot record / compact tombstone | 5 / 3 | Exact current caller/origin meaning; older records refuse. |
+| Redb internal document format / physical schema | 20 / 15 | Older/future stores refused; no migration. |
 | Application command receipt / layout record | 1 / 1 | Exact supported contracts. |
 | Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
-| External control / authenticated cursor | 2.9 / 2 | Only the exact current protocol and cursor forms are accepted. |
-| Peer protocol and catalog messages | 1.4 | Earlier minors refused. |
-| Daemon configuration | 12 | TOML; JSON and earlier versions refused. |
-| Managed resource request / inventory | 2 | Exact schema, bounded typed recipe references, preserved receipts and guarded transitions. |
+| External control / authenticated cursor | 2.10 / 2 | Only the exact current protocol and cursor forms are accepted. |
+| Peer protocol and catalog messages | 1.5 | Earlier minors refused. |
+| Daemon configuration | 13 | TOML; JSON and earlier versions refused. |
+| Managed resource request / inventory | 3 | Exact schema, bounded typed recipe references, preserved receipts and guarded transitions. |
+| Published method / invocation association | 1 / 1 | Exact schema and generation; ancestry preserves accepted depth ceilings. |
 | Layout document / CLI JSON output | 1 / 2 | CLI schema 1 refused. |
 
 ## Limitations now
@@ -126,8 +135,12 @@ values; repository contracts check the version cells against source.
   configuration, policy, target generation and fresh authority. Raw start/update cannot substitute a
   candidate. The finite [Slotbook example](../../examples/adaptive-slotbook/README.md) is the supported
   authoring and inspection path. It is not a general application correctness or security guarantee.
-  Catalog publication, service delegation and evaluated reuse remain assigned to 04–05; no live
-  model repair, second-host protected deployment or reboot qualification is claimed here.
+  Catalog publication and service delegation are implemented. Evaluated reuse remains assigned to
+  05. Public inputs are finite reviewed choices or authorized exact artifacts; results are declared
+  accepted terminal fields. Per-call allowances and service grant/host ceilings apply, with no
+  service-wide lifetime spending account. Process-internal network/model calls are not direct-model
+  accounting. No live model repair, second-machine protected deployment or reboot qualification is
+  claimed here.
 - Earlier selection-policy-version-1 manifests remain readable, but omissions retaining ambiguous
   identities or sizes and stopped required evidence cannot authorize reuse. Retry and startup refuse
   those retained records without rewriting their bytes. An unsafe active lease prevents daemon

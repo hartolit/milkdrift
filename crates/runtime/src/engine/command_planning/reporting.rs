@@ -259,6 +259,10 @@ impl RuntimeService {
     ) -> bool {
         projection.leases().values().any(|lease| {
             lease.attempt() == attempt && lease.worker() == worker && lease.is_active()
+        }) || projection.attempts().get(attempt).is_some_and(|value| {
+            value.published_invocation().is_some()
+                && value.is_active()
+                && worker == &self.config.worker
         })
     }
 
@@ -272,7 +276,10 @@ impl RuntimeService {
             .attempts()
             .get(attempt)
             .ok_or_else(|| RuntimeError::InvalidTransition(format!("unknown attempt {attempt}")))?;
-        let historically_owned = attempt_view.lease_workers().contains(worker);
+        let historically_owned = attempt_view.lease_workers().contains(worker)
+            || (attempt_view.published_invocation().is_some()
+                && attempt_view.is_active()
+                && worker == &self.config.worker);
         if !historically_owned {
             return Err(RuntimeError::InvalidTransition(
                 "worker never owned a durable lease for the attempt".to_owned(),
@@ -491,6 +498,7 @@ impl RuntimeService {
                         None => None,
                     };
                     Ok::<_, RuntimeError>(AttemptUsage {
+                        nested_work: usage.nested_work(),
                         input_units: usage.input_units(),
                         output_units: usage.output_units(),
                         duration_ms: usage.duration_ms(),
@@ -568,6 +576,7 @@ impl RuntimeService {
                     None => None,
                 };
                 Ok::<_, RuntimeError>(AttemptUsage {
+                    nested_work: usage.nested_work(),
                     input_units: usage.input_units(),
                     output_units: usage.output_units(),
                     duration_ms: usage.duration_ms(),

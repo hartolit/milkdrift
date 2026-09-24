@@ -584,7 +584,7 @@ mod tests {
     fn response_decoder_requires_the_exact_negotiated_version()
     -> Result<(), Box<dyn std::error::Error>> {
         let bytes = encode_envelope(&ProtocolEnvelope::v1(serde_json::json!({"ok": true})))?;
-        let decoded: serde_json::Value = decode_response_document(&bytes, ProtocolVersion::V1_4)?;
+        let decoded: serde_json::Value = decode_response_document(&bytes, ProtocolVersion::V1_5)?;
         assert_eq!(decoded, serde_json::json!({"ok": true}));
 
         assert!(
@@ -596,7 +596,7 @@ mod tests {
         );
         let legacy = br#"{"protocol":{"major":1,"minor":1},"message":null,"extensions":{}}"#;
         assert!(
-            decode_response_document::<serde_json::Value>(legacy, ProtocolVersion::V1_4).is_err()
+            decode_response_document::<serde_json::Value>(legacy, ProtocolVersion::V1_5).is_err()
         );
         Ok(())
     }

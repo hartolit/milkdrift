@@ -92,7 +92,19 @@ pub(super) fn begin_resolution(
         }
         ManagedUsePhase::Entered { physical_identity }
         | ManagedUsePhase::Fencing { physical_identity } => physical_identity.clone(),
-        ManagedUsePhase::Quiescent { evidence } => evidence.physical_identity.clone(),
+        ManagedUsePhase::Quiescent {
+            evidence:
+                QuiescenceEvidence::PhysicalStop {
+                    physical_identity, ..
+                },
+        } => physical_identity.clone(),
+        ManagedUsePhase::Quiescent {
+            evidence: QuiescenceEvidence::NoExternalEntry { .. },
+        } => {
+            return Err(busy(
+                "a pending workflow has no physical writer to fence; cancel its exact invocation",
+            ));
+        }
         ManagedUsePhase::Suspended { .. } => {
             return Err(busy("suspended use requires child settlement"));
         }
@@ -223,7 +235,17 @@ pub(super) fn quiesce(
     claim: u64,
     evidence: &QuiescenceEvidence,
 ) -> Result<(), PersistenceError> {
-    if !milkdrift_contracts::is_canonical_blake3_digest(&evidence.observation_digest) {
+    let QuiescenceEvidence::PhysicalStop {
+        physical_identity: stopped_identity,
+        observation_digest,
+        ..
+    } = evidence
+    else {
+        return Err(invalid(
+            "only the publication acceptance transaction can prove no external entry",
+        ));
+    };
+    if !milkdrift_contracts::is_canonical_blake3_digest(observation_digest) {
         return Err(invalid("invalid stop evidence"));
     }
     let write = store.database().begin_write().map_err(error::redb)?;
@@ -235,7 +257,7 @@ pub(super) fn quiesce(
     match &u.phase {
         ManagedUsePhase::Entered { physical_identity }
         | ManagedUsePhase::Fencing { physical_identity }
-            if physical_identity == &evidence.physical_identity => {}
+            if physical_identity == stopped_identity => {}
         ManagedUsePhase::Quiescent { evidence: old } if old == evidence => return Ok(()),
         _ => {
             return Err(conflict(
@@ -252,13 +274,13 @@ pub(super) fn quiesce(
             setup.resources.iter().any(|r| {
                 r.kind == milkdrift_capability::managed::ManagedResourceKind::Service
                     && r.ownership == milkdrift_capability::managed::ResourceOwnership::Owned
-                    && r.identity == evidence.physical_identity
+                    && &r.identity == stopped_identity
             })
         })
     {
         record.desired_running = false;
         record.observation = Some(milkdrift_persistence::managed::ManagedObservation {
-            digest: evidence.observation_digest.clone(),
+            digest: observation_digest.clone(),
             summary: "owned service physically fenced; prior operation outcome remains unchanged"
                 .to_owned(),
             running: false,
@@ -278,6 +300,13 @@ pub(super) fn release(store: &RedbStore, id: &str, claim: u64) -> Result<(), Per
     if u.claim != claim
         || !matches!(u.phase, ManagedUsePhase::Quiescent { .. })
         || u.parent.is_some()
+        || (!u.execution_terminal
+            && matches!(
+                u.phase,
+                ManagedUsePhase::Quiescent {
+                    evidence: QuiescenceEvidence::NoExternalEntry { .. }
+                }
+            ))
         || record.uses.iter().any(|c| c.parent.as_deref() == Some(id))
     {
         return Err(busy(

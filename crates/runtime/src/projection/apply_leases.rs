@@ -14,6 +14,32 @@ impl RunProjection {
     ) -> Result<(), RuntimeError> {
         let _sequence = event.sequence();
         match event.kind() {
+            RunEventKind::PublishedInvocationPlanned { attempt, plan } => {
+                let value = self.attempt(attempt, event)?;
+                if value.state != AttemptState::Running
+                    || value.published_invocation.is_some()
+                    || value.request.as_ref() != Some(&plan.request)
+                    || value
+                        .adapter_entry_authorization
+                        .as_ref()
+                        .is_none_or(|d| !d.is_allowed())
+                    || self.active_lease_for_attempt(attempt).is_none()
+                    || value.capability.as_ref().is_none_or(|c| {
+                        c.snapshot().capability() != &plan.capability
+                            || c.snapshot().descriptor_revision() != plan.generation
+                    })
+                {
+                    return Err(invalid_at(
+                        event,
+                        "published association is duplicate or differs from accepted entry",
+                    ));
+                }
+                self.complete_attempt_leases(attempt);
+                self.attempts
+                    .get_mut(attempt)
+                    .ok_or_else(|| invalid_at(event, "unknown attempt"))?
+                    .published_invocation = Some(plan.as_ref().clone());
+            }
             RunEventKind::LeaseGranted {
                 lease,
                 execution,

@@ -30,7 +30,9 @@ pub use caller::{
     ServingPrincipal,
 };
 pub use catalog::{CatalogEntry, CatalogSnapshot, CatalogUpdate, CatalogUpdateKind};
-pub use direct::{DirectDiscovery, DirectInvocationRequest, ServingInvocationRead};
+pub use direct::{
+    DirectDiscovery, DirectInvocationRequest, InvocationOutputChunk, ServingInvocationRead,
+};
 pub use document::{
     DecodeLimits, MAX_PEER_DOCUMENT_BYTES, ProtocolEnvelope, decode_envelope, encode_envelope,
 };

@@ -1,12 +1,14 @@
-# Peer protocol v1.4
+# Peer protocol v1.5
 
-Version 1.4 separates invocation origin from authenticated caller identity and adds enforced
-per-call allowances, request-bound input transfer and host-invocation artifact provenance.
+Version 1.5 carries bounded publication ancestry and nested process/model allowances alongside
+origin-bound invocation authority. Terminal usage can report the internal admissions and artifact
+bytes needed to settle a published service reservation. Direct calls retain request-bound input
+transfer and host-invocation artifact provenance.
 Both peers use this exact version in a coordinated deployment;
 previous protocol generations and snapshot formats are refused. Current durable acceptance/replay
 and tombstone contracts remain exact across restart.
 
-`milkdrift-peer-protocol` is transport neutral. Every JSON control message uses a `ProtocolEnvelope` with selected `{major, minor}`, one typed message, and at most 32 explicitly ignorable DNS-namespaced extensions. Major 1/minor 4 is the only implemented version. It includes typed archived replay and observation-history dispositions and the exact queried request identity in every lookup result, so clients can bind authenticated responses to the URL they requested. Peers implementing earlier minors are rejected instead of guessing the changed shape or meaning. Unknown majors and unknown typed message fields fail closed. Decoding preflights encoded bytes, depth, container items, string/key sizes, duplicates, and document size before domain deserialization.
+`milkdrift-peer-protocol` is transport neutral. Every JSON control message uses a `ProtocolEnvelope` with selected `{major, minor}`, one typed message, and at most 32 explicitly ignorable DNS-namespaced extensions. Major 1/minor 5 is the only implemented version. It includes typed archived replay and observation-history dispositions and the exact queried request identity in every lookup result, so clients can bind authenticated responses to the URL they requested. Peers implementing earlier minors are rejected instead of guessing the changed shape or meaning. Unknown majors and unknown typed message fields fail closed. Decoding preflights encoded bytes, depth, container items, string/key sizes, duplicates, and document size before domain deserialization.
 
 ## Authentication and session
 
@@ -66,7 +68,7 @@ Accepted work is `dispatch_available`. A fixed daemon-owned worker atomically cl
 
 While an execution is hot, semantic observations are separate append-only checksummed rows contiguous from sequence one and map to progress, stream, artifact, terminal, or uncertainty. Pages use an exclusive `after_sequence` cursor and bounded limit; they never load or rewrite retained hot history. Every append advances a rolling observation-chain digest. SSE uses the same encoded observations plus independent transport keepalive comments; polling is equally resumable. The service reevaluates the exact peer execution scope on every page and bounded stream cycle; credential rotation/revocation emits `authorization_terminated` and stops future disclosure. Terminal closure is explicit.
 
-After compaction, lookup and observation responses explicitly carry `history: archived`. The compact summary retains acceptance identity, immutable execution provenance and authority summary, cancellation facts, accounting, the observation count and rolling digest, and either the final terminal observation or a typed uncertain disposition. Historical intermediate observations and their observation-to-artifact mappings are no longer available. A client that encounters archival while polling consumes the retained final/uncertain disposition without reinvoking the capability.
+After compaction, lookup and observation responses explicitly carry `history: archived`. The compact summary retains acceptance identity, immutable execution provenance and authority summary, cancellation facts, accounting, the observation count and rolling digest, and either the final terminal observation or a typed uncertain disposition. Intermediate progress is no longer available. A bounded manifest retains at most 256 named output observations with their original remote sequences and immutable references; the 257th output is refused before append. A client that encounters archival materializes any missing outputs through the same currently authorized transfer path and then consumes the final/uncertain disposition without reinvoking the capability. Local report sequences remain contiguous even when remote progress was compacted.
 
 Before proven acceptance, clients retry only the same canonical request and query its key. After acceptance, clients resume the same execution and never submit replacement work. Missing accepted records become truthful uncertainty under the existing side-effect policy.
 

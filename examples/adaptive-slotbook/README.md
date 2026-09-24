@@ -123,3 +123,23 @@ rechecks lifetime and current approval.
 An already accepted systemd service can restart with the same immutable generation and retained data.
 Power loss, hostile host administration, arbitrary application security and second-host deployment
 are outside this finite example's evidence.
+
+
+## Invoke the governed method as a capability
+
+After preparing a fresh directory as above, add `--published` to `qualify.py`. It configures the
+exact service grant and publishes the governed revision as `method:slotbook` generation 1. A separate
+invoke-only credential requests `method.invoke`; the operator finds the actual linked run through
+ordinary authorized run inspection and submits the same permitted repair proposal. The consumer is
+refused method/internal inspection and resource administration. One execution worker runs the
+internal process tasks. Exact public replay after restart leaves the deployment generation unchanged.
+
+Use `--published --invocation-mode workflow` in another fresh directory to make an ordinary local
+workflow call the same public method. The outer attempt retains its link and the internal run keeps
+its own agreement and revision history. Both modes retain failed evidence and exercise the same
+protected verifier/publisher before removing their installations. Run these native qualifications
+serially: they deliberately use the fixed Slotbook service port and installation names.
+
+The current 03 method has an empty input interface and a fixed target/version. This example does
+not imply arbitrary-target deployment or a parameterized replacement agreement. The publication
+contract and finite input rules are described in the [published methods guide](../../docs/guides/published-methods.md).

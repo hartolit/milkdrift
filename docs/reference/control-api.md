@@ -1,4 +1,4 @@
-# Local control API 2.9
+# Local control API 2.10
 
 Use this reference for exact requests, replies, routes, and CLI machine output. For setup, begin
 with the [operator examples](../../examples/operator/README.md); for Rust integration, use the
@@ -12,10 +12,10 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":9}}
+{"protocol":{"major":2,"minor":10}}
 ```
 
-Version 2.9 is required on both sides. Older and newer major/minor versions are refused with
+Version 2.10 is required on both sides. Older and newer major/minor versions are refused with
 `unsupported_version`; update the client and daemon together. There is no protocol downgrade.
 Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
@@ -23,7 +23,7 @@ the negotiated envelope version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 9},
+  "protocol": {"major": 2, "minor": 10},
   "request_id": "req-1",
   "value": {}
 }
@@ -37,7 +37,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 9},
+  "protocol": {"major": 2, "minor": 10},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -86,7 +86,7 @@ administration uses the separate routes below. A command envelope has no actor f
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 9},
+  "protocol": {"major": 2, "minor": 10},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -361,7 +361,7 @@ content digest.
 Both host roles expose `POST /v1/resources` when the managed Linux adapter is configured.
 `ControlClient::manage_resources` accepts `milkdrift_capability::managed::ManagedRequest` and
 validates the returned `ManagedResponse` against its target. The HTTP response uses the ordinary
-success/error envelope. The inner command/inventory schema is independently versioned at 1.
+success/error envelope. The inner command/inventory schema is independently versioned at 3.
 An authorized `prepare` returns a preview state of `prepared` or `unprepared`. The latter includes
 bounded prerequisite diagnostics without recording a transition or changing an installation; it is
 not an accepted apply. Authentication, scope and malformed-request failures still use the error
@@ -369,7 +369,7 @@ envelope. Clients must examine the preview state before proposing a change.
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "command": "inspect-one",
   "installation": "slotbook",
   "expected_version": 0,
@@ -410,8 +410,9 @@ See [managed operations](../operations/managed-linux.md) for exact CLI use and r
 
 ## Governed methods and protected publication
 
-Protocol 2.9 run reads include `governing_agreement` (the accepted origin binding or null) and
-`agreement_adoptions` (the cumulative prospective adoption count). These project runtime history;
+Protocol 2.10 run reads include `published_source` (the accepted public operation or local attempt,
+visible under internal run inspection), `governing_agreement` (the accepted origin binding or null),
+and `agreement_adoptions` (the cumulative prospective adoption count). These project runtime history;
 clients cannot update them. Blueprint schema 3 includes an explicit agreement or null.
 
 Proposal version 1 also accepts a strict authoring `draft` envelope. Its fields match the canonical
@@ -419,7 +420,7 @@ proposal except that the owner derives `digest` and derives the mutation batch i
 `mutation` array. This form uses the same submission, authority, risk and reconciliation checks.
 It cannot be combined with a canonical `proposal` envelope. Normal receipts retain canonical identity.
 
-Managed schema 2 adds `evaluate { candidate }`, `evidence { evaluation }`, and
+Managed schema 3 includes `evaluate { candidate }`, `evidence { evaluation }`, and
 `publish { evaluation }`. Candidate is an exact artifact reference; evaluation is its host-derived
 `b3_` journal identity. `resource.evaluate_candidate` and `resource.publish_candidate` accept an
 inline target (`schema_version`, `command`, `installation`, `expected_version`) plus a selected
@@ -428,3 +429,31 @@ artifact owner. Every API, CLI, workflow and serving call enters the managed own
 report is only an identity selector. The private journal and current target policy decide permission.
 Responses contain optional `evaluation`; pending intent, completed evidence, running service and
 workflow terminal remain distinct. See the [runnable example](../../examples/adaptive-slotbook/README.md).
+
+
+## Published workflow capabilities
+
+The ordinary command endpoint accepts `publish_method { document, expected_previous_version }`,
+`inspect_method { capability, generation }`, `list_methods { after_capability, after_generation,
+limit }`, and `retire_method { capability, generation, expected_version }`. The document is the
+schema-1 persistence-owned `PublishedMethod`; inspection and listing return retained records.
+Listing requires a complete after pair or neither, and a limit from 1 through 128. Authority is
+`AdministerCapabilities` scoped to the named capability and `method.publish`, `method.inspect`, or
+`method.retire`. The publication binds a configured service grant; only workflow-enabled hosts
+with accounted execution can provide it. The next consecutive descriptor generation promotes a
+replacement. Exact accepted generations continue after retirement; different bytes under the same
+immutable identity conflict.
+
+Public discovery/invocation/lookup/observation/cancellation use the existing `/v1/invocations`
+routes. The derived `org.milkdrift/published-method.v1` descriptor extension contains documentation,
+finite input rules and output limits, without internal field mappings, graph or service identity.
+`org.milkdrift/published-allowance.v1` carries the conservative prepared envelope for delegated
+admission. Callers cannot override either derived extension in a method document.
+
+`GET /v1/invocations/{execution}/outputs/{artifact}?offset=0&maximum=65536` returns one immutable
+metadata-and-byte range. Maximum is 1 through 65,536 bytes. `Inspect` and `ReadCapabilityOutput`
+authorize only that authenticated caller's recorded terminal output under the exact capability
+scope, including after archival. Unrelated artifact identities refuse; this route does not grant
+general artifact access. Observations and archived summaries also recheck result-read permission
+before disclosing output references. [Published methods](../guides/published-methods.md) gives the
+configuration and CLI path.

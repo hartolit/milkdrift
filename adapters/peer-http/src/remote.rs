@@ -404,7 +404,7 @@ impl CapabilityAdapter for RemoteCapabilityAdapter {
         &self,
         _invocation: &AdapterInvocation<'_>,
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
-        self.request_limits()
+        self.request_limits()?
             .admission_envelope()
             .map_err(|error| AdapterError::rejected(error.to_string()))
     }
@@ -624,6 +624,10 @@ fn local_descriptor(
     let mut trust_zones = remote.trust_zones().clone();
     trust_zones.insert(relationship.trust_zone.clone());
     let mut extensions = remote.extensions().clone();
+    // Managed inventory belongs to the serving host. The exact remote descriptor is retained
+    // for delegation; its filesystem claims cannot address the origin's unrelated inventory.
+    extensions
+        .retain(|key, _| key.as_str() != milkdrift_capability::managed::MANAGED_BINDING_EXTENSION);
     let extension = ExtensionKey::new("dev.milkdrift.peer/provenance")
         .map_err(|error| PeerHttpError::Protocol(error.to_string()))?;
     let value = serde_json::to_value(provenance)
@@ -755,24 +759,11 @@ fn error_class(error: &PeerHttpError) -> &'static str {
     }
 }
 
+mod limits;
 #[cfg(test)]
 mod tests;
 
 impl RemoteCapabilityAdapter {
-    fn request_limits(&self) -> milkdrift_peer_protocol::ExecutionLimits {
-        let mut limits = self.relationship.execution_limits.clone();
-        if self.remote_descriptor.category() == &milkdrift_capability::CapabilityCategory::Process {
-            // Native process admission does not qualify model billing or logical tokens.
-            // Forbid those dimensions in the exact delegated call; serving preparation
-            // must confirm they are inapplicable before any process can enter.
-            limits.input_units = None;
-            limits.output_units = None;
-            limits.cost_micros = 0;
-            limits.cost_currency = None;
-        }
-        limits
-    }
-
     fn execute_prepared(
         &self,
         invocation: &AdapterInvocation<'_>,
@@ -828,11 +819,13 @@ impl RemoteCapabilityAdapter {
                     reservation: reservation.clone(),
                 }
             });
+        let publication_ancestry = context.publication_ancestry().to_vec();
         let context = context.workflow().ok_or_else(|| {
             AdapterError::rejected("workflow delegation cannot carry direct origin")
         })?;
-        let limits = self.request_limits();
+        let limits = self.request_limits()?;
         let delegation = DelegatedAuthorization {
+            publication_ancestry,
             controller_reservation,
             reference: self.relationship.delegation.clone(),
             issuer_peer: self.client.local_peer().clone(),
@@ -866,10 +859,21 @@ impl RemoteCapabilityAdapter {
         )
         .map_err(|error| AdapterError::rejected(error.to_string()))?;
         self.stage_inputs(&request, inputs, reporter)?;
+        let mut imported = BTreeSet::new();
+        let mut imported_bytes = request
+            .input_artifact_bytes()
+            .map_err(|error| AdapterError::rejected(error.to_string()))?;
         let execution = match self.client.submit(&request) {
             Ok(InvocationAcceptance::Accepted { execution, .. }) => execution,
-            Ok(InvocationAcceptance::Archived { summary, .. }) => {
-                return report_archived_summary(
+            Ok(InvocationAcceptance::Archived {
+                summary, execution, ..
+            }) => {
+                return self.recover_archived_outputs(
+                    &execution,
+                    deadline,
+                    artifact_controller.as_ref(),
+                    &mut imported,
+                    &mut imported_bytes,
                     invocation.request().invocation(),
                     1,
                     invocation.resolution().operation_contract().side_effect(),
@@ -919,10 +923,6 @@ impl RemoteCapabilityAdapter {
             .map_err(|_| AdapterError::external_failure("remote execution map unavailable"))?
             .insert(invocation.request().invocation().clone(), execution.clone());
         let mut after: u64 = 0;
-        let mut imported = BTreeSet::new();
-        let mut imported_bytes = request
-            .input_artifact_bytes()
-            .map_err(|error| AdapterError::rejected(error.to_string()))?;
         let result = 'observing: loop {
             if self.lifecycle.load(Ordering::SeqCst) == Lifecycle::Stopped as u8 {
                 break report_uncertainty(
@@ -992,7 +992,12 @@ impl RemoteCapabilityAdapter {
                         }
                     }
                     if let Some(summary) = archived_summary {
-                        break report_archived_summary(
+                        break self.recover_archived_outputs(
+                            &execution,
+                            deadline,
+                            artifact_controller.as_ref(),
+                            &mut imported,
+                            &mut imported_bytes,
                             invocation.request().invocation(),
                             after.saturating_add(1),
                             invocation.resolution().operation_contract().side_effect(),

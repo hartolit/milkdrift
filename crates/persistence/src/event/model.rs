@@ -373,6 +373,9 @@ pub struct MonetaryUsage {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AttemptUsage {
+    /// Attributable nested entries and internal artifacts for a composed operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nested_work: Option<milkdrift_capability::NestedWorkUsage>,
     /// Provider-defined input units when observed.
     pub input_units: Option<u64>,
     /// Provider-defined output units when observed.

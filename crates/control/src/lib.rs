@@ -80,3 +80,6 @@ pub const WORKFLOW_SIGNAL_OPERATION: &str = "workflow.signal";
 pub const CONTROLLER_INSPECT_OPERATION: &str = "controller.inspect";
 /// Namespaced capability operation for authorized checkpoint continuation.
 pub const CONTROLLER_CONTINUE_OPERATION: &str = "controller.continue";
+
+mod published;
+pub use published::{PublishedWorkflowService, PublishedWorkflowStore};

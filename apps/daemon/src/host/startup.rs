@@ -337,7 +337,7 @@ impl Owner {
         if !recovery_controls {
             recover_input_uploads(store.as_ref(), startup_now)?;
         }
-        let workflow = if role == milkdrift_control_protocol::HostRole::WorkflowEnabled {
+        let mut workflow = if role == milkdrift_control_protocol::HostRole::WorkflowEnabled {
             let scheduler = SchedulerLimits::new(
                 runtime_plan.global_concurrency,
                 runtime_plan.per_run_concurrency,
@@ -394,7 +394,11 @@ impl Owner {
                     .install_controller_lifecycle(control.controller_lifecycle_owner())
                     .map_err(|error| error.to_string())?;
             }
-            Some(WorkflowServices { runtime, control })
+            Some(WorkflowServices {
+                runtime,
+                control,
+                publications: None,
+            })
         } else {
             None
         };
@@ -506,7 +510,7 @@ impl Owner {
         capabilities::register_configured(
             &adapters,
             &capability_host,
-            data,
+            data.clone(),
             auth.resolver(),
             startup_now,
         )?;
@@ -522,6 +526,42 @@ impl Owner {
             owner_queue,
             clock.clone(),
         )?;
+        if let Some(workflow) = &mut workflow {
+            let grants = auth.grants();
+            let mut services = BTreeMap::new();
+            for (capability, identity) in &runtime_plan.publication_services {
+                let grant = grants
+                    .iter()
+                    .find(|grant| grant.identity() == identity)
+                    .ok_or_else(|| "configured publication service grant is absent".to_owned())?;
+                services.insert(
+                    capability.clone(),
+                    milkdrift_persistence::published::PublishedServiceIdentity {
+                        actor: grant.actor().clone(),
+                        grant: grant.identity().clone(),
+                        grant_revision: grant.revision(),
+                        grant_digest: grant.digest().map_err(|error| error.to_string())?,
+                        revocation_generation: grant.revocation_generation(),
+                    },
+                );
+            }
+            let publications = milkdrift_control::PublishedWorkflowService::new(
+                capability_host.clone(),
+                store.clone(),
+                workflow.runtime.clone(),
+                authority.clone(),
+                clock.runtime_adapter(),
+                data,
+                services,
+            );
+            let port: Arc<dyn milkdrift_capability_host::PublishedWorkflowContinuation> =
+                publications.clone();
+            capability_host
+                .install_published_continuation(&port)
+                .map_err(|error| error.to_string())?;
+            publications.restore().map_err(|error| error.to_string())?;
+            workflow.publications = Some(publications);
+        }
         startup_cleanup.service = peer_runtime.service.clone();
         if let Some(service) = &peer_runtime.service {
             health.peer_status(
@@ -607,6 +647,16 @@ fn recover_input_uploads(store: &RedbStore, now: u64) -> Result<(), String> {
 
 fn refuse_workflow_obligations(store: &RedbStore) -> Result<(), String> {
     use milkdrift_persistence::{ControllerAccountStore, RunSummaryFilter, RunSummaryPageQuery};
+    if !milkdrift_persistence::published::PublishedMethodStore::published_methods(
+        store,
+        None,
+        PageSize::new(1).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?
+    .is_empty()
+    {
+        return Err("execution_only role refused: retained published workflow implementations require workflow_enabled".to_owned());
+    }
     let mut cursor = None;
     loop {
         let page = store

@@ -149,6 +149,7 @@ impl RunJournal for RedbStore {
         crate::controller_account::apply_controller_transaction(&write, request)?;
         append_events(&write, request, self.faults.as_ref())?;
         crate::managed::apply_run_resources(&write, request)?;
+        crate::published::apply_local_links(&write, request)?;
         if let Some(checkpoint) = request.projection_checkpoint() {
             crate::snapshot::attach_projection_checkpoint(
                 &write,

@@ -332,8 +332,9 @@ fn shutdown_and_restart_recover_entered_claim_without_duplicate_adapter_entry() 
             .clock
             .wait_for_unavailable_observations(1, Duration::from_secs(2))?
     );
+    // The threads joined, but the durable entered operation still needs its recovery owner.
     assert!(
-        running
+        !running
             .service
             .shutdown_workers(Duration::from_secs(2))
             .clean
@@ -420,6 +421,7 @@ fn durable_drain_and_relationship_generation_close_the_adapter_entry_race() -> T
     store.set_peer_admission_open(false)?;
     let authority = allowed_decision(&peer)?;
     let entry_request = PeerEntryRequest {
+        published_invocation: None,
         owner: &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         execution: &execution,
         worker: &worker,

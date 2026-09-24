@@ -33,6 +33,19 @@ use super::model::{
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 #[allow(clippy::large_enum_variant)] // Durable facts remain direct typed schema fields.
 pub enum RunEventKind {
+    /// Internal run accepted the service relationship retained by its invocation owner.
+    PublishedRunBound {
+        /// Authoritative parent acceptance, used for inherited policy/account checks.
+        source: crate::published::PublishedInvocationSource,
+    },
+    /// An accepted workflow-backed operation yielded its execution lease after saving the exact
+    /// child command association. The attempt and resource obligations remain owned.
+    PublishedInvocationPlanned {
+        /// Local immutable attempt retaining this association.
+        attempt: AttemptId,
+        /// Canonical child creation/start association, accepted before any child creation.
+        plan: Box<crate::published::PublishedInvocationPlan>,
+    },
     /// An immutable outer agreement was accepted or inherited before this scope started.
     AgreementAccepted {
         /// Exact originating agreement, carried unchanged through descendants and restart.

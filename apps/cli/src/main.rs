@@ -81,6 +81,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum TopCommand {
+    /// Publish and administer exact reusable workflow capabilities on this host.
+    Method {
+        #[command(subcommand)]
+        command: MethodCommand,
+    },
     /// Approved persistent installation lifecycle, shared with workflow capabilities.
     Resource(ResourceArgs),
     /// Independent execution on the explicitly selected daemon endpoint.
@@ -281,6 +286,12 @@ enum InvocationCommand {
     },
     /// Follow bounded pages until terminal evidence or retained uncertainty; requires a timeout.
     Wait { execution: String },
+    /// Download one retained terminal output of this caller's accepted invocation.
+    Output {
+        execution: String,
+        artifact: String,
+        destination: PathBuf,
+    },
     /// Request cancellation; acknowledgement is separate from execution outcome.
     Cancel {
         execution: String,
@@ -501,6 +512,39 @@ impl TerminalFilter {
             Self::Cancelled => terminal == "cancelled",
         }
     }
+}
+
+#[derive(Subcommand)]
+enum MethodCommand {
+    /// Validate and publish an exact method document; the next generation promotes a replacement.
+    Publish {
+        file: PathBuf,
+        #[arg(long)]
+        expected_previous_version: Option<u64>,
+    },
+    /// Inspect a protected exact implementation; ordinary discovery is invocation catalog.
+    Show {
+        capability: String,
+        #[arg(long)]
+        generation: u64,
+    },
+    /// Page retained generations with an explicit stable continuation identity.
+    List {
+        #[arg(long)]
+        after_capability: Option<String>,
+        #[arg(long)]
+        after_generation: Option<u64>,
+        #[arg(long, default_value_t = 32)]
+        limit: u32,
+    },
+    /// Close new selection while allowing accepted work to settle.
+    Retire {
+        capability: String,
+        #[arg(long)]
+        generation: u64,
+        #[arg(long)]
+        expected_version: u64,
+    },
 }
 
 #[derive(Subcommand)]

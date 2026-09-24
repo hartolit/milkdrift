@@ -315,6 +315,9 @@ impl RunTerminalProjection {
 /// Pure read model obtained by replaying one run's ordered authoritative facts.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct RunProjection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) published_source:
+        Option<milkdrift_persistence::published::PublishedInvocationSource>,
     pub(super) sequence: RunSequence,
     /// Last authoritative sequence whose high-volume historical detail was compacted.
     ///

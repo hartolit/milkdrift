@@ -46,7 +46,7 @@ the executable system. Development methods belong in the [practices](development
   logical workspace values and temporary materialization. **Attachment:** access to a resource
   owned elsewhere, without permission to delete it.
 
-Agreements and protected managed publication are implemented; published methods remain assigned work (see [status](product/status.md)):
+Agreements and published methods bind adaptation to an accepted contract:
 
 - **Agreement:** immutable obligations, effect prerequisites and adaptation limits accepted for a
   scope. **Method adaptation:** a prospective revision inside those limits, not a change to them.
@@ -116,7 +116,7 @@ Transport-independent serving acceptance, preparation, entry and recovery live i
 local workflow history stays in runtime. Further accepted dependency changes preserve that inward
 direction. Host resource policy belongs in a narrow module
 with typed persistence actions and an adopted Linux mechanism adapter. Blueprint owns agreement
-structure; authority owns verifier policy and the assigned service delegation decisions, and control owns publication and
+structure; authority owns verifier policy and service delegation decisions, and control owns publication and
 proposal orchestration. Host consumes a continuation port implemented by control, avoiding a
 host-to-control dependency cycle. Shared producer meaning stays in workspace, with one artifact
 store. These moves are required by concrete direct/resource/publication consumers; no new crate
@@ -403,7 +403,10 @@ Local `NodeScheduled` acceptance and direct/peer serving acceptance acquire the 
 index projects those facts; it does not schedule an independent execution. Final-entry evidence
 permits physical entry under the current claim. A terminal event releases unentered reservations,
 but entered work needs adapter stop evidence. Accepted subworkflow journal links identify the exact
-parent logical execution and inherited authority; published invocation links remain work for 04.
+parent logical execution and inherited authority. Published links instead identify the caller's
+exact saved association and its configured service identity. The wrapper has no physical writer:
+its entry transaction records `NoExternalEntry` quiescence before any child takes editing. Physical
+children still require the enforcing adapter's exact stop/fencing evidence.
 
 The current maintenance policy refuses busy state immediately. Successful acceptance commits a
 bounded transition and closes admission; each platform result is separately guarded by transition
@@ -427,7 +430,7 @@ direct/raw update paths. Repair workers cannot write served content or use an un
 credential or native tool to bypass the operation. The existing result-acceptance capability retains
 its finite documented meaning; it is not by itself this effect protection.
 
-The assigned publication extension will let control publish exact starting methods and adaptation policies through the normal registry. A
+Control publishes exact starting methods and adaptation policies through the normal registry. A
 published version binds a service principal/grant and input/target narrowing policy, allowing a
 caller to invoke deployment without owning its internal administrative grant union. Caller authority,
 inherited restrictions, agreement and budgets remain applicable; caller-supplied paths or context
@@ -444,6 +447,26 @@ unsupported recursion. Shared-area children use the editing transfer above as we
 worker capacity. Cancellation, internal completion, agreement satisfaction, result publication and
 surviving deployed service remain separate facts. [ADR 0041](decisions/0041-published-method-invocation.md)
 owns linkage, service authority and account settlement.
+
+The configured `runtime.publication_services` map names each capability's immutable service grant.
+It requires workflow mode and explicit controller activation. Control validates supported internal
+implementations, service create/start and invocation authority, the input contract, declared terminal
+outputs, and conservative accounting bounds before publication. Registry capacity is reserved before
+the inventory commit. Discovery projects public documentation and constraints without disclosing the
+starting graph or service grant. Retirement preserves the inventory and accepted continuations;
+restoration advertises an unavailable exact generation when its current service cannot execute it.
+Before and after internal preparation, runtime rechecks the enclosing invocation's deadline and
+local caller chain. Serving owns current client/peer checks through the host's weak owner reference;
+the service grant alone cannot authorize further entry for a cancelled or revoked public call. Accepted ancestry
+also carries each publication's depth ceiling, so a descendant cannot reset a stricter limit.
+
+Each service run has a persistence-owned cumulative allowance. Ordinary descendants inherit it;
+controllers cannot replace it. A calling workflow reserves the method's full internal envelope in
+its own account before entry, then settles measured internal work and public copies once. Missing
+usage retains that reservation. Direct/peer serving accounts apply the same finite per-call envelope.
+These are per-invocation budgets, alongside service authority and host capacity; they are not a
+service-wide lifetime spending account. [Published methods](guides/published-methods.md) explains
+configuration, operator commands, disclosure, and the supported limits.
 
 Learning uses ordinary control proposals, runtime evaluations, artifacts and publication. An agent
 selects authorized source decisions/failures and proposes a candidate method; an evaluator compares

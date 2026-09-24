@@ -9,7 +9,8 @@ use super::run::RunProjection;
 impl RunProjection {
     pub(super) fn apply_kind(&mut self, event: &RunEventEnvelope) -> Result<(), RuntimeError> {
         match event.kind() {
-            RunEventKind::AgreementAccepted { .. }
+            RunEventKind::PublishedRunBound { .. }
+            | RunEventKind::AgreementAccepted { .. }
             | RunEventKind::RunCreated { .. }
             | RunEventKind::ExecutionAuthorityEstablished { .. }
             | RunEventKind::RevisionPinned { .. }
@@ -31,7 +32,8 @@ impl RunProjection {
             | RunEventKind::CapabilityResolved { .. }
             | RunEventKind::SideEffectClassified { .. } => self.apply_execution_kind(event),
 
-            RunEventKind::LeaseGranted { .. }
+            RunEventKind::PublishedInvocationPlanned { .. }
+            | RunEventKind::LeaseGranted { .. }
             | RunEventKind::CapabilityEntryDecisionRecorded { .. }
             | RunEventKind::CapabilityAdapterEntryDecisionRecorded { .. }
             | RunEventKind::LeaseHeartbeatRecorded { .. }

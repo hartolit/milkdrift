@@ -75,3 +75,20 @@ add a use claim around frozen provider bytes; only final host entry receives tha
 entered-serving fixture helper and optional prepared-serving allowance assertion remain under
 `test-support`. Review their default/all-feature inventories with those consumers; none promises a
 separately versioned third-party Rust API.
+
+The published-method boundary adds durable schemas and store ports under `persistence::published`;
+redb keeps its inventory/index mechanics private. `control::PublishedWorkflowService` and its store
+composition bound are workspace adapter contracts consumed by daemon. Capability-host owns
+`PublishedWorkflowContinuation` and the prepared pending-work alternative; runtime and serving both
+consume that port, while control implements it without a reverse dependency. Runtime's exact
+create/bind/start and cancellation methods are workspace ports for that implementation, guarded by
+the authoritative saved association. `InvocationCounts`, `NestedWorkUsage`, publication ancestry,
+managed `NoExternalEntry` proof and published child links are durable cross-owner contracts; they
+cannot be ordinary UI state. The output range and method commands are external control/peer
+contracts, retaining exact caller and version checks. No extra public graph engine, mutable method
+registry API or unjournaled invocation entry is introduced.
+`PublicationAncestor` is a validated durable contract consumed by runtime dispatch, host context,
+publication admission and peer delegation. It preserves each accepted depth ceiling.
+`TaskExecutor::published_serving_entry_allowed` is a workspace adapter port: runtime invokes it
+at internal final entry and capability-host routes it to its existing serving owner. Its default
+refuses unavailable authority; the serving attachment and policy checks remain private.

@@ -88,6 +88,13 @@ impl AdaptationScope {
         Ok(self)
     }
 
+    /// Exact capability envelopes permitted for future editable tasks. Publication validates
+    /// their supported implementations before advertising a governed service.
+    #[must_use]
+    pub fn requirements(&self) -> &[CapabilityRequirement] {
+        &self.requirements
+    }
+
     /// Maximum prospective adoptions over the entire accepted governed run.
     #[must_use]
     pub const fn maximum_revisions(&self) -> u16 {

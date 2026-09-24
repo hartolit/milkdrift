@@ -207,6 +207,7 @@ fn session(
 
 fn grant(config: &ActorBindingConfig, actor: &ActorRef) -> Result<AuthorityGrant, ConfigError> {
     let preset = match config.preset {
+        AuthorityPresetConfig::Invoker => AuthorityPreset::Invoker,
         AuthorityPresetConfig::Observer => AuthorityPreset::Observer,
         AuthorityPresetConfig::Advisor => AuthorityPreset::Advisor,
         AuthorityPresetConfig::Supervisor => AuthorityPreset::Supervisor,

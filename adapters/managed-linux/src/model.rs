@@ -179,11 +179,9 @@ impl CapabilityAdapter for ManagedModelAdapter {
         invocation: &AdapterInvocation<'_>,
     ) -> Result<milkdrift_capability_host::PreparedAdapterExecution, AdapterError> {
         let prepared = self.inner.clone().prepare(invocation)?;
-        Ok(
-            prepared.with_entry_wrapper(move |invocation, reporter, entry| {
-                self.execute_guarded(invocation, reporter, |reporter| entry(invocation, reporter))
-            }),
-        )
+        prepared.with_entry_wrapper(move |invocation, reporter, entry| {
+            self.execute_guarded(invocation, reporter, |reporter| entry(invocation, reporter))
+        })
     }
     fn admission_envelope(
         &self,
@@ -278,7 +276,7 @@ impl AdapterReporter for ResponseProof<'_> {
                 .quiesce_managed_use(
                     self.id,
                     self.claim,
-                    &QuiescenceEvidence {
+                    &QuiescenceEvidence::PhysicalStop {
                         physical_identity: self.physical.to_owned(),
                         observation_digest: crate::digest(
                             serde_json::to_vec(&event).map_err(fail)?,

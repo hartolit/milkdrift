@@ -179,3 +179,24 @@ fn failure(error: ServingError, request_id: String) -> ApiError {
     };
     ApiError::new(status, code, message, retryable, Some(request_id))
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct OutputQuery {
+    offset: u64,
+    maximum: u32,
+}
+
+pub(super) async fn output(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((execution, artifact)): Path<(String, String)>,
+    Query(query): Query<OutputQuery>,
+) -> Result<Response, ApiError> {
+    serving(state, headers, move |service, actor| {
+        let execution = PeerExecutionId::new(execution)
+            .map_err(|error| ServingError::Protocol(error.to_string()))?;
+        service.client_output(actor, &execution, &artifact, query.offset, query.maximum)
+    })
+    .await
+}

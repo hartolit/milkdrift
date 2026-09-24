@@ -57,6 +57,25 @@ pub(crate) fn record(
         {
             return Err(invalid("managed hold missing its index"));
         }
+        let evidence = match &u.phase {
+            milkdrift_persistence::managed::ManagedUsePhase::Quiescent { evidence }
+            | milkdrift_persistence::managed::ManagedUsePhase::Suspended { evidence, .. } => {
+                Some(evidence)
+            }
+            _ => None,
+        };
+        if let Some(milkdrift_persistence::managed::QuiescenceEvidence::NoExternalEntry {
+            source,
+        }) = evidence
+        {
+            let plan = crate::published::association_read(read, source)?
+                .ok_or_else(|| invalid("no-entry proof lost its publication acceptance"))?;
+            if !super::execution::publication_parent_matches(u, &plan) {
+                return Err(invalid(
+                    "no-entry proof belongs to a different resource use",
+                ));
+            }
+        }
         match &u.execution {
             ManagedExecution::Local {
                 run,

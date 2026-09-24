@@ -14,6 +14,8 @@ use crate::ControlError;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthorityPreset {
+    /// Invoke and observe public capabilities within explicit scope, without workflow administration.
+    Invoker,
     /// Inspect only the exact state permitted by resource scope.
     Observer,
     /// Inspect and submit prospective proposals.
@@ -60,8 +62,9 @@ impl AuthorityPreset {
             InspectNodeExecution, InspectOwnAuthority, InspectPeer, InspectProposal,
             InspectProviderProfile, InspectRevision, InspectRun, InspectTimeline, InvokeCapability,
             ListCapabilities, NegotiateControlProtocol, Pause, Propose, ProposeOffline,
-            PublishArtifact, ReadArtifactContent, ReadArtifactMetadata, ReadLayout, ReadReadiness,
-            ReadWorkspaceValue, Resume, Retry, StartRun, Terminate, ValidateBlueprint, WriteLayout,
+            PublishArtifact, ReadArtifactContent, ReadArtifactMetadata, ReadCapabilityOutput,
+            ReadLayout, ReadReadiness, ReadWorkspaceValue, Resume, Retry, StartRun, Terminate,
+            ValidateBlueprint, WriteLayout,
         };
         let reads = [
             Inspect,
@@ -77,6 +80,7 @@ impl AuthorityPreset {
             InspectProviderProfile,
             ReadArtifactMetadata,
             ReadArtifactContent,
+            ReadCapabilityOutput,
             ReadWorkspaceValue,
             ReadLayout,
             NegotiateControlProtocol,
@@ -86,6 +90,23 @@ impl AuthorityPreset {
             InspectPeer,
         ];
         match self {
+            Self::Invoker => [
+                Inspect,
+                ReadCapabilityOutput,
+                InvokeCapability,
+                CancelCapability,
+                ListCapabilities,
+                InspectCapabilityHealth,
+                InspectProviderProfile,
+                ReadArtifactMetadata,
+                ReadArtifactContent,
+                PublishArtifact,
+                NegotiateControlProtocol,
+                ReadReadiness,
+                InspectOwnAuthority,
+            ]
+            .into_iter()
+            .collect(),
             Self::Observer => reads.into_iter().collect(),
             Self::Advisor => reads.into_iter().chain([Propose, ProposeOffline]).collect(),
             Self::Supervisor => reads

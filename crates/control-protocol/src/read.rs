@@ -181,6 +181,9 @@ pub struct RevisionChange {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunRead {
+    /// Exact caller-owned publication association; this read requires internal run inspection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published_source: Option<Value>,
     /// Accepted outer agreement binding, projected from the persistence-owned contract.
     pub governing_agreement: Option<Value>,
     /// Cumulative prospective revisions retained through restart and history compaction.
@@ -351,6 +354,9 @@ pub struct CapabilityOperationRead {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AttemptUsageRead {
+    /// Actual nested process/model admissions and internal artifact bytes for a composed method.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nested_work: Option<NestedWorkUsageRead>,
     /// Provider-defined input units when supplied.
     pub input_units: Option<u64>,
     /// Provider-defined output units when supplied.
@@ -361,6 +367,18 @@ pub struct AttemptUsageRead {
     pub cost_micros: Option<u64>,
     /// Uppercase ISO currency paired with `cost_micros`.
     pub currency: Option<String>,
+}
+
+/// Attributable work inside a published method; output copies remain separately accounted.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NestedWorkUsageRead {
+    /// Internal process entries.
+    pub process_admissions: u64,
+    /// Internal model entries.
+    pub model_admissions: u64,
+    /// Logical internal artifact bytes.
+    pub artifact_bytes: u64,
 }
 
 /// One named immutable artifact publication owned by an attempt.
@@ -637,6 +655,8 @@ pub struct AuthorityRead {
     pub grant_id: String,
     /// Immutable grant revision.
     pub grant_revision: u64,
+    /// Digest of the exact immutable grant, for explicit service publication relationships.
+    pub grant_digest: String,
     /// Current revocation generation.
     pub revocation_generation: u64,
     /// Stable operation names allowed by configuration.

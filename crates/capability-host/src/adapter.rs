@@ -209,6 +209,12 @@ pub trait AdapterReporter: Send + Sync {
 /// idempotent no-resource behavior; resource-owning implementations must make replay, drain, and
 /// shutdown behavior explicit in their own state machine.
 pub trait CapabilityAdapter: Send + Sync + 'static {
+    /// Independent bound for durable workflow continuations. Ordinary synchronous adapters have
+    /// no continuation slots. These lifetime pins do not consume an execution permit.
+    fn maximum_pending_workflows(&self) -> Option<u32> {
+        None
+    }
+
     /// Whether this adapter implements independent, explicitly selected inputs.
     /// Workflow-only adapters remain absent from the independent invocation catalog.
     fn accepts_direct_inputs(&self) -> bool {
@@ -296,10 +302,35 @@ type AdapterEntry = Box<
 /// controller reservation. Dropping an unentered handle releases its ephemeral data.
 pub struct PreparedAdapterExecution {
     envelope: InvocationAdmissionEnvelope,
-    entry: AdapterEntry,
+    action: PreparedAdapterAction,
+}
+
+enum PreparedAdapterAction {
+    External(AdapterEntry),
+    Published(Box<milkdrift_persistence::published::PublishedInvocationPlan>),
 }
 
 impl PreparedAdapterExecution {
+    /// Arrange a real internal workflow through the caller's durable continuation owner.
+    /// This preparation performs no child creation; the association must first be committed.
+    pub fn published(
+        envelope: InvocationAdmissionEnvelope,
+        plan: milkdrift_persistence::published::PublishedInvocationPlan,
+    ) -> Self {
+        Self {
+            envelope,
+            action: PreparedAdapterAction::Published(Box::new(plan)),
+        }
+    }
+    pub(crate) fn published_plan(
+        &self,
+    ) -> Option<&milkdrift_persistence::published::PublishedInvocationPlan> {
+        match &self.action {
+            PreparedAdapterAction::Published(plan) => Some(plan),
+            PreparedAdapterAction::External(_) => None,
+        }
+    }
+
     /// Captures bounded local preparation and the only operation that may submit it.
     pub fn new(
         envelope: InvocationAdmissionEnvelope,
@@ -309,7 +340,7 @@ impl PreparedAdapterExecution {
     ) -> Self {
         Self {
             envelope,
-            entry: Box::new(entry),
+            action: PreparedAdapterAction::External(Box::new(entry)),
         }
     }
 
@@ -325,10 +356,17 @@ impl PreparedAdapterExecution {
         ) -> Result<(), AdapterError>
         + Send
         + 'static,
-    ) -> Self {
-        Self::new(self.envelope, move |invocation, reporter| {
-            wrapper(invocation, reporter, self.entry)
-        })
+    ) -> Result<Self, AdapterError> {
+        match self.action {
+            PreparedAdapterAction::External(entry) => {
+                Ok(Self::new(self.envelope, move |invocation, reporter| {
+                    wrapper(invocation, reporter, entry)
+                }))
+            }
+            PreparedAdapterAction::Published(_) => Err(AdapterError::rejected(
+                "synchronous entry guards cannot wrap a durable continuation",
+            )),
+        }
     }
 
     pub(crate) fn envelope(&self) -> &InvocationAdmissionEnvelope {
@@ -340,6 +378,11 @@ impl PreparedAdapterExecution {
         invocation: &AdapterInvocation<'_>,
         reporter: &dyn AdapterReporter,
     ) -> Result<(), AdapterError> {
-        (self.entry)(invocation, reporter)
+        match self.action {
+            PreparedAdapterAction::External(entry) => entry(invocation, reporter),
+            PreparedAdapterAction::Published(_) => Err(AdapterError::rejected(
+                "published work must use its durable continuation",
+            )),
+        }
     }
 }

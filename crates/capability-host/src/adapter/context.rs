@@ -54,6 +54,8 @@ pub enum AdapterInputSelection {
 /// Exact input selection and durable authority supplied to materializing adapters.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AdapterExecutionContext {
+    publication_ancestry: Vec<milkdrift_capability::PublicationAncestor>,
+    serving_source: Option<milkdrift_persistence::published::PublishedInvocationSource>,
     selection: AdapterInputSelection,
     authority: Option<ExecutionAuthorityBasis>,
     resolution_authorization: Option<AuthorityDecisionSnapshot>,
@@ -66,6 +68,111 @@ pub struct AdapterExecutionContext {
 }
 
 impl AdapterExecutionContext {
+    /// Enclosing accepted methods, bounded by the runtime and exact peer delegation document.
+    #[must_use]
+    pub fn publication_ancestry(&self) -> &[milkdrift_capability::PublicationAncestor] {
+        &self.publication_ancestry
+    }
+
+    /// Existing acceptance owner; serving workflow coordinates never become a second local attempt.
+    pub fn published_source(
+        &self,
+    ) -> Option<milkdrift_persistence::published::PublishedInvocationSource> {
+        self.serving_source.clone().or_else(|| {
+            self.workflow().map(|w| {
+                milkdrift_persistence::published::PublishedInvocationSource::Local {
+                    run: w.run.clone(),
+                    attempt: w.attempt.clone(),
+                }
+            })
+        })
+    }
+    pub(crate) fn with_serving_preparation(
+        mut self,
+        record: &milkdrift_persistence::PeerExecutionRecord,
+    ) -> Self {
+        self.serving_source = Some(
+            milkdrift_persistence::published::PublishedInvocationSource::Serving {
+                caller: record.caller.clone(),
+                execution: record.execution.clone(),
+            },
+        );
+        self.entry_authorization = Some(record.authority.clone());
+        if let milkdrift_peer_protocol::ServingAuthorization::Peer(delegation) =
+            &record.request.authorization
+        {
+            self.publication_ancestry = delegation.publication_ancestry.clone();
+        }
+        self
+    }
+
+    /// Recover a public result's local owner from the exact attempt association. This constructor
+    /// carries the original reservation so publishing result bytes cannot escape its accounting.
+    pub fn published_local_result(
+        plan: &milkdrift_persistence::published::PublishedInvocationPlan,
+        projection: &milkdrift_runtime::RunProjection,
+        accounts: &dyn milkdrift_persistence::ControllerAccountStore,
+    ) -> Result<Self, crate::InvocationDataError> {
+        use milkdrift_persistence::published::PublishedInvocationSource;
+        let invalid = || {
+            crate::InvocationDataError::Integrity(
+                "public result lost its exact local acceptance".to_owned(),
+            )
+        };
+        let PublishedInvocationSource::Local { run, attempt } = &plan.source else {
+            return Err(invalid());
+        };
+        let value = projection.attempts().get(attempt).ok_or_else(invalid)?;
+        if projection.run_id() != Some(run) || value.published_invocation() != Some(plan) {
+            return Err(invalid());
+        }
+        let execution = projection
+            .node_executions()
+            .get(value.execution())
+            .ok_or_else(invalid)?;
+        let mut context = Self::new(
+            run.clone(),
+            projection
+                .revision_for_attempt(attempt)
+                .ok_or_else(invalid)?
+                .clone(),
+            execution.node().clone(),
+            value.execution().clone(),
+            attempt.clone(),
+        );
+        context.authority = projection.execution_authority().cloned();
+        context.entry_authorization = value.adapter_entry_authorization().cloned();
+        context.controller_reservation = accounts
+            .controller_account_binding(run)
+            .map_err(|_| invalid())?
+            .map(|account| {
+                milkdrift_persistence::ControllerReservationId::for_attempt(&account, attempt)
+            })
+            .transpose()
+            .map_err(|_| invalid())?;
+        Ok(context)
+    }
+
+    /// Recover the serving artifact namespace from the entered operation, including a workflow
+    /// origin on another host. That origin must never be mistaken for a locally owned run.
+    pub fn published_serving_result(
+        plan: &milkdrift_persistence::published::PublishedInvocationPlan,
+        record: &milkdrift_persistence::PeerExecutionRecord,
+    ) -> Result<Self, crate::InvocationDataError> {
+        let source = milkdrift_persistence::published::PublishedInvocationSource::Serving {
+            caller: record.caller.clone(),
+            execution: record.execution.clone(),
+        };
+        if plan.source != source || record.published_invocation.as_ref() != Some(plan) {
+            return Err(crate::InvocationDataError::Integrity(
+                "public result differs from its serving acceptance".to_owned(),
+            ));
+        }
+        crate::serving::authority::adapter_execution_context(&record.request)
+            .map_err(|e| crate::InvocationDataError::Integrity(e.to_string()))?
+            .with_serving_execution(record)
+    }
+
     /// Constructs exact durable provenance for an already validated execution dispatch.
     #[must_use]
     pub const fn new(
@@ -76,6 +183,8 @@ impl AdapterExecutionContext {
         attempt: AttemptId,
     ) -> Self {
         Self {
+            publication_ancestry: Vec::new(),
+            serving_source: None,
             selection: AdapterInputSelection::Workflow(WorkflowExecutionContext {
                 run,
                 revision,
@@ -96,6 +205,8 @@ impl AdapterExecutionContext {
     #[must_use]
     pub const fn direct(selection: DirectInputSelection) -> Self {
         Self {
+            publication_ancestry: Vec::new(),
+            serving_source: None,
             selection: AdapterInputSelection::Direct(selection),
             authority: None,
             resolution_authorization: None,
@@ -134,6 +245,8 @@ impl AdapterExecutionContext {
         controller_reservation: Option<&ControllerReservationId>,
     ) -> Self {
         Self {
+            publication_ancestry: dispatch.publication_ancestry().to_vec(),
+            serving_source: None,
             selection: AdapterInputSelection::Workflow(WorkflowExecutionContext {
                 run: dispatch.run().clone(),
                 revision: dispatch.revision().clone(),
@@ -176,6 +289,11 @@ impl AdapterExecutionContext {
         if !matches!(
             record.phase,
             milkdrift_persistence::PeerExecutionPhase::Entered { .. }
+                | milkdrift_persistence::PeerExecutionPhase::AwaitingWorkflow { .. }
+                | milkdrift_persistence::PeerExecutionPhase::CancellationRequested {
+                    evidence: Some(_),
+                    ..
+                }
         ) || record.caller != record.request.authorization.caller()
             || !selection_matches
             || self.authority.is_some()

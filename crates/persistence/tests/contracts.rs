@@ -42,7 +42,7 @@ fn revision_id() -> Result<RevisionId, PersistenceError> {
 }
 
 #[test]
-fn legacy_schema_v1_remains_readable_and_current_writes_use_v4()
+fn legacy_schema_v1_remains_readable_and_current_writes_use_v5()
 -> Result<(), Box<dyn std::error::Error>> {
     let event = sample_event(1)?;
     let encoded = event.to_canonical_json()?;
@@ -52,7 +52,7 @@ fn legacy_schema_v1_remains_readable_and_current_writes_use_v4()
         .unwrap_or(fixture_with_newline);
     let legacy = RunEventEnvelope::from_json(fixture)?;
     assert_eq!(legacy.schema_version(), 1);
-    assert_eq!(event.schema_version(), 4);
+    assert_eq!(event.schema_version(), 5);
     assert_ne!(encoded, fixture);
     assert_eq!(RunEventEnvelope::from_json(&encoded)?, event);
     Ok(())
@@ -93,14 +93,14 @@ fn future_and_malformed_versions_fail_before_interpretation()
 -> Result<(), Box<dyn std::error::Error>> {
     let bytes = sample_event(1)?.to_canonical_json()?;
     let mut value: serde_json::Value = serde_json::from_slice(&bytes)?;
-    value["schema_version"] = json!(5);
+    value["schema_version"] = json!(6);
     let future = serde_json::to_vec(&value)?;
     assert!(matches!(
         RunEventEnvelope::from_json(&future),
         Err(PersistenceError::UnsupportedVersion {
             document: "run_event",
-            found: 5,
-            supported: 4
+            found: 6,
+            supported: 5
         })
     ));
 

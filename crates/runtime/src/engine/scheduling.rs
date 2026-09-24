@@ -70,6 +70,7 @@ impl RuntimeService {
         let _entered = span.enter();
         let mut result = SchedulerTickResult::default();
         let limit = PageSize::new(u32::from(self.config.maximum_tick_items))?;
+        self.drive_published_invocations(limit)?;
         let maximum_visits = usize::from(self.config.maximum_tick_items);
         // Reserve one physical visit for runnable admission while allowing the
         // deterministic driver to use the remainder of the scheduler-wide

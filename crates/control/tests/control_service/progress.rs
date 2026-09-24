@@ -352,6 +352,7 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
     contract_account.settle_terminal(
         &contract_reservation,
         Some(&AttemptUsage {
+            nested_work: None,
             input_units: Some(6),
             output_units: None,
             duration_ms: None,
@@ -394,6 +395,7 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
     integrity_account.settle_terminal(
         &integrity_reservation,
         Some(&AttemptUsage {
+            nested_work: None,
             input_units: None,
             output_units: None,
             duration_ms: None,

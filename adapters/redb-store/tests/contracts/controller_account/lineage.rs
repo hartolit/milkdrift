@@ -292,7 +292,10 @@ fn controller_lineage_actions_require_exact_activation_and_child_events() -> Tes
         .through_sequence;
     let altered_declaration = ControllerAccountDeclaration::new(
         owner.clone(),
-        declaration.controller_execution().clone(),
+        declaration
+            .controller_execution()
+            .ok_or("controller owner absent")?
+            .clone(),
         declaration.policy_digest().to_owned(),
         ControllerResourceBudget::new(
             1_000_001,
@@ -349,7 +352,10 @@ fn controller_lineage_actions_require_exact_activation_and_child_events() -> Tes
         vec![
             RunEventKind::SubworkflowCreated {
                 subworkflow: first_subworkflow,
-                parent_execution: declaration.controller_execution().clone(),
+                parent_execution: declaration
+                    .controller_execution()
+                    .ok_or("controller owner absent")?
+                    .clone(),
                 child_run: first_multi_child.clone(),
                 child_revision: revision_id()?,
                 scope: first_scope.clone(),
@@ -358,7 +364,10 @@ fn controller_lineage_actions_require_exact_activation_and_child_events() -> Tes
             },
             RunEventKind::SubworkflowCreated {
                 subworkflow: second_subworkflow,
-                parent_execution: declaration.controller_execution().clone(),
+                parent_execution: declaration
+                    .controller_execution()
+                    .ok_or("controller owner absent")?
+                    .clone(),
                 child_run: second_multi_child.clone(),
                 child_revision: revision_id()?,
                 scope: second_scope.clone(),
@@ -416,7 +425,10 @@ fn controller_lineage_actions_require_exact_activation_and_child_events() -> Tes
         cross_account_head,
         RunEventKind::SubworkflowCreated {
             subworkflow: cross_account_subworkflow,
-            parent_execution: declaration.controller_execution().clone(),
+            parent_execution: declaration
+                .controller_execution()
+                .ok_or("controller owner absent")?
+                .clone(),
             child_run: cross_account_child.clone(),
             child_revision: revision_id()?,
             scope: cross_account_scope.clone(),
@@ -484,7 +496,10 @@ fn controller_lineage_actions_require_exact_activation_and_child_events() -> Tes
         parent_head,
         RunEventKind::SubworkflowCreated {
             subworkflow,
-            parent_execution: declaration.controller_execution().clone(),
+            parent_execution: declaration
+                .controller_execution()
+                .ok_or("controller owner absent")?
+                .clone(),
             child_run: child.clone(),
             child_revision: revision_id()?,
             scope: scope.clone(),
@@ -599,7 +614,10 @@ fn controller_assessment_integrity_requires_the_exact_durable_declaration() -> T
 
     let altered = ControllerAccountDeclaration::new(
         owner.clone(),
-        declaration.controller_execution().clone(),
+        declaration
+            .controller_execution()
+            .ok_or("controller owner absent")?
+            .clone(),
         declaration.policy_digest().to_owned(),
         ControllerResourceBudget::new(
             1_000_001,

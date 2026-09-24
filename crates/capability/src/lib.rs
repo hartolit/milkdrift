@@ -34,6 +34,8 @@ mod resolved;
 
 pub use admission::{
     AdmissionBound, AdmissionMonetaryBound, AdmissionUnit, InvocationAdmissionEnvelope,
+    InvocationCounts, MAX_PUBLICATION_DEPTH, NestedWorkUsage, PUBLISHED_ALLOWANCE_EXTENSION,
+    PublicationAncestor,
 };
 pub use bounded::{BoundedJson, ContractError, MAX_DOCUMENT_BYTES};
 pub use descriptor::{

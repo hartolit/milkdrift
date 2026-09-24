@@ -113,7 +113,7 @@ impl IntoResponse for ApiError {
             PeerHttpError::Transport(_) => (StatusCode::BAD_GATEWAY, "transport", true),
         };
         let body = serde_json::to_vec(&ErrorBody {
-            protocol: milkdrift_peer_protocol::ProtocolVersion::V1_4,
+            protocol: milkdrift_peer_protocol::ProtocolVersion::V1_5,
             code,
             message: bounded(&self.0.to_string(), 512),
             retryable,

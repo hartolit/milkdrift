@@ -5,6 +5,7 @@
 //! starts no hidden worker, and every successful reporter call is already durable.
 
 mod entry;
+mod published;
 mod reporter;
 mod session;
 
@@ -34,6 +35,8 @@ const MAX_OBSERVATION_COMMIT_RETRIES: usize = 16;
 /// Result of executing one claimed effect on the caller's thread/task.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EffectExecutionResult {
+    /// Durable child association retains ownership without consuming an execution worker.
+    Pending,
     /// A terminal invocation observation is durable.
     Completed {
         /// Invocation/heartbeat observations accepted or replayed.
@@ -105,15 +108,25 @@ impl RuntimeService {
                 continue;
             }
             let projection = self.projection(&indexed.run)?;
-            let lease = projection.leases().get(&indexed.lease).ok_or_else(|| {
-                RuntimeError::InvalidHistory("active effect index names an absent lease".to_owned())
-            })?;
+            let Some(lease) = projection.leases().get(&indexed.lease) else {
+                if projection.sequence() > indexed.through_sequence {
+                    // Reports and publication handoff may settle and compact a lease after
+                    // the bounded index snapshot was read. A later poll sees the new index.
+                    continue;
+                }
+                return Err(RuntimeError::InvalidHistory(
+                    "active effect index names an absent lease".to_owned(),
+                ));
+            };
             if !lease.is_active()
                 || lease.attempt() != &indexed.attempt
                 || lease.worker() != &indexed.worker
                 || lease.expires_at() != indexed.expires_at
                 || projection.sequence() < indexed.through_sequence
             {
+                if projection.sequence() > indexed.through_sequence {
+                    continue;
+                }
                 return Err(RuntimeError::InvalidHistory(
                     "active effect index disagrees with authoritative lease state".to_owned(),
                 ));
@@ -312,20 +325,36 @@ impl RuntimeService {
         {
             return Ok(None);
         }
-        Ok(Some(ExecutionDispatch::from_snapshot(
-            run.clone(),
-            revision.clone(),
-            execution.node().clone(),
-            execution.execution().clone(),
-            attempt.clone(),
-            lease.clone(),
-            lease_view.expires_at(),
-            capability.snapshot().clone(),
-            basis.clone(),
-            resolution_authorization.clone(),
-            entry_authorization,
-            request.clone(),
-        )?))
+        let ancestry = if let Some(source) = projection.published_source() {
+            let plan = self.store.published_invocation(source)?.ok_or_else(|| {
+                RuntimeError::InvalidHistory(
+                    "dispatch lost its enclosing published association".to_owned(),
+                )
+            })?;
+            let ancestor = plan.ancestor()?;
+            let mut ancestry = plan.ancestry;
+            ancestry.push(ancestor);
+            ancestry
+        } else {
+            Vec::new()
+        };
+        Ok(Some(
+            ExecutionDispatch::from_snapshot(
+                run.clone(),
+                revision.clone(),
+                execution.node().clone(),
+                execution.execution().clone(),
+                attempt.clone(),
+                lease.clone(),
+                lease_view.expires_at(),
+                capability.snapshot().clone(),
+                basis.clone(),
+                resolution_authorization.clone(),
+                entry_authorization,
+                request.clone(),
+            )?
+            .with_publication_ancestry(ancestry),
+        ))
     }
 
     fn cancellation_dispatch(

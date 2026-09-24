@@ -100,6 +100,11 @@ impl DaemonHost {
                 .filter_map(|value| value.as_str().map(str::to_owned))
                 .collect();
             Ok(milkdrift_control_protocol::AuthorityRead {
+                grant_digest: session
+                    .grant
+                    .digest()
+                    .map_err(|_| super::internal())?
+                    .to_string(),
                 actor: session.actor.as_str().to_owned(),
                 grant_id: session.grant.identity().as_str().to_owned(),
                 grant_revision: session.grant.revision(),

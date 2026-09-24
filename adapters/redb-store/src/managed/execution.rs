@@ -16,10 +16,15 @@ use serde::{Deserialize, Serialize};
 
 /// The index points to one authoritative parent event, not a second association authority.
 #[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ChildLink {
-    pub(super) parent: milkdrift_workspace::RunId,
-    pub(super) sequence: milkdrift_persistence::RunSequence,
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub(super) enum ChildLink {
+    Subworkflow {
+        parent: milkdrift_workspace::RunId,
+        sequence: milkdrift_persistence::RunSequence,
+    },
+    Published {
+        source: milkdrift_persistence::published::PublishedInvocationSource,
+    },
 }
 
 fn acquire(
@@ -53,17 +58,18 @@ fn acquire(
     {
         return Err(busy("managed generation is busy, unavailable or stale"));
     }
-    let descriptor = current
-        .capabilities
-        .iter()
-        .find(|d| {
-            d.identity() == snapshot.capability()
-                && d.descriptor_revision() == snapshot.descriptor_revision()
-        })
-        .ok_or_else(|| conflict("unpublished managed capability"))?;
-    snapshot
-        .validate_against(descriptor)
-        .map_err(|e| invalid(&e.to_string()))?;
+    if let Some(descriptor) = current.capabilities.iter().find(|d| {
+        d.identity() == snapshot.capability()
+            && d.descriptor_revision() == snapshot.descriptor_revision()
+    }) {
+        snapshot
+            .validate_against(descriptor)
+            .map_err(|e| invalid(&e.to_string()))?;
+    } else {
+        // A published method may retain an explicit dependency on this installation. Its ordinary
+        // registered descriptor is a derived view of the separately authorized immutable method.
+        crate::published::validate_managed_publication(write, snapshot)?;
+    }
     if binding
         .resources
         .iter()
@@ -131,12 +137,51 @@ fn acquire(
         .filter(|u| u.editing.iter().any(|r| editing.contains(r)))
         .collect();
     if blockers.is_empty() {
-        use_record.editing = editing;
+        use_record.editing = editing.clone();
     } else if blockers.len() != 1
         || !matches!(blockers[0].phase, ManagedUsePhase::Quiescent { .. })
         || !linked(write, blockers[0], &use_record, None)?
     {
         return Err(busy("working area already has an exclusive editor"));
+    }
+    if let Some(parent) = blockers.first()
+        && let ManagedUsePhase::Quiescent {
+            evidence: milkdrift_persistence::managed::QuiescenceEvidence::NoExternalEntry { source },
+        } = &parent.phase
+    {
+        let source = source.clone();
+        let parent_id = parent.id.clone();
+        let parent_index = record
+            .uses
+            .iter()
+            .position(|usage| usage.id == parent_id)
+            .ok_or_else(|| invalid("publication parent hold disappeared"))?;
+        let plan = crate::published::association_in_transaction(write, &source)?
+            .ok_or_else(|| invalid("publication resource hold lost acceptance"))?;
+        if editing
+            .iter()
+            .any(|resource| !record.uses[parent_index].editing.contains(resource))
+            || !publication_parent_matches(&record.uses[parent_index], &plan)
+            || parent_cancelled(write, &record.uses[parent_index])?
+        {
+            return Err(busy("published resource parent is no longer active"));
+        }
+        let parent = &mut record.uses[parent_index];
+        parent
+            .editing
+            .retain(|resource| !editing.contains(resource));
+        parent.claim = parent
+            .claim
+            .checked_add(1)
+            .ok_or_else(|| invalid("resource claim exhausted"))?;
+        parent.phase = ManagedUsePhase::Suspended {
+            child: id.clone(),
+            evidence: milkdrift_persistence::managed::QuiescenceEvidence::NoExternalEntry {
+                source,
+            },
+        };
+        use_record.editing = editing;
+        use_record.parent = Some(parent_id);
     }
     // An exact child can reserve lifetime protection while awaiting explicit transfer. It still
     // cannot cross final entry until the transaction commits its editing claim.
@@ -184,13 +229,43 @@ fn terminal(write: &redb::WriteTransaction, id: &str) -> Result<(), PersistenceE
         return Ok(());
     };
     record.uses[i].execution_terminal = true;
+    let stopped_or_never_entered =
+        matches!(record.uses[i].phase, ManagedUsePhase::Quiescent { .. })
+            || (!record.uses[i].entry_committed
+                && matches!(record.uses[i].phase, ManagedUsePhase::Reserved {}));
+    if let Some(parent_id) = &record.uses[i].parent
+        && stopped_or_never_entered
+        && let Some(parent_index) = record.uses.iter().position(|usage| &usage.id == parent_id)
+        && let ManagedUsePhase::Suspended {
+            child,
+            evidence: milkdrift_persistence::managed::QuiescenceEvidence::NoExternalEntry { source },
+        } = &record.uses[parent_index].phase
+        && child == id
+    {
+        let evidence = milkdrift_persistence::managed::QuiescenceEvidence::NoExternalEntry {
+            source: source.clone(),
+        };
+        let parent = &mut record.uses[parent_index];
+        parent.claim = parent
+            .claim
+            .checked_add(1)
+            .ok_or_else(|| invalid("resource claim exhausted"))?;
+        parent.editing = parent
+            .binding
+            .resources
+            .iter()
+            .filter(|resource| resource.mutation)
+            .map(|resource| resource.resource.clone())
+            .collect();
+        parent.phase = ManagedUsePhase::Quiescent { evidence };
+        record.uses[i].parent = None;
+    }
     let u = &record.uses[i];
     // Terminal observations never stand in for physical stop. Adapters may prove stop before
     // reporting; uncertainty/reporting loss keeps the use for authorized recovery.
     if u.parent.is_none()
         && !record.uses.iter().any(|c| c.parent.as_deref() == Some(id))
-        && ((!u.entry_committed && matches!(u.phase, ManagedUsePhase::Reserved {}))
-            || matches!(u.phase, ManagedUsePhase::Quiescent { .. }))
+        && stopped_or_never_entered
     {
         remove_index(write, u)?;
         record.uses.remove(i);
@@ -212,9 +287,13 @@ pub(crate) fn apply_run_resources(
     let run = request.receipt().run();
     for event in request.events() {
         match event.kind() {
+            RunEventKind::PublishedInvocationPlanned { plan, .. } => {
+                link_published(write, plan)?;
+                pending_publication(write, plan)?;
+            }
             RunEventKind::SubworkflowCreated { child_run, .. } => {
                 let bytes = json::encode(
-                    &ChildLink {
+                    &ChildLink::Subworkflow {
                         parent: run.clone(),
                         sequence: event.sequence(),
                     },
@@ -364,43 +443,124 @@ pub(super) fn linked(
     child: &ManagedUse,
     association: Option<&str>,
 ) -> Result<bool, PersistenceError> {
-    let (
-        ManagedExecution::Local {
-            run: parent_run,
-            execution: parent_execution,
-            ..
-        },
-        ManagedExecution::Local { run: child_run, .. },
-    ) = (&parent.execution, &child.execution)
-    else {
+    let ManagedExecution::Local { run: child_run, .. } = &child.execution else {
         return Ok(false);
     };
+    let mut current = child_run.clone();
     let table = write.open_table(MANAGED_LINKS).map_err(error::redb)?;
-    let Some(bytes) = table.get(child_run.as_str()).map_err(error::redb)? else {
-        return Ok(false);
-    };
-    let link: ChildLink = json::decode(bytes.value(), "managed child link")?;
-    if &link.parent != parent_run
-        || association.is_some_and(|a| a != format!("{}:{}", link.parent, link.sequence.get()))
-    {
-        return Ok(false);
+    for _ in 0..32 {
+        let Some(bytes) = table.get(current.as_str()).map_err(error::redb)? else {
+            return Ok(false);
+        };
+        match json::decode::<ChildLink>(bytes.value(), "managed child link")? {
+            ChildLink::Subworkflow {
+                parent: run,
+                sequence,
+            } => {
+                let key = codec::run_sequence(run.as_str(), sequence)?;
+                let event = {
+                    let events = write.open_table(RUN_EVENTS).map_err(error::redb)?;
+                    let bytes = events
+                        .get(key.as_slice())
+                        .map_err(error::redb)?
+                        .ok_or_else(|| invalid("child link lost authoritative event"))?;
+                    crate::journal::decode_stored_event(bytes.value())?
+                };
+                let RunEventKind::SubworkflowCreated {
+                    child_run,
+                    parent_execution,
+                    ownership: milkdrift_persistence::SubworkflowOwnership::Attached,
+                    ..
+                } = event.kind()
+                else {
+                    return Ok(false);
+                };
+                if child_run != &current || run_basis(write, &run)? != run_basis(write, &current)? {
+                    return Ok(false);
+                }
+                if let ManagedExecution::Local {
+                    run: expected,
+                    execution,
+                    ..
+                } = &parent.execution
+                    && expected == &run
+                    && execution == parent_execution
+                {
+                    return Ok(association
+                        .is_none_or(|value| value == format!("{run}:{}", sequence.get())));
+                }
+                current = run;
+            }
+            ChildLink::Published { source } => {
+                let Some(plan) = crate::published::association_in_transaction(write, &source)?
+                else {
+                    return Ok(false);
+                };
+                if plan.child_run != current
+                    || !publication_parent_matches(parent, &plan)
+                    || association.is_some_and(|value| value != plan.association_id())
+                {
+                    return Ok(false);
+                }
+                let basis = run_basis(write, &current)?;
+                return Ok(basis.actor() == &plan.service.actor
+                    && basis.grant() == &plan.service.grant
+                    && basis.grant_revision() == plan.service.grant_revision
+                    && basis.grant_digest() == &plan.service.grant_digest
+                    && basis.revocation_generation() == plan.service.revocation_generation);
+            }
+        }
     }
-    let key = codec::run_sequence(link.parent.as_str(), link.sequence)?;
-    let events = write.open_table(RUN_EVENTS).map_err(error::redb)?;
-    let bytes = events
-        .get(key.as_slice())
+    Err(invalid(
+        "managed child ancestry exceeds the supported bound",
+    ))
+}
+
+pub(super) fn publication_parent_matches(
+    parent: &ManagedUse,
+    plan: &milkdrift_persistence::published::PublishedInvocationPlan,
+) -> bool {
+    use milkdrift_persistence::published::PublishedInvocationSource;
+    parent.execution.invocation() == &plan.invocation
+        && match (&parent.execution, &plan.source) {
+            (
+                ManagedExecution::Local { run, attempt, .. },
+                PublishedInvocationSource::Local {
+                    run: accepted_run,
+                    attempt: accepted_attempt,
+                },
+            ) => run == accepted_run && attempt == accepted_attempt,
+            (
+                ManagedExecution::Serving { execution, .. },
+                PublishedInvocationSource::Serving {
+                    execution: accepted_execution,
+                    ..
+                },
+            ) => execution == accepted_execution,
+            _ => false,
+        }
+}
+
+pub(crate) fn link_published(
+    write: &redb::WriteTransaction,
+    plan: &milkdrift_persistence::published::PublishedInvocationPlan,
+) -> Result<(), PersistenceError> {
+    let bytes = json::encode(
+        &ChildLink::Published {
+            source: plan.source.clone(),
+        },
+        "managed child link",
+    )?;
+    if write
+        .open_table(MANAGED_LINKS)
         .map_err(error::redb)?
-        .ok_or_else(|| invalid("child link lost authoritative event"))?;
-    let event = crate::journal::decode_stored_event(bytes.value())?;
-    if !matches!(event.kind(), RunEventKind::SubworkflowCreated { child_run: run, parent_execution: execution, ownership: milkdrift_persistence::SubworkflowOwnership::Attached, .. } if run == child_run && execution == parent_execution)
+        .insert(plan.child_run.as_str(), bytes.as_slice())
+        .map_err(error::redb)?
+        .is_some()
     {
-        return Ok(false);
+        return Err(conflict("published child association already exists"));
     }
-    drop(bytes);
-    drop(events);
-    // Runtime already enforces inherited basis when creating the child; compare those immutable
-    // bindings again here to ensure a separately authorized run cannot borrow its resource claim.
-    Ok(run_basis(write, parent_run)? == run_basis(write, child_run)?)
+    Ok(())
 }
 
 fn run_basis(
@@ -449,7 +609,17 @@ pub(super) fn parent_cancelled(
     parent: &ManagedUse,
 ) -> Result<bool, PersistenceError> {
     let ManagedExecution::Local { run, .. } = &parent.execution else {
-        return Ok(true);
+        let ManagedExecution::Serving { execution, .. } = &parent.execution else {
+            return Ok(true);
+        };
+        let table = write
+            .open_table(crate::schema::PEER_EXECUTIONS)
+            .map_err(error::redb)?;
+        let Some(bytes) = table.get(execution.as_str()).map_err(error::redb)? else {
+            return Ok(true);
+        };
+        let record: PeerExecutionRecord = json::decode(bytes.value(), "peer execution")?;
+        return Ok(record.cancellation.is_some() || !record.phase.is_active());
     };
     let summary = write
         .open_table(crate::schema::RUN_SUMMARIES)
@@ -465,4 +635,31 @@ pub(super) fn parent_cancelled(
         milkdrift_persistence::IndexedRunState::Cancelling
             | milkdrift_persistence::IndexedRunState::Terminal
     ))
+}
+
+/// The accepted action has no external entry closure. Its authoritative transaction is therefore
+/// no-entry proof, independent of a child's later physical stop evidence.
+pub(crate) fn pending_publication(
+    write: &redb::WriteTransaction,
+    plan: &milkdrift_persistence::published::PublishedInvocationPlan,
+) -> Result<(), PersistenceError> {
+    let id = milkdrift_persistence::managed::managed_use_id(&plan.invocation);
+    let Some((mut record, index)) = locate(write, &id)? else {
+        return Ok(());
+    };
+    let usage = &mut record.uses[index];
+    if !matches!(usage.phase, ManagedUsePhase::Reserved {})
+        || !publication_parent_matches(usage, plan)
+    {
+        return Err(conflict(
+            "published no-entry evidence differs from its accepted hold",
+        ));
+    }
+    usage.phase = ManagedUsePhase::Quiescent {
+        evidence: milkdrift_persistence::managed::QuiescenceEvidence::NoExternalEntry {
+            source: plan.source.clone(),
+        },
+    };
+    bump(&mut record)?;
+    put_record(write, &record)
 }

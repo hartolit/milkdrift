@@ -117,6 +117,7 @@ pub(super) fn scan(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceE
             let command_events = command_events(&events, &command)?;
             validate_transition_revision_links(&record, &account_revisions)?;
             validate_transition_event_links(
+                read,
                 &record.transaction,
                 &record.run,
                 &command_events,
@@ -501,6 +502,7 @@ fn command_events(
 }
 
 fn validate_transition_event_links(
+    read: &redb::ReadTransaction,
     transaction: &milkdrift_persistence::ControllerAccountTransaction,
     run: &RunId,
     events: &[RunEventEnvelope],
@@ -524,24 +526,29 @@ fn validate_transition_event_links(
     }
 
     for (declaration, bind_run) in establishments {
-        if bind_run != run
-            || events
-                .iter()
-                .filter(|event| {
-                    matches!(
-                        event.kind(),
-                        RunEventKind::ControllerAssessmentRecorded {
-                            boundary: ControllerAssessmentBoundary::Activation,
-                            account_declaration: Some(recorded),
-                            ..
-                        } if recorded == declaration
-                    )
-                })
-                .count()
-                != 1
-        {
+        let mut matching = 0;
+        for event in events {
+            match event.kind() {
+                RunEventKind::ControllerAssessmentRecorded {
+                    boundary: ControllerAssessmentBoundary::Activation,
+                    account_declaration: Some(recorded),
+                    ..
+                } if recorded == declaration => matching += 1,
+                RunEventKind::PublishedRunBound { source } => {
+                    let plan =
+                        crate::published::association_read(read, source)?.ok_or_else(|| {
+                            corrupt("published account lost its accepted association")
+                        })?;
+                    if plan.child_run == *run && &plan.allowance == declaration {
+                        matching += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if bind_run != run || matching != 1 {
             return Err(corrupt(
-                "controller establishment no longer matches its activation event",
+                "controller establishment no longer matches its activation or published allowance",
             ));
         }
     }

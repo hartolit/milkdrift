@@ -71,6 +71,25 @@ impl CommandRequest {
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 #[allow(missing_docs)] // Variant prose documents each compact operation payload.
 pub enum Command {
+    /// Publish or promote one exact immutable workflow implementation generation.
+    PublishMethod {
+        document: Value,
+        expected_previous_version: Option<u64>,
+    },
+    /// Inspect protected publication implementation details with administration authority.
+    InspectMethod { capability: String, generation: u64 },
+    /// Page retained publication definitions; public discovery uses the capability catalog.
+    ListMethods {
+        after_capability: Option<String>,
+        after_generation: Option<u64>,
+        limit: u32,
+    },
+    /// Retire new selection while preserving accepted calls and their exact implementation.
+    RetireMethod {
+        capability: String,
+        generation: u64,
+        expected_version: u64,
+    },
     /// Store a validated immutable blueprint document.
     ImportBlueprint { document: Value },
     /// Validate an immutable blueprint document without storing it.

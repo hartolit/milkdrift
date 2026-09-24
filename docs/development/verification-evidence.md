@@ -745,3 +745,38 @@ values have deterministic reader/generation coverage; only the recorded Ornith w
 owned physical evidence. The [02 handoff](virtual-office/adaptive-hosts/handoffs/02.md) identifies
 commands, inputs, final gate and API review. This supersedes recipe-1 evidence for changed
 configuration consumers and leaves the existing hardware issue open.
+
+## Published workflow capabilities
+
+The focused suites are `milkdrift-control --test control_service published::`,
+`milkdrift-daemon --test control_plane published::`, and
+`milkdrift-daemon --test two_daemon_peer published::`, with `cargo test` and `--all-features`.
+They exercise durable create/bind/start recovery, generation retention, caller isolation, bounded
+nesting, service authority, cumulative accounting, output disclosure and archival. Preparation-hook
+tests expire or cancel the public call before internal entry and require zero process entries.
+Managed integration observes the exact editing handoff, its return between children, terminal
+release, and retained claims after lost stop evidence and reopen. Peer protocol tests require
+ancestry ceilings to survive serialization. The full gate includes these suites and the underlying
+resource, authority, storage, runtime, adapter and CLI contracts.
+
+For actual binaries, follow the [Slotbook setup](../../examples/adaptive-slotbook/README.md), then
+run the following against a separate fresh prepared directory for each mode:
+
+```sh
+python3 examples/adaptive-slotbook/qualify.py --root /absolute/private/published-direct --published --invocation-mode direct
+python3 examples/adaptive-slotbook/qualify.py --root /absolute/private/published-workflow --published --invocation-mode workflow
+python3 examples/adaptive-slotbook/qualify.py --root /absolute/private/published-peer --published --invocation-mode peer
+```
+
+This lane uses one execution worker on the provider, its actual managed workspace, and the same
+protected deployment method. It observes real parent/child editing claims and busy maintenance
+refusal, exercises invoke-only disclosure and prospective repair, verifies immutable deployed bytes,
+replays acceptance after restart, and removes its installations with data preserved. Peer mode uses
+two daemons on one desktop. Seeded and repaired sources are explicit fixtures; this lane makes no
+live-model, second-machine, reboot or general security claim. Fault-injected loss and stop-proof
+refusal remain distinct deterministic evidence, not physical interruption qualification.
+
+The [04 handoff](virtual-office/adaptive-hosts/handoffs/04.md) identifies exact versions, transaction
+ownership, review corrections and local evidence under `target/adaptive-hosts/04-review/`. Current
+configuration, caller permissions and operating limits belong to the
+[published-method guide](../guides/published-methods.md).

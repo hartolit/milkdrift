@@ -1,8 +1,8 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 14;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 15;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
-pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 19;
+pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 20;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
 pub(crate) const CLOCK_WATERMARK_UNIX_MS_KEY: &str = "boundary_clock_high_water_unix_ms";
 pub(crate) const LEASE_SET_REVISION_KEY: &str = "lease_set_revision";
@@ -47,6 +47,10 @@ macro_rules! physical_tables {
 }
 
 physical_tables! {
+PUBLISHED_LOCAL_LINKS: &'static str, u64 = "milkdrift.v1.published.local_links";
+PUBLISHED_LOCAL_PENDING: &'static str, u64 = "milkdrift.v1.published.local_pending";
+PUBLISHED_METHODS: &'static str, &'static [u8] = "milkdrift.v1.published.methods";
+PUBLISHED_METHOD_HEADS: &'static str, u64 = "milkdrift.v1.published.heads";
 MANAGED_LOCAL_USES: &'static str, &'static str = "milkdrift.v1.managed.local_uses";
 // Resource authority outlives serving observation compaction and invocation leases.
 MANAGED_INSTALLATIONS: &'static str, &'static [u8] = "milkdrift.v1.managed.installations";

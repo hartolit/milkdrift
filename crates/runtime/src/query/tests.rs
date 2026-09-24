@@ -407,7 +407,7 @@ fn assert_projection_payload_falls_back(
         run.clone(),
         RunSequence::FIRST,
         history_digest(&events[..1])?,
-        RUN_PROJECTION_SNAPSHOT_SCHEMA_V5,
+        RUN_PROJECTION_SNAPSHOT_SCHEMA_V6,
         payload,
     )?;
     let expected = RunProjection::replay(&events)?;
@@ -479,22 +479,22 @@ fn compacted_projection_snapshot_golden()
     ]);
     let projection = RunProjection::replay(&events)?;
     let snapshot = SnapshotDocument::new(
-        SnapshotId::new("snapshot-runtime-projection-v5-golden")?,
+        SnapshotId::new("snapshot-runtime-projection-v6-golden")?,
         run,
         RunSequence::new(5),
         history_digest(&events)?,
-        RUN_PROJECTION_SNAPSHOT_SCHEMA_V5,
+        RUN_PROJECTION_SNAPSHOT_SCHEMA_V6,
         encode_projection_snapshot(&projection)?,
     )?;
     Ok((snapshot, projection))
 }
 
 #[test]
-fn exact_snapshot_envelope_and_compacted_projection_v5_match_reviewed_golden()
+fn exact_snapshot_envelope_and_compacted_projection_v6_match_reviewed_golden()
 -> Result<(), Box<dyn Error>> {
     let (snapshot, projection) = compacted_projection_snapshot_golden()?;
     let wire_with_newline = include_bytes!(
-        "../../tests/fixtures/projection-snapshot-envelope-v2-projection-v5-wire.json"
+        "../../tests/fixtures/projection-snapshot-envelope-v2-projection-v6-wire.json"
     );
     let wire = wire_with_newline
         .strip_suffix(b"\n")
@@ -509,7 +509,7 @@ fn exact_snapshot_envelope_and_compacted_projection_v5_match_reviewed_golden()
     assert_eq!(decoded_wire.to_canonical_json()?, wire);
 
     let golden: serde_json::Value = serde_json::from_slice(include_bytes!(
-        "../../tests/fixtures/projection-snapshot-envelope-v2-projection-v5.json"
+        "../../tests/fixtures/projection-snapshot-envelope-v2-projection-v6.json"
     ))?;
     let envelope = golden
         .get("snapshot_envelope")
@@ -543,7 +543,7 @@ fn exact_snapshot_envelope_and_compacted_projection_v5_match_reviewed_golden()
             .ok_or("snapshot golden projection payload is absent")?
             .clone(),
     )?;
-    assert_eq!(decoded.schema_version, RUN_PROJECTION_SNAPSHOT_SCHEMA_V5);
+    assert_eq!(decoded.schema_version, RUN_PROJECTION_SNAPSHOT_SCHEMA_V6);
     assert_eq!(decoded.projection, projection);
     let canonical = serde_json::to_vec(&ProjectionSnapshotPayloadRef {
         schema_version: decoded.schema_version,
@@ -565,7 +565,7 @@ fn compatible_snapshot_replays_only_the_authoritative_tail() -> Result<(), Box<d
         run.clone(),
         RunSequence::FIRST,
         history_digest(&events[..1])?,
-        RUN_PROJECTION_SNAPSHOT_SCHEMA_V5,
+        RUN_PROJECTION_SNAPSHOT_SCHEMA_V6,
         encode_projection_snapshot(&prefix)?,
     )?;
     let store = PagedStore {
@@ -654,7 +654,7 @@ fn compacted_execution_snapshot_plus_tail_equals_full_replay() -> Result<(), Box
         run.clone(),
         RunSequence::new(5),
         history_digest(&events[..5])?,
-        RUN_PROJECTION_SNAPSHOT_SCHEMA_V5,
+        RUN_PROJECTION_SNAPSHOT_SCHEMA_V6,
         encode_projection_snapshot(&prefix)?,
     )?;
     let store = PagedStore {
@@ -693,7 +693,7 @@ fn compatible_snapshot_at_journal_head_loads_without_replaying_an_event()
         run.clone(),
         head,
         history_digest(&events)?,
-        RUN_PROJECTION_SNAPSHOT_SCHEMA_V5,
+        RUN_PROJECTION_SNAPSHOT_SCHEMA_V6,
         encode_projection_snapshot(&complete)?,
     )?;
     let store = PagedStore {

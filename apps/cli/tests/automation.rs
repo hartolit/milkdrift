@@ -442,6 +442,7 @@ fn prepared_direct_requests_satisfy_each_operations_idempotency_contract() -> Te
         let discovery = DirectDiscovery {
             host: PeerId::new("host-test")?,
             limits: ExecutionLimits {
+                nested_invocations: None,
                 artifact_bytes: 4096,
                 duration_ms: 1000,
                 cost_micros: 0,

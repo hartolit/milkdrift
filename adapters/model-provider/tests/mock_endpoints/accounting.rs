@@ -96,6 +96,7 @@ fn prepared_mapping_and_reported_usage_settle_the_supported_tariff_without_relab
     account.settle_terminal(
         &reservation,
         Some(&AttemptUsage {
+            nested_work: None,
             input_units: usage.input_units(),
             output_units: usage.output_units(),
             duration_ms: usage.duration_ms(),

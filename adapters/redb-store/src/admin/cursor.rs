@@ -14,7 +14,7 @@ use super::{
     TIMER_ENTRIES, TIMER_INDEX, VALUES, WORKSPACE_BUDGETS, WORKSPACE_USAGE, WORKSPACE_VALUE_HEADS,
     error, integrity::scan_index_integrity,
 };
-const INTEGRITY_CURSOR_VERSION: u8 = 2;
+const INTEGRITY_CURSOR_VERSION: u8 = 3;
 const INTEGRITY_CURSOR_PREFIX_BYTES: usize = 33;
 
 pub(crate) fn make_integrity_cursor(
@@ -188,7 +188,7 @@ pub(crate) fn index_cursor_position(
             "index integrity cursor has no phase".to_owned(),
         ));
     };
-    if phase > 53 || key.is_empty() {
+    if phase > 57 || key.is_empty() {
         return Err(PersistenceError::InvalidCursor(
             "index integrity cursor has an unknown phase or empty key".to_owned(),
         ));
@@ -598,6 +598,30 @@ pub(crate) fn index_integrity_cursor_exists(
             .map(|row| row.is_some()),
         53 => read
             .open_table(crate::schema::MANAGED_EVALUATIONS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        54 => read
+            .open_table(crate::schema::PUBLISHED_METHODS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        55 => read
+            .open_table(crate::schema::PUBLISHED_METHOD_HEADS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        56 => read
+            .open_table(crate::schema::PUBLISHED_LOCAL_LINKS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        57 => read
+            .open_table(crate::schema::PUBLISHED_LOCAL_PENDING)
             .map_err(error::redb)?
             .get(string_key()?)
             .map_err(error::redb)

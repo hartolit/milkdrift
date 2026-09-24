@@ -148,7 +148,30 @@ impl RedbStore {
             authority: request.authority.clone(),
         };
         crate::managed::enter_serving_resources(&write, &record)?;
-        record.phase = PeerExecutionPhase::Entered { claim, evidence };
+        if let Some(plan) = request.published_invocation {
+            crate::published::validate_plan(&write, plan)?;
+            if plan.source
+                != (milkdrift_persistence::published::PublishedInvocationSource::Serving {
+                    caller: record.caller.clone(),
+                    execution: record.execution.clone(),
+                })
+                || plan.invocation != record.managed_invocation()?
+                || plan.generation != record.request.selection.descriptor_revision()
+                || plan.capability != *record.request.selection.capability()
+                || plan.request.inputs() != record.request.request.inputs()
+            {
+                return Err(invalid(
+                    "published association differs from serving acceptance",
+                ));
+            }
+            remove_claim_index(&write, &record.execution, &claim)?;
+            crate::managed::link_published(&write, plan)?;
+            crate::managed::pending_publication(&write, plan)?;
+            record.published_invocation = Some(plan.clone());
+            record.phase = PeerExecutionPhase::AwaitingWorkflow { evidence };
+        } else {
+            record.phase = PeerExecutionPhase::Entered { claim, evidence };
+        }
         bump_record(&mut record)?;
         global.dispatch_queued = global
             .dispatch_queued

@@ -240,6 +240,7 @@ impl PeerService {
         let entered = match self
             .executions
             .mark_peer_entered(&PeerEntryRequest {
+                published_invocation: prepared.published_plan(),
                 owner: &record.caller,
                 execution: &record.execution,
                 worker: &claim.worker,
@@ -268,6 +269,12 @@ impl PeerService {
                     .map_err(ClaimedRunFailure::from);
             }
         };
+        if entered.published_invocation.is_some() {
+            prepared
+                .accept_published(&entered)
+                .map_err(|e| ServingError::Unavailable(e.to_string()))?;
+            return Ok(());
+        }
         let reporter = PeerStoreReporter {
             caller: entered.caller.clone(),
             execution: entered.execution.clone(),
@@ -617,36 +624,28 @@ impl AdapterReporter for PeerStoreReporter {
             ));
         }
         if let InvocationEventKind::Terminal { terminal } = event.kind() {
-            if terminal.usage().is_some_and(|usage| {
-                usage
-                    .duration_ms()
-                    .is_some_and(|duration| duration > self.limits.duration_ms)
-                    || usage.cost_micros().is_some_and(|cost| {
-                        cost > self.limits.cost_micros
-                            || usage.currency() != self.limits.cost_currency.as_deref()
-                    })
-                    || usage.input_units().is_some_and(|units| {
-                        self.limits
-                            .input_units
-                            .is_none_or(|maximum| units > maximum)
-                    })
-                    || usage.output_units().is_some_and(|units| {
-                        self.limits
-                            .output_units
-                            .is_none_or(|maximum| units > maximum)
-                    })
-            }) {
+            if terminal
+                .usage()
+                .is_some_and(|usage| !self.limits.permits_usage(usage))
+            {
                 return Err(self.reject_report(
                     "peer_report_usage_quota",
-                    "peer terminal usage exceeds the accepted duration or cost quota",
+                    "peer terminal usage exceeds its accepted allowance",
                 ));
             }
-            let output_bytes = terminal
-                .outputs()
-                .iter()
-                .try_fold(self.input_artifact_bytes, |total, output| {
-                    output.size_bytes().and_then(|size| total.checked_add(size))
-                });
+            let output_bytes = terminal.outputs().iter().try_fold(
+                self.input_artifact_bytes
+                    .checked_add(
+                        terminal
+                            .usage()
+                            .and_then(milkdrift_capability::UsageObservation::nested_work)
+                            .map_or(0, milkdrift_capability::NestedWorkUsage::artifact_bytes),
+                    )
+                    .ok_or_else(|| {
+                        self.reject_report("peer_report_artifact_quota", "artifact byte overflow")
+                    })?,
+                |total, output| output.size_bytes().and_then(|size| total.checked_add(size)),
+            );
             if output_bytes.is_none_or(|bytes| bytes > self.limits.artifact_bytes) {
                 return Err(self.reject_report(
                     "peer_report_artifact_quota",

@@ -120,10 +120,28 @@ impl RuntimeService {
                     "recovery attempt sweep cursor",
                 )?;
                 remaining = remaining.saturating_sub(scan_limit.saturating_sub(scan_remaining));
+                for attempt in scanned
+                    .iter()
+                    .filter_map(|id| projection.attempts().get(id))
+                {
+                    if let Some(plan) = attempt.published_invocation()
+                        && (self.store.published_invocation(&plan.source)?.as_ref() != Some(plan)
+                            || self.store.published_local_pending(&plan.source)?
+                                != attempt.is_active())
+                    {
+                        return Err(RuntimeError::InvalidHistory(
+                            "published recovery indexes differ from authoritative attempt history"
+                                .to_owned(),
+                        ));
+                    }
+                }
                 let actionable: Vec<_> = scanned
                     .iter()
                     .filter_map(|attempt| projection.attempts().get(attempt))
                     .filter(|attempt| {
+                        if attempt.published_invocation().is_some() {
+                            return false;
+                        }
                         if attempt.is_active() {
                             return projection
                                 .active_lease_for_attempt(attempt.attempt())

@@ -264,7 +264,10 @@ fn assessment(
         policy_digest: declaration.policy_digest().to_owned(),
         governing_revision: revision_id()?,
         controller_node: NodeId::new(format!("controller-node-{suffix}"))?,
-        controller_execution: declaration.controller_execution().clone(),
+        controller_execution: declaration
+            .controller_execution()
+            .ok_or("controller owner absent")?
+            .clone(),
         assessment_id: format!("controller-assessment:{suffix}"),
         cycle_id: None,
         boundary,
@@ -357,7 +360,10 @@ fn bind_child_request(
         expected,
         RunEventKind::SubworkflowCreated {
             subworkflow,
-            parent_execution: declaration.controller_execution().clone(),
+            parent_execution: declaration
+                .controller_execution()
+                .ok_or("controller owner absent")?
+                .clone(),
             child_run: child.clone(),
             child_revision: revision_id()?,
             scope: scope.clone(),
@@ -605,7 +611,10 @@ fn same_account_identity_with_an_altered_budget_is_not_idempotent() -> TestResul
     let expected = declaration(&owner, "same-account-altered-budget")?;
     let altered = ControllerAccountDeclaration::new(
         owner.clone(),
-        expected.controller_execution().clone(),
+        expected
+            .controller_execution()
+            .ok_or("controller owner absent")?
+            .clone(),
         expected.policy_digest().to_owned(),
         ControllerResourceBudget::new(
             1_000_001,

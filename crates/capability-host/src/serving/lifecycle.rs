@@ -67,7 +67,14 @@ impl PeerService {
             },
             |owner| owner.shutdown(timeout.saturating_sub(started.elapsed())),
         );
-        report.clean &= admission_closed;
+        report.clean &= admission_closed
+            && self
+                .executions
+                .peer_execution_status()
+                .is_ok_and(|status| status.active == 0);
+        if report.clean {
+            self.capability_host.release_published_serving_owner(self);
+        }
         report
     }
 
@@ -126,6 +133,7 @@ impl PeerService {
 
     /// Compacts one bounded page beyond the configured hot observation horizon.
     pub fn maintain_retention(&self) -> Result<PeerExecutionStatus, ServingError> {
+        self.continue_published()?;
         let now = self.now()?;
         let retention_ms = u64::try_from(self.config.workers.observation_hot_retention.as_millis())
             .unwrap_or(u64::MAX);

@@ -3,7 +3,7 @@
 use super::super::RuntimeService;
 use super::super::support::{CommandPlan, collect_required_artifacts, event_kind_name};
 use crate::projection::{RunLifecycle, RunProjection};
-use crate::query::{RUN_PROJECTION_SNAPSHOT_SCHEMA_V5, encode_projection_snapshot};
+use crate::query::{RUN_PROJECTION_SNAPSHOT_SCHEMA_V6, encode_projection_snapshot};
 use crate::{RunCommandDocument, RuntimeError};
 use milkdrift_authority::AuthorityDecisionSnapshot;
 use milkdrift_capability::BoundedJson;
@@ -113,7 +113,7 @@ impl RuntimeService {
             .transpose()?;
         let projection_checkpoint = projection_payload
             .as_deref()
-            .map(|payload| ProjectionCheckpoint::new(RUN_PROJECTION_SNAPSHOT_SCHEMA_V5, payload))
+            .map(|payload| ProjectionCheckpoint::new(RUN_PROJECTION_SNAPSHOT_SCHEMA_V6, payload))
             .transpose()?;
         let mut request = AtomicRunCommitRequest::new(
             receipt,
@@ -246,6 +246,27 @@ impl RuntimeService {
                     return Err(RuntimeError::InvalidHistory(
                         "current controller assessment omitted its account declaration".to_owned(),
                     ));
+                }
+                RunEventKind::PublishedRunBound { source } => {
+                    let association =
+                        self.store.published_invocation(source)?.ok_or_else(|| {
+                            RuntimeError::InvalidHistory(
+                                "published allowance lost its accepted association".to_owned(),
+                            )
+                        })?;
+                    if association.child_run == *document.run_id() {
+                        if bound_account.is_some() {
+                            return Err(RuntimeError::InvalidHistory(
+                                "published root already has an allowance".to_owned(),
+                            ));
+                        }
+                        plan.controller_actions
+                            .push(ControllerAccountAction::Establish {
+                                declaration: association.allowance.clone(),
+                                bind_run: document.run_id().clone(),
+                            });
+                        bound_account = Some(association.allowance.account().clone());
+                    }
                 }
                 RunEventKind::SubworkflowCreated {
                     child_run,

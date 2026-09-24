@@ -12,7 +12,8 @@ pub(crate) fn runtime_tick(runtime: &RuntimeService) -> Result<SchedulerTickResu
             EffectExecutionResult::Uncertain { .. } => {
                 scheduled.uncertain = scheduled.uncertain.saturating_add(1);
             }
-            EffectExecutionResult::CancellationAcknowledged
+            EffectExecutionResult::Pending
+            | EffectExecutionResult::CancellationAcknowledged
             | EffectExecutionResult::CancellationDeferred => {}
         }
     }

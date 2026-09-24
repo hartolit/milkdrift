@@ -31,15 +31,27 @@ impl PeerService {
             &snapshot,
             AuthorityOperation::InspectPeerExecution,
         )?;
-        let PeerExecutionSnapshot::Hot(record) = snapshot else {
-            return Err(ServingError::NotFound(
-                "execution output detail was archived".to_owned(),
-            ));
+        let (reference, deadline) = match &snapshot {
+            PeerExecutionSnapshot::Hot(record) => (
+                self.executions
+                    .peer_observation_artifact(execution, sequence)
+                    .map_err(map_execution_persistence)?,
+                record.request.deadline_unix_ms,
+            ),
+            PeerExecutionSnapshot::Archived(record) => (
+                record
+                    .output_observations
+                    .iter()
+                    .find(|output| output.sequence == sequence)
+                    .and_then(|output| output.event.kind().output())
+                    .map(|(_, reference)| reference.clone()),
+                record
+                    .authorization
+                    .delegation()
+                    .map_or(0, |authorization| authorization.expires_at_unix_ms),
+            ),
         };
-        let reference = self
-            .executions
-            .peer_observation_artifact(execution, sequence)
-            .map_err(map_execution_persistence)?
+        let reference = reference
             .ok_or_else(|| ServingError::NotFound("execution output unavailable".to_owned()))?;
         let metadata = self.artifacts.metadata(&reference)?;
         self.require_operation(
@@ -66,10 +78,7 @@ impl PeerService {
             binding: milkdrift_peer_protocol::ArtifactTransferBinding::Execution {
                 execution: execution.clone(),
             },
-            expires_at_unix_ms: record
-                .request
-                .deadline_unix_ms
-                .min(relationship.expires_at_unix_ms),
+            expires_at_unix_ms: deadline.min(relationship.expires_at_unix_ms),
         })
     }
 
@@ -159,49 +168,48 @@ impl PeerService {
             &snapshot,
             AuthorityOperation::InspectPeerExecution,
         )?;
-        let record = match snapshot {
-            PeerExecutionSnapshot::Hot(record) => record,
-            PeerExecutionSnapshot::Archived(_)
-                if offer.direction == ArtifactTransferDirection::Download =>
-            {
-                return Err(ServingError::NotFound(
-                    "archived execution observation-to-artifact history was compacted; core artifact retention is unchanged"
-                        .to_owned(),
-                ));
-            }
-            PeerExecutionSnapshot::Archived(tombstone) => {
-                return Err(ServingError::Unauthorized(format!(
-                    "artifact upload cannot target archived execution {}",
-                    tombstone.execution
-                )));
-            }
-        };
         if offer.direction == ArtifactTransferDirection::Download {
             if offer.source_peer != self.config.local_peer {
                 return Err(ServingError::Unauthorized(
                     "download source is not the serving peer".to_owned(),
                 ));
             }
-            let mut produced = false;
-            for sequence in 1..=record.last_observation_sequence {
-                if self
-                    .executions
-                    .peer_observation_artifact(&record.execution, sequence)
-                    .map_err(map_execution_persistence)?
-                    .as_ref()
-                    .is_some_and(|artifact| {
-                        workspace_artifact_matches_capability(&offer.artifact, artifact)
-                    })
-                {
-                    produced = true;
-                    break;
+            let produced = match &snapshot {
+                PeerExecutionSnapshot::Archived(record) => record
+                    .output_observations
+                    .iter()
+                    .filter_map(|output| output.event.kind().output())
+                    .any(|(_, reference)| {
+                        workspace_artifact_matches_capability(&offer.artifact, reference)
+                    }),
+                PeerExecutionSnapshot::Hot(record) => {
+                    let mut produced = false;
+                    for sequence in 1..=record.last_observation_sequence {
+                        if self
+                            .executions
+                            .peer_observation_artifact(&record.execution, sequence)
+                            .map_err(map_execution_persistence)?
+                            .as_ref()
+                            .is_some_and(|reference| {
+                                workspace_artifact_matches_capability(&offer.artifact, reference)
+                            })
+                        {
+                            produced = true;
+                            break;
+                        }
+                    }
+                    produced
                 }
-            }
+            };
             if !produced {
                 return Err(ServingError::Unauthorized(
                     "artifact is not a durable output of the claimed execution".to_owned(),
                 ));
             }
+        } else if matches!(snapshot, PeerExecutionSnapshot::Archived(_)) {
+            return Err(ServingError::Unauthorized(
+                "artifact upload cannot target an archived execution".to_owned(),
+            ));
         }
         self.require_operation(
             &relationship,

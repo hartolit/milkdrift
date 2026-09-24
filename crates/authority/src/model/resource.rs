@@ -94,6 +94,8 @@ pub enum AuthorityOperation {
     ReadArtifactMetadata,
     /// Read an explicit verified artifact byte range.
     ReadArtifactContent,
+    /// Read only artifacts recorded as outputs of an accepted capability owned by this caller.
+    ReadCapabilityOutput,
     /// Publish or import artifact content.
     PublishArtifact,
     /// Export artifact content across an external boundary.

@@ -77,6 +77,23 @@ impl DaemonConfig {
             ));
         }
         validate_runtime(&self.runtime)?;
+        if !self.runtime.publication_services.is_empty() {
+            if self.role != milkdrift_control_protocol::HostRole::WorkflowEnabled
+                || self.runtime.controller_activation == super::ControllerActivation::Disabled
+            {
+                return Err(ConfigError::Invalid("publication services require workflow_enabled and enabled controller accounting".to_owned()));
+            }
+            if self.runtime.publication_services.len() > 128
+                || self.runtime.publication_services.values().any(|grant| {
+                    !self
+                        .actors
+                        .iter()
+                        .any(|actor| actor.enabled && actor.grant_id == grant.as_str())
+                })
+            {
+                return Err(ConfigError::Invalid("publication service grants must name enabled configured actors (at most 128 capabilities)".to_owned()));
+            }
+        }
         if self.role == milkdrift_control_protocol::HostRole::ExecutionOnly
             && self.runtime.controller_activation != super::ControllerActivation::Disabled
         {

@@ -11,6 +11,7 @@ mod application;
 mod artifacts;
 mod controller;
 mod managed;
+mod published;
 mod revisions;
 mod run;
 mod scheduler;
@@ -74,6 +75,10 @@ pub(super) mod phase {
     pub(super) const MANAGED_LOCAL_USES: u8 = 51;
     pub(super) const MANAGED_LINKS: u8 = 52;
     pub(super) const MANAGED_EVALUATIONS: u8 = 53;
+    pub(super) const PUBLISHED_METHODS: u8 = 54;
+    pub(super) const PUBLISHED_HEADS: u8 = 55;
+    pub(super) const PUBLISHED_LINKS: u8 = 56;
+    pub(super) const PUBLISHED_PENDING: u8 = 57;
 }
 
 /// Shared state for one ordered scan page. Domain modules own tables and validation.
@@ -334,5 +339,6 @@ pub(crate) fn scan_index_integrity(
     artifacts::scan_publications(&mut context)?;
     application::scan(&mut context)?;
     controller::scan(&mut context)?;
-    managed::scan(&mut context)
+    managed::scan(&mut context)?;
+    published::scan(&mut context)
 }

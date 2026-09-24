@@ -43,7 +43,7 @@ fn every_initialized_table_is_required_and_type_checked_on_reopen()
         .map(|table| table.name().to_owned())
         .collect();
     // Independent physical-format expectation, never generated from the declaration macro.
-    assert_eq!(names.len(), 71);
+    assert_eq!(names.len(), 75);
     drop(database);
     for name in names {
         for malformed in [false, true] {
@@ -88,7 +88,7 @@ fn extra_physical_tables_are_refused_without_repair() -> Result<(), Box<dyn std:
         assert_corruption(validate(directory.path()));
         let database = Database::open(directory.path().join(DATABASE_FILENAME))?;
         let read = database.begin_read()?;
-        assert_eq!(read.list_tables()?.count(), 71 + usize::from(!multimap));
+        assert_eq!(read.list_tables()?.count(), 75 + usize::from(!multimap));
         assert_eq!(read.list_multimap_tables()?.count(), usize::from(multimap));
     }
     Ok(())

@@ -28,6 +28,7 @@ impl CapabilityHost {
                 "serving preparation requires an exact pre-entry claim".to_owned(),
             ));
         }
+        let context = context.with_serving_preparation(accepted);
         let request = serving_request(accepted)?;
         let prepared =
             self.prepare_invocation(&accepted.request.selection, &request, Some(&context))?;
@@ -54,6 +55,29 @@ impl CapabilityHost {
 }
 
 impl PreparedServingExecution {
+    pub(crate) fn published_plan(
+        &self,
+    ) -> Option<&milkdrift_persistence::published::PublishedInvocationPlan> {
+        self.prepared.published_plan()
+    }
+
+    pub(crate) fn accept_published(
+        self,
+        entered: &PeerExecutionRecord,
+    ) -> Result<(), ExecutorError> {
+        if entered.caller != self.accepted.caller
+            || entered.execution != self.accepted.execution
+            || entered.request != self.accepted.request
+            || entered.published_invocation.as_ref() != self.prepared.published_plan()
+            || !matches!(entered.phase, PeerExecutionPhase::AwaitingWorkflow { .. })
+        {
+            return Err(ExecutorError::InvalidDispatch(
+                "published entry differs from its prepared acceptance".to_owned(),
+            ));
+        }
+        self.prepared.accept_published()
+    }
+
     /// Consumes prepared bytes only for the exact claim's committed entry record.
     pub(crate) fn enter(
         self,

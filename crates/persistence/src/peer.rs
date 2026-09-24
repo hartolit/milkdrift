@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 use crate::{PageSize, PersistenceError, TimestampMillis, WorkerId};
 
 /// Current record schema binds host, authenticated caller realm and explicit invocation origin.
-pub const SERVING_EXECUTION_RECORD_SCHEMA_VERSION: u32 = 4;
+pub const SERVING_EXECUTION_RECORD_SCHEMA_VERSION: u32 = 5;
 /// Current immutable archive retains the exact accepted authorization and caller namespace.
-pub const SERVING_EXECUTION_TOMBSTONE_SCHEMA_VERSION: u32 = 2;
+pub const SERVING_EXECUTION_TOMBSTONE_SCHEMA_VERSION: u32 = 3;
 
 /// Durable relationship facts consulted inside the acceptance transaction.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -95,6 +95,11 @@ pub struct PeerCancellationRecord {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum PeerExecutionPhase {
+    /// A durable internal workflow association owns progress; no execution worker is held.
+    AwaitingWorkflow {
+        /// Exact entry decision retained while the child executes.
+        evidence: PeerEntryEvidence,
+    },
     /// Accepted work is indexed in the durable dispatch queue.
     DispatchAvailable {
         /// Time this generation became available.
@@ -144,6 +149,7 @@ impl PeerExecutionPhase {
             Self::DispatchAvailable { .. }
                 | Self::DispatchClaimed { .. }
                 | Self::Entered { .. }
+                | Self::AwaitingWorkflow { .. }
                 | Self::CancellationRequested { .. }
         )
     }
@@ -154,7 +160,10 @@ impl PeerExecutionPhase {
         match self {
             Self::DispatchClaimed { claim } | Self::Entered { claim, .. } => Some(claim),
             Self::CancellationRequested { claim, .. } => claim.as_ref(),
-            Self::DispatchAvailable { .. } | Self::Terminal { .. } | Self::Uncertain { .. } => None,
+            Self::AwaitingWorkflow { .. }
+            | Self::DispatchAvailable { .. }
+            | Self::Terminal { .. }
+            | Self::Uncertain { .. } => None,
         }
     }
 
@@ -162,7 +171,7 @@ impl PeerExecutionPhase {
     #[must_use]
     pub const fn entry_evidence(&self) -> Option<&PeerEntryEvidence> {
         match self {
-            Self::Entered { evidence, .. } => Some(evidence),
+            Self::Entered { evidence, .. } | Self::AwaitingWorkflow { evidence } => Some(evidence),
             Self::CancellationRequested { evidence, .. } => evidence.as_ref(),
             Self::DispatchAvailable { .. }
             | Self::DispatchClaimed { .. }
@@ -176,6 +185,8 @@ impl PeerExecutionPhase {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PeerExecutionAccounting {
+    /// Number of output records retained for exact result recovery (at most 256).
+    pub outputs: u32,
     /// Number of append-only observation rows.
     pub observations: u32,
     /// Sum of exact input and output artifact sizes accounted so far.
@@ -190,6 +201,8 @@ pub struct PeerExecutionAccounting {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PeerExecutionRecord {
+    /// Saved before child creation, retained through public result publication and archival.
+    pub published_invocation: Option<crate::published::PublishedInvocationPlan>,
     /// Record schema.
     pub schema_version: u32,
     /// Authenticated submitting peer.
@@ -283,6 +296,10 @@ impl PeerArchivedDisposition {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PeerExecutionTombstone {
+    /// Bounded named output facts retained while progress history is compacted.
+    pub output_observations: Vec<PeerObservation>,
+    /// Exact permanent child and command association, even after detailed observations retire.
+    pub published_invocation: Option<crate::published::PublishedInvocationPlan>,
     /// Tombstone document schema.
     pub schema_version: u32,
     /// Authenticated submitting peer.
@@ -449,6 +466,8 @@ pub enum PeerEntryOutcome {
 
 /// Complete facts needed by one atomic adapter-entry transaction.
 pub struct PeerEntryRequest<'a> {
+    /// Optional workflow association to save atomically with final entry and worker release.
+    pub published_invocation: Option<&'a crate::published::PublishedInvocationPlan>,
     /// Authenticated execution owner.
     pub owner: &'a milkdrift_peer_protocol::ServingCaller,
     /// Stable remote execution identity.
@@ -576,6 +595,14 @@ pub struct PeerRetentionPage {
 /// admission reply, use the same owner/request identity rather than submitting new work.
 /// Entry and terminal evidence remain separate from acceptance and cancellation.
 pub trait PeerExecutionStore: Send + Sync {
+    /// Bounded physical hot-record scan for pending workflow continuations. The cursor advances
+    /// over nonmatching records too; terminal history is not loaded or scanned.
+    fn published_serving_page(
+        &self,
+        after: Option<&PeerExecutionId>,
+        limit: PageSize,
+    ) -> Result<(Vec<PeerExecutionRecord>, Option<PeerExecutionId>), PersistenceError>;
+
     /// Binds this store to one installation; a different host must refuse without mutation.
     fn bind_serving_host(
         &self,

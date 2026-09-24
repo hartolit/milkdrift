@@ -120,7 +120,7 @@ Use host-appropriate limits; fixture and example values do not establish model m
 
 Recipe schema 1 and `linux-quadlet-v1/v2` deployments are unsupported by this correction. Schema 2
 and mechanism `linux-quadlet-v4` bind the separate limits, alias and initialization semantics into
-new approvals. Daemon configuration remains version 12 and portable inventory remains version 1.
+new approvals. Daemon configuration uses version 13 and portable inventory remains version 1.
 Do not edit saved inventory or reinterpret an old approval. Before upgrading an active older
 installation, use its matching binary to inspect, preserve and remove it; retain its labeled volumes
 and shared inputs. Approve a schema-2 recipe in a fresh installation namespace. If already upgraded,
@@ -239,7 +239,12 @@ handoff. Both retain lifetime holds; only the child can edit. Return requires ch
 and, for `--resume-parent`, the parent's current authority and uncancelled execution. The returned
 parent receives a new claim. Old callbacks cannot enter. A cancelled parent can settle a child
 without resuming, then resolve/release its remaining hold. These resource transactions are available
-now; the published-invocation association and integrated single-worker method test belong to 04.
+through the normal resource command path. Published calls use their saved invocation association
+instead of a subworkflow event. Their wrapper has never entered a physical writer: the same
+acceptance/entry transaction records that evidence, and only the exact linked service child can
+receive its editing claim. Actual worker children still require physical stop/fencing evidence.
+The wrapper cannot release a suspended hold merely because its internal workflow became terminal.
+See [published methods](../guides/published-methods.md) for service authority and recovery.
 
 ## Protection and retained state
 

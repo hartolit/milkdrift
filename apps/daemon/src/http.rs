@@ -128,6 +128,7 @@ pub(crate) fn router(host: DaemonHost) -> Router {
         "/v1/invocation-requests/{request}" => get(invocations::lookup), RouteAuthorityMapping::Exact(AuthorityOperation::Inspect), RouteResourceMapping::Capability;
         "/v1/invocations/{execution}" => get(invocations::inspect), RouteAuthorityMapping::Exact(AuthorityOperation::Inspect), RouteResourceMapping::Capability;
         "/v1/invocations/{execution}/observations" => get(invocations::observations), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Capability;
+        "/v1/invocations/{execution}/outputs/{artifact}" => get(invocations::output), RouteAuthorityMapping::Exact(AuthorityOperation::ReadCapabilityOutput), RouteResourceMapping::Capability;
         "/v1/invocations/{execution}/cancel" => post(invocations::cancel), RouteAuthorityMapping::Exact(AuthorityOperation::CancelCapability), RouteResourceMapping::Capability;
         "/v1/peers" => get(peers), RouteAuthorityMapping::Exact(AuthorityOperation::InspectPeer), RouteResourceMapping::Peer;
         "/v1/peers/{peer}" => get(peer), RouteAuthorityMapping::Exact(AuthorityOperation::InspectPeer), RouteResourceMapping::Peer;

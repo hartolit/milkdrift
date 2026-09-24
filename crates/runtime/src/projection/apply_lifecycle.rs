@@ -13,12 +13,31 @@ use super::run::{
 };
 
 impl RunProjection {
+    pub(super) fn can_bind_published_source(&self) -> bool {
+        // Recovery can finish this metadata/account link after an editor cancelled an unstarted
+        // child. It appends the association without changing the terminal or accepting execution.
+        self.published_source.is_none()
+            && (self.lifecycle == RunLifecycle::Created
+                || (self.lifecycle == RunLifecycle::Terminal(RunOutcome::Cancelled)
+                    && self.execution_authority.is_none()
+                    && self.accepted_agreement.is_none()))
+    }
+
     pub(super) fn apply_lifecycle_kind(
         &mut self,
         event: &RunEventEnvelope,
     ) -> Result<(), RuntimeError> {
         let sequence = event.sequence();
         match event.kind() {
+            RunEventKind::PublishedRunBound { source } => {
+                if !self.can_bind_published_source() {
+                    return Err(invalid_at(
+                        event,
+                        "published service relationship must bind once before start",
+                    ));
+                }
+                self.published_source = Some(source.clone());
+            }
             RunEventKind::AgreementAccepted { binding } => {
                 if self.lifecycle != RunLifecycle::Created || self.accepted_agreement.is_some() {
                     return Err(invalid_at(

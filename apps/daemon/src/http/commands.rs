@@ -80,6 +80,10 @@ pub(super) async fn command(
 
 fn command_trace(command: &Command) -> CommandTrace {
     let (operation, run, revision, attempt, proposal) = match command {
+        Command::PublishMethod { .. } => ("publish_method", None, None, None, None),
+        Command::InspectMethod { .. } => ("inspect_method", None, None, None, None),
+        Command::ListMethods { .. } => ("list_methods", None, None, None, None),
+        Command::RetireMethod { .. } => ("retire_method", None, None, None, None),
         Command::ImportBlueprint { .. } => ("import_blueprint", None, None, None, None),
         Command::ValidateBlueprint { .. } => ("validate_blueprint", None, None, None, None),
         Command::ImportPromptSequence { .. } => ("import_prompt_sequence", None, None, None, None),

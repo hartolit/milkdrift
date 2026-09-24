@@ -338,6 +338,7 @@ fn final_entry_integrity_distinguishes_denied_uncontrolled_and_reserved_links() 
             .controller_account(origin.account())?
             .ok_or("originating controller account disappeared before settlement")?;
         let usage = AttemptUsage {
+            nested_work: None,
             input_units: Some(3),
             output_units: None,
             duration_ms: Some(4),
@@ -452,6 +453,7 @@ fn final_entry_integrity_distinguishes_denied_uncontrolled_and_reserved_links() 
             .controller_account(origin.account())?
             .ok_or("originating controller account disappeared before late settlement")?;
         let late_usage = AttemptUsage {
+            nested_work: None,
             input_units: Some(2),
             output_units: None,
             duration_ms: Some(5),

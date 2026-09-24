@@ -26,6 +26,7 @@ mod json;
 mod managed;
 pub mod offline;
 mod peer;
+mod published;
 mod revision;
 mod schema;
 mod snapshot;

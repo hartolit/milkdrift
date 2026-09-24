@@ -14,7 +14,7 @@ fn edge(name: &str, from: &str, to: &str) -> TestResult<Edge> {
         PortId::new("in")?,
     ))
 }
-fn governed() -> TestResult<(BlueprintRevision, BlueprintRevision)> {
+pub(super) fn governed() -> TestResult<(BlueprintRevision, BlueprintRevision)> {
     let start = Node::new(NodeId::new("start")?, NodeKind::Wait { duration_ms: 1 })?
         .with_control_output(PortId::new("out")?)?;
     let done = Node::new(

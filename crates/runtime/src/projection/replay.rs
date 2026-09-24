@@ -33,6 +33,14 @@ use super::structured::{
 };
 
 impl RunProjection {
+    /// Exact public acceptance owning this internal service run.
+    #[must_use]
+    pub fn published_source(
+        &self,
+    ) -> Option<&milkdrift_persistence::published::PublishedInvocationSource> {
+        self.published_source.as_ref()
+    }
+
     /// Creates an empty, uncreated projection.
     #[must_use]
     pub fn new() -> Self {
@@ -689,6 +697,7 @@ impl RunProjection {
 
     fn event_is_safe_after_terminal(&self, kind: &RunEventKind) -> bool {
         match kind {
+            RunEventKind::PublishedRunBound { .. } => self.can_bind_published_source(),
             RunEventKind::RecoveryStarted { .. }
             | RunEventKind::RecoveryClassified { .. }
             | RunEventKind::ExternalOutcomeRetained { .. } => true,

@@ -456,7 +456,7 @@ fn release_controller_longevity_stops_once_across_checkpoints_and_restart() -> T
             .ok_or("controller longevity account is absent")?;
         assert_eq!(
             account.declaration().controller_execution(),
-            &controller_execution
+            Some(&controller_execution)
         );
         service.execute(&command(
             "longevity-continue-three",

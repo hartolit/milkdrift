@@ -1,7 +1,7 @@
 use super::*;
 
 fn fixture_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v12.toml")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/daemon-config-v13.toml")
 }
 
 fn fixture_document() -> Result<DaemonConfig, Box<dyn std::error::Error>> {
@@ -71,7 +71,7 @@ fn maintained_operator_configuration_uses_the_production_reader()
 }
 
 #[test]
-fn schema_v12_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+fn schema_v13_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     let plan = DaemonConfig::load(&fixture_path())?;
     let document = fixture_document()?;
     let actor = &document.actors[0];
@@ -127,7 +127,7 @@ fn old_and_future_config_versions_are_rejected_truthfully() -> Result<(), Box<dy
     {
         let directory = tempfile::tempdir()?;
         let value = source.replacen(
-            "schema_version = 12",
+            "schema_version = 13",
             &format!("schema_version = {unsupported}"),
             1,
         );
@@ -146,7 +146,7 @@ fn duplicate_unknown_and_json_configuration_are_rejected() -> Result<(), Box<dyn
 {
     let directory = tempfile::tempdir()?;
     let duplicate = directory.path().join("duplicate.toml");
-    fs::write(&duplicate, "schema_version = 12\nschema_version = 12\n")?;
+    fs::write(&duplicate, "schema_version = 13\nschema_version = 13\n")?;
     assert!(matches!(
         DaemonConfig::load(&duplicate),
         Err(ConfigError::Toml(_))
@@ -163,8 +163,8 @@ fn duplicate_unknown_and_json_configuration_are_rejected() -> Result<(), Box<dyn
     fs::write(
         &unknown,
         fs::read_to_string(fixture_path())?.replacen(
-            "schema_version = 12",
-            "schema_version = 12\nunexpected = true",
+            "schema_version = 13",
+            "schema_version = 13\nunexpected = true",
             1,
         ),
     )?;

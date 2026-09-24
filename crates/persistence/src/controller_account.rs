@@ -16,7 +16,7 @@ pub use transaction::{ControllerAccountAction, ControllerAccountTransaction};
 
 use std::collections::BTreeMap;
 
-use milkdrift_capability::CapabilityCategory;
+use milkdrift_capability::{CapabilityCategory, InvocationId};
 use milkdrift_workspace::RunId;
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +44,19 @@ pub struct ControllerResourceBudget {
 }
 
 impl ControllerResourceBudget {
+    /// Whether every cumulative dimension fits the enclosing allowance. An unbilled allowance
+    /// can fit a billed ceiling; a different monetary ledger cannot be silently converted.
+    #[must_use]
+    pub fn fits_within(&self, ceiling: &Self) -> bool {
+        (self.currency.is_none() || self.currency == ceiling.currency)
+            && self.cost_micros <= ceiling.cost_micros
+            && self.input_units <= ceiling.input_units
+            && self.output_units <= ceiling.output_units
+            && self.artifact_bytes <= ceiling.artifact_bytes
+            && self.process_admissions <= ceiling.process_admissions
+            && self.model_admissions <= ceiling.model_admissions
+    }
+
     /// Constructs resource ceilings. With no currency, cost must be zero and billed entry is refused.
     pub fn new(
         cost_micros: u64,
@@ -54,18 +67,11 @@ impl ControllerResourceBudget {
         process_admissions: u64,
         model_admissions: u64,
     ) -> Result<Self, PersistenceError> {
-        if [
-            input_units,
-            output_units,
-            artifact_bytes,
-            process_admissions,
-            model_admissions,
-        ]
-        .contains(&0)
-            || (currency.is_none() && cost_micros != 0)
-        {
+        // Zero is a real ceiling: a process-only service can prohibit model admissions,
+        // and an explicitly unbilled service can prohibit spend without inventing currency.
+        if currency.is_none() && cost_micros != 0 {
             return Err(PersistenceError::InvalidDocument(
-                "controller resource ceilings must be nonzero".to_owned(),
+                "a monetary ceiling requires its explicit currency".to_owned(),
             ));
         }
         Ok(Self {
@@ -122,7 +128,10 @@ impl ControllerResourceBudget {
 pub struct ControllerAccountDeclaration {
     account: ControllerAccountId,
     controller_run: RunId,
-    controller_execution: NodeExecutionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    controller_execution: Option<NodeExecutionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    published_invocation: Option<InvocationId>,
     policy_digest: String,
     budget: ControllerResourceBudget,
     declaration_digest: IntegrityDigest,
@@ -133,7 +142,10 @@ struct DeclarationDigestInput<'a> {
     domain: &'static str,
     account: &'a ControllerAccountId,
     controller_run: &'a RunId,
-    controller_execution: &'a NodeExecutionId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    controller_execution: Option<&'a NodeExecutionId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    published_invocation: Option<&'a InvocationId>,
     policy_digest: &'a str,
     budget: &'a ControllerResourceBudget,
 }
@@ -146,26 +158,62 @@ impl ControllerAccountDeclaration {
         policy_digest: impl Into<String>,
         budget: ControllerResourceBudget,
     ) -> Result<Self, PersistenceError> {
+        Self::build(
+            controller_run,
+            Some(controller_execution),
+            None,
+            policy_digest.into(),
+            budget,
+        )
+    }
+
+    /// Establish a sub-allowance for one real published invocation. It is a distinct account from
+    /// any caller reservation, so ordinary internal entries are never charged twice to that caller.
+    pub fn for_published_invocation(
+        run: RunId,
+        invocation: InvocationId,
+        method_digest: impl Into<String>,
+        budget: ControllerResourceBudget,
+    ) -> Result<Self, PersistenceError> {
+        Self::build(run, None, Some(invocation), method_digest.into(), budget)
+    }
+
+    fn build(
+        controller_run: RunId,
+        controller_execution: Option<NodeExecutionId>,
+        published_invocation: Option<InvocationId>,
+        policy_digest: String,
+        budget: ControllerResourceBudget,
+    ) -> Result<Self, PersistenceError> {
         Self::validate_budget(&budget)?;
-        let policy_digest = policy_digest.into();
+
         if policy_digest.len() < 4 || policy_digest.len() > 192 || !policy_digest.is_ascii() {
             return Err(PersistenceError::InvalidDocument(
                 "controller policy digest is malformed".to_owned(),
             ));
         }
-        let identity = framed_digest(
-            b"milkdrift.controller-account.identity.v1\0",
-            &[
-                controller_run.as_str(),
-                controller_execution.as_str(),
-                &policy_digest,
-            ],
-        );
+        let (domain, owner) = match (&controller_execution, &published_invocation) {
+            (Some(execution), None) => (
+                b"milkdrift.controller-account.identity.v1\0".as_slice(),
+                execution.as_str(),
+            ),
+            (None, Some(invocation)) => (
+                b"milkdrift.published-allowance.identity.v1\0".as_slice(),
+                invocation.as_str(),
+            ),
+            _ => {
+                return Err(PersistenceError::InvalidDocument(
+                    "account must have exactly one durable owner".to_owned(),
+                ));
+            }
+        };
+        let identity = framed_digest(domain, &[controller_run.as_str(), owner, &policy_digest]);
         let account = ControllerAccountId::new(format!("controller-account:{identity}"))?;
         let declaration_digest = declaration_digest(
             &account,
             &controller_run,
-            &controller_execution,
+            controller_execution.as_ref(),
+            published_invocation.as_ref(),
             &policy_digest,
             &budget,
         )?;
@@ -173,6 +221,7 @@ impl ControllerAccountDeclaration {
             account,
             controller_run,
             controller_execution,
+            published_invocation,
             policy_digest,
             budget,
             declaration_digest,
@@ -194,9 +243,10 @@ impl ControllerAccountDeclaration {
 
     /// Revalidates an untrusted stored declaration.
     pub fn validate(&self) -> Result<(), PersistenceError> {
-        let rebuilt = Self::new(
+        let rebuilt = Self::build(
             self.controller_run.clone(),
             self.controller_execution.clone(),
+            self.published_invocation.clone(),
             self.policy_digest.clone(),
             self.budget.clone(),
         )?;
@@ -220,8 +270,13 @@ impl ControllerAccountDeclaration {
     }
     /// Exact controller node execution that owns the occurrence.
     #[must_use]
-    pub const fn controller_execution(&self) -> &NodeExecutionId {
-        &self.controller_execution
+    pub const fn controller_execution(&self) -> Option<&NodeExecutionId> {
+        self.controller_execution.as_ref()
+    }
+    /// Exact published invocation when this declaration is a service sub-allowance.
+    #[must_use]
+    pub const fn published_invocation(&self) -> Option<&InvocationId> {
+        self.published_invocation.as_ref()
     }
     /// Immutable validated controller-policy digest.
     #[must_use]
@@ -243,7 +298,8 @@ impl ControllerAccountDeclaration {
 fn declaration_digest(
     account: &ControllerAccountId,
     controller_run: &RunId,
-    controller_execution: &NodeExecutionId,
+    controller_execution: Option<&NodeExecutionId>,
+    published_invocation: Option<&InvocationId>,
     policy_digest: &str,
     budget: &ControllerResourceBudget,
 ) -> Result<IntegrityDigest, PersistenceError> {
@@ -253,6 +309,7 @@ fn declaration_digest(
             account,
             controller_run,
             controller_execution,
+            published_invocation,
             policy_digest,
             budget,
         },
@@ -359,6 +416,8 @@ pub enum ControllerArtifactChargeOutcome {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControllerReservation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nested: Option<NestedReservation>,
     reservation: ControllerReservationId,
     attempt: AttemptId,
     category: CapabilityCategory,
@@ -366,6 +425,13 @@ pub struct ControllerReservation {
     output: ControllerReservationDimension,
     artifact: ControllerReservationDimension,
     cost: ControllerReservationDimension,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NestedReservation {
+    process: ControllerReservationDimension,
+    model: ControllerReservationDimension,
 }
 
 /// Exact lifecycle of one dimension inside an accepted reservation.

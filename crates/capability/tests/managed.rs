@@ -4,14 +4,14 @@ type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[test]
 fn exact_request_shape_refuses_old_versions_unknown_fields_and_claim_ambiguity() -> Result {
-    let golden = r#"{"schema_version":2,"command":"inspect-one","installation":"slotbook","expected_version":7,"action":{"type":"inspect"}}"#;
+    let golden = r#"{"schema_version":3,"command":"inspect-one","installation":"slotbook","expected_version":7,"action":{"type":"inspect"}}"#;
     let request: ManagedRequest = serde_json::from_str(golden)?;
     request.validate()?;
     assert_eq!(serde_json::to_string(&request)?, golden);
     assert_eq!(request.operation(), "resource.inspect");
     for invalid in [
-        golden.replace("\"schema_version\":2", "\"schema_version\":0"),
-        golden.replace("\"schema_version\":2", "\"schema_version\":3"),
+        golden.replace("\"schema_version\":3", "\"schema_version\":0"),
+        golden.replace("\"schema_version\":3", "\"schema_version\":4"),
         golden.replace(
             "\"type\":\"inspect\"",
             "\"type\":\"inspect\",\"engine_args\":[]",

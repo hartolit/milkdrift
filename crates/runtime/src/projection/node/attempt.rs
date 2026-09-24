@@ -347,6 +347,9 @@ impl RetainedExternalOutcome {
 /// Settled high-frequency history is queried from the journal.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct NodeAttemptProjection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::projection) published_invocation:
+        Option<milkdrift_persistence::published::PublishedInvocationPlan>,
     pub(in crate::projection) attempt: AttemptId,
     pub(in crate::projection) execution: NodeExecutionId,
     pub(in crate::projection) attempt_number: u32,
@@ -379,6 +382,14 @@ pub struct NodeAttemptProjection {
 }
 
 impl NodeAttemptProjection {
+    /// Exact child association retained while worker capacity is released.
+    #[must_use]
+    pub fn published_invocation(
+        &self,
+    ) -> Option<&milkdrift_persistence::published::PublishedInvocationPlan> {
+        self.published_invocation.as_ref()
+    }
+
     /// Immutable attempt identity.
     #[must_use]
     pub const fn attempt(&self) -> &AttemptId {

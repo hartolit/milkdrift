@@ -44,6 +44,7 @@ fn client_policy(actors: &[ActorRef]) -> TestResult<ServingClientPolicy> {
         grants,
         revocations: BTreeMap::new(),
         execution_limits: ExecutionLimits {
+            nested_invocations: None,
             artifact_bytes: 1_048_576,
             duration_ms: 30_000,
             cost_micros: 0,

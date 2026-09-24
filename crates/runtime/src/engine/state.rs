@@ -287,7 +287,18 @@ impl RuntimeService {
                         "accepted agreement binding differs from immutable definition".to_owned(),
                     ));
                 }
-            } else if current.semantic().agreement().is_some() {
+            } else if current.semantic().agreement().is_some()
+                && !(projection.execution_authority().is_none()
+                    && matches!(
+                        projection.lifecycle(),
+                        crate::RunLifecycle::Cancelling
+                            | crate::RunLifecycle::Terminal(
+                                milkdrift_persistence::RunOutcome::Cancelled
+                            )
+                    ))
+            {
+                // A created run can be cancelled without ever accepting start authority or
+                // its agreement. Cancellation must not manufacture either acceptance.
                 return Err(RuntimeError::InvalidHistory(
                     "governed run has no accepted agreement binding".to_owned(),
                 ));

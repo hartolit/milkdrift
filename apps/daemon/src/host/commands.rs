@@ -8,6 +8,7 @@ mod control;
 mod controllers;
 mod definitions;
 mod proposals;
+mod publications;
 mod runs;
 
 impl Owner {
@@ -22,6 +23,10 @@ impl Owner {
     ) -> Result<CommandAccepted, PublicFailure> {
         self.workflow()?;
         match &request.command {
+            Command::PublishMethod { .. }
+            | Command::InspectMethod { .. }
+            | Command::ListMethods { .. }
+            | Command::RetireMethod { .. } => publications::execute(self, session, request),
             Command::ImportBlueprint { document } => {
                 definitions::blueprint(self, session, request, document, true)
             }

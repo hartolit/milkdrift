@@ -129,8 +129,8 @@ impl RuntimeService {
             DecisionId::new(format!("decision:{}", blake3::hash(identity.as_bytes())))?;
         request.evaluated_at = BoundaryTimeMillis::new(now.get());
         let mut authorization = self.authority.evaluate(&request)?;
-        let mut adapter_dispatch = authorization
-            .is_allowed()
+        let mut public_call_active = self.published_entry_allowed(&projection, now)?;
+        let mut adapter_dispatch = (authorization.is_allowed() && public_call_active)
             .then(|| dispatch.with_entry_authorization(authorization.clone()))
             .transpose()?;
         let preparation = adapter_dispatch
@@ -187,14 +187,15 @@ impl RuntimeService {
             }
             request.evaluated_at = BoundaryTimeMillis::new(now.get());
             authorization = self.authority.evaluate(&request)?;
-            adapter_dispatch = if authorization.is_allowed() {
+            public_call_active = self.published_entry_allowed(&projection, now)?;
+            adapter_dispatch = if authorization.is_allowed() && public_call_active {
                 Some(dispatch.with_entry_authorization(authorization.clone())?)
             } else {
                 None
             };
         }
         // A denied final check must release preparation without reserving account resources.
-        if !authorization.is_allowed() {
+        if !authorization.is_allowed() || !public_call_active {
             prepared = None;
         }
         // Preparation can be slower than sibling heartbeats. Refresh their unrelated journal
@@ -223,6 +224,23 @@ impl RuntimeService {
             return Ok(None);
         }
         projection = latest;
+        if !public_call_active {
+            self.commit_internal_plan_from_projection(
+                dispatch.run(), projection, now,
+                SystemTransition::DecideCapabilityAdapterEntry { attempt: dispatch.attempt().clone() },
+                CommandPlan::one(RunEventKind::NodeTerminal {
+                    execution: dispatch.execution().clone(),
+                    attempt: dispatch.attempt().clone(),
+                    report_sequence: next_sequence,
+                    outcome: milkdrift_persistence::NodeOutcome::Rejected,
+                    error_class: Some(ErrorClass::Authorization),
+                    detail: Some(milkdrift_persistence::BoundedDetail::new(
+                        "enclosing published invocation is cancelled, expired, or no longer authorized",
+                    )?),
+                }),
+            )?;
+            return Ok(None);
+        }
         // A worker can wait after claiming, and preparation can overlap later acceptance
         // or access changes. Recheck the frozen sources at the final entry boundary.
         if prepared.is_some() {
@@ -320,6 +338,20 @@ impl RuntimeService {
                 ))?),
             });
         }
+        if authorization.is_allowed()
+            && !matches!(
+                controller_admission,
+                ControllerAdmissionOutcome::Denied { .. }
+            )
+            && let Some(plan) = prepared
+                .as_ref()
+                .and_then(PreparedExecution::published_plan)
+        {
+            events.push(RunEventKind::PublishedInvocationPlanned {
+                attempt: dispatch.attempt().clone(),
+                plan: Box::new(plan.clone()),
+            });
+        }
         let decision_commit = self.commit_internal_plan_from_projection(
             dispatch.run(),
             projection,
@@ -386,6 +418,10 @@ impl RuntimeService {
         else {
             return Ok(EffectExecutionResult::Completed { observations: 0 });
         };
+        if prepared.published_plan().is_some() {
+            prepared.accept_published(&adapter_dispatch)?;
+            return Ok(EffectExecutionResult::Pending);
+        }
         let reporter = DurableExecutionReporter::new(self, &adapter_dispatch, next_sequence);
         let boundary = prepared.enter_with_controller_reservation(
             &adapter_dispatch,

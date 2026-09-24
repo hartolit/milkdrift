@@ -82,6 +82,14 @@ impl RunEventKind {
                 "executor report sequences are one-based".to_owned(),
             ));
         }
+        if let Self::PublishedInvocationPlanned { plan, .. } = self {
+            plan.validate()?;
+            if &plan.child_run == run {
+                return Err(PersistenceError::InvalidDocument(
+                    "published child cannot be its parent".to_owned(),
+                ));
+            }
+        }
         let context = ReferenceContext { run };
         lifecycle::validate(self, &context)?;
         continuation::validate(self, &context)?;

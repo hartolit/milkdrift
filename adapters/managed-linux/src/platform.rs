@@ -867,7 +867,7 @@ impl ManagedPlatform for LinuxManagedPlatform {
             }
             // Removing an attachment cannot stop the remote service. After the local request
             // owner has left, explicit resolution relinquishes only this host's attachment hold.
-            return Ok(QuiescenceEvidence {
+            return Ok(QuiescenceEvidence::PhysicalStop {
                 physical_identity: resource.identity.clone(),
                 observation_digest: digest(format!(
                     "{}:{}:locally-fenced",
@@ -884,7 +884,7 @@ impl ManagedPlatform for LinuxManagedPlatform {
         if Self::inspect("container", &name)?.is_some() {
             return Err(platform_error("task container remains after fencing"));
         }
-        Ok(QuiescenceEvidence {
+        Ok(QuiescenceEvidence::PhysicalStop {
             physical_identity: name.clone(),
             observation_digest: digest(format!("{}:{name}:absent", setup.ownership)),
             disrupted: true,

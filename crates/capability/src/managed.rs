@@ -9,7 +9,7 @@ use crate::{CapabilityId, ContractError};
 use serde::{Deserialize, Serialize};
 
 /// Current installation command and inspection document version.
-pub const MANAGED_SCHEMA_VERSION: u32 = 2;
+pub const MANAGED_SCHEMA_VERSION: u32 = 3;
 /// Maximum resources in one installation and one coherent use acquisition.
 pub const MAX_MANAGED_RESOURCES: usize = 16;
 /// Maximum simultaneous unresolved uses of one installation.

@@ -124,7 +124,7 @@ fn serve_archived_execution(
                 peer: remote_peer,
                 session: SessionId::new("session-remote-conformance-server")
                     .map_err(|error| error.to_string())?,
-                selected_version: ProtocolVersion::V1_4,
+                selected_version: ProtocolVersion::V1_5,
                 features: FeatureSet {
                     resumable_observations: true,
                     resumable_artifacts: true,
@@ -177,6 +177,7 @@ fn serve_archived_execution(
                 request_digest: request.request_digest,
                 accepted_at_unix_ms: 100,
                 summary: Box::new(ArchivedExecutionSummary {
+                    output_observations: Vec::new(),
                     status: RemoteExecutionStatus::Terminal,
                     last_sequence: 1,
                     observation_digest: format!("b3_{}", "0".repeat(64)),
@@ -235,6 +236,7 @@ fn remote_case(scenario: ConformanceScenario) -> Result<RemoteCase, Box<dyn std:
         execution_network_destinations: BTreeSet::new(),
         execution_secrets: BTreeSet::new(),
         execution_limits: ExecutionLimits {
+            nested_invocations: None,
             artifact_bytes: 1_024,
             duration_ms: 1_000,
             cost_micros: 1_000,
@@ -651,6 +653,7 @@ fn remote_catalog_registration_fails_closed_and_recovers_with_the_clock()
         execution_network_destinations: BTreeSet::new(),
         execution_secrets: BTreeSet::new(),
         execution_limits: ExecutionLimits {
+            nested_invocations: None,
             artifact_bytes: 1,
             duration_ms: 1,
             cost_micros: 0,

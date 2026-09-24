@@ -96,9 +96,11 @@ handles when it cannot finish. Keep the store and capability host alive for fina
 [shutdown owner](../../apps/daemon/src/host/shutdown.rs) coordinates this with runtime workers.
 
 Retention compacts eligible terminal/uncertain records into durable tombstones. Lookup, exact replay,
-and conflict behavior survive; detailed observation rows and their peer artifact links do not.
-Consequently, an archived execution can replay its final summary while a new download negotiation
-through its old observation links is refused. Core artifact retention remains independently owned.
+and conflict behavior survive. Intermediate progress is removed; at most 256 named output facts
+retain their original remote sequences. An origin adapter downloads any missing outputs before
+reporting the retained terminal result. Transfer still checks current relationship and artifact
+authority, and failure remains uncertain without repeating execution. Core artifact retention
+remains independently owned.
 
 For implementation changes, `remote` owns catalog registrations and the origin adapter; `client`
 and `http` own HTTP framing. Capability-host's [serving module](../../crates/capability-host/src/serving.rs)

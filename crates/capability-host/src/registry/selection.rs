@@ -23,6 +23,8 @@ impl CapabilityHost {
         let config = config.validate()?;
         Ok(Self {
             core: Arc::new(HostCore {
+                published: Mutex::new(None),
+                published_serving: Mutex::new(None),
                 config,
                 policy,
                 state: Mutex::new(RegistryState {
@@ -32,6 +34,7 @@ impl CapabilityHost {
                     generations: BTreeMap::new(),
                     current: BTreeMap::new(),
                     in_flight: BTreeMap::new(),
+                    pending: BTreeMap::new(),
                 }),
             }),
         })
@@ -48,11 +51,26 @@ impl CapabilityHost {
         adapter: Arc<dyn CapabilityAdapter>,
         observation: Option<CapabilityObservation>,
     ) -> Result<RegistrationOutcome, HostError> {
+        self.register_with_commit(descriptor, adapter, observation, || Ok::<_, HostError>(()))
+            .map(|(outcome, ())| outcome)
+    }
+
+    /// Reserve capacity and start the adapter before committing a durable advertisement.
+    /// The callback runs exactly once after validation, including identical registration replay.
+    /// No new generation becomes visible if it fails. It must not reenter this host: the registry
+    /// lock protects the commit-to-visibility boundary. Durable replay recovers a lost commit reply.
+    pub fn register_with_commit<T, E: From<HostError>>(
+        &self,
+        descriptor: CapabilityDescriptor,
+        adapter: Arc<dyn CapabilityAdapter>,
+        observation: Option<CapabilityObservation>,
+        commit: impl FnOnce() -> Result<T, E>,
+    ) -> Result<(RegistrationOutcome, T), E> {
         if observation
             .as_ref()
             .is_some_and(|value| value.capability() != descriptor.identity())
         {
-            return Err(HostError::ObservationMismatch);
+            return Err(HostError::ObservationMismatch.into());
         }
         let key = GenerationKey {
             capability: descriptor.identity().clone(),
@@ -65,20 +83,21 @@ impl CapabilityHost {
         let mut reservation = {
             let mut state = self.lock_state()?;
             if !state.admission_open || state.shutdown {
-                return Err(HostError::RegistrationClosed);
+                return Err(HostError::RegistrationClosed.into());
             }
             if let Some(existing) = state.generations.get(&key) {
-                return if existing.descriptor == descriptor {
-                    Ok(RegistrationOutcome::Idempotent)
-                } else {
-                    Err(HostError::ConflictingRevision {
+                if existing.descriptor != descriptor {
+                    return Err(HostError::ConflictingRevision {
                         capability: key.capability,
                         descriptor_revision: key.revision,
-                    })
-                };
+                    }
+                    .into());
+                }
+                let committed = commit()?;
+                return Ok((RegistrationOutcome::Idempotent, committed));
             }
             if state.starting.contains(&key) {
-                return Err(HostError::RegistrationInProgress(state.starting.len()));
+                return Err(HostError::RegistrationInProgress(state.starting.len()).into());
             }
             self.validate_registration_capacity(&state, &key)?;
             state.starting.insert(key.clone());
@@ -88,26 +107,39 @@ impl CapabilityHost {
             lifecycle_call(|| Ok::<_, crate::AdapterError>(adapter.authority_requirements()))?;
         let accepts_direct_inputs =
             lifecycle_call(|| Ok::<_, crate::AdapterError>(adapter.accepts_direct_inputs()))?;
+        let pending_limit =
+            lifecycle_call(|| Ok::<_, crate::AdapterError>(adapter.maximum_pending_workflows()))?;
+        if pending_limit == Some(0) {
+            return Err(HostError::InvalidConfig.into());
+        }
         let permit_limit = descriptor
             .admission()
             .max_concurrent()
             .min(self.core.config.max_concurrent_per_generation);
         if let Err(error) = lifecycle_call(|| adapter.start()) {
             let _ = lifecycle_call(|| adapter.shutdown());
-            return Err(error);
+            return Err(error.into());
         }
         let mut state = match self.lock_state() {
             Ok(state) => state,
             Err(error) => {
                 let _ = lifecycle_call(|| adapter.shutdown());
-                return Err(error);
+                return Err(error.into());
             }
         };
         if !state.admission_open || state.shutdown {
             drop(state);
             let _ = lifecycle_call(|| adapter.shutdown());
-            return Err(HostError::RegistrationClosed);
+            return Err(HostError::RegistrationClosed.into());
         }
+        let committed = match commit() {
+            Ok(value) => value,
+            Err(error) => {
+                drop(state);
+                let _ = lifecycle_call(|| adapter.shutdown());
+                return Err(error);
+            }
+        };
         state.starting.remove(&key);
         state.generations.insert(
             key.clone(),
@@ -120,13 +152,15 @@ impl CapabilityHost {
                 observation,
                 draining: false,
                 active: 0,
+                pending: 0,
+                pending_limit,
                 permit_limit,
                 last_failure: None,
             },
         );
         update_current(&mut state, &key.capability);
         reservation.complete();
-        Ok(RegistrationOutcome::Registered)
+        Ok((RegistrationOutcome::Registered, committed))
     }
 
     /// Replaces the live observation for one exact generation.
@@ -250,7 +284,11 @@ impl CapabilityHost {
                 continue;
             }
             availability_match = true;
-            if generation.active >= generation.permit_limit {
+            if generation.active >= generation.permit_limit
+                || generation.pending_limit.is_some_and(|limit| {
+                    generation.active.saturating_add(generation.pending) >= limit
+                })
+            {
                 continue;
             }
             capacity_match = true;
@@ -352,7 +390,11 @@ impl CapabilityHost {
                 continue;
             }
             availability_match = true;
-            if generation.active >= generation.permit_limit {
+            if generation.active >= generation.permit_limit
+                || generation.pending_limit.is_some_and(|limit| {
+                    generation.active.saturating_add(generation.pending) >= limit
+                })
+            {
                 continue;
             }
             candidates.push((

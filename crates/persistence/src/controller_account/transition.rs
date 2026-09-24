@@ -2,7 +2,7 @@
 use super::{
     ControllerAccountBlock, ControllerAccountState, ControllerAdmissionDenial,
     ControllerAdmissionOutcome, ControllerArtifactChargeOutcome, ControllerReservation,
-    ControllerReservationDimension, ControllerReservationId, checked_add,
+    ControllerReservationDimension, ControllerReservationId, NestedReservation, checked_add,
 };
 use crate::{AttemptId, CurrencyCode, PersistenceError};
 use milkdrift_capability::{AdmissionBound, CapabilityCategory, InvocationAdmissionEnvelope};
@@ -151,7 +151,16 @@ impl ControllerAccountState {
             | CapabilityCategory::Peer
             | CapabilityCategory::Custom(_) => (0, 0),
         };
-        let Some(process_candidate) = self.settled.process_admissions.checked_add(process) else {
+        let nested = envelope.nested_invocations();
+        let nested_process = nested.map_or(0, milkdrift_capability::InvocationCounts::process);
+        let nested_model = nested.map_or(0, milkdrift_capability::InvocationCounts::model);
+        let Some(process_candidate) = self
+            .settled
+            .process_admissions
+            .checked_add(process)
+            .and_then(|v| v.checked_add(self.outstanding.process_admissions))
+            .and_then(|v| v.checked_add(nested_process))
+        else {
             return Ok(ControllerAdmissionOutcome::Denied {
                 account: self.declaration.account.clone(),
                 reason: ControllerAdmissionDenial::Overflow {
@@ -167,7 +176,13 @@ impl ControllerAccountState {
                 },
             });
         }
-        let Some(model_candidate) = self.settled.model_admissions.checked_add(model) else {
+        let Some(model_candidate) = self
+            .settled
+            .model_admissions
+            .checked_add(model)
+            .and_then(|v| v.checked_add(self.outstanding.model_admissions))
+            .and_then(|v| v.checked_add(nested_model))
+        else {
             return Ok(ControllerAdmissionOutcome::Denied {
                 account: self.declaration.account.clone(),
                 reason: ControllerAdmissionDenial::Overflow {
@@ -193,9 +208,17 @@ impl ControllerAccountState {
             checked_add(self.outstanding.cost_micros, cost.unwrap_or(0))?;
         self.settled.process_admissions = checked_add(self.settled.process_admissions, process)?;
         self.settled.model_admissions = checked_add(self.settled.model_admissions, model)?;
+        self.outstanding.process_admissions =
+            checked_add(self.outstanding.process_admissions, nested_process)?;
+        self.outstanding.model_admissions =
+            checked_add(self.outstanding.model_admissions, nested_model)?;
         self.reservations.insert(
             reservation.clone(),
             ControllerReservation {
+                nested: nested.map(|counts| NestedReservation {
+                    process: ControllerReservationDimension::Outstanding(counts.process()),
+                    model: ControllerReservationDimension::Outstanding(counts.model()),
+                }),
                 reservation: reservation.clone(),
                 attempt,
                 category,
@@ -268,23 +291,67 @@ impl ControllerAccountState {
             &mut self.settled.cost_micros,
             &mut self.blocked,
         )?;
-        // Artifact bytes settle only at publication. A known terminal proves that no later
-        // adapter publication for this synchronous invocation can begin.
-        if let ControllerReservationDimension::Outstanding(remaining) = record.artifact {
-            self.outstanding.artifact_bytes = self
-                .outstanding
-                .artifact_bytes
-                .checked_sub(remaining)
-                .ok_or_else(|| {
-                    PersistenceError::InvalidDocument(
-                        "controller artifact remainder underflow".to_owned(),
-                    )
-                })?;
-            record.artifact = ControllerReservationDimension::Settled;
+        if let Some(nested) = &mut record.nested {
+            let observed = usage.and_then(|value| value.nested_work);
+            settle_dimension(
+                "process_admissions",
+                reservation,
+                &mut nested.process,
+                observed.map(|v| v.invocations().process()),
+                &mut self.outstanding.process_admissions,
+                &mut self.settled.process_admissions,
+                &mut self.blocked,
+            )?;
+            settle_dimension(
+                "model_admissions",
+                reservation,
+                &mut nested.model,
+                observed.map(|v| v.invocations().model()),
+                &mut self.outstanding.model_admissions,
+                &mut self.settled.model_admissions,
+                &mut self.blocked,
+            )?;
+            // Public output bytes already consumed this reservation at publication. Only the
+            // method's internal logical bytes are added by its independently observed settlement.
+            settle_dimension(
+                "artifact_bytes",
+                reservation,
+                &mut record.artifact,
+                observed.map(milkdrift_capability::NestedWorkUsage::artifact_bytes),
+                &mut self.outstanding.artifact_bytes,
+                &mut self.settled.artifact_bytes,
+                &mut self.blocked,
+            )?;
+        } else {
+            if usage.and_then(|value| value.nested_work).is_some() && self.blocked.is_none() {
+                self.blocked = Some(ControllerAccountBlock::Integrity {
+                    reason: "terminal reported nested work without a nested entry allowance"
+                        .to_owned(),
+                });
+            }
+            // Ordinary artifact bytes settle at publication; terminal proves that no later
+            // publication for this operation can begin.
+            if let ControllerReservationDimension::Outstanding(remaining) = record.artifact {
+                self.outstanding.artifact_bytes = self
+                    .outstanding
+                    .artifact_bytes
+                    .checked_sub(remaining)
+                    .ok_or_else(|| {
+                        PersistenceError::InvalidDocument(
+                            "controller artifact remainder underflow".to_owned(),
+                        )
+                    })?;
+                record.artifact = ControllerReservationDimension::Settled;
+            }
         }
         if record.input.remaining().is_some()
             || record.output.remaining().is_some()
             || record.cost.remaining().is_some()
+            || record.artifact.remaining().is_some()
+            || record
+                .nested
+                .as_ref()
+                .is_some_and(|v| v.process.remaining().is_some() || v.model.remaining().is_some())
         {
             self.reservations.insert(reservation.clone(), record);
         }

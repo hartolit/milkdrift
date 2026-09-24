@@ -45,8 +45,20 @@ impl ControllerLifecycleOwner {
         run: &milkdrift_workspace::RunId,
         execution: &NodeExecutionId,
     ) -> Result<ControllerAccountDeclaration, ControlError> {
+        let budget = Self::resource_budget(document)?;
+        Ok(ControllerAccountDeclaration::new(
+            run.clone(),
+            execution.clone(),
+            document.digest().as_str(),
+            budget,
+        )?)
+    }
+
+    pub(crate) fn resource_budget(
+        document: &ControllerPolicyDocument,
+    ) -> Result<ControllerResourceBudget, ControlError> {
         let limits = document.policy().limits();
-        let budget = ControllerResourceBudget::new(
+        Ok(ControllerResourceBudget::new(
             limits.max_cost_micros(),
             document
                 .policy()
@@ -59,12 +71,6 @@ impl ControllerLifecycleOwner {
             limits.max_artifact_bytes(),
             u64::from(limits.max_process_invocations()),
             u64::from(limits.max_model_invocations()),
-        )?;
-        Ok(ControllerAccountDeclaration::new(
-            run.clone(),
-            execution.clone(),
-            document.digest().as_str(),
-            budget,
         )?)
     }
 
@@ -504,6 +510,18 @@ impl ControllerLifecycle for ControllerLifecycleOwner {
         };
         let declaration = Self::account_declaration(&document, context.run, context.execution)
             .map_err(|error| RuntimeError::InvalidHistory(error.to_string()))?;
+        let declaration = match context.account {
+            Some(account)
+                if account.declaration().published_invocation().is_some()
+                    && account
+                        .declaration()
+                        .budget()
+                        .fits_within(declaration.budget()) =>
+            {
+                account.declaration().clone()
+            }
+            _ => declaration,
+        };
         match context.account {
             Some(account) if account.declaration() == &declaration => {}
             Some(_) => {

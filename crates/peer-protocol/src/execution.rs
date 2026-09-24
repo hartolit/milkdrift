@@ -54,6 +54,9 @@ impl PeerExecutionProvenance {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionLimits {
+    /// Cumulative internal process/model entries. Absence forbids composed execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nested_invocations: Option<milkdrift_capability::InvocationCounts>,
     /// Maximum total input plus output artifact bytes.
     pub artifact_bytes: u64,
     /// Maximum execution duration.
@@ -95,7 +98,10 @@ impl ExecutionLimits {
     /// True when every requested ceiling is no greater than this grant ceiling.
     #[must_use]
     pub fn contains(&self, requested: &Self) -> bool {
-        requested.artifact_bytes <= self.artifact_bytes
+        requested.nested_invocations.is_none_or(|counts| {
+            self.nested_invocations
+                .is_some_and(|maximum| maximum.contains(counts))
+        }) && requested.artifact_bytes <= self.artifact_bytes
             && requested.duration_ms <= self.duration_ms
             && requested.cost_micros <= self.cost_micros
             && (requested.cost_currency.is_none() || requested.cost_currency == self.cost_currency)
@@ -117,7 +123,7 @@ impl ExecutionLimits {
             AdmissionBound, AdmissionMonetaryBound, AdmissionUnit, InvocationAdmissionEnvelope,
         };
         self.validate()?;
-        Ok(InvocationAdmissionEnvelope::new(
+        let envelope = InvocationAdmissionEnvelope::new(
             AdmissionUnit::ModelTokens,
             self.input_units
                 .map_or(AdmissionBound::NotApplicable, AdmissionBound::Bounded),
@@ -131,7 +137,33 @@ impl ExecutionLimits {
                         .map(AdmissionBound::Bounded)
                 })
                 .map_err(|error| PeerProtocolError::InvalidContract(error.to_string()))?,
+        );
+        Ok(self.nested_invocations.map_or_else(
+            || envelope.clone(),
+            |counts| envelope.clone().with_nested_invocations(counts),
         ))
+    }
+
+    /// Validate reported usage without treating missing observations as zero consumption.
+    #[must_use]
+    pub fn permits_usage(&self, usage: &milkdrift_capability::UsageObservation) -> bool {
+        usage
+            .duration_ms()
+            .is_none_or(|value| value <= self.duration_ms)
+            && usage.cost_micros().is_none_or(|value| {
+                value <= self.cost_micros && usage.currency() == self.cost_currency.as_deref()
+            })
+            && usage
+                .input_units()
+                .is_none_or(|value| self.input_units.is_some_and(|limit| value <= limit))
+            && usage
+                .output_units()
+                .is_none_or(|value| self.output_units.is_some_and(|limit| value <= limit))
+            && usage.nested_work().is_none_or(|nested| {
+                self.nested_invocations
+                    .is_some_and(|maximum| maximum.contains(nested.invocations()))
+                    && nested.artifact_bytes() <= self.artifact_bytes
+            })
     }
 
     /// Refuses entry unless the prepared adapter can enforce every accepted dimension.
@@ -154,7 +186,10 @@ impl ExecutionLimits {
             AdmissionBound::Bounded(value) => Some(*value),
             AdmissionBound::Unknown => None,
         };
-        permits_units(prepared.input_units(), self.input_units)
+        prepared.nested_invocations().is_none_or(|counts| {
+            self.nested_invocations
+                .is_some_and(|maximum| maximum.contains(counts))
+        }) && permits_units(prepared.input_units(), self.input_units)
             && permits_units(prepared.output_units(), self.output_units)
             && output_bytes
                 .and_then(|value| value.checked_add(input_artifact_bytes))
@@ -174,6 +209,9 @@ impl ExecutionLimits {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DelegatedAuthorization {
+    /// Exact enclosing publications from the originating runtime; prevents cycles across hosts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub publication_ancestry: Vec<milkdrift_capability::PublicationAncestor>,
     /// Opaque relationship-local record identity; it is not a bearer credential.
     pub reference: DelegationRef,
     /// Daemon issuing the delegation.
@@ -207,6 +245,17 @@ impl DelegatedAuthorization {
         self.limits.validate()?;
         if let InvocationOrigin::Workflow { provenance } = &self.origin {
             provenance.validate()?;
+        }
+        if self.publication_ancestry.len()
+            > usize::from(milkdrift_capability::MAX_PUBLICATION_DEPTH)
+            || self.publication_ancestry.iter().any(|ancestor| {
+                self.publication_ancestry.len() > usize::from(ancestor.maximum_depth())
+            })
+            || (!self.publication_ancestry.is_empty() && self.origin.workflow().is_none())
+        {
+            return Err(PeerProtocolError::InvalidContract(
+                "publication ancestry requires bounded workflow provenance".to_owned(),
+            ));
         }
         if self
             .controller_reservation
@@ -685,6 +734,8 @@ pub enum RemoteExecutionStatus {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArchivedExecutionSummary {
+    /// At most 256 named output facts, retaining original remote sequence and identity.
+    pub output_observations: Vec<PeerObservation>,
     /// Terminal or truthful outcome-unknown disposition.
     pub status: RemoteExecutionStatus,
     /// Highest observation sequence before archival.
@@ -712,6 +763,25 @@ impl ArchivedExecutionSummary {
             return Err(PeerProtocolError::InvalidContract(
                 "archived execution summary has invalid bounds or digest".to_owned(),
             ));
+        }
+        if self.output_observations.len() > 256 {
+            return Err(PeerProtocolError::InvalidContract(
+                "archived output count exceeds 256".to_owned(),
+            ));
+        }
+        let mut prior = 0;
+        for output in &self.output_observations {
+            output.validate()?;
+            if output.execution != *execution
+                || output.sequence <= prior
+                || output.sequence > self.last_sequence
+                || output.event.kind().output().is_none()
+            {
+                return Err(PeerProtocolError::InvalidContract(
+                    "archived output identity or order is invalid".to_owned(),
+                ));
+            }
+            prior = output.sequence;
         }
         match (
             self.status,

@@ -248,6 +248,13 @@ impl RunProjection {
             || self.subworkflows.values().any(|child| {
                 child.parent_execution == *execution && child.cancellation_reason.is_some()
             })
+            // The private publication continuation owns cleanup for its accepted service link
+            // (deadline, revocation, or cancellation observed in the linked run). The saved
+            // association is its structured authority; it never grants a caller run control.
+            || self.node_executions.get(execution)
+                .and_then(|node| node.attempts.last())
+                .and_then(|attempt| self.attempts.get(attempt))
+                .is_some_and(|attempt| attempt.published_invocation.is_some())
     }
 
     pub(super) fn ensure_terminal_quiescent(
@@ -493,6 +500,7 @@ pub(super) fn new_attempt(
     state: AttemptState,
 ) -> NodeAttemptProjection {
     NodeAttemptProjection {
+        published_invocation: None,
         attempt,
         execution,
         attempt_number,

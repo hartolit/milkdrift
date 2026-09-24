@@ -1,4 +1,4 @@
-//! Strict schema-10 TOML input and owner-specific configuration choices.
+//! Strict schema-13 TOML input and owner-specific configuration choices.
 use milkdrift_authority::{
     ArtifactAuthorityScope, AuthorityBudget, BoundaryTimeMillis, CapabilityAuthorityScope,
     DaemonAuthorityScope, FilesystemScope, LayoutAuthorityScope, NetworkProfileRef, NetworkScope,
@@ -33,6 +33,8 @@ pub enum SecretSourceConfig {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthorityPresetConfig {
+    /// Public capability use with no internal workflow inspection or editing.
+    Invoker,
     /// Read-only inspection.
     Observer,
     /// Inspection plus prospective proposal submission.
@@ -144,6 +146,11 @@ pub enum ControllerActivation {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeHostConfig {
+    /// Explicit public capability to configured service grant relationship. The named grant is
+    /// never inferred from a publisher or caller. Requires workflow role and accounted execution.
+    #[serde(default)]
+    pub publication_services:
+        BTreeMap<milkdrift_capability::CapabilityId, milkdrift_authority::GrantId>,
     /// Explicit lifecycle installation policy, independent of actor permission and worker capacity.
     #[serde(default)]
     pub controller_activation: ControllerActivation,
@@ -176,6 +183,7 @@ pub struct RuntimeHostConfig {
 impl Default for RuntimeHostConfig {
     fn default() -> Self {
         Self {
+            publication_services: BTreeMap::new(),
             controller_activation: ControllerActivation::Disabled,
             request_queue: 128,
             maintenance_interval_ms: 100,
@@ -312,6 +320,7 @@ impl Default for ClientServingConfig {
             maximum_uploaded_artifacts: 1_024,
             maximum_uploaded_bytes: 64 * 1_048_576,
             execution_limits: milkdrift_peer_protocol::ExecutionLimits {
+                nested_invocations: None,
                 artifact_bytes: 16 * 1_048_576,
                 duration_ms: 300_000,
                 cost_micros: 0,
@@ -334,6 +343,9 @@ impl Default for ClientServingConfig {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PeerRelationshipConfig {
+    /// Per-call composed work ceilings; absent refuses published workflow execution.
+    #[serde(default)]
+    pub nested_invocations: Option<milkdrift_capability::InvocationCounts>,
     /// Exact authenticated remote peer identity.
     pub peer_id: String,
     /// Fixed endpoint; workflow/model input cannot replace it.
@@ -425,6 +437,7 @@ pub struct PeerRelationshipConfig {
 impl PeerRelationshipConfig {
     pub(crate) fn execution_limits(&self) -> milkdrift_peer_protocol::ExecutionLimits {
         milkdrift_peer_protocol::ExecutionLimits {
+            nested_invocations: self.nested_invocations,
             artifact_bytes: self.maximum_artifact_bytes,
             duration_ms: self.maximum_duration_ms,
             cost_micros: self.maximum_cost_micros,

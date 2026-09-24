@@ -1,6 +1,6 @@
 # 0041 — Published methods bind a starting revision and recoverable service invocation
 
-- Status: accepted direction; implementation assigned to adaptive-hosts 04
+- Status: accepted; implemented by adaptive-hosts 04
 - Date: 2026-09-18
 - Extends: [0013](0013-immutable-proposal-revisions.md), [0022](0022-redb-owned-daemon-application-state.md), [0027](0027-controller-final-entry-reservations.md), [0038](0038-independent-host-execution.md), [0040](0040-protected-adaptive-methods.md)
 - Refines: [0019](0019-frozen-execution-authority.md) for explicit published service calls; ordinary child authority inheritance remains unchanged
@@ -45,6 +45,12 @@ Delegated credentials retain 0038's origin/account binding across direct and pee
 public operation name cannot reclassify a worker as independent. Check current revocation before
 future entry and disclosure while preserving accepted authority facts for replay.
 
+Internal final entry checks the enclosing public call before and after local adapter preparation,
+as well as the service grant. Runtime follows the bounded local association chain and checks current
+caller authority, cancellation and deadlines. At an incoming serving boundary, the existing serving
+owner checks its exact accepted record and current client/peer policy. Its weak host reference cannot
+keep a stopped owner alive or substitute a different caller's authority. A missing owner fails closed.
+
 ## Acceptance to internal run
 
 Use a **stable command association** because runtime already owns its transaction. Before any
@@ -55,10 +61,14 @@ for a direct or incoming peer caller it is part of the serving execution record.
 standalone execution journal for the local attempt. Planned child identity denotes real work to be
 created, not a fabricated workflow for ordinary direct process/model calls.
 
-Control submits those exact commands to runtime. Runtime atomically creates the run, inputs,
-agreement/authority/account bindings and creation receipt; starting it is a separately replayable
-command under its existing owner. The association is then advanced from planned to linked using
-the exact runtime receipt. A conflicting pre-existing run refuses; it is never adopted by name.
+Control submits those exact commands to runtime. The create transaction records the run, inputs
+and authorized creation receipt. The saved method already fixes its agreement and service basis.
+A second runtime transaction appends
+`PublishedRunBound` and establishes its account from the saved allowance. The canonical start command
+expects sequence 2 and establishes execution authority and agreement acceptance. Recovery repeats
+these three boundaries against the same child and receipts;
+the saved caller association is immutable and needs no second mutable linkage ledger. A conflicting
+pre-existing run refuses; it is never adopted by name.
 Acceptance acknowledges the durable planned association, not successful internal creation.
 
 Crash before creation replays the saved create command. Crash after creation or start but before
@@ -68,6 +78,11 @@ a new published version. If a now-revoked service cannot start, retain a refused
 as appropriate; do not invent a successful child. Linkage, pending cancellations, allowance transfers
 and resource use survive detail archival as long as their obligations do, and compact summaries
 retain permanent exact replay/conflict identity.
+If cancellation arrives after creation committed but before binding, recovery verifies the exact
+creation receipt and completes the saved association/account before cancelling. It does not start
+the child or manufacture execution authority or agreement acceptance for a never-started run.
+If an authorized editor already cancelled that never-started child, recovery may append the same
+missing association after its terminal event. The cancellation and all earlier history remain unchanged.
 
 ## Nonblocking continuation and resource handoff
 
@@ -79,15 +94,24 @@ public results. A waiting call does not count against the execution capacity its
 Outstanding invocations, nesting depth and retained observations still have independent bounds.
 Refuse recursive/circular publication chains by exact accepted ancestry and depth before child
 creation; no unbounded thread per call or second scheduler is permitted.
+Each ancestor carries its accepted depth ceiling through durable associations and peer delegation.
+Every descendant must satisfy all those ceilings; selecting a method with a larger limit cannot
+extend an ancestor's allowance.
 
 For a parent and child editing the same managed working area, worker release is only half the rule.
 Use [0039's explicit handoff](0039-managed-resource-ownership.md#lifetime-protection-versus-mutation):
 bind suspended parent, accepted child association, resource generation and inherited authority;
 prove the old writer quiescent; atomically transfer the editing claim; retain lifetime protection.
-The child enters only after linkage and handoff are durable. Parent writes remain refused until
+The publication wrapper never enters an external process, so its owning entry transaction records
+`NoExternalEntry` quiescence tied to the exact publication association. This cannot stand in for a
+physical stop of an ordinary adapter. A child claim compares that association, service grant and
+resource generation before transferring editing. The child enters only after linkage and handoff
+are durable. Parent writes remain refused until
 all child writers are proven stopped and a new parent claim is authorized. Exact child identity,
 claim generations and interruption evidence stay inspectable after restart. An active parent
 process with a writable mount cannot be made safe merely by releasing its Milkdrift worker slot.
+An authoritative terminal refusal before child entry intent also returns its reserved editing
+claim. This rule cannot release a child whose entry was committed but whose stop remains unknown.
 
 Cancellation records one exact public request and a stable linked runtime cancellation command.
 Acknowledgement reports acceptance of that request, not child termination. Parent timeout or
@@ -115,10 +139,13 @@ model calls remain unqualified unless actually mediated. A public result reports
 
 ## Compatibility, evidence and alternatives
 
-04 introduces versioned publication and link forms and reviews changed authority, runtime event,
-account, serving record, configuration and client/peer DTO families against 01–03's actual readers.
-Use the existing exact-current storage refusal/preservation policy; no migration or numeric future
-version is invented here. Accepted versions remain exact within supported generations. Old ordinary
+The implementation writes publication/association schema 1, run events 5, projection payload 6
+(envelope 2), serving hot records 5 and tombstones 3, managed requests/inventory 3, daemon config 13,
+control protocol 2.10 and peer protocol 1.5. Redb format 15/internal documents 20 refuse earlier store
+formats without rewriting them. Historical ordinary run-event readers 1–4 retain their original
+meaning; they cannot carry publication facts. The archive also retains up to 256 named outputs,
+allowing ordinary peer adapters to recover bytes and report them before an archived terminal.
+Current authorization still controls every disclosure. Accepted versions remain exact within supported generations. Old ordinary
 run history is never relabeled as a published invocation. Implement the new relationship across
 all readers, integrity scans, backup, conformance, clients and recovery before advertising it.
 

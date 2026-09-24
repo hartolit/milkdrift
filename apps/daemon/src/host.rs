@@ -209,6 +209,7 @@ struct Owner {
 struct WorkflowServices {
     runtime: Arc<RuntimeService>,
     control: Arc<ControlService>,
+    publications: Option<Arc<milkdrift_control::PublishedWorkflowService>>,
 }
 
 impl Owner {

@@ -28,7 +28,7 @@ Protocol 1.2 subsequently adds the exact queried request identity to every looku
 the consuming client reject a semantically swapped response from an authenticated but untrusted
 peer instead of trusting the HTTP path alone; earlier minor versions are now refused.
 
-Peer compaction deletes only peer-owned detail and observation-to-artifact mappings. It does not delete or rewrite core artifact bytes, metadata, ownership, retention class, or provenance. Compact tombstones have no automatic destructive expiry. Physical reclamation beyond them requires an operator-managed, fully retained store-generation rotation and a new client request-id epoch.
+As extended by [0041](0041-published-method-invocation.md), compaction retains a bounded manifest of at most 256 named output observations. Output append refuses overflow before changing history. This lets an origin recover the actual result after archival without rerunning a method. Peer compaction deletes intermediate progress and replaces hot observation-to-artifact mappings with those retained output facts. It does not delete or rewrite core artifact bytes, metadata, ownership, retention class, or provenance. Compact tombstones have no automatic destructive expiry. Physical reclamation beyond them requires an operator-managed, fully retained store-generation rotation and a new client request-id epoch.
 
 ## Consequences
 
