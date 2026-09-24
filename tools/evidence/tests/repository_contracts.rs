@@ -109,6 +109,14 @@ fn manifest_section<'a>(manifest: &'a str, heading: &str) -> &'a str {
 #[test]
 fn repository_evidence_tasks_have_one_cargo_owned_rust_path() -> TestResult {
     let repository = root()?;
+    let mut interpreter_sources = Vec::new();
+    collect_files(&repository, &mut interpreter_sources, &|path| {
+        path.extension().is_some_and(|extension| extension == "py")
+    })?;
+    assert!(
+        interpreter_sources.is_empty(),
+        "maintained tooling and fixtures must use Rust: {interpreter_sources:?}"
+    );
     let aliases = read(repository.join(".cargo/config.toml"))?;
     assert!(aliases.contains(
         "external-evidence = \"run --package milkdrift-evidence --bin milkdrift-external-evidence --\""

@@ -1173,6 +1173,7 @@ dependencies = [
  "milkdrift-runtime",
  "milkdrift-workspace",
  "proc-macro2",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
@@ -1400,6 +1401,17 @@ dependencies = [
  "toml",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "milkdrift-slotbook"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

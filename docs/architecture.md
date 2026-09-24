@@ -85,6 +85,7 @@ executable, which is `milkdrift`. Private children organize each owner's impleme
 | `apps/daemon` | Configuration compilation, authentication, single owner queue, command/read adaptation, HTTP/SSE, startup/maintenance/shutdown (`config`, `auth`, `host`, `http`). |
 | `apps/cli` | Arguments and presentation over the control client; bounded input/output/session/streaming owners and command-family routing. |
 | `tools/evidence` | Unpublished development leaf: actual-binary harness, mutation runner, benchmarks, operational and external evidence. |
+| `examples/adaptive-slotbook` | Independently deployed Rust application and explicit defective fixture. Product packages do not depend on this example. |
 
 Dependencies point toward stable semantics. Capability knows nothing about blueprint; blueprint
 uses pure requirements and schema identities. Persistence consumes immutable domain contracts and

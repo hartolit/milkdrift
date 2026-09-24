@@ -70,7 +70,7 @@ repository state and executing the declared checks. It publishes `VerifiedCheckp
 {
   "checkpoint":"sha256:exact-repository-snapshot",
   "checked_checkpoint":"sha256:exact-repository-snapshot",
-  "checks":{"python.unittest":true,"git.diff":true},
+  "checks":{"rust.tests":true,"git.diff":true},
   "coding":{"type":"no_change","justification":"Existing behavior passes the requested independent checks."}
 }
 ```

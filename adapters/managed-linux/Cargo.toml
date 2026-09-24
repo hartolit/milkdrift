@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "milkdrift-verifier-test-helper"
+path = "tests/fixtures/verifier_helper.rs"
+
 [dependencies]
 blake3.workspace = true
 milkdrift-authority.workspace = true

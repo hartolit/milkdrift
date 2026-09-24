@@ -24,6 +24,7 @@ members = [
     "apps/cli",
     "apps/daemon",
     "tools/evidence",
+    "examples/adaptive-slotbook",
 ]
 
 [workspace.package]

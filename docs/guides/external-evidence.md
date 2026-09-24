@@ -11,10 +11,11 @@ credential-free CI/self-test mode; it deliberately sets the report and both scen
 
 ## Prerequisites
 
-- Build prerequisites from the [development workflow](../development/workflow.md), Git, Python 3,
-  and a `b3sum` CLI for preparing exact executable facts. The harness resolves Git/Python from
-  `PATH`; on Windows put a real Python installation before the WindowsApps aliases. Python is
-  used by the separate verifier/reviewer/evidence helpers. The preparation commands below use
+- Build prerequisites from the [development workflow](../development/workflow.md), Git, the pinned
+  Rust toolchain and a `b3sum` CLI for preparing exact executable facts. The harness resolves Git
+  and the real toolchain compiler from `PATH`. Verifier/reviewer/evidence helpers are native roles
+  of the byte-pinned Rust harness. Generated Rust tests compile with that compiler and run through
+  bounded child processes. The preparation commands below use
   a Unix shell and GNU `stat`; use your host's file-length command on other platforms.
 - A clean Milkdrift checkout at the exact commit/tree being cited. Real mode refuses a dirty
   checkout because the recorded Git tree would not identify the tested source; fixture mode records
@@ -41,7 +42,7 @@ stat -c '%s' /absolute/path/to/agent
 /absolute/path/to/agent --version
 ```
 
-The generated grants include exact execute scopes for the coding agent and the Python interpreter
+The generated grants include exact execute scopes for the coding agent and the native harness
 used by the verifier, reviewer, and model-evidence producer. They need not be installed in the same
 directory; sharing a directory does not add duplicate authority or grant write access there.
 
@@ -238,7 +239,7 @@ evidence directory automatically.
 
 ## Hermetic self-test and optional peer evidence
 
-The local self-test performs both workflows against a byte-pinned Python fixture and a loopback
+The local self-test performs both workflows against a byte-pinned Rust fixture and a loopback
 mock endpoint, without external network or credentials:
 
 ```sh

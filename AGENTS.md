@@ -54,6 +54,8 @@ implementation evidence for current versions.
 
 ## Required development behavior
 
+- Implement repository-owned executables, examples, fixtures, and development tooling in Rust.
+  Do not add interpreter scripts or embed another language to bypass the maintained Rust owners.
 - Inspect current source, consumers, tests, manifests, and Git context before planning a change.
 - Complete an owned boundary end to end: implementation, refusal paths, tests, docs, and evidence.
 - Prefer deletion, private modules, and narrow visibility. Do not add generic `common`, framework,

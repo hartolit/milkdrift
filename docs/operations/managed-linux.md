@@ -331,12 +331,20 @@ other major versions require mechanism review. The executed host qualification i
 ## Protected application candidates
 
 Use a `protected_service` recipe when served application bytes must satisfy fixed checks before
-activation. This distinct schema-1 recipe pins an image/interpreter, kernel limits, application
-configuration, credential digest, trusted verifier source/native runtime and version-1 effect policy.
+activation. This distinct schema-2 recipe pins an image, kernel limits, application
+configuration, credential digest, native `verifier_executable` with its `verifier_digest`, and
+version-1 effect policy. The platform executes a verified private copy of that verifier and mounts
+the immutable candidate at `/candidate/app`, the service's direct executable entry point.
+Verifier files are capped at 64 MiB to bound the host's verified executable copies. Use a build
+without debug information for deployment; the candidate's separate byte ceiling belongs to its policy.
 The policy fixes the producer, check names, maximum candidate bytes and validity interval. It is
 committed by the blueprint agreement. Operator files stay outside the editable worker's mounts.
 The [adaptive Slotbook example](../../examples/adaptive-slotbook/README.md) generates complete input
 files and runs the supported authoring, failure, repair, verification, publication and reopen path.
+
+Schema 1 and `linux-protected-service-v1` are unsupported: the native mechanism cannot reinterpret
+an earlier interpreter-based approval. Preserve old stores and evidence with their matching binary.
+Use a distinct installation and new native candidate verification when adopting schema 2.
 
 Initial `resource apply` creates an empty protected target without starting application code.
 `resource evaluate` reads an exact authorized artifact and records incomplete evidence before
@@ -373,6 +381,6 @@ identity; verification and service observation compare the actual container agai
 
 Managed worker schema 2 supports `stdout_artifact: true` in `command`. On successful execution it
 publishes raw bounded stdout separately from `worker_result`. The raw artifact is suitable for an
-immutable source candidate; it is not trusted verification evidence. Mechanism `linux-quadlet-v4`
+immutable executable candidate; it is not trusted verification evidence. Mechanism `linux-quadlet-v4`
 binds this contract, and older worker mechanisms require a new installation rather than silent reuse.
 The worker's normal output cap applies to both capture and admission accounting.

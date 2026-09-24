@@ -151,8 +151,12 @@ The Linux protected-service mechanism owns data and a fixed user-systemd service
 image, read-only candidate/configuration, and declared kernel limits. It exposes no raw worker for
 the served target. The separate managed worker has no engine socket, production credential or served
 content mount. Operator recipe removal/change and verifier/credential changes revoke new entry.
-The verifier is pinned by its source and native Python executable digest; the OS and Python standard
-library remain trusted host prerequisites, not a claim of a hermetic verifier runtime. Successful
+Protected recipe schema 2 and `linux-protected-service-v2` pin the native verifier executable digest;
+the platform runs a verified private executable copy. Candidate bytes execute directly, with no
+interpreter selection or compilation after approval. The OS and any dynamically linked libraries
+remain trusted prerequisites; the maintained Slotbook candidate is statically linked. Earlier
+schema-1 interpreter recipes refuse instead of acquiring new meaning. Preserve their stores with
+the matching binary; a new native installation requires new verification. Successful
 service restart preserves the previously accepted generation; policy expiry limits new controlled
 entry, not retrospective deletion of an already running service.
 

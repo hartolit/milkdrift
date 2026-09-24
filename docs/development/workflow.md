@@ -140,15 +140,15 @@ application evidence tests and the shared process fixture before isolated daemon
 
 ```sh
 cargo build -p milkdrift-daemon --bin milkdrift-daemon \
+  -p milkdrift-cli --bin milkdrift \
   -p milkdrift-local-process --bin milkdrift-process-test-helper
 ```
 
-The workspace gate also builds these targets. Hermetic external-evidence tests require Python 3
-and Git on the harness's `PATH`; generated verifiers use the resolved absolute Git executable
-because process adapters deliberately clear the child environment.
-On Windows, put a real Python installation before the `WindowsApps` execution aliases on `PATH`.
-The fixture resolves and hashes the interpreter file; an alias can fail executable resolution
-before a scenario starts. Adjust the test shell's `PATH`, not the fixture's identity checks.
+The workspace gate also builds these targets. External-evidence self-tests require Git and the
+pinned Rust toolchain on the harness's `PATH`. Helpers are roles of the same byte-pinned Rust
+evidence executable. The verifier resolves the real toolchain compiler and Git executable, compiles
+the generated Rust tests and executes them. Its profile explicitly passes the non-secret `PATH`
+and platform linker environment because process adapters otherwise clear the child environment.
 
 Build the product daemon before the structured-runtime retained-context suite as well: its offline
 storage scenarios use the shared legacy fixture to exercise the actual daemon binary. They prove

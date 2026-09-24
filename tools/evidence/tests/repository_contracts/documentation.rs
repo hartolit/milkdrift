@@ -533,19 +533,18 @@ fn every_maintained_example_has_a_production_reader() -> TestResult {
             "managed-linux/slotbook.json" => {
                 milkdrift_managed_linux::LinuxRecipe::from_json(&bytes)?;
             }
-            "managed-linux/Containerfile" | "managed-linux/Containerfile.containerignore" => {
+            "managed-linux/Containerfile"
+            | "managed-linux/Containerfile.containerignore"
+            | "adaptive-slotbook/Containerfile" => {
                 // Podman owns these formats. The documented real image build reads both together;
                 // a local string assertion cannot qualify its build or ignore-file semantics.
                 std::str::from_utf8(&bytes)?;
             }
-            "adaptive-slotbook/prepare.py"
-            | "adaptive-slotbook/qualify.py"
-            | "adaptive-slotbook/publication.py"
-            | "adaptive-slotbook/verifier.py"
-            | "adaptive-slotbook/seeded.py"
-            | "adaptive-slotbook/repaired.py" => {
-                // Python owns executable input; CLI authoring tests run the factory through the
-                // production readers, and the separately gated qualification runs the HTTP harness.
+            "adaptive-slotbook/Cargo.toml" => {
+                toml::from_str::<toml::Value>(std::str::from_utf8(&bytes)?)?;
+            }
+            path if path.starts_with("adaptive-slotbook/src/") && path.ends_with(".rs") => {
+                // The workspace compiler, tests and lint gate own the application source.
                 std::str::from_utf8(&bytes)?;
             }
             "adaptive-slotbook/README.md"

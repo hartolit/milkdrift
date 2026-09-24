@@ -125,7 +125,7 @@ pub(super) async fn run_process_scenario(
             stage_id: "repair".to_owned(),
             generation: 1,
             prompt: PromptSource::InlineMarkdown {
-                content: "In a fresh process, inspect the current accepted repository state, make only any remaining bounded repair needed for the unittest, run it, and do not commit.\n"
+                content: "In a fresh process, inspect the current accepted repository state, make only any remaining bounded repair needed for the Rust test, run it, and do not commit.\n"
                     .to_owned(),
             },
             verification_override: Some(good_verification),

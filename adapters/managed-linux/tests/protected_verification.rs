@@ -22,18 +22,6 @@ use std::{
 };
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-const HARNESS: &str = r#"import json, subprocess, sys, time
-from pathlib import Path
-s=json.loads(Path(sys.argv[1]).read_bytes())
-p=subprocess.run(['/usr/bin/podman','run','--detach','--pull=never','--network=none',
-    '--name='+s['container'],'--label=org.milkdrift.platform='+s['platform_owner'],
-    '--label=org.milkdrift.verification='+s['evaluation'],'--entrypoint=/bin/sleep',s['image'],'120'],
-    check=True,capture_output=True)
-Path(s['directory'],'launched').write_bytes(p.stdout)
-if s['application']['timeout']: time.sleep(60)
-print(json.dumps([{'name': 'lifecycle', 'passed': True, 'diagnostic': 'test container launched'}]))
-"#;
-
 fn digest(bytes: impl AsRef<[u8]>) -> String {
     format!("b3_{}", blake3::hash(bytes.as_ref()))
 }
@@ -61,7 +49,7 @@ fn private(path: &Path) -> Result {
 }
 
 #[test]
-#[ignore = "requires MILKDRIFT_PROTECTED_TEST_IMAGE with a preloaded Python image and real rootless Podman"]
+#[ignore = "requires MILKDRIFT_PROTECTED_TEST_IMAGE with a preloaded sleep-capable image and real rootless Podman"]
 fn verifier_renewal_timeout_recovery_and_preentry_integrity() -> Result {
     let image = std::env::var("MILKDRIFT_PROTECTED_TEST_IMAGE")?;
     let parent = std::env::var_os("MILKDRIFT_LINUX_EVIDENCE_PARENT")
@@ -75,27 +63,27 @@ fn verifier_renewal_timeout_recovery_and_preentry_integrity() -> Result {
     for name in ["state", "quadlet", "systemd"] {
         private(&root.join(name))?;
     }
-    fs::write(root.join("verifier.py"), HARNESS)?;
+    let verifier = root.join("verifier");
+    fs::copy(
+        env!("CARGO_BIN_EXE_milkdrift-verifier-test-helper"),
+        &verifier,
+    )?;
     fs::write(root.join("token"), "synthetic-test-token")?;
     fs::write(root.join("clock"), "2027-04-10T09:00:00Z")?;
-    let source_digest = digest(HARNESS);
-    let runtime_digest = digest(fs::read("/usr/bin/python3")?);
+    let verifier_digest = digest(fs::read(&verifier)?);
     let policy = ProtectedEffectPolicy {
         schema_version: 1,
         required_checks: vec!["lifecycle".to_owned()],
-        verifier: digest(serde_json::to_vec(
-            &serde_json::json!({"source":source_digest,"runtime":runtime_digest}),
-        )?),
+        verifier: verifier_digest.clone(),
         producer: CausalId::new("trusted:physical-verifier")?,
         maximum_candidate_bytes: 1024,
         validity_ms: 60_000,
     };
     let mut recipe = ProtectedServiceRecipe {
-        schema_version: 1,
+        schema_version: 2,
         kind: "protected_service".to_owned(),
         name: ManagedName::new("verifier-test")?,
         image,
-        executable: "/usr/local/bin/python3".to_owned(),
         limits: ContainerLimits {
             memory_bytes: 536_870_912,
             cpu_percent: 100,
@@ -111,9 +99,8 @@ fn verifier_renewal_timeout_recovery_and_preentry_integrity() -> Result {
         clock_file: root.join("clock"),
         agreement: digest("agreement"),
         policy,
-        verifier_file: root.join("verifier.py"),
-        verifier_source_digest: source_digest,
-        verifier_runtime_digest: runtime_digest,
+        verifier_executable: verifier,
+        verifier_digest,
         verification_timeout_ms: 5000,
         data_disposition: DataDisposition::Preserve,
     };
@@ -127,7 +114,7 @@ fn verifier_renewal_timeout_recovery_and_preentry_integrity() -> Result {
     };
     let platform = LinuxManagedPlatform::new(config.clone())?;
     let setup = platform.plan(&recipe.name, &recipe.reference()?, &digest("ownership"), 1)?;
-    let bytes = b"print('immutable candidate')";
+    let bytes = b"immutable candidate fixture: not executed by this lifecycle verifier";
     let mut evaluation = CandidateEvaluation {
         schema_version: 1,
         identity: digest("first-evaluation"),

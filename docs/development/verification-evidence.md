@@ -52,7 +52,7 @@ the guard. The targeted commands and failure assertions are retained under
 Run the [maintained CLI qualification](../../examples/adaptive-slotbook/README.md) on a provisioned
 rootless Linux host. It freezes the HTTP/API representation, uses explicitly seeded fixture failures,
 submits a structured prospective repair, and obtains fresh trusted observations before deploying
-immutable source. Its files preserve the original failure, proposal identity, accepted agreement,
+immutable executable bytes. Its files preserve the original failure, proposal identity, accepted agreement,
 new candidate and target generation. A fresh direct evaluation/publication and request replay after
 reopen separately exercise the managed owner outside a workflow. Container identity/start time and
 mounted bytes support the replay and exact-candidate observations. This does not qualify arbitrary
@@ -68,7 +68,7 @@ wrong generation, exact bytes, lost effect responses and before/after evaluation
 Those deterministic tests establish owner behavior without making an OS-isolation claim.
 
 The opt-in `protected_verification` target exercises actual detached test containers and filesystem
-state. Set `MILKDRIFT_PROTECTED_TEST_IMAGE` to an approved preloaded Python image identity, and
+state. Set `MILKDRIFT_PROTECTED_TEST_IMAGE` to an approved preloaded image providing `/bin/sleep`, and
 optionally `MILKDRIFT_LINUX_EVIDENCE_PARENT` to the directory for retained evidence, then run:
 
 ```sh
@@ -763,20 +763,21 @@ For actual binaries, follow the [Slotbook setup](../../examples/adaptive-slotboo
 run the following against a separate fresh prepared directory for each mode:
 
 ```sh
-python3 examples/adaptive-slotbook/qualify.py --root /absolute/private/published-direct --published --invocation-mode direct
-python3 examples/adaptive-slotbook/qualify.py --root /absolute/private/published-workflow --published --invocation-mode workflow
-python3 examples/adaptive-slotbook/qualify.py --root /absolute/private/published-peer --published --invocation-mode peer
+target/debug/slotbook-evidence qualify --root /absolute/private/published-direct --candidate /absolute/path/to/slotbook --published --invocation-mode direct
+target/debug/slotbook-evidence qualify --root /absolute/private/published-workflow --candidate /absolute/path/to/slotbook --published --invocation-mode workflow
+target/debug/slotbook-evidence qualify --root /absolute/private/published-peer --candidate /absolute/path/to/slotbook --published --invocation-mode peer
 ```
 
 This lane uses one execution worker on the provider, its actual managed workspace, and the same
 protected deployment method. It observes real parent/child editing claims and busy maintenance
 refusal, exercises invoke-only disclosure and prospective repair, verifies immutable deployed bytes,
 replays acceptance after restart, and removes its installations with data preserved. Peer mode uses
-two daemons on one desktop. Seeded and repaired sources are explicit fixtures; this lane makes no
+two daemons on one desktop. Seeded and corrected executables are explicit Rust fixtures; this lane makes no
 live-model, second-machine, reboot or general security claim. Fault-injected loss and stop-proof
 refusal remain distinct deterministic evidence, not physical interruption qualification.
 
 The [04 handoff](virtual-office/adaptive-hosts/handoffs/04.md) identifies exact versions, transaction
-ownership, review corrections and local evidence under `target/adaptive-hosts/04-review/`. Current
+ownership, review corrections and original evidence under `target/adaptive-hosts/04-review/`.
+Its Rust follow-up records native executable qualification under `target/rust-coherence/`. Current
 configuration, caller permissions and operating limits belong to the
 [published-method guide](../guides/published-methods.md).

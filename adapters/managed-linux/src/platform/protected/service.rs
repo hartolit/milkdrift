@@ -25,7 +25,7 @@ fn unit_text(setup: &ApprovedSetup, d: &Deployment) -> Result<String, ManagedErr
     }
     let cid = format!("{runtime}/milkdrift-{}/container.cid", d.unit);
     Ok(format!(
-        "# Milkdrift owner={} recipe={}\n[Unit]\nDescription=Milkdrift protected application\n[Service]\nType=notify\nNotifyAccess=all\nDelegate=yes\nKillMode=mixed\nStandardOutput=null\nStandardError=null\nRuntimeDirectory=milkdrift-{}\nRuntimeDirectoryMode=0700\nExecStart=/usr/bin/podman run --sdnotify=conmon --cgroups=split --pull=never --replace=false --name={} --cidfile={} --label=org.milkdrift.owner={} --label=org.milkdrift.platform={} --label=org.milkdrift.recipe={} --log-driver=none --read-only --read-only-tmpfs=false --tmpfs={} --cap-drop=all --security-opt=no-new-privileges --userns=auto:size=65536 --network=pasta:--no-map-gw --publish=127.0.0.1:{}:8080 --memory={} --memory-swap={} --cpus={} --pids-limit={} --volume={}:/candidate/app.py:ro --volume={}:/config/application.json:ro --volume={}:/config/token:ro --volume={}:/config/clock:ro --volume={}:/data:U --entrypoint={} {} -I /candidate/app.py\nExecStop=/usr/bin/podman stop --ignore --time={} --cidfile={}\nExecStopPost=/usr/bin/podman rm --force --ignore --cidfile={}\nRestart=on-failure\nTimeoutStartSec={}ms\nTimeoutStopSec={}s\n[Install]\nWantedBy=default.target\n",
+        "# Milkdrift owner={} recipe={}\n[Unit]\nDescription=Milkdrift protected application\n[Service]\nType=notify\nNotifyAccess=all\nDelegate=yes\nKillMode=mixed\nStandardOutput=null\nStandardError=null\nRuntimeDirectory=milkdrift-{}\nRuntimeDirectoryMode=0700\nExecStart=/usr/bin/podman run --sdnotify=conmon --cgroups=split --pull=never --replace=false --name={} --cidfile={} --label=org.milkdrift.owner={} --label=org.milkdrift.platform={} --label=org.milkdrift.recipe={} --log-driver=none --read-only --read-only-tmpfs=false --tmpfs={} --cap-drop=all --security-opt=no-new-privileges --userns=auto:size=65536 --network=pasta:--no-map-gw --publish=127.0.0.1:{}:8080 --memory={} --memory-swap={} --cpus={} --pids-limit={} --volume={}:/candidate/app:ro --volume={}:/config/application.json:ro --volume={}:/config/token:ro --volume={}:/config/clock:ro --volume={}:/data:U --entrypoint=/candidate/app {}\nExecStop=/usr/bin/podman stop --ignore --time={} --cidfile={}\nExecStopPost=/usr/bin/podman rm --force --ignore --cidfile={}\nRestart=on-failure\nTimeoutStartSec={}ms\nTimeoutStopSec={}s\n[Install]\nWantedBy=default.target\n",
         setup.ownership,
         setup.recipe.digest,
         d.unit,
@@ -45,7 +45,6 @@ fn unit_text(setup: &ApprovedSetup, d: &Deployment) -> Result<String, ManagedErr
         d.root.join("token").display(),
         r.clock_file.display(),
         d.data_volume,
-        r.executable,
         r.image,
         r.shutdown_ms.div_ceil(1000),
         cid,
@@ -157,7 +156,7 @@ pub(super) fn observe(
                         let destination =
                             m.get("Destination").and_then(|v| v.as_str()).unwrap_or("");
                         ![
-                            "/candidate/app.py",
+                            "/candidate/app",
                             "/config/application.json",
                             "/config/token",
                             "/config/clock",
@@ -190,8 +189,7 @@ pub(super) fn observe(
                     .and_then(|v| v.as_array())
                     .is_some_and(|mounts| {
                         mounts.iter().any(|m| {
-                            m.get("Destination").and_then(|v| v.as_str())
-                                == Some("/candidate/app.py")
+                            m.get("Destination").and_then(|v| v.as_str()) == Some("/candidate/app")
                                 && m.get("Source").and_then(|v| v.as_str()) == path.to_str()
                                 && m.get("RW").and_then(|v| v.as_bool()) == Some(false)
                         })

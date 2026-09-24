@@ -1,8 +1,10 @@
-use super::{LinuxManagedPlatform, ManagedError, decode, digest, immutable, rejected};
+use super::{
+    LinuxManagedPlatform, ManagedError, decode, digest, immutable, immutable_executable, rejected,
+};
 use crate::command;
 use milkdrift_persistence::managed::ApprovedSetup;
 use milkdrift_workspace::{CandidateCheck, CandidateEvaluation};
-use std::{fs, path::Path, time::Duration};
+use std::{fs, time::Duration};
 
 pub(super) fn evaluate(
     platform: &LinuxManagedPlatform,
@@ -33,14 +35,14 @@ pub(super) fn evaluate(
     builder.create(&directory).map_err(|_| {
         rejected("verification scratch already exists; prior observation requires inspection")
     })?;
-    immutable(&directory.as_path().join("candidate.py"), bytes)?;
-    let harness = fs::read(&d.recipe.verifier_file).map_err(rejected)?;
-    if digest(&harness) != d.recipe.verifier_source_digest {
+    immutable_executable(&directory.as_path().join("candidate"), bytes)?;
+    let harness = fs::read(&d.recipe.verifier_executable).map_err(rejected)?;
+    if digest(&harness) != d.recipe.verifier_digest {
         return Err(rejected("verifier generation changed during preparation"));
     }
-    immutable(&directory.as_path().join("verifier.py"), &harness)?;
-    let input = serde_json::json!({"schema_version":1, "image":d.recipe.image, "executable":d.recipe.executable,
-        "candidate":directory.as_path().join("candidate.py"), "token_file":d.recipe.token_file, "directory":directory.as_path(), "application": d.recipe.application,
+    immutable_executable(&directory.as_path().join("verifier"), &harness)?;
+    let input = serde_json::json!({"schema_version":2, "image":d.recipe.image,
+        "candidate":directory.as_path().join("candidate"), "token_file":d.recipe.token_file, "directory":directory.as_path(), "application": d.recipe.application,
         "image_identity":LinuxManagedPlatform::image_identity(&d.recipe.image)?,
         "limits":d.recipe.limits, "subject":subject, "required_checks": d.recipe.policy.required_checks,
         "container":container, "platform_owner":platform.owner, "evaluation":evaluation.identity});
@@ -49,16 +51,8 @@ pub(super) fn evaluate(
         &serde_json::to_vec(&input).map_err(rejected)?,
     )?;
     let output = command::run(
-        Path::new("/usr/bin/python3"),
-        &[
-            "-I".to_owned(),
-            directory
-                .as_path()
-                .join("verifier.py")
-                .display()
-                .to_string(),
-            directory.as_path().join("input.json").display().to_string(),
-        ],
+        &directory.as_path().join("verifier"),
+        &[directory.as_path().join("input.json").display().to_string()],
         &[],
         Duration::from_millis(d.recipe.verification_timeout_ms),
         32_768,

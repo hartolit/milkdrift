@@ -25,6 +25,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+// Bound each in-memory copy of the trusted native executable independently of candidate policy.
+// Deployments use binaries without debug information; this ceiling is not an application budget.
+const MAX_VERIFIER_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Operator-approved target and separate verifier. Candidate bytes are supplied through artifact
 /// authority at evaluation, never through an agent-writable served path or an unbound rebuild.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -36,10 +40,8 @@ pub struct ProtectedServiceRecipe {
     pub kind: String,
     /// Operator recipe identity.
     pub name: ManagedName,
-    /// Exact preloaded runtime image, including the interpreter and libraries.
+    /// Exact preloaded image providing the candidate executable's operating environment.
     pub image: String,
-    /// Container-internal interpreter executable; the candidate is its sole source argument.
-    pub executable: String,
     /// Explicit independent service limits.
     pub limits: ContainerLimits,
     /// Bounded lifecycle timeouts.
@@ -60,12 +62,10 @@ pub struct ProtectedServiceRecipe {
     pub agreement: String,
     /// Fixed check set, trusted verifier generation and evidence lifetime.
     pub policy: ProtectedEffectPolicy,
-    /// Operator-owned Python verifier source, executed outside the candidate's container.
-    pub verifier_file: PathBuf,
-    /// Exact operator-owned verifier source bytes.
-    pub verifier_source_digest: String,
-    /// Exact native isolated-mode Python executable used by the trusted host.
-    pub verifier_runtime_digest: String,
+    /// Operator-owned native verifier, executed outside the candidate's container.
+    pub verifier_executable: PathBuf,
+    /// Exact verifier executable bytes; also the policy's verifier generation.
+    pub verifier_digest: String,
     /// Maximum verifier process duration, including its isolated service stop/start checks.
     /// Platform fencing after exit or timeout uses the bounded administrative helper deadline.
     pub verification_timeout_ms: u64,
@@ -88,16 +88,14 @@ impl ProtectedServiceRecipe {
         self.limits.validate("protected service limits")?;
         crate::recipe::validate_timeout(self.startup_ms, "protected startup_ms")?;
         crate::recipe::validate_timeout(self.shutdown_ms, "protected shutdown_ms")?;
-        if self.schema_version != 1
+        if self.schema_version != 2
             || self.kind != "protected_service"
             || !recipe::exact_image(&self.image)
-            || !recipe::safe_absolute(Path::new(&self.executable))
             || !recipe::safe_absolute(&self.token_file)
             || !milkdrift_contracts::is_canonical_blake3_digest(&self.token_digest)
             || !recipe::safe_absolute(&self.clock_file)
-            || !recipe::safe_absolute(&self.verifier_file)
-            || !milkdrift_contracts::is_canonical_blake3_digest(&self.verifier_source_digest)
-            || !milkdrift_contracts::is_canonical_blake3_digest(&self.verifier_runtime_digest)
+            || !recipe::safe_absolute(&self.verifier_executable)
+            || !milkdrift_contracts::is_canonical_blake3_digest(&self.verifier_digest)
             || !milkdrift_contracts::is_canonical_blake3_digest(&self.agreement)
             || self.port < 1024
             || self.verification_timeout_ms == 0
@@ -105,15 +103,14 @@ impl ProtectedServiceRecipe {
         {
             return Err(rejected("invalid protected service recipe"));
         }
-        let identity = serde_json::json!({"source":self.verifier_source_digest,"runtime":self.verifier_runtime_digest});
-        if self.policy.verifier != digest(serde_json::to_vec(&identity).map_err(rejected)?) {
+        if self.policy.verifier != self.verifier_digest {
             return Err(rejected(
-                "verifier generation differs from pinned source/runtime",
+                "verifier generation differs from pinned executable",
             ));
         }
         Ok(())
     }
-    /// Exact approved reference. The verifier source hash is separately checked at every entry.
+    /// Exact approved reference. The verifier executable is separately checked at every entry.
     pub fn reference(&self) -> Result<RecipeReference, ManagedError> {
         self.validate()?;
         let bytes = milkdrift_contracts::canonical_json_bytes(
@@ -151,7 +148,7 @@ fn decode(
     let d: Deployment =
         serde_json::from_value(setup.configuration.value().clone()).map_err(rejected)?;
     let prefix = crate::units::volume_prefix(&platform.owner, &setup.ownership);
-    if setup.mechanism != "linux-protected-service-v1"
+    if setup.mechanism != "linux-protected-service-v2"
         || setup.platform_owner != platform.owner
         || d.root != platform.config.state_root.join(&prefix)
         || d.systemd_directory != platform.config.systemd_directory
@@ -180,7 +177,7 @@ fn decode(
         ));
     }
     if let Some(e) = setup.protection.as_ref().and_then(|p| p.evidence.as_ref()) {
-        let expected = d.root.join(format!("{}.py", e.subject.artifact.digest()));
+        let expected = d.root.join(e.subject.artifact.digest().to_string());
         if d.candidate.as_ref() != Some(&expected) {
             return Err(rejected(
                 "protected candidate path differs from immutable evidence",
@@ -235,7 +232,7 @@ pub(super) fn plan(
             evidence: None,
         }),
         recipe: recipe.reference()?,
-        mechanism: "linux-protected-service-v1".to_owned(),
+        mechanism: "linux-protected-service-v2".to_owned(),
         configuration: BoundedJson::new(serde_json::to_value(&d).map_err(rejected)?)
             .map_err(rejected)?,
         platform_owner: platform.owner.clone(),
@@ -286,18 +283,10 @@ pub(super) fn active_policy(
     if !approved {
         return Err(rejected("protected target approval changed or was revoked"));
     }
-    regular_file(&d.recipe.verifier_file, 1_048_576)?;
-    let bytes = fs::read(&d.recipe.verifier_file).map_err(rejected)?;
-    if digest(&bytes) != d.recipe.verifier_source_digest {
+    regular_file(&d.recipe.verifier_executable, MAX_VERIFIER_BYTES)?;
+    let bytes = fs::read(&d.recipe.verifier_executable).map_err(rejected)?;
+    if digest(&bytes) != d.recipe.verifier_digest {
         return Err(rejected("trusted verifier generation changed"));
-    }
-    let runtime = Path::new("/usr/bin/python3");
-    let metadata = fs::metadata(runtime).map_err(rejected)?;
-    if !metadata.is_file()
-        || metadata.len() > 16_777_216
-        || digest(fs::read(runtime).map_err(rejected)?) != d.recipe.verifier_runtime_digest
-    {
-        return Err(rejected("trusted verifier runtime generation changed"));
     }
     regular_file(&d.recipe.token_file, 1024)?;
     if digest(fs::read(&d.recipe.token_file).map_err(rejected)?) != d.recipe.token_digest {
@@ -307,6 +296,12 @@ pub(super) fn active_policy(
     Ok(())
 }
 fn immutable(path: &Path, bytes: &[u8]) -> Result<(), ManagedError> {
+    immutable_file(path, bytes, false)
+}
+fn immutable_executable(path: &Path, bytes: &[u8]) -> Result<(), ManagedError> {
+    immutable_file(path, bytes, true)
+}
+fn immutable_file(path: &Path, bytes: &[u8], executable: bool) -> Result<(), ManagedError> {
     if path.exists() {
         regular_file(path, bytes.len() as u64)?;
         if fs::read(path).map_err(rejected)? != bytes {
@@ -323,7 +318,11 @@ fn immutable(path: &Path, bytes: &[u8]) -> Result<(), ManagedError> {
     {
         use std::os::unix::fs::PermissionsExt;
         file.as_file()
-            .set_permissions(fs::Permissions::from_mode(0o444))
+            .set_permissions(fs::Permissions::from_mode(if executable {
+                0o555
+            } else {
+                0o444
+            }))
             .map_err(rejected)?;
     }
     file.as_file().sync_all().map_err(rejected)?;
@@ -366,10 +365,8 @@ pub(super) fn prepare(
     )?;
     let mut d = decode(platform, &candidate)?;
     ensure_root(&d)?;
-    let path = d
-        .root
-        .join(format!("{}.py", evidence.subject.artifact.digest()));
-    immutable(&path, bytes)?;
+    let path = d.root.join(evidence.subject.artifact.digest().to_string());
+    immutable_executable(&path, bytes)?;
     d.candidate = Some(path);
     candidate.configuration =
         BoundedJson::new(serde_json::to_value(d).map_err(rejected)?).map_err(rejected)?;

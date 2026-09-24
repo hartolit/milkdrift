@@ -15,7 +15,8 @@ Slotbook is a small headless HTTP service for reserving limited places or equipm
 intervals. It exposes availability and accepts/cancels reservations; no GUI, payments, email,
 external identity provider or real customer data is needed. Ordinary source files, build outputs
 and documentation live in a managed working area. A private persistent data volume belongs to
-the deployed service. Implementation language is a method choice within the approved tool recipe.
+the deployed service. The maintained application, verifier and development tooling use Rust;
+ordinary approved external capabilities remain outside this repository's implementation boundary.
 
 The source input, identified as `slotbook-source-workshop`, is:
 

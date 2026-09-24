@@ -46,14 +46,15 @@ pub struct ModelProfileFacts {
 
 pub fn initialize_repository(repository: &Path) -> Result<(String, String), String> {
     fs::create_dir_all(repository).map_err(|error| error.to_string())?;
+    fs::write(repository.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
     fs::write(
-        repository.join("calculator.py"),
-        "def add(a, b):\n    return a - b\n",
+        repository.join("calculator.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a - b }\n",
     )
     .map_err(|error| error.to_string())?;
     fs::write(
-        repository.join("test_calculator.py"),
-        "import unittest\nfrom calculator import add\n\nclass CalculatorTest(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n\nif __name__ == '__main__':\n    unittest.main()\n",
+        repository.join("test_calculator.rs"),
+        "mod calculator;\n#[test]\nfn addition() { assert_eq!(calculator::add(2, 3), 5); }\n",
     )
     .map_err(|error| error.to_string())?;
     git(repository, &["init", "-q"])?;
@@ -62,7 +63,10 @@ pub fn initialize_repository(repository: &Path) -> Result<(String, String), Stri
         repository,
         &["config", "user.email", "evidence@milkdrift.invalid"],
     )?;
-    git(repository, &["add", "calculator.py", "test_calculator.py"])?;
+    git(
+        repository,
+        &["add", ".gitignore", "calculator.rs", "test_calculator.rs"],
+    )?;
     git(
         repository,
         &["commit", "-q", "-m", "initial disposable fixture"],
@@ -109,7 +113,7 @@ pub fn process_sequence(
                 "id":"repository:external-evidence",
                 "root_ref":"workspace:disposable-external-evidence",
                 "starting_revision":"harness-recorded-initial-commit",
-                "allowed_paths":["calculator.py","test_calculator.py"],
+                "allowed_paths":["calculator.rs","test_calculator.rs"],
                 "allowed_operations":["read","write","execute","version_control"],
                 "dirty_tree":"allow_recorded",
                 "isolation":"shared_sequential",
@@ -120,12 +124,12 @@ pub fn process_sequence(
             "stages":[{
                 "id":"repair",
                 "title":"Repair the disposable calculator",
-                "prompt":{"type":"inline_markdown","content":"Inspect this disposable Python repository. Fix calculator.add so the existing unittest passes. Keep the change bounded, run the test, do not commit, and report the result.\n"},
+                "prompt":{"type":"inline_markdown","content":"Inspect this disposable Rust repository. Fix calculator::add so the existing Rust test passes. Create the ignored target/ directory, compile test_calculator.rs with rustc --test and direct its -o output into target/, then run that test executable. Keep source changes bounded, do not commit, and report the result.\n"},
                 "session":"fresh",
                 "coding":{"capability":agent_capability,"operation":"process.execute","provider_profile":null,"execution_trust":"trusted_host_process","maximum_side_effect":"unknown"},
                 "verification":{
                     "profile":{"capability":"evidence-verifier-weak","operation":"process.execute","provider_profile":null,"execution_trust":"trusted_host_process","maximum_side_effect":"read_only"},
-                    "checks":["python.unittest","git.diff"],
+                    "checks":["rust.tests","git.diff"],
                     "result_artifact":"verification_result",
                     "log_artifact":"verification_logs"
                 },
@@ -222,7 +226,7 @@ pub fn model_revision(
         Mutation::AddNode {
             node: evidence_node(
                 "evidence-b",
-                "verification evidence: unittest expects add(2,3)=5",
+                "verification evidence: Rust test expects add(2,3)=5",
             )?
             .with_control_input(port("in")?)
             .map_err(|e| e.to_string())?,

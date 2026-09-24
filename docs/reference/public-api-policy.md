@@ -43,6 +43,11 @@ including unjournaled `SystemPeerClock` and `execute_exact` fixture entry, requi
 require `test-admin`; the provider parser measurement driver requires `operational-evidence`.
 Review these separately from default product surfaces.
 The evidence package is unpublished and must remain a development leaf. The CLI has no library API.
+The unpublished Slotbook example's `Candidate` and `serve` exports are application entry points
+shared by its corrected and explicitly defective fixture binaries. No product package consumes
+them. Its booking state and HTTP implementation remain private. Protected recipe schema 2's
+verifier executable/digest fields are durable adapter inputs consumed by managed-linux and daemon;
+the earlier interpreter/source fields have been removed, with unsupported versions refused.
 
 ## Review method
 

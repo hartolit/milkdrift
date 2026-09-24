@@ -25,11 +25,9 @@ The build context includes only the Containerfile and application brief, as sele
 `podman image inspect --format '{{.Id}}' IMAGE` value in the recipe. Applying a recipe never pulls
 or resolves a tag. The accepted generation records actual image bytes, not a maintained alias.
 
-A small Python edit can generate the approved recipe from the maintained defaults:
-
-```sh
-python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); p["worker_image"]=sys.argv[2]; print(json.dumps(p,indent=2))' examples/managed-linux/slotbook.json sha256:YOUR_EXACT_IMAGE_ID > /private/path/slotbook.json
-```
+Copy `examples/managed-linux/slotbook.json` into private operator storage and set its `worker_image`
+to that exact image ID. Validate the edited recipe with `milkdrift-daemon managed-bootstrap --preview`
+before using the generated configuration.
 
 For an attachment, select the exact endpoint and its accounting contracts. For example, Drifty's
 operator-supplied API base is `http://drifty.hartolit.internal:8080/v1` and model alias is `ornith`;

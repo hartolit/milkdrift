@@ -5,6 +5,7 @@
 //! exact source/scenario evidence and redaction. Fixture mode tests this harness and always
 //! remains non-qualifying, even when every scenario assertion succeeds.
 
+mod fixture;
 mod profiles;
 mod report;
 mod workflows;
@@ -68,6 +69,7 @@ fn client_error(error: ClientError) -> String {
 #[derive(Parser, Debug)]
 #[command(
     name = "milkdrift-external-evidence",
+    version,
     about = "Operator-driven, redacted real process/model interoperability evidence"
 )]
 struct Arguments {
@@ -135,6 +137,15 @@ impl Drop for MockEndpoint {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    if std::env::args().nth(1).as_deref() == Some("--fixture-helper") {
+        return match fixture::run(std::env::args().skip(2).collect()) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("evidence fixture: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let arguments = Arguments::parse();
     match execute(arguments).await {
         Ok(()) => ExitCode::SUCCESS,
@@ -971,7 +982,7 @@ mod tests {
     #[test]
     fn grants_cover_separate_helper_executables_without_extra_access() -> HarnessResult {
         let root = tempfile::tempdir().map_err(|error| error.to_string())?;
-        for directory in ["agent", "python", "session", "repository"] {
+        for directory in ["agent", "helper", "session", "repository"] {
             fs::create_dir(root.path().join(directory)).map_err(|error| error.to_string())?;
         }
         let root = root
@@ -989,7 +1000,7 @@ mod tests {
             secret_refs: BTreeSet::new(),
         };
         let mut helpers = GeneratedProfiles {
-            canonical_executable: root.join("python/python.exe"),
+            canonical_executable: root.join("helper/evidence.exe"),
             weak_verifier: root.join("weak.json"),
             good_verifier: root.join("good.json"),
             reviewer: root.join("reviewer.json"),
@@ -1006,7 +1017,7 @@ mod tests {
             secret_refs: BTreeSet::new(),
         };
         let execute = BTreeSet::from([AccessMode::Execute]);
-        let helper_scope = FilesystemScope::from_canonical_host_path(&root.join("python"), execute)
+        let helper_scope = FilesystemScope::from_canonical_host_path(&root.join("helper"), execute)
             .map_err(|error| error.to_string())?;
         for same_executable in [false, true] {
             if same_executable {

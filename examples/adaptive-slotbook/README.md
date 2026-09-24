@@ -3,8 +3,10 @@
 This contract fixes the HTTP representation before constructing the seeded or repaired candidate.
 The operator-owned verifier implements the six observations in the
 [application specification](../../docs/guides/adaptive-method-example.md). Candidates are immutable
-UTF-8 Python source artifacts executed by the exact configured Python container image. No rebuild
+compiled Rust executable artifacts run directly in the exact configured container image. No rebuild
 occurs after checking. The runtime image and non-secret configuration belong to the recipe identity.
+This example package owns the independently deployed application; the existing `milkdrift-evidence`
+package owns its preparation, qualification and trusted verifier executables.
 
 The candidate listens on container port 8080. It reads `/config/application.json` for `resource`
 and positive integer `capacity`, `/config/token` for the synthetic bearer token, and
@@ -14,7 +16,8 @@ HTTP operation. No model worker can mount these directories or the engine socket
 
 - `GET /health` returns 200.
 - `GET /availability?start=...&end=...` returns only `resource`, `start`, `end`, and `remaining`.
-  Timestamps are RFC3339 UTC with `Z`; intervals are half-open.
+  Timestamps use RFC3339 UTC with `Z`, optionally fractional seconds, within 32 bytes;
+  invalid calendar dates refuse. Intervals are half-open and equivalent instants compare equally.
 - `POST /reservations` accepts JSON `name`, `start`, `end`, `quantity` and returns 201 with `id`.
   Missing or wrong bearer tokens return 401 before mutation. Invalid intervals or zero quantity
   return 400, and insufficient overlapping capacity returns 409.
@@ -23,6 +26,11 @@ HTTP operation. No model worker can mount these directories or the engine socket
 - `DELETE /reservations/{id}` requires the token. Before the interval starts it returns 200 and
   releases capacity. Repeating successful cancellation returns 200. At or after the start of an
   active reservation it returns 409 and retains the booking.
+
+The corrected application retains at most 4096 booking identities, including cancelled bookings
+needed for idempotent cancellation. New bookings refuse with 507 at that bound. Each mutation
+atomically replaces a bounded JSON snapshot. A failed write leaves the service unavailable until
+reopen, so an uncertain persistence result cannot allow conflicting mutations in memory.
 
 The verifier uses synthetic names and secrets. It independently creates requests, races two
 contenders, observes service recreation with the same test data directory, and checks container mounts and
@@ -39,36 +47,52 @@ readable inside the isolated container; keep its parent outside worker mounts.
 
 ## Author and run the example
 
-Build `milkdrift-cli` and `milkdrift-daemon`, provision the rootless Podman/user-systemd prerequisites
-in [managed operations](../../docs/operations/managed-linux.md), and load the exact Python image
-identified below. The scripts require Python 3 and a fresh private directory. They use no cloud
-credentials or live model generation. `seeded.py` deliberately permits anonymous mutation and loses
-bookings at restart; `repaired.py` is a deterministic repair fixture.
+Provision the rootless Podman/user-systemd prerequisites in
+[managed operations](../../docs/operations/managed-linux.md). Build the Rust tools and both native
+application fixtures, then package the candidates in an exact local image. The commands below target
+x86-64 GNU/Linux and statically link the candidates. They do not establish another target's support.
+`slotbook-seeded` deliberately permits anonymous mutation and loses bookings at restart; `slotbook`
+is the deterministic corrected fixture. This qualification uses no live model or cloud credentials.
 
 ```sh
-cargo build -p milkdrift-cli -p milkdrift-daemon
-podman pull docker.io/library/python@sha256:2325bb286ec344af3e5898cc224b5844e2707ac6e26b1632516fd3edc84a5e26
-python3 examples/adaptive-slotbook/prepare.py --root /absolute/private/slotbook-example \
-  --image docker.io/library/python@sha256:2325bb286ec344af3e5898cc224b5844e2707ac6e26b1632516fd3edc84a5e26
-python3 examples/adaptive-slotbook/qualify.py --root /absolute/private/slotbook-example
+CARGO_PROFILE_DEV_OPT_LEVEL=1 CARGO_PROFILE_DEV_DEBUG=0 \
+  cargo build -p milkdrift-cli -p milkdrift-daemon -p milkdrift-evidence --bins
+CARGO_TARGET_DIR=target/slotbook-static CARGO_PROFILE_RELEASE_STRIP=symbols \
+  RUSTFLAGS='-C target-feature=+crt-static' cargo build -p milkdrift-slotbook --bins \
+  --release --target x86_64-unknown-linux-gnu
+mkdir -p target/slotbook-image
+cp target/slotbook-static/x86_64-unknown-linux-gnu/release/slotbook \
+  target/slotbook-static/x86_64-unknown-linux-gnu/release/slotbook-seeded target/slotbook-image/
+cp examples/adaptive-slotbook/Containerfile target/slotbook-image/
+podman build --pull=never --build-arg BASE_IMAGE=sha256:PRELOADED_BUSYBOX_IMAGE_ID \
+  -t localhost/milkdrift-slotbook-rust target/slotbook-image
+podman image inspect --format '{{.Id}}' localhost/milkdrift-slotbook-rust
+target/debug/slotbook-evidence prepare --root /absolute/private/slotbook-example \
+  --image sha256:RESULTING_IMAGE_ID
+target/debug/slotbook-evidence qualify --root /absolute/private/slotbook-example \
+  --candidate target/slotbook-static/x86_64-unknown-linux-gnu/release/slotbook
 ```
 
-The declared immutable image must be available locally. Supply another independently selected exact
-image only after qualifying it. The prepared files
+Replace both image placeholders with inspected exact identities. The preloaded base must provide
+the example worker's `sh`, `cp`, `cat`, `test` and `sleep` utilities. The build copies only the two
+application executables into `/fixtures`; it includes no token or trusted verifier. Qualify every
+selected image; its tag is only a build convenience. `--candidate` supplies the independently built
+corrected bytes for comparison against the downloaded artifact and deployed mount. The prepared files
 include `policy.json`, `adaptation-scope.json`, `base.json`, `governed.json`, two operator recipe inputs,
-and repair mutations. `prepare.py` invokes `artifact digest`, `blueprint effect-policy`,
+and repair mutations. `slotbook-evidence prepare` invokes `artifact digest`, `blueprint effect-policy`,
 `blueprint create` and `blueprint govern`; the product owns parsing, identity derivation and validation.
-It pins the verifier source/native interpreter and a synthetic token. The generated target version
+It copies the native verifier into private operator storage and pins its digest and a synthetic token.
+Rebuilding the development executable cannot change that approved copy. The generated target version
 must match inspection after initial application (normally 6); `--target-version` makes this explicit.
 
-`qualify.py` starts a private workflow-enabled host on port 19748, installs only its approved
+`slotbook-evidence qualify` starts a private workflow-enabled host on port 19748, installs only its approved
 `slotbook-build` worker and `slotbook-test` service, then follows the ordinary authenticated CLI.
 It retains initial failed checks, demonstrates failed evidence and uploaded forged-report publication
 refusals, imports the method, and starts a run with a 45-second repair window. A structured proposal inserts investigation
 and replaces future repair work inside `repair.`. The ordinary proposal path applies it under the
-agreement policy without a fresh approval. The repaired worker emits immutable source, the fixed
+agreement policy without a fresh approval. The repaired worker emits immutable executable bytes, the fixed
 verifier evaluates it, and the fixed publisher consumes its journal identity. It also renews verification
-of unchanged bytes without overwriting earlier observations. The script inspects completion, reopens
+of unchanged bytes without overwriting earlier observations. The qualifier inspects completion, reopens
 the store, checks retained failure and removes its installations through the
 resource owner. Failure retains resources and logs for explicit inspection; it never prunes Podman.
 Data disposition is `preserve`, so removal deliberately leaves owned volumes for operator retention.
@@ -77,7 +101,10 @@ The generated `host/daemon.toml` grants `agent:repair` only the two approved man
 families and finite budgets. The operator supplies approved recipes outside worker storage. This
 fixture uses a controller preset to expose both authoring and inspection; production deployments
 should narrow operations to each actor's work. Capability allowlists cannot approve another recipe,
-change the target policy, or mount host credentials into the worker.
+change the target policy, or mount host credentials into the worker. The example declares a 4 MiB
+candidate ceiling, 32 MiB individual artifact allowance and 128 MiB internal artifact budget to
+accommodate native executables and their escaped worker reports. These are explicit example
+allocations, not platform defaults; preparation and admission validate them through the normal owners.
 
 ## Inspect and adapt through supported commands
 
@@ -127,7 +154,7 @@ are outside this finite example's evidence.
 
 ## Invoke the governed method as a capability
 
-After preparing a fresh directory as above, add `--published` to `qualify.py`. It configures the
+After preparing a fresh directory as above, add `--published` to `slotbook-evidence qualify`. It configures the
 exact service grant and publishes the governed revision as `method:slotbook` generation 1. A separate
 invoke-only credential requests `method.invoke`; the operator finds the actual linked run through
 ordinary authorized run inspection and submits the same permitted repair proposal. The consumer is
@@ -136,9 +163,13 @@ internal process tasks. Exact public replay after restart leaves the deployment 
 
 Use `--published --invocation-mode workflow` in another fresh directory to make an ordinary local
 workflow call the same public method. The outer attempt retains its link and the internal run keeps
-its own agreement and revision history. Both modes retain failed evidence and exercise the same
-protected verifier/publisher before removing their installations. Run these native qualifications
-serially: they deliberately use the fixed Slotbook service port and installation names.
+its own agreement and revision history. Use `--published --invocation-mode peer` in a fresh directory
+to put that caller on a second local daemon, which has no managed adapters. The provider retains
+the service grant and resource ownership. `--port` selects the provider's control listener; the peer
+caller uses the next port. This exercises two processes on one host, not a second-machine deployment.
+All modes retain failed evidence and exercise the same protected verifier/publisher before removing
+their installations. Run these native qualifications serially: they deliberately use the fixed
+Slotbook application port 19848 and installation names.
 
 The current 03 method has an empty input interface and a fixed target/version. This example does
 not imply arbitrary-target deployment or a parameterized replacement agreement. The publication

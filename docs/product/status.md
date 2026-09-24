@@ -199,15 +199,17 @@ values; repository contracts check the version cells against source.
 
 ### Protected adaptive method verification
 
-Assignment 03's reviewed full gate passes with 896 workspace tests, 24 doctests and all 24 repository
-contracts. Eight environment-specific tests remain ignored by that gate. Twenty-four default and
-all-feature API inventories were reviewed. Deliberately disabling protected-graph validation,
-failed-check enforcement or candidate-file validation before activation makes the respective refusal
-test fail. The build uses optimization level 1 with debug
+The Rust implementation follow-up passes the full gate with 923 workspace tests, 24 doctests and all
+24 repository contracts. Eight environment-specific tests remain ignored by that gate; the native
+protected-verifier lifecycle test also passed separately. The changed managed-linux, evidence and
+example default/all-feature API inventories were reviewed. Earlier deliberate removals of
+protected-graph validation, failed-check enforcement and candidate-file validation made their refusal
+tests fail. The build uses optimization level 1 with debug
 assertions enabled; no unoptimized full-gate result is claimed.
 
-The finite [Slotbook qualification](../../examples/adaptive-slotbook/README.md) uses immutable Python
-source artifacts and the operator-owned six-check verifier. Actual daemon/CLI execution retained
+The finite [Slotbook qualification](../../examples/adaptive-slotbook/README.md) uses immutable Rust
+executable artifacts and the operator-owned native six-check verifier. Protected recipe schema 2
+pins that verifier's executable digest and runs the candidate directly. Actual daemon/CLI execution retained
 initial authentication/persistence failures, rejected an uploaded forged positive report, automatically
 adopted a scoped prospective repair, completed all six new checks and served exactly the checked bytes.
 Direct lifecycle updates cannot remove protection. Reopen preserved the agreement, adoption count,
@@ -215,11 +217,13 @@ private verification and target generation. A new authorized request renewed ver
 bytes without overwriting earlier evidence. A separately authorized direct publication reached
 generation 3; exact replay after
 another reopen preserved its generation, version, container ID and start time. Both test installations
-were removed through their owner, retaining declared data volumes. The handoff records exact candidate
+were removed through their owner, retaining declared data volumes. The
+[04 follow-up](../development/virtual-office/adaptive-hosts/handoffs/04.md#rust-implementation-follow-up)
+records exact candidate
 identities and evidence paths. The native verifier test also covers detached-container cleanup after
 completion, timeout and platform reopen, plus changed candidate-file refusal before activation.
 Protected preparation shares the Podman version, controller delegation, subordinate-ID and lingering
-checks used by other managed services. Live model repair belongs to assignment 06; the fixtures in 03
+checks used by other managed services. Live model repair belongs to assignment 06; these fixtures
 do not represent observed model choices. Interrupted verification retains unknown evidence and refuses
 publication. This desktop qualification does not establish second-host operation,
 power-loss persistence or general application correctness/security.

@@ -169,17 +169,21 @@ pub fn generated_profiles(
     repository: &Path,
     session_root: &Path,
 ) -> Result<GeneratedProfiles, String> {
-    let python = find_executable(&["python3", "python"])?;
+    let helper = std::env::current_exe()
+        .and_then(|p| p.canonicalize())
+        .map_err(|e| e.to_string())?;
     let git = find_executable(&["git"])?;
     let git = git.to_str().ok_or("Git executable path is not UTF-8")?;
+    let rustc = compiler()?;
+    let rustc = rustc.to_str().ok_or("compiler path is not UTF-8")?;
     let weak_verifier = write_profile(
         session_root,
         repository,
-        &python,
+        &helper,
         "evidence-verifier-weak",
         "evidence-verifier-weak",
-        verifier_code(),
-        vec!["weak".to_owned(), git.to_owned()],
+        "verify",
+        vec!["weak".to_owned(), git.to_owned(), rustc.to_owned()],
         Vec::new(),
         vec![
             (
@@ -196,11 +200,11 @@ pub fn generated_profiles(
     let good_verifier = write_profile(
         session_root,
         repository,
-        &python,
+        &helper,
         "evidence-verifier-good",
         "evidence-verifier-good",
-        verifier_code(),
-        vec!["good".to_owned(), git.to_owned()],
+        "verify",
+        vec!["good".to_owned(), git.to_owned(), rustc.to_owned()],
         Vec::new(),
         vec![
             (
@@ -217,10 +221,10 @@ pub fn generated_profiles(
     let reviewer = write_profile(
         session_root,
         repository,
-        &python,
+        &helper,
         "evidence-reviewer",
         "evidence-reviewer",
-        reviewer_code(),
+        "review",
         Vec::new(),
         vec![("milkdrift.context_manifest", "context/manifest.json")],
         vec![
@@ -238,10 +242,10 @@ pub fn generated_profiles(
     let evidence_source = write_profile(
         session_root,
         repository,
-        &python,
+        &helper,
         "evidence-source",
         "evidence-source",
-        evidence_source_code(),
+        "evidence",
         Vec::new(),
         vec![("payload", "inputs/payload.json")],
         vec![("evidence", "evidence.txt", "text/plain", true)],
@@ -249,7 +253,7 @@ pub fn generated_profiles(
         true,
     )?;
     Ok(GeneratedProfiles {
-        canonical_executable: python,
+        canonical_executable: helper,
         weak_verifier,
         good_verifier,
         reviewer,
@@ -258,16 +262,25 @@ pub fn generated_profiles(
 }
 
 fn fixture_agent_value(repository: &Path, session_root: &Path) -> Result<Value, String> {
-    let python = find_executable(&["python3", "python"])?;
-    let identity = hash_file(&python).map_err(|error| error.to_string())?;
+    let helper = std::env::current_exe()
+        .and_then(|p| p.canonicalize())
+        .map_err(|e| e.to_string())?;
+    let identity = hash_file(&helper).map_err(|error| error.to_string())?;
     Ok(base_profile(
         repository,
         session_root,
-        &python,
+        &helper,
         identity,
         "fixture-coding-agent",
         "fixture-coding-agent",
-        vec!["-c".to_owned(), fixture_agent_code().to_owned()],
+        vec![
+            "--fixture-helper".to_owned(),
+            "agent".to_owned(),
+            compiler()?
+                .to_str()
+                .ok_or("compiler path is not UTF-8")?
+                .to_owned(),
+        ],
         json!({}),
         vec![("prompt", "inputs/prompt.json")],
         json!({"type":"input","input":"prompt","max_bytes":65536}),
@@ -286,7 +299,7 @@ fn write_profile(
     executable: &Path,
     profile_id: &str,
     capability: &str,
-    code: &str,
+    operation: &str,
     extra_args: Vec<String>,
     inputs: Vec<(&str, &str)>,
     outputs: Vec<(&str, &str, &str, bool)>,
@@ -294,7 +307,7 @@ fn write_profile(
     fixture: bool,
 ) -> Result<PathBuf, String> {
     let identity = hash_file(executable).map_err(|error| error.to_string())?;
-    let mut arguments = vec!["-c".to_owned(), code.to_owned()];
+    let mut arguments = vec!["--fixture-helper".to_owned(), operation.to_owned()];
     arguments.extend(extra_args);
     arguments.push("{{execution_root}}".to_owned());
     let value = base_profile(
@@ -386,7 +399,7 @@ fn base_profile(
                 {"path":repository,"access":"read_write"}
             ],
             "inputs": inputs,
-            "environment": {"allowed_non_secret":[],"secrets":{},"max_value_bytes":4096},
+            "environment": {"allowed_non_secret":["PATH","LIB","LIBPATH","INCLUDE","SYSTEMROOT"],"secrets":{},"max_value_bytes":32768},
             "stdin": stdin,
             "stdout": {"max_capture_bytes":1048576,"stream_progress":false,"max_progress_events":0,"overflow_action":"continue_truncated","artifact_name":stdout},
             "stderr": {"max_capture_bytes":1048576,"stream_progress":false,"max_progress_events":0,"overflow_action":"continue_truncated","artifact_name":stderr},
@@ -454,6 +467,7 @@ fn reject_fixture_profile(value: &Value) -> Result<(), String> {
         "evidence-process-helper",
         "false",
         "milkdrift-process-test-helper",
+        "milkdrift-external-evidence",
         "node",
         "perl",
         "powershell",
@@ -502,55 +516,21 @@ fn string(profile: &serde_json::Map<String, Value>, key: &str) -> Result<String,
         .ok_or_else(|| format!("agent profile {key} is absent"))
 }
 
-fn fixture_agent_code() -> &'static str {
-    r#"from pathlib import Path
-import sys
-p=Path('calculator.py')
-s=p.read_text()
-if 'return a - b' in s:
-    p.write_text(s.replace('return a - b', 'return a + b'))
-print('fixture coding process inspected and repaired calculator.py')
-sys.stdin.read()
-"#
-}
-
-fn verifier_code() -> &'static str {
-    r#"import hashlib, json, pathlib, subprocess, sys
-mode=sys.argv[1]
-root=pathlib.Path(sys.argv[3])
-def checkpoint():
-    files=subprocess.run([sys.argv[2],'ls-files','--cached','--others','--exclude-standard','-z'],check=True,capture_output=True).stdout.split(b'\0')
-    state=[(name.decode(),hashlib.sha256(pathlib.Path(name.decode()).read_bytes()).hexdigest()) for name in sorted(set(files)) if name]
-    return 'sha256:'+hashlib.sha256(json.dumps(state,separators=(',',':')).encode()).hexdigest()
-before=checkpoint()
-diff=subprocess.run([sys.argv[2],'diff','--binary','HEAD'],check=False,capture_output=True,text=True)
-tests=subprocess.run([sys.executable,'-B','-m','unittest','-v'],check=False,capture_output=True,text=True)
-after=checkpoint()
-log='ORCHESTRATION_FAULT_INJECTION='+str(mode=='weak')+'\n'+tests.stdout+tests.stderr
-(root/'verification.log').write_text(log)
-coding={'type':'changed'} if diff.stdout else {'type':'no_change','justification':'Independent unittest verifies the requested calculator behavior at the unchanged checkpoint.'}
-report={'checkpoint':before,'checked_checkpoint':after,'checks':{'python.unittest':mode=='good' and tests.returncode==0,'git.diff':diff.returncode==0},'coding':coding}
-(root/'verification-result.json').write_text(json.dumps(report))
-sys.exit(0 if diff.returncode==0 and tests.returncode==0 else 1)
-"#
-}
-
-fn reviewer_code() -> &'static str {
-    r#"import json, pathlib, sys
-root=pathlib.Path(sys.argv[1])
-manifest=pathlib.Path(root/'context/manifest.json')
-observed=manifest.exists()
-(root/'review.json').write_text(json.dumps({'schema_version':1,'independent_process':True,'context_manifest_observed':observed,'finding':'controlled verifier gate requires remediation workflow'}))
-(root/'remediation-proposal.json').write_text(json.dumps({'schema_version':1,'action':'rerun coding and independent verification'}))
-"#
-}
-
-fn evidence_source_code() -> &'static str {
-    r#"import json, pathlib, sys
-root=pathlib.Path(sys.argv[1])
-payload=json.loads((root/'inputs/payload.json').read_text())
-(root/'evidence.txt').write_text(payload)
-"#
+fn compiler() -> Result<PathBuf, String> {
+    let output = milkdrift_evidence::application::run_command(
+        Command::new("rustc").args(["--print", "sysroot"]),
+        None,
+        std::time::Duration::from_secs(10),
+    )
+    .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err("Rust compiler sysroot unavailable".into());
+    }
+    Path::new(output.stdout.trim())
+        .join("bin")
+        .join(format!("rustc{}", std::env::consts::EXE_SUFFIX))
+        .canonicalize()
+        .map_err(|e| e.to_string())
 }
 
 fn find_executable(names: &[&str]) -> Result<PathBuf, String> {
