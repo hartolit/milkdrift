@@ -16,7 +16,7 @@ Choose the lane whose observations support the claim you need:
 | `operational-evidence` | Storage turnover/reopen, bounded current state, queue overload/recovery, stream reconnect, and graceful shutdown observations. The signal lane requires Unix; thread counts use Linux `/proc` when available. [Operational lane](../../docs/development/verification-evidence.md#benchmarks-and-operations). |
 | `mutation-evidence` | Whether selected tests detect particular implementation mutations. Baseline failures, timeouts, and unrelated fixture failures do not qualify a mutant as caught. [Campaign and classification rules](../../docs/development/verification-evidence.md#mutation). |
 | `evidence-process-helper` | Deterministic bytes and process behavior used by the harness, never a real coding-agent qualification. |
-| `slotbook-evidence`, `slotbook-verifier` | Prepare and qualify the native application through real managed resources; verify its six finite checks with an independently pinned executable. [Commands and boundaries](../../examples/adaptive-slotbook/README.md). |
+| `slotbook-evidence`, `slotbook-verifier` | Prepare and qualify the native application, selected-evidence learning, paired evaluation, isolated variants and staged tool recipes through real managed resources. Six finite checks use an independently pinned executable; the explicit model fixture remains distinct from real responses. [Commands and boundaries](../../examples/adaptive-slotbook/README.md). |
 
 Build the daemon before isolated application-evidence tests. The maintained commands identify any
 additional CLI/helper binaries and Rust/Git prerequisites. Put logs, generated profiles, stores,

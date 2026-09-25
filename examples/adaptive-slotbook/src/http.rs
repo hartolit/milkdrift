@@ -22,6 +22,8 @@ use std::{
 struct Application {
     resource: String,
     capacity: u32,
+    #[serde(default)]
+    cancellation_notice_seconds: u32,
 }
 struct ApplicationState {
     resource: String,
@@ -158,6 +160,7 @@ pub(super) async fn serve(candidate: Candidate) -> Result<(), Box<dyn std::error
     }
     let bookings = Bookings::open(
         application.capacity,
+        application.cancellation_notice_seconds,
         (candidate == Candidate::Corrected).then(|| PathBuf::from("/data/bookings.json")),
     )?;
     let state = Arc::new(ApplicationState {

@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use std::{fs, io::Read, path::Path, process::Command, thread, time::Duration};
 
 pub(super) struct Service {
+    pub(super) case: super::case::Case,
     pub(super) spec: Specification,
     pub(super) token: String,
     pub(super) identity: Option<String>,
@@ -52,6 +53,7 @@ pub(super) fn remove_cidfile(path: &Path) -> EvidenceResult {
 }
 impl Service {
     pub(super) fn prepare(spec: Specification) -> EvidenceResult<Self> {
+        let case = super::case::Case::from_application(&spec.application)?;
         let token = fs::read_to_string(&spec.token_file)?.trim().to_owned();
         require(
             !token.is_empty() && token.len() <= 1024,
@@ -66,12 +68,13 @@ impl Service {
         for (name, bytes) in [
             ("application.json", serde_json::to_vec(&spec.application)?),
             ("token", token.as_bytes().to_vec()),
-            ("clock", b"2027-04-10T09:00:00Z".to_vec()),
+            ("clock", case.before.as_bytes().to_vec()),
         ] {
             fs::write(config.join(name), bytes)?;
             permissions(&config.join(name), 0o444)?;
         }
         Ok(Self {
+            case,
             spec,
             token,
             identity: None,

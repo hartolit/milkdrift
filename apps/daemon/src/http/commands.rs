@@ -80,6 +80,7 @@ pub(super) async fn command(
 
 fn command_trace(command: &Command) -> CommandTrace {
     let (operation, run, revision, attempt, proposal) = match command {
+        Command::Learning { .. } => ("learning", None, None, None, None),
         Command::PublishMethod { .. } => ("publish_method", None, None, None, None),
         Command::InspectMethod { .. } => ("inspect_method", None, None, None, None),
         Command::ListMethods { .. } => ("list_methods", None, None, None, None),

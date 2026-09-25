@@ -81,13 +81,33 @@ fn fixture_with_faults(
     managed: bool,
     faults: Option<Arc<dyn milkdrift_redb_store::FaultInjector>>,
 ) -> TestResult<Fixture> {
+    fixture_with_service_scope(directory, prefix, managed, faults, None)
+}
+
+fn fixture_with_service_scope(
+    directory: &std::path::Path,
+    prefix: &str,
+    managed: bool,
+    faults: Option<Arc<dyn milkdrift_redb_store::FaultInjector>>,
+    service_scope: Option<CapabilityAuthorityScope>,
+) -> TestResult<Fixture> {
     let mut config = milkdrift_redb_store::RedbStoreConfig::new(directory.join("store.redb"));
     if let Some(faults) = faults {
         config = config.with_fault_injector(faults);
     }
     let store = Arc::new(RedbStore::open_with_config(config)?);
     let caller = publication_grant("human:caller", "grant:caller")?;
-    let service = publication_grant("service:deployment", "grant:deployment")?;
+    let mut service = publication_grant("service:deployment", "grant:deployment")?;
+    if let Some(scope) = service_scope {
+        let mut resources = service.resources().clone();
+        resources.capability = scope;
+        service =
+            AuthorityGrantBuilder::new(service.identity().clone(), 1, service.actor().clone())
+                .operations(service.operations().clone())
+                .resources(resources)
+                .budget(service.budget())
+                .build()?;
+    }
     let evaluator = Arc::new(GrantSetEvaluator::new(
         PolicyId::new("test.publication")?,
         1,

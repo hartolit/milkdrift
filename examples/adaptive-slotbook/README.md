@@ -9,7 +9,8 @@ This example package owns the independently deployed application; the existing `
 package owns its preparation, qualification and trusted verifier executables.
 
 The candidate listens on container port 8080. It reads `/config/application.json` for `resource`
-and positive integer `capacity`, `/config/token` for the synthetic bearer token, and
+and positive integer `capacity`, optional `cancellation_notice_seconds` (zero by default),
+`/config/token` for the synthetic bearer token, and
 `/config/clock` for the operator-controlled UTC timestamp. It stores bookings in `/data`; all
 other mounts and the root filesystem are read-only. The clock is a test target input, not a public
 HTTP operation. No model worker can mount these directories or the engine socket.
@@ -23,9 +24,10 @@ HTTP operation. No model worker can mount these directories or the engine socket
   return 400, and insufficient overlapping capacity returns 409.
 - `GET /reservations` requires the token and returns a JSON array of active reservations, each with
   `id`, `name`, `start`, `end`, and `quantity`.
-- `DELETE /reservations/{id}` requires the token. Before the interval starts it returns 200 and
-  releases capacity. Repeating successful cancellation returns 200. At or after the start of an
-  active reservation it returns 409 and retains the booking.
+- `DELETE /reservations/{id}` requires the token. Before the interval start minus its configured
+  notice period it returns 200 and releases capacity. Repeating successful cancellation returns
+  200. At or after that cutoff an
+  active reservation returns 409 and retains the booking.
 
 The corrected application retains at most 4096 booking identities, including cancelled bookings
 needed for idempotent cancellation. New bookings refuse with 507 at that bound. Each mutation
@@ -38,6 +40,12 @@ candidate bytes. Its stdout is a bounded JSON array of named check observations.
 and response bodies are not used as diagnostic text, so test tokens cannot become report content.
 A passed report establishes these finite checks, not general correctness, security or power-loss
 persistence. Seeded regression fixtures must be labeled separately from live model output.
+
+The unchanged six check names also cover the fixed held-out loan/class parameters. The verifier
+selects its operator-owned case from the exact application configuration: camera/1/0,
+tripod/2/3600, yoga/4/7200, or ceramics/6/86400 (resource/capacity/notice seconds).
+It checks the dates, quantities and cancellation boundaries in the maintained specification;
+candidate code cannot supply an expected response. Unsupported combinations refuse verification.
 
 The configured test token is part of the candidate configuration through its digest and is used
 by both verification and activation. Rotating it requires a distinct approved target configuration;
@@ -62,7 +70,8 @@ CARGO_TARGET_DIR=target/slotbook-static CARGO_PROFILE_RELEASE_STRIP=symbols \
   --release --target x86_64-unknown-linux-gnu
 mkdir -p target/slotbook-image
 cp target/slotbook-static/x86_64-unknown-linux-gnu/release/slotbook \
-  target/slotbook-static/x86_64-unknown-linux-gnu/release/slotbook-seeded target/slotbook-image/
+  target/slotbook-static/x86_64-unknown-linux-gnu/release/slotbook-seeded \
+  target/slotbook-static/x86_64-unknown-linux-gnu/release/slotbook-workspace target/slotbook-image/
 cp examples/adaptive-slotbook/Containerfile target/slotbook-image/
 podman build --pull=never --build-arg BASE_IMAGE=sha256:PRELOADED_BUSYBOX_IMAGE_ID \
   -t localhost/milkdrift-slotbook-rust target/slotbook-image
@@ -74,8 +83,8 @@ target/debug/slotbook-evidence qualify --root /absolute/private/slotbook-example
 ```
 
 Replace both image placeholders with inspected exact identities. The preloaded base must provide
-the example worker's `sh`, `cp`, `cat`, `test` and `sleep` utilities. The build copies only the two
-application executables into `/fixtures`; it includes no token or trusted verifier. Qualify every
+the example worker's `sh`, `cp`, `cat`, `test` and `sleep` utilities. The build copies the two
+application executables and native workspace documentation tool into `/fixtures`; it includes no token or trusted verifier. Qualify every
 selected image; its tag is only a build convenience. `--candidate` supplies the independently built
 corrected bytes for comparison against the downloaded artifact and deployed mount. The prepared files
 include `policy.json`, `adaptation-scope.json`, `base.json`, `governed.json`, two operator recipe inputs,
@@ -174,3 +183,78 @@ Slotbook application port 19848 and installation names.
 The current 03 method has an empty input interface and a fixed target/version. This example does
 not imply arbitrary-target deployment or a parameterized replacement agreement. The publication
 contract and finite input rules are described in the [published methods guide](../../docs/guides/published-methods.md).
+
+## Learn from selected evidence and compare product variations
+
+The [learning guide](../../docs/guides/learning-methods.md) explains the supported `learning` command
+documents and authority boundaries. After a successful `qualify --published`, retain that private
+directory and run the Rust driver with an operator-reviewed model profile:
+
+```sh
+target/debug/slotbook-evidence learn \
+  --root target/slotbook-study \
+  --image sha256:EXACT_SLOTBOOK_IMAGE_ID \
+  --model-profile /absolute/path/to/local-model-profile.json \
+--port 19758
+```
+
+Use a profile accepted by the ordinary model-provider reader, enabling strict structured output.
+The endpoint, model alias, trust boundary, deadlines and billing declaration remain operator inputs.
+On a new study, `--service-port-base` chooses eleven consecutive loopback application ports
+(default 19900–19910). Choose an unused range when retaining another study's deployed product.
+For a remote service that offers only HTTP, use the supported local development profile through an
+authenticated loopback tunnel; do not remove the non-loopback plaintext guard. The driver permits
+one external proposal generation at a time. Server context capacity and effective sampling settings
+remain separate from the local request's declared limits.
+
+This study authors a new bounded, parameterized agreement from the source example. It does not
+retroactively change the original method's fixed target. The baseline has three immutable verifier
+submissions. Only worker nodes inside `repair.` are editable. Each held-out method/input has its own
+prepared worker, protected target, service grant, public request key and cumulative account. The
+four pairs, six checks, exact tools and two-repair threshold are declared before model entry. The
+proposal receives selected source failures, repair, method and guidance; it receives no held-out
+case artifacts. A model response passes the ordinary proposal, graph and agreement readers before
+it becomes a candidate. The implementation and repair binaries remain labeled native fixtures;
+this lane does not demonstrate a model independently implementing an application.
+
+The study retains generated documents, CLI results and private observations under `learning-05`.
+`result.json` records the comparison, selected method, independently executed camera-loan and yoga
+products, and the operator's explicit choice to deploy only the loan product. Product configuration,
+private verification and accepted method lineage distinguish the services; they use the same native
+application template. A rejected or inconclusive candidate leaves the baseline selected. Each
+variant must pass its own target's verifier, and cross-target publication evidence is refused.
+
+`setup-improvement.json` records a scratch tool experiment, exact native/build inputs, a new approved
+recipe tested in a fresh installation, and activation with existing application bytes preserved.
+`knowledge-update-result.json` records the subsequent explicit guidance selection and the unchanged
+earlier selection and model manifest. Neither change silently republishes the workflow.
+
+After interruption, `--resume` reuses exact accepted requests and refuses changed retained inputs.
+If a proposal failed before any comparison invocation was accepted, `--resume --proposal-attempt 2`
+can declare a new prospective proposal against the same frozen cases and criterion. Attempt numbers
+are bounded to 1–4. Earlier model responses, failures and uncertain usage remain retained. An
+entered request is never blindly retried as if no effect occurred. This recovery option does not
+authorize changing the criterion after observing evaluation results. Do not overwrite the private
+study directory or treat a new proposal run as settlement of an earlier unknown effect.
+
+For deterministic validation, use a separate fresh qualification directory and a reviewed local
+profile naming model `learning-fixture`, with no authentication, structured-output support and
+endpoint `http://127.0.0.1:18082`. Start this finite endpoint before `learn`:
+
+```sh
+target/debug/slotbook-evidence model-fixture \
+  --root target/slotbook-fixture-study --port 18082 --mode useful
+```
+
+It accepts one request by default and reads only the frozen source selection and baseline. Its
+controlled response replaces the first seeded build with the corrected native fixture. Modes
+`no-improvement`, `malformed`, `invented-evidence` and `forbidden-edit` supply deliberate
+counterexamples. These are synthetic responses and token reports, not local-model quality
+measurements. They pass through the same HTTP adapter, retained manifest, ordinary proposal reader
+and learning commands. A different endpoint requires its own reviewed network grant; a proposal
+retry does not expand an existing grant. `--proposal-only` retains an admitted candidate before
+evaluation; resume with the same attempt number to continue its original comparison.
+`--candidate-validation 2` resubmits the same retained response under a new command identity after
+a refused local submission has been diagnosed. It does not generate a new response, change its
+mutation, replace a rejection receipt or authorize a changed comparison. Validation identities
+are bounded to 1–4; accepted submissions use exact replay.

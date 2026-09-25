@@ -8,6 +8,10 @@ use milkdrift_persistence::StorageFailureClass;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum FaultPoint {
+    /// Before a reusable method generation and its head become durable together.
+    BeforePublishedMethodCommit,
+    /// After a method generation commits, before its caller receives the result.
+    AfterPublishedMethodCommit,
     /// Before a managed resource transaction becomes durable.
     BeforeManagedCommit,
     /// After a managed transaction committed but before the caller receives its reply.

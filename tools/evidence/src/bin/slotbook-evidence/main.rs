@@ -1,6 +1,8 @@
 //! Prepare and qualify the maintained Slotbook method through actual product binaries.
 macro_rules! args { ($($value:expr),* $(,)?) => { vec![$(format!("{}", $value)),*] }; }
 mod client;
+mod learning;
+mod model_fixture;
 mod prepare;
 mod publication;
 mod qualification;
@@ -21,6 +23,10 @@ enum Action {
     Prepare(Prepare),
     /// Execute and inspect the configured method; retain resources on failure for recovery.
     Qualify(Qualify),
+    /// Continue an accepted source qualification with explicit held-out learning and variants.
+    Learn(learning::Arguments),
+    /// Serve a bounded, explicitly deterministic proposal endpoint for validation scenarios.
+    ModelFixture(model_fixture::Arguments),
 }
 #[derive(clap::Args)]
 struct Prepare {
@@ -73,5 +79,7 @@ fn main() -> EvidenceResult {
     match Arguments::parse().command {
         Action::Prepare(args) => prepare::run(args),
         Action::Qualify(args) => qualification::run(args),
+        Action::Learn(args) => learning::run(args),
+        Action::ModelFixture(args) => model_fixture::run(args),
     }
 }

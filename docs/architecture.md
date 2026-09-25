@@ -269,6 +269,14 @@ peer, workspace, diagnostic class, budgets, validity, and revocation. Allow dime
 `Any` or bounded nonempty `Only` beneath whole-scope `DenyAll`; empty collections cannot grant
 wildcards. Shared-layout revisions are explicit; actor-owned layout vocabulary is reserved.
 
+For an unnamed task implementation, prospective runtime validation can probe the ordinary
+authorized resolver and narrow that identity to a current registered, granted implementation. Other
+requirement dimensions remain subject to the full envelope check. The probe creates no attempt
+or permit. Transient health and permit capacity affect scheduling and entry, not prospective
+authority; those boundaries repeat selection and authorization. Publication uses the same
+rule, allowing one reusable definition to run in separately granted workspaces without giving
+each service authority over every workspace.
+
 Collections are filtered before hidden identities are fetched or projected. Artifact metadata and
 content are independently authorized against stored sensitivity. Readiness discloses less than
 health. Consequential mutations, protected releases, and peer administration retain bounded
@@ -469,13 +477,22 @@ These are per-invocation budgets, alongside service authority and host capacity;
 service-wide lifetime spending account. [Published methods](guides/published-methods.md) explains
 configuration, operator commands, disclosure, and the supported limits.
 
-Learning uses ordinary control proposals, runtime evaluations, artifacts and publication. An agent
-selects authorized source decisions/failures and proposes a candidate method; an evaluator compares
-baseline and candidate on separate inputs with criteria fixed before selection. Promotion changes
-future calls only. Each product variation owns mutable files, inputs, verification and usage, even
-when immutable lessons are shared. The [Slotbook specification](guides/adaptive-method-example.md)
-fixes the shared demonstration and its possible rejection/inconclusive outcomes; it reports no
-executed learning result.
+Learning composes ordinary control proposals, runtime evaluations, artifacts and publication.
+`control::learning` owns strict selection/declaration requests and the deterministic comparison.
+The daemon checks authenticated source reads, verifies actual model-output provenance and reads
+the declared runtime/account/verifier evidence. Its ordinary application receipts retain each
+decision; there is no lesson database or background learning scheduler. Editable workspace notes
+become task knowledge only through an explicit immutable artifact selection. Source pages freeze
+the public timeline projection; private contents need their own permitted artifact reads.
+
+Before proposal generation, an independent declaration fixes paired inputs, exact worker/target
+generations, checks, thresholds and budgets. Missing or unexamined evidence stays inconclusive.
+Only separate publication authority, or an exact operator policy rechecked against current grants,
+can promote an eligible method. Old accepted calls keep their revision and agreement. Each product
+variation owns mutable files, inputs, verification and usage. Recipe activation records a separate
+generation and never changes a workflow publication implicitly. [Learning methods](guides/learning-methods.md)
+explains these operations; [ADR 0042](decisions/0042-selected-evidence-and-method-evaluation.md)
+owns their boundary and [status](product/status.md) records executed evidence.
 
 ## History, compaction, and recovery
 
@@ -692,7 +709,9 @@ plans. Enabled peer mode requires identity; internal owners receive only their s
 synchronous owner queue serializes runtime, control, storage, clock, and registry operations.
 Typed one-shot closures capture response channels; HTTP owns sockets/framing, not semantic state.
 Queue saturation has a typed overload response. External work runs on fixed workers without a
-global lock. Weak peer-facing store handles prevent router lifetime from extending storage ownership.
+global lock. Weak peer-facing store handles and managed-resource handles prevent idle routers from
+extending storage ownership. The daemon owner retains the managed lifecycle until its workers
+finish, then releases it when joined; an idle HTTP connection cannot block the next store open.
 
 One fallible daemon clock advances a durable high-water fact before authorization, expiry,
 scheduling, or timestamps; artifact acceptance advances it in the same transaction. Failure or

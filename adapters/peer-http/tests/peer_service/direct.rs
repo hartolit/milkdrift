@@ -110,6 +110,20 @@ fn client_realms_replay_archive_and_reopen_without_workflow_provenance() -> Test
         limits: policy.execution_limits.clone(),
         deadline_unix_ms: now().saturating_add(30_000),
     };
+    host.update_observation(
+        descriptor.identity(),
+        1,
+        CapabilityObservation::new(
+            descriptor.identity().clone(),
+            now(),
+            true,
+            1,
+            "fresh health sample after client preparation",
+        )?,
+    )?;
+    let refreshed = service.client_catalog(&actors[0])?;
+    assert_eq!(refreshed.generation, submission.catalog_generation);
+    assert_eq!(refreshed.digest, submission.catalog_digest);
     let InvocationAcceptance::Accepted { execution, .. } =
         service.invoke_client(&actors[0], &submission)?
     else {
@@ -193,5 +207,70 @@ fn client_realms_replay_archive_and_reopen_without_workflow_provenance() -> Test
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert!(service.shutdown_workers(Duration::from_secs(5)).clean);
     host.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn health_refresh_preserves_peer_selection_but_unavailability_invalidates_it() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let store = Arc::new(RedbStore::open(root.path())?);
+    let peer = PeerId::new("peer-stable-catalog")?;
+    let (host, descriptor) = host_with_adapter(Arc::new(TerminalAdapter {
+        capability: CapabilityId::new("test-capability")?,
+        delay: Duration::ZERO,
+        active: Arc::new(AtomicUsize::new(0)),
+        maximum: Arc::new(AtomicUsize::new(0)),
+        calls: Arc::new(AtomicUsize::new(0)),
+        requirements: CapabilityExecutionRequirements::default(),
+    }))?;
+    let service = PeerService::new(
+        server_config(peer.clone(), PeerId::new("catalog-target")?, 1, 4)?,
+        host.clone(),
+        store,
+        system_peer_clock(),
+    )?;
+    service.recover(1024)?;
+    let before = service.catalog(&peer)?;
+    host.update_observation(
+        descriptor.identity(),
+        1,
+        CapabilityObservation::new(
+            descriptor.identity().clone(),
+            now(),
+            true,
+            7,
+            "changed load and diagnostic",
+        )?,
+    )?;
+    assert_eq!(before, service.catalog(&peer)?);
+    host.update_observation(
+        descriptor.identity(),
+        1,
+        CapabilityObservation::new(
+            descriptor.identity().clone(),
+            now(),
+            false,
+            0,
+            "unavailable",
+        )?,
+    )?;
+    let unavailable = service.catalog(&peer)?;
+    assert!(unavailable.entries.is_empty());
+    assert!(unavailable.generation > before.generation);
+    host.update_observation(
+        descriptor.identity(),
+        1,
+        CapabilityObservation::new(
+            descriptor.identity().clone(),
+            now(),
+            true,
+            0,
+            "available again",
+        )?,
+    )?;
+    let recovered = service.catalog(&peer)?;
+    assert_eq!(recovered.entries.len(), 1);
+    assert!(recovered.generation > unavailable.generation);
+    assert!(service.shutdown_workers(Duration::from_secs(2)).clean);
     Ok(())
 }

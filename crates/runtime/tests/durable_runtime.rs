@@ -430,6 +430,80 @@ fn authority_requests_cover_every_external_command_family() -> TestResult {
 }
 
 #[test]
+fn unnamed_requirement_resolves_within_exact_identity_grant_without_widening_it() -> TestResult {
+    let descriptor = CapabilityDescriptorDocument::from_json(include_bytes!(
+        "../../capability/tests/fixtures/descriptor-v1.json"
+    ))?
+    .body()
+    .clone();
+    for allowed in [true, false] {
+        let directory = TempDir::new()?;
+        let store = Arc::new(RedbStore::open(directory.path())?);
+        let revision = sequence_revision()?;
+        store.put_revision(&revision)?;
+        let actor = ActorRef::new("service:narrow-worker")?;
+        let identity = if allowed {
+            descriptor.identity().clone()
+        } else {
+            CapabilityId::new("another-worker")?
+        };
+        let scope = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
+            .only_capabilities(BTreeSet::from([identity]))?
+            .only_operations(BTreeSet::from([OperationId::new("model.generate")?]))?
+            .build();
+        let (runtime, claim) = exact_grant_service(
+            store.clone(),
+            Arc::new(ManualClock::new(2_000)),
+            descriptor.clone(),
+            &actor,
+            revision.semantic().workflow(),
+            BTreeSet::from([
+                AuthorityOperation::CreateRun,
+                AuthorityOperation::StartRun,
+                AuthorityOperation::InvokeCapability,
+            ]),
+            scope,
+            "unnamed-worker",
+        )?;
+        let run = RunId::new("unnamed-worker")?;
+        runtime.handle_authorized_command(
+            &create_document(&revision, &run, &actor, "create")?,
+            &claim,
+        )?;
+        let start = RunCommandDocument::new(
+            CommandId::new("start")?,
+            run.clone(),
+            actor,
+            store.head(&run)?,
+            TimestampMillis::new(2_001),
+            Reason::new("select only a granted implementation")?,
+            Vec::new(),
+            RunCommand::StartRun,
+        )?;
+        let result = runtime.handle_authorized_command(&start, &claim)?;
+        assert_eq!(
+            result.result().disposition() == milkdrift_persistence::CommandDisposition::Accepted,
+            allowed
+        );
+        let projection = runtime.projection(&run)?;
+        if allowed {
+            assert_eq!(
+                projection
+                    .execution_authority()
+                    .ok_or("authority absent")?
+                    .grant_digest(),
+                claim.grant_digest()
+            );
+            assert_eq!(projection.lifecycle(), RunLifecycle::Running);
+        } else {
+            assert_eq!(projection.lifecycle(), RunLifecycle::Created);
+            assert!(projection.execution_authority().is_none());
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn draft_only_actor_cannot_start_and_out_of_envelope_start_keeps_typed_denial() -> TestResult {
     let descriptor = CapabilityDescriptorDocument::from_json(include_bytes!(
         "../../capability/tests/fixtures/descriptor-v1.json"

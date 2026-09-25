@@ -195,7 +195,11 @@ impl PublishedMethodStore for RedbStore {
             heads.insert(id.as_str(), generation).map_err(error::redb)?;
             record
         };
+        self.faults
+            .check(crate::fault::FaultPoint::BeforePublishedMethodCommit)?;
         write.commit().map_err(error::redb)?;
+        self.faults
+            .check(crate::fault::FaultPoint::AfterPublishedMethodCommit)?;
         Ok(record)
     }
     fn published_method(

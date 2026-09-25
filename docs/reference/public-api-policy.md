@@ -97,3 +97,19 @@ publication admission and peer delegation. It preserves each accepted depth ceil
 `TaskExecutor::published_serving_entry_allowed` is a workspace adapter port: runtime invokes it
 at internal final entry and capability-host routes it to its existing serving owner. Its default
 refuses unavailable authority; the serving attachment and policy checks remain private.
+
+`control::learning` owns durable declaration, selection, candidate-request and comparison schemas.
+The daemon consumes its bounded pure comparison function after reading the actual serving, run,
+account and verifier owners; the evidence driver consumes the same serialized contracts through
+CLI commands. These are durable schema and workspace adapter contracts. `Command::Learning` is
+the external control API entry point. Daemon receipt projections, provenance checks, selection
+materialization and promotion composition remain private. No learning database, scheduler, global
+memory subscription or test-only production export is added.
+The declaration's `input_field` and `candidate_output` use the existing validated workspace key;
+the observed terminal `output` is consumed by the comparison's exact-artifact check. These fields
+are part of that single wire contract, rather than Slotbook-specific names in the daemon reader.
+The additional before/after method-publication commit fault points remain under redb's existing
+`test-admin` export. They test lost replies and refused commits without exposing a product fault API.
+`CapabilityResolutionContext::is_prospective` is a workspace adapter query consumed by the host
+resolver. It lets revision authority checks defer transient health and capacity to scheduling;
+the runtime alone constructs prospective contexts, and neither resolution path acquires a permit.

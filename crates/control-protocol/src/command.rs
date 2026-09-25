@@ -71,6 +71,8 @@ impl CommandRequest {
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 #[allow(missing_docs)] // Variant prose documents each compact operation payload.
 pub enum Command {
+    /// Select evidence, declare and compare a study, or promote through ordinary authority.
+    Learning { document: Value },
     /// Publish or promote one exact immutable workflow implementation generation.
     PublishMethod {
         document: Value,

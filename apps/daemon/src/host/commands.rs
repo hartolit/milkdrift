@@ -7,6 +7,7 @@ use milkdrift_control_protocol::{Command, CommandAccepted, CommandRequest};
 mod control;
 mod controllers;
 mod definitions;
+mod learning;
 mod proposals;
 mod publications;
 mod runs;
@@ -23,6 +24,7 @@ impl Owner {
     ) -> Result<CommandAccepted, PublicFailure> {
         self.workflow()?;
         match &request.command {
+            Command::Learning { document } => learning::execute(self, session, request, document),
             Command::PublishMethod { .. }
             | Command::InspectMethod { .. }
             | Command::ListMethods { .. }

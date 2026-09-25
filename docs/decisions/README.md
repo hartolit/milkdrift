@@ -54,3 +54,4 @@ verify it; these decisions do not change current readers, configuration options 
 - [0039 — Managed resources retain lifetime protection and transferable editing ownership](0039-managed-resource-ownership.md)
 - [0040 — Adapt the method within a protected agreement](0040-protected-adaptive-methods.md)
 - [0041 — Published methods bind a starting revision and recoverable service invocation](0041-published-method-invocation.md)
+- [0042 — Compare reusable methods against independently declared evidence](0042-selected-evidence-and-method-evaluation.md)

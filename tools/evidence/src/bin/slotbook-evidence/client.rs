@@ -18,12 +18,15 @@ pub(super) enum Caller {
     Operator,
     Consumer,
     Origin,
+    Learner,
+    Evaluator,
 }
 #[derive(Clone, Copy)]
 pub(super) enum Expected {
     Success,
     Refused,
-    StaleCatalog,
+    PreAcceptanceRetry,
+    InvocationObservation,
 }
 pub(super) fn text(value: &Value) -> EvidenceResult<&str> {
     value
@@ -52,8 +55,43 @@ pub(super) struct Session {
     children: Vec<OwnedChild>,
     starts: u32,
     calls: std::cell::Cell<u64>,
+    token: PathBuf,
 }
 impl Session {
+    pub(super) fn resume(
+        root: &Path,
+        cli: &Path,
+        daemon: &Path,
+        port: u16,
+    ) -> EvidenceResult<Self> {
+        let root = root.canonicalize()?;
+        let logs = root.join("learning-05/evidence");
+        fs::create_dir_all(&logs)?;
+        let logs = logs.join(format!(
+            "session-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis()
+        ));
+        prepare::private_directory(&logs)?;
+        Ok(Self {
+            token: root.join("learning-05/operator.token"),
+            config: root.join("host/daemon.toml"),
+            root,
+            cli: cli.canonicalize()?,
+            daemon: daemon.canonicalize()?,
+            port,
+            logs,
+            protected: Value::Null,
+            worker: Value::Null,
+            requests: BTreeMap::new(),
+            origin: None,
+            children: Vec::new(),
+            starts: 0,
+            calls: std::cell::Cell::new(0),
+        })
+    }
     pub(super) fn prepare(args: &Qualify) -> EvidenceResult<Self> {
         let root = args.root.canonicalize()?;
         let cli = args.cli.canonicalize()?;
@@ -147,6 +185,7 @@ impl Session {
             )?;
         }
         Ok(Self {
+            token: root.join("host/operator.token"),
             root,
             cli,
             logs,
@@ -172,11 +211,12 @@ impl Session {
         command.env("MILKDRIFT_ENDPOINT", format!("http://127.0.0.1:{port}"));
         command.env(
             "MILKDRIFT_TOKEN_FILE",
-            self.root.join(if matches!(caller, Caller::Consumer) {
-                "consumer.token"
-            } else {
-                "host/operator.token"
-            }),
+            match caller {
+                Caller::Consumer => self.root.join("consumer.token"),
+                Caller::Learner => self.root.join("learning-05/learner.token"),
+                Caller::Evaluator => self.root.join("learning-05/evaluator.token"),
+                _ => self.token.clone(),
+            },
         );
         command
     }
@@ -187,19 +227,24 @@ impl Session {
         expected: Expected,
         caller: Caller,
     ) -> EvidenceResult<Value> {
+        let timeout = if arguments.windows(2).any(|a| a == ["run", "wait"]) {
+            600
+        } else {
+            240
+        };
         let output = run_command(
             self.command(caller)
                 .args(args![
                     "--json",
                     "--yes",
                     "--timeout-secs",
-                    240,
+                    timeout,
                     "--command-id",
                     label
                 ])
                 .args(arguments),
             None,
-            Duration::from_secs(250),
+            Duration::from_secs(timeout + 10),
         )?;
         self.calls.set(self.calls.get() + 1);
         let log_label = if self.logs.join(format!("{label}.json")).exists() {
@@ -222,14 +267,22 @@ impl Session {
             .map(serde_json::from_str::<Value>)
             .collect::<Result<Vec<_>, _>>()?;
         let mut final_page = pages.last().cloned().ok_or("CLI produced no response")?;
-        let stale = final_page["status"] == "failure"
+        let retryable_preparation = final_page["status"] == "failure"
             && final_page["value"]["type"] == "rejected"
-            && final_page["value"]["code"] == "catalog_stale"
+            && matches!(
+                final_page["value"]["code"].as_str(),
+                Some("catalog_stale" | "deadline")
+            )
             && final_page["value"]["known_execution"].is_null();
         let accepted = match expected {
             Expected::Success => output.status.success(),
             Expected::Refused => !output.status.success(),
-            Expected::StaleCatalog => output.status.success() || stale,
+            Expected::PreAcceptanceRetry => output.status.success() || retryable_preparation,
+            Expected::InvocationObservation => {
+                output.status.success()
+                    || (final_page["type"] == "invocation.wait"
+                        && final_page["error"]["code"] == "invocation_failed")
+            }
         };
         ensure(
             accepted,
@@ -301,36 +354,52 @@ impl Session {
         inputs: &Path,
         caller: Caller,
     ) -> EvidenceResult<String> {
-        for attempt in 0..3 {
+        // On recovery prefer the newest retained preparation: an earlier stale document may
+        // share a request key with later accepted bytes, and must not be mistaken for a replay.
+        let path_for = |attempt| {
+            self.root.join(if attempt == 0 {
+                format!("{label}-request.json")
+            } else {
+                format!("{label}-{attempt}-request.json")
+            })
+        };
+        let attempts = (0..6)
+            .rev()
+            .filter(|i| path_for(*i).exists())
+            .chain((0..6).filter(|i| !path_for(*i).exists()))
+            .collect::<Vec<_>>();
+        for attempt in attempts {
             let identity = if attempt == 0 {
                 label.to_owned()
             } else {
                 format!("{label}-{attempt}")
             };
             let request = self.root.join(format!("{identity}-request.json"));
-            self.call(
-                &format!("{identity}-prepare"),
-                args![
-                    "invocation",
-                    "prepare",
-                    capability,
-                    operation,
-                    "--host",
-                    "host:slotbook-test",
-                    "--request-id",
-                    identity,
-                    "--inputs",
-                    inputs.display(),
-                    "--output",
-                    request.display()
-                ],
-                Expected::Success,
-                caller,
-            )?;
+            if !request.exists() {
+                self.call(
+                    &format!("{identity}-prepare"),
+                    args![
+                        "invocation",
+                        "prepare",
+                        capability,
+                        operation,
+                        "--host",
+                        "host:slotbook-test",
+                        "--request-id",
+                        label,
+                        "--inputs",
+                        inputs.display(),
+                        "--output",
+                        request.display()
+                    ],
+                    Expected::Success,
+                    caller,
+                )?;
+            }
             let accepted = self.call(
                 &format!("{identity}-submit"),
                 args!["invocation", "submit", request.display()],
-                Expected::StaleCatalog,
+                Expected::PreAcceptanceRetry,
                 caller,
             )?;
             if accepted["status"] == "success" {
@@ -338,7 +407,7 @@ impl Session {
                 return Ok(text(&accepted["value"]["execution"])?.into());
             }
         }
-        Err("catalog changed across three explicit refusals without acceptance".into())
+        Err("catalog changed across six explicit refusals without acceptance".into())
     }
     pub(super) fn start(&mut self) -> EvidenceResult {
         ensure(
@@ -372,9 +441,15 @@ impl Session {
             }
             let ready = |caller| -> EvidenceResult<bool> {
                 Ok(run_command(
-                    self.command(caller).args(["--json", "daemon", "readiness"]),
+                    self.command(caller).args([
+                        "--json",
+                        "--timeout-secs",
+                        "2",
+                        "daemon",
+                        "readiness",
+                    ]),
                     None,
-                    Duration::from_secs(3),
+                    Duration::from_secs(5),
                 )?
                 .status
                 .success())

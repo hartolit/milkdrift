@@ -781,3 +781,57 @@ ownership, review corrections and original evidence under `target/adaptive-hosts
 Its Rust follow-up records native executable qualification under `target/rust-coherence/`. Current
 configuration, caller permissions and operating limits belong to the
 [published-method guide](../guides/published-methods.md).
+
+## Selected learning and product variants
+
+The [learning example](../../examples/adaptive-slotbook/README.md) continues the native published
+source through `slotbook-evidence learn`. An operator profile supplies the proposal endpoint.
+`slotbook-evidence model-fixture` is the separate deterministic HTTP lane; useful, unhelpful,
+malformed, invented-evidence and forbidden-edit modes exercise the same adapter and readers.
+Neither its synthetic usage nor the seeded application repair is real-model quality evidence.
+
+Focused checks include `milkdrift-control --test learning`, daemon learning source-context tests,
+the published control/daemon suites, the native Slotbook library, verifier cases and fixture reader.
+Run them with `cargo test` and `--all-features`; the workspace gate includes them. Comparison tests
+cover incomplete evidence, failed checks, paired regression, fixed input/verifier/configuration
+identities, returned-product mismatch and account/submission bounds. A real host/runtime test
+starts a narrowly granted method while its worker is unhealthy, refuses execution until health
+returns, then completes the same invocation. Publication regressions replace the method during an
+active call and inject failures before and after the publication commit, then reopen and replay.
+Catalog tests distinguish changes to availability/contracts from diagnostic health refreshes.
+The daemon resource test keeps an idle handle alive through shutdown and immediately reopens the
+store, proving that the joined owner releases managed storage without a sleep or reopen retry.
+
+The actual-binary scenario fixes four input pairs before model entry, retains three protected
+submissions per method/input, restarts during the comparison and promotion, and checks separate
+loan/class products before selecting one deployment. Its tool experiment records native bytes and
+an exact OCI base, verifies a fresh managed setup and preserves working bytes during activation.
+Knowledge supersession and prior context are checked across restart. These are finite desktop
+observations, not model-quality, host-reboot or general deployment guarantees.
+
+Evidence from 2026-09-25 lives under private `target/adaptive-hosts/05/` and the reviewed fresh
+study in `target/adaptive-hosts/05-review/`; the
+[05 handoff](virtual-office/adaptive-hosts/handoffs/05.md) records scope and results.
+The earlier `verified` study proves an accepted pre-entry preparation refusal remains inconclusive,
+automatic promotion is refused and the baseline publication remains available. Real Ornith
+requests in `complete` retain malformed candidate responses and interrupted/timeout uncertainty;
+none was substituted with a deterministic proposal. Raw requests, responses, stores and credentials
+remain private local evidence under the selected retention policy.
+
+The reviewed `05-review/qualified` study retains eight paired executions under the strengthened
+input/output and public-completion checks: one baseline repair versus zero candidate repairs on
+each input, passing final checks and settled accounts. Its separate policy promoted generation 2
+and replayed the same publication after restart. The earlier `05/end-to-end` products retain their
+baseline lineage; a later eligible comparison does not retroactively change their selected method.
+Both reviewed candidate variants passed their own six checks, and class evidence could not publish
+the loan target. Only the selected loan product was deployed. The result retains separate working
+state, configurations, invocations and method lineage.
+Fresh tool staging and an authorized drained worker update preserved the exact application bytes.
+Explicit knowledge supersession left the earlier selection and model context unchanged; an update
+for a different workspace was refused.
+
+The review gate passes 943 unit/integration tests, 24 doctests and all 24 repository contracts,
+alongside the remaining full-gate checks. Eight environment-specific tests remain ignored by that
+gate; the native protected-verifier lifecycle also passed separately. The desktop's finite private
+UID/GID pool caused an earlier renewal to remain unknown when two services occupied both mappings.
+That refusal is retained in `05-review/study/`; it is not converted into a successful verification.

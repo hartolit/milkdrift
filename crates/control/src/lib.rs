@@ -17,6 +17,7 @@ mod controller;
 mod document;
 mod error;
 mod identity;
+pub mod learning;
 mod policy;
 mod preset;
 mod read;

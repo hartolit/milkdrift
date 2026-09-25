@@ -118,7 +118,8 @@ impl PublishedWorkflowService {
                 }
                 let mut permitted = false;
                 for generation in &catalog {
-                    if generation.draining
+                    if !generation.current
+                        || generation.draining
                         || !generation.descriptor.matches(&requirement).is_match()
                     {
                         continue;
@@ -128,6 +129,14 @@ impl PublishedWorkflowService {
                     let mut resources = milkdrift_authority::RequestedResourceFacts::empty();
                     resources.workflow = Some(revision.semantic().workflow().clone());
                     resources.capability = Some(descriptor.identity().clone());
+                    // Match runtime's prospective check: unnamed implementations select one
+                    // granted identity, while all other declared envelope dimensions stay fixed.
+                    resources.capability_envelope = Some(
+                        CapabilityAuthorityScope::requirement_envelope(
+                            &requirement.clone().exact(descriptor.identity().clone()),
+                        )
+                        .map_err(failure)?,
+                    );
                     resources.category = Some(descriptor.category().clone());
                     resources.capability_operation = Some(requirement.operation().clone());
                     resources.provider_profile = descriptor.provider_profile().cloned();
@@ -150,7 +159,7 @@ impl PublishedWorkflowService {
                 }
                 if !permitted {
                     return Err(rejected(
-                        "publication requires a currently available implementation within its service grant",
+                        "publication requires a current registered implementation within its service grant",
                     ));
                 }
             }

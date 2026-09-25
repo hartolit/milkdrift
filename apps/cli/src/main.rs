@@ -81,6 +81,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum TopCommand {
+    /// Select evidence, declare a comparison, submit a candidate, compare, promote or inspect.
+    Learning {
+        /// Strict learning operation document, with exact prior receipt references.
+        file: PathBuf,
+    },
     /// Publish and administer exact reusable workflow capabilities on this host.
     Method {
         #[command(subcommand)]

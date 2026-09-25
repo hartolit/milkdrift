@@ -1,4 +1,25 @@
-# Local control API 2.10
+# Local control API 2.11
+
+The `learning` command body accepts an operation document owned by
+`milkdrift_control::learning::LearningRequest`: `select`, `declare`, `candidate`, `compare`,
+`preauthorize`, `auto_promote`, `promote`, or `inspect`. It uses the same authenticated command envelope and hot/cold receipt
+replay as other commands. `milkdrift learning FILE` submits that document. Each operation requires
+its named `learning.*` capability operation on `milkdrift-workflow-control`; candidate submission
+uses ordinary offline proposal authority. Selection, declaration, comparison and inspection also
+recheck the applicable source, revision, artifact and resource permissions. Promotion additionally
+requires `method.publish` on the exact publication capability. Automatic promotion uses the
+preauthorized operator's current grant and exact template, under the named executor's separate
+`learning.auto_promote` permission. Receipt references contain the
+authenticated `actor` and exact `command`; knowing a reference does not grant inspection.
+
+Selection publishes a restricted immutable source artifact and returns its exact reference.
+Comparison reads the declared run, account and private verifier records and reports `eligible`,
+`rejected`, or `inconclusive`; client-supplied scores are not accepted.
+Declarations name `input_field` and `candidate_output` so a passing check cannot qualify an unused
+input or a different returned artifact. Promotion returns an exact compact publication reference;
+`method show CAPABILITY --generation N` reads the full published contract from its owner.
+[Learning methods](../guides/learning-methods.md) explains source
+materialization, immutable declarations, finite inspection and independent publication authority.
 
 Use this reference for exact requests, replies, routes, and CLI machine output. For setup, begin
 with the [operator examples](../../examples/operator/README.md); for Rust integration, use the
@@ -12,10 +33,10 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":10}}
+{"protocol":{"major":2,"minor":11}}
 ```
 
-Version 2.10 is required on both sides. Older and newer major/minor versions are refused with
+Version 2.11 is required on both sides. Older and newer major/minor versions are refused with
 `unsupported_version`; update the client and daemon together. There is no protocol downgrade.
 Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
@@ -23,7 +44,7 @@ the negotiated envelope version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 10},
+  "protocol": {"major": 2, "minor": 11},
   "request_id": "req-1",
   "value": {}
 }
@@ -37,7 +58,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 10},
+  "protocol": {"major": 2, "minor": 11},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -86,7 +107,7 @@ administration uses the separate routes below. A command envelope has no actor f
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 10},
+  "protocol": {"major": 2, "minor": 11},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -377,7 +398,8 @@ envelope. Clients must examine the preview state before proposing a change.
 }
 ```
 
-The same document is the inline `request` input to `milkdrift.resources` / `resource.manage`.
+The same document is the `request` input to `milkdrift.resources` / `resource.manage`, supplied
+inline or through an authorized exact value/artifact reference (at most 64 KiB).
 `prepare` and `inspect` evaluate `InspectHealth`; mutations evaluate `AdministerCapabilities`.
 All target capability identity `managed.INSTALLATION` and the exact operation selector
 `resource.ACTION`, plus configuration-derived filesystem/network requirements. Preparation/inspection
@@ -410,7 +432,7 @@ See [managed operations](../operations/managed-linux.md) for exact CLI use and r
 
 ## Governed methods and protected publication
 
-Protocol 2.10 run reads include `published_source` (the accepted public operation or local attempt,
+Protocol 2.11 run reads include `published_source` (the accepted public operation or local attempt,
 visible under internal run inspection), `governing_agreement` (the accepted origin binding or null),
 and `agreement_adoptions` (the cumulative prospective adoption count). These project runtime history;
 clients cannot update them. Blueprint schema 3 includes an explicit agreement or null.
@@ -423,7 +445,8 @@ It cannot be combined with a canonical `proposal` envelope. Normal receipts reta
 Managed schema 3 includes `evaluate { candidate }`, `evidence { evaluation }`, and
 `publish { evaluation }`. Candidate is an exact artifact reference; evaluation is its host-derived
 `b3_` journal identity. `resource.evaluate_candidate` and `resource.publish_candidate` accept an
-inline target (`schema_version`, `command`, `installation`, `expected_version`) plus a selected
+target (`schema_version`, `command`, `installation`, `expected_version`) inline or through a bounded
+authorized value/artifact reference, plus a selected
 `candidate` or `evaluation` artifact input. They resolve selected workspace values through the same
 artifact owner. Every API, CLI, workflow and serving call enters the managed owner; an uploaded
 report is only an identity selector. The private journal and current target policy decide permission.

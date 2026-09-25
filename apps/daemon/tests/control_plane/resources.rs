@@ -57,7 +57,14 @@ async fn configured_resource_owner_retains_exact_failed_platform_intent_across_r
         quadlet_directory: quadlets,
         recipes: vec![path],
     });
+    // An idle HTTP connection may retain a handle after the server finishes draining.
+    // Joining the owner must release storage even while that handle remains alive.
+    let first = DaemonHost::start(config.clone().validate(directory.path())?)?;
+    let idle_connection = first.clone();
+    first.shutdown().await?;
+    drop(first);
     let daemon = start(config.clone().validate(directory.path())?, CONTROLLER_TOKEN).await?;
+    drop(idle_connection);
     let request = ManagedRequest {
         schema_version: milkdrift_capability::managed::MANAGED_SCHEMA_VERSION,
         command: ManagedName::new("apply-exact")?,

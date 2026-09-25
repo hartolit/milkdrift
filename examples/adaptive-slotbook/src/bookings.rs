@@ -36,6 +36,44 @@ impl Ord for Timestamp {
     }
 }
 impl Timestamp {
+    fn seconds(&self) -> u64 {
+        // Parsing has already checked the Gregorian fields. An ordinal avoids local time zones
+        // and makes a cancellation notice period work across midnight, month and leap boundaries.
+        let digits = |start: usize, end: usize| {
+            self.0.as_bytes()[start..end]
+                .iter()
+                .fold(0_u64, |value, digit| value * 10 + u64::from(digit - b'0'))
+        };
+        let year = digits(0, 4);
+        let prior = year - 1;
+        let month = digits(5, 7);
+        let leap =
+            year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+        let mut days = prior * 365 + prior / 4 - prior / 100 + prior / 400;
+        for m in 1..month {
+            days += match m {
+                2 => {
+                    if leap {
+                        29
+                    } else {
+                        28
+                    }
+                }
+                4 | 6 | 9 | 11 => 30,
+                _ => 31,
+            };
+        }
+        (days + digits(8, 10) - 1) * 86_400
+            + digits(11, 13) * 3600
+            + digits(14, 16) * 60
+            + digits(17, 19)
+    }
+
+    fn before_notice_boundary(&self, start: &Self, notice_seconds: u32) -> bool {
+        (self.seconds() + u64::from(notice_seconds), self.key().1)
+            < (start.seconds(), start.key().1)
+    }
+
     // Every constructor validates ASCII calendar fields. Trim fractional zeroes so equal
     // instants compare equally while preserving the caller's representation in HTTP and storage.
     fn key(&self) -> (&str, &str) {
@@ -134,6 +172,7 @@ pub(super) enum Failure {
 
 pub(super) struct Bookings {
     capacity: u32,
+    cancellation_notice_seconds: u32,
     path: Option<PathBuf>,
     snapshot: Snapshot,
     unavailable: bool,
@@ -141,6 +180,7 @@ pub(super) struct Bookings {
 impl Bookings {
     pub(super) fn open(
         capacity: u32,
+        cancellation_notice_seconds: u32,
         path: Option<PathBuf>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         if capacity == 0 {
@@ -186,6 +226,7 @@ impl Bookings {
         };
         Ok(Self {
             capacity,
+            cancellation_notice_seconds,
             path,
             snapshot,
             unavailable: false,
@@ -269,7 +310,7 @@ impl Bookings {
         if row.cancelled {
             return Ok(());
         }
-        if clock >= &row.start {
+        if !clock.before_notice_boundary(&row.start, self.cancellation_notice_seconds) {
             return Err(Failure::Conflict);
         }
         row.cancelled = true;
@@ -307,6 +348,60 @@ impl Bookings {
 mod tests {
     use super::*;
     #[test]
+    fn cancellation_notice_is_strict_across_calendar_and_fraction_boundaries()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (start, notice, before, cutoff) in [
+            (
+                "2027-05-04T09:00:00Z",
+                3600,
+                "2027-05-04T07:59:00Z",
+                "2027-05-04T08:00:00Z",
+            ),
+            (
+                "2027-06-08T17:00:00Z",
+                7200,
+                "2027-06-08T14:59:00Z",
+                "2027-06-08T15:00:00Z",
+            ),
+            (
+                "2028-03-01T00:00:00.1Z",
+                86400,
+                "2028-02-29T00:00:00.09Z",
+                "2028-02-29T00:00:00.10Z",
+            ),
+            (
+                "2027-01-01T00:00:00Z",
+                86400,
+                "2026-12-30T23:59:59Z",
+                "2026-12-31T00:00:00Z",
+            ),
+        ] {
+            let parse = |s| Timestamp::parse(s).map_err(|e| format!("{e:?}"));
+            assert!(parse(before)?.before_notice_boundary(&parse(start)?, notice));
+            assert!(!parse(cutoff)?.before_notice_boundary(&parse(start)?, notice));
+            let mut store = Bookings::open(2, notice, None)?;
+            let id = store
+                .create(Reservation {
+                    name: "Ada".into(),
+                    start: start.into(),
+                    end: "2029-01-01T00:00:00Z".into(),
+                    quantity: 2,
+                })
+                .map_err(|e| format!("{e:?}"))?;
+            assert!(matches!(
+                store.cancel(id, &parse(cutoff)?),
+                Err(Failure::Conflict)
+            ));
+            store
+                .cancel(id, &parse(before)?)
+                .map_err(|e| format!("{e:?}"))?;
+            store
+                .cancel(id, &parse(cutoff)?)
+                .map_err(|e| format!("{e:?}"))?;
+        }
+        Ok(())
+    }
+    #[test]
     fn timestamps_refuse_invalid_calendar_values_and_noncanonical_forms() {
         for value in [
             "2027-02-29T00:00:00Z",
@@ -343,7 +438,7 @@ mod tests {
             end: "2027-04-10T11:00:00Z".into(),
             quantity: 1,
         };
-        let mut store = Bookings::open(1, Some(path.clone()))?;
+        let mut store = Bookings::open(1, 0, Some(path.clone()))?;
         let id = store
             .create(request.clone())
             .map_err(|e| format!("{e:?}"))?;
@@ -352,7 +447,7 @@ mod tests {
             Err(Failure::Conflict)
         ));
         drop(store);
-        let mut reopened = Bookings::open(1, Some(path))?;
+        let mut reopened = Bookings::open(1, 0, Some(path))?;
         assert!(matches!(
             reopened.create(request.clone()),
             Err(Failure::Conflict)
@@ -369,7 +464,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         let path = root.path().join("bookings.json");
-        let mut store = Bookings::open(1, Some(path.clone()))?;
+        let mut store = Bookings::open(1, 0, Some(path.clone()))?;
         // A directory at the snapshot destination makes the real atomic replacement fail.
         fs::create_dir(&path)?;
         let request = Reservation {
@@ -388,7 +483,7 @@ mod tests {
             Err(Failure::Unavailable)
         ));
         assert!(matches!(store.active(), Err(Failure::Unavailable)));
-        let mut reopened = Bookings::open(1, Some(path))?;
+        let mut reopened = Bookings::open(1, 0, Some(path))?;
         assert!(reopened.active().map_err(|e| format!("{e:?}"))?.is_empty());
         assert_eq!(reopened.create(request).map_err(|e| format!("{e:?}"))?, 1);
         Ok(())

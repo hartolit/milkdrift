@@ -164,9 +164,16 @@ impl super::DaemonHost {
         if !self.accepting_mutations() {
             return Err(ManagedError::Conflict("host is draining".to_owned()));
         }
-        let managed = self.managed.as_ref().ok_or_else(|| {
-            ManagedError::Rejected("managed Linux setup is not configured".to_owned())
-        })?;
+        let managed = self
+            .managed
+            .as_ref()
+            .ok_or_else(|| {
+                ManagedError::Rejected("managed Linux setup is not configured".to_owned())
+            })?
+            .upgrade()
+            .ok_or_else(|| {
+                ManagedError::Conflict("managed resource owner has stopped".to_owned())
+            })?;
         let claim = session.context.authority();
         let caller = AuthorityRequest {
             decision: DecisionId::new("managed-api").map_err(failure)?,

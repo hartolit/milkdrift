@@ -130,7 +130,7 @@ pub struct DaemonHost {
     peer_registries: Arc<BTreeMap<PeerId, Arc<PeerRegistry>>>,
     revoked_peers: Arc<Mutex<BTreeSet<PeerId>>>,
     clock: DurableClock,
-    managed: Option<Arc<managed::ManagedHost>>,
+    managed: Option<Weak<managed::ManagedHost>>,
 }
 
 impl std::fmt::Debug for DaemonHost {
@@ -202,6 +202,8 @@ struct Owner {
     peer_service: Option<Weak<PeerService>>,
     // Strong lifecycle lease; service-facing artifact adapters retain only a weak handle.
     _peer_artifacts: Option<Arc<CorePeerArtifactStore>>,
+    // Idle HTTP handles must not retain the managed store after the owner is joined.
+    _managed: Option<Arc<managed::ManagedHost>>,
     peer_registries: BTreeMap<PeerId, Arc<PeerRegistry>>,
     clock: DurableClock,
 }

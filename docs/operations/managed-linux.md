@@ -17,6 +17,11 @@ not established by this setup.
 The mechanism requires a non-root Linux account, Podman 5.4 through 6.x, user systemd, cgroup v2
 with delegated CPU, memory and PID controllers and preloaded exact images. Reserve at least 65,536 subordinate UIDs and
 GIDs for a worker, or 131,072 of each when an owned model service and worker run together.
+Count protected services and verifier containers in the same host-wide pool. With only 131,072
+IDs of each kind, two resident services leave no range for a verifier or worker. Preparing an
+individual recipe does not reserve spare IDs against other installations. Plan for the maximum
+simultaneous containers, or stop disposable services through their managed owner before testing.
+Stopping preserves declared data; a later controlled start still requires applicable evidence.
 An owned persistent service also requires operator-enabled user lingering. `prepare` checks these
 facts, available shared RAM, free storage, and exact model inputs. An unsupported version or missing
 protection refuses; there is no privileged-container or native-process fallback. The adapter uses

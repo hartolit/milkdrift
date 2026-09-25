@@ -5,6 +5,12 @@ authorized operations. `ControlService` translates those requests into immutable
 [runtime commands](../runtime/README.md). It is the place to work on proposal handling, risk
 classification, or controller policy; scheduling and event commits remain with runtime.
 
+For reuse across tasks, [`learning`](src/learning.rs) compares independently executed methods
+against a declaration fixed before proposal generation. The daemon authenticates source selection
+and obtains observations from existing run/account/verifier owners; the comparison itself grants
+no publication authority. [Learning methods](../../docs/guides/learning-methods.md) follows the
+operator and agent path from selected evidence through evaluation and separate promotion.
+
 The same installed adapter exposes `workflow.accept_result`. Use an ordinary acceptance task and
 branch to distinguish an invocation's completion from the output required by its workflow.
 [Result acceptance](../../docs/guides/result-acceptance.md) explains the typed contracts, verifier

@@ -49,6 +49,29 @@ pub fn entered(
     AdapterExecutionContext,
     PeerExecutionRecord,
 )> {
+    entered_reference(
+        store,
+        descriptor,
+        key,
+        input,
+        InvocationValueReference::Inline {
+            value: BoundedJson::new(value)?,
+        },
+    )
+}
+
+/// Retain an exact referenced input in the same real acceptance used by inline fixtures.
+pub fn entered_reference(
+    store: &RedbStore,
+    descriptor: &CapabilityDescriptor,
+    key: &str,
+    input: &str,
+    value: InvocationValueReference,
+) -> Result<(
+    InvocationRequest,
+    AdapterExecutionContext,
+    PeerExecutionRecord,
+)> {
     let operation = descriptor
         .operations()
         .keys()
@@ -67,12 +90,7 @@ pub fn entered(
         operation.clone(),
         descriptor.provider_profile().cloned(),
         key_value.clone(),
-        vec![InputReference::new(
-            input,
-            InvocationValueReference::Inline {
-                value: BoundedJson::new(value)?,
-            },
-        )?],
+        vec![InputReference::new(input, value)?],
         BTreeMap::new(),
     )?;
     let mut authority = caller()?;

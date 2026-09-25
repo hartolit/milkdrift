@@ -32,6 +32,81 @@ impl FaultInjector for CommitFault {
 }
 
 #[test]
+fn failed_or_lost_promotion_commit_preserves_old_generation_and_exact_replay() -> TestResult {
+    for point in [
+        FaultPoint::BeforePublishedMethodCommit,
+        FaultPoint::AfterPublishedMethodCommit,
+    ] {
+        let directory = TempDir::new()?;
+        let request = milkdrift_persistence::IntegrityDigest::hash(b"reviewed-method-promotion");
+        let (original, next);
+        {
+            let faults = Arc::new(CommitFault::default());
+            let fixture = fixture_with_faults(
+                directory.path(),
+                "promotion-fault",
+                false,
+                Some(faults.clone()),
+            )?;
+            original = fixture.method.clone();
+            let mut method = original.clone();
+            let mut descriptor = serde_json::to_value(&method.descriptor)?;
+            descriptor["descriptor_revision"] = serde_json::json!(2);
+            method.descriptor = serde_json::from_value(descriptor)?;
+            next = method;
+            faults.arm(point, 1)?;
+            assert!(
+                fixture
+                    .published
+                    .publish(next.clone(), Some(1), &fixture.decision, &request)
+                    .is_err()
+            );
+            assert_eq!(
+                fixture
+                    .store
+                    .published_method(original.descriptor.identity(), 1)?
+                    .ok_or("original absent")?
+                    .method,
+                original
+            );
+            assert_eq!(
+                fixture
+                    .store
+                    .published_method(original.descriptor.identity(), 2)?
+                    .is_some(),
+                point == FaultPoint::AfterPublishedMethodCommit
+            );
+        }
+        let fixture = fixture(directory.path(), "promotion-reopened")?;
+        let accepted =
+            fixture
+                .published
+                .publish(next.clone(), Some(1), &fixture.decision, &request)?;
+        let replay =
+            fixture
+                .published
+                .publish(next.clone(), Some(1), &fixture.decision, &request)?;
+        assert_eq!(accepted, replay);
+        assert_eq!(accepted.method, next);
+        assert_eq!(
+            fixture
+                .store
+                .published_method(original.descriptor.identity(), 1)?
+                .ok_or("original absent after reopen")?
+                .method,
+            original
+        );
+        assert!(
+            fixture
+                .store
+                .published_method(original.descriptor.identity(), 3)?
+                .is_none()
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn each_create_bind_start_commit_boundary_recovers_one_child_after_reopen() -> TestResult {
     for managed in [false, true] {
         for point in [

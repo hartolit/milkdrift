@@ -76,7 +76,10 @@ enum Parsed {
     Evaluation(ManagedTarget, milkdrift_capability::InputReference),
     Publication(ManagedTarget, milkdrift_capability::InputReference),
 }
-fn parse(invocation: &AdapterInvocation<'_>) -> Result<Parsed, AdapterError> {
+fn parse(
+    invocation: &AdapterInvocation<'_>,
+    data: &dyn InvocationDataAccess,
+) -> Result<Parsed, AdapterError> {
     let operation = invocation.request().operation().as_str();
     let input = |name: &str| {
         invocation
@@ -91,18 +94,37 @@ fn parse(invocation: &AdapterInvocation<'_>) -> Result<Parsed, AdapterError> {
     } else {
         "target"
     };
-    let InvocationValueReference::Inline { value } = input(name)?.value() else {
-        return Err(AdapterError::rejected(
-            "managed target/request must be bounded inline JSON",
-        ));
+    let value = match input(name)?.value() {
+        InvocationValueReference::Inline { value } => value.value().clone(),
+        _ => {
+            let context = invocation.context().ok_or_else(|| {
+                AdapterError::rejected(
+                    "referenced managed target/request requires authorized execution context",
+                )
+            })?;
+            let bytes = data
+                .read_input_bytes(
+                    context,
+                    input(name)?,
+                    MaterializationLimits {
+                        max_files: 1,
+                        max_file_bytes: 65_536,
+                        max_total_bytes: 65_536,
+                        max_path_bytes: 256,
+                        max_directory_depth: 8,
+                        chunk_bytes: 16_384,
+                    },
+                )
+                .map_err(failure)?;
+            milkdrift_contracts::parse_json_without_duplicates(&bytes).map_err(failure)?
+        }
     };
     if operation == "resource.manage" {
-        let request: ManagedRequest =
-            serde_json::from_value(value.value().clone()).map_err(failure)?;
+        let request: ManagedRequest = serde_json::from_value(value).map_err(failure)?;
         request.validate().map_err(failure)?;
         return Ok(Parsed::Ready(request));
     }
-    let target: ManagedTarget = serde_json::from_value(value.value().clone()).map_err(failure)?;
+    let target: ManagedTarget = serde_json::from_value(value).map_err(failure)?;
     target.request(ManagedAction::Inspect {}).map_err(failure)?;
     match operation {
         "resource.evaluate_candidate" | "resource.publish_candidate" => {
@@ -137,7 +159,7 @@ impl CapabilityAdapter for ManagedLifecycleAdapter {
         &self,
         invocation: &AdapterInvocation<'_>,
     ) -> Result<InvocationAdmissionEnvelope, AdapterError> {
-        parse(invocation)?;
+        parse(invocation, self.data.as_ref())?;
         Ok(InvocationAdmissionEnvelope::new(
             AdmissionUnit::Unknown,
             AdmissionBound::NotApplicable,
@@ -157,7 +179,7 @@ impl CapabilityAdapter for ManagedLifecycleAdapter {
         invocation: &AdapterInvocation<'_>,
         reporter: &dyn AdapterReporter,
     ) -> Result<(), AdapterError> {
-        let parsed = parse(invocation)?;
+        let parsed = parse(invocation, self.data.as_ref())?;
         let context = invocation
             .context()
             .ok_or_else(|| AdapterError::rejected("durable execution context is required"))?;

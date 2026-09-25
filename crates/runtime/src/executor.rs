@@ -177,8 +177,8 @@ pub struct CapabilityResolutionContext {
     basis: ExecutionAuthorityBasis,
     revision: RevisionId,
     node: NodeId,
-    execution: NodeExecutionId,
-    attempt: AttemptId,
+    execution: Option<NodeExecutionId>,
+    attempt: Option<AttemptId>,
 }
 
 impl CapabilityResolutionContext {
@@ -195,9 +195,33 @@ impl CapabilityResolutionContext {
             basis,
             revision,
             node,
-            execution,
-            attempt,
+            execution: Some(execution),
+            attempt: Some(attempt),
         }
+    }
+
+    /// A prospective revision check has no scheduled execution or invented attempt identity.
+    pub(crate) fn for_revision(
+        basis: ExecutionAuthorityBasis,
+        revision: RevisionId,
+        node: NodeId,
+    ) -> Self {
+        Self {
+            basis,
+            revision,
+            node,
+            execution: None,
+            attempt: None,
+        }
+    }
+
+    /// Whether resolution checks future revision authority without scheduling an attempt.
+    ///
+    /// Hosts still check the current implementation and grant, but defer transient health and
+    /// permit capacity checks until ordinary scheduling. This probe acquires no permit.
+    #[must_use]
+    pub const fn is_prospective(&self) -> bool {
+        self.execution.is_none()
     }
 
     /// Frozen run-level authority inherited by this attempt.
@@ -254,8 +278,14 @@ impl CapabilityResolutionContext {
             self.basis.digest(),
             self.revision,
             self.node,
-            self.execution,
-            self.attempt,
+            self.execution
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "revision-check".into()),
+            self.attempt
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "unscheduled".into()),
             descriptor.identity(),
             boundary,
         );
@@ -271,8 +301,8 @@ impl CapabilityResolutionContext {
             AuthorityExecutionProvenance {
                 revision: Some(self.revision.clone()),
                 node: Some(self.node.clone()),
-                execution: Some(self.execution.to_string()),
-                attempt: Some(self.attempt.to_string()),
+                execution: self.execution.as_ref().map(ToString::to_string),
+                attempt: self.attempt.as_ref().map(ToString::to_string),
                 descriptor_revision: Some(descriptor.descriptor_revision()),
                 peer: descriptor.peer().cloned(),
                 idempotency: Some(contract.idempotency()),

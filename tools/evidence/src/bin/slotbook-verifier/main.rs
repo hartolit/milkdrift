@@ -1,4 +1,5 @@
 //! Operator-owned finite HTTP verifier, pinned by executable digest outside editable workers.
+mod case;
 mod checks;
 mod service;
 

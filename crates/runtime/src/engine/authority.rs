@@ -155,7 +155,7 @@ impl RuntimeService {
                     node.id(),
                 );
                 let digest = blake3::hash(identity.as_bytes());
-                let request = basis.request(
+                let mut request = basis.request(
                     DecisionId::new(format!("decision:{digest}"))?,
                     AuthorityOperation::InvokeCapability,
                     resources,
@@ -171,7 +171,33 @@ impl RuntimeService {
                         ..AuthorityExecutionProvenance::default()
                     },
                 );
-                let decision = self.authority.evaluate(&request)?;
+                let mut decision = self.authority.evaluate(&request)?;
+                if !decision.is_allowed() && requirement.exact_capability().is_none() {
+                    // An unnamed implementation is selected inside the run's grant, not a
+                    // request to invoke every identity. Probe through the ordinary authorized
+                    // resolver, then keep every other prospective envelope dimension intact.
+                    // Scheduling and final entry resolve/check authority again; this takes no
+                    // permit and does not freeze a future invocation or manufacture an attempt.
+                    let context = crate::CapabilityResolutionContext::for_revision(
+                        basis.clone(),
+                        revision_id.clone(),
+                        node.id().clone(),
+                    );
+                    if let Ok(resolved) = self.executor.resolve_authorized(
+                        &requirement,
+                        &context,
+                        self.authority.as_ref(),
+                        evaluated_at_unix_ms,
+                    ) {
+                        let exact = requirement
+                            .clone()
+                            .exact(resolved.descriptor().identity().clone());
+                        request.resources.capability = exact.exact_capability().cloned();
+                        request.resources.capability_envelope =
+                            Some(CapabilityAuthorityScope::requirement_envelope(&exact)?);
+                        decision = self.authority.evaluate(&request)?;
+                    }
+                }
                 if !decision.is_allowed() {
                     return Err(ExecutionAuthorityError {
                         error: RuntimeError::AuthorizationDenied {

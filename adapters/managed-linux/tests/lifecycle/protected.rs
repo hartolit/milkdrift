@@ -178,7 +178,14 @@ fn publish_artifact(
         ArtifactPublicationId::new(name)?,
         RunId::new(name)?,
         metadata,
-        WorkspaceBudget::new(0, 0, 0, 1, 64, 64)?,
+        WorkspaceBudget::new(
+            0,
+            0,
+            0,
+            1,
+            (bytes.len() as u64).max(64),
+            (bytes.len() as u64).max(64),
+        )?,
         WorkspaceUsage::EMPTY,
     )?;
     store.begin_publication(&publication)?;
@@ -771,6 +778,70 @@ fn adapter_reports_known_refusal_but_preserves_uncertainty_after_an_accepted_eff
             assert_eq!(terminal.side_effect(), SideEffectClass::None);
             assert!(serde_json::to_string(terminal)?.contains("verification is failed"));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn referenced_managed_request_uses_bounded_authorized_input_reading() -> Result {
+    use milkdrift_capability::{InvocationValueReference, ResolvedCapabilitySnapshot};
+    use milkdrift_capability_host::{
+        AdapterInvocation, CapabilityAdapter, StoreInvocationDataAccess,
+        managed::{ManagedLifecycleAdapter, managed_lifecycle_descriptor},
+    };
+    use milkdrift_persistence::{ArtifactReadAuthority, EvidenceId};
+    for case in ["valid", "denied", "malformed"] {
+        let root = tempfile::tempdir()?;
+        let store = Arc::new(RedbStore::open(root.path())?);
+        let platform = Arc::new(ProtectedPlatform::default());
+        let owner = Arc::new(manager(
+            store.clone(),
+            platform.clone(),
+            Arc::new(Clock(AtomicU64::new(1000))),
+        ));
+        let bytes = if case == "malformed" {
+            br#"{"schema_version":3,"schema_version":3}"#.to_vec()
+        } else {
+            serde_json::to_vec(&request(
+                "prepare",
+                0,
+                ManagedAction::Prepare {
+                    recipe: reference('1')?,
+                },
+            )?)?
+        };
+        let reference = publish_artifact(&store, "managed-request", &bytes)?;
+        let descriptor = managed_lifecycle_descriptor()?;
+        let (invocation, context, _) = super::support::entered_reference(
+            &store,
+            &descriptor,
+            "referenced-request",
+            "request",
+            InvocationValueReference::Artifact { reference },
+        )?;
+        let read_authority = if case == "denied" {
+            ArtifactReadAuthority::PublicOnly
+        } else {
+            ArtifactReadAuthority::Authorized {
+                actor: caller()?.actor,
+                evidence: EvidenceId::new("approved-request-read")?,
+            }
+        };
+        let data = Arc::new(StoreInvocationDataAccess::new(
+            store,
+            root.path().join("temporary"),
+            read_authority,
+        )?);
+        let adapter = ManagedLifecycleAdapter::new(owner, data);
+        let snapshot =
+            ResolvedCapabilitySnapshot::from_descriptor(&descriptor, invocation.operation())?;
+        let result = adapter.admission_envelope(&AdapterInvocation::with_context(
+            &snapshot,
+            &invocation,
+            &context,
+        ));
+        assert_eq!(result.is_ok(), case == "valid");
+        assert_eq!(platform.base.0.lock().map_err(|e| e.to_string())?.starts, 0);
     }
     Ok(())
 }

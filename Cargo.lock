@@ -1408,6 +1408,7 @@ name = "milkdrift-slotbook"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "blake3",
  "serde",
  "serde_json",
  "tempfile",

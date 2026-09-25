@@ -59,7 +59,7 @@ pub(super) fn credential(path: &Path) -> EvidenceResult {
 pub(super) fn artifact_schema() -> Value {
     json!({"id":"milkdrift.artifact-reference","version":1})
 }
-fn port(direction: &str, schema: Value, binding: Value, required: bool) -> Value {
+pub(super) fn port(direction: &str, schema: Value, binding: Value, required: bool) -> Value {
     json!({"direction":direction,"schema":schema,"binding":binding,"required":required})
 }
 pub(super) fn node(identity: &str, kind: Value, incoming: bool, outgoing: bool) -> Value {
@@ -75,7 +75,7 @@ pub(super) fn edge(
 ) -> Value {
     json!({"id":identity,"kind":kind,"source_node":source,"source_port":from,"target_node":target,"target_port":to})
 }
-fn task(
+pub(super) fn task(
     identity: &str,
     requirement: Value,
     name: &str,
@@ -101,7 +101,7 @@ fn task(
     }
     result
 }
-fn worker(identity: &str, requirement: &Value, argv: &[&str], capture: bool) -> Value {
+pub(super) fn worker(identity: &str, requirement: &Value, argv: &[&str], capture: bool) -> Value {
     task(
         identity,
         requirement.clone(),

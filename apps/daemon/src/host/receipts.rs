@@ -179,7 +179,7 @@ fn application_receipt(
     .map_err(public_persistence)
 }
 
-fn stored_application_result(
+pub(super) fn stored_application_result(
     receipt: &ApplicationCommandReceipt,
 ) -> Result<CommandAccepted, PublicFailure> {
     let stored: StoredApplicationResult = serde_json::from_slice(receipt.result().document())
@@ -278,7 +278,8 @@ fn command_run_identity(command: &Command) -> Option<&str> {
         | Command::ContinueController { run_id, .. }
         | Command::DecideProposal { run_id, .. }
         | Command::ApplyProposal { run_id, .. } => Some(run_id),
-        Command::PublishMethod { .. }
+        Command::Learning { .. }
+        | Command::PublishMethod { .. }
         | Command::InspectMethod { .. }
         | Command::ListMethods { .. }
         | Command::RetireMethod { .. }

@@ -194,7 +194,22 @@ fn filtered_descriptor(
 }
 
 pub(super) fn catalog_fingerprint(entries: &[CatalogEntry]) -> Result<String, ServingError> {
-    let bytes =
-        serde_json::to_vec(entries).map_err(|error| ServingError::Protocol(error.to_string()))?;
+    // A health heartbeat or load sample must not invalidate an otherwise exact prepared request.
+    // The snapshot retains its original truthful observations until its TTL expires. Membership,
+    // contracts and draining still change the generation; final entry checks live availability,
+    // authority and capacity independently of this discovery snapshot.
+    let selection = entries
+        .iter()
+        .map(|entry| {
+            (
+                &entry.descriptor,
+                &entry.invocable_operations,
+                entry.draining,
+                entry.observation.available(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let bytes = serde_json::to_vec(&selection)
+        .map_err(|error| ServingError::Protocol(error.to_string()))?;
     Ok(blake3::hash(&bytes).to_hex().to_string())
 }

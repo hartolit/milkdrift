@@ -435,6 +435,11 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
         "Peer protocol and catalog messages".to_owned(),
         peer.clone(),
     );
+    let learning = numeric_const("crates/control/src/learning.rs", "LEARNING_SCHEMA_VERSION")?;
+    expected.insert(
+        "Learning declaration / comparison".to_owned(),
+        format!("{learning} / {learning}"),
+    );
     let acceptance = numeric_const(
         "crates/control/src/acceptance.rs",
         "RESULT_ACCEPTANCE_SCHEMA_VERSION",

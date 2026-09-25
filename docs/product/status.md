@@ -37,6 +37,12 @@ This document owns current implementation, limitations, exact versions, and qual
   to internal runs or administrative capabilities. Retirement preserves accepted calls; ancestry,
   caller revocation, cancellation and deadlines constrain future internal entry. See
   [published methods](../guides/published-methods.md).
+- Selected knowledge and finite learning commands compose the existing artifact, context, proposal,
+  runtime, account, verifier and publication owners. Declarations fix independent evaluation slots
+  before model entry. Comparisons retain eligible, rejected and inconclusive outcomes; manual or
+  separately preauthorized promotion requires current publication authority. The native Slotbook
+  driver exercises held-out comparisons, independent loan/class products and staged tool recipes.
+  [Learning methods](../guides/learning-methods.md) explains frozen source versions and operator use.
 - The CLI covers blueprint/sequence authoring, run/proposal/controller/peer/layout control,
   retained-work resolution, bounded inspection, verified create-new downloads, wait/follow deadlines,
   and stable machine output. [Production examples](../../examples/operator/README.md) provide
@@ -110,11 +116,12 @@ values; repository contracts check the version cells against source.
 | Redb internal document format / physical schema | 20 / 15 | Older/future stores refused; no migration. |
 | Application command receipt / layout record | 1 / 1 | Exact supported contracts. |
 | Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
-| External control / authenticated cursor | 2.10 / 2 | Only the exact current protocol and cursor forms are accepted. |
+| External control / authenticated cursor | 2.11 / 2 | Only the exact current protocol and cursor forms are accepted. |
 | Peer protocol and catalog messages | 1.5 | Earlier minors refused. |
 | Daemon configuration | 13 | TOML; JSON and earlier versions refused. |
 | Managed resource request / inventory | 3 | Exact schema, bounded typed recipe references, preserved receipts and guarded transitions. |
 | Published method / invocation association | 1 / 1 | Exact schema and generation; ancestry preserves accepted depth ceilings. |
+| Learning declaration / comparison | 1 / 1 | Exact selected evidence, frozen evaluation slots and separate promotion authority. |
 | Layout document / CLI JSON output | 1 / 2 | CLI schema 1 refused. |
 
 ## Limitations now
@@ -135,12 +142,21 @@ values; repository contracts check the version cells against source.
   configuration, policy, target generation and fresh authority. Raw start/update cannot substitute a
   candidate. The finite [Slotbook example](../../examples/adaptive-slotbook/README.md) is the supported
   authoring and inspection path. It is not a general application correctness or security guarantee.
-  Catalog publication and service delegation are implemented. Evaluated reuse remains assigned to
-  05. Public inputs are finite reviewed choices or authorized exact artifacts; results are declared
+  Catalog publication, service delegation and finite evaluated reuse are implemented.
+  Public inputs are finite reviewed choices or authorized exact artifacts; results are declared
   accepted terminal fields. Per-call allowances and service grant/host ceilings apply, with no
   service-wide lifetime spending account. Process-internal network/model calls are not direct-model
   accounting. No live model repair, second-machine protected deployment or reboot qualification is
   claimed here.
+- Learning comparisons are bounded to declared slots and 4,096 events per internal run. Unread
+  descendants, unavailable usage, missing public completion or missing verifier evidence prevent
+  eligibility. The declaration fixes the input and output fields; the returned product must be the
+  artifact accepted by the final verifier. The maintained
+  application and repair remain seeded native fixtures. Real Ornith requests reached the ordinary
+  adapter, but completed responses contained malformed candidate documents and were refused;
+  interrupted requests retain uncertainty. No useful real-model improvement, universal superiority
+  or assignment 06 operational qualification is claimed. The
+  [05 handoff](../development/virtual-office/adaptive-hosts/handoffs/05.md) records evidence lanes.
 - Earlier selection-policy-version-1 manifests remain readable, but omissions retaining ambiguous
   identities or sizes and stopped required evidence cannot authorize reuse. Retry and startup refuse
   those retained records without rewriting their bytes. An unsafe active lease prevents daemon
@@ -196,6 +212,20 @@ values; repository contracts check the version cells against source.
   hosted Linux runner; forced Windows child termination does not qualify that platform claim.
 
 ## Current validation/evidence snapshot
+
+### Evaluated method reuse
+
+The 05 review passes the full gate with 943 unit/integration tests, 24 doctests and all 24 repository
+contracts. Eight environment-specific tests remain ignored; the native verifier lifecycle test
+passed separately. The changed default/all-feature APIs were reviewed. The same local optimization
+1/debug-information 0 profile retains debug assertions. A real host/runtime regression reproduces
+and fixes startup denial when a narrowly granted unnamed worker is temporarily unhealthy, while
+proving execution still waits for health. Fresh actual-binary fixture qualification completed all
+four held-out pairs, promoted generation 2, and produced two independently verified variants using
+the candidate; only the loan product was selected for deployment. Staged tool activation preserved
+application bytes and explicit knowledge updates preserved prior selections. The
+[05 handoff](../development/virtual-office/adaptive-hosts/handoffs/05.md) records review corrections
+and the physical fixture evidence; assignment 06 owns real-model and further host qualification.
 
 ### Protected adaptive method verification
 

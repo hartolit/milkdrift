@@ -12,6 +12,78 @@ fn generation(fixture: &Fixture, number: u64) -> TestResult<PublishedMethod> {
 }
 
 #[test]
+fn narrow_service_can_start_while_its_unnamed_worker_is_temporarily_unavailable() -> TestResult {
+    let directory = TempDir::new()?;
+    let worker = admission::process_descriptor()?;
+    let scope = CapabilityAuthorityScopeBuilder::new(SideEffectClass::ReadOnly)
+        .only_capabilities(BTreeSet::from([worker.identity().clone()]))?
+        .build();
+    let fixture = fixture_with_service_scope(
+        directory.path(),
+        "unavailable-worker",
+        false,
+        None,
+        Some(scope),
+    )?;
+    let run = start_outer(&fixture, "run:unavailable-worker")?;
+    runtime_tick(&fixture.runtime)?;
+    let plan = fixture
+        .store
+        .published_local_page(None, PageSize::new(8)?)?
+        .0
+        .pop()
+        .ok_or("pending call absent")?;
+    fixture.host.update_observation(
+        worker.identity(),
+        1,
+        CapabilityObservation::new(
+            worker.identity().clone(),
+            NOW,
+            false,
+            0,
+            "temporarily unavailable",
+        )?,
+    )?;
+    fixture
+        .runtime
+        .arrange_published_run(&plan, fixture.store.as_ref())?;
+    assert_eq!(
+        fixture.runtime.projection(&plan.child_run)?.lifecycle(),
+        RunLifecycle::Running
+    );
+    for _ in 0..4 {
+        runtime_tick(&fixture.runtime)?;
+    }
+    assert_eq!(
+        fixture.process.entries(),
+        0,
+        "scheduling still requires a healthy worker"
+    );
+    assert_eq!(
+        fixture.runtime.projection(&plan.child_run)?.lifecycle(),
+        RunLifecycle::Running
+    );
+    fixture.host.update_observation(
+        worker.identity(),
+        1,
+        CapabilityObservation::new(worker.identity().clone(), NOW, true, 0, "available again")?,
+    )?;
+    for _ in 0..48 {
+        fixture.clock.advance(1)?;
+        runtime_tick(&fixture.runtime)?;
+        if fixture.runtime.projection(&run)?.lifecycle().is_completed() {
+            break;
+        }
+    }
+    assert_eq!(
+        fixture.runtime.projection(&run)?.lifecycle(),
+        RunLifecycle::Terminal(RunOutcome::Succeeded)
+    );
+    assert_eq!(fixture.process.entries(), 2);
+    Ok(())
+}
+
+#[test]
 fn registry_bound_refuses_before_publishing_an_unusable_generation() -> TestResult {
     let directory = TempDir::new()?;
     let fixture = fixture(directory.path(), "registry-bound")?;
@@ -37,6 +109,120 @@ fn registry_bound_refuses_before_publishing_an_unusable_generation() -> TestResu
             .store
             .published_method(fixture.method.descriptor.identity(), 3)?
             .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn newer_method_keeps_an_active_calls_revision_agreement_and_allowance_exact() -> TestResult {
+    let directory = TempDir::new()?;
+    let fixture = fixture(directory.path(), "newer-method")?;
+    let old_run = start_outer(&fixture, "run:older-method")?;
+    runtime_tick(&fixture.runtime)?;
+    let old_plan = fixture
+        .store
+        .published_local_page(None, PageSize::new(8)?)?
+        .0
+        .pop()
+        .ok_or("old call absent")?;
+    assert_eq!(old_plan.generation, 1);
+    let base = fixture
+        .store
+        .revision(&fixture.method.revision)?
+        .ok_or("baseline absent")?;
+    let node = task_node("repair.begin", "model.generate")?.with_data_input(
+        PortId::new("instruction")?,
+        milkdrift_blueprint::DataPort::input(
+            milkdrift_blueprint::SchemaRef::new(
+                milkdrift_capability::SchemaId::new("example.instruction")?,
+                1,
+            )?,
+            true,
+            Some(milkdrift_blueprint::BindingSource::Literal {
+                value: milkdrift_capability::BoundedJson::new(serde_json::json!(
+                    "Use the newly reviewed method guidance"
+                ))?,
+            }),
+        )?,
+    )?;
+    let revised = base.revise(
+        base.id(),
+        MutationBatch::new(vec![Mutation::ReplaceNode { node }])?,
+        AuthorRef::new("human:caller")?,
+        "prospective reusable method improvement",
+    )?;
+    milkdrift_blueprint::validate_agreement_adoption(&base, &revised)?;
+    fixture.store.put_revision(&revised)?;
+    let mut next = generation(&fixture, 2)?;
+    next.revision = revised.id().clone();
+    fixture.published.publish(
+        next,
+        Some(1),
+        &fixture.decision,
+        &milkdrift_persistence::IntegrityDigest::hash(b"new-method-while-active"),
+    )?;
+    assert_eq!(
+        fixture
+            .store
+            .published_invocation(&old_plan.source)?
+            .as_ref(),
+        Some(&old_plan)
+    );
+    assert_eq!(old_plan.allowance.budget(), &fixture.method.allowance);
+    assert_eq!(
+        fixture
+            .store
+            .published_method(&old_plan.capability, 1)?
+            .ok_or("older publication absent")?
+            .method,
+        fixture.method
+    );
+    fixture
+        .runtime
+        .arrange_published_run(&old_plan, fixture.store.as_ref())?;
+    for _ in 0..48 {
+        fixture.clock.advance(1)?;
+        runtime_tick(&fixture.runtime)?;
+        if fixture
+            .runtime
+            .projection(&old_run)?
+            .lifecycle()
+            .is_completed()
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        fixture.runtime.projection(&old_run)?.lifecycle(),
+        RunLifecycle::Terminal(RunOutcome::Succeeded)
+    );
+    assert_eq!(
+        fixture.runtime.projection(&old_plan.child_run)?.revision(),
+        Some(&fixture.method.revision)
+    );
+    let new_run = start_outer(&fixture, "run:newer-method")?;
+    runtime_tick(&fixture.runtime)?;
+    let new_plan = fixture
+        .store
+        .published_local_page(None, PageSize::new(8)?)?
+        .0
+        .pop()
+        .ok_or("new call absent")?;
+    assert_eq!(new_plan.generation, 2);
+    fixture
+        .runtime
+        .arrange_published_run(&new_plan, fixture.store.as_ref())?;
+    assert_eq!(
+        fixture.runtime.projection(&new_plan.child_run)?.revision(),
+        Some(revised.id())
+    );
+    assert_ne!(old_plan.child_run, new_plan.child_run);
+    assert!(
+        !fixture
+            .runtime
+            .projection(&new_run)?
+            .lifecycle()
+            .is_completed()
     );
     Ok(())
 }

@@ -224,9 +224,10 @@ impl CapabilityHost {
         self.update_observation(capability, descriptor_revision, observation)
     }
 
-    /// Selects a matching generation after authority, fresh health, and capacity checks.
+    /// Selects a matching current generation under the supplied authority.
     ///
     /// Authority is evaluated before mutable availability so denial is not presented as absence.
+    /// Prospective revision checks defer health and capacity checks to ordinary scheduling.
     /// The returned selection holds no permit; exact entry can still fail after this call.
     pub fn resolve_authorized_at(
         &self,
@@ -276,18 +277,21 @@ impl CapabilityHost {
                 continue;
             }
             authority_match = true;
-            if !observation_available(
-                generation.observation.as_ref(),
-                observed_at_unix_ms,
-                self.core.config.observation_stale_after_ms,
-            ) {
+            if !authority.is_prospective()
+                && !observation_available(
+                    generation.observation.as_ref(),
+                    observed_at_unix_ms,
+                    self.core.config.observation_stale_after_ms,
+                )
+            {
                 continue;
             }
             availability_match = true;
-            if generation.active >= generation.permit_limit
-                || generation.pending_limit.is_some_and(|limit| {
-                    generation.active.saturating_add(generation.pending) >= limit
-                })
+            if !authority.is_prospective()
+                && (generation.active >= generation.permit_limit
+                    || generation.pending_limit.is_some_and(|limit| {
+                        generation.active.saturating_add(generation.pending) >= limit
+                    }))
             {
                 continue;
             }

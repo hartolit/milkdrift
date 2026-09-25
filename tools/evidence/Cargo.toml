@@ -27,6 +27,7 @@ milkdrift-control-protocol.workspace = true
 milkdrift-daemon.workspace = true
 milkdrift-local-process.workspace = true
 milkdrift-model.workspace = true
+milkdrift-managed-linux.workspace = true
 milkdrift-model-provider = { workspace = true, features = ["operational-evidence"] }
 milkdrift-peer-protocol.workspace = true
 milkdrift-persistence.workspace = true
@@ -42,7 +43,6 @@ toml.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-milkdrift-managed-linux.workspace = true
 divan = "=0.1.21"
 proc-macro2 = { version = "=1.0.107", features = ["span-locations"] }
 

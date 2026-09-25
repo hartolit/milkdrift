@@ -6,8 +6,6 @@ use milkdrift_evidence::EvidenceResult;
 use reqwest::Method;
 use serde_json::{Value, json};
 
-const START: &str = "2027-04-10T10:00:00Z";
-const END: &str = "2027-04-10T11:00:00Z";
 fn booking(
     s: &Service,
     name: &str,
@@ -24,7 +22,18 @@ fn booking(
     )
 }
 fn book(s: &Service) -> EvidenceResult<(u16, Value)> {
-    booking(s, "Ada", START, END, 1, Some(&s.token))
+    booking(s, "Ada", s.case.start, s.case.end, 1, Some(&s.token))
+}
+fn fill(s: &Service, mut quantity: u64) -> EvidenceResult {
+    while quantity > 0 {
+        let count = quantity.min(u64::from(s.case.quantity)) as u32;
+        require(
+            booking(s, "Bo", s.case.start, s.case.end, count, Some(&s.token))?.0 == 201,
+            "declared quantity booking failed",
+        )?;
+        quantity -= u64::from(count);
+    }
+    Ok(())
 }
 fn remaining(s: &Service, start: &str, end: &str) -> EvidenceResult<u64> {
     let query = url::form_urlencoded::Serializer::new(String::new())
@@ -68,7 +77,7 @@ fn path(item: &Value) -> EvidenceResult<String> {
     ))
 }
 fn clear(s: &Service) -> EvidenceResult {
-    s.clock("2027-04-10T09:00:00Z")?;
+    s.clock(s.case.before)?;
     for item in active(s)? {
         require(
             s.request(Method::DELETE, &path(&item)?, None, Some(&s.token))?
@@ -80,13 +89,15 @@ fn clear(s: &Service) -> EvidenceResult {
     Ok(())
 }
 pub(super) fn observe(s: &mut Service, name: &str) -> EvidenceResult {
+    let c = s.case;
+    let (start, end) = (c.start, c.end);
     match name {
         "public-availability" => {
             clear(s)?;
             require(
-                remaining(s, START, END)? == 2
+                remaining(s, start, end)? == c.capacity
                     && book(s)?.0 == 201
-                    && remaining(s, START, END)? == 1,
+                    && remaining(s, start, end)? == c.capacity - 1,
                 "public availability differs",
             )
         }
@@ -95,7 +106,7 @@ pub(super) fn observe(s: &mut Service, name: &str) -> EvidenceResult {
             let before = active(s)?;
             for auth in [None, Some("incorrect")] {
                 require(
-                    booking(s, "Ada", START, END, 1, auth)?.0 == 401 && active(s)? == before,
+                    booking(s, "Ada", start, end, 1, auth)?.0 == 401 && active(s)? == before,
                     "unauthorized creation changed bookings",
                 )?;
             }
@@ -104,7 +115,7 @@ pub(super) fn observe(s: &mut Service, name: &str) -> EvidenceResult {
             for auth in [None, Some("incorrect")] {
                 require(
                     s.request(Method::DELETE, &path(&item)?, None, auth)?.0 == 401
-                        && remaining(s, START, END)? == 1,
+                        && remaining(s, start, end)? == c.capacity - 1,
                     "unauthorized cancellation changed bookings",
                 )?;
             }
@@ -112,33 +123,31 @@ pub(super) fn observe(s: &mut Service, name: &str) -> EvidenceResult {
                 s.request(Method::DELETE, &path(&item)?, None, Some(&s.token))?
                     .0
                     == 200
-                    && remaining(s, START, END)? == 2,
+                    && remaining(s, start, end)? == c.capacity,
                 "authorized cancellation refused",
             )
         }
         "capacity-and-intervals" => {
             clear(s)?;
             for (start, end, quantity) in [
-                (END, START, 1),
-                (START, START, 1),
-                ("not-a-date", END, 1),
-                (START, END, 0),
+                (end, start, 1),
+                (start, start, 1),
+                ("not-a-date", end, 1),
+                (start, end, 0),
             ] {
                 require(
                     booking(s, "Ada", start, end, quantity, Some(&s.token))?.0 == 400,
                     "invalid interval or quantity accepted",
                 )?;
             }
-            require(
-                active(s)?.is_empty() && book(s)?.0 == 201,
-                "initial capacity differs",
-            )?;
+            require(active(s)?.is_empty(), "initial capacity differs")?;
+            fill(s, c.capacity - 1)?;
             let s: &Service = s;
             let mut statuses = std::thread::scope(|scope| {
                 let first =
-                    scope.spawn(|| booking(s, "Bo", START, END, 1, Some(&s.token)).map(|r| r.0));
+                    scope.spawn(|| booking(s, "Bo", start, end, 1, Some(&s.token)).map(|r| r.0));
                 let second =
-                    scope.spawn(|| booking(s, "Ci", START, END, 1, Some(&s.token)).map(|r| r.0));
+                    scope.spawn(|| booking(s, "Ci", start, end, 1, Some(&s.token)).map(|r| r.0));
                 Ok::<_, Box<dyn std::error::Error + Send + Sync>>(vec![
                     first.join().map_err(|_| "contender failed")??,
                     second.join().map_err(|_| "contender failed")??,
@@ -146,8 +155,12 @@ pub(super) fn observe(s: &mut Service, name: &str) -> EvidenceResult {
             })?;
             statuses.sort_unstable();
             require(
-                statuses == [201, 409] && remaining(s, START, END)? == 0 && active(s)?.len() == 2,
+                statuses == [201, 409] && remaining(s, start, end)? == 0,
                 "concurrent bookings exceeded capacity",
+            )?;
+            require(
+                booking(s, "Ada", c.overlap, c.adjacent_end, 1, Some(&s.token))?.0 == 409,
+                "overlapping interval exceeded capacity",
             )?;
             let before = active(s)?;
             require(
@@ -155,26 +168,30 @@ pub(super) fn observe(s: &mut Service, name: &str) -> EvidenceResult {
                 "over-capacity refusal mutated state",
             )?;
             require(
-                booking(s, "Ada", END, "2027-04-10T12:00:00Z", 1, Some(&s.token))?.0 == 201
-                    && remaining(s, END, "2027-04-10T12:00:00Z")? == 1,
+                booking(s, "Ada", end, c.adjacent_end, 1, Some(&s.token))?.0 == 201
+                    && remaining(s, end, c.adjacent_end)? == c.capacity - 1,
                 "adjacent intervals overlap",
             )
         }
         "durable-bookings" => {
             clear(s)?;
-            require(
-                book(s)?.0 == 201
-                    && booking(s, "Bo", START, END, 1, Some(&s.token))?.0 == 201
-                    && book(s)?.0 == 409,
-                "initial durable capacity differs",
-            )?;
+            fill(s, c.capacity)?;
+            require(book(s)?.0 == 409, "initial durable capacity differs")?;
             let rows = active(s)?;
             let item = rows.first().ok_or("booking absent")?;
             require(
                 s.request(Method::DELETE, &path(item)?, None, Some(&s.token))?
                     .0
                     == 200
-                    && book(s)?.0 == 201,
+                    && booking(
+                        s,
+                        "Ada",
+                        start,
+                        end,
+                        item["quantity"].as_u64().ok_or("quantity absent")? as u32,
+                        Some(&s.token),
+                    )?
+                    .0 == 201,
                 "replacement reservation failed",
             )?;
             let before = active(s)?;
@@ -190,7 +207,7 @@ pub(super) fn observe(s: &mut Service, name: &str) -> EvidenceResult {
             s.launch()?;
             s.ready()?;
             require(
-                active(s)? == before && remaining(s, START, END)? == 0,
+                active(s)? == before && remaining(s, start, end)? == 0,
                 "bookings changed after container recreation",
             )
         }
@@ -208,18 +225,18 @@ pub(super) fn observe(s: &mut Service, name: &str) -> EvidenceResult {
                 )?;
             }
             require(
-                remaining(s, START, END)? == 2,
+                remaining(s, start, end)? == c.capacity,
                 "cancellation did not release capacity",
             )?;
             let (status, item) = book(s)?;
             require(status == 201, "second booking failed")?;
-            for clock in [START, "2027-04-10T10:30:00Z"] {
+            for clock in [c.cutoff, c.end] {
                 s.clock(clock)?;
                 require(
                     s.request(Method::DELETE, &path(&item)?, None, Some(&s.token))?
                         .0
                         == 409
-                        && remaining(s, START, END)? == 1,
+                        && remaining(s, start, end)? == c.capacity - 1,
                     "cancellation cutoff bypassed",
                 )?;
             }
