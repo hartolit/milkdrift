@@ -69,7 +69,6 @@ impl DaemonLaunch {
         let mut child = start_daemon(&self.executable, &self.config)?;
         let mut config = ClientConfig::new(self.endpoint.clone());
         config.safe_query_retries = 0;
-        config.request_timeout = Duration::from_secs(2);
         let client = ControlClient::new(config, BearerCredential::new(token)?)?;
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -77,7 +76,11 @@ impl DaemonLaunch {
                 child.try_wait()?.is_none(),
                 "daemon exited before readiness",
             )?;
-            if client.readiness().await.is_ok_and(|ready| ready.ready) {
+            // Bound each startup probe without shortening subsequent scenario requests.
+            if tokio::time::timeout(Duration::from_secs(2), client.readiness())
+                .await
+                .is_ok_and(|result| result.is_ok_and(|ready| ready.ready))
+            {
                 return Ok((child, client));
             }
             ensure(

@@ -54,6 +54,11 @@ impl PeerService {
                 resources.side_effect = record.request.selection.operation_contract().side_effect();
             }
             milkdrift_persistence::PeerExecutionSnapshot::Archived(record) => {
+                for observation in &record.output_observations {
+                    if let Some((_, reference)) = observation.event.kind().output() {
+                        self.authorize_peer_artifact_metadata(relationship, reference)?;
+                    }
+                }
                 if let Some(observation) = record.disposition.terminal_observation()
                     && let Some(terminal) = observation.event.kind().terminal()
                 {

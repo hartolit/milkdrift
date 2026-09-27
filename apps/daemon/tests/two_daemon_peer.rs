@@ -44,6 +44,9 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const OPERATOR_TOKEN: &str = "two-daemon-operator-token";
 const PEER_TOKEN: &str = "two-daemon-peer-token";
+const DELEGATED_CALL_MS: u64 = 30_000;
+// Observe the full accepted call allowance and its subsequent durable reporting.
+const RUN_OBSERVATION_TIMEOUT: Duration = Duration::from_millis(DELEGATED_CALL_MS + 10_000);
 
 struct RunningDaemon {
     client: ControlClient,
@@ -158,7 +161,7 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
             },
         ))
         .await?;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    let deadline = tokio::time::Instant::now() + RUN_OBSERVATION_TIMEOUT;
     loop {
         let run = daemon_b.client.run("run-peer-process").await?;
         if run.lifecycle == "terminal" {
@@ -269,7 +272,7 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
                 .as_millis(),
         )?;
         let remaining = expires.saturating_sub(now);
-        if remaining < 8_000 {
+        if remaining < DELEGATED_CALL_MS {
             tokio::time::sleep(Duration::from_millis(remaining + 1)).await;
             let renewed = daemon_b.client.peer_action("peer-a", "reload").await?;
             assert!(renewed.connected);
@@ -291,7 +294,7 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
                 },
             ))
             .await?;
-        let turnover_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+        let turnover_deadline = tokio::time::Instant::now() + RUN_OBSERVATION_TIMEOUT;
         loop {
             let run = daemon_b.client.run(&run_id).await?;
             if run.lifecycle == "terminal" {
@@ -333,7 +336,7 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
             },
         ))
         .await?;
-    let restart_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    let restart_deadline = tokio::time::Instant::now() + RUN_OBSERVATION_TIMEOUT;
     loop {
         let run = daemon_b
             .client
@@ -569,13 +572,14 @@ fn configuration_document(
                     milkdrift_workspace::ArtifactSensitivity::Internal,
                     milkdrift_workspace::ArtifactSensitivity::Restricted,
                 ]),
-                maximum_duration_ms: 30_000,
+                maximum_duration_ms: DELEGATED_CALL_MS,
                 maximum_cost_micros: 0,
                 cost_currency: None,
                 maximum_input_units: None,
                 maximum_output_units: None,
                 maximum_observations: 128,
-                catalog_ttl_ms: 30_000,
+                // Setup and the placement fixture's two sequential calls share this catalog.
+                catalog_ttl_ms: DELEGATED_CALL_MS * 3,
                 trust_zone: "two-daemon-test".to_owned(),
                 delegation_ref: "delegation:two-daemon".to_owned(),
                 revocation_generation: 0,

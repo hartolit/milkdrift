@@ -750,7 +750,8 @@ pub trait PeerExecutionStore: Send + Sync {
         request: &PeerRetentionRequest,
     ) -> Result<PeerRetentionPage, PersistenceError>;
 
-    /// Returns an artifact reference durably indexed from a specific observation, when present.
+    /// Returns the artifact reference from a specific output observation, when present.
+    /// Archival retains this lookup through the tombstone after retiring the hot index.
     fn peer_observation_artifact(
         &self,
         execution: &PeerExecutionId,

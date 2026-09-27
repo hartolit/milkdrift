@@ -27,19 +27,9 @@ impl PeerService {
         self.require_client_execution(actor, &snapshot, AuthorityOperation::ReadCapabilityOutput)?;
         let terminal = match &snapshot {
             PeerExecutionSnapshot::Hot(record) => match &record.phase {
-                milkdrift_persistence::PeerExecutionPhase::Terminal { sequence, .. } => self
-                    .executions
-                    .peer_observations(
-                        &self.client_caller(actor),
-                        execution,
-                        sequence.saturating_sub(1),
-                        milkdrift_persistence::PageSize::new(1)
-                            .map_err(map_execution_persistence)?,
-                    )
-                    .map_err(map_execution_persistence)?
-                    .observations
-                    .into_iter()
-                    .next(),
+                milkdrift_persistence::PeerExecutionPhase::Terminal { .. } => {
+                    self.terminal_observation(&self.client_caller(actor), record)?
+                }
                 _ => None,
             },
             PeerExecutionSnapshot::Archived(record) => {

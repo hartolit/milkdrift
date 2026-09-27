@@ -552,11 +552,18 @@ impl PeerService {
                 PageSize::new(1).map_err(|error| ServingError::Protocol(error.to_string()))?,
             )
             .map_err(map_execution_persistence)?;
-        Ok(page
-            .observations
-            .into_iter()
-            .next()
-            .filter(|observation| observation.event.kind().terminal().is_some()))
+        // The hot detail may have been archived since the caller read its head.
+        // The page snapshot and its observations belong to the same store transaction.
+        Ok(match page.execution {
+            milkdrift_persistence::PeerExecutionSnapshot::Archived(record) => {
+                record.disposition.terminal_observation().cloned()
+            }
+            milkdrift_persistence::PeerExecutionSnapshot::Hot(_) => page
+                .observations
+                .into_iter()
+                .next()
+                .filter(|observation| observation.event.kind().terminal().is_some()),
+        })
     }
 
     pub(super) fn notify_workers(&self) {

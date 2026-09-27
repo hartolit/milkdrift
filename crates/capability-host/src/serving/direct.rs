@@ -117,6 +117,9 @@ impl PeerService {
                 .map_err(|error| ServingError::Protocol(error.to_string()))?,
             )
             .map_err(map_execution_persistence)?;
+        // Archival may have replaced the inspected hot record. Authorize the snapshot
+        // actually disclosed, including any retained output references in its summary.
+        self.require_client_execution(actor, &page.execution, AuthorityOperation::Inspect)?;
         if page.observations.iter().any(|item| {
             item.event.kind().output().is_some()
                 || item
@@ -127,7 +130,7 @@ impl PeerService {
         }) {
             self.require_client_execution(
                 actor,
-                &record,
+                &page.execution,
                 AuthorityOperation::ReadCapabilityOutput,
             )?;
         }

@@ -216,6 +216,12 @@ the production daemon host and configuration reader plus the built process helpe
 repeatable test topology for the implemented execution path. It does not establish physical
 multi-machine deployment qualification.
 
+The fixture gives each delegated call thirty seconds and observes completion for forty seconds
+per call, including eighty seconds for the two sequential placement calls. A ninety-second catalog
+covers setup and both calls. Turnover waits for
+a fresh catalog when less than one full call allowance remains. These test budgets permit the
+configured work to finish on unoptimized runners; they are not latency guarantees.
+
 Capability/authority/blueprint/sequence tests cover strict placement sets, immutable revision identity
 and obsolete snapshot refusal. Runtime and capability-host suites exercise final-entry revocation,
 deterministic
@@ -585,6 +591,10 @@ therefore do not isolate the effect of the larger budget. See the
 The development-only evidence package shares one child lifecycle owner for deadlines, bounded
 captured output, readiness, restart, CLI JSON decoding, and cleanup. Production configuration and
 composition remain in the actual daemon. Build the daemon before isolated evidence-package tests.
+Readiness probes have a two-second bound; subsequent scenario calls retain the control client's
+ordinary thirty-second request timeout. The workflow observation deadline is a separate limit.
+External fixture children have a five-minute outer bound covering their sequence of workflow waits,
+restarts and compiler invocations; that bound does not replace any individual operation deadline.
 
 ## Mutation
 
@@ -674,6 +684,15 @@ valid document envelopes with mismatched published source, capability or inputs,
 observation/output counts. Both transaction readers must reject those corrupt records. These checks
 exercise reachable recovery and corruption boundaries; producer validation does not make their
 reader guards redundant.
+
+Serving archival regressions use real adapter output and archive the execution at each observed
+authorization boundary after workers join. Authorized direct output reads retain exact bytes;
+inspect-only clients and peers without artifact metadata rights cannot receive archived output
+references. Artifact lookup also survives retirement of its hot index, while zero and unrelated
+sequences still refuse. Restoring the earlier hot-only lookups and authorization checks makes all
+four regressions fail at these boundaries. The tests are in `peer_service::direct::archival` and
+the peer-service artifact-transfer suite; raw weakening output is retained under
+`target/adaptive-hosts/06/completion/ci/archival-weakening.log`.
 
 The September 12 controller integration based on `741b230` has a focused changed-line campaign,
 not a new full controller-shard qualification. Across 46 exact mutants, 36 are caught, five are

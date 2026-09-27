@@ -936,6 +936,16 @@ impl PeerExecutionStore for RedbStore {
     ) -> Result<Option<milkdrift_capability::ArtifactReference>, PersistenceError> {
         let read = self.database().begin_read().map_err(error::redb)?;
         let key = observation_key(execution, sequence)?;
+        if let Some(PeerExecutionSnapshot::Archived(record)) =
+            snapshot_optional_in_read_transaction(&read, execution)?
+        {
+            return Ok(record
+                .output_observations
+                .iter()
+                .find(|observation| observation.sequence == sequence)
+                .and_then(|observation| observation.event.kind().output())
+                .map(|(_, reference)| reference.clone()));
+        }
         read.open_table(PEER_OBSERVATION_ARTIFACTS)
             .map_err(error::redb)?
             .get(key.as_slice())

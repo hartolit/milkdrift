@@ -155,9 +155,9 @@ async fn completed_attempts(
     client: &ControlClient,
     run: &str,
 ) -> TestResult<Vec<milkdrift_control_protocol::AttemptRead>> {
-    // Two remote entries include artifact transfer and durable observation polling.
-    // Allow scheduler variance on Windows without changing either process's 5s limit.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    // Observe both sequential delegated calls and their durable reporting. Each
+    // keeps its existing call allowance and the process itself still has a 5s limit.
+    let deadline = tokio::time::Instant::now() + super::RUN_OBSERVATION_TIMEOUT * 2;
     loop {
         let view = client.run(run).await?;
         if view.uncertainty_count > 0 {

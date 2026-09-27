@@ -656,6 +656,40 @@ fn entered_peer_execution_owns_output_budget_and_metadata_requires_live_download
     );
     assert!(service.output_artifact_offer(&peer, &execution, 2).is_err());
     service.negotiate_artifact(&peer, &offer)?;
+    assert!(core.peer_observation_artifact(&execution, 0).is_err());
+    assert_eq!(
+        core.peer_observation_artifact(&execution, 1)?,
+        Some(reference.clone())
+    );
+    core.archive_peer_executions(&PeerRetentionRequest {
+        terminal_before_or_at: TimestampMillis::new(now()),
+        archived_at: TimestampMillis::new(now()),
+        limit: PageSize::new(8)?,
+    })?;
+    assert!(matches!(
+        core.peer_execution(
+            &milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
+            &execution
+        )?,
+        Some(PeerExecutionSnapshot::Archived(_))
+    ));
+    // A caller that read the hot head just before archival still resolves the same output.
+    assert_eq!(
+        core.peer_observation_artifact(&execution, 1)?,
+        Some(reference)
+    );
+    assert_eq!(core.peer_observation_artifact(&execution, 2)?, None);
+    assert_eq!(core.peer_observation_artifact(&execution, 3)?, None);
+    assert!(core.peer_observation_artifact(&execution, 0).is_err());
+    let archived_offer = service.output_artifact_offer(&peer, &execution, 1)?;
+    assert_eq!(archived_offer, offer);
+    service.negotiate_artifact(&peer, &archived_offer)?;
+    assert_eq!(
+        service
+            .read_artifact_chunk(&peer, &offer.transfer, 0, 3)?
+            .bytes,
+        b"abc"
+    );
     service.revoke_peer(&peer)?;
     assert!(service.output_artifact_offer(&peer, &execution, 1).is_err());
     assert!(

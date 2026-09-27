@@ -54,7 +54,9 @@ fn fixture_proves_the_harness_without_claiming_external_qualification() -> TestR
             .arg("secret:test-only=env:MILKDRIFT_EVIDENCE_TEST_SECRET")
             .env("MILKDRIFT_EVIDENCE_TEST_SECRET", secret),
         None,
-        Duration::from_secs(90),
+        // This child owns multiple workflow waits, daemon restarts and compiler invocations.
+        // Its deadline must cover that sequence, including unoptimized executable hashing.
+        Duration::from_secs(300),
     )?;
     assert!(result.status.success(), "fixture failed: {}", result.stderr);
 
@@ -167,7 +169,7 @@ fn fixture_process_and_model_scenario_failures_exit_nonzero() -> TestResult {
                 fault,
             ]),
             None,
-            Duration::from_secs(90),
+            Duration::from_secs(300),
         )?;
         assert!(!result.status.success());
         let (_, report) = read_report(&output)?;
@@ -186,7 +188,8 @@ fn fixture_process_and_model_scenario_failures_exit_nonzero() -> TestResult {
         assert!(
             report[scenario]["failure_reason"]
                 .as_str()
-                .is_some_and(|reason| reason.contains(expected_reason))
+                .is_some_and(|reason| reason.contains(expected_reason)),
+            "{fault}: expected {expected_reason:?}; report={report}"
         );
         if scenario == "model" {
             assert_eq!(report["process"]["outcome"], "succeeded");
