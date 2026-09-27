@@ -20,6 +20,7 @@ pub(super) enum Caller {
     Origin,
     Learner,
     Evaluator,
+    SourceAuthor,
 }
 #[derive(Clone, Copy)]
 pub(super) enum Expected {
@@ -63,10 +64,12 @@ impl Session {
         cli: &Path,
         daemon: &Path,
         port: u16,
+        evidence: &Path,
+        token: &Path,
     ) -> EvidenceResult<Self> {
         let root = root.canonicalize()?;
-        let logs = root.join("learning-05/evidence");
-        fs::create_dir_all(&logs)?;
+        let logs = evidence;
+        fs::create_dir_all(logs)?;
         let logs = logs.join(format!(
             "session-{}-{}",
             std::process::id(),
@@ -76,7 +79,7 @@ impl Session {
         ));
         prepare::private_directory(&logs)?;
         Ok(Self {
-            token: root.join("learning-05/operator.token"),
+            token: token.canonicalize()?,
             config: root.join("host/daemon.toml"),
             root,
             cli: cli.canonicalize()?,
@@ -215,6 +218,7 @@ impl Session {
                 Caller::Consumer => self.root.join("consumer.token"),
                 Caller::Learner => self.root.join("learning-05/learner.token"),
                 Caller::Evaluator => self.root.join("learning-05/evaluator.token"),
+                Caller::SourceAuthor => self.root.join("source-author.token"),
                 _ => self.token.clone(),
             },
         );

@@ -1,6 +1,24 @@
 use super::*;
 use crate::units;
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+#[test]
+#[cfg(target_os = "linux")]
+fn private_networking_rejects_missing_and_substituted_tun_devices() -> Result {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("tun");
+    let missing = verify_tun(&path).err().ok_or("missing TUN accepted")?;
+    assert!(missing.to_string().contains("running kernel's TUN module"));
+    fs::write(&path, b"ordinary file cannot supply a TUN driver")?;
+    assert!(verify_tun(&path).is_err());
+    assert!(verify_tun(Path::new("/dev/null")).is_err());
+    assert_eq!(
+        fs::read(&path)?,
+        b"ordinary file cannot supply a TUN driver"
+    );
+    Ok(())
+}
+
 #[test]
 fn byte_limits_cannot_silently_round_on_different_host_page_sizes() -> Result {
     let recipe = units::deployment(&super::super::tests::owned_setup()?)?.recipe;

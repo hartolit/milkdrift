@@ -1,4 +1,5 @@
 mod artifacts;
+mod streaming;
 
 use std::{
     io::{Read, Write},
@@ -202,12 +203,14 @@ struct RemoteCase {
 fn remote_case(scenario: ConformanceScenario) -> Result<RemoteCase, Box<dyn std::error::Error>> {
     let origin = PeerId::new("peer-remote-conformance-origin")?;
     let remote = PeerId::new("peer-remote-conformance-target")?;
-    let (address, server) = if scenario.executes() {
-        let (address, server) = serve_archived_execution(remote.clone())?;
-        (address, Some(server))
-    } else {
-        (UNREACHABLE_REMOTE_ADDRESS.to_owned(), None)
-    };
+    // A refused initial lease renewal must stop before the first network request.
+    let (address, server) =
+        if scenario.executes() && scenario != ConformanceScenario::ReporterFailure {
+            let (address, server) = serve_archived_execution(remote.clone())?;
+            (address, Some(server))
+        } else {
+            (UNREACHABLE_REMOTE_ADDRESS.to_owned(), None)
+        };
     let credential = Arc::new(SensitiveSecret::new(
         b"peer-remote-conformance-secret".to_vec(),
     ));

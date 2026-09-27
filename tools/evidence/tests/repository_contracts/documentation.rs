@@ -540,7 +540,8 @@ fn every_maintained_example_has_a_production_reader() -> TestResult {
             }
             "managed-linux/Containerfile"
             | "managed-linux/Containerfile.containerignore"
-            | "adaptive-slotbook/Containerfile" => {
+            | "adaptive-slotbook/Containerfile"
+            | "adaptive-slotbook/Containerfile.development" => {
                 // Podman owns these formats. The documented real image build reads both together;
                 // a local string assertion cannot qualify its build or ignore-file semantics.
                 std::str::from_utf8(&bytes)?;

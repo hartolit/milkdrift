@@ -19,9 +19,9 @@ pub(super) fn run(
 ) -> EvidenceResult<Value> {
     let model_run = text(&declaration["proposal_run"])?;
     let file = |stem: &str| format!("{}.json", key(args, stem));
-    let source = load(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/operator/model.json"),
-    )?;
+    let source: Value = serde_json::from_str(include_str!(
+        "../../../../../../../../examples/operator/model.json"
+    ))?;
     let mut model = source["revision"]["semantic"]["nodes"]["model"].clone();
     model["kind"]["config"]["requirement"]["exact_capability"] = json!(MODEL);
     model["kind"]["config"]["requirement"]["provider_profile"] =

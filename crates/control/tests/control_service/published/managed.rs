@@ -339,5 +339,300 @@ fn lost_child_stop_proof_survives_cancel_and_reopen_without_returning_editing() 
     );
     assert_eq!(reopened.process.entries(), 0);
     reopened.store.verify_managed_integrity()?;
+    let plan = reopened
+        .store
+        .published_invocation(&source)?
+        .ok_or("retained publication association absent")?;
+    resolve_and_return(&reopened, &plan, false)?;
+    assert_completed_without_holds(&reopened, &run, &plan)?;
+    Ok(())
+}
+
+#[test]
+fn authorized_return_after_lost_child_stop_retains_wrapper_quiescence() -> TestResult {
+    let directory = TempDir::new()?;
+    let run;
+    let source;
+    {
+        let fixture = fixture_with_resources(directory.path(), "return-proof", true)?;
+        fixture.uncertain_entry.store(true, Ordering::SeqCst);
+        run = start_outer(&fixture, "run:return-proof")?;
+        runtime_tick(&fixture.runtime)?;
+        source = fixture
+            .store
+            .published_local_page(None, PageSize::new(8)?)?
+            .0
+            .pop()
+            .ok_or("publication association absent")?
+            .source;
+        for _ in 0..32 {
+            fixture.clock.advance(1)?;
+            runtime_tick(&fixture.runtime)?;
+        }
+        assert!(!fixture.runtime.projection(&run)?.lifecycle().is_completed());
+    }
+    let reopened = fixture_with_resources(directory.path(), "return-proof-reopen", true)?;
+    let plan = reopened
+        .store
+        .published_invocation(&source)?
+        .ok_or("retained publication association absent")?;
+    resolve_and_return(&reopened, &plan, true)?;
+    assert_completed_without_holds(&reopened, &run, &plan)?;
+    Ok(())
+}
+
+fn resource_decision(
+    request: &ManagedRequest,
+    actor: &str,
+    grant: &str,
+) -> TestResult<milkdrift_authority::AuthorityDecisionSnapshot> {
+    let grant = publication_grant(actor, grant)?;
+    let evaluator = GrantSetEvaluator::new(
+        PolicyId::new("test.publication")?,
+        1,
+        [grant.clone()],
+        BTreeMap::new(),
+    )?;
+    let mut resources = RequestedResourceFacts::empty();
+    resources.capability = Some(CapabilityId::new("managed.publication-test")?);
+    resources.capability_operation = Some(OperationId::new(request.operation())?);
+    Ok(evaluator.evaluate(&AuthorityRequest {
+        decision: DecisionId::new(format!("decision:{}", request.command))?,
+        actor: grant.actor().clone(),
+        grant: grant.identity().clone(),
+        grant_revision: 1,
+        grant_digest: grant.digest()?,
+        revocation_generation: 0,
+        operation: AuthorityOperation::AdministerCapabilities,
+        resources,
+        budget: AuthorityBudget::default(),
+        evaluated_at: BoundaryTimeMillis::new(NOW),
+        provenance: Default::default(),
+    })?)
+}
+
+fn resolve_and_return(
+    fixture: &Fixture,
+    plan: &milkdrift_persistence::published::PublishedInvocationPlan,
+    resume_parent: bool,
+) -> TestResult {
+    let inventory = fixture
+        .store
+        .managed_installation(&name("publication-test")?)?
+        .ok_or("inventory absent before resolution")?;
+    let parent = inventory
+        .uses
+        .iter()
+        .find(|usage| usage.parent.is_none())
+        .ok_or("parent hold absent")?;
+    let child = inventory
+        .uses
+        .iter()
+        .find(|usage| usage.parent.as_ref() == Some(&parent.id))
+        .ok_or("child hold absent")?;
+    let ManagedExecution::Local { run, attempt, .. } = &child.execution else {
+        return Err("published child is not a local runtime attempt".into());
+    };
+    assert!(
+        fixture
+            .runtime
+            .projection(run)?
+            .attempts()
+            .get(attempt)
+            .is_some_and(|attempt| attempt.is_unresolved()),
+        "losing the adapter result must retain runtime uncertainty"
+    );
+    assert!(!child.execution_terminal);
+    assert!(matches!(child.phase, ManagedUsePhase::Entered { .. }));
+    let resolve = ManagedRequest {
+        schema_version: MANAGED_SCHEMA_VERSION,
+        command: name("resolve-publication-child")?,
+        installation: inventory.name.clone(),
+        expected_version: inventory.version,
+        action: ManagedAction::Resolve {
+            use_id: child.id.clone(),
+            expected_claim: child.claim,
+        },
+    };
+    let authorization = resource_decision(&resolve, "human:caller", "grant:caller")?;
+    let receipt = fixture
+        .store
+        .begin_managed_resolution(&resolve, &authorization)?;
+    let fenced = fixture
+        .store
+        .managed_use(&child.id)?
+        .ok_or("fenced child absent")?;
+    let ManagedUsePhase::Fencing { physical_identity } = &fenced.phase else {
+        return Err("resolution did not fence the exact child".into());
+    };
+    let stopped = QuiescenceEvidence::PhysicalStop {
+        physical_identity: physical_identity.clone(),
+        observation_digest: digest(),
+        disrupted: true,
+    };
+    assert!(
+        fixture
+            .store
+            .quiesce_managed_use(&child.id, child.claim, &stopped)
+            .is_err(),
+        "old stop callbacks cannot consume the fencing claim"
+    );
+    fixture
+        .store
+        .quiesce_managed_use(&child.id, fenced.claim, &stopped)?;
+    let projection = fixture.runtime.projection(run)?;
+    assert!(
+        projection
+            .attempts()
+            .get(attempt)
+            .is_some_and(|attempt| attempt.is_unresolved()),
+        "physical fencing must not invent the missing execution outcome"
+    );
+    let resolution = milkdrift_runtime::RunCommandDocument::new(
+        milkdrift_persistence::CommandId::new("command:resolve-fenced-child")?,
+        run.clone(),
+        fixture.context.actor().clone(),
+        projection.sequence(),
+        TimestampMillis::new(NOW),
+        Reason::new("abandon the uncertain candidate after fencing its exact writer")?,
+        vec![milkdrift_persistence::EvidenceReference {
+            id: EvidenceId::new(format!("managed:{}:{}", resolve.command, fenced.claim))?,
+            kind: milkdrift_persistence::EvidenceKind::RecoveryObservation,
+        }],
+        milkdrift_runtime::RunCommand::ResolveExternalWork {
+            attempt: attempt.clone(),
+            decision: ReconciliationDecisionId::new("decision:resolve-fenced-child")?,
+            action: milkdrift_runtime::ExternalWorkAction::ResolveFailed,
+            remediation_node: None,
+        },
+    )?;
+    let returned = ManagedRequest {
+        schema_version: MANAGED_SCHEMA_VERSION,
+        command: name("return-publication-child")?,
+        installation: inventory.name.clone(),
+        expected_version: fixture
+            .store
+            .managed_installation(&inventory.name)?
+            .ok_or("inventory absent after fencing")?
+            .version,
+        action: ManagedAction::Return {
+            transfer: EditingHandoff {
+                installation: inventory.name.clone(),
+                generation: inventory.generation,
+                parent: parent.id.clone(),
+                child: child.id.clone(),
+                parent_claim: parent.claim,
+                child_claim: fenced.claim,
+                association: plan.association_id(),
+            },
+            resume_parent,
+        },
+    };
+    if resume_parent {
+        for (actor, grant) in [
+            ("human:other", "grant:other"),
+            ("service:deployment", "grant:deployment"),
+        ] {
+            assert!(
+                fixture
+                    .store
+                    .transfer_managed_editing(
+                        &returned,
+                        &resource_decision(&returned, actor, grant)?
+                    )
+                    .is_err(),
+                "a resource administrator or the child's service cannot resume another caller"
+            );
+        }
+    }
+    let returned_authority = resource_decision(&returned, "human:caller", "grant:caller")?;
+    let returned_receipt = fixture
+        .store
+        .transfer_managed_editing(&returned, &returned_authority)?;
+    assert!(fixture.store.managed_use(&child.id)?.is_none());
+    let resumed = fixture
+        .store
+        .managed_use(&parent.id)?
+        .ok_or("parent absent before continuation")?;
+    assert!(matches!(
+        &resumed.phase,
+        ManagedUsePhase::Quiescent {
+            evidence: QuiescenceEvidence::NoExternalEntry { source }
+        } if source == &plan.source
+    ));
+    assert_eq!(resumed.editing.is_empty(), !resume_parent);
+    assert_eq!(resumed.claim, parent.claim + 1);
+    assert!(
+        fixture
+            .store
+            .enter_managed_use(&parent.id, resumed.claim, "forbidden-wrapper-writer")
+            .is_err()
+    );
+    assert_eq!(
+        fixture
+            .store
+            .transfer_managed_editing(&returned, &returned_authority)?,
+        returned_receipt
+    );
+    assert_eq!(
+        fixture
+            .store
+            .begin_managed_resolution(&resolve, &authorization)?,
+        receipt
+    );
+    fixture.store.verify_managed_integrity()?;
+    assert!(
+        fixture
+            .runtime
+            .projection(run)?
+            .attempts()
+            .get(attempt)
+            .is_some_and(|attempt| attempt.is_unresolved()),
+        "returning the physically stopped writer must not resolve its execution outcome"
+    );
+    let resolved = fixture
+        .runtime
+        .handle_authorized_command(&resolution, fixture.context.authority())?;
+    assert_eq!(
+        resolved.result().disposition(),
+        milkdrift_persistence::CommandDisposition::Accepted,
+        "external resolution refused: {resolved:#?}"
+    );
+    Ok(())
+}
+
+fn assert_completed_without_holds(
+    fixture: &Fixture,
+    run: &RunId,
+    plan: &milkdrift_persistence::published::PublishedInvocationPlan,
+) -> TestResult {
+    for _ in 0..32 {
+        fixture.clock.advance(1)?;
+        runtime_tick(&fixture.runtime)?;
+        if fixture.runtime.projection(run)?.lifecycle().is_completed() {
+            break;
+        }
+    }
+    let outer = fixture.runtime.projection(run)?;
+    assert!(
+        outer.lifecycle().is_completed(),
+        "outer: {outer:#?}\nchild: {:#?}\nresource holds: {:#?}\naccount: {:#?}",
+        fixture.runtime.projection(&plan.child_run)?,
+        fixture
+            .store
+            .managed_installation(&name("publication-test")?)?,
+        fixture.store.controller_account(plan.allowance.account())?
+    );
+    assert_eq!(fixture.process.entries(), 0);
+    assert!(
+        fixture
+            .store
+            .managed_installation(&name("publication-test")?)?
+            .ok_or("inventory absent after completion")?
+            .uses
+            .is_empty(),
+        "terminal publication must release its recovered wrapper hold"
+    );
+    fixture.store.verify_managed_integrity()?;
     Ok(())
 }

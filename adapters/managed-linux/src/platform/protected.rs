@@ -256,6 +256,7 @@ pub(super) fn diagnose(
     )?;
     // Verification can run while the last accepted generation remains live.
     let version = LinuxManagedPlatform::diagnose_host(2, true)?;
+    LinuxManagedPlatform::diagnose_network()?;
     LinuxManagedPlatform::image_identity(&d.recipe.image)?;
     Ok(vec![
         format!(

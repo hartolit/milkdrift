@@ -394,6 +394,29 @@ fn controlled(body: &BlueprintRevision) -> EvidenceResult<BlueprintRevision> {
 }
 
 fn measure_idle(role: &str, process: u32) -> EvidenceResult {
+    #[cfg(target_os = "linux")]
+    {
+        // /proc reports the running daemon, including all threads. VmRSS is resident memory,
+        // not a private-allocation or peak measurement; retain the kernel's units explicitly.
+        let status = std::fs::read_to_string(format!("/proc/{process}/status"))?;
+        let mut measured = serde_json::Map::new();
+        for field in ["VmRSS", "VmHWM", "VmSize", "Threads"] {
+            let value = status
+                .lines()
+                .find_map(|line| line.strip_prefix(&format!("{field}:")))
+                .ok_or_else(|| format!("Linux process status omitted {field}"))?;
+            measured.insert(field.into(), json!(value.trim()));
+        }
+        measured.insert("architecture".into(), json!(std::env::consts::ARCH));
+        measured.insert(
+            "kernel".into(),
+            json!(std::fs::read_to_string("/proc/sys/kernel/osrelease")?.trim()),
+        );
+        println!(
+            "idle role evidence (development binary, same-machine loopback, before requests): role={role}, process={process}, measurement={}",
+            Value::Object(measured)
+        );
+    }
     #[cfg(windows)]
     {
         let script = format!(
@@ -420,12 +443,12 @@ fn measure_idle(role: &str, process: u32) -> EvidenceResult {
             "idle role evidence (debug binary, same-machine loopback, before requests): role={role}, process={process}, measurement={measured}"
         );
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     println!("idle role observation not measured on this platform: role={role}, process={process}");
     Ok(())
 }
 
-fn blueprint(
+pub(super) fn blueprint(
     workflow: &str,
     capability: &str,
     operation: &str,

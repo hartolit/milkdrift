@@ -859,11 +859,16 @@ impl RemoteCapabilityAdapter {
         )
         .map_err(|error| AdapterError::rejected(error.to_string()))?;
         self.stage_inputs(&request, inputs, reporter)?;
+        reporter.heartbeat()?;
         let mut imported = BTreeSet::new();
         let mut imported_bytes = request
             .input_artifact_bytes()
             .map_err(|error| AdapterError::rejected(error.to_string()))?;
-        let execution = match self.client.submit(&request) {
+        let execution = match self.client.submit_with_renewal(&request, || {
+            reporter
+                .heartbeat()
+                .map_err(|error| PeerHttpError::Unavailable(error.to_string()))
+        }) {
             Ok(InvocationAcceptance::Accepted { execution, .. }) => execution,
             Ok(InvocationAcceptance::Archived {
                 summary, execution, ..
@@ -954,8 +959,16 @@ impl RemoteCapabilityAdapter {
                     reporter,
                 );
             }
+            if let Err(error) = reporter.heartbeat() {
+                break Err(error);
+            }
             match self.client.observations(&execution, after, 128) {
                 Ok(page) => {
+                    // Receiving progress does not renew the origin's durable lease. A busy
+                    // stream needs the same renewal as an empty observation poll.
+                    if let Err(error) = reporter.heartbeat() {
+                        break Err(error);
+                    }
                     let archived_summary = match &page.history {
                         ObservationHistory::Archived { summary } => Some(summary.clone()),
                         ObservationHistory::Hot => None,
@@ -1018,9 +1031,6 @@ impl RemoteCapabilityAdapter {
                         break Ok(());
                     }
                     if empty {
-                        if let Err(error) = reporter.heartbeat() {
-                            break Err(error);
-                        }
                         thread::sleep(self.client.observation_poll_interval());
                     }
                 }
@@ -1034,7 +1044,9 @@ impl RemoteCapabilityAdapter {
                     );
                 }
                 Err(_) => {
-                    let _ = reporter.heartbeat();
+                    if let Err(error) = reporter.heartbeat() {
+                        break Err(error);
+                    }
                     thread::sleep(self.client.observation_poll_interval());
                 }
             }

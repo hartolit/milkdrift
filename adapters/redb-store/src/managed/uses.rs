@@ -428,13 +428,15 @@ pub(super) fn transfer(
         } else {
             Vec::new()
         };
-        // Current authority grants the still-active parent a new physical entry epoch. The
-        // caller must consume this claim; callbacks from its earlier epoch remain stale.
-        record.uses[pi].phase = if resume {
-            ManagedUsePhase::Reserved {}
-        } else {
-            ManagedUsePhase::Quiescent { evidence }
-        };
+        // Only a physical parent needs a new entry epoch. A publication wrapper cannot enter
+        // a writer: retain its accepted no-entry proof so later children and terminal settlement
+        // use the same resource path as uninterrupted publication.
+        record.uses[pi].phase =
+            if resume && matches!(evidence, QuiescenceEvidence::PhysicalStop { .. }) {
+                ManagedUsePhase::Reserved {}
+            } else {
+                ManagedUsePhase::Quiescent { evidence }
+            };
         super::execution::remove_index(&write, &record.uses[ci])?;
         record.uses.remove(ci);
         write

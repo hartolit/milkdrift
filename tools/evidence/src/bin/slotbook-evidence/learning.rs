@@ -47,6 +47,10 @@ pub(super) struct Arguments {
     /// Resume the exact retained inputs after an interrupted run; conflicting files are refused.
     #[arg(long)]
     pub resume: bool,
+    /// After observing the selected deployment, drain it and remove this study's disposable
+    /// installations through their owners. Declared data and evidence remain preserved.
+    #[arg(long)]
+    pub remove_disposable: bool,
 }
 
 pub(super) fn run(args: Arguments) -> EvidenceResult {
@@ -58,7 +62,14 @@ pub(super) fn run(args: Arguments) -> EvidenceResult {
     if !args.resume {
         prepare::private_directory(&directory)?;
     }
-    let mut session = Session::resume(&root, &args.cli, &args.daemon, args.port)?;
+    let mut session = Session::resume(
+        &root,
+        &args.cli,
+        &args.daemon,
+        args.port,
+        &root.join("learning-05/evidence"),
+        &root.join("learning-05/operator.token"),
+    )?;
     let source = load(root.join("qualification.json"))?;
     if !args.resume {
         author::prepare(&args, &session, &source)?;

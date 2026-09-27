@@ -28,6 +28,58 @@ settlement and cannot release its reservation. The process marker records two us
 direct and one remote. It uses an explicit loopback development exception and does not
 establish non-loopback TLS deployment, a physical second machine, or real model quality.
 
+To exercise hosts already installed by an operator, use `--installed-hosts` with a private JSON
+manifest and a fresh `--installed-output` directory. The driver uses the CLI only; it does not
+launch, reconfigure or stop these hosts. Each endpoint must be loopback HTTP, including the local
+end of an authenticated SSH forward for a remote machine. First connect the peer with
+`milkdrift peer connect HOST` and read `milkdrift capability list` on the coordinator. Copy the
+exact coordinator capability IDs into the manifest; the driver also checks their peer identity
+before dispatch. Example shape for the exercised topology:
+
+```json
+{
+  "schema_version": 1,
+  "namespace": "acceptance-unique-1",
+  "serving": {
+    "endpoint": "http://127.0.0.1:19790/",
+    "token_file": "/private/serving-operator.token",
+    "host": "um790-execution"
+  },
+  "coordinator": {
+    "endpoint": "http://127.0.0.1:19791/",
+    "token_file": "/private/coordinator-operator.token",
+    "host": "desktop-coordinator"
+  },
+  "process_capability": "independent-process",
+  "model_capability": "operator-model",
+  "coordinator_process_capability": "peer:06bd6f8e9186:independent-process",
+  "coordinator_model_capability": "peer:06bd6f8e9186:operator-model"
+}
+```
+
+The serving process must accept the `source` artifact and return its exact bytes as `stdout`.
+The byte-pinned evidence executable's `--fixture-independent MARKER_FILE` mode supplies this
+process and appends an independent entry marker. The model must accept fresh text requests with
+streaming, a 64-unit output maximum and the explicit `reasoning_effort: none` extension. Its profile
+needs truthful finite admission terms and enough artifact allowance for inputs plus the prepared
+response bound. Use the normal [peer](../operations/peers.md) and
+[provider](../guides/local-model-endpoint.md) setup paths for capabilities and permissions.
+
+```sh
+cargo run -p milkdrift-evidence --bin headless-cli-evidence -- \
+  --daemon PATH_TO_DAEMON --cli PATH_TO_CLI \
+  --installed-hosts /private/hosts.json --installed-output /private/evidence-new
+```
+
+The driver retains exact requests, paged observations and downloaded bytes, requires successful
+terminal outcomes, and compares direct versus workflow origins. Model text must be nonempty UTF-8;
+this check establishes useful transport, not application quality. A closed uncertain invocation
+stops qualification with its evidence preserved. Observation history is bounded at 4096 events.
+After restarting the same daemons with their preserved stores, run the same command with
+`--installed-replay`. It checks the original execution/attempt identities and bytes, including
+archived direct outputs. Independently record physical host identities, process marker deltas and
+model server entries before/after replay; the driver cannot infer those from HTTP success.
+
 The harness prints idle process measurements before either role begins its workflow scenario.
 On Windows x64 build 26200 with debug binaries, one 2026-09-18 observation measured execution-only
 at 31 threads, 30,457,856 working-set bytes and 6,369,280 private bytes; workflow-enabled measured
@@ -35,12 +87,27 @@ at 31 threads, 30,457,856 working-set bytes and 6,369,280 private bytes; workflo
 workers and ran on the same machine. These are process snapshots with OS/runtime overhead,
 not a portable performance promise or a live-inference memory measurement.
 
+On Linux the harness reads the daemon's `/proc/PID/status` and records resident memory (`VmRSS`),
+resident high-water mark (`VmHWM`), virtual size (`VmSize`), thread count, architecture and kernel.
+An Arch x86_64/kernel 7.2.6 observation with Rust 1.95.0, development optimization 1 and debug
+information 0 measured 40 threads and 35,840 kB resident for execution-only, and 44 threads and
+35,408 kB resident for workflow-enabled. Debug assertions remained enabled. Virtual sizes were
+2,157,392 kB and 2,165,384 kB respectively; virtual address space is not physical memory consumption.
+These idle same-machine snapshots precede requests and include runtime/OS overhead. They do not
+measure private allocation, model memory or a throughput guarantee. Raw observations are in
+`target/adaptive-hosts/06/independent-measured.log`.
+
 Focused serving tests cover prepared refusal/panic/revocation/expiry, caller separation, archival,
 request-bound input staging and cumulative quota replay. Redb artifact tests reopen after interrupted
 client uploads, reclaim only that owner through bounded pages, preserve workflow/peer publication
 ownership, and verify imported controller charges across replay/reopen. Daemon role tests assert
 closed-history preservation and active-obligation refusal. The full gate remains necessary for
 changes to these shared boundaries.
+
+Peer adapter regressions also cover continuous output and delayed artifact metadata/cleanup while
+the origin retains its lease. Renewal occurs between bounded requests and refusal stops further
+work. A request or transport outage that itself exceeds the lease still requires uncertainty
+handling; the adapter does not extend an expired lease or replay an external effect to hide it.
 
 The prepared-allowance negative tests were also run with their admission guard deliberately
 disabled. Both detected one forbidden external entry instead of zero; both passed after restoring
@@ -57,6 +124,15 @@ new candidate and target generation. A fresh direct evaluation/publication and r
 reopen separately exercise the managed owner outside a workflow. Container identity/start time and
 mounted bytes support the replay and exact-candidate observations. This does not qualify arbitrary
 application behavior, model reasoning, power loss, hostile host administration or another machine.
+
+For actual generated source, use the separate [`slotbook-evidence develop` route](../../examples/adaptive-slotbook/README.md#develop-source-with-a-real-model).
+It selects the fixed public source brief, obtains at most three actual structured proposals,
+submits them through a scoped advisor credential and compiles returned Rust in an isolated worker.
+Completed compiler/verifier evidence feeds bounded repair requests. The immutable candidate must
+pass the same six checks before protected publication. A passing initial source candidate requires
+a separate labelled seeded-repair run; seeded repair cannot establish a model's prior planning
+failure. Explicit resume inputs and ownership-checked preserving removal retain the full study.
+The separately declared learning comparison keeps its original held-out inputs and criterion.
 
 `cargo test -p milkdrift-blueprint --test agreements` covers indirect dependency/interface/terminal
 and scope edits. `cargo test -p milkdrift-control --test control_service agreements::` covers ordinary
@@ -759,6 +835,17 @@ release, and retained claims after lost stop evidence and reopen. Peer protocol 
 ancestry ceilings to survive serialization. The full gate includes these suites and the underlying
 resource, authority, storage, runtime, adapter and CLI contracts.
 
+The `published::managed::` control cases also lose a child's physical stop proof, tear down and
+reopen the store, fence the exact child, and explicitly return its editing claim. Both cancellation
+and authorized continuation are checked: a publication wrapper retains its `NoExternalEntry`
+proof, while physical parents still require a fresh entry claim. Unrelated administrators and the
+child's service authority cannot resume the original caller's claim. Stale callbacks refuse,
+exact command replay is stable, and runtime uncertainty requires its own authorized resolution
+before all holds settle. The physical-parent counterpart is redb's
+`managed::exact_child_handoff_restart_fencing_and_authorized_return_never_have_two_editors`.
+Removing the wrapper proof guard in an isolated worktree made the new continuation test fail;
+the patch and assertion are retained in `target/adaptive-hosts/06/mutation-no-entry.*`.
+
 For actual binaries, follow the [Slotbook setup](../../examples/adaptive-slotbook/README.md), then
 run the following against a separate fresh prepared directory for each mode:
 
@@ -775,6 +862,14 @@ replays acceptance after restart, and removes its installations with data preser
 two daemons on one desktop. Seeded and corrected executables are explicit Rust fixtures; this lane makes no
 live-model, second-machine, reboot or general security claim. Fault-injected loss and stop-proof
 refusal remain distinct deterministic evidence, not physical interruption qualification.
+
+The fresh desktop peer qualification under `target/adaptive-hosts/06/published-peer/` passed with
+`--drain-before-renewal`. It observed the deployed service across daemon restart, then stopped only
+that service through its owner before renewing verification. This permits the finite scenario
+with two private container mappings while an unrelated service remains running. It establishes
+sequential renewal, not enough capacity for verification beside both running services. The native
+BusyBox worker lifecycle and protected verifier timeout/reopen/integrity tests also passed afresh;
+their exact inputs and logs are recorded in the [06 handoff](virtual-office/adaptive-hosts/handoffs/06.md).
 
 The [04 handoff](virtual-office/adaptive-hosts/handoffs/04.md) identifies exact versions, transaction
 ownership, review corrections and original evidence under `target/adaptive-hosts/04-review/`.
@@ -835,3 +930,35 @@ alongside the remaining full-gate checks. Eight environment-specific tests remai
 gate; the native protected-verifier lifecycle also passed separately. The desktop's finite private
 UID/GID pool caused an earlier renewal to remain unknown when two services occupied both mappings.
 That refusal is retained in `05-review/study/`; it is not converted into a successful verification.
+
+The fresh `target/adaptive-hosts/06/published-peer/learning-05/` study also passed all four pairs,
+promoted generation 2 and verified both variants before deploying only the selected loan product.
+With `--remove-disposable`, the driver drains its selected service before tool staging and removes
+only the recorded study installations after the update/knowledge checks. It verifies exact
+generation, recipe, accepted evaluation, resource inventory and preservation policy before cleanup,
+including stopped installations; pending uses or changed dispositions refuse. The corrected driver
+replayed the completed study without further model work. All 23 installations were removed, all
+47 recorded volumes remained, and source application/guidance hashes matched after removal.
+The unrelated service kept its ID, start time and zero restarts during that cleanup. These are
+deterministic desktop observations; the physical host and real-model evidence is separate below.
+
+## Integrated host acceptance
+
+The maintained [Slotbook example](../../examples/adaptive-slotbook/README.md) provides the
+`headless-cli-evidence --installed-hosts` and `slotbook-evidence develop` routes for physical hosts
+and bounded live-source studies. The [06 handoff](virtual-office/adaptive-hosts/handoffs/06.md)
+identifies exact binaries, inputs and retained evidence under `target/adaptive-hosts/06/`.
+Desktop–UM790 records establish direct and workflow process/model calls, exact replay with an
+independent entry counter, owned CPU-service replacement/removal and automatic recovery after an
+orderly idle reboot. They establish neither in-flight power-loss recovery nor managed Vulkan
+isolation. The bounded live-source study failed to produce a verified application, and its final
+model attempt remains uncertain. That acceptance requirement remains open.
+
+The subsequent review retained fresh results under `target/adaptive-hosts/06-review/`: the full
+gate passed 960 unit/integration tests, 24 doctests and all 24 repository contracts. Eight opt-in
+tests remain ignored. The native protected-verifier renewal/timeout/reopen/integrity case and the
+actual-binary independent-host scenario passed separately. The latter uses a deterministic model
+and two desktop daemons. Default/all-feature public API inventories for redb-store, managed-linux,
+peer-http, capability-host and evidence were regenerated without changes. The gate used pinned
+Rust 1.95.0, optimization 1 and debug information 0 with debug assertions enabled. No physical reboot
+or live-model generation was rerun in that review; retained records are not fresh executions.

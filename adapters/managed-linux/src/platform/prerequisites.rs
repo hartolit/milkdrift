@@ -67,6 +67,29 @@ fn verify_subordinate_ids(info: &serde_json::Value, required: u64) -> Result<(),
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn verify_tun(path: &Path) -> Result<(), ManagedError> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    // A stale device node survives removal of the running kernel's modules. Opening it checks
+    // driver availability without creating an interface or changing the host network.
+    let device = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| {
+            rejected(format!(
+                "private container networking requires usable /dev/net/tun: {error}; check device permissions and the running kernel's TUN module; reboot after a kernel upgrade if its matching modules are unavailable"
+            ))
+        })?;
+    let metadata = device.metadata().map_err(rejected)?;
+    if !metadata.file_type().is_char_device() || metadata.rdev() != rustix::fs::makedev(10, 200) {
+        return Err(rejected(
+            "private container networking requires /dev/net/tun to be the Linux TUN character device",
+        ));
+    }
+    Ok(())
+}
+
 fn verify_model(
     path: &Path,
     expected: &str,
@@ -106,6 +129,13 @@ fn verify_model(
 }
 
 impl LinuxManagedPlatform {
+    pub(super) fn diagnose_network() -> Result<(), ManagedError> {
+        #[cfg(target_os = "linux")]
+        return verify_tun(Path::new("/dev/net/tun"));
+        #[cfg(not(target_os = "linux"))]
+        Err(rejected("private container networking requires Linux"))
+    }
+
     /// Shared prerequisites for all managed containers; resource-specific inputs stay with their recipe.
     pub(super) fn diagnose_host(
         simultaneous_containers: u64,
@@ -174,6 +204,9 @@ impl LinuxManagedPlatform {
         let persistent_service = matches!(d.recipe.model_service, ModelService::Owned { .. });
         let version =
             Self::diagnose_host(if persistent_service { 2 } else { 1 }, persistent_service)?;
+        if persistent_service || d.recipe.worker_network == crate::WorkerNetwork::Outbound {
+            Self::diagnose_network()?;
+        }
         let memory = bounded_text("/proc/meminfo")?
             .lines()
             .find_map(|line| {

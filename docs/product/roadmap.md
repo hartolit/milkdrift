@@ -9,11 +9,12 @@ finish its public path, refusal/recovery behavior, tests, and documentation befo
 
 | Order | Unfinished responsibility | Acceptance outcome |
 | --- | --- | --- |
-| 02 | Managed Linux resources | Rootless Podman and systemd/Quadlet supply a useful setup with approved configuration, durable ownership, generation use protection, exclusive editing and child handoff, recovery, update, and deliberate removal. |
-| 03 | Adaptive methods and protected obligations | Agents can repair within an immutable agreement; trusted candidate-bound verification and the consequential operation both prevent bypass. |
-| 04 | Published workflow capabilities | Exact starting methods and adaptation policies are callable under constrained service authority, with one recoverable internal run, inherited accounting, and progress with one worker and a shared working area. |
-| 05 | Evaluated learning and product variations | Selected run evidence produces a candidate method, separate baseline/candidate evaluations, promotion or rejection under fixed criteria, and isolated variants. |
-| 06 | Integrated acceptance | Actual binaries, Linux enforcement, desktop-to-UM790 operation and real local-model behavior establish the complete setup/repair/publication/reuse/removal path and its limits. |
+| 06 | Integrated acceptance | Obtain a qualifying real-model source/repair result after the bounded study failed; retain its uncertain final call without blind replay. Physical desktop-to-UM790 calls, owned CPU model lifecycle, orderly reboot replay, preservation/removal, an inconclusive real-method comparison and the final software gate are complete. Close the sprint only against the required accepted behavior. |
+
+The managed resource, protected adaptation, publication and evaluated-learning implementations
+have finite desktop qualification. Their current coverage and limits belong to
+[status](status.md#current-validationevidence-snapshot); the remaining live-source acceptance is
+owned by 06. Passing deterministic fixtures does not complete that acceptance.
 
 Use the maintained [Slotbook example](../guides/adaptive-method-example.md) across these assignments.
 The learning outcome may be negative or inconclusive; demonstrating the mechanism does not require

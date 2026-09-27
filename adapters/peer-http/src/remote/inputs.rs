@@ -152,6 +152,7 @@ impl RemoteCapabilityAdapter {
                 expires_at_unix_ms: request.deadline_unix_ms,
             };
             let result = (|| {
+                reporter.heartbeat()?;
                 let (mut offset, maximum) = match self
                     .client
                     .negotiate_artifact(&offer)
@@ -208,8 +209,14 @@ impl RemoteCapabilityAdapter {
                 }
                 Ok(())
             })();
+            let renewal = if result.is_ok() {
+                reporter.heartbeat()
+            } else {
+                Ok(())
+            };
             let _ = self.client.abort_artifact(&transfer);
             result?;
+            renewal?;
         }
         Ok(())
     }

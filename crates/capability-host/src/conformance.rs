@@ -573,7 +573,7 @@ impl AdapterReporter for RejectingReporter {
 
     fn heartbeat(&self) -> Result<(), AdapterError> {
         Err(AdapterError::external_failure(
-            "injected durable heartbeat rejection",
+            "injected durable reporter rejection during heartbeat",
         ))
     }
 }

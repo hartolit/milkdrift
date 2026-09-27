@@ -83,7 +83,10 @@ fn request_target(stream: &mut TcpStream) -> Result<String, Box<dyn std::error::
     Ok(target)
 }
 
-fn transfer_case(outcome: TransferOutcome) -> Result<(), Box<dyn std::error::Error>> {
+fn transfer_case(
+    outcome: TransferOutcome,
+    delayed_metadata: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let core = Arc::new(RedbStore::open(root.path())?);
     let clock = Arc::new(ControlledClock::new(100));
@@ -188,6 +191,16 @@ fn transfer_case(outcome: TransferOutcome) -> Result<(), Box<dyn std::error::Err
                 Err(error) => return Err(error.to_string()),
             };
             let target = request_target(&mut stream).map_err(|error| error.to_string())?;
+            if delayed_metadata
+                && (target.ends_with("/artifact")
+                    || target.ends_with("/negotiate")
+                    || target.ends_with("/abort"))
+            {
+                let now = clock.now.fetch_add(90, Ordering::SeqCst) + 90;
+                if now >= expires_at.load(Ordering::SeqCst) {
+                    return Err("output metadata or cleanup exhausted its durable lease".to_owned());
+                }
+            }
             if target.ends_with("/artifact") {
                 write_response(&mut stream, &server_offer)?;
             } else if target.ends_with("/negotiate") {
@@ -260,16 +273,22 @@ fn transfer_case(outcome: TransferOutcome) -> Result<(), Box<dyn std::error::Err
 #[test]
 fn multi_chunk_output_renews_lease_until_verified_publication()
 -> Result<(), Box<dyn std::error::Error>> {
-    transfer_case(TransferOutcome::Complete)
+    transfer_case(TransferOutcome::Complete, false)
 }
 
 #[test]
 fn refused_lease_renewal_stops_output_transfer_and_aborts_staging()
 -> Result<(), Box<dyn std::error::Error>> {
-    transfer_case(TransferOutcome::LeaseRefused)
+    transfer_case(TransferOutcome::LeaseRefused, false)
 }
 
 #[test]
 fn shutdown_stops_output_transfer_and_aborts_staging() -> Result<(), Box<dyn std::error::Error>> {
-    transfer_case(TransferOutcome::Shutdown)
+    transfer_case(TransferOutcome::Shutdown, false)
+}
+
+#[test]
+fn output_metadata_and_cleanup_round_trips_renew_the_lease()
+-> Result<(), Box<dyn std::error::Error>> {
+    transfer_case(TransferOutcome::Complete, true)
 }

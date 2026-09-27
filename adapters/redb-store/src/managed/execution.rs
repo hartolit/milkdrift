@@ -591,6 +591,31 @@ pub(super) fn parent_authorized(
     parent: &ManagedUse,
     decision: &milkdrift_authority::AuthorityDecisionSnapshot,
 ) -> Result<bool, PersistenceError> {
+    let evidence = match &parent.phase {
+        ManagedUsePhase::Quiescent { evidence } | ManagedUsePhase::Suspended { evidence, .. } => {
+            Some(evidence)
+        }
+        _ => None,
+    };
+    if let Some(milkdrift_persistence::managed::QuiescenceEvidence::NoExternalEntry { source }) =
+        evidence
+    {
+        let Some(plan) = crate::published::association_in_transaction(write, source)? else {
+            return Ok(false);
+        };
+        let accepted = plan.caller.request();
+        let current = decision.request();
+        // Local and served wrappers retain the caller's exact accepted authority. The child
+        // link separately verifies service authority; an unrelated resource administrator
+        // may settle without resuming, but cannot acquire this caller's editing claim.
+        return Ok(publication_parent_matches(parent, &plan)
+            && decision.is_allowed()
+            && accepted.actor == current.actor
+            && accepted.grant == current.grant
+            && accepted.grant_revision == current.grant_revision
+            && accepted.grant_digest == current.grant_digest
+            && accepted.revocation_generation == current.revocation_generation);
+    }
     let ManagedExecution::Local { run, .. } = &parent.execution else {
         return Ok(false);
     };

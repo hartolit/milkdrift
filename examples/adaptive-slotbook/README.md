@@ -106,6 +106,13 @@ the store, checks retained failure and removes its installations through the
 resource owner. Failure retains resources and logs for explicit inspection; it never prunes Podman.
 Data disposition is `preserve`, so removal deliberately leaves owned volumes for operator retention.
 
+With only two private container ID mappings available, add `--drain-before-renewal` when retaining
+an unrelated running service. After observing the accepted deployment and its survival across
+daemon restart, this option stops only the scenario's service through its resource owner before
+renewing verification. It preserves the accepted generation and data, then publishes the newly
+verified generation. The report records that drain; it does not claim concurrent verification
+beside the scenario's running service. Existing unrelated services remain untouched.
+
 The generated `host/daemon.toml` grants `agent:repair` only the two approved managed capability
 families and finite budgets. The operator supplies approved recipes outside worker storage. This
 fixture uses a controller preset to expose both authoring and inspection; production deployments
@@ -114,6 +121,67 @@ change the target policy, or mount host credentials into the worker. The example
 candidate ceiling, 32 MiB individual artifact allowance and 128 MiB internal artifact budget to
 accommodate native executables and their escaped worker reports. These are explicit example
 allocations, not platform defaults; preparation and admission validate them through the normal owners.
+
+## Develop source with a real model
+
+`slotbook-evidence develop` uses the same source brief, governed build region, six-check verifier
+and protected publisher. It runs actual daemon/CLI binaries and an approved Rust compiler image.
+The model returns a complete structured proposal containing Rust source as worker input. The
+ordinary proposal reader and authority check it before compilation in the managed worker. The
+verifier executes the resulting immutable binary; model prose and proposal submission alone do
+not establish application acceptance.
+
+The setup creates a separate advisor identity for offline source proposals, scoped to Slotbook's
+worker and protected resource operations. It cannot execute work, read artifacts or access the
+host filesystem/network. The harness binds the submitted draft to that authenticated author and
+the observed model provenance, preserving the returned mutation. The operator starts the accepted
+revision through the ordinary run command; global controller permissions do not change.
+
+Use an operator-reviewed local model profile with structured JSON support, explicit billing and
+context for at most 23,000 UTF-8 prompt bytes plus 8,192 output tokens and the provider's template.
+The command selects the prompt once. Each study admits at most three proposal calls. Invalid
+responses remain recorded. Failed builds or candidates supply selected compiler diagnostics and
+completed verifier journal records to the next call. Uncertainty stops continuation for inspection.
+Polling uses at most 241 individually bounded CLI requests per model or application run; this is
+not a fixed elapsed-time performance promise.
+
+The earlier [managed tool image](../managed-linux/Containerfile) includes the complete evaluation
+specification for operator setup. Build a separate source image to exclude that file from model
+workers. Both arguments below are exact local image IDs: the compiler image from managed setup
+and the fixture image from the deterministic qualifier above.
+
+```sh
+podman build --pull=never --target development \
+  --build-arg TOOLCHAIN_IMAGE=sha256:APPROVED_MANAGED_RUST_IMAGE_ID \
+  --build-arg FIXTURE_IMAGE=sha256:APPROVED_SLOTBOOK_FIXTURE_IMAGE_ID \
+  -f examples/adaptive-slotbook/Containerfile.development \
+  -t localhost/milkdrift-slotbook-development .
+podman image inspect --format '{{.Id}}' localhost/milkdrift-slotbook-development
+target/debug/slotbook-evidence develop --root /absolute/private/slotbook-live-source \
+  --image sha256:RESULTING_DEVELOPMENT_IMAGE_ID --model-profile /absolute/operator/model.json \
+  --cli target/debug/milkdrift --daemon target/debug/milkdrift-daemon \
+  --verifier target/debug/slotbook-verifier --remove-disposable
+```
+
+The directory must be new. `--resume` reuses retained requests, responses and accepted runs; use
+the same image, profile bytes, initial lane and port recorded in `development-inputs.json`.
+Retained uncertainty still blocks continuation.
+Use a delegated user service when the shell lacks the required controllers, following
+[managed operations](../../docs/operations/managed-linux.md). The default daemon port is 19768;
+protected service port 19848 must also be free. Serialize scenarios with other model calls.
+
+If the live initial candidate passes, run a separately labelled repair study with a fresh directory
+and `--seeded-initial`. Build the same Containerfile with `--target seeded` to include only the known
+failing `/fixtures/slotbook-seeded` executable. This first obtains failed verifier observations and
+then asks the model for replacement source; it supplies no corrected fixture. It proves repair of
+a seed, not a historical model planning error. Source studies do not replace the separately declared
+held-out learning comparison below or authorize changing its criterion.
+
+`development-result.json` records the outcome and exact evaluation. Raw responses, proposed
+revisions, run/attempt reads and downloaded diagnostics remain beside it. `--remove-disposable`
+requires the observed installation identities and preservation dispositions to remain unchanged;
+it removes owned workers/services through their resource APIs while retaining volumes and evidence.
+A failed or incomplete study remains failed; the command does not manufacture a pass.
 
 ## Inspect and adapt through supported commands
 
@@ -228,6 +296,18 @@ variant must pass its own target's verifier, and cross-target publication eviden
 recipe tested in a fresh installation, and activation with existing application bytes preserved.
 `knowledge-update-result.json` records the subsequent explicit guidance selection and the unchanged
 earlier selection and model manifest. Neither change silently republishes the workflow.
+
+For a disposable acceptance run, add `--remove-disposable` to `learn`. After observing the selected
+product's protected deployment, the driver drains that study-owned service before staging the tool
+update. This permits the tool worker to run while an unrelated service retains the other private
+container mapping. Once setup and knowledge checks finish, it removes the study's declared workers,
+targets and staging installation through the authenticated resource API. The
+`disposable-removal.json` report retains the observed inventories. Recipes preserve working files
+and data volumes, and the private study directory retains source, artifacts and decisions.
+Cleanup refuses a changed generation, resource identity, recipe, accepted evaluation or preservation
+disposition, including when resuming a stopped installation. Inspect and resolve any pending operation
+or use before retrying; the driver never converts uncertainty into a removal result.
+Unresolved uses refuse removal; the driver leaves their evidence for authorized recovery.
 
 After interruption, `--resume` reuses exact accepted requests and refuses changed retained inputs.
 If a proposal failed before any comparison invocation was accepted, `--resume --proposal-attempt 2`

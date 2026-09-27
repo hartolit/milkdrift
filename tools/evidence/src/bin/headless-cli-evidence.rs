@@ -51,6 +51,15 @@ struct Arguments {
     /// Run only independent process/model hosting through the actual daemon and CLI binaries.
     #[arg(long, conflicts_with = "controller_qualification")]
     independent_host_only: bool,
+    /// Check separately installed execution/coordinator hosts using an explicit endpoint manifest.
+    #[arg(long, conflicts_with_all = ["independent_host_only", "controller_qualification"], requires = "installed_output")]
+    installed_hosts: Option<PathBuf>,
+    /// Fresh private evidence directory, or the unchanged directory for --installed-replay.
+    #[arg(long, requires = "installed_hosts")]
+    installed_output: Option<PathBuf>,
+    /// Replay saved acceptances after the operator restarts the selected installations.
+    #[arg(long, requires = "installed_hosts")]
+    installed_replay: bool,
     /// Exercise explicit controller activation in an isolated installation.
     #[arg(long)]
     controller_qualification: bool,
@@ -161,6 +170,9 @@ fn record_verification(value: serde_json::Value) {
 fn run(arguments: Arguments) -> EvidenceResult {
     require_executable(&arguments.daemon)?;
     require_executable(&arguments.cli)?;
+    if arguments.installed_hosts.is_some() {
+        return independent::installed(&arguments);
+    }
     if arguments.controller_qualification {
         return controller::run(&arguments);
     }

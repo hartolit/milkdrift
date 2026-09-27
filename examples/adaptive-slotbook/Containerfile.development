@@ -1,0 +1,11 @@
+# Optional image for the separately labelled model repair of the seeded candidate.
+# Both arguments must be exact approved local image identities; build with --pull=never.
+ARG TOOLCHAIN_IMAGE
+ARG FIXTURE_IMAGE
+FROM ${FIXTURE_IMAGE} AS seed
+FROM ${TOOLCHAIN_IMAGE} AS development
+# The earlier setup image contains the complete evaluator specification. Source development
+# receives only its explicit public brief; do not expose that specification to compiled code.
+RUN rm /usr/share/milkdrift/slotbook.md /usr/local/bin/initialize-slotbook
+FROM development AS seeded
+COPY --from=seed /fixtures/slotbook-seeded /fixtures/slotbook-seeded

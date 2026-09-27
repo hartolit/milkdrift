@@ -1,3 +1,4 @@
+mod cleanup;
 mod evaluate;
 mod proposal;
 mod setup;
@@ -213,7 +214,7 @@ pub(in crate::learning) fn run(
             return Ok(());
         }
         evaluate::run(args, s, &baseline, &result, &declaration, &slots)?;
-        return setup::run(args, s, &slots);
+        return finish(args, s, &slots);
     }
     s.ok(
         "learning-base-import",
@@ -351,5 +352,16 @@ pub(in crate::learning) fn run(
         return Ok(());
     }
     evaluate::run(args, s, &baseline, &result, &declaration, &slots)?;
-    setup::run(args, s, &slots)
+    finish(args, s, &slots)
+}
+
+fn finish(args: &Arguments, s: &mut Session, slots: &[Value]) -> EvidenceResult {
+    if args.remove_disposable {
+        cleanup::drain_selected(s, slots)?;
+    }
+    setup::run(args, s, slots)?;
+    if args.remove_disposable {
+        cleanup::remove(s, slots)?;
+    }
+    Ok(())
 }

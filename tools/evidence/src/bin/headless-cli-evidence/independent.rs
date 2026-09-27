@@ -1,7 +1,10 @@
 //! Black-box independent calls use public upload, discovery, saved requests and observations.
+#[path = "independent/installed.rs"]
+mod installed;
 #[path = "independent/workflow.rs"]
 mod workflow;
 use super::{Arguments, TOKEN, setup};
+pub(super) use installed::run as installed;
 use milkdrift_capability::{InputReference, InvocationValueReference};
 use milkdrift_evidence::{
     EvidenceResult,

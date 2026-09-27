@@ -376,11 +376,29 @@ fn unauthorized_provider_expansion_stores_no_revision() -> TestResult {
     let store = Arc::new(RedbStore::open(directory.path())?);
     let actor = ActorRef::new("ai:provider-confined")?;
     let workflow = WorkflowId::new("workflow-control-provider-confined")?;
-    let base = base_revision(workflow.as_str())?;
+    let original = base_revision(workflow.as_str())?;
+    store.put_revision(&original)?;
     let grant_id = GrantId::new("grant:control-provider-confined")?;
-    store.put_revision(&base)?;
     let allowed_profile = ProviderProfileRef::new("profile-allowed")?;
-    let grant = AuthorityPreset::Controller
+    let allowed_work = Node::new(
+        NodeId::new("work")?,
+        NodeKind::task_direct_inputs(
+            CapabilityRequirement::new(OperationId::new("model.generate")?)
+                .provider_profile(allowed_profile.clone())
+                .maximum_side_effect(SideEffectClass::ReadOnly),
+        )?,
+    )?
+    .with_control_output(PortId::new("out")?)?;
+    let base = original.revise(
+        original.id(),
+        MutationBatch::new(vec![Mutation::ReplaceNode {
+            node: allowed_work.clone(),
+        }])?,
+        AuthorRef::new("human:provider-scope")?,
+        "pin the authorized starting provider",
+    )?;
+    store.put_revision(&base)?;
+    let grant = AuthorityPreset::Advisor
         .template(
             grant_id.clone(),
             1,
@@ -406,6 +424,40 @@ fn unauthorized_provider_expansion_stores_no_revision() -> TestResult {
         grant,
         BTreeMap::new(),
     )?;
+    let allowed = WorkflowProposalDocument::new(WorkflowProposal::new(
+        ProposalId::new("proposal-provider-allowed")?,
+        actor.clone(),
+        ProposalProvenance::Direct,
+        workflow.clone(),
+        None,
+        base.id().clone(),
+        base.content_digest().clone(),
+        None,
+        MutationBatch::new(vec![Mutation::ReplaceNode { node: allowed_work }])?,
+        "retain the authorized provider",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        ProposalApplicationPolicy::ProposeOnly,
+        None,
+        ClaimedStopCondition::Continue,
+    )?);
+    let accepted = service.execute(&command(
+        "control-provider-allowed",
+        &context,
+        OptimisticGuard {
+            expected_run_sequence: None,
+            expected_revision: Some(base.id().clone()),
+            expected_proposal_digest: Some(allowed.proposal().digest().clone()),
+        },
+        ControlCommand::SubmitProposal { proposal: allowed },
+    )?)?;
+    let ControlResult::ProposalSubmitted { value } = accepted else {
+        return Err("authorized offline proposal was not submitted".into());
+    };
+    assert!(store.revision(&value.proposed_revision)?.is_some());
     let replacement = Node::new(
         NodeId::new("work")?,
         NodeKind::task_direct_inputs(
@@ -469,6 +521,7 @@ fn unauthorized_provider_expansion_stores_no_revision() -> TestResult {
         NodeId::new("work")?,
         NodeKind::task_direct_inputs(
             CapabilityRequirement::new(OperationId::new("model.generate")?)
+                .provider_profile(ProviderProfileRef::new("profile-allowed")?)
                 .maximum_side_effect(SideEffectClass::ReadOnly),
         )?,
     )?

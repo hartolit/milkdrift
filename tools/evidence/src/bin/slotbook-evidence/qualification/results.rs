@@ -133,7 +133,27 @@ pub(super) fn finish(
         args!["--evaluation", accepted_id],
         Expected::Refused,
     )?;
-    let direct_version = number(&reopened["version"])?;
+    let renewal_state = if args.drain_before_renewal {
+        target(
+            s,
+            "drain-before-renewal",
+            "stop",
+            number(&reopened["version"])?,
+            vec![],
+            Expected::Success,
+        )?;
+        let stopped = inspect(s, "drained-before-renewal")?;
+        ensure(
+            stopped["pending"].is_null()
+                && stopped["observed_running"] == false
+                && stopped["generation"] == reopened["generation"],
+            "owned service did not drain with its accepted generation preserved",
+        )?;
+        stopped
+    } else {
+        reopened
+    };
+    let direct_version = number(&renewal_state["version"])?;
     let direct = target(
         s,
         "direct-evaluate",
@@ -246,6 +266,6 @@ pub(super) fn finish(
             "qualification resource removal incomplete",
         )?;
     }
-    s.write("qualification.json",&json!({"completed_run":completed,"protected_target":after,"failure_evidence":failed_id,"public_execution":link.public,"internal_run":link.internal,"invocation_mode":args.invocation_mode.name(),"lane":"compiled Rust seeded repair; rootless Linux; finite six-check HTTP verifier"}))?;
+    s.write("qualification.json",&json!({"completed_run":completed,"protected_target":after,"failure_evidence":failed_id,"public_execution":link.public,"internal_run":link.internal,"invocation_mode":args.invocation_mode.name(),"drained_before_renewal":args.drain_before_renewal,"lane":"compiled Rust seeded repair; rootless Linux; finite six-check HTTP verifier"}))?;
     Ok(())
 }

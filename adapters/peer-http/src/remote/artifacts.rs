@@ -43,6 +43,7 @@ impl RemoteCapabilityAdapter {
                 "peer output count exceeds the observation allowance",
             ));
         }
+        reporter.heartbeat()?;
         let download = self
             .client
             .output_artifact_offer(execution, observation.sequence)
@@ -64,6 +65,7 @@ impl RemoteCapabilityAdapter {
         let peer = self.client.remote_peer();
         let transfer = download.transfer.clone();
         let result = (|| {
+            reporter.heartbeat()?;
             let remote_limit = match self
                 .client
                 .negotiate_artifact(&download)
@@ -162,11 +164,17 @@ impl RemoteCapabilityAdapter {
             }
             Ok(())
         })();
+        let renewal = if result.is_ok() {
+            reporter.heartbeat()
+        } else {
+            Ok(())
+        };
         // Both owners bound staging independently. Every exit releases transport state;
         // aborting a completed transfer does not remove its durable core artifact.
         let _ = self.client.abort_artifact(&transfer);
         let _ = self.artifacts.abort(peer, &transfer);
         result?;
+        renewal?;
         imported.insert(reference.identity().to_owned());
         *total_bytes = next_total;
         Ok(())

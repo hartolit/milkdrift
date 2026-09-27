@@ -27,7 +27,8 @@ This document owns current implementation, limitations, exact versions, and qual
   prepares workload-independent working storage, temporary workers, and optional owned Quadlet llama-server or
   attached endpoint. It requires explicit resource protection and refuses unsupported prerequisites.
   Deterministic lifecycle/ledger/conformance/backup tests are distinct from the gated real-Podman
-  lane. Desktop Podman 6.1.2 is exercised; managed GPU and UM790/reboot qualification remain pending; see
+  lane. Desktop and UM790 Podman 6.1.2 are exercised, including owned CPU model lifecycle and an
+  orderly host reboot with completed-call replay. Managed GPU and pressure qualification remain pending; see
   [managed operations](../operations/managed-linux.md).
 - Workflow-enabled hosts publish exact governed methods through ordinary capability discovery and
   invocation. Local attempts and direct/peer serving records retain one recoverable internal run,
@@ -146,16 +147,16 @@ values; repository contracts check the version cells against source.
   Public inputs are finite reviewed choices or authorized exact artifacts; results are declared
   accepted terminal fields. Per-call allowances and service grant/host ceilings apply, with no
   service-wide lifetime spending account. Process-internal network/model calls are not direct-model
-  accounting. No live model repair, second-machine protected deployment or reboot qualification is
-  claimed here.
+  accounting. Native seeded protected deployment has run on the UM790, and completed calls replay
+  after an orderly host reboot. Actual live model source repair remains unqualified.
 - Learning comparisons are bounded to declared slots and 4,096 events per internal run. Unread
   descendants, unavailable usage, missing public completion or missing verifier evidence prevent
   eligibility. The declaration fixes the input and output fields; the returned product must be the
   artifact accepted by the final verifier. The maintained
-  application and repair remain seeded native fixtures. Real Ornith requests reached the ordinary
-  adapter, but completed responses contained malformed candidate documents and were refused;
-  interrupted requests retain uncertainty. No useful real-model improvement, universal superiority
-  or assignment 06 operational qualification is claimed. The
+  application and repair remain seeded native fixtures. A valid real Ornith method proposal was
+  evaluated on Drifty; its candidate runs lacked comparable verifier evidence, so the comparison
+  remained inconclusive and the baseline was retained. Earlier malformed candidates and uncertain
+  calls remain recorded. No useful real-model improvement or universal superiority is claimed. The
   [05 handoff](../development/virtual-office/adaptive-hosts/handoffs/05.md) records evidence lanes.
 - Earlier selection-policy-version-1 manifests remain readable, but omissions retaining ambiguous
   identities or sizes and stopped required evidence cannot authorize reuse. Retry and startup refuse
@@ -212,6 +213,62 @@ values; repository contracts check the version cells against source.
   hosted Linux runner; forced Windows child termination does not qualify that platform claim.
 
 ## Current validation/evidence snapshot
+
+### Integrated acceptance in progress
+
+The fresh deterministic learning lane completed four held-out pairs with one baseline repair and
+zero candidate repairs each, promoted generation 2, and produced separately verified camera-loan
+and yoga-class variants. Only the loan product was deployed. A staged tool update preserved its
+source application's bytes; knowledge supersession preserved prior selections. Cleanup removed
+all 23 study installations and replayed with the reviewed identity/preservation checks. Native
+inspection found all 47 retained study volumes and matching source/guidance hashes afterward.
+The unrelated service kept its original container identity/start time, with no study containers left.
+
+Fresh desktop actual-binary evidence covers independent roles, public files, direct and delegated
+work, retained unknown usage, and the one-worker peer Slotbook method through repair, protected
+deployment, daemon restart, exact replay, verification renewal and preservation-aware removal.
+The model in these lanes is deterministic; both peers run on the desktop. Native BusyBox worker
+enforcement and the protected verifier's timeout/reopen/candidate-integrity lane also pass afresh.
+An authorized recovery now preserves a published wrapper's proof of no external entry. Its
+regressions cover lost child stop evidence, complete store reopen, fencing, exact return/replay,
+unrelated-authority refusal, cancellation and terminal hold release. Deliberate removal of the
+proof guard makes the continuation test fail. Linux idle-role memory/thread observations and
+reproduction commands belong to the [evidence guide](../development/verification-evidence.md).
+
+The [06 handoff](../development/virtual-office/adaptive-hosts/handoffs/06.md) retains exact inputs,
+review scope and current verification. This does not accept or close the sprint. Physical
+desktop-to-UM790 direct process/model calls and workflows now pass using the same execution-only
+serving capabilities. Both daemons restart with exact replay, unchanged outputs and no additional
+process or native-model entry. The native Slotbook qualification also passes on the UM790.
+Rootless prerequisites are installed under a dedicated account, and a setup reboot restored its
+matching kernel/TUN module. A later authorized reboot automatically restarted the owned CPU model
+service before Milkdrift; reopening the daemons replayed completed direct and workflow operations
+with exact retained results and no new external entry. This tests idle completed-work recovery,
+not interruption during an active call or power loss.
+
+A real Ornith proposal was obtained from explicitly seeded source evidence. Its four candidate
+evaluations did not produce comparable verifier results, so the outcome is inconclusive and the
+candidate was not promoted. The retained baseline produced two independently verified variants;
+only the selected loan variant was deployed. The owned CPU model passed direct inference, exact
+reapply, automatic reboot recovery, drained configuration replacement and preservation-aware removal.
+Old generation acceptances replayed, and the managed Rust source, binary and marker survived both
+replacement and removal. The bounded real-source study did not qualify a Slotbook application:
+the first candidate failed compilation; the next compiled a build utility whose verifier journal
+closed without completed checks, so publication refused. The final model call reached its
+8192-token limit without trustworthy terminal output; its attempt and unknown usage remain
+uncertain and were not replayed. All source-study resources were removed with source, binary,
+artifacts and data preserved. Successful model-developed source/repair remains the sprint blocker.
+Authenticated forwarding carries native model requests; the non-loopback plaintext restriction
+remains in force. Native Vulkan use does not qualify the managed Vulkan boundary.
+
+The fresh review gate passed 960 unit/integration tests, 24 doctests and all 24 repository contracts,
+with warning-denying Clippy/rustdoc, dependency checks and test discovery. Eight opt-in tests remain
+ignored by that gate. The native verifier lifecycle and actual-binary independent-host scenario
+passed separately in the review; the physical host and live-model results above come from retained
+implementation evidence. Default/all-feature API inventories for redb-store, managed-linux,
+peer-http, capability-host and evidence have no changes. The local optimization 1/debug-information 0
+profile retains debug assertions. The [active handoff](../development/virtual-office/adaptive-hosts/handoffs/06.md)
+distinguishes fresh checks, retained physical evidence and the missing live-source acceptance.
 
 ### Evaluated method reuse
 
@@ -298,9 +355,10 @@ The [handoff](../development/virtual-office/adaptive-hosts/handoffs/02.md) binds
 inputs, commands, full-gate/API results and profile settings. Corrective evidence lives under
 `target/adaptive-hosts/post-02/`; predecessor results remain under
 `target/adaptive-hosts/managed-02-qualification/` and `target/adaptive-hosts/managed-02-review/`.
-Machine reboot, power loss, managed Vulkan and UM790 pressure remain in the
+Power loss, managed Vulkan and UM790 pressure remain in the
 [hardware qualification issue](../development/virtual-office/whiteboard/issues/managed-linux-hardware-qualification.md).
-The passing desktop tests do not establish those hardware claims.
+The later orderly UM790 reboot establishes the narrow completed-work recovery described above;
+the passing desktop and CPU tests do not establish the remaining hardware claims.
 [Managed operations](../operations/managed-linux.md#platform-qualification) owns the runnable lanes.
 
 ### Independent host execution

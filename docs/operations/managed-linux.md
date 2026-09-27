@@ -21,11 +21,18 @@ Count protected services and verifier containers in the same host-wide pool. Wit
 IDs of each kind, two resident services leave no range for a verifier or worker. Preparing an
 individual recipe does not reserve spare IDs against other installations. Plan for the maximum
 simultaneous containers, or stop disposable services through their managed owner before testing.
+Keep subordinate ranges disjoint, including ranges automatically assigned when creating an account.
 Stopping preserves declared data; a later controlled start still requires applicable evidence.
 An owned persistent service also requires operator-enabled user lingering. `prepare` checks these
 facts, available shared RAM, free storage, and exact model inputs. An unsupported version or missing
 protection refuses; there is no privileged-container or native-process fallback. The adapter uses
 `/usr/bin/podman`, `/usr/bin/systemctl`, `/usr/bin/loginctl` and the installed Quadlet generator.
+
+Owned services, protected verification and workers with outbound networking also require a usable
+`/dev/net/tun` driver for Podman's private networking. Preparation opens the device without creating
+an interface. A device node alone is insufficient: after a kernel upgrade, the running kernel's
+modules may no longer be installed. In that case, an administrator must reboot into the installed
+kernel before testing. An unavailable driver refuses preparation rather than weakening isolation.
 
 Install prerequisites through your operating system before bootstrap. This command creates private
 Milkdrift configuration and a credential file; it does not install packages, enable lingering, change
@@ -49,6 +56,19 @@ loads at most 32 approved recipes. Model recipes also require the existing provi
 finite token accounting and explicit billing; unknown terms refuse instead of advertising a model
 that the independent host cannot admit. To approve another recipe, add its absolute private file
 to `adapters.managed_linux.recipes` under a distinct recipe name, validate configuration, and restart.
+
+When launching the daemon as a systemd user service, give that service `Delegate=yes` so its
+rootless container operations can use the delegated controllers. An SSH shell's successful
+preflight does not establish availability inside a different service cgroup. For example:
+
+```sh
+systemd-run --user --unit=milkdrift-slotbook --property=Delegate=yes --property=WorkingDirectory=/home/operator/milkdrift-slotbook -- /absolute/path/milkdrift-daemon --config /home/operator/milkdrift-slotbook/daemon.toml
+```
+
+Inspect `resource prepare` diagnostics from that daemon before applying. A successful command
+receipt may describe an unprepared or pending installation; require the reported lifecycle state
+and absent blockers, rather than treating the HTTP/CLI status alone as completed setup.
+
 The installation name remains stable across these recipe updates. Bootstrap defaults the installation
 name to the initial recipe name; `--installation` selects another name explicitly. Updates select its exact
 name and digest; caller-supplied mounts, engine flags and unit directives are not accepted.
@@ -249,6 +269,11 @@ instead of a subworkflow event. Their wrapper has never entered a physical write
 acceptance/entry transaction records that evidence, and only the exact linked service child can
 receive its editing claim. Actual worker children still require physical stop/fencing evidence.
 The wrapper cannot release a suspended hold merely because its internal workflow became terminal.
+After resolving an uncertain published child, return its editing claim using the saved publication
+association. Resuming requires the original caller's current grant, including for direct and peer
+calls; the child's service grant or an unrelated administrator cannot substitute for it. A returned
+wrapper keeps its no-entry proof, so it can pass editing to another child or release its hold when
+the invocation completes. A cancelled wrapper must be returned without resuming.
 See [published methods](../guides/published-methods.md) for service authority and recovery.
 
 ## Protection and retained state

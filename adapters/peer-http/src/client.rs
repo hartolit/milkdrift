@@ -158,9 +158,21 @@ impl PeerHttpClient {
         &self,
         request: &ServingInvocationRequest,
     ) -> Result<InvocationAcceptance, PeerHttpError> {
+        self.submit_with_renewal(request, || Ok(()))
+    }
+
+    // A sequence of individually bounded HTTP attempts can outlive the caller's durable
+    // lease. The adapter must be able to renew, or refuse further requests, between them.
+    pub(crate) fn submit_with_renewal(
+        &self,
+        request: &ServingInvocationRequest,
+        mut renew: impl FnMut() -> Result<(), PeerHttpError>,
+    ) -> Result<InvocationAcceptance, PeerHttpError> {
+        renew()?;
         self.ensure_handshake()?;
         let mut last_error = None;
         for _attempt in 0..3 {
+            renew()?;
             match self.post::<_, InvocationAcceptance>(&["peer", "v1", "invocations"], request) {
                 Ok(response) => {
                     response
@@ -173,6 +185,7 @@ impl PeerHttpClient {
                 Err(error) => return Err(error),
             }
         }
+        renew()?;
         match self.lookup(&request.request_id) {
             Ok(InvocationLookup::Known {
                 execution,

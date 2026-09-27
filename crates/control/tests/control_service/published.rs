@@ -42,6 +42,7 @@ fn publication_grant(actor: &str, name: &str) -> TestResult<AuthorityGrant> {
         .build()?;
     let mut operations = base.operations().clone();
     operations.insert(AuthorityOperation::AdministerCapabilities);
+    operations.insert(AuthorityOperation::Terminate);
     Ok(
         AuthorityGrantBuilder::new(base.identity().clone(), 1, base.actor().clone())
             .operations(operations)

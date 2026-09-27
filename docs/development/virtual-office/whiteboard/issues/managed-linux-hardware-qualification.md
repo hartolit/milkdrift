@@ -8,28 +8,30 @@ actual kernel limits pass. These are no longer blockers on that host. The
 
 ## Evidence and remaining boundary
 
-Drifty accepts real model requests through its existing native llama.cpp service. Read-only SSH
-inspection found no Podman executable on that host; its listener is bound to the NetBird address,
-not loopback. An authenticated SSH forward to that exact listener supports the ordinary Milkdrift
-model smoke. This does not exercise Milkdrift-owned Vulkan containers or qualify shared-memory
-pressure on the UM790. The desktop CPU test does not establish those properties either.
+Drifty now has an operator-prepared dedicated account, delegated controllers, rootless Podman
+6.1.2 and matching kernel/TUN support. Assignment 06 exercised physical direct/workflow calls,
+native seeded Slotbook protection and an owned CPU service using the exact Ornith 35B weights.
+An orderly operator reboot automatically restored that service before Milkdrift started. Completed
+calls replayed without new entry; drained replacement preserved the working area, and removal
+retained source, output and data. The [06 handoff](../../adaptive-hosts/handoffs/06.md) binds the
+exact inputs and independent observations. These completed setup and idle-recovery checks are no
+longer blockers.
 
-A machine reboot and power-loss recovery were not executed. The desktop is the active user session;
-interrupting it would terminate this review. Starting a second 35B Vulkan service beside Drifty's
-existing native service also needs an explicit resource/interruption plan. The user provided the
-native service for inference tests, not permission to stop it or reconfigure its host.
+The independently attached native server uses Vulkan. That does not exercise Milkdrift-owned
+Vulkan containers or qualify controlled shared-memory pressure on the UM790. Simultaneous native
+Vulkan and owned CPU loading was observed with free memory; no stress or performance guarantee
+follows. All generation was serialized. Neither an orderly reboot with completed calls nor daemon
+interruption establishes physical power-loss recovery or recovery of active inference across reboot.
 
-The remaining acceptance work needs an operator-prepared rootless host, an exact Vulkan server
-image and model, device permissions, memory headroom measured as one shared pool, and a scheduled
-reboot. Run the maintained lifecycle lane, preserve actual offload and successful inference
-evidence, then inspect retained state after reboot and controlled pressure. Do not clear this issue
-from endpoint health or a CPU result.
+The remaining hardware work needs an exact approved Vulkan container image, device permissions,
+and an explicit pressure/interruption plan within the machine's shared memory pool. Preserve actual
+offload and successful inference evidence, then test the specific recovery claim. Do not clear this
+issue from native endpoint health, CPU inference or the completed idle reboot.
 
 ## Questions of purpose
 
-- Must the initial qualified deployment own Drifty's model service, or is an explicitly attached
-  native service enough for the first supported use? Keeping attachment avoids taking over an
-  already useful operator service, but does not satisfy an owned-Vulkan claim.
+- Which owned Vulkan configuration, beyond the qualified CPU and attached-native paths, is worth
+  claiming support for? Attachment and CPU operation do not satisfy an owned-Vulkan claim.
 - Which reboot and pressure failures must Milkdrift recover from, and which require operator repair?
   What retained evidence distinguishes an interrupted call from a safely restartable service?
 - Can an isolated maintenance window and the existing host establish these claims, or is a separate

@@ -1,9 +1,11 @@
 //! Prepare and qualify the maintained Slotbook method through actual product binaries.
 macro_rules! args { ($($value:expr),* $(,)?) => { vec![$(format!("{}", $value)),*] }; }
 mod client;
+mod develop;
 mod learning;
 mod model_fixture;
 mod prepare;
+mod preservation;
 mod publication;
 mod qualification;
 
@@ -23,6 +25,8 @@ enum Action {
     Prepare(Prepare),
     /// Execute and inspect the configured method; retain resources on failure for recovery.
     Qualify(Qualify),
+    /// Ask a real model to implement/repair the fixed source case in an isolated managed worker.
+    Develop(develop::Arguments),
     /// Continue an accepted source qualification with explicit held-out learning and variants.
     Learn(learning::Arguments),
     /// Serve a bounded, explicitly deterministic proposal endpoint for validation scenarios.
@@ -74,11 +78,15 @@ struct Qualify {
     /// Exact corrected binary used to build the image, for independent deployed-byte comparison.
     #[arg(long)]
     candidate: PathBuf,
+    /// Stop this scenario's owned service before renewal when only two private mappings fit.
+    #[arg(long)]
+    drain_before_renewal: bool,
 }
 fn main() -> EvidenceResult {
     match Arguments::parse().command {
         Action::Prepare(args) => prepare::run(args),
         Action::Qualify(args) => qualification::run(args),
+        Action::Develop(args) => develop::run(args),
         Action::Learn(args) => learning::run(args),
         Action::ModelFixture(args) => model_fixture::run(args),
     }
