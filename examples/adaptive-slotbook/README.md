@@ -71,7 +71,8 @@ CARGO_TARGET_DIR=target/slotbook-static CARGO_PROFILE_RELEASE_STRIP=symbols \
 mkdir -p target/slotbook-image
 cp target/slotbook-static/x86_64-unknown-linux-gnu/release/slotbook \
   target/slotbook-static/x86_64-unknown-linux-gnu/release/slotbook-seeded \
-  target/slotbook-static/x86_64-unknown-linux-gnu/release/slotbook-workspace target/slotbook-image/
+  target/slotbook-static/x86_64-unknown-linux-gnu/release/slotbook-workspace \
+  target/slotbook-static/x86_64-unknown-linux-gnu/release/slotbook-source-write target/slotbook-image/
 cp examples/adaptive-slotbook/Containerfile target/slotbook-image/
 podman build --pull=never --build-arg BASE_IMAGE=sha256:PRELOADED_BUSYBOX_IMAGE_ID \
   -t localhost/milkdrift-slotbook-rust target/slotbook-image
@@ -126,24 +127,43 @@ allocations, not platform defaults; preparation and admission validate them thro
 
 `slotbook-evidence develop` uses the same source brief, governed build region, six-check verifier
 and protected publisher. It runs actual daemon/CLI binaries and an approved Rust compiler image.
-The model returns a complete structured proposal containing Rust source as worker input. The
-ordinary proposal reader and authority check it before compilation in the managed worker. The
+The model returns structured implementation data: complete source and a rationale, including
+the complete corrected source on repair. A private, versioned authoring step maps those bytes
+into the fixed build-node mutation; it adds no application code. The ordinary proposal reader and
+authority check that proposal before compilation in the managed worker. The
 verifier executes the resulting immutable binary; model prose and proposal submission alone do
 not establish application acceptance.
 
 The setup creates a separate advisor identity for offline source proposals, scoped to Slotbook's
 worker and protected resource operations. It cannot execute work, read artifacts or access the
 host filesystem/network. The harness binds the submitted draft to that authenticated author and
-the observed model provenance, preserving the returned mutation. The operator starts the accepted
+the observed model provenance, preserving every returned source byte. The mapping, raw response
+and resulting proposal are retained separately. The operator starts the accepted
 revision through the ordinary run command; global controller permissions do not change.
 
-Use an operator-reviewed local model profile with structured JSON support, explicit billing and
-context for at most 23,000 UTF-8 prompt bytes plus 8,192 output tokens and the provider's template.
-The command selects the prompt once. Each study admits at most three proposal calls. Invalid
-responses remain recorded. Failed builds or candidates supply selected compiler diagnostics and
-completed verifier journal records to the next call. Uncertainty stops continuation for inspection.
-Polling uses at most 241 individually bounded CLI requests per model or application run; this is
-not a fixed elapsed-time performance promise.
+Use operator-reviewed local model profiles with structured JSON support and explicit billing.
+Choose a mode that returns the structured answer in ordinary message content. The current
+provider reader refuses separate reasoning fields; enabling thinking does not qualify that mode.
+For the exercised llama.cpp endpoints, the profile's `org.milkdrift.openai/request` options set
+`chat_template_kwargs.enable_thinking` to `false`. Retain those exact profile bytes with the study.
+Each call allows 16,384 output tokens, including repairs that return the complete corrected file.
+The response contains `application_source` before `rationale`; the full program is required on
+every attempt. Only Rust's standard library and the pinned `serde_json` library are available.
+Selected prompts are bounded by
+52,000 UTF-8 bytes, including the complete current source on repairs. Check the actual requests
+against the server's token context and allow enough request/idle time for local generation.
+The task is uploaded as an immutable artifact, so its manifest records a reference without repeating
+the prompt. `--maximum-attempts` fixes one to eight calls (six by default).
+`--repair-model-profile` optionally selects a second model for even-numbered attempts; the primary
+model handles odd-numbered attempts. Calls are sequential and retain their distinct provenance.
+
+Failed builds or candidates supply compiler diagnostics, completed verifier records and an immutable
+source snapshot to the next call. The write helper requires the selected source digest before
+atomically replacing the file; a stale or missing source refuses. Initial creation requires that
+the file is absent. The worker's exclusive editing claim prevents concurrent managed writes.
+Invalid responses remain recorded and uncertainty stops continuation for inspection. Each model run
+uses at most 361 individually bounded observation requests; application runs use 241. These bounds
+are not elapsed-time performance promises.
 
 The earlier [managed tool image](../managed-linux/Containerfile) includes the complete evaluation
 specification for operator setup. Build a separate source image to exclude that file from model
@@ -151,6 +171,8 @@ workers. Both arguments below are exact local image IDs: the compiler image from
 and the fixture image from the deterministic qualifier above.
 
 ```sh
+CARGO_TARGET_DIR=target/slotbook-development RUSTFLAGS='-C target-feature=+crt-static' \
+  cargo build -p serde_json --release --target x86_64-unknown-linux-gnu
 podman build --pull=never --target development \
   --build-arg TOOLCHAIN_IMAGE=sha256:APPROVED_MANAGED_RUST_IMAGE_ID \
   --build-arg FIXTURE_IMAGE=sha256:APPROVED_SLOTBOOK_FIXTURE_IMAGE_ID \
@@ -159,12 +181,22 @@ podman build --pull=never --target development \
 podman image inspect --format '{{.Id}}' localhost/milkdrift-slotbook-development
 target/debug/slotbook-evidence develop --root /absolute/private/slotbook-live-source \
   --image sha256:RESULTING_DEVELOPMENT_IMAGE_ID --model-profile /absolute/operator/model.json \
+  --repair-model-profile /absolute/operator/second-model.json --maximum-attempts 6 \
   --cli target/debug/milkdrift --daemon target/debug/milkdrift-daemon \
   --verifier target/debug/slotbook-verifier --remove-disposable
 ```
 
+The development image includes only the pinned compiler, JSON library and source-write helper;
+no application implementation is supplied. The library build uses the repository lockfile and
+the same compiler version as the approved image. Keep `target/slotbook-development` dedicated to
+this dependency build so unrelated application libraries cannot enter the image.
+
 The directory must be new. `--resume` reuses retained requests, responses and accepted runs; use
-the same image, profile bytes, initial lane and port recorded in `development-inputs.json`.
+the same image, profile bytes, proposal-mapping version, attempt allowance, initial lane and port
+recorded in `development-inputs.json`.
+Before reuse, the driver verifies downloaded response bytes against their immutable artifact
+reference and reconstructs the workflow and proposal from those bytes and the declared inputs.
+A changed retained document refuses continuation rather than attributing edited code to the model.
 Retained uncertainty still blocks continuation.
 Use a delegated user service when the shell lacks the required controllers, following
 [managed operations](../../docs/operations/managed-linux.md). The default daemon port is 19768;
@@ -182,6 +214,25 @@ revisions, run/attempt reads and downloaded diagnostics remain beside it. `--rem
 requires the observed installation identities and preservation dispositions to remain unchanged;
 it removes owned workers/services through their resource APIs while retaining volumes and evidence.
 A failed or incomplete study remains failed; the command does not manufacture a pass.
+
+For workflow qualification with an explicitly assisted implementation, correct the retained Rust
+source and submit it in a new study. Preserve the original model response and identify the changes
+as assistance; an accepted assisted candidate does not establish unaided model development.
+
+```sh
+target/debug/slotbook-evidence develop --root /absolute/private/slotbook-assisted \
+  --image sha256:RESULTING_DEVELOPMENT_IMAGE_ID \
+  --assisted-source /absolute/operator/corrected-slotbook.rs --maximum-attempts 1 \
+  --cli target/debug/milkdrift --daemon target/debug/milkdrift-daemon \
+  --verifier target/debug/slotbook-verifier --remove-disposable
+```
+
+This explicit alternative makes no model request and records direct proposal provenance. It pins
+the supplied regular UTF-8 source file to its path, digest and byte size before submission. The same restricted
+author, source-write helper, managed compiler, immutable capture, verifier and publisher handle it.
+`--resume` requires identical source bytes and study inputs. A further correction is a new declared
+submission; it cannot overwrite an earlier model response, proposal or accepted result.
+Model profiles and seeded input cannot be combined with assisted source.
 
 ## Inspect and adapt through supported commands
 

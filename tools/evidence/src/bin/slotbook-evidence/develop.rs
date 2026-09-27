@@ -1,4 +1,7 @@
 //! Bounded live source development; proposal bytes and trusted observations remain distinct.
+mod assisted;
+mod authoring;
+mod observations;
 mod proposal;
 use super::{
     InvocationMode, Prepare, Qualify,
@@ -6,10 +9,12 @@ use super::{
     prepare, qualification,
 };
 use milkdrift_evidence::{EvidenceResult, application::ensure};
+use observations::{observe, source_snapshot};
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf, thread, time::Duration};
+use std::{fs, path::PathBuf};
 
 const MODEL: &str = "slotbook-development-model";
+const REPAIR_MODEL: &str = "slotbook-repair-model";
 const AUTHOR: &str = "agent:source-author";
 
 #[derive(clap::Args)]
@@ -27,8 +32,21 @@ pub(super) struct Arguments {
     #[arg(long)]
     image: String,
     /// Explicit operator-reviewed local model profile supporting structured output.
-    #[arg(long)]
-    model_profile: PathBuf,
+    #[arg(
+        long,
+        required_unless_present = "assisted_source",
+        conflicts_with = "assisted_source"
+    )]
+    model_profile: Option<PathBuf>,
+    /// Explicit operator-assisted Rust source; records direct provenance and makes no model call.
+    #[arg(long, conflicts_with_all = ["model_profile", "repair_model_profile", "seeded_initial"])]
+    assisted_source: Option<PathBuf>,
+    /// Optional second model for alternate repair attempts; the initial model handles odd attempts.
+    #[arg(long, requires = "model_profile")]
+    repair_model_profile: Option<PathBuf>,
+    /// Finite proposal allowance, fixed before the study starts.
+    #[arg(long, default_value_t = 6, value_parser = clap::value_parser!(u8).range(1..=8))]
+    maximum_attempts: u8,
     #[arg(long, default_value_t = 19768)]
     port: u16,
     /// Separately labelled repair from /fixtures/slotbook-seeded in the approved image.
@@ -43,6 +61,10 @@ pub(super) struct Arguments {
 }
 
 pub(super) fn run(args: Arguments) -> EvidenceResult {
+    ensure(
+        args.assisted_source.is_none() || args.maximum_attempts == 1,
+        "an assisted source submission requires --maximum-attempts 1; further corrections need a new declared submission",
+    )?;
     if args.resume {
         ensure(
             load(args.root.join("development-inputs.json"))? == declared_inputs(&args)?,
@@ -65,8 +87,7 @@ pub(super) fn run(args: Arguments) -> EvidenceResult {
         let config: Value =
             toml::from_str(&fs::read_to_string(args.root.join("host/daemon.toml"))?)?;
         ensure(
-            config["adapters"]["model_profiles"][0]["profile"]
-                == json!(args.model_profile.canonicalize()?),
+            config["adapters"]["model_profiles"] == model_profiles(&args)?,
             "resume model configuration differs",
         )?;
         configure_author(&s)?;
@@ -114,14 +135,36 @@ pub(super) fn run(args: Arguments) -> EvidenceResult {
 }
 
 fn declared_inputs(args: &Arguments) -> EvidenceResult<Value> {
-    let profile = args.model_profile.canonicalize()?;
-    Ok(
-        json!({"image":args.image,"model_profile":profile,"model_profile_digest":format!("b3_{}",blake3::hash(&fs::read(&profile)?)),"seeded_initial":args.seeded_initial,"port":args.port}),
-    )
+    let profile = args
+        .model_profile
+        .as_ref()
+        .map(|p| p.canonicalize())
+        .transpose()?;
+    let profile_digest = profile
+        .as_ref()
+        .map(|p| fs::read(p).map(|bytes| format!("b3_{}", blake3::hash(&bytes))))
+        .transpose()?;
+    let repair = args
+        .repair_model_profile
+        .as_ref()
+        .map(|p| p.canonicalize())
+        .transpose()?;
+    let repair_digest = repair
+        .as_ref()
+        .map(|p| fs::read(p).map(|bytes| format!("b3_{}", blake3::hash(&bytes))))
+        .transpose()?;
+    let mut inputs = json!({"authoring_version":authoring::VERSION,"image":args.image,"model_profile":profile,"model_profile_digest":profile_digest,"repair_model_profile":repair,"repair_model_profile_digest":repair_digest,"maximum_attempts":args.maximum_attempts,"seeded_initial":args.seeded_initial,"port":args.port});
+    if let Some(path) = &args.assisted_source {
+        inputs["assisted_source"] = assisted::input(path)?.0;
+    }
+    Ok(inputs)
 }
 
 fn configure(args: &Arguments, s: &Session) -> EvidenceResult {
-    let profile_path = args.model_profile.canonicalize()?;
+    let Some(profile_path) = &args.model_profile else {
+        return Ok(());
+    };
+    let profile_path = profile_path.canonicalize()?;
     let profile = load(&profile_path)?;
     let endpoint = url::Url::parse(text(&profile["base_url"])?)?;
     let destination = format!(
@@ -133,17 +176,43 @@ fn configure(args: &Arguments, s: &Session) -> EvidenceResult {
     );
     let path = s.root.join("host/daemon.toml");
     let mut config: Value = toml::from_str(&fs::read_to_string(&path)?)?;
-    config["adapters"]["model_profiles"] = json!([{"capability_id":MODEL,"profile":profile_path}]);
+    config["adapters"]["model_profiles"] = model_profiles(args)?;
+    let mut profiles = vec![profile["identity"].clone()];
+    let mut destinations = vec![destination];
+    let mut capabilities = vec![json!(MODEL)];
+    if let Some(path) = &args.repair_model_profile {
+        let path = path.canonicalize()?;
+        let repair = load(&path)?;
+        let url = url::Url::parse(text(&repair["base_url"])?)?;
+        destinations.push(format!(
+            "{}:{}",
+            url.host_str().ok_or("repair host absent")?,
+            url.port_or_known_default().ok_or("repair port absent")?
+        ));
+        profiles.push(repair["identity"].clone());
+        capabilities.push(json!(REPAIR_MODEL));
+    }
     let actor = &mut config["actors"][0];
     actor["authority"]["resources"]["capability"]["identities"]["values"]
         .as_array_mut()
         .ok_or("capability grant absent")?
-        .push(json!(MODEL));
+        .extend(capabilities);
     actor["authority"]["resources"]["network"] =
-        json!({"profiles":[profile["identity"]],"destinations":[destination]});
-    actor["authority"]["budget"]["duration_ms"] = json!(3600000);
+        json!({"profiles":profiles,"destinations":destinations});
+    actor["authority"]["budget"]["duration_ms"] = json!(14400000);
     fs::write(path, toml::to_string_pretty(&config)?)?;
     Ok(())
+}
+
+fn model_profiles(args: &Arguments) -> EvidenceResult<Value> {
+    let mut profiles = Vec::new();
+    if let Some(path) = &args.model_profile {
+        profiles.push(json!({"capability_id":MODEL,"profile":path.canonicalize()?}));
+    }
+    if let Some(path) = &args.repair_model_profile {
+        profiles.push(json!({"capability_id":REPAIR_MODEL,"profile":path.canonicalize()?}));
+    }
+    Ok(json!(profiles))
 }
 
 fn configure_author(s: &Session) -> EvidenceResult {
@@ -240,7 +309,14 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
             args!["blueprint", "import", s.root.join(file).display()],
         )?;
     }
-    let mut selected = json!({"lane":if args.seeded_initial {"seeded repair; no observed model planning failure"} else {"live source development; no candidate supplied"}});
+    let lane = if args.assisted_source.is_some() {
+        "operator-assisted source; direct proposal, no new model generation"
+    } else if args.seeded_initial {
+        "seeded repair; no observed model planning failure"
+    } else {
+        "live source development; no candidate supplied"
+    };
+    let mut selected = json!({"lane":lane});
     if args.seeded_initial {
         let input = s.root.join("seed-inputs.json");
         if !input.exists() {
@@ -286,11 +362,16 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
     }
     let mut attempts = Vec::new();
     let mut accepted = false;
-    for index in 1..=3 {
-        let proposed = match proposal::generate(args, s, index, &revision, &selected)? {
+    for index in 1..=args.maximum_attempts {
+        let generated = if let Some(path) = &args.assisted_source {
+            proposal::Outcome::Ready(assisted::proposal(s, path, &revision, &selected)?)
+        } else {
+            proposal::generate(args, s, index, &revision, &selected)?
+        };
+        let proposed = match generated {
             proposal::Outcome::Ready(path) => path,
             proposal::Outcome::Invalid(failure) => {
-                selected = failure.clone();
+                selected["invalid_proposal"] = failure.clone();
                 attempts.push(failure);
                 continue;
             }
@@ -310,7 +391,7 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
         // Invalid proposals are retained as negative evidence; do not substitute a mutation.
         ensure(
             submitted["status"] == "success",
-            "model proposal was not authorized",
+            "source proposal was not authorized",
         )?;
         let next = text(&submitted["value"]["value"]["proposed_revision"])?;
         let revision_path = s.root.join(format!("source-{index}-revision.json"));
@@ -333,7 +414,7 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
             args!["run", "start", run, "slotbook", next],
         )?;
         let result = observe(s, &run, index)?;
-        selected = json!({"run":result["run"]["run_id"],"terminal":result["run"]["terminal"],"attempts":result["attempts"],"omission":"Only selected compiler/verifier diagnostics and exact artifact references are supplied; full run inspection is retained separately."});
+        selected = json!({"run":result["run"]["run_id"],"terminal":result["run"]["terminal"],"attempts":result["attempts"],"source":source_snapshot(s,index)?,"omission":"Complete source and selected compiler/verifier diagnostics are supplied with exact artifact references; full run inspection is retained separately."});
         accepted = result["run"]["terminal"] == "succeeded";
         attempts.push(result);
         if accepted {
@@ -373,7 +454,7 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
     } else {
         crate::preservation::unchanged(&target, &setup["slotbook-test"])?;
     }
-    let result = json!({"source_input":"slotbook-source-workshop","seeded_initial":args.seeded_initial,"attempts":attempts,"accepted":accepted,"evaluation":evaluation,"target":target,"worker":setup["slotbook-build"],"limit":"Finite real-model source/repair evidence, not held-out learning or power-loss qualification."});
+    let result = json!({"source_input":"slotbook-source-workshop","source_origin":lane,"seeded_initial":args.seeded_initial,"attempts":attempts,"accepted":accepted,"evaluation":evaluation,"target":target,"worker":setup["slotbook-build"],"limit":"Finite source/repair workflow evidence with the recorded source origin, not autonomous model competence, held-out learning or power-loss qualification."});
     s.write("development-result.json", &result)?;
     finish(s, &result, args.remove_disposable)
 }
@@ -422,113 +503,6 @@ fn finish(s: &Session, result: &Value, remove: bool) -> EvidenceResult {
     }
     ensure(
         result["accepted"] == true,
-        "bounded live development did not produce an accepted candidate; evidence retained",
+        "bounded source development did not produce an accepted candidate; evidence retained",
     )
-}
-
-fn observe(s: &Session, run: &str, index: u8) -> EvidenceResult<Value> {
-    let mut state = Value::Null;
-    for poll in 0..=240 {
-        state = s.ok(
-            &format!("source-{index}-observe-{poll}"),
-            args!["run", "show", run],
-        )?["value"]
-            .clone();
-        if !state["terminal"].is_null() || state["uncertainty_count"] != 0 {
-            break;
-        }
-        ensure(
-            poll < 240,
-            "source execution exhausted its 241 bounded observation requests",
-        )?;
-        thread::sleep(Duration::from_secs(5));
-    }
-    ensure(
-        state["uncertainty_count"] == 0,
-        "source execution uncertain; inspect before any further effect",
-    )?;
-    let mut attempts = Vec::new();
-    for node in state["nodes"].as_array().ok_or("source nodes absent")? {
-        if !node["latest_attempt_id"].is_string() {
-            continue;
-        }
-        let id = text(&node["latest_attempt_id"])?;
-        let attempt = s.ok(
-            &format!("source-{index}-attempt-{id}"),
-            args!["attempt", "inspect", run, id],
-        )?["value"]
-            .clone();
-        let mut outputs = Vec::new();
-        for output in attempt["outputs"]
-            .as_array()
-            .ok_or("attempt outputs absent")?
-        {
-            // Worker reports and verifier reports are bounded selected diagnostics. Native
-            // executable stdout is retained by its artifact identity, never fed as model text.
-            if (output["name"] == "worker_result" && node["node_id"] == "repair.begin")
-                || output["name"] == "resource_result"
-            {
-                let path = s.logs.join(format!(
-                    "source-{index}-{id}-{}.json",
-                    text(&output["name"])?
-                ));
-                s.ok(
-                    &format!("source-{index}-{id}-download-{}", text(&output["name"])?),
-                    args![
-                        "artifact",
-                        "get",
-                        text(&output["artifact"]["artifact_id"])?,
-                        "--output",
-                        path.display()
-                    ],
-                )?;
-                let bytes = fs::read(path)?;
-                ensure(
-                    bytes.len() <= 65536,
-                    "selected diagnostics exceed model context allocation",
-                )?;
-                let mut content: Value = serde_json::from_slice(&bytes)?;
-                if output["name"] == "worker_result" {
-                    // Keep the exact artifact above; compiler output can dwarf the useful
-                    // source brief. The selected excerpt discloses every omitted byte.
-                    content = json!({"exit_code":content["exit_code"],"stderr":excerpt(text(&content["stderr"])?,4096),"stdout":excerpt(text(&content["stdout"])?,1024)});
-                }
-                let evaluation = if output["name"] == "resource_result"
-                    && content["evaluation"]["identity"].is_string()
-                {
-                    qualification::evidence(
-                        s,
-                        &format!("source-{index}-{id}-completed-evaluation"),
-                        text(&content["evaluation"]["identity"])?,
-                    )?
-                } else {
-                    Value::Null
-                };
-                outputs.push(json!({"reference":output["artifact"],"content":content,"completed_evaluation":evaluation}));
-            }
-        }
-        attempts.push(json!({"attempt_id":id,"node":node["node_id"],"state":attempt["state"],"terminal":attempt["terminal"],"terminal_detail":attempt["terminal_detail"],"uncertain":attempt["uncertain"],"selected_outputs":outputs}));
-    }
-    Ok(json!({"run":state,"attempts":attempts}))
-}
-
-fn excerpt(value: &str, limit: usize) -> Value {
-    let mut end = value.len().min(limit);
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    json!({"text":&value[..end],"omitted_bytes":value.len()-end,"selection":"leading UTF-8 excerpt; exact complete bytes remain in the referenced artifact"})
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn diagnostic_excerpt_discloses_omission_at_utf8_boundary() {
-        let selected = excerpt("abéerror", 3);
-        assert_eq!(selected["text"], "ab");
-        assert_eq!(selected["omitted_bytes"], 7);
-        assert_eq!(excerpt("short", 4096)["omitted_bytes"], 0);
-    }
 }

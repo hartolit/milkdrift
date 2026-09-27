@@ -6,6 +6,9 @@ FROM ${FIXTURE_IMAGE} AS seed
 FROM ${TOOLCHAIN_IMAGE} AS development
 # The earlier setup image contains the complete evaluator specification. Source development
 # receives only its explicit public brief; do not expose that specification to compiled code.
-RUN rm /usr/share/milkdrift/slotbook.md /usr/local/bin/initialize-slotbook
+RUN rm -f /usr/share/milkdrift/slotbook.md /usr/local/bin/initialize-slotbook
+COPY target/slotbook-static/x86_64-unknown-linux-gnu/release/slotbook-source-write /usr/local/bin/slotbook-source-write
+COPY target/slotbook-development/x86_64-unknown-linux-gnu/release/deps/libserde_json-*.rlib target/slotbook-development/x86_64-unknown-linux-gnu/release/deps/libserde_core-*.rlib target/slotbook-development/x86_64-unknown-linux-gnu/release/deps/libitoa-*.rlib target/slotbook-development/x86_64-unknown-linux-gnu/release/deps/libmemchr-*.rlib target/slotbook-development/x86_64-unknown-linux-gnu/release/deps/libzmij-*.rlib /opt/slotbook/lib/
+RUN ln -s /opt/slotbook/lib/libserde_json-*.rlib /opt/slotbook/lib/libserde_json.rlib
 FROM development AS seeded
 COPY --from=seed /fixtures/slotbook-seeded /fixtures/slotbook-seeded

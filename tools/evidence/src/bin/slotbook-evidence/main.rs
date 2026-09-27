@@ -25,7 +25,7 @@ enum Action {
     Prepare(Prepare),
     /// Execute and inspect the configured method; retain resources on failure for recovery.
     Qualify(Qualify),
-    /// Ask a real model to implement/repair the fixed source case in an isolated managed worker.
+    /// Develop source in a managed worker using a real model or explicitly assisted input.
     Develop(develop::Arguments),
     /// Continue an accepted source qualification with explicit held-out learning and variants.
     Learn(learning::Arguments),
@@ -89,5 +89,43 @@ fn main() -> EvidenceResult {
         Action::Develop(args) => develop::run(args),
         Action::Learn(args) => learning::run(args),
         Action::ModelFixture(args) => model_fixture::run(args),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assisted_source_is_an_explicit_exclusive_single_submission() -> EvidenceResult {
+        let base = [
+            "slotbook-evidence",
+            "develop",
+            "--root",
+            "unused",
+            "--image",
+            "unused",
+            "--assisted-source",
+            "source.rs",
+        ];
+        for extra in [
+            vec!["--model-profile", "model.json"],
+            vec!["--repair-model-profile", "repair.json"],
+            vec!["--seeded-initial"],
+        ] {
+            assert!(Arguments::try_parse_from(base.iter().copied().chain(extra)).is_err());
+        }
+        let parsed = Arguments::try_parse_from(base)?;
+        let Action::Develop(args) = parsed.command else {
+            return Err("wrong action".into());
+        };
+        let error = develop::run(args)
+            .err()
+            .ok_or("multiple assisted submissions accepted")?;
+        assert!(error.to_string().contains("--maximum-attempts 1"));
+        assert!(
+            Arguments::try_parse_from(base.into_iter().chain(["--maximum-attempts", "1"])).is_ok()
+        );
+        Ok(())
     }
 }
