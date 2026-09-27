@@ -221,6 +221,11 @@ per call, including eighty seconds for the two sequential placement calls. A nin
 covers setup and both calls. Turnover waits for
 a fresh catalog when less than one full call allowance remains. These test budgets permit the
 configured work to finish on unoptimized runners; they are not latency guarantees.
+The local published-method fixture likewise observes its thirty-second method allowance plus ten
+seconds for terminal reporting. It polls for actual archival after the retention horizon and accepts
+an exact replay whether its record is still hot or already archived. A 25% CPU-quota run reproduces
+the previous ten-second observer failure and passes with these observation changes; the method's
+execution deadline and required successful terminal stay unchanged.
 
 Capability/authority/blueprint/sequence tests cover strict placement sets, immutable revision identity
 and obsolete snapshot refusal. Runtime and capability-host suites exercise final-entry revocation,

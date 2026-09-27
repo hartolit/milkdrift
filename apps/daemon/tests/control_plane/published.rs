@@ -199,11 +199,21 @@ async fn invoke_only_published_outputs_replay_retirement_and_restart() -> TestRe
             },
         ))
         .await?;
-    assert!(matches!(
-        invoker.invoke(&request_doc).await?,
-        InvocationAcceptance::Accepted { replayed: true, .. }
-    ));
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    match invoker.invoke(&request_doc).await? {
+        InvocationAcceptance::Accepted {
+            execution: replay,
+            replayed: true,
+            ..
+        }
+        | InvocationAcceptance::Archived {
+            execution: replay, ..
+        } => assert_eq!(replay, execution),
+        other => return Err(format!("exact publication replay changed: {other:?}").into()),
+    }
+    // Observe the method's full accepted allowance and its subsequent terminal publication.
+    let deadline = tokio::time::Instant::now()
+        + Duration::from_millis(method.maximum_duration_ms)
+        + Duration::from_secs(10);
     let terminal = loop {
         let page = invoker.invocation_observations(&execution, 0, 32).await?;
         if let Some(terminal) = page
@@ -320,11 +330,29 @@ async fn invoke_only_published_outputs_replay_retirement_and_restart() -> TestRe
         invoker.invoke(&changed).await?,
         InvocationAcceptance::Rejected { .. }
     ));
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(matches!(
-        invoker.invoke(&request_doc).await?,
-        InvocationAcceptance::Archived { .. }
-    ));
+    // The retention horizon makes a record eligible; maintenance performs archival later.
+    let archive_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match invoker.invoke(&request_doc).await? {
+            InvocationAcceptance::Archived {
+                execution: replay, ..
+            } => {
+                assert_eq!(replay, execution);
+                break;
+            }
+            InvocationAcceptance::Accepted {
+                execution: replay,
+                replayed: true,
+                ..
+            } => assert_eq!(replay, execution),
+            other => return Err(format!("exact publication replay changed: {other:?}").into()),
+        }
+        assert!(
+            tokio::time::Instant::now() < archive_deadline,
+            "completed publication did not archive"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     assert_eq!(
         invoker
             .invocation_output(&execution, output.identity(), 0, 1024)
