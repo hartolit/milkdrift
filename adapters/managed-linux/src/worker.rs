@@ -573,21 +573,32 @@ fn run_task(
     LinuxManagedPlatform::podman(&task_arguments(setup, name, argv)?)?;
     let value = LinuxManagedPlatform::inspect("container", name)?
         .ok_or_else(|| platform_error("created task identity missing"))?;
-    LinuxManagedPlatform::verify_labels(&value, setup, Some(&setup.recipe.digest))?;
+    let identity = task_identity(&value, setup, name)?;
     verify_container(&value, setup, true)?;
     command::run(
         Path::new("/usr/bin/podman"),
-        &["start".to_owned(), "--attach".to_owned(), name.to_owned()],
+        &[
+            "start".to_owned(),
+            "--attach".to_owned(),
+            identity.to_owned(),
+        ],
         &[],
         timeout,
         output_limit,
         cancel,
     )
 }
-fn cleanup_task(setup: &ApprovedSetup, name: &str) -> Result<(), ManagedError> {
+pub(crate) fn cleanup_task(setup: &ApprovedSetup, name: &str) -> Result<(), ManagedError> {
     if let Some(value) = LinuxManagedPlatform::inspect("container", name)? {
-        LinuxManagedPlatform::verify_labels(&value, setup, Some(&setup.recipe.digest))?;
-        LinuxManagedPlatform::podman(&["rm".to_owned(), "--force".to_owned(), name.to_owned()])?;
+        let identity = task_identity(&value, setup, name)?;
+        LinuxManagedPlatform::podman(&[
+            "rm".to_owned(),
+            "--force".to_owned(),
+            identity.to_owned(),
+        ])?;
+        if LinuxManagedPlatform::inspect("container", identity)?.is_some() {
+            return Err(platform_error("inspected task remains after cleanup"));
+        }
     }
     if LinuxManagedPlatform::inspect("container", name)?.is_some() {
         return Err(platform_error(
@@ -595,6 +606,26 @@ fn cleanup_task(setup: &ApprovedSetup, name: &str) -> Result<(), ManagedError> {
         ));
     }
     Ok(())
+}
+
+fn task_identity<'a>(
+    value: &'a serde_json::Value,
+    setup: &ApprovedSetup,
+    name: &str,
+) -> Result<&'a str, ManagedError> {
+    LinuxManagedPlatform::verify_labels(value, setup, Some(&setup.recipe.digest))?;
+    let identity = value.get("Id").and_then(|v| v.as_str()).unwrap_or("");
+    if value.get("Name").and_then(|v| v.as_str()) != Some(name)
+        || identity.len() != 64
+        || !identity
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(platform_error("task container identity differs"));
+    }
+    // Names can be reused between inspection and an engine command. Address only the inspected
+    // container so another creator's replacement cannot be started or removed by this task.
+    Ok(identity)
 }
 
 pub(crate) fn verify_container(

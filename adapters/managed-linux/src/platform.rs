@@ -877,13 +877,7 @@ impl ManagedPlatform for LinuxManagedPlatform {
             });
         }
         let name = format!("mdtask-{}", usage.id);
-        if let Some(value) = Self::inspect("container", &name)? {
-            Self::verify_labels(&value, setup, Some(&setup.recipe.digest))?;
-            Self::podman(&["rm".to_owned(), "--force".to_owned(), name.clone()])?;
-        }
-        if Self::inspect("container", &name)?.is_some() {
-            return Err(platform_error("task container remains after fencing"));
-        }
+        crate::worker::cleanup_task(setup, &name)?;
         Ok(QuiescenceEvidence::PhysicalStop {
             physical_identity: name.clone(),
             observation_digest: digest(format!("{}:{name}:absent", setup.ownership)),

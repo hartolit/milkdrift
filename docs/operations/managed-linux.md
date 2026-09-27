@@ -252,8 +252,10 @@ milkdrift --timeout-secs 120 --command-id resolve-one resource --installation sl
 ```
 
 Resolution first commits a newer fencing claim, preventing late entry. It then waits at most 50
-seconds for an in-process creator to leave and verifies/removes the exact task container. Resolving
-an owned model use stops the owned service and changes desired state to stopped; conflicting users
+seconds for an in-process creator to leave and verifies/removes the exact task container. It
+uses the inspected container ID, as do ordinary task start and cleanup, so a reused name cannot
+redirect those commands to a replacement. An occupied name after cleanup keeps resolution blocked.
+Resolving an owned model use stops the owned service and changes desired state to stopped; conflicting users
 must settle first. An attachment resolution relinquishes only this host's dependency after its local
 request owner leaves; it cannot stop the remote server. Neither path manufactures an execution result.
 A lost fence reply leaves a retained blocker; inspect its new claim before another resolution.

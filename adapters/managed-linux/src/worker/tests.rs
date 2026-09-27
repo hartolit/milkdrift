@@ -60,6 +60,50 @@ fn observed_privilege_restriction_must_be_explicitly_enabled() {
 }
 
 #[test]
+fn task_commands_require_the_inspected_identity_and_owned_generation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let setup = milkdrift_persistence::managed::ApprovedSetup {
+        protection: None,
+        recipe: crate::LinuxRecipe::from_json(include_bytes!(
+            "../../tests/fixtures/owned-recipe-v2.json"
+        ))?
+        .reference()?,
+        mechanism: "linux-quadlet-v4".to_owned(),
+        configuration: milkdrift_capability::BoundedJson::new(serde_json::json!({}))?,
+        platform_owner: "test-platform".to_owned(),
+        ownership: crate::digest("test-task-owner"),
+        resources: Vec::new(),
+        capabilities: Vec::new(),
+    };
+    let id = "a".repeat(64);
+    let name = "mdtask-owned";
+    let value = serde_json::json!({
+        "Id": id, "Name": name, "Config": {"Labels": {
+            "org.milkdrift.owner": setup.ownership,
+            "org.milkdrift.platform": setup.platform_owner,
+            "org.milkdrift.recipe": setup.recipe.digest
+        }}
+    });
+    assert_eq!(super::task_identity(&value, &setup, name)?, id);
+    assert!(super::task_identity(&value, &setup, "mdtask-other").is_err());
+    for invalid in ["", "--all", "short-id", &"z".repeat(64)] {
+        let mut changed = value.clone();
+        changed["Id"] = invalid.into();
+        assert!(super::task_identity(&changed, &setup, name).is_err());
+    }
+    for key in [
+        "org.milkdrift.owner",
+        "org.milkdrift.platform",
+        "org.milkdrift.recipe",
+    ] {
+        let mut changed = value.clone();
+        changed["Config"]["Labels"][key] = "foreign".into();
+        assert!(super::task_identity(&changed, &setup, name).is_err());
+    }
+    Ok(())
+}
+
+#[test]
 fn realized_user_maps_exclude_the_manager_identity() {
     for offset in [1, 65537] {
         assert!(private_id_mappings(Some(&serde_json::json!({
