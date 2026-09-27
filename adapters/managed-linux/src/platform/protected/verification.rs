@@ -5,6 +5,7 @@ use crate::command;
 use milkdrift_persistence::managed::ApprovedSetup;
 use milkdrift_workspace::{CandidateCheck, CandidateEvaluation};
 use std::{fs, time::Duration};
+mod scratch;
 
 pub(super) fn evaluate(
     platform: &LinuxManagedPlatform,
@@ -12,6 +13,9 @@ pub(super) fn evaluate(
     evaluation: &CandidateEvaluation,
     bytes: &[u8],
 ) -> Result<Vec<CandidateCheck>, ManagedError> {
+    let _verification = platform.verification.try_lock().map_err(|_| {
+        rejected("another verification owns scratch admission or its ownership is uncertain")
+    })?;
     super::diagnose(platform, setup)?;
     let d = decode(platform, setup)?;
     evaluation.validate().map_err(rejected)?;
@@ -21,35 +25,34 @@ pub(super) fn evaluate(
     }
     // A new authorized request can renew expired evidence for unchanged bytes. Exact request
     // replay is fenced by the journal before this method is called.
-    let directory = platform
-        .config
-        .state_root
-        .join(format!("verification-{}", evaluation.identity));
-    let container = container_name(&platform.owner, &evaluation.identity);
-    let mut builder = fs::DirBuilder::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    builder.create(&directory).map_err(|_| {
-        rejected("verification scratch already exists; prior observation requires inspection")
-    })?;
-    immutable_executable(&directory.as_path().join("candidate"), bytes)?;
     let harness = fs::read(&d.recipe.verifier_executable).map_err(rejected)?;
     if digest(&harness) != d.recipe.verifier_digest {
         return Err(rejected("verifier generation changed during preparation"));
     }
+    let reserved_bytes = (bytes.len() as u64)
+        .checked_add(harness.len() as u64)
+        .and_then(|size| size.checked_add(65_536))
+        .ok_or_else(|| rejected("verification scratch reservation overflow"))?;
+    let directory = scratch::prepare(
+        &platform.config.state_root,
+        &evaluation.identity,
+        reserved_bytes,
+    )?;
+    let container = container_name(&platform.owner, &evaluation.identity);
+    immutable_executable(&directory.as_path().join("candidate"), bytes)?;
     immutable_executable(&directory.as_path().join("verifier"), &harness)?;
     let input = serde_json::json!({"schema_version":2, "image":d.recipe.image,
         "candidate":directory.as_path().join("candidate"), "token_file":d.recipe.token_file, "directory":directory.as_path(), "application": d.recipe.application,
         "image_identity":LinuxManagedPlatform::image_identity(&d.recipe.image)?,
         "limits":d.recipe.limits, "subject":subject, "required_checks": d.recipe.policy.required_checks,
         "container":container, "platform_owner":platform.owner, "evaluation":evaluation.identity});
-    immutable(
-        &directory.as_path().join("input.json"),
-        &serde_json::to_vec(&input).map_err(rejected)?,
-    )?;
+    let input = serde_json::to_vec(&input).map_err(rejected)?;
+    if input.len() > 65_536 {
+        return Err(rejected(
+            "verification input exceeds its scratch reservation",
+        ));
+    }
+    immutable(&directory.as_path().join("input.json"), &input)?;
     let output = command::run(
         &directory.as_path().join("verifier"),
         &[directory.as_path().join("input.json").display().to_string()],
@@ -71,6 +74,9 @@ pub(super) fn evaluate(
     if checks.len() > 32 || checks.iter().any(|c| c.diagnostic.len() > 256) {
         return Err(rejected("verifier observations exceeded bounds"));
     }
+    // The journal owns evidence and the artifact store owns candidate bytes. Only a successful
+    // verifier exit plus the exact container's observed absence permits scratch deletion.
+    scratch::remove(&directory)?;
     Ok(checks)
 }
 

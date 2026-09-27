@@ -46,5 +46,13 @@ unrelated survivors are outside that single-test qualification; the reported hea
 Raw results are under `target/validation-repair/mutations-*` (records-final, boundaries-committed,
 grants, controller, health, nested). No hosted CI run has been dispatched.
 
-Next: finish verifier scratch review/documentation, full workspace gate, affected API inventories,
-and final cleanup of this temporary office. Scratch changes remain a separate uncommitted phase.
+Verifier scratch now cleans completed successful reports after exact container absence, keeps failed
+or interrupted work, and measures retained trees before admission (32 directories, 1 GiB, bounded
+entry/depth scan). Unit tests cover turnover, exact byte/directory limits and link refusal. Native
+verification is serialized with immediate refusal when busy. Operator cleanup and limits are in the
+managed guide; the opt-in physical fixture was updated but is not being rerun per assignment scope.
+
+Full workspace tests are now running with loopback socket permission; sandboxed broad peer and
+managed conformance runs failed only because their test listeners were prohibited. Build/fmt/check
+have passed. Remaining: full gate results, affected API inventories, final diff review and removal
+of this temporary office. No sprint 06 product/hardware rerun is authorized or needed.

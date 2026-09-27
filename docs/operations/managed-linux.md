@@ -418,7 +418,32 @@ or timeout, and fences leftovers before startup opens admission. Cleanup failure
 result. Known refusals before an accepted managed intent produce a rejected invocation with their reason.
 Failures after an accepted intent preserve uncertainty. The configured `verification_timeout_ms`
 bounds the verifier process; fencing uses the
-separate bounded administrative-helper timeout. Preserved scratch remains available for inspection.
+separate bounded administrative-helper timeout.
+
+After a successful verifier exit, a bounded check report and confirmed absence of its exact container,
+the owner deletes that evaluation's scratch tree, including the copied candidate and verifier.
+Durable evidence remains in the store and candidate bytes remain in the artifact store. Failed,
+timed-out, interrupted or uncleanable scratch remains for inspection; startup container fencing does
+not itself authorize deleting it. The platform serializes verifier scratch ownership and refuses a
+concurrent evaluation instead of building an unbounded queue.
+
+Before creating scratch, the owner counts retained verification directories and their logical file
+bytes independently of artifact-store accounting. Admission permits at most 32 such directories and
+1 GiB including the new candidate, verifier and up to 64 KiB of input. The inventory visit is bounded
+to 4,096 entries and eight nested levels; links, special files or unreadable paths refuse admission
+and automatic cleanup. These are retention/admission checks, not a filesystem quota on the trusted
+verifier while it runs. A verifier that produces excessive scratch closes subsequent admission until
+inspection; kernel disk isolation is not established by these checks.
+
+To reclaim retained scratch, close managed admission and stop the daemon. Verify that the native
+verifier process and its descendants have ended and the exact platform/evaluation-labeled container
+is absent. Inspect the evaluation with `resource evidence` before shutdown, and preserve any scratch
+needed for diagnosis in a separate private evidence directory. Then remove only the exact
+`verification-b3_…` directory under the configured private `state_root`, after checking its canonical
+path and contents; never follow a link or remove installation data as part of this cleanup. Reopening
+and the next admission remeasure retained scratch. Deleting scratch changes neither the accepted
+receipt nor an incomplete evaluation, and cannot grant a rerun under its old command key.
+
 Both bare image IDs and registry-qualified digest references resolve through Podman's local image
 identity; verification and service observation compare the actual container against that identity.
 

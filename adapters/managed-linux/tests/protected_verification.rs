@@ -150,27 +150,30 @@ fn verifier_renewal_timeout_recovery_and_preentry_integrity() -> Result {
         let directory = root
             .join("state")
             .join(format!("verification-{}", evaluation.identity));
-        let id = fs::read_to_string(directory.join("launched"))?;
+        let name = format!(
+            "mdverify-{}",
+            digest(format!("{}:{}", setup.platform_owner, evaluation.identity))
+        );
         assert!(
-            !exists(id.trim())?,
+            !exists(&name)?,
             "successful verifier leaked its detached container"
         );
+        assert!(
+            !directory.exists(),
+            "completed verifier retained disposable scratch"
+        );
     }
-    assert!(
-        platform
-            .evaluate_candidate(&setup, &evaluation, bytes)
-            .is_err(),
-        "same evaluation scratch must never be rerun"
-    );
 
     // Reconstruct the exact owned leftover a killed host would leave, then recover on reopen.
-    let input: serde_json::Value = serde_json::from_slice(&fs::read(
-        root.join("state")
-            .join(format!("verification-{}", evaluation.identity))
-            .join("input.json"),
-    )?)?;
-    let name = input["container"].as_str().ok_or("container absent")?;
-    let owner = input["platform_owner"].as_str().ok_or("owner absent")?;
+    let directory = root
+        .join("state")
+        .join(format!("verification-{}", evaluation.identity));
+    private(&directory)?;
+    let owner = &setup.platform_owner;
+    let name = format!(
+        "mdverify-{}",
+        digest(format!("{owner}:{}", evaluation.identity))
+    );
     podman(&[
         "run",
         "--detach",
@@ -183,13 +186,17 @@ fn verifier_renewal_timeout_recovery_and_preentry_integrity() -> Result {
         &recipe.image,
         "120",
     ])?;
-    assert!(exists(name)?);
+    assert!(exists(&name)?);
     drop(platform);
     let platform = LinuxManagedPlatform::new(config.clone())?;
     platform.recover_verifications()?;
     assert!(
-        !exists(name)?,
+        !exists(&name)?,
         "startup left the interrupted verifier container running"
+    );
+    assert!(
+        directory.exists(),
+        "interrupted scratch requires inspection, even after container fencing"
     );
 
     evaluation.complete = true;

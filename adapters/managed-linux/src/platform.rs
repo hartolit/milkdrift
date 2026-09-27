@@ -43,6 +43,7 @@ pub struct LinuxManagedPlatform {
     owner: String,
     pub(crate) active: Mutex<BTreeMap<String, Arc<AtomicBool>>>,
     pub(crate) quiescent: Condvar,
+    verification: Mutex<()>,
     _lock: fs::File,
 }
 impl LinuxManagedPlatform {
@@ -110,6 +111,7 @@ impl LinuxManagedPlatform {
             owner,
             active: Mutex::new(BTreeMap::new()),
             quiescent: Condvar::new(),
+            verification: Mutex::new(()),
             _lock: lock,
         })
     }
