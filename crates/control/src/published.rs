@@ -233,11 +233,20 @@ impl PublishedWorkflowService {
         loop {
             let (records, next) = self
                 .store
-                .published_serving_page(cursor.as_ref(), PageSize::new(128).map_err(failure)?)
+                .active_serving_page(cursor.as_ref(), PageSize::new(128).map_err(failure)?)
                 .map_err(failure)?;
             for record in records {
                 if let Some(plan) = &record.published_invocation {
                     self.restore_invocation(plan)?;
+                } else if let Some(method) = self
+                    .store
+                    .published_method(
+                        record.request.selection.capability(),
+                        record.request.selection.descriptor_revision(),
+                    )
+                    .map_err(failure)?
+                {
+                    self.register(host, &method)?;
                 }
             }
             cursor = next;

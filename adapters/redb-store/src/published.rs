@@ -58,6 +58,20 @@ fn decode(bytes: &[u8]) -> Result<PublishedMethodRecord, PersistenceError> {
     }
     Ok(record)
 }
+
+pub(crate) fn retired_in_transaction(
+    write: &redb::WriteTransaction,
+    selection: &milkdrift_capability::ResolvedCapabilitySnapshot,
+) -> Result<bool, PersistenceError> {
+    let table = write.open_table(PUBLISHED_METHODS).map_err(error::redb)?;
+    let exact = key(selection.capability(), selection.descriptor_revision());
+    table
+        .get(exact.as_str())
+        .map_err(error::redb)?
+        .map(|bytes| decode(bytes.value()).map(|record| record.retired))
+        .transpose()
+        .map(|retired| retired.unwrap_or(false))
+}
 impl milkdrift_persistence::published::PublishedInvocationStore for RedbStore {
     fn published_local_pending(
         &self,

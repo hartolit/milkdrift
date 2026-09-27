@@ -86,7 +86,7 @@ fn bind_host_in_transaction(
 }
 
 impl PeerExecutionStore for RedbStore {
-    fn published_serving_page(
+    fn active_serving_page(
         &self,
         after: Option<&PeerExecutionId>,
         limit: milkdrift_persistence::PageSize,
@@ -111,7 +111,7 @@ impl PeerExecutionStore for RedbStore {
             let record = decode_record(bytes.value())?;
             count += 1;
             last = Some(record.execution.clone());
-            if record.published_invocation.is_some() && record.phase.is_active() {
+            if record.phase.is_active() {
                 result.push(record);
             }
         }
@@ -327,6 +327,14 @@ impl PeerExecutionStore for RedbStore {
         }
 
         validate_admission(admission)?;
+
+        // Retirement and acceptance serialize in this transaction. An old catalog cannot add
+        // a new obligation after the publication owner has begun checking for idle retirement.
+        if crate::published::retired_in_transaction(&write, &admission.request.selection)? {
+            return Ok(PeerAdmissionOutcome::Rejected(
+                PeerAdmissionRejection::CatalogUnavailable,
+            ));
+        }
 
         let mut global = global_accounting(&write)?;
         if !global.admission_open {

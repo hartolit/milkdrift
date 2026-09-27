@@ -595,9 +595,9 @@ pub struct PeerRetentionPage {
 /// admission reply, use the same owner/request identity rather than submitting new work.
 /// Entry and terminal evidence remain separate from acceptance and cancellation.
 pub trait PeerExecutionStore: Send + Sync {
-    /// Bounded physical hot-record scan for pending workflow continuations. The cursor advances
-    /// over nonmatching records too; terminal history is not loaded or scanned.
-    fn published_serving_page(
+    /// Bounded physical hot-record scan for accepted work, including requests awaiting entry.
+    /// The cursor advances over nonmatching hot records too; archived history is never scanned.
+    fn active_serving_page(
         &self,
         after: Option<&PeerExecutionId>,
         limit: PageSize,

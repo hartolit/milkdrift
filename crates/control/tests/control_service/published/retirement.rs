@@ -1,5 +1,13 @@
 //! Retired definitions outlive their registry adapters and still replay after complete reopen.
 use super::*;
+use milkdrift_peer_protocol::{
+    CatalogSnapshot, ClientInvocationAuthorization, DirectInvocationRequest, ExecutionLimits,
+    ObservationCategory, PeerExecutionId, PeerObservation, PeerRequestId,
+};
+use milkdrift_persistence::{
+    PeerAdmission, PeerAdmissionOutcome, PeerAdmissionRejection, PeerClaimOutcome,
+    PeerDispatchClaimRequest, PeerExecutionStore, ServingCallerState, ServingCatalogState,
+};
 
 fn retire(
     fixture: &Fixture,
@@ -110,5 +118,163 @@ fn retired_generations_turn_over_beyond_registry_capacity_and_reopen() -> TestRe
     }
     assert!(generations(&fixture)?.is_empty());
     assert_eq!(fixture.process.entries(), 0);
+    Ok(())
+}
+
+#[test]
+fn queued_serving_acceptance_survives_retirement_and_reopen_before_entry() -> TestResult {
+    let directory = TempDir::new()?;
+    let first = fixture(directory.path(), "queued")?;
+    let grant = publication_grant("human:caller", "grant:caller")?;
+    let evaluator = GrantSetEvaluator::new(
+        PolicyId::new("test.publication")?,
+        1,
+        [grant.clone()],
+        BTreeMap::new(),
+    )?;
+    let mut authority_request = first.decision.request().clone();
+    authority_request.operation = AuthorityOperation::InvokeCapability;
+    authority_request.resources.capability_operation = Some(OperationId::new("method.invoke")?);
+    authority_request.provenance.descriptor_revision = Some(1);
+    let authority = evaluator.evaluate(&authority_request)?;
+    assert!(authority.is_allowed());
+    let host = milkdrift_capability::PeerId::new("host:queued")?;
+    let catalog = CatalogSnapshot::new(1, NOW, NOW + 60_000, Vec::new())?;
+    let mut submission = DirectInvocationRequest {
+        host: host.clone(),
+        request_id: PeerRequestId::new("request:queued")?,
+        catalog_generation: 1,
+        catalog_digest: catalog.digest.clone(),
+        selection: milkdrift_capability::ResolvedCapabilitySnapshot::from_descriptor(
+            &first.method.capability_descriptor()?,
+            &OperationId::new("method.invoke")?,
+        )?,
+        request: milkdrift_capability::InvocationRequest::new(
+            milkdrift_capability::InvocationId::new("invocation:queued")?,
+            first.method.descriptor.identity().clone(),
+            OperationId::new("method.invoke")?,
+            None,
+            None,
+            Vec::new(),
+            BTreeMap::new(),
+        )?,
+        limits: ExecutionLimits {
+            nested_invocations: None,
+            artifact_bytes: 1024,
+            duration_ms: 1000,
+            cost_micros: 0,
+            cost_currency: None,
+            input_units: None,
+            output_units: None,
+            observations: 8,
+        },
+        deadline_unix_ms: NOW + 60_000,
+    };
+    let basis = ClientInvocationAuthorization {
+        host,
+        actor: grant.actor().clone(),
+        grant: grant.identity().clone(),
+        grant_revision: 1,
+        grant_digest: grant.digest()?,
+        revocation_generation: 0,
+    };
+    let request = submission.bind(basis.clone())?;
+    let caller = request.authorization.caller();
+    first
+        .store
+        .configure_peer_relationship(&ServingCallerState {
+            caller: caller.clone(),
+            generation: 1,
+            enabled: true,
+            expires_at_unix_ms: NOW + 60_000,
+            maximum_active: 4,
+        })?;
+    first.store.publish_peer_catalog(&ServingCatalogState {
+        caller: caller.clone(),
+        relationship_generation: 1,
+        generation: 1,
+        digest: catalog.digest.as_str().to_owned(),
+        expires_at_unix_ms: NOW + 60_000,
+    })?;
+    first.store.set_peer_admission_open(true)?;
+    let execution = PeerExecutionId::new("execution:queued")?;
+    let admission = PeerAdmission {
+        caller: &caller,
+        request: &request,
+        authority: &authority,
+        execution: &execution,
+        relationship_generation: 1,
+        accepted_at_unix_ms: NOW,
+        maximum_global_active: 4,
+        maximum_dispatch_queue: 4,
+        maximum_hot_terminal_records: 8,
+        archive_batch_size: 4,
+        archive_terminal_before_or_at_unix_ms: 1,
+    };
+    assert!(matches!(
+        first.store.admit_peer_execution(&admission)?,
+        PeerAdmissionOutcome::Accepted(_)
+    ));
+    let queued = first.store.peer_execution(&caller, &execution)?;
+    retire(&first, 1)?;
+    assert_eq!(generations(&first)?.len(), 1);
+    assert_eq!(generations(&first)?[0].pending_workflows, 0);
+    assert!(matches!(
+        first.store.admit_peer_execution(&admission)?,
+        PeerAdmissionOutcome::Replayed(_)
+    ));
+    // Simulate a submission that read the old catalog before retirement committed.
+    submission.request_id = PeerRequestId::new("request:too-late")?;
+    let too_late = submission.bind(basis)?;
+    assert!(matches!(
+        first.store.admit_peer_execution(&PeerAdmission {
+            request: &too_late,
+            ..admission
+        })?,
+        PeerAdmissionOutcome::Rejected(PeerAdmissionRejection::CatalogUnavailable)
+    ));
+    drop(first);
+
+    let reopened = fixture(directory.path(), "queued-reopened")?;
+    assert_eq!(reopened.store.peer_execution(&caller, &execution)?, queued);
+    reopened.published.maintain_retirement()?;
+    assert_eq!(generations(&reopened)?.len(), 1);
+    assert!(generations(&reopened)?[0].draining);
+    let worker = WorkerId::new("worker:queued")?;
+    assert!(matches!(
+        reopened
+            .store
+            .claim_peer_dispatch(&PeerDispatchClaimRequest {
+                worker: &worker,
+                claimed_at_unix_ms: NOW,
+                lease_expires_at_unix_ms: NOW + 1000,
+            })?,
+        PeerClaimOutcome::Claimed(_)
+    ));
+    reopened.store.append_peer_observation(
+        &caller,
+        &execution,
+        &PeerObservation {
+            execution: execution.clone(),
+            sequence: 1,
+            category: ObservationCategory::Terminal,
+            event: milkdrift_capability::InvocationEvent::new(
+                request.request.invocation().clone(),
+                1,
+                milkdrift_capability::InvocationEventKind::Terminal {
+                    terminal: milkdrift_capability::InvocationTerminal::new(
+                        milkdrift_capability::TerminalStatus::Cancelled,
+                        Vec::new(),
+                        None,
+                        None,
+                        SideEffectClass::ReadOnly,
+                    )?,
+                },
+            )?,
+            observed_at_unix_ms: NOW,
+        },
+    )?;
+    reopened.published.maintain_retirement()?;
+    assert!(generations(&reopened)?.is_empty());
     Ok(())
 }

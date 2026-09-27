@@ -56,3 +56,10 @@ Full workspace tests are now running with loopback socket permission; sandboxed 
 managed conformance runs failed only because their test listeners were prohibited. Build/fmt/check
 have passed. Remaining: full gate results, affected API inventories, final diff review and removal
 of this temporary office. No sprint 06 product/hardware rerun is authorized or needed.
+
+The full gate found a queued-serving retirement race: durable acceptance precedes a child plan.
+Retirement now checks the bounded active serving page after durable retirement, admission refuses
+retired generations inside the same write transaction, and startup restores queued exact generations.
+A deterministic accept/retire/reopen/settle test and the original daemon publication test pass.
+An additional mutation-generated disconnect-health deletion now has a direct assertion. Recheck its
+full library mutation group and rerun the integrated gate on these changes before final evidence.

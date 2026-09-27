@@ -120,3 +120,6 @@ Persistence's active installation/publication pages are workspace adapter ports 
 while exact and historical reads retain the durable documents. Redb's managed/publication limits
 are external configuration contracts validated at open. Their private indexes and count mechanics
 are not exported. Historical evidence is retained under the existing exact-version format policy.
+`PeerExecutionStore::active_serving_page` is a bounded workspace adapter port consumed by serving
+continuation maintenance and publication recovery/retirement. It includes queued accepted requests
+without child links, so adapters cannot disappear before those requests reach entry.

@@ -72,7 +72,7 @@ impl PeerService {
         })?;
         let (records, next) = self
             .executions
-            .published_serving_page(
+            .active_serving_page(
                 cursor.as_ref(),
                 PageSize::new(self.config.workers.archive_batch_size)
                     .map_err(|e| ServingError::Protocol(e.to_string()))?,

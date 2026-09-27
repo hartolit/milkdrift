@@ -79,13 +79,13 @@ impl OwnerPeerExecutionStore {
 }
 
 impl PeerExecutionStore for OwnerPeerExecutionStore {
-    fn published_serving_page(
+    fn active_serving_page(
         &self,
         after: Option<&PeerExecutionId>,
         limit: milkdrift_persistence::PageSize,
     ) -> Result<(Vec<PeerExecutionRecord>, Option<PeerExecutionId>), PersistenceError> {
         let after = after.cloned();
-        self.call(move |direct| direct.published_serving_page(after.as_ref(), limit))
+        self.call(move |direct| direct.active_serving_page(after.as_ref(), limit))
     }
 
     fn bind_serving_host(&self, host: &PeerId) -> Result<(), PersistenceError> {

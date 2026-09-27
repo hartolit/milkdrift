@@ -1060,6 +1060,7 @@ dependencies = [
  "milkdrift-capability-host",
  "milkdrift-contracts",
  "milkdrift-model",
+ "milkdrift-peer-protocol",
  "milkdrift-persistence",
  "milkdrift-redb-store",
  "milkdrift-runtime",

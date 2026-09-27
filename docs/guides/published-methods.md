@@ -60,9 +60,12 @@ publication. The default store allows 4,096 non-retired generations across all m
 that bound refuses new publication. Retirement releases that storage admission slot while retaining
 the exact definition and command identity. Historical rows continue to occupy disk and remain
 available through bounded inventory pages. Retirement closes new selection and preserves accepted work.
-Once its entry permits and pending calls settle, maintenance releases the retired adapter's
-registry slot. Startup restores only invocable generations and those still needed by pending
-calls. Historical definitions remain inspectable, and replay never recreates a retired adapter.
+Accepted work includes direct and peer requests still waiting in the durable dispatch queue,
+before any child workflow exists. Retirement and new serving acceptance serialize in storage,
+so an old catalog cannot add work after retirement commits. Once queued calls, entry permits and
+pending child workflows settle, maintenance releases the retired adapter's registry slot. Startup
+restores only invocable generations and those still needed by accepted calls. Historical definitions
+remain inspectable, and replay never recreates a retired adapter.
 
 Administration requires `AdministerCapabilities` with exact `method.publish`, `method.inspect` or
 `method.retire` capability-operation scope. Method inspection includes protected implementation
