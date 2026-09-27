@@ -660,11 +660,6 @@ pub(crate) fn verify_container(
             "offline worker has an unexpected network attachment",
         ));
     }
-    if host.get("MemorySwap").and_then(|v| v.as_u64()) != Some(limits.memory_bytes) {
-        return Err(platform_error(
-            "swap limit differs from the approved memory budget",
-        ));
-    }
     for m in mounts {
         let dest = m.get("Destination").and_then(|v| v.as_str()).unwrap_or("");
         if dest == "/tmp" && m.get("Type").and_then(|v| v.as_str()) == Some("tmpfs") {
@@ -718,15 +713,6 @@ pub(crate) fn verify_container(
     } else if devices.is_some_and(|d| !d.is_empty()) {
         return Err(platform_error("container has unapproved devices"));
     }
-    // Podman serializes an empty capability set as either null or []; absence is not evidence.
-    if !value
-        .get("EffectiveCaps")
-        .is_some_and(|caps| caps.is_null() || caps.as_array().is_some_and(Vec::is_empty))
-    {
-        return Err(platform_error(
-            "effective container capabilities are not empty",
-        ));
-    }
     Ok(())
 }
 
@@ -759,10 +745,14 @@ pub(crate) fn verify_limits<'a>(
         .get("SecurityOpt")
         .and_then(|v| v.as_array())
         .is_some_and(|a| {
-            a.iter().any(|v| {
-                v.as_str()
-                    .is_some_and(|s| s.starts_with("no-new-privileges"))
-            })
+            let mut settings = a
+                .iter()
+                .filter_map(|v| v.as_str())
+                .filter(|s| s.starts_with("no-new-privileges"));
+            matches!(
+                settings.next(),
+                Some("no-new-privileges" | "no-new-privileges=true")
+            ) && settings.next().is_none()
         });
     if host.get("Privileged").and_then(|v| v.as_bool()) != Some(false)
         || host.get("ReadonlyRootfs").and_then(|v| v.as_bool()) != Some(true)
@@ -773,7 +763,10 @@ pub(crate) fn verify_limits<'a>(
             .and_then(|v| v.as_u64())
             .zip(host.get("CpuPeriod").and_then(|v| v.as_u64()))
             .is_none_or(|(quota, period)| {
-                quota.saturating_mul(100) != period.saturating_mul(u64::from(limits.cpu_percent))
+                quota == 0
+                    || period == 0
+                    || u128::from(quota) * 100
+                        != u128::from(period) * u128::from(limits.cpu_percent)
             })
         || !has_no_new_privileges
         || host
@@ -786,6 +779,7 @@ pub(crate) fn verify_limits<'a>(
             "actual container namespace/resource enforcement differs from approved profile",
         ));
     }
+    // Podman serializes an empty capability set as either null or []; absence is not evidence.
     if host.get("MemorySwap").and_then(|v| v.as_u64()) != Some(limits.memory_bytes)
         || !value
             .get("EffectiveCaps")

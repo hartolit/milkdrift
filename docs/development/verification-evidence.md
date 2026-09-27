@@ -830,6 +830,9 @@ platform names and labels separate identical requests under different manager ro
 prerequisite tests require enough UID/GID ranges for a worker beside its owned model. The lifecycle and attached-model
 adapters use common conformance with real serving acceptance/artifact storage, prepared-envelope
 allowance checks and a bounded model HTTP fixture. These establish contracts, not Linux containment.
+Inspection regressions refuse zero or mismatched CPU quota/period values, including arithmetic
+overflow, and disabled or contradictory `no-new-privileges` settings. Workers, models and protected
+applications share that enforcement reader.
 
 The opt-in actual Podman/Quadlet lane and its exact environment variables are in
 [managed operations](../operations/managed-linux.md#platform-qualification). It includes common

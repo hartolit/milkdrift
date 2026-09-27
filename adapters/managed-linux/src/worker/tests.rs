@@ -1,5 +1,64 @@
 use super::private_id_mappings;
 
+fn inspected_limits() -> (crate::ContainerLimits, serde_json::Value) {
+    let limits = crate::ContainerLimits {
+        memory_bytes: 268_435_456,
+        cpu_percent: 100,
+        pids: 64,
+        temporary_bytes: 16_777_216,
+    };
+    let value = serde_json::json!({
+        "EffectiveCaps": [],
+        "HostConfig": {
+            "Privileged": false,
+            "ReadonlyRootfs": true,
+            "Memory": limits.memory_bytes,
+            "MemorySwap": limits.memory_bytes,
+            "PidsLimit": limits.pids,
+            "CpuQuota": 100_000,
+            "CpuPeriod": 100_000,
+            "NetworkMode": "none",
+            "SecurityOpt": ["no-new-privileges"],
+            "Tmpfs": {"/tmp": format!("rw,nodev,nosuid,size={}", limits.temporary_bytes)},
+            "IDMappings": {"UidMap": ["0:1:65536"], "GidMap": ["0:1:65536"]}
+        }
+    });
+    (limits, value)
+}
+
+#[test]
+fn observed_cpu_limits_require_a_positive_exact_ratio() {
+    let (limits, value) = inspected_limits();
+    assert!(super::verify_limits(&value, &limits).is_ok());
+    for (quota, period) in [(0, 0), (0, 100_000), (100_000, 0), (u64::MAX, u64::MAX / 2)] {
+        let mut changed = value.clone();
+        changed["HostConfig"]["CpuQuota"] = quota.into();
+        changed["HostConfig"]["CpuPeriod"] = period.into();
+        assert!(
+            super::verify_limits(&changed, &limits).is_err(),
+            "unverified CPU enforcement: quota={quota}, period={period}"
+        );
+    }
+}
+
+#[test]
+fn observed_privilege_restriction_must_be_explicitly_enabled() {
+    let (limits, mut value) = inspected_limits();
+    for enabled in ["no-new-privileges", "no-new-privileges=true"] {
+        value["HostConfig"]["SecurityOpt"] = serde_json::json!([enabled]);
+        assert!(super::verify_limits(&value, &limits).is_ok());
+    }
+    for options in [
+        serde_json::json!([]),
+        serde_json::json!(["no-new-privileges=false"]),
+        serde_json::json!(["no-new-privileges-unknown"]),
+        serde_json::json!(["no-new-privileges", "no-new-privileges=false"]),
+    ] {
+        value["HostConfig"]["SecurityOpt"] = options;
+        assert!(super::verify_limits(&value, &limits).is_err());
+    }
+}
+
 #[test]
 fn realized_user_maps_exclude_the_manager_identity() {
     for offset in [1, 65537] {
