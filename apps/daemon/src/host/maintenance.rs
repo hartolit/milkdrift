@@ -99,6 +99,20 @@ impl Owner {
                 health.set_active_effects(u32::try_from(active).unwrap_or(u32::MAX));
             }
         }
+        if let Some(publications) = self
+            .workflow
+            .as_ref()
+            .and_then(|workflow| workflow.publications.as_ref())
+            && let Err(error) = publications.maintain_retirement()
+        {
+            warn!(
+                outcome = "error",
+                code = "publication_retirement",
+                "{}",
+                bounded(&error.to_string())
+            );
+            health.failure("published generation retirement failed");
+        }
     }
 }
 

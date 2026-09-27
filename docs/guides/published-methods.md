@@ -58,6 +58,9 @@ state changes. Use its observed version for replacement and retirement. Reusing 
 command key with different bytes conflicts. Registry capacity is checked before committing a new
 publication. Retained inventory is finite; reaching a bound refuses new publication instead of
 silently discarding old evidence. Retirement closes new selection and preserves accepted work.
+Once its entry permits and pending calls settle, maintenance releases the retired adapter's
+registry slot. Startup restores only invocable generations and those still needed by pending
+calls. Historical definitions remain inspectable, and replay never recreates a retired adapter.
 
 Administration requires `AdministerCapabilities` with exact `method.publish`, `method.inspect` or
 `method.retire` capability-operation scope. Method inspection includes protected implementation

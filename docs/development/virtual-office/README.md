@@ -9,8 +9,9 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-No active sprint. The [roadmap](../../product/roadmap.md) owns the next authorized work;
-the [whiteboard](whiteboard/README.md) retains questions requiring a separate decision.
+The operator-authorized [validation and CI repairs](validation-repair/README.md) address publication
+retirement, retained capacity and the reported mutation run. The [roadmap](../../product/roadmap.md)
+owns product direction; the [whiteboard](whiteboard/README.md) retains separate questions.
 
 ## Prepared assignments
 

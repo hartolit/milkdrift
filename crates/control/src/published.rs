@@ -6,6 +6,7 @@ use std::{
     sync::{Arc, Weak},
 };
 mod authority;
+mod lifecycle;
 mod result;
 mod validation;
 use milkdrift_authority::{
@@ -101,6 +102,23 @@ impl PublishedWorkflowService {
         let current = self
             .current_decision(authorization.request().clone())
             .map_err(publication_error)?;
+        // Historical replay must not resurrect an adapter or need a free registry slot.
+        if self
+            .store
+            .published_method(
+                method.descriptor.identity(),
+                method.descriptor.descriptor_revision(),
+            )?
+            .is_some_and(|record| record.retired)
+        {
+            return Ok(self.store.publish_method(
+                &method,
+                expected_previous_version,
+                &current,
+                request,
+            )?);
+        }
+        self.maintain_retirement().map_err(publication_error)?;
         let (_, record) = host.register_with_commit(
             method.capability_descriptor()?,
             Arc::new(PublishedMethodAdapter {
@@ -164,12 +182,15 @@ impl PublishedWorkflowService {
             &current,
             request,
         )?;
-        host.begin_drain(capability, generation)
-            .map_err(|error| crate::ControlError::InvalidContract(error.to_string()))?;
+        match host.begin_drain(capability, generation) {
+            Ok(()) | Err(milkdrift_capability_host::HostError::GenerationUnavailable { .. }) => {}
+            Err(error) => return Err(error.into()),
+        }
+        self.maintain_retirement().map_err(publication_error)?;
         Ok(record)
     }
 
-    /// Reconstruct every retained exact generation before recovery admits new calls.
+    /// Restore invocable generations and exact pending calls before reopening admission.
     pub fn restore(self: &Arc<Self>) -> Result<(), ExecutorError> {
         let host = &self.host;
         let mut after = None;
@@ -185,35 +206,9 @@ impl PublishedWorkflowService {
                 break;
             }
             for record in &page {
-                self.register(host, record)?;
-            }
-            after = page.last().map(|record| {
-                (
-                    record.method.descriptor.identity().clone(),
-                    record.method.descriptor.descriptor_revision(),
-                )
-            });
-        }
-        let now = self.clock.now().map_err(failure)?.get();
-        let mut after = None;
-        loop {
-            let page = self
-                .store
-                .published_methods(
-                    after.as_ref().map(|(id, generation)| (id, *generation)),
-                    PageSize::new(128).map_err(failure)?,
-                )
-                .map_err(failure)?;
-            if page.is_empty() {
-                break;
-            }
-            for record in &page {
-                host.refresh_health(
-                    record.method.descriptor.identity(),
-                    record.method.descriptor.descriptor_revision(),
-                    now,
-                )
-                .map_err(failure)?;
+                if !record.retired {
+                    self.register(host, record)?;
+                }
             }
             after = page.last().map(|record| {
                 (
@@ -229,7 +224,7 @@ impl PublishedWorkflowService {
                 .published_local_page(cursor.as_ref(), PageSize::new(128).map_err(failure)?)
                 .map_err(failure)?;
             for plan in &plans {
-                host.retain_published_invocation(plan)?;
+                self.restore_invocation(plan)?;
             }
             cursor = next;
             if cursor.is_none() {
@@ -244,12 +239,31 @@ impl PublishedWorkflowService {
                 .map_err(failure)?;
             for record in records {
                 if let Some(plan) = &record.published_invocation {
-                    host.retain_published_invocation(plan)?;
+                    self.restore_invocation(plan)?;
                 }
             }
             cursor = next;
             if cursor.is_none() {
                 break;
+            }
+        }
+        // Resolve cross-publication dependencies only after all required adapters are present.
+        let now = self.clock.now().map_err(failure)?.get();
+        for generation in host
+            .generations(
+                &milkdrift_authority::CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
+                now,
+            )
+            .map_err(failure)?
+        {
+            if self
+                .store
+                .published_method(&generation.capability, generation.descriptor_revision)
+                .map_err(failure)?
+                .is_some()
+            {
+                host.refresh_health(&generation.capability, generation.descriptor_revision, now)
+                    .map_err(failure)?;
             }
         }
         Ok(())

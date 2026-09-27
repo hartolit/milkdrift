@@ -9,6 +9,8 @@ mod entry;
 mod managed;
 #[path = "published/recovery.rs"]
 mod recovery;
+#[path = "published/retirement.rs"]
+mod retirement;
 use milkdrift_authority::{
     AuthorityEvaluator, AuthorityExecutionProvenance, AuthorityGrant, AuthorityGrantBuilder,
     AuthorityOperation, AuthorityRequest, BoundaryTimeMillis, DecisionId, RequestedResourceFacts,
@@ -525,9 +527,17 @@ fn retirement_preserves_accepted_work_and_definition_conflicts_are_exact() -> Te
         fixture.runtime.projection(&run)?.lifecycle(),
         RunLifecycle::Terminal(RunOutcome::Succeeded)
     );
-    fixture
-        .host
-        .finish_drain(fixture.method.descriptor.identity(), 1)?;
+    fixture.published.maintain_retirement()?;
+    assert!(
+        fixture
+            .host
+            .generations(
+                &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
+                NOW,
+            )?
+            .iter()
+            .all(|generation| generation.capability != *fixture.method.descriptor.identity())
+    );
     Ok(())
 }
 
