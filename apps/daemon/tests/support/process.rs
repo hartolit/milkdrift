@@ -33,6 +33,9 @@ pub(crate) fn configured_process_profile(directory: &tempfile::TempDir) -> TestR
     ))?;
     profile["profile"]["executable"] = json!(executable);
     profile["profile"]["arguments"] = json!(["echo", "golden"]);
+    // These tests exercise daemon composition, not the golden fixture's one-second
+    // deadline. Unoptimized durable reporting can exceed that deadline on a busy runner.
+    profile["profile"]["limits"]["wall_timeout_ms"] = json!(10000);
     profile["profile"]["filesystem_roots"] = json!([
         {"path": executable.parent().ok_or("fixture executable parent absent")?, "access":"execute"},
         {"path": std::env::temp_dir().canonicalize()?, "access":"read_write"}

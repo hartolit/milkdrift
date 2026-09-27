@@ -291,7 +291,6 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
     loop {
         let run = daemon.client.run("run-process").await?;
         if run.lifecycle == "terminal" {
-            assert_eq!(run.terminal.as_deref(), Some("succeeded"));
             break;
         }
         if tokio::time::Instant::now() >= deadline {
@@ -331,6 +330,11 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
         .and_then(|entry| entry.attempt_id)
         .ok_or("process run omitted its exact attempt")?;
     let attempt = daemon.client.attempt("run-process", &attempt_id).await?;
+    assert_eq!(
+        daemon.client.run("run-process").await?.terminal.as_deref(),
+        Some("succeeded"),
+        "{attempt:?}"
+    );
     assert_eq!(attempt.context_access, "authorized");
     assert_eq!(
         attempt.capability_id.as_deref(),

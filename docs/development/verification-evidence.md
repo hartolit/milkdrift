@@ -196,8 +196,9 @@ same byte-pinned helper through drain/cancel/retain shutdown, reopens the store,
 uncertainty explanation and refuses unsafe retry without another entry. Build the helper first.
 This fixture deliberately delays holder startup beyond 800 ms. Readiness has a separate bounded
 allowance; drain/retain request parent exit explicitly after shutdown is requested, while cancel
-must terminate the parent itself. The three-second shutdown bound and live external-holder checks
-remain independent of startup speed.
+must terminate the parent itself. The daemon has ten seconds for durable shutdown, with a separate
+fifteen-second harness deadline. Cancel must return the daemon's retained-uncertainty error; a harness
+timeout cannot satisfy the test. Live external-holder checks remain independent of startup speed.
 The platform workflow also runs these daemon cases and the capability-host lifecycle suite.
 The per-platform uploaded logs, not cross-compilation, establish which OS paths were executed.
 
@@ -634,6 +635,9 @@ exercise the same suite to detect missing prerequisites before they can make a m
 Shards that run the retained-context binary tests include the daemon and shared process-helper
 packages. Cargo builds their executables inside each isolated checkout, including any mutation;
 prebuilt binaries from the caller's workspace cannot supply that evidence.
+Shards selecting the application evidence package also build the CLI, which its source-authoring
+checks invoke. Daemon composition fixtures allow ten seconds for ordinary processes and declare
+matching invocation budgets; adapter-specific timeout tests retain their own exact bounds.
 The runner prints each completed mutation, including caught and unbuildable cases, so CI logs
 show progress during long campaigns instead of remaining silent until the final summary.
 Set `CARGO_MUTANTS_MINIMUM_TEST_TIMEOUT` from a measured full selected-suite run when the host needs
@@ -663,6 +667,13 @@ mutation-tool limitation. The runner rejects duplicate identities and validates 
 policy. When source moves, review the affected contract again and refresh its exact mutant identity
 from the current list; a stale line number must not silently match another mutation.
 A healthy benchmark cannot justify a survivor. Historical counts do not qualify new source.
+
+The runtime failure-drain regression rejects prospective revision adoption while entered work is
+still draining toward an already chosen failure terminal. The peer storage regression inserts
+valid document envelopes with mismatched published source, capability or inputs, or inconsistent
+observation/output counts. Both transaction readers must reject those corrupt records. These checks
+exercise reachable recovery and corruption boundaries; producer validation does not make their
+reader guards redundant.
 
 The September 12 controller integration based on `741b230` has a focused changed-line campaign,
 not a new full controller-shard qualification. Across 46 exact mutants, 36 are caught, five are

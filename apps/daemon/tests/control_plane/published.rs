@@ -210,6 +210,13 @@ async fn invoke_only_published_outputs_replay_retirement_and_restart() -> TestRe
             .observations
             .iter()
             .find_map(|item| item.event.kind().terminal())
+            .or_else(|| match &page.history {
+                milkdrift_peer_protocol::ObservationHistory::Hot => None,
+                milkdrift_peer_protocol::ObservationHistory::Archived { summary } => summary
+                    .final_observation
+                    .as_ref()
+                    .and_then(|item| item.event.kind().terminal()),
+            })
         {
             break terminal.clone();
         }

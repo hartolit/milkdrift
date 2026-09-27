@@ -103,6 +103,7 @@ impl MutationShard {
                     "milkdrift-local-process",
                     "milkdrift-peer-http",
                     "milkdrift-evidence",
+                    "milkdrift-cli",
                     "milkdrift-daemon",
                 ],
                 cargo_test_arguments: &[],
@@ -113,6 +114,7 @@ impl MutationShard {
                 test_packages: &[
                     "milkdrift-redb-store",
                     "milkdrift-evidence",
+                    "milkdrift-cli",
                     "milkdrift-daemon",
                     "milkdrift-local-process",
                 ],
@@ -203,6 +205,7 @@ impl MutationShard {
                     "milkdrift-peer-http",
                     "milkdrift-redb-store",
                     "milkdrift-evidence",
+                    "milkdrift-cli",
                     "milkdrift-daemon",
                     "milkdrift-local-process",
                 ],
@@ -679,6 +682,10 @@ mod tests {
         let repository = repository_root()?;
         for shard in ALL_SHARDS {
             let specification = shard.specification();
+            if specification.test_packages.contains(&"milkdrift-evidence") {
+                // The Slotbook authoring contract executes the CLI from this checkout.
+                assert!(specification.test_packages.contains(&"milkdrift-cli"));
+            }
             let command = mutation_command(&repository, Path::new("target/unused"), specification)?;
             let arguments: BTreeSet<_> = command.get_args().map(OsString::from).collect();
             // Test-only package selection in cargo-mutants 27.1 excludes the baseline.

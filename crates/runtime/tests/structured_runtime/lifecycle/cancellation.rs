@@ -276,6 +276,15 @@ fn explicit_failure_terminal_drains_owned_work_and_finishes_failed() -> TestResu
     )?;
     let run = RunId::new("run-explicit-failure-drain")?;
     store.put_revision(&revision)?;
+    let prospective = revision.revise(
+        revision.id(),
+        MutationBatch::new(vec![Mutation::ReplaceNode {
+            node: terminal("done", TerminalOutcome::Success)?,
+        }])?,
+        AuthorRef::new("human:structured-runtime-test")?,
+        "attempt prospective change during an explicit failure drain",
+    )?;
+    store.put_revision(&prospective)?;
     assert_eq!(
         submit_command(
             runtime.as_ref(),
@@ -318,6 +327,16 @@ fn explicit_failure_terminal_drains_owned_work_and_finishes_failed() -> TestResu
         RunOutcome::Failed
     );
     assert!(draining.cancellation().is_none());
+    let adoption = submit_command(
+        runtime.as_ref(),
+        store.as_ref(),
+        &run,
+        RunCommand::RequestRevisionAdoption {
+            reconciliation: ReconciliationId::new("reconciliation-during-failure-drain")?,
+            revision: prospective.id().clone(),
+            policy: ReconciliationPolicy::FinishCurrentThenAdopt,
+        },
+    );
     assert!(
         !runtime
             .history(&run)?
@@ -331,6 +350,7 @@ fn explicit_failure_terminal_drains_owned_work_and_finishes_failed() -> TestResu
     blocked
         .join()
         .map_err(|_| "explicit failure dispatch thread panicked")??;
+    assert_eq!(adoption?, CommandDisposition::Rejected);
     for _ in 0..4 {
         if runtime.projection(&run)?.is_completed() {
             break;

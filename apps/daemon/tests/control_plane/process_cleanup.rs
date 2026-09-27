@@ -32,7 +32,9 @@ async fn inherited_pipes_settle_drain_cancel_and_retain_without_duplicate_entry(
         let mut config =
             configuration_document_with_process_profiles(&directory, 16, vec![profile_path])?;
         config.shutdown = ShutdownConfig {
-            deadline_ms: 3000,
+            // Include durable settlement on an unoptimized, contended runner. The
+            // escaped holder still cannot keep shutdown or its I/O workers alive.
+            deadline_ms: 10000,
             effect_policy: mode,
         };
         let plan = config.validate(directory.path())?;
@@ -85,13 +87,19 @@ async fn inherited_pipes_settle_drain_cancel_and_retain_without_duplicate_entry(
         );
         released?;
         assert!(
-            started.elapsed() < Duration::from_secs(3),
+            started.elapsed() < Duration::from_secs(16),
             "shutdown exceeded its bound: {mode:?}"
         );
         if mode == ShutdownEffectPolicy::Cancel {
             assert!(
-                stopped.is_err(),
-                "forced removal retains the unresolved invocation"
+                matches!(
+                    stopped
+                        .as_ref()
+                        .err()
+                        .and_then(|error| error.downcast_ref::<milkdrift_daemon::HostError>()),
+                    Some(milkdrift_daemon::HostError::Shutdown(_))
+                ),
+                "forced removal must report retained uncertainty, not a harness timeout: {stopped:?}"
             );
         } else {
             stopped?;

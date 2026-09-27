@@ -74,7 +74,8 @@ impl RunningDaemon {
     pub(super) async fn stop(self) -> TestResult {
         let Self { stop, task, .. } = self;
         let _ = stop.send(());
-        tokio::time::timeout(Duration::from_secs(10), task).await???;
+        // Allow the longest configured ten-second shutdown to settle its durable result.
+        tokio::time::timeout(Duration::from_secs(15), task).await???;
         Ok(())
     }
 }

@@ -133,7 +133,8 @@ async fn direct_process_upload_replay_and_restart_have_no_workflow_records() -> 
         limits: milkdrift_peer_protocol::ExecutionLimits {
             nested_invocations: None,
             artifact_bytes: 4096,
-            duration_ms: 3000,
+            // Covers the shared profile's ten-second wall bound and owned cleanup.
+            duration_ms: 15000,
             cost_micros: 0,
             cost_currency: None,
             input_units: None,

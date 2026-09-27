@@ -1,4 +1,5 @@
 //! Independent physical corruption fixtures for both transaction kinds.
+mod published;
 use milkdrift_peer_protocol::PeerExecutionId;
 use milkdrift_persistence::{PersistenceError, StorageFailureClass};
 use redb::Database;
