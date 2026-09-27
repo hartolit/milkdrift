@@ -48,7 +48,9 @@ fn fixture_proves_the_harness_without_claiming_external_qualification() -> TestR
                 "--max-output-units",
                 "2048",
                 "--timeout-secs",
-                "45",
+                // A workflow wait covers several sequential processes and acceptance steps.
+                // Keep an explicit non-default bound without timing out valid debug-build work.
+                "120",
             ])
             .arg("--secret-source")
             .arg("secret:test-only=env:MILKDRIFT_EVIDENCE_TEST_SECRET")
@@ -100,8 +102,8 @@ fn fixture_proves_the_harness_without_claiming_external_qualification() -> TestR
     );
     assert_eq!(report["model"]["facts"]["usage"]["input_units"], 19);
     assert_eq!(report["model"]["facts"]["max_output_units"], 2048);
-    assert_eq!(report["model"]["facts"]["wait_timeout_secs"], 45);
-    assert_eq!(report["process"]["facts"]["wait_timeout_secs"], 45);
+    assert_eq!(report["model"]["facts"]["wait_timeout_secs"], 120);
+    assert_eq!(report["process"]["facts"]["wait_timeout_secs"], 120);
     let repository_facts = &report["process"]["facts"];
     assert_eq!(
         repository_facts["repository_initial_commit"],

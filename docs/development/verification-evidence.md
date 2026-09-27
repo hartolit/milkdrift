@@ -598,6 +598,9 @@ captured output, readiness, restart, CLI JSON decoding, and cleanup. Production 
 composition remain in the actual daemon. Build the daemon before isolated evidence-package tests.
 Readiness probes have a two-second bound; subsequent scenario calls retain the control client's
 ordinary thirty-second request timeout. The workflow observation deadline is a separate limit.
+The successful external fixture explicitly selects a two-minute workflow observer: each wait covers
+several sequential processes, acceptance steps and executable identity checks. Individual process
+limits remain unchanged, and the stalled-read regression checks that observation stays bounded.
 External fixture children have a five-minute outer bound covering their sequence of workflow waits,
 restarts and compiler invocations; that bound does not replace any individual operation deadline.
 
