@@ -100,6 +100,9 @@ impl OfflineStore {
         let temp_root = artifact_root.join(TEMP_DIRECTORY);
         paths::directory(&temp_root)?;
         let store = RedbStore {
+            max_active_installations: config.max_active_installations,
+            max_pending_evaluations: config.max_pending_evaluations,
+            max_active_publications: config.max_active_publications,
             database,
             root: root.clone(),
             artifact_root,

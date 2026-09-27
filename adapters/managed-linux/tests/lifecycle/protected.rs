@@ -234,6 +234,96 @@ fn evaluate(
     assert_eq!(owner.execute(&caller()?, &request)?, response);
     Ok(evidence.identity)
 }
+
+#[test]
+fn completed_evaluations_turn_over_and_keep_exact_evidence_and_receipts_after_reopen() -> Result {
+    let root = tempfile::tempdir()?;
+    let platform = Arc::new(ProtectedPlatform::default());
+    let clock = Arc::new(Clock(AtomicU64::new(1000)));
+    let mut history = Vec::new();
+    for number in 0..6 {
+        let store = Arc::new(RedbStore::open_with_config(
+            RedbStoreConfig::new(root.path()).with_managed_limits(1, 1),
+        )?);
+        let owner = manager(store.clone(), platform.clone(), clock.clone());
+        owner.recover_startup()?;
+        if number == 0 {
+            owner.execute(
+                &caller()?,
+                &request(
+                    "install",
+                    0,
+                    ManagedAction::Apply {
+                        recipe: reference('1')?,
+                    },
+                )?,
+            )?;
+        }
+        let candidate = publish_artifact(
+            &store,
+            &format!("candidate-{number}"),
+            if number % 2 == 0 {
+                b"defective"
+            } else {
+                b"repaired"
+            },
+        )?;
+        let request = request(
+            &format!("evaluate-{number}"),
+            current(&store)?.version,
+            ManagedAction::Evaluate { candidate },
+        )?;
+        let response = owner.execute(&caller()?, &request)?;
+        let initial: CandidateEvaluation = serde_json::from_value(
+            response
+                .evaluation
+                .as_ref()
+                .ok_or("evaluation absent")?
+                .value()
+                .clone(),
+        )?;
+        assert!(!initial.complete);
+        let retained = store
+            .managed_evaluation(&initial.identity)?
+            .ok_or("evidence absent")?;
+        assert!(retained.complete);
+        assert_eq!(retained.checks[0].passed, Some(number % 2 != 0));
+        history.push((request, response, retained));
+    }
+    let store = Arc::new(RedbStore::open_with_config(
+        RedbStoreConfig::new(root.path()).with_managed_limits(1, 1),
+    )?);
+    let owner = manager(store.clone(), platform.clone(), clock);
+    owner.recover_startup()?;
+    for (request, response, retained) in &history {
+        assert_eq!(owner.execute(&caller()?, request)?, *response);
+        assert_eq!(
+            store.managed_evaluation(&retained.identity)?,
+            Some(retained.clone())
+        );
+        let mut conflict = request.clone();
+        conflict.expected_version += 1;
+        assert!(owner.execute(&caller()?, &conflict).is_err());
+    }
+    assert_eq!(platform.evaluations.load(Ordering::SeqCst), 6);
+    // An older passing record still authorizes its exact candidate after later evaluations.
+    owner.execute(
+        &caller()?,
+        &request(
+            "publish-old",
+            current(&store)?.version,
+            ManagedAction::Publish {
+                evaluation: history[1].2.identity.clone(),
+            },
+        )?,
+    )?;
+    let setup = current(&store)?.current.ok_or("setup absent")?;
+    assert_eq!(
+        setup.protection.and_then(|p| p.evidence),
+        Some(history[1].2.clone())
+    );
+    Ok(())
+}
 #[test]
 fn failed_forged_stale_and_revoked_evidence_cannot_publish_and_replay_is_exact() -> Result {
     let directory = tempfile::tempdir()?;
@@ -620,17 +710,21 @@ fn evaluation_commit_loss_retains_unknown_or_exact_result_without_rerunning() ->
             drop(owner);
             drop(store);
             let store = Arc::new(RedbStore::open_with_config(
-                RedbStoreConfig::new(root.path()).with_fault_injector(Arc::new(FailCommit {
-                    point,
-                    index,
-                    calls: AtomicUsize::new(0),
-                })),
+                RedbStoreConfig::new(root.path())
+                    .with_managed_limits(1, 1)
+                    .with_fault_injector(Arc::new(FailCommit {
+                        point,
+                        index,
+                        calls: AtomicUsize::new(0),
+                    })),
             )?);
             let owner = manager(store.clone(), platform.clone(), clock.clone());
             assert!(owner.execute(&caller()?, &evaluate).is_err());
             drop(owner);
             drop(store);
-            let store = Arc::new(RedbStore::open(root.path())?);
+            let store = Arc::new(RedbStore::open_with_config(
+                RedbStoreConfig::new(root.path()).with_managed_limits(1, 1),
+            )?);
             let owner = manager(store.clone(), platform.clone(), clock);
             let receipt = owner.execute(&caller()?, &evaluate)?;
             let initial: CandidateEvaluation = serde_json::from_value(
@@ -654,6 +748,14 @@ fn evaluation_commit_loss_retains_unknown_or_exact_result_without_rerunning() ->
             );
             assert_eq!(platform.base.0.lock().map_err(|e| e.to_string())?.starts, 0);
             if !complete {
+                let mut another = evaluate.clone();
+                another.command = ManagedName::new("another-evaluation")?;
+                assert!(owner.execute(&caller()?, &another).is_err());
+                assert!(
+                    store
+                        .managed_receipt(caller()?.actor.as_str(), &another.command)?
+                        .is_none()
+                );
                 assert!(
                     owner
                         .execute(

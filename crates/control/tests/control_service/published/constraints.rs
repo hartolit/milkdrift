@@ -110,6 +110,21 @@ fn registry_bound_refuses_before_publishing_an_unusable_generation() -> TestResu
             .published_method(fixture.method.descriptor.identity(), 3)?
             .is_none()
     );
+    for number in 3..=4 {
+        fixture.store.publish_method(
+            &generation(&fixture, number)?,
+            Some(1),
+            &fixture.decision,
+            &milkdrift_persistence::IntegrityDigest::hash(
+                format!("storage-generation-{number}").as_bytes(),
+            ),
+        )?;
+    }
+    assert!(matches!(fixture.store.publish_method(
+        &generation(&fixture, 5)?, Some(1), &fixture.decision,
+        &milkdrift_persistence::IntegrityDigest::hash(b"storage-generation-five")),
+        Err(milkdrift_persistence::PersistenceError::InvalidDocument(reason))
+            if reason.contains("active publication bound")));
     Ok(())
 }
 

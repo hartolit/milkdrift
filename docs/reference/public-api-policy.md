@@ -113,3 +113,10 @@ The additional before/after method-publication commit fault points remain under 
 `CapabilityResolutionContext::is_prospective` is a workspace adapter query consumed by the host
 resolver. It lets revision authority checks defer transient health and capacity to scheduling;
 the runtime alone constructs prospective contexts, and neither resolution path acquires a permit.
+
+`PublishedWorkflowService::maintain_retirement` is a workspace adapter operation called by daemon
+maintenance and publication changes; the registry still owns the final permit/pending refusal.
+Persistence's active installation/publication pages are workspace adapter ports used by recovery,
+while exact and historical reads retain the durable documents. Redb's managed/publication limits
+are external configuration contracts validated at open. Their private indexes and count mechanics
+are not exported. Historical evidence is retained under the existing exact-version format policy.

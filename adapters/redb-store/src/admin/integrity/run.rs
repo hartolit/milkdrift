@@ -187,6 +187,9 @@ pub(super) fn scan_invocation_facts(
                     | crate::schema::APPLICATION_RECEIPT_LAST_ARCHIVED_AT_KEY
                     | crate::schema::SECURITY_AUDIT_NEXT_SEQUENCE_KEY
                     | crate::schema::SECURITY_AUDIT_COUNT_KEY
+                    | crate::schema::MANAGED_ACTIVE_COUNT_KEY
+                    | crate::schema::EVALUATION_PENDING_COUNT_KEY
+                    | crate::schema::PUBLICATION_ACTIVE_COUNT_KEY
             ) {
                 Ok(())
             } else {

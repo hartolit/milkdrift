@@ -11,6 +11,9 @@ pub(crate) const DEFAULT_MAX_READ_BYTES: u64 = 1_073_741_824;
 pub(crate) const DEFAULT_HOT_APPLICATION_RECEIPTS: u32 = 10_000;
 pub(crate) const DEFAULT_APPLICATION_RECEIPT_ARCHIVE_BATCH_SIZE: u32 = 256;
 pub(crate) const DEFAULT_MAX_SECURITY_AUDIT_RECORDS: u32 = 100_000;
+pub(crate) const DEFAULT_MAX_ACTIVE_INSTALLATIONS: u32 = 1024;
+pub(crate) const DEFAULT_MAX_PENDING_EVALUATIONS: u32 = 4096;
+pub(crate) const DEFAULT_MAX_ACTIVE_PUBLICATIONS: u32 = 4096;
 
 /// Injected clock sampled within storage transactions for durable boundary facts.
 pub trait StoreClock: Send + Sync {
@@ -46,6 +49,9 @@ pub struct RedbStoreConfig {
     pub(crate) hot_application_receipt_bound: u32,
     pub(crate) application_receipt_archive_batch_size: u32,
     pub(crate) max_security_audit_records: u32,
+    pub(crate) max_active_installations: u32,
+    pub(crate) max_pending_evaluations: u32,
+    pub(crate) max_active_publications: u32,
     pub(crate) faults: Arc<dyn FaultInjector>,
     pub(crate) clock: Arc<dyn StoreClock>,
 }
@@ -86,6 +92,9 @@ impl RedbStoreConfig {
             hot_application_receipt_bound: DEFAULT_HOT_APPLICATION_RECEIPTS,
             application_receipt_archive_batch_size: DEFAULT_APPLICATION_RECEIPT_ARCHIVE_BATCH_SIZE,
             max_security_audit_records: DEFAULT_MAX_SECURITY_AUDIT_RECORDS,
+            max_active_installations: DEFAULT_MAX_ACTIVE_INSTALLATIONS,
+            max_pending_evaluations: DEFAULT_MAX_PENDING_EVALUATIONS,
+            max_active_publications: DEFAULT_MAX_ACTIVE_PUBLICATIONS,
             faults: no_faults(),
             clock: Arc::new(SystemStoreClock),
         }
@@ -109,6 +118,28 @@ impl RedbStoreConfig {
     #[must_use]
     pub fn with_security_audit_limit(mut self, max_security_audit_records: u32) -> Self {
         self.max_security_audit_records = max_security_audit_records;
+        self
+    }
+
+    /// Bounds non-removed installations and incomplete candidate evaluations independently.
+    /// Completed history and command receipts remain durable and do not consume these slots.
+    /// Smaller limits on reopen refuse new admission until existing obligations settle.
+    #[must_use]
+    pub fn with_managed_limits(
+        mut self,
+        active_installations: u32,
+        pending_evaluations: u32,
+    ) -> Self {
+        self.max_active_installations = active_installations;
+        self.max_pending_evaluations = pending_evaluations;
+        self
+    }
+
+    /// Bounds non-retired method generations. Retirement frees a storage admission slot;
+    /// accepted calls and registry pins have their own independently enforced lifetime.
+    #[must_use]
+    pub fn with_publication_limit(mut self, active_publications: u32) -> Self {
+        self.max_active_publications = active_publications;
         self
     }
 
@@ -164,6 +195,9 @@ pub struct RedbStore {
     pub(crate) hot_application_receipt_bound: u32,
     pub(crate) application_receipt_archive_batch_size: u32,
     pub(crate) max_security_audit_records: u32,
+    pub(crate) max_active_installations: u32,
+    pub(crate) max_pending_evaluations: u32,
+    pub(crate) max_active_publications: u32,
     pub(crate) faults: Arc<dyn FaultInjector>,
     pub(crate) clock: Arc<dyn StoreClock>,
     pub(crate) artifact_serialization: Mutex<()>,

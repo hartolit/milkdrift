@@ -177,6 +177,15 @@ installation under that actor-scoped command ID conflicts, including after remov
 for a genuinely new request. After a timeout, replay the exact saved request or inspect; a timeout
 does not cancel the recorded change.
 
+The default store admits at most 1,024 non-removed installations and 4,096 incomplete candidate
+evaluations. Verified removal frees an installation slot; a pending or uncertain removal does not.
+Each installation name remains permanently reserved, so use a new name for a new setup. A durable
+completed evaluation frees its evaluation slot whether its checks passed, failed or remained
+unknown. An interrupted evaluation without a final record stays charged and exact replay does not
+rerun it. Removed inventories, accepted receipts, transitions and completed verifier evidence stay
+on disk for exact replay, conflicts, inspection and publication references. These are limits on
+current obligations, not lifetime record counts; historical inventory reads remain paged.
+
 Successful verification registers `managed.slotbook.worker` (`workspace.execute`) and, when selected,
 `managed.slotbook.model` (`model.generate`) in both host roles. The registry is a rebuildable projection;
 its catalog and health show current availability. The worker accepts the named inline input `command`:

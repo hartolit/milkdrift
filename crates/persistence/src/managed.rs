@@ -46,6 +46,13 @@ pub trait ManagedResourceStore: Send + Sync {
         after: Option<&ManagedName>,
         limit: PageSize,
     ) -> Result<Vec<InstallationRecord>, PersistenceError>;
+    /// Page only non-removed installations for recovery and live registry projection.
+    /// Removed identities remain available through exact lookup and historical inventory.
+    fn active_managed_installations(
+        &self,
+        after: Option<&ManagedName>,
+        limit: PageSize,
+    ) -> Result<Vec<InstallationRecord>, PersistenceError>;
     /// Read exact actor-scoped receipt before planning any effect.
     fn managed_receipt(
         &self,

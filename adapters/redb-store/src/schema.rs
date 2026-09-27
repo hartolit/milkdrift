@@ -1,6 +1,6 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 15;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 16;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 20;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
@@ -15,6 +15,9 @@ pub(crate) const APPLICATION_RECEIPT_LAST_ARCHIVED_AT_KEY: &str =
     "application_receipt_last_archived_at";
 pub(crate) const SECURITY_AUDIT_NEXT_SEQUENCE_KEY: &str = "security_audit_next_sequence";
 pub(crate) const SECURITY_AUDIT_COUNT_KEY: &str = "security_audit_count";
+pub(crate) const MANAGED_ACTIVE_COUNT_KEY: &str = "managed_active_count";
+pub(crate) const EVALUATION_PENDING_COUNT_KEY: &str = "evaluation_pending_count";
+pub(crate) const PUBLICATION_ACTIVE_COUNT_KEY: &str = "publication_active_count";
 pub(crate) const PEER_EXECUTION_GLOBAL_ACCOUNTING_KEY: &str = "global";
 
 // One declaration owns physical names, types, initialization and exact membership.
@@ -50,12 +53,15 @@ physical_tables! {
 PUBLISHED_LOCAL_LINKS: &'static str, u64 = "milkdrift.v1.published.local_links";
 PUBLISHED_LOCAL_PENDING: &'static str, u64 = "milkdrift.v1.published.local_pending";
 PUBLISHED_METHODS: &'static str, &'static [u8] = "milkdrift.v1.published.methods";
+PUBLISHED_ACTIVE_METHODS: &'static str, u64 = "milkdrift.v1.published.active_methods";
 PUBLISHED_METHOD_HEADS: &'static str, u64 = "milkdrift.v1.published.heads";
 MANAGED_LOCAL_USES: &'static str, &'static str = "milkdrift.v1.managed.local_uses";
 // Resource authority outlives serving observation compaction and invocation leases.
 MANAGED_INSTALLATIONS: &'static str, &'static [u8] = "milkdrift.v1.managed.installations";
+MANAGED_ACTIVE_INSTALLATIONS: &'static str, u64 = "milkdrift.v1.managed.active_installations";
 MANAGED_RECEIPTS: &'static [u8], &'static [u8] = "milkdrift.v1.managed.receipts";
 MANAGED_EVALUATIONS: &'static str, &'static [u8] = "milkdrift.v1.managed.evaluations";
+MANAGED_PENDING_EVALUATIONS: &'static str, u64 = "milkdrift.v1.managed.pending_evaluations";
 MANAGED_TRANSITIONS: &'static str, &'static [u8] = "milkdrift.v1.managed.transitions";
 MANAGED_USES: &'static str, &'static str = "milkdrift.v1.managed.uses";
 MANAGED_LINKS: &'static str, &'static [u8] = "milkdrift.v1.managed.links";

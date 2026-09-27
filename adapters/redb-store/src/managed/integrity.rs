@@ -1,7 +1,9 @@
 use super::{decode_record, invalid};
 use crate::{
     RedbStore, error, json,
-    schema::{MANAGED_INSTALLATIONS, MANAGED_TRANSITIONS, MANAGED_USES},
+    schema::{
+        MANAGED_ACTIVE_INSTALLATIONS, MANAGED_INSTALLATIONS, MANAGED_TRANSITIONS, MANAGED_USES,
+    },
 };
 use milkdrift_persistence::{
     PersistenceError,
@@ -11,21 +13,43 @@ use redb::ReadableTable;
 
 pub(super) fn verify(store: &RedbStore) -> Result<(), PersistenceError> {
     let read = store.database().begin_read().map_err(error::redb)?;
-    let installations = read
-        .open_table(MANAGED_INSTALLATIONS)
+    let active = read
+        .open_table(MANAGED_ACTIVE_INSTALLATIONS)
         .map_err(error::redb)?;
     let uses = read.open_table(MANAGED_USES).map_err(error::redb)?;
     // Startup visits the bounded live inventory only. Lifetime receipts and transition history
     // are checked by the ordinary resumable integrity scanner, not an unbounded startup pass.
-    for row in installations.iter().map_err(error::redb)? {
+    for row in active.iter().map_err(error::redb)? {
         let (key, value) = row.map_err(error::redb)?;
-        record(&read, key.value(), value.value())?;
+        active_installation(&read, key.value(), value.value())?;
     }
     for row in uses.iter().map_err(error::redb)? {
         let (id, name) = row.map_err(error::redb)?;
         use_index(&read, id.value(), name.value())?;
     }
     Ok(())
+}
+
+pub(crate) fn active_installation(
+    read: &redb::ReadTransaction,
+    key: &str,
+    value: u64,
+) -> Result<milkdrift_persistence::managed::InstallationRecord, PersistenceError> {
+    let installations = read
+        .open_table(MANAGED_INSTALLATIONS)
+        .map_err(error::redb)?;
+    let bytes = installations
+        .get(key)
+        .map_err(error::redb)?
+        .ok_or_else(|| error::corruption("active installation lost its inventory"))?;
+    let record = decode_record(bytes.value())?;
+    if value != 1 || record.removed || record.name.as_str() != key {
+        return Err(error::corruption(
+            "active installation index differs from its inventory",
+        ));
+    }
+    self::record(read, key, bytes.value())?;
+    Ok(record)
 }
 
 pub(crate) fn record(
@@ -36,6 +60,14 @@ pub(crate) fn record(
     let record = decode_record(bytes)?;
     if key != record.name.as_str() {
         return Err(invalid("managed inventory key mismatch"));
+    }
+    let active = read
+        .open_table(MANAGED_ACTIVE_INSTALLATIONS)
+        .map_err(error::redb)?;
+    if active.get(key).map_err(error::redb)?.map(|v| v.value()) != (!record.removed).then_some(1) {
+        return Err(error::corruption(
+            "installation active membership differs from its inventory",
+        ));
     }
     let uses = read.open_table(MANAGED_USES).map_err(error::redb)?;
     let mut editors = std::collections::BTreeSet::new();

@@ -2,8 +2,8 @@
 use crate::{
     RedbStore, error, json,
     schema::{
-        PUBLISHED_LOCAL_LINKS, PUBLISHED_LOCAL_PENDING, PUBLISHED_METHOD_HEADS, PUBLISHED_METHODS,
-        RUN_EVENTS,
+        PUBLISHED_ACTIVE_METHODS, PUBLISHED_LOCAL_LINKS, PUBLISHED_LOCAL_PENDING,
+        PUBLISHED_METHOD_HEADS, PUBLISHED_METHODS, RUN_EVENTS,
     },
 };
 use milkdrift_authority::{AuthorityDecisionSnapshot, AuthorityOperation};
@@ -15,9 +15,7 @@ use milkdrift_persistence::{
         PublishedMethodStore,
     },
 };
-use redb::{ReadableTable, ReadableTableMetadata};
-
-const MAX_PUBLICATIONS: u64 = 4096;
+use redb::ReadableTable;
 
 fn key(capability: &CapabilityId, generation: u64) -> String {
     format!("{capability}/{generation:020}")
@@ -158,8 +156,13 @@ impl PublishedMethodStore for RedbStore {
                 prior.retirement_request = None;
                 return Ok(prior);
             }
-            if table.len().map_err(error::redb)? >= MAX_PUBLICATIONS {
-                return Err(invalid("publication retention bound reached"));
+            if crate::store::capacity::count(
+                &write,
+                PUBLISHED_ACTIVE_METHODS,
+                crate::schema::PUBLICATION_ACTIVE_COUNT_KEY,
+            )? >= u64::from(self.max_active_publications)
+            {
+                return Err(invalid("active publication bound reached"));
             }
             let previous = heads
                 .get(id.as_str())
@@ -193,6 +196,13 @@ impl PublishedMethodStore for RedbStore {
                 .insert(exact.as_str(), bytes.as_slice())
                 .map_err(error::redb)?;
             heads.insert(id.as_str(), generation).map_err(error::redb)?;
+            crate::store::capacity::set_membership(
+                &write,
+                PUBLISHED_ACTIVE_METHODS,
+                crate::schema::PUBLICATION_ACTIVE_COUNT_KEY,
+                &exact,
+                true,
+            )?;
             record
         };
         self.faults
@@ -279,12 +289,72 @@ impl PublishedMethodStore for RedbStore {
                 table
                     .insert(key.as_str(), bytes.as_slice())
                     .map_err(error::redb)?;
+                crate::store::capacity::set_membership(
+                    &write,
+                    PUBLISHED_ACTIVE_METHODS,
+                    crate::schema::PUBLICATION_ACTIVE_COUNT_KEY,
+                    &key,
+                    false,
+                )?;
             }
             record
         };
         write.commit().map_err(error::redb)?;
         Ok(record)
     }
+
+    fn active_published_methods(
+        &self,
+        after: Option<(&CapabilityId, u64)>,
+        limit: PageSize,
+    ) -> Result<Vec<PublishedMethodRecord>, PersistenceError> {
+        let read = self.database.begin_read().map_err(error::redb)?;
+        let active = read
+            .open_table(PUBLISHED_ACTIVE_METHODS)
+            .map_err(error::redb)?;
+        let after = after.map(|(id, generation)| key(id, generation));
+        let bounds = (
+            after
+                .as_deref()
+                .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded),
+            std::ops::Bound::Unbounded,
+        );
+        active
+            .range::<&str>(bounds)
+            .map_err(error::redb)?
+            .take(limit.get() as usize)
+            .map(|row| {
+                let (key, value) = row.map_err(error::redb)?;
+                active_method(&read, key.value(), value.value())
+            })
+            .collect()
+    }
+}
+
+pub(crate) fn active_method(
+    read: &redb::ReadTransaction,
+    identity: &str,
+    value: u64,
+) -> Result<PublishedMethodRecord, PersistenceError> {
+    let methods = read.open_table(PUBLISHED_METHODS).map_err(error::redb)?;
+    let bytes = methods
+        .get(identity)
+        .map_err(error::redb)?
+        .ok_or_else(|| error::corruption("active publication lost its definition"))?;
+    let record = decode(bytes.value())?;
+    if value != 1
+        || record.retired
+        || identity
+            != key(
+                record.method.descriptor.identity(),
+                record.method.descriptor.descriptor_revision(),
+            )
+    {
+        return Err(error::corruption(
+            "active publication index differs from its definition",
+        ));
+    }
+    Ok(record)
 }
 
 impl RedbStore {

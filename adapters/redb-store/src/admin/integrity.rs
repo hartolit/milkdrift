@@ -79,6 +79,9 @@ pub(super) mod phase {
     pub(super) const PUBLISHED_HEADS: u8 = 55;
     pub(super) const PUBLISHED_LINKS: u8 = 56;
     pub(super) const PUBLISHED_PENDING: u8 = 57;
+    pub(super) const MANAGED_ACTIVE_INSTALLATIONS: u8 = 58;
+    pub(super) const MANAGED_PENDING_EVALUATIONS: u8 = 59;
+    pub(super) const PUBLISHED_ACTIVE_METHODS: u8 = 60;
 }
 
 /// Shared state for one ordered scan page. Domain modules own tables and validation.
@@ -340,5 +343,7 @@ pub(crate) fn scan_index_integrity(
     application::scan(&mut context)?;
     controller::scan(&mut context)?;
     managed::scan(&mut context)?;
-    published::scan(&mut context)
+    published::scan(&mut context)?;
+    managed::scan_active(&mut context)?;
+    published::scan_active(&mut context)
 }

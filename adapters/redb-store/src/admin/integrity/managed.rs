@@ -58,6 +58,66 @@ pub(super) fn scan(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceE
             .open_table(crate::schema::MANAGED_EVALUATIONS)
             .map_err(error::redb)?,
         "managed_evaluations",
-        |key, bytes| crate::managed::evaluation::decode(key, bytes).map(|_| ()),
+        |key, bytes| {
+            let evidence = crate::managed::evaluation::decode(key, bytes)?;
+            let pending = read
+                .open_table(crate::schema::MANAGED_PENDING_EVALUATIONS)
+                .map_err(error::redb)?;
+            if pending.get(key).map_err(error::redb)?.map(|v| v.value())
+                != (!evidence.complete).then_some(1)
+            {
+                return Err(error::corruption(
+                    "evaluation pending membership differs from its evidence",
+                ));
+            }
+            Ok(())
+        },
+    )
+}
+
+pub(super) fn scan_active(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceError> {
+    let read = context.read;
+    for (index, key) in [
+        (
+            crate::schema::MANAGED_ACTIVE_INSTALLATIONS,
+            crate::schema::MANAGED_ACTIVE_COUNT_KEY,
+        ),
+        (
+            crate::schema::MANAGED_PENDING_EVALUATIONS,
+            crate::schema::EVALUATION_PENDING_COUNT_KEY,
+        ),
+    ] {
+        crate::store::capacity::verify_read_count(read, index, key)?;
+    }
+    context.string_u64(
+        phase::MANAGED_ACTIVE_INSTALLATIONS,
+        &read
+            .open_table(crate::schema::MANAGED_ACTIVE_INSTALLATIONS)
+            .map_err(error::redb)?,
+        "managed_active_installations",
+        |key, value| crate::managed::integrity::active_installation(read, key, value).map(|_| ()),
+    )?;
+    context.string_u64(
+        phase::MANAGED_PENDING_EVALUATIONS,
+        &read
+            .open_table(crate::schema::MANAGED_PENDING_EVALUATIONS)
+            .map_err(error::redb)?,
+        "managed_pending_evaluations",
+        |key, value| {
+            let table = read
+                .open_table(crate::schema::MANAGED_EVALUATIONS)
+                .map_err(error::redb)?;
+            let bytes = table
+                .get(key)
+                .map_err(error::redb)?
+                .ok_or_else(|| error::corruption("pending evaluation lost its intent"))?;
+            let evidence = crate::managed::evaluation::decode(key, bytes.value())?;
+            if value != 1 || evidence.complete {
+                return Err(error::corruption(
+                    "pending evaluation index differs from its evidence",
+                ));
+            }
+            Ok(())
+        },
     )
 }

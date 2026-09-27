@@ -32,5 +32,19 @@ Artifact uploads use the pinned Node 24 action. Focused tests pass. Direct mutat
 in progress; the first reader run caught 16/18, and the two output-count boundary gaps were corrected
 and the reader tests rerun. Requalify them before closure. One nested-account predicate is explicitly
 classified with a supported-transition explanation and zero-dimension/reopen coverage.
-Next: finish scoped mutation qualification, active store indexes and verifier scratch, then full
-gate/API review. CI logs, exact survivor list and focused results are under `target/validation-repair/`.
+Active storage membership/count anchors now separate removed installations, completed evaluations
+and retired publications from operating capacity. Physical format 16 explicitly refuses older
+stores under the existing unreleased-format policy. All redb tests, 18 managed lifecycle tests and
+22 publication tests pass. Turnover tests use one-slot managed/evaluation limits, a four-record
+publication limit and a two-generation registry across six cycles and full reopen. Incomplete or
+uncertain work stays charged, and completed evidence remains usable for exact publication.
+
+The scoped checks caught all 27 reported mutants whose branches remain behaviorally distinguishable;
+four duplicate checks were deleted and the remaining nested-account predicate is classified. The
+tool additionally emits struct-field deletions outside its regex, so the focused health run's nine
+unrelated survivors are outside that single-test qualification; the reported health mutant is caught.
+Raw results are under `target/validation-repair/mutations-*` (records-final, boundaries-committed,
+grants, controller, health, nested). No hosted CI run has been dispatched.
+
+Next: finish verifier scratch review/documentation, full workspace gate, affected API inventories,
+and final cleanup of this temporary office. Scratch changes remain a separate uncommitted phase.

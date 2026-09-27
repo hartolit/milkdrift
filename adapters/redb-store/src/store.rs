@@ -5,6 +5,7 @@ use redb::Database;
 
 use crate::{error, fault::FaultInjector, fault::no_faults};
 
+pub(crate) mod capacity;
 mod config;
 pub(crate) mod filesystem;
 mod open;

@@ -49,6 +49,12 @@ eligible records become compact tombstones that preserve acceptance and final di
 detailed observations retire. Security audit retains its own bounded window. These policies
 do not delete runtime journal history or implicitly expire artifact bytes.
 
+Managed removal, candidate-evaluation completion and method retirement release their own active
+admission slots. Their full historical records stay available for replay and evidence references;
+startup pages the derived active indexes. `with_managed_limits` and `with_publication_limit` configure
+these independent bounds. Lowering a limit on reopen blocks new work until current obligations
+settle; it does not evict accepted work. These limits do not cap the disk space occupied by history.
+
 [`sample_clock`](src/clock.rs) samples the configured clock after obtaining the write transaction,
 then advances or rejects the durable watermark. Sampling before waiting for a writer would let a
 concurrent publication overtake that sample and falsely appear to move time backwards. The

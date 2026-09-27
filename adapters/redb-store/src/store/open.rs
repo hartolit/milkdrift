@@ -69,6 +69,9 @@ impl RedbStore {
             hot_application_receipt_bound: config.hot_application_receipt_bound,
             application_receipt_archive_batch_size: config.application_receipt_archive_batch_size,
             max_security_audit_records: config.max_security_audit_records,
+            max_active_installations: config.max_active_installations,
+            max_pending_evaluations: config.max_pending_evaluations,
+            max_active_publications: config.max_active_publications,
             faults: config.faults,
             clock: config.clock,
             artifact_serialization: Mutex::new(()),
@@ -84,6 +87,15 @@ impl RedbStore {
 }
 
 pub(crate) fn validate_config(config: &RedbStoreConfig) -> Result<(), PersistenceError> {
+    if config.max_active_installations == 0
+        || config.max_pending_evaluations == 0
+        || config.max_active_publications == 0
+    {
+        return Err(PersistenceError::Bounds {
+            location: "redb_store_config",
+            reason: "active installation, pending evaluation and active publication bounds must be nonzero".to_owned(),
+        });
+    }
     if config.max_artifact_bytes > config.max_total_artifact_bytes {
         return Err(PersistenceError::Bounds {
             location: "redb_store_config",

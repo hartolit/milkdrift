@@ -32,6 +32,16 @@ pub(super) fn scan(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceE
             record.method.validate()?;
             let id = record.method.descriptor.identity();
             let generation = record.method.descriptor.descriptor_revision();
+            let active = read
+                .open_table(crate::schema::PUBLISHED_ACTIVE_METHODS)
+                .map_err(error::redb)?;
+            if active.get(key).map_err(error::redb)?.map(|v| v.value())
+                != (!record.retired).then_some(1)
+            {
+                return Err(error::corruption(
+                    "publication active membership differs from its definition",
+                ));
+            }
             if key != format!("{id}/{generation:020}")
                 || record.version != if record.retired { 2 } else { 1 }
                 || record.retired != record.retirement_request.is_some()
@@ -121,5 +131,22 @@ pub(super) fn scan(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceE
             }
             Ok(())
         },
+    )
+}
+
+pub(super) fn scan_active(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceError> {
+    let read = context.read;
+    crate::store::capacity::verify_read_count(
+        read,
+        crate::schema::PUBLISHED_ACTIVE_METHODS,
+        crate::schema::PUBLICATION_ACTIVE_COUNT_KEY,
+    )?;
+    context.string_u64(
+        phase::PUBLISHED_ACTIVE_METHODS,
+        &read
+            .open_table(crate::schema::PUBLISHED_ACTIVE_METHODS)
+            .map_err(error::redb)?,
+        "published_active_methods",
+        |key, value| crate::published::active_method(read, key, value).map(|_| ()),
     )
 }

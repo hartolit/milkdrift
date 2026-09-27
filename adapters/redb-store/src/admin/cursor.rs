@@ -188,7 +188,7 @@ pub(crate) fn index_cursor_position(
             "index integrity cursor has no phase".to_owned(),
         ));
     };
-    if phase > 57 || key.is_empty() {
+    if phase > 60 || key.is_empty() {
         return Err(PersistenceError::InvalidCursor(
             "index integrity cursor has an unknown phase or empty key".to_owned(),
         ));
@@ -622,6 +622,24 @@ pub(crate) fn index_integrity_cursor_exists(
             .map(|row| row.is_some()),
         57 => read
             .open_table(crate::schema::PUBLISHED_LOCAL_PENDING)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        58 => read
+            .open_table(crate::schema::MANAGED_ACTIVE_INSTALLATIONS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        59 => read
+            .open_table(crate::schema::MANAGED_PENDING_EVALUATIONS)
+            .map_err(error::redb)?
+            .get(string_key()?)
+            .map_err(error::redb)
+            .map(|row| row.is_some()),
+        60 => read
+            .open_table(crate::schema::PUBLISHED_ACTIVE_METHODS)
             .map_err(error::redb)?
             .get(string_key()?)
             .map_err(error::redb)

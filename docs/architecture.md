@@ -394,6 +394,15 @@ exact generation holds. Compaction retains ownership/removal facts and preserved
 independently of execution detail. Attached services are not deletion targets. No transaction spans
 redb, the filesystem and systemd; no general rollback is promised for irreversible external changes.
 
+Non-removed installations, incomplete candidate evaluations and non-retired publications each have
+a derived active index and count anchor committed with their owning record. These indexes bound new
+admission and let startup restore current obligations without loading completed history. Removal,
+evaluation completion and publication retirement release their respective storage slots; immutable
+receipts, evidence and definitions remain in the same authoritative tables. Registry retirement
+separately waits for entry permits and accepted calls to settle. Count checks refuse lost index
+membership at reopen, and the resumable integrity scan checks membership against the retained facts.
+See [ADR 0043](decisions/0043-active-capacity-and-retained-history.md) for preservation consequences.
+
 A lifetime hold prevents invalidating the generation required by accepted work. An editing claim
 permits one mutator in a working area. A waiting parent keeps its lifetime hold while explicitly
 handing the editing claim to its exact accepted child. The resource transaction checks generation,

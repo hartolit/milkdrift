@@ -2,6 +2,8 @@
 
 #[path = "contracts/artifact.rs"]
 mod artifact;
+#[path = "contracts/capacity.rs"]
+mod capacity;
 #[path = "contracts/clock.rs"]
 mod clock;
 #[path = "contracts/controller_account.rs"]

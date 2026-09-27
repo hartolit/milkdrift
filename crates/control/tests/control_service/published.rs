@@ -94,7 +94,8 @@ fn fixture_with_service_scope(
     faults: Option<Arc<dyn milkdrift_redb_store::FaultInjector>>,
     service_scope: Option<CapabilityAuthorityScope>,
 ) -> TestResult<Fixture> {
-    let mut config = milkdrift_redb_store::RedbStoreConfig::new(directory.join("store.redb"));
+    let mut config = milkdrift_redb_store::RedbStoreConfig::new(directory.join("store.redb"))
+        .with_publication_limit(4);
     if let Some(faults) = faults {
         config = config.with_fault_injector(faults);
     }

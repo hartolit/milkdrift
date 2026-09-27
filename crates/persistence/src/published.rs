@@ -433,6 +433,13 @@ pub trait PublishedMethodStore: PublishedInvocationStore {
         after: Option<(&CapabilityId, u64)>,
         limit: PageSize,
     ) -> Result<Vec<PublishedMethodRecord>, PersistenceError>;
+    /// Page non-retired generations for catalog recovery without scanning historical definitions.
+    /// Retired generations needed by accepted work are restored from those exact associations.
+    fn active_published_methods(
+        &self,
+        after: Option<(&CapabilityId, u64)>,
+        limit: PageSize,
+    ) -> Result<Vec<PublishedMethodRecord>, PersistenceError>;
     /// Close new admission, preserving immutable implementation and accepted work.
     fn retire_method(
         &self,

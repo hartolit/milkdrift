@@ -197,7 +197,7 @@ impl PublishedWorkflowService {
         loop {
             let page = self
                 .store
-                .published_methods(
+                .active_published_methods(
                     after.as_ref().map(|(id, generation)| (id, *generation)),
                     PageSize::new(128).map_err(failure)?,
                 )
@@ -206,9 +206,7 @@ impl PublishedWorkflowService {
                 break;
             }
             for record in &page {
-                if !record.retired {
-                    self.register(host, record)?;
-                }
+                self.register(host, record)?;
             }
             after = page.last().map(|record| {
                 (

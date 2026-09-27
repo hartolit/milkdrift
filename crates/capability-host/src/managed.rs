@@ -232,7 +232,7 @@ impl ManagedResources {
         loop {
             let page = self
                 .store
-                .managed_installations(after.as_ref(), PageSize::new(32)?)?;
+                .active_managed_installations(after.as_ref(), PageSize::new(32)?)?;
             if page.is_empty() {
                 break;
             }

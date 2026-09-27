@@ -10,7 +10,9 @@ pub(crate) use execution::{
 
 use crate::{
     RedbStore, codec, error, json,
-    schema::{MANAGED_INSTALLATIONS, MANAGED_RECEIPTS, MANAGED_TRANSITIONS},
+    schema::{
+        MANAGED_ACTIVE_INSTALLATIONS, MANAGED_INSTALLATIONS, MANAGED_RECEIPTS, MANAGED_TRANSITIONS,
+    },
 };
 use milkdrift_authority::AuthorityDecisionSnapshot;
 use milkdrift_capability::managed::{
@@ -23,9 +25,7 @@ use milkdrift_persistence::{
         ManagedResourceStore, ManagedTransition, ManagedUse, QuiescenceEvidence, ResourceReceipt,
     },
 };
-use redb::{ReadableTable, ReadableTableMetadata};
-
-const MAX_INSTALLATIONS: u64 = 1024;
+use redb::ReadableTable;
 
 // Repeat the semantic owner's scope binding inside the transaction: concurrent callers can both
 // pass its initial receipt lookup before one of them commits the actor/command key.
@@ -155,6 +155,13 @@ pub(super) fn put_record(
         .map_err(error::redb)?
         .insert(record.name.as_str(), bytes.as_slice())
         .map_err(error::redb)?;
+    crate::store::capacity::set_membership(
+        write,
+        MANAGED_ACTIVE_INSTALLATIONS,
+        crate::schema::MANAGED_ACTIVE_COUNT_KEY,
+        record.name.as_str(),
+        !record.removed,
+    )?;
     Ok(())
 }
 fn save_transition(
@@ -230,6 +237,31 @@ impl ManagedResourceStore for RedbStore {
             })
             .collect()
     }
+    fn active_managed_installations(
+        &self,
+        after: Option<&ManagedName>,
+        limit: PageSize,
+    ) -> Result<Vec<InstallationRecord>, PersistenceError> {
+        let read = self.database().begin_read().map_err(error::redb)?;
+        let active = read
+            .open_table(MANAGED_ACTIVE_INSTALLATIONS)
+            .map_err(error::redb)?;
+        let bounds = (
+            after.map_or(std::ops::Bound::Unbounded, |n| {
+                std::ops::Bound::Excluded(n.as_str())
+            }),
+            std::ops::Bound::Unbounded,
+        );
+        active
+            .range::<&str>(bounds)
+            .map_err(error::redb)?
+            .take(limit.get() as usize)
+            .map(|row| {
+                let (key, value) = row.map_err(error::redb)?;
+                integrity::active_installation(&read, key.value(), value.value())
+            })
+            .collect()
+    }
     fn managed_receipt(
         &self,
         actor: &str,
@@ -286,14 +318,13 @@ impl ManagedResourceStore for RedbStore {
             return Err(conflict(request.installation.as_str()));
         }
         if existing.is_none()
-            && write
-                .open_table(MANAGED_INSTALLATIONS)
-                .map_err(error::redb)?
-                .len()
-                .map_err(error::redb)?
-                >= MAX_INSTALLATIONS
+            && crate::store::capacity::count(
+                &write,
+                MANAGED_ACTIVE_INSTALLATIONS,
+                crate::schema::MANAGED_ACTIVE_COUNT_KEY,
+            )? >= u64::from(self.max_active_installations)
         {
-            return Err(busy("managed installation namespace limit reached"));
+            return Err(busy("active managed installation limit reached"));
         }
         let mut record = existing.unwrap_or(InstallationRecord {
             schema_version: MANAGED_SCHEMA_VERSION,

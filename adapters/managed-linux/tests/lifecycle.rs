@@ -867,3 +867,6 @@ fn interrupted_capability_publication_rebuilds_without_repeating_platform_change
 
 #[path = "lifecycle/protected.rs"]
 mod protected;
+
+#[path = "lifecycle/turnover.rs"]
+mod turnover;

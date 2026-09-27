@@ -1,7 +1,7 @@
 use super::{conflict, invalid, read_record, same_receipt_scope, validate_authorization};
 use crate::{
     RedbStore, codec, error, json,
-    schema::{MANAGED_EVALUATIONS, MANAGED_RECEIPTS},
+    schema::{MANAGED_EVALUATIONS, MANAGED_PENDING_EVALUATIONS, MANAGED_RECEIPTS},
 };
 use milkdrift_authority::AuthorityDecisionSnapshot;
 use milkdrift_capability::{
@@ -10,7 +10,7 @@ use milkdrift_capability::{
 };
 use milkdrift_persistence::{PersistenceError, managed::ResourceReceipt};
 use milkdrift_workspace::CandidateEvaluation;
-use redb::{ReadableTable, ReadableTableMetadata};
+use redb::ReadableTable;
 
 pub(super) fn begin(
     store: &RedbStore,
@@ -70,8 +70,13 @@ pub(super) fn begin(
         return Err(conflict("stale evaluation target or policy"));
     }
     let mut table = write.open_table(MANAGED_EVALUATIONS).map_err(error::redb)?;
-    if table.len().map_err(error::redb)? >= 4096 {
-        return Err(super::busy("retained evaluation limit reached"));
+    if crate::store::capacity::count(
+        &write,
+        MANAGED_PENDING_EVALUATIONS,
+        crate::schema::EVALUATION_PENDING_COUNT_KEY,
+    )? >= u64::from(store.max_pending_evaluations)
+    {
+        return Err(super::busy("pending evaluation limit reached"));
     }
     if table
         .get(evidence.identity.as_str())
@@ -84,6 +89,13 @@ pub(super) fn begin(
     table
         .insert(evidence.identity.as_str(), bytes.as_slice())
         .map_err(error::redb)?;
+    crate::store::capacity::set_membership(
+        &write,
+        MANAGED_PENDING_EVALUATIONS,
+        crate::schema::EVALUATION_PENDING_COUNT_KEY,
+        &evidence.identity,
+        true,
+    )?;
     let mut response = record.view();
     response.state = "evaluating".to_owned();
     response.evaluation = Some(
@@ -146,6 +158,13 @@ pub(super) fn finish(
     table
         .insert(evidence.identity.as_str(), bytes.as_slice())
         .map_err(error::redb)?;
+    crate::store::capacity::set_membership(
+        &write,
+        MANAGED_PENDING_EVALUATIONS,
+        crate::schema::EVALUATION_PENDING_COUNT_KEY,
+        &evidence.identity,
+        false,
+    )?;
     drop(table);
     store
         .faults

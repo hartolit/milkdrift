@@ -92,6 +92,13 @@ pub(crate) fn initialize_schema(
         table
             .insert(SECURITY_AUDIT_COUNT_KEY, 0)
             .map_err(error::redb)?;
+        for key in [
+            crate::schema::MANAGED_ACTIVE_COUNT_KEY,
+            crate::schema::EVALUATION_PENDING_COUNT_KEY,
+            crate::schema::PUBLICATION_ACTIVE_COUNT_KEY,
+        ] {
+            table.insert(key, 0).map_err(error::redb)?;
+        }
     }
     crate::schema::initialize_tables(&write)?;
     {
@@ -225,6 +232,22 @@ pub(crate) fn validate_schema(database: &Database) -> Result<(), PersistenceErro
     let read = database.begin_read().map_err(error::redb)?;
 
     crate::schema::validate_tables(&read)?;
+    for (index, key) in [
+        (
+            crate::schema::MANAGED_ACTIVE_INSTALLATIONS,
+            crate::schema::MANAGED_ACTIVE_COUNT_KEY,
+        ),
+        (
+            crate::schema::MANAGED_PENDING_EVALUATIONS,
+            crate::schema::EVALUATION_PENDING_COUNT_KEY,
+        ),
+        (
+            crate::schema::PUBLISHED_ACTIVE_METHODS,
+            crate::schema::PUBLICATION_ACTIVE_COUNT_KEY,
+        ),
+    ] {
+        super::capacity::verify_read_count(&read, index, key)?;
+    }
     {
         let hot = read
             .open_table(APPLICATION_COMMAND_RECEIPTS_HOT)
