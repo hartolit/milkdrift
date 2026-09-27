@@ -62,6 +62,7 @@ pub(super) type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 pub(super) const CONTROLLER_TOKEN: &str = "controller-integration-token";
 pub(super) const OBSERVER_TOKEN: &str = "observer-integration-token";
+pub(super) const DOGFOOD_PROCESS_WALL_MS: u64 = 30_000;
 
 pub(super) struct RunningDaemon {
     pub(super) endpoint: Url,
@@ -75,7 +76,9 @@ impl RunningDaemon {
         let Self { stop, task, .. } = self;
         let _ = stop.send(());
         // Allow the longest configured ten-second shutdown to settle its durable result.
-        tokio::time::timeout(Duration::from_secs(15), task).await???;
+        tokio::time::timeout(Duration::from_secs(15), task)
+            .await
+            .map_err(|_| "timed out waiting for the daemon to shut down")???;
         Ok(())
     }
 }
@@ -227,7 +230,7 @@ pub(super) fn write_dogfood_process_profile(
     let bytes = fs::read(executable)?;
     let executable_root = executable.parent().ok_or("executable has no parent")?;
     // This end-to-end fixture includes synchronous journal reporting under concurrent daemon
-    // tests. Use the maintained process example's ten-second budget; adapter timeout tests own
+    // tests. Allow thirty seconds for each fixture invocation; adapter timeout tests own
     // the tighter termination checks independently of filesystem/reporting throughput.
     let value = serde_json::json!({
         "schema_version": 2,
@@ -290,7 +293,7 @@ pub(super) fn write_dogfood_process_profile(
                 "artifact_chunk_bytes": 65536,
                 "max_output_files": 8,
                 "max_total_output_bytes": 4194304,
-                "wall_timeout_ms": 10000,
+                "wall_timeout_ms": DOGFOOD_PROCESS_WALL_MS,
                 "graceful_termination_ms": 100,
                 "forced_termination_ms": 100,
                 "heartbeat_interval_ms": 1000
@@ -597,14 +600,19 @@ pub(super) fn executable_dogfood_sequence() -> TestResult<PromptSequenceDocument
 pub(super) async fn wait_for_run<F>(
     client: &ControlClient,
     run: &str,
+    timeout: Duration,
     predicate: F,
 ) -> TestResult<milkdrift_control_protocol::RunRead>
 where
     F: Fn(&milkdrift_control_protocol::RunRead) -> bool,
 {
     let mut last = None;
-    for _ in 0..500 {
-        let state = client.run(run).await?;
+    let deadline = tokio::time::Instant::now() + timeout;
+    while tokio::time::Instant::now() < deadline {
+        let state = match tokio::time::timeout_at(deadline, client.run(run)).await {
+            Ok(state) => state?,
+            Err(_) => break,
+        };
         if predicate(&state) {
             return Ok(state);
         }

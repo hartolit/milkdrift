@@ -227,6 +227,20 @@ an exact replay whether its record is still hot or already archived. A 25% CPU-q
 the previous ten-second observer failure and passes with these observation changes; the method's
 execution deadline and required successful terminal stay unchanged.
 
+Control-plane fixtures also distinguish execution budgets from consumer observation. The configured
+process keeps its ten-second execution limit and is observed for twenty seconds. Positive stream
+observations allow thirty seconds, including draining to the journal head; the 600 ms negative
+idle check and fifteen-second shutdown bound remain unchanged. Stage-labelled errors identify which
+observation failed. Local pressure runs reproduce both earlier observation failures and pass with
+these corrections: the operations group at 25% CPU quota and the stream case at 10%.
+
+The headless remediation fixture assigns its four process profiles thirty seconds each, including
+synchronous progress reporting and pipe completion. Its observers cover five sequential calls before
+approval and three after remediation, with ten seconds of orchestration/reporting allowance per
+call. Each run read is bounded by that phase's monotonic deadline. Unexpected terminal failures still
+fail immediately with attempt evidence. Adapter timeout and cleanup tests keep their independent
+limits; these fixture allowances establish no product latency promise.
+
 Capability/authority/blueprint/sequence tests cover strict placement sets, immutable revision identity
 and obsolete snapshot refusal. Runtime and capability-host suites exercise final-entry revocation,
 deterministic

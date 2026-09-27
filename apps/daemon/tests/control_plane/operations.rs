@@ -91,6 +91,9 @@ async fn daemon_bounded_overload_returns_stable_error() -> TestResult {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_stream_reconnect_auth_rotation_and_shutdown() -> TestResult {
+    // Positive observations include queued authority and journal reads under concurrent CI load.
+    // This is a consumer allowance, not a server latency contract; the idle assertion stays short.
+    let observation_timeout = Duration::from_secs(30);
     let directory = tempfile::tempdir()?;
     let daemon = start(configuration(&directory, 16)?, CONTROLLER_TOKEN).await?;
     let revision = import_blueprint(&daemon.client, "stream-import").await?;
@@ -108,8 +111,9 @@ async fn daemon_stream_reconnect_auth_rotation_and_shutdown() -> TestResult {
         .await?;
 
     let mut stream = daemon.client.subscribe("v1/runs/run-stream/stream", None);
-    let first = tokio::time::timeout(Duration::from_secs(3), stream.next())
-        .await?
+    let first = tokio::time::timeout(observation_timeout, stream.next())
+        .await
+        .map_err(|_| "timed out waiting for initial run observation")?
         .ok_or("run stream closed before its first observation")??;
     assert_eq!(first.feed, "run:run-stream");
     let first_position = first.cursor.position_for("run:run-stream")?;
@@ -122,11 +126,12 @@ async fn daemon_stream_reconnect_auth_rotation_and_shutdown() -> TestResult {
     let mut resumed = daemon
         .client
         .subscribe("v1/runs/run-stream/stream", Some(first.cursor));
-    let second = tokio::time::timeout(Duration::from_secs(3), resumed.next())
-        .await?
+    let second = tokio::time::timeout(observation_timeout, resumed.next())
+        .await
+        .map_err(|_| "timed out waiting for reconnected run observation")?
         .ok_or("resumed run stream closed")??;
     assert!(second.cursor.position_for("run:run-stream")? > first_position);
-    let head = tokio::time::timeout(Duration::from_secs(3), async {
+    let head = tokio::time::timeout(observation_timeout, async {
         let mut observed = second;
         loop {
             match observed.observation {
@@ -143,7 +148,8 @@ async fn daemon_stream_reconnect_auth_rotation_and_shutdown() -> TestResult {
                 .ok_or("stream ended before its head")??;
         }
     })
-    .await??;
+    .await
+    .map_err(|_| "timed out draining the run stream to its journal head")??;
     assert!(
         tokio::time::timeout(Duration::from_millis(600), resumed.next())
             .await
@@ -160,23 +166,26 @@ async fn daemon_stream_reconnect_auth_rotation_and_shutdown() -> TestResult {
             },
         ))
         .await?;
-    let changed = tokio::time::timeout(Duration::from_secs(3), resumed.next())
-        .await?
+    let changed = tokio::time::timeout(observation_timeout, resumed.next())
+        .await
+        .map_err(|_| "timed out waiting for the post-command run observation")?
         .ok_or("stream ended before the new command")??;
     assert!(matches!(changed.observation, Observation::Timeline(entry) if entry.sequence > head));
     drop(resumed);
 
     let mut capabilities = daemon.client.subscribe("v1/stream/capabilities", None);
-    let capability = tokio::time::timeout(Duration::from_secs(3), capabilities.next())
-        .await?
+    let capability = tokio::time::timeout(observation_timeout, capabilities.next())
+        .await
+        .map_err(|_| "timed out waiting for the capability observation")?
         .ok_or("capability stream closed before its first observation")??;
     assert_eq!(capability.feed, "capability-health");
     assert!(matches!(capability.observation, Observation::Capability(_)));
     drop(capabilities);
 
     let mut health = daemon.client.subscribe("v1/stream/health", None);
-    let initial_health = tokio::time::timeout(Duration::from_secs(3), health.next())
-        .await?
+    let initial_health = tokio::time::timeout(observation_timeout, health.next())
+        .await
+        .map_err(|_| "timed out waiting for initial health observation")?
         .ok_or("health stream closed before its first observation")??;
     assert!(matches!(
         initial_health.observation,
@@ -193,8 +202,9 @@ async fn daemon_stream_reconnect_auth_rotation_and_shutdown() -> TestResult {
             },
         ))
         .await?;
-    let changed_health = tokio::time::timeout(Duration::from_secs(3), health.next())
-        .await?
+    let changed_health = tokio::time::timeout(observation_timeout, health.next())
+        .await
+        .map_err(|_| "timed out waiting for changed health observation")?
         .ok_or("health stream did not publish an operational change")??;
     assert!(matches!(
         changed_health.observation,
@@ -208,8 +218,9 @@ async fn daemon_stream_reconnect_auth_rotation_and_shutdown() -> TestResult {
         &directory.path().join("controller.token"),
         "rotated-controller-token",
     )?;
-    let closing = tokio::time::timeout(Duration::from_secs(3), health.next())
-        .await?
+    let closing = tokio::time::timeout(observation_timeout, health.next())
+        .await
+        .map_err(|_| "timed out waiting for credential rotation to close the stream")?
         .ok_or("health stream closed without a rotation observation")??;
     assert!(matches!(
         closing.observation,
@@ -287,7 +298,8 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
         ))
         .await?;
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    // The configured process may run for ten seconds before its durable result is reported.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     loop {
         let run = daemon.client.run("run-process").await?;
         if run.lifecycle == "terminal" {

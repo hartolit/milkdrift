@@ -114,12 +114,20 @@ async fn headless_dogfood_failure_remediation_and_restart_are_durable() -> TestR
         ))
         .await?;
 
-    let waiting = wait_for_run(&daemon.client, "run-headless-dogfood", |state| {
-        state
-            .nodes
-            .iter()
-            .any(|node| node.node_id == "stage-two-approval")
-    })
+    // Five sequential fixture calls precede the approval. Each may use its process allowance
+    // plus orchestration/reporting time; the observer must cover the whole suffix.
+    let call_allowance = Duration::from_millis(DOGFOOD_PROCESS_WALL_MS + 10_000);
+    let waiting = wait_for_run(
+        &daemon.client,
+        "run-headless-dogfood",
+        call_allowance * 5,
+        |state| {
+            state
+                .nodes
+                .iter()
+                .any(|node| node.node_id == "stage-two-approval")
+        },
+    )
     .await?;
     assert_eq!(waiting.lifecycle, "running");
     assert!(waiting.terminal.is_none());
@@ -288,9 +296,12 @@ async fn headless_dogfood_failure_remediation_and_restart_are_durable() -> TestR
             },
         ))
         .await?;
-    let completed = wait_for_run(&resumed.client, "run-headless-dogfood", |state| {
-        state.terminal.as_deref() == Some("succeeded")
-    })
+    let completed = wait_for_run(
+        &resumed.client,
+        "run-headless-dogfood",
+        call_allowance * 3,
+        |state| state.terminal.as_deref() == Some("succeeded"),
+    )
     .await?;
     assert_eq!(completed.lifecycle, "terminal");
     for node in &completed.nodes {
