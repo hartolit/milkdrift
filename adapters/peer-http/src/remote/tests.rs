@@ -819,6 +819,8 @@ fn remote_catalog_registration_fails_closed_and_recovers_with_the_clock()
         Err(PeerHttpError::Unavailable(_))
     ));
     assert!(!registry.status().connected);
+    registry.disconnect()?;
+    assert_eq!(registry.status().health, "disconnected");
     let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _guard = registry.status.lock();
         std::panic::resume_unwind(Box::new("injected status owner failure"));
