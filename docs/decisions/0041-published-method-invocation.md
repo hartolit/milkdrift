@@ -1,6 +1,6 @@
 # 0041 — Published methods bind a starting revision and recoverable service invocation
 
-- Status: accepted; implemented by adaptive-hosts 04
+- Status: accepted and implemented
 - Date: 2026-09-18
 - Extends: [0013](0013-immutable-proposal-revisions.md), [0022](0022-redb-owned-daemon-application-state.md), [0027](0027-controller-final-entry-reservations.md), [0038](0038-independent-host-execution.md), [0040](0040-protected-adaptive-methods.md)
 - Refines: [0019](0019-frozen-execution-authority.md) for explicit published service calls; ordinary child authority inheritance remains unchanged
@@ -154,8 +154,8 @@ after archival, narrow invocation beside denied administration, and positive ada
 effect-bypass refusal. With a single execution worker and the same working area, the child must
 progress while parent/conflicting writes refuse; unrelated resources must progress. After proven
 child completion the parent regains editing without duplicate work or a leaked hold. Repeat with
-interruption during handoff and active child use, cancellation and missing stop evidence. 02 owns
-resource transition evidence, 04 owns this integrated test, and 06 reruns it through product binaries.
+interruption during handoff and active child use, cancellation and missing stop evidence. Resource
+transaction tests and actual product-binary scenarios retain these distinct evidence boundaries.
 
 A frozen graph per version would unnecessarily forbid contracted adaptation. Ambient publisher
 rights create a confused deputy. Blocking on the child consumes its own capacity, and a separate

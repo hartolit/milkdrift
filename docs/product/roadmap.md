@@ -2,25 +2,23 @@
 
 Ordered unfinished work; [status](status.md) owns implementation and evidence facts.
 
-The user has authorized the [adaptive methods and independent hosts sprint](../development/virtual-office/adaptive-hosts/README.md).
-Its direction is adopted in vision, architecture, and ADRs 0038–0041. This authorization replaces
-the blanket feature freeze. Complete the remaining responsibility boundaries in order; each must
-finish its public path, refusal/recovery behavior, tests, and documentation before its successor.
+The user authorized the finite adaptive methods and independent hosts implementation. Its direction
+is adopted in vision, architecture, and ADRs 0038–0041. Integrated physical acceptance now passes
+with explicitly assisted application source; unaided model coding is not a closure requirement.
 
-| Order | Unfinished responsibility | Acceptance outcome |
-| --- | --- | --- |
-| 06 | Integrated acceptance | Obtain a qualifying real-model source/repair result after the bounded study failed; retain its uncertain final call without blind replay. Physical desktop-to-UM790 calls, owned CPU model lifecycle, orderly reboot replay, preservation/removal, an inconclusive real-method comparison and the final software gate are complete. Close the sprint only against the required accepted behavior. |
+No implementation sprint or successor assignment is currently open. Further work needs a concrete
+operator need and its own bounded authorization; the whiteboard retains questions for that decision.
 
 The managed resource, protected adaptation, publication and evaluated-learning implementations
-have finite desktop qualification. Their current coverage and limits belong to
-[status](status.md#current-validationevidence-snapshot); the remaining live-source acceptance is
-owned by 06. Passing deterministic fixtures does not complete that acceptance.
+have finite desktop and UM790 qualification. Current coverage and limits belong to
+[status](status.md#current-validationevidence-snapshot). Broader managed Vulkan, active-reboot and
+memory-pressure claims remain separately scoped questions in the
+[hardware qualification issue](../development/virtual-office/whiteboard/issues/managed-linux-hardware-qualification.md).
 
-Use the maintained [Slotbook example](../guides/adaptive-method-example.md) across these assignments.
-The learning outcome may be negative or inconclusive; demonstrating the mechanism does not require
-fabricating a better method. Physical qualification remains required for sprint closure, unless
-the user explicitly accepts a different closure scope. Assignment 00 adopts the design and settles
-the example and nested-use rules; it does not implement any row above.
+Use the maintained [Slotbook example](../guides/adaptive-method-example.md) for the operator route.
+A learning outcome may be negative or inconclusive; demonstrating the mechanism does not require
+fabricating a better method. Preserved model failures and uncertainty remain evidence even when an
+authorized assistant supplies a corrected implementation to continue the workflow.
 
 Keep native trusted execution, attached endpoints, ordinary files, external inference, scoped
 knowledge, local-first operation and shared administration. Linux is the first managed mechanism;

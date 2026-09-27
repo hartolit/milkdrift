@@ -1,6 +1,6 @@
 # 0040 — Adapt the method within a protected agreement
 
-- Status: accepted direction; adaptation/effect implementation assigned to adaptive-hosts 03, evaluated reuse to 05
+- Status: accepted and implemented, including finite evaluated reuse
 - Date: 2026-09-18
 - Extends: [0005](0005-prospective-revision-reconciliation.md), [0013](0013-immutable-proposal-revisions.md), [0032](0032-purpose-specific-result-acceptance.md)
 - Revises: coarse approval policy as the only automatic-adaptation boundary in [0014](0014-shared-human-ai-control-path.md)
@@ -89,13 +89,12 @@ and scoped files, not a second memory database. No learning process acquires aut
 
 ## Compatibility and evidence
 
-Current generic result acceptance, revision identities, risk policy and schemas remain as implemented
-until 03. Do not decode an old revision as if it accepted a new agreement. Introduce versioned core
-agreement/binding, evidence and policy forms with hand-reviewed fixtures; retain historical risk
+Do not decode an old revision as if it accepted a new agreement. Core agreement/binding, evidence
+and policy forms have versioned readers and hand-reviewed fixtures; retain historical risk
 decisions under the exact policy that produced them. Where a changed serialized boundary cannot
 preserve exact meaning, use explicit refusal under the pre-release policy, never a permissive fallback.
-03 owns blueprint, authority, control/runtime, resource entry and public consumers together. 05 owns
-the ordinary learning/evaluation examples and any necessary narrow proposal/evidence extensions.
+Blueprint, authority, control/runtime, resource entry and public consumers enforce the same agreement
+boundary. The maintained learning example uses ordinary proposal and evaluation operations.
 No numeric version or storage migration is selected by this design document.
 
 Positive repair and negative bypass tests must share the same product path. Remove a check, change

@@ -1,9 +1,9 @@
 # Slotbook: develop, repair and evaluate a reusable booking method
 
-This is the maintained application and evaluation specification for the adaptive-hosts sprint.
+This is the maintained application and evaluation specification for adaptive methods and hosts.
 It fixes the acceptance case before implementation and candidate selection. It is prose, not a
-loadable blueprint or a report of an executed model run. Assignments 02–06 use this same application;
-they add supported artifacts and runnable examples through production readers when implemented.
+loadable blueprint or a report of an executed model run. The maintained Slotbook example supplies
+the supported artifacts and runnable commands through production readers.
 Ownership follows [architecture](../architecture.md) and ADRs
 [0039](../decisions/0039-managed-resource-ownership.md),
 [0040](../decisions/0040-protected-adaptive-methods.md) and
@@ -74,8 +74,8 @@ replacement, restarts, and checks the resulting capacity. Test client names are 
 and `Bo`; neither may appear in public availability. The clock is a controlled test input, not a
 worker-editable policy setting or the host's real clock.
 
-03 must freeze the concrete bounded API contract and harness bytes before generating repair
-candidates, implementing these observations without adding discretionary quality scores. Candidate,
+The maintained verifier freezes the concrete bounded API contract and harness bytes before repair
+generation, implementing these observations without discretionary quality scores. Candidate,
 configuration, agreement/check set, verifier generation and authenticated producer, target/resource
 generation, evidence validity and allowed effect use bind one acceptance decision. Evidence is valid
 for that exact candidate/configuration/target under the unchanged active verifier policy; revocation
@@ -117,8 +117,8 @@ evaluation inputs/oracles below and all baseline/candidate evaluation outputs un
 
 ## Separate evaluation inputs and product variations
 
-These inputs belong to the evaluator, not the proposal agent's source context. 05 materializes them
-as separately authorized artifacts in evaluator-owned storage. The proposal process receives only
+These inputs belong to the evaluator, not the proposal agent's source context. The learning driver
+materializes them as separately authorized artifacts in evaluator-owned storage. The proposal process receives only
 the source selection in an isolated working area: no repository checkout containing this full
 specification, evaluator files, broad shell/read grant or hidden context reference can leak them.
 An evaluating method receives its task input normally, including requirements and product parameters;
@@ -182,7 +182,7 @@ four comparisons. Deterministic fixtures can test positive promotion and negativ
 separately; they cannot supply a missing positive real-model result. Independent variations can use
 the retained baseline when a candidate is rejected; their method/version must say so.
 
-## Trace and implementation allocation
+## Trace and operator route
 
 Use the logical case names above and capture actual returned identities, rather than hardcoding fake
 run IDs. The retained evidence chain is:
@@ -196,11 +196,13 @@ source input + baseline revision + source run decisions/failure/repair
     -> selected variant's protected deployment and retained resource identity
 ```
 
-02 prepares Slotbook's files/tooling, staging and data ownership; it does not claim the protected
-publication gate exists. 03 implements the fixed verifier, seeded repair/refusal cases and governed
-deployment. 04 makes that method callable and implements the single-worker same-area parent/child
-test from ADR 0039. 05 implements source selection, held-out evaluation, decisions and independent
-variants. 06 runs the same path on actual product binaries and the authorized Linux/UM790 setup,
-separating deterministic, platform, physical and real-model evidence. Raw evidence belongs under
+The managed resource owner prepares Slotbook's tooling, working area, staging and data ownership.
+The fixed verifier and protected publisher enforce the candidate's obligations; published methods
+make that workflow callable, including the single-worker parent/child boundary in
+[ADR 0039](../decisions/0039-managed-resource-ownership.md). The
+[maintained example](../../examples/adaptive-slotbook/README.md) supplies source development,
+held-out evaluation, decisions and independent variants through product binaries. The
+[evidence guide](../development/verification-evidence.md#integrated-host-acceptance) separates
+deterministic, platform, physical and real-model results. Raw evidence belongs under
 ignored `target/adaptive-hosts/` or CI artifacts, with durable source/evaluation/decision references
 in normal product artifacts and scoped inspection. Nothing in this specification claims execution.

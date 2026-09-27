@@ -148,7 +148,9 @@ values; repository contracts check the version cells against source.
   accepted terminal fields. Per-call allowances and service grant/host ceilings apply, with no
   service-wide lifetime spending account. Process-internal network/model calls are not direct-model
   accounting. Native seeded protected deployment has run on the UM790, and completed calls replay
-  after an orderly host reboot. Actual live model source repair remains unqualified.
+  after an orderly host reboot. An explicitly assisted source correction also passed the unchanged
+  verifier and protected publication on the UM790; unaided local-model source development remains
+  unqualified.
 - Learning comparisons are bounded to declared slots and 4,096 events per internal run. Unread
   descendants, unavailable usage, missing public completion or missing verifier evidence prevent
   eligibility. The declaration fixes the input and output fields; the returned product must be the
@@ -157,7 +159,8 @@ values; repository contracts check the version cells against source.
   evaluated on Drifty; its candidate runs lacked comparable verifier evidence, so the comparison
   remained inconclusive and the baseline was retained. Earlier malformed candidates and uncertain
   calls remain recorded. No useful real-model improvement or universal superiority is claimed. The
-  [05 handoff](../development/virtual-office/adaptive-hosts/handoffs/05.md) records evidence lanes.
+  [evidence guide](../development/verification-evidence.md#selected-learning-and-product-variants)
+  records the distinct evidence lanes.
 - Earlier selection-policy-version-1 manifests remain readable, but omissions retaining ambiguous
   identities or sizes and stopped required evidence cannot authorize reuse. Retry and startup refuse
   those retained records without rewriting their bytes. An unsafe active lease prevents daemon
@@ -214,7 +217,7 @@ values; repository contracts check the version cells against source.
 
 ## Current validation/evidence snapshot
 
-### Integrated acceptance in progress
+### Integrated acceptance
 
 The fresh deterministic learning lane completed four held-out pairs with one baseline repair and
 zero candidate repairs each, promoted generation 2, and produced separately verified camera-loan
@@ -235,8 +238,8 @@ unrelated-authority refusal, cancellation and terminal hold release. Deliberate 
 proof guard makes the continuation test fail. Linux idle-role memory/thread observations and
 reproduction commands belong to the [evidence guide](../development/verification-evidence.md).
 
-The [06 handoff](../development/virtual-office/adaptive-hosts/handoffs/06.md) retains exact inputs,
-review scope and current verification. This does not accept or close the sprint. Physical
+The [integrated evidence](../development/verification-evidence.md#integrated-host-acceptance)
+retains exact inputs, review scope and verification. Physical
 desktop-to-UM790 direct process/model calls and workflows now pass using the same execution-only
 serving capabilities. Both daemons restart with exact replay, unchanged outputs and no additional
 process or native-model entry. The native Slotbook qualification also passes on the UM790.
@@ -252,23 +255,40 @@ candidate was not promoted. The retained baseline produced two independently ver
 only the selected loan variant was deployed. The owned CPU model passed direct inference, exact
 reapply, automatic reboot recovery, drained configuration replacement and preservation-aware removal.
 Old generation acceptances replayed, and the managed Rust source, binary and marker survived both
-replacement and removal. The bounded real-source study did not qualify a Slotbook application:
-the first candidate failed compilation; the next compiled a build utility whose verifier journal
-closed without completed checks, so publication refused. The final model call reached its
-8192-token limit without trustworthy terminal output; its attempt and unknown usage remain
-uncertain and were not replayed. All source-study resources were removed with source, binary,
-artifacts and data preserved. Successful model-developed source/repair remains the sprint blocker.
+replacement and removal. Bounded real-source studies have not qualified a Slotbook application.
+The maintained driver can alternate the desktop Ornith 9B and UM790 Ornith 35B endpoints, submit
+their exact source through ordinary authorized proposals, compile it, and return selected compiler
+evidence and the current source to the next call. Both servers expose 32,768-token contexts; the
+current study allows 16,384 output tokens per call. Its eight responses produced seven failed builds
+and one refusal because the rationale exceeded its declared byte bound. No candidate reached the
+fixed verifier or publication. Earlier response-loss attempts and unknown usage remain uncertain;
+they were not replayed. Study installations were removed with source, artifacts and data preserved.
+The operator authorized an assisted correction to test the workflow independently of the local
+models' ability to implement the whole application. That separately attributed source passed all
+six unchanged checks on Drifty and reached protected publication. The served application remained
+healthy after the workflow finished. Reopening the daemon and replaying its exact start command
+preserved the complete terminal run, attempt identities, target version, accepted evaluation and
+container ID/start time. Removal used the recorded preservation policy; all four selected volumes
+remain. This is successful assisted workflow acceptance, with no claim that the local models
+completed the implementation themselves. The original failed and uncertain records are unchanged.
 Authenticated forwarding carries native model requests; the non-loopback plaintext restriction
 remains in force. Native Vulkan use does not qualify the managed Vulkan boundary.
 
-The fresh review gate passed 960 unit/integration tests, 24 doctests and all 24 repository contracts,
-with warning-denying Clippy/rustdoc, dependency checks and test discovery. Eight opt-in tests remain
-ignored by that gate. The native verifier lifecycle and actual-binary independent-host scenario
-passed separately in the review; the physical host and live-model results above come from retained
-implementation evidence. Default/all-feature API inventories for redb-store, managed-linux,
-peer-http, capability-host and evidence have no changes. The local optimization 1/debug-information 0
-profile retains debug assertions. The [active handoff](../development/virtual-office/adaptive-hosts/handoffs/06.md)
-distinguishes fresh checks, retained physical evidence and the missing live-source acceptance.
+The closeout review's local gate passed 973 unit/integration tests, 24 doctests and all 24 repository
+contracts, with warning-denying Clippy/rustdoc, dependency checks and test discovery. Eight opt-in
+tests remain ignored. It used the default unoptimized debug profile and includes the CI fixture
+corrections, assisted-input path and source replay checks. Cached model responses must match their
+immutable artifact references; reconstructed authoring documents refuse changed retained proposals.
+Source reads enforce byte bounds and regular files, and the writer refuses symlink replacements.
+CLI reconstruction reproduced a retained model workflow's canonical document.
+
+The native verifier lifecycle and actual-binary independent-host scenario retain their separately
+reviewed evidence. Serving archival regressions reject output disclosure without authority and
+retain authorized bytes across archival; restoring the prior behavior makes all four checks fail.
+Default/all-feature serving and persistence API inventories are unchanged. These are local software
+checks; retained hosted and physical results remain scoped to their recorded executions. The
+[evidence guide](../development/verification-evidence.md#integrated-host-acceptance) distinguishes
+those evidence classes and assisted source provenance.
 
 ### Evaluated method reuse
 
@@ -281,8 +301,8 @@ proving execution still waits for health. Fresh actual-binary fixture qualificat
 four held-out pairs, promoted generation 2, and produced two independently verified variants using
 the candidate; only the loan product was selected for deployment. Staged tool activation preserved
 application bytes and explicit knowledge updates preserved prior selections. The
-[05 handoff](../development/virtual-office/adaptive-hosts/handoffs/05.md) records review corrections
-and the physical fixture evidence; assignment 06 owns real-model and further host qualification.
+[evidence guide](../development/verification-evidence.md#selected-learning-and-product-variants)
+records the physical fixture evidence separately from the real-model and host results above.
 
 ### Protected adaptive method verification
 
@@ -305,19 +325,18 @@ bytes without overwriting earlier evidence. A separately authorized direct publi
 generation 3; exact replay after
 another reopen preserved its generation, version, container ID and start time. Both test installations
 were removed through their owner, retaining declared data volumes. The
-[04 follow-up](../development/virtual-office/adaptive-hosts/handoffs/04.md#rust-implementation-follow-up)
-records exact candidate
-identities and evidence paths. The native verifier test also covers detached-container cleanup after
+[published-workflow evidence](../development/verification-evidence.md#published-workflow-capabilities)
+records exact candidate identities and evidence paths. The native verifier test also covers detached-container cleanup after
 completion, timeout and platform reopen, plus changed candidate-file refusal before activation.
 Protected preparation shares the Podman version, controller delegation, subordinate-ID and lingering
-checks used by other managed services. Live model repair belongs to assignment 06; these fixtures
-do not represent observed model choices. Interrupted verification retains unknown evidence and refuses
+checks used by other managed services. These fixtures do not represent observed model choices;
+the separate live/assisted results are stated above. Interrupted verification retains unknown evidence and refuses
 publication. This desktop qualification does not establish second-host operation,
 power-loss persistence or general application correctness/security.
 
 ### Managed Linux resource qualification
 
-Assignment 02 and its post-execution corrections have desktop Arch Linux qualification with
+Managed resources and their configuration corrections have desktop Arch Linux qualification with
 Podman 6.1.2, systemd 261.3 and kernel 7.2.6. The adapter accepts 5.4..6.x and checks actual
 controller delegation, private UID/GID mappings and effective definitions. Recipe schema 2 and
 mechanism v3 separate worker/service budgets and make the owned model alias, endpoint bounds and
@@ -342,8 +361,8 @@ loaded in the corrective run.
 The full local gate passes with 880 workspace tests, 24 doctests, all 24 repository contracts,
 warning-denying Clippy/rustdoc, dependency audits, formatting, checks and discovery. Seven manual
 tests remain ignored by that gate; both physical Linux cases were executed separately. Eight
-default/all-feature API inventories were reviewed. The local gate uses optimization level 1 with
-debug assertions enabled; an unoptimized full-gate pass is not established on this host.
+default/all-feature API inventories were reviewed. That qualification used optimization level 1
+with debug assertions enabled; the later integrated gate above uses the default unoptimized profile.
 
 Actual model calls use explicit per-request `reasoning_effort: "none"`. Earlier desktop `ornith-9b`
 and Drifty `ornith` daemon/CLI smoke evidence remains valid for those recorded inputs; Drifty uses
@@ -351,8 +370,8 @@ an authenticated SSH tunnel to its NetBird listener. Default `reasoning_content`
 refuse and retain uncertainty. Neither the corrected owned CPU run nor the earlier failed Gemma
 smoke qualifies default reasoning-mode interoperability. Native server settings were unchanged.
 
-The [handoff](../development/virtual-office/adaptive-hosts/handoffs/02.md) binds exact images, model
-inputs, commands, full-gate/API results and profile settings. Corrective evidence lives under
+The [managed evidence](../development/verification-evidence.md#managed-linux-installations) binds
+images, model inputs, commands, full-gate/API results and profile settings. Corrective evidence lives under
 `target/adaptive-hosts/post-02/`; predecessor results remain under
 `target/adaptive-hosts/managed-02-qualification/` and `target/adaptive-hosts/managed-02-review/`.
 Power loss, managed Vulkan and UM790 pressure remain in the
@@ -363,14 +382,14 @@ the passing desktop and CPU tests do not establish the remaining hardware claims
 
 ### Independent host execution
 
-Assignment 01 is reviewed and accepted on Windows x86_64/MSVC with
+The independent-host implementation is reviewed and accepted on Windows x86_64/MSVC with
 Rust 1.95.0. The local gate after the process-shutdown correction passes: 833 workspace tests,
 24 doctests, all 24 repository contracts,
 formatting, all-target/all-feature checking, warning-denying Clippy/rustdoc, dependency audits and
 test discovery. Five manual tests remain ignored. Commands and results are under
 `target/ci-repair/`, with the independent-host binary evidence under `target/adaptive-hosts/review/`.
-The [assignment handoff](../development/virtual-office/adaptive-hosts/handoffs/01.md) records the
-resulting commits, corrected operator grant, verification and initial timeout failures.
+The [independent-host evidence](../development/verification-evidence.md#independent-host-execution)
+records the corrected operator route and qualification limits.
 Default/all-feature API inventories for fourteen affected libraries were reviewed against their
 actual consumers; fixture entry, conformance and unjournaled clock helpers remain outside the
 ordinary host API.
@@ -378,8 +397,10 @@ ordinary host API.
 Hosted platform run 35317306020 passed Linux but failed macOS process shutdown and Windows fixture
 startup. Shutdown now leaves signalling to the execution monitor; the cleanup fixture separates
 bounded startup from its three-second shutdown assertion. The delayed-start regression reproduces
-the old Windows failure and passes after correction. The corrected macOS path and hosted Windows
-timing still require a fresh CI run; local checks do not qualify those hosted results.
+the old Windows failure and passes after correction. The later hosted
+[platform run](https://github.com/hartolit/milkdrift/actions/runs/36319050580) at `c322cf4` passes
+the configured cross-platform suites. This is selected platform coverage, not a complete
+Windows/macOS workspace gate.
 
 The actual daemon/CLI independent-host scenario verifies direct process/fresh-model output,
 public input upload and artifact download, replay/restart, real remote workflow origins and

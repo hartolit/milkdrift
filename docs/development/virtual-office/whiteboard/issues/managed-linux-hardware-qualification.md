@@ -4,16 +4,18 @@ The assignment 02 follow-up at baseline `78de0bf` replaces the obsolete Podman r
 qualifies real workers, owned CPU inference, service recovery without Milkdrift, and ownership-safe
 cleanup on desktop Arch Linux/Podman 6.1.2. CPU, memory and PID controllers are delegated and their
 actual kernel limits pass. These are no longer blockers on that host. The
-[handoff](../../adaptive-hosts/handoffs/02.md) owns commands, exact inputs and results.
+[managed evidence guide](../../../verification-evidence.md#managed-linux-installations)
+owns commands, exact inputs and results.
 
 ## Evidence and remaining boundary
 
 Drifty now has an operator-prepared dedicated account, delegated controllers, rootless Podman
-6.1.2 and matching kernel/TUN support. Assignment 06 exercised physical direct/workflow calls,
+6.1.2 and matching kernel/TUN support. Integrated acceptance exercised physical direct/workflow calls,
 native seeded Slotbook protection and an owned CPU service using the exact Ornith 35B weights.
 An orderly operator reboot automatically restored that service before Milkdrift started. Completed
 calls replayed without new entry; drained replacement preserved the working area, and removal
-retained source, output and data. The [06 handoff](../../adaptive-hosts/handoffs/06.md) binds the
+retained source, output and data. The
+[integrated evidence guide](../../../verification-evidence.md#integrated-host-acceptance) binds the
 exact inputs and independent observations. These completed setup and idle-recovery checks are no
 longer blockers.
 

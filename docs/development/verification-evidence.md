@@ -841,14 +841,15 @@ A daemon reopen is not a host reboot; GPU configuration/log evidence does not al
 GPU inference or shared-memory pressure on the UM790.
 
 The 2026-09-22 review's full gate and API results are retained under
-`target/adaptive-hosts/managed-02-review/`; the [handoff](virtual-office/adaptive-hosts/handoffs/02.md)
-records the optimization settings and the initial physical gaps. The follow-up evidence under
+`target/adaptive-hosts/managed-02-review/`; it used optimization 1 with debug assertions and retained
+the initial physical gaps. The follow-up evidence under
 `target/adaptive-hosts/managed-02-qualification/` closes desktop Podman 6.1.2 worker and owned-CPU
 lifecycle qualification, actual kernel limits, supervisor recovery without Milkdrift, ID-bound
 cleanup under a real foreign-container collision, and the complete daemon/CLI path. It includes
 concurrent model progress, busy-removal refusal, replay/restart and preserved data. The physical
-lane retains its store on failure. Machine reboot and managed UM790/Vulkan qualification remain
-explicit in the linked handoff and hardware issue. The actual daemon/CLI
+lane retains its store on failure. Later idle-reboot evidence is stated in
+[integrated host acceptance](#integrated-host-acceptance); managed Vulkan and pressure remain in the
+[hardware issue](virtual-office/whiteboard/issues/managed-linux-hardware-qualification.md). The actual daemon/CLI
 Gemma smoke is negative evidence: one entered attempt remains uncertain, without another entry,
 when the strict response reader encounters LM Studio's unmapped `reasoning_content` deltas.
 `gemma-final.log` and its retained session store preserve the result; `gemma-diagnostic-sse.txt`
@@ -870,7 +871,7 @@ replay after restart, headroom diagnosis, incompatible apply refusal, explicit u
 removal. Short varied deadline/cancellation and combined-output tests complement the existing
 retained-uncertainty and lifecycle fault cases. Alternate model inputs and larger configuration
 values have deterministic reader/generation coverage; only the recorded Ornith weights have new
-owned physical evidence. The [02 handoff](virtual-office/adaptive-hosts/handoffs/02.md) identifies
+owned physical evidence. The retained `target/adaptive-hosts/post-02/` manifests and reports identify
 commands, inputs, final gate and API review. This supersedes recipe-1 evidence for changed
 configuration consumers and leaves the existing hardware issue open.
 
@@ -921,11 +922,11 @@ that service through its owner before renewing verification. This permits the fi
 with two private container mappings while an unrelated service remains running. It establishes
 sequential renewal, not enough capacity for verification beside both running services. The native
 BusyBox worker lifecycle and protected verifier timeout/reopen/integrity tests also passed afresh;
-their exact inputs and logs are recorded in the [06 handoff](virtual-office/adaptive-hosts/handoffs/06.md).
+their logs are under `target/adaptive-hosts/06/` and `target/adaptive-hosts/06-review/`, including
+`native-verifier.log` and its retained `native/` inputs.
 
-The [04 handoff](virtual-office/adaptive-hosts/handoffs/04.md) identifies exact versions, transaction
-ownership, review corrections and original evidence under `target/adaptive-hosts/04-review/`.
-Its Rust follow-up records native executable qualification under `target/rust-coherence/`. Current
+Original published-method evidence is under `target/adaptive-hosts/04-review/`;
+the Rust follow-up retains native executable qualification under `target/rust-coherence/`. Current
 configuration, caller permissions and operating limits belong to the
 [published-method guide](../guides/published-methods.md).
 
@@ -957,8 +958,8 @@ Knowledge supersession and prior context are checked across restart. These are f
 observations, not model-quality, host-reboot or general deployment guarantees.
 
 Evidence from 2026-09-25 lives under private `target/adaptive-hosts/05/` and the reviewed fresh
-study in `target/adaptive-hosts/05-review/`; the
-[05 handoff](virtual-office/adaptive-hosts/handoffs/05.md) records scope and results.
+study in `target/adaptive-hosts/05-review/`; exact study inputs, reports and cleanup receipts remain
+in those directories.
 The earlier `verified` study proves an accepted pre-entry preparation refusal remains inconclusive,
 automatic promotion is refused and the baseline publication remains available. Real Ornith
 requests in `complete` retain malformed candidate responses and interrupted/timeout uncertainty;
@@ -998,13 +999,54 @@ deterministic desktop observations; the physical host and real-model evidence is
 
 The maintained [Slotbook example](../../examples/adaptive-slotbook/README.md) provides the
 `headless-cli-evidence --installed-hosts` and `slotbook-evidence develop` routes for physical hosts
-and bounded live-source studies. The [06 handoff](virtual-office/adaptive-hosts/handoffs/06.md)
-identifies exact binaries, inputs and retained evidence under `target/adaptive-hosts/06/`.
+and bounded source studies. Exact binaries, inputs and retained evidence live under
+`target/adaptive-hosts/06/`; the final assisted run is under `completion/assisted/`.
 Desktop–UM790 records establish direct and workflow process/model calls, exact replay with an
 independent entry counter, owned CPU-service replacement/removal and automatic recovery after an
 orderly idle reboot. They establish neither in-flight power-loss recovery nor managed Vulkan
-isolation. The bounded live-source study failed to produce a verified application, and its final
-model attempt remains uncertain. That acceptance requirement remains open.
+isolation. Bounded live-source studies have not produced a verified application. Earlier response
+losses remain uncertain. The latest alternating desktop Ornith 9B / UM790 Ornith 35B study completed
+eight model calls with 32,768-token server contexts and 16,384-token output allowances. Seven
+proposals failed compilation and one was refused for its rationale byte bound. The final model
+source, authorized proposal and managed-workspace snapshot have identical bytes; repair claims in
+the rationale were not treated as compiler evidence. No candidate reached verification or
+publication. The driver retained every response
+and compiler artifact and removed the exact recorded installations while preserving their volumes.
+Private evidence is under `target/adaptive-hosts/06/completion/source-v6/`.
+
+The operator explicitly selected assisted implementation for workflow acceptance. The corrected
+source was submitted through `slotbook-evidence develop --assisted-source ... --maximum-attempts 1`
+in a fresh private study on Drifty, using image
+`sha256:91bdb925ac0f21a4205115badf9b5eea7e344dee4a363d32cd3279c9e8e36683`. Direct proposal provenance
+distinguishes the assistant's correction from the preserved local-model response. All six unchanged
+verifier checks passed and protected publication activated that exact 1,578,728-byte candidate.
+The evaluation identity is
+`b3_715b50df20dce80766df73e04a20cb5f5db99cb621c856c17b5c184f3f419425`.
+The application remained healthy after the workflow finished. Exact start-command replay after
+daemon reopen preserved the complete terminal run, four attempt identities, target version 13,
+accepted evaluation and running container ID/start time. Preservation-aware removal then removed
+both installations, with all four selected volumes physically present afterward. No model call was
+made by the assisted route, and prior uncertain calls were not replayed or settled.
+
+`completion/assisted/binaries.sha256` binds the tested CLI, daemon, driver, verifier and source;
+`development-inputs.json`, `source-1-assisted-proposal.json`, `development-result.json`, `recovery/`
+and `evidence/` retain the actual public-path records. The corrected source and managed snapshot
+share SHA-256 `fcb1c21d136e595cac8f221fac29330a8f86874f6e13151d4b95eef7e718408f`.
+`preserved-resources.log` records native post-removal inspection. The remote private root is
+`/home/agent/milkdrift-acceptance/06-20260927/slotbook-assisted` on the operator-supplied `agent`
+account. This establishes the finite assisted workflow, not unaided model coding, arbitrary
+application correctness or a new physical reboot claim.
+
+Other retained inputs remain distinct: `drifty-agent/installed-replay-reboot-v6.log` and
+`installed-final-peer-replay.log` bind physical direct/workflow replay and the independent process
+counter; `drifty-agent/reboot-automatic-recovery.log`, `reboot-retained-results.log` and
+`reboot-artifacts.log` bind owned CPU-service recovery. Drifty used kernel `7.2.7-arch1-1`, Podman
+6.1.2 and systemd 261.3 with delegated controllers. The attached native Ornith 35B Q4_K_M weights
+have SHA-256 `42739874cc2ccfdb8523b23fbe52e29b2a7555c8176737ca9ca0b5d59859d41f`;
+owned CPU inference used the same weights with a 4096-token context and 28 GiB service cap.
+The later native two-model profiles and 32,768-token context observations are retained under
+`completion/`; they declare self-hosted billing with no token charge. No managed Vulkan isolation
+or inference performance promise follows from those attached endpoints.
 
 The subsequent review retained fresh results under `target/adaptive-hosts/06-review/`: the full
 gate passed 960 unit/integration tests, 24 doctests and all 24 repository contracts. Eight opt-in
@@ -1014,3 +1056,22 @@ and two desktop daemons. Default/all-feature public API inventories for redb-sto
 peer-http, capability-host and evidence were regenerated without changes. The gate used pinned
 Rust 1.95.0, optimization 1 and debug information 0 with debug assertions enabled. No physical reboot
 or live-model generation was rerun in that review; retained records are not fresh executions.
+
+The source-authoring and closeout review passes the full local gate under pinned Rust 1.95.0 with
+the default unoptimized debug profile: 973 unit/integration tests, 24 doctests, warning-denying
+Clippy and rustdoc, dependency checks, discovery and all 24 repository contracts. Eight opt-in
+tests remain ignored. Logs are under `target/adaptive-hosts/closure-review/`; the earlier assisted
+gate remains under `target/adaptive-hosts/06/completion/gate/*-assisted-final.log`.
+
+The 14 source-driver tests and two source-writer tests cover bounded UTF-8/regular-file reading,
+exact source and proposal replay, changed-input refusal, direct provenance, exclusive input modes,
+the one-attempt assisted limit and symlink refusal. The review corrected unchecked reuse of cached
+model responses and proposals: response bytes now match the product's artifact digest and size,
+and authoring documents are reconstructed and compared before submission. The CLI reproduced a
+retained model workflow's canonical document. Documentation contracts and CLI parsing checks cover
+the maintained operator route after office closeout.
+
+Retained assisted source/proposal/workspace bytes match, as do the terminal run and container
+identity before and after replay. These inspected records support the physical result above;
+this closeout review did not repeat live-model generation or physical-host operations. Local gate
+results do not qualify a later hosted CI run.

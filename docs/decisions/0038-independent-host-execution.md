@@ -1,6 +1,6 @@
 # 0038 — Independent hosts share execution without sharing workflow history
 
-- Status: accepted direction; implementation assigned to adaptive-hosts 01
+- Status: accepted and implemented
 - Date: 2026-09-18
 - Extends: [0018](0018-peer-idempotency-and-uncertainty.md), [0020](0020-one-authorized-control-and-read-plane.md), [0024](0024-peer-execution-hot-retention-and-tombstones.md), [0037](0037-constrained-peer-placement.md)
 - Revises: mandatory runtime composition in [0015](0015-single-daemon-runtime-owner.md), run-only materialization assumptions in [0010](0010-host-owned-materialization.md)

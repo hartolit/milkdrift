@@ -1,6 +1,6 @@
 # 0039 — Managed resources retain lifetime protection and transferable editing ownership
 
-- Status: accepted direction; resource implementation in adaptive-hosts 02; physical qualification pending; published child integration to 04
+- Status: accepted and implemented; physical qualification limits are recorded in product status
 - Date: 2026-09-18
 - Extends: [0010](0010-host-owned-materialization.md), [0022](0022-redb-owned-daemon-application-state.md), [0024](0024-peer-execution-hot-retention-and-tombstones.md)
 - Preserves: trusted-process limits in [0021](0021-byte-pinned-trusted-host-processes.md)
@@ -25,7 +25,8 @@ See the [Quadlet manual](https://docs.podman.io/en/stable/markdown/podman-system
 The [Podman service API](https://docs.podman.io/en/stable/markdown/podman-system-service.1.html#security)
 grants the service user's full engine access; it is not a scoped worker interface. Keep its socket,
 manager files, credentials, units and configuration outside worker access. Verify installed versions
-and actual OS enforcement in 02; this choice establishes no isolation or hardware qualification.
+and actual OS enforcement through the [managed qualification lane](../development/verification-evidence.md#managed-linux-installations);
+this design choice alone establishes no isolation or hardware qualification.
 
 ## Durable lifecycle
 
@@ -105,8 +106,8 @@ acknowledgement, lost connection or lease expiry does not establish quiescence. 
 than one active mutator, but other resources and unrelated model calls can proceed.
 
 Expose blockers, lineage, exact claims, last evidence and pending transition through the existing
-authorized command/read plane. Extend its retained-work resolution approach with resource-specific
-inspection and resolution in 02; the implemented typed operations share the resource owner. An authorized operator
+authorized command/read plane. Resource-specific inspection and resolution extend its retained-work
+resolution approach; the implemented typed operations share the resource owner. An authorized operator
 may supply validated stop/absence evidence, resume the exact safe step, or explicitly fence/disrupt
 the owned resource and record the deviation. A risk acknowledgement without physical fencing cannot
 enable another writer. Resolution can preserve an invocation's unknown outcome while proving that
@@ -114,17 +115,18 @@ its resource use ended. Offline inspection/preservation remains available if sta
 
 ## Compatibility, acceptance and alternatives
 
-New resource records and journal actions need versioned readers, integrity/backup coverage and
-hand-reviewed fixtures in 02; 04 adds exact published-child linkage. The implementation uses managed schema 2, physical redb schema 14/internal document format 19,
-and daemon configuration 12. Older stores/configurations refuse before mutation; no migration is supplied. Preserve supported history and refuse incompatible
+Resource records, journal actions and exact published-child linkage have versioned readers,
+integrity/backup coverage and hand-reviewed fixtures. The [current status](../product/status.md)
+records supported versions against their owning constants and readers. Older stores/configurations
+refuse before mutation; no migration is supplied. Preserve supported history and refuse incompatible
 stores before mutation as in [0038](0038-independent-host-execution.md).
 
-02 tests transfer transitions, conflicting writers, uncertain use and fault recovery using real
-accepted execution relationships; 04 implements the integrated single-worker published parent/child
-case, and 06 reruns it. During child progress, parent/unrelated conflicting writes and removal must
+Resource transaction tests cover transfer transitions, conflicting writers, uncertain use and fault
+recovery using accepted execution relationships. Published-method tests and actual-binary evidence
+cover the integrated single-worker parent/child case. During child progress, parent/unrelated conflicting writes and removal must
 refuse, work on another resource must progress, and proven child completion must permit parent
 resumption without a duplicate or leaked hold. Interrupt both the transfer and active-child stages.
-This is a required design test, not a finding that today's implementation already deadlocks.
+These assertions guard the required ownership boundary across interruption and recovery.
 
 Task receipts alone cannot own persistent resources. A shared reentrant lock cannot prove lineage
 or physical quiescence. One operation per host would hide the problem by disabling useful concurrency.

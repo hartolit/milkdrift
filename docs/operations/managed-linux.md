@@ -345,9 +345,11 @@ MILKDRIFT_LINUX_RECIPE=/home/operator/approved-slotbook.json MILKDRIFT_QUADLET_T
 
 Arch Linux with Podman 6.1.2, systemd 261.3 and kernel 7.2.6 has passed worker and owned CPU-model
 lifecycle tests, supervisor recovery without Milkdrift, actual kernel-limit checks and the collision
-regression. The daemon/CLI evidence and exact inputs are recorded in the
-[assignment handoff](../development/virtual-office/adaptive-hosts/handoffs/02.md).
-This does not qualify a machine reboot, power loss, managed Vulkan, or UM790 memory pressure; the
+regression. The [evidence guide](../development/verification-evidence.md#managed-linux-installations)
+records those daemon/CLI inputs and outcomes. Later physical desktop–UM790 evidence on kernel
+7.2.7 additionally qualifies automatic owned CPU-service recovery after an orderly idle reboot,
+completed-call replay, drained replacement and preservation-aware removal. It does not qualify
+active-call reboot recovery, power loss, managed Vulkan, or UM790 memory pressure; the
 [hardware qualification issue](../development/virtual-office/whiteboard/issues/managed-linux-hardware-qualification.md)
 records the remaining work. Windows/macOS continue to refuse this Linux mechanism.
 
