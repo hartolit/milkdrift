@@ -71,6 +71,44 @@ fn missing_nested_usage_retains_counts_and_internal_bytes() -> TestResult {
 }
 
 #[test]
+fn process_only_and_model_only_unknown_nested_work_remain_reserved_until_measured() -> TestResult {
+    for (process, model) in [(2, 0), (0, 2), (2, 2)] {
+        let mut state = account(3, 3)?;
+        let (id, attempt) = reservation(&state, "independent-nested-counts")?;
+        let envelope = InvocationAdmissionEnvelope::not_applicable()
+            .with_nested_invocations(InvocationCounts::new(process, model));
+        assert!(matches!(
+            state.admit(id.clone(), attempt, CapabilityCategory::Tool, &envelope)?,
+            ControllerAdmissionOutcome::Reserved { .. }
+        ));
+        state.settle_terminal(&id, None)?;
+        assert_eq!(state.outstanding().process_admissions(), process);
+        assert_eq!(state.outstanding().model_admissions(), model);
+        assert!(state.reservations().contains_key(&id));
+        state = serde_json::from_slice(&serde_json::to_vec(&state)?)?;
+        state.validate()?;
+        state.settle_terminal(
+            &id,
+            Some(&AttemptUsage {
+                input_units: None,
+                output_units: None,
+                duration_ms: None,
+                cost: None,
+                nested_work: Some(NestedWorkUsage::new(
+                    InvocationCounts::new(process, model),
+                    0,
+                )),
+            }),
+        )?;
+        assert_eq!(state.settled().process_admissions(), process);
+        assert_eq!(state.settled().model_admissions(), model);
+        assert!(state.reservations().is_empty());
+        state.validate()?;
+    }
+    Ok(())
+}
+
+#[test]
 fn published_allowance_has_a_real_invocation_owner_and_stable_identity() -> TestResult {
     let original = account(3, 3)?;
     let declaration = ControllerAccountDeclaration::for_published_invocation(

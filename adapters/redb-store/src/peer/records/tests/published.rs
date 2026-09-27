@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn record() -> TestResult<PeerExecutionRecord> {
+pub(super) fn record() -> TestResult<PeerExecutionRecord> {
     let capability = CapabilityId::new("method:record-test")?;
     let operation = OperationId::new("method.invoke")?;
     let schema = SchemaContract::new(
@@ -89,7 +89,7 @@ fn record() -> TestResult<PeerExecutionRecord> {
         cost_currency: None,
         input_units: None,
         output_units: None,
-        observations: 10,
+        observations: 1024,
     };
     let request_id = PeerRequestId::new("request:record-test")?;
     let request = ServingInvocationRequest::new(
@@ -205,7 +205,13 @@ fn published_record_corruption_refuses_both_transaction_readers() -> TestResult 
         "capability",
         "inputs",
         "outputs",
+        "output-boundary",
+        "output-overflow",
         "observations",
+        "artifact-overflow",
+        "artifact-boundary",
+        "caller",
+        "actor",
     ] {
         let mut record = original.clone();
         let plan = record
@@ -256,9 +262,44 @@ fn published_record_corruption_refuses_both_transaction_readers() -> TestResult 
         if case == "outputs" {
             record.accounting.outputs = 1;
         }
+        if matches!(case, "output-boundary" | "output-overflow") {
+            record.accounting.outputs = 256 + u32::from(case == "output-overflow");
+            record.accounting.observations = record.accounting.outputs;
+            record.last_observation_sequence = u64::from(record.accounting.outputs);
+        }
         if case == "observations" {
             record.last_observation_sequence = u64::from(record.request.limits.observations) + 1;
             record.accounting.observations = record.request.limits.observations + 1;
+        }
+        if matches!(case, "artifact-overflow" | "artifact-boundary") {
+            record.accounting.artifact_bytes =
+                record.request.limits.artifact_bytes + u64::from(case == "artifact-overflow");
+        }
+        if case == "caller" {
+            record.caller = milkdrift_peer_protocol::ServingCaller::peer(
+                &PeerId::new("serving")?,
+                &PeerId::new("unrelated")?,
+            );
+            plan.source = PublishedInvocationSource::Serving {
+                caller: record.caller.clone(),
+                execution: record.execution.clone(),
+            };
+            record.published_invocation = None;
+            record.phase = PeerExecutionPhase::DispatchAvailable {
+                available_at_unix_ms: 100,
+            };
+        }
+        if case == "actor" {
+            let mut request = record.authority.request().clone();
+            request.actor = ActorRef::new("peer:unrelated")?;
+            record.authority = AuthorityDecisionSnapshot::from_evaluation(
+                PolicyId::new("policy:record-test")?,
+                1,
+                request,
+                vec![DecisionReasonCode::Allowed],
+                AuthorityBudget::default(),
+                SideEffectClass::ReadOnly,
+            )?;
         }
         let root = tempfile::tempdir()?;
         let db = redb::Database::create(root.path().join("peer.redb"))?;
@@ -273,9 +314,14 @@ fn published_record_corruption_refuses_both_transaction_readers() -> TestResult 
             .open_table(crate::schema::PEER_EXECUTIONS)?
             .insert(record.execution.as_str(), bytes.as_slice())?;
         let assert_result = |result| {
-            if case != "valid" {
-                let expected = if matches!(case, "outputs" | "observations") {
+            if !matches!(case, "valid" | "artifact-boundary" | "output-boundary") {
+                let expected = if matches!(
+                    case,
+                    "outputs" | "output-overflow" | "observations" | "artifact-overflow"
+                ) {
                     "primary facts are invalid"
+                } else if matches!(case, "caller" | "actor") {
+                    "caller contradicts accepted authority"
                 } else {
                     "published serving link differs"
                 };

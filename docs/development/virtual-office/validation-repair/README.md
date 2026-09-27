@@ -25,6 +25,12 @@ guidance, validation report and referenced source evidence. Publication retireme
 adapters through service maintenance and restores retired generations only for pending calls.
 All 22 publication tests pass, including six generations across full store reopen with a two-slot
 registry, preserved pending calls and exact historical replay. The daemon invokes this maintenance.
-Next: retained store capacity and verifier scratch, then CI survivors, then integrated gate/API review.
-CI job logs are available through the GitHub connector; the exact survivor list and publication test
-log are under `target/validation-repair/`.
+CI boundary tests now cover hot/archived serving records, independent authenticated-grant facts,
+lease/deadline entry, nested accounting, published controller assessment and poisoned status health.
+Removed a duplicate pre-write publication association check; the transactional writer validates it.
+Artifact uploads use the pinned Node 24 action. Focused tests pass. Direct mutation qualification is
+in progress; the first reader run caught 16/18, and the two output-count boundary gaps were corrected
+and the reader tests rerun. Requalify them before closure. One nested-account predicate is explicitly
+classified with a supported-transition explanation and zero-dimension/reopen coverage.
+Next: finish scoped mutation qualification, active store indexes and verifier scratch, then full
+gate/API review. CI logs, exact survivor list and focused results are under `target/validation-repair/`.

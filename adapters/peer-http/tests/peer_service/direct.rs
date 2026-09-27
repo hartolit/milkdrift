@@ -165,6 +165,39 @@ fn client_realms_replay_archive_and_reopen_without_workflow_provenance() -> Test
         InvocationOrigin::Direct
     );
     assert!(record.authority.request().provenance.attempt.is_none());
+    // Exercise admission in a fresh store so an exact replay cannot short-circuit validation.
+    // Each authenticated grant fact must match independently.
+    let fresh_root = tempfile::tempdir()?;
+    let fresh_store = RedbStore::open(fresh_root.path())?;
+    for field in ["grant", "revision", "digest", "revocation"] {
+        let mut request = record.authority.request().clone();
+        match field {
+            "grant" => request.grant = GrantId::new("grant:other")?,
+            "revision" => request.grant_revision += 1,
+            "digest" => request.grant_digest = GrantDigest::new(format!("b3_{}", "f".repeat(64)))?,
+            "revocation" => request.revocation_generation += 1,
+            _ => unreachable!(),
+        }
+        let authority = AuthorityDecisionSnapshot::from_evaluation(
+            record.authority.policy().clone(),
+            record.authority.policy_version(),
+            request,
+            vec![DecisionReasonCode::Allowed],
+            AuthorityBudget::default(),
+            SideEffectClass::ReadOnly,
+        )?;
+        assert!(
+            matches!(fresh_store.admit_peer_execution(&PeerAdmission {
+            caller: &record.caller, request: &record.request, authority: &authority,
+            execution: &record.execution, relationship_generation: record.relationship_generation,
+            accepted_at_unix_ms: record.accepted_at_unix_ms, maximum_global_active: 4,
+            maximum_dispatch_queue: 4, maximum_hot_terminal_records: 1000, archive_batch_size: 16,
+            archive_terminal_before_or_at_unix_ms: 1,
+        }), Err(milkdrift_persistence::PersistenceError::InvalidDocument(reason))
+            if reason.contains("exact authenticated grant")),
+            "{field}"
+        );
+    }
     assert!(matches!(
         service.invoke_client(&actors[0], &submission)?,
         InvocationAcceptance::Accepted { replayed: true, .. }

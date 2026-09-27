@@ -1,6 +1,8 @@
 //! Durable acceptance, recovery, archival, and integrity behavior.
 
 use super::support::*;
+#[path = "storage/boundaries.rs"]
+mod boundaries;
 
 #[test]
 fn transport_configuration_requires_https_or_explicit_loopback_development() -> TestResult {

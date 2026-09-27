@@ -12,14 +12,14 @@
   },
   "classifications": [
     {
+      "mutant": "crates/persistence/src/controller_account/transition.rs:354:66: replace || with && in ControllerAccountState::settle_terminal",
+      "classification": "unreachable_by_valid_contract",
+      "explanation": "Nested process and model dimensions are admitted together as Outstanding (including zero counts) and settle together from one optional NestedWorkUsage. Missing nested usage leaves both outstanding; present usage settles both, including over-envelope observations. No supported transition leaves exactly one dimension outstanding, so changing this disjunction cannot remove a reachable reservation. The process-only/model-only unknown-usage test exercises zero and nonzero dimensions, serialized reopen and later measured settlement. The defensive check remains for independently malformed retained state."
+    },
+    {
       "mutant": "adapters/redb-store/src/controller_account.rs:277:39: replace match guard existing.declaration() == declaration with true in apply_controller_transaction",
       "classification": "unreachable_by_valid_contract",
       "explanation": "An establishment transaction must bind its declared originating run, and canonical account identity fixes that run. Re-establishing an existing account therefore encounters its existing run binding; pre-application event validation rejects a declaration differing from that immutable account before this defensive match guard is reached."
-    },
-    {
-      "mutant": "adapters/peer-http/src/remote.rs:232:17: delete field health from struct PeerRegistryStatus expression in PeerRegistry::status",
-      "classification": "unreachable_by_valid_contract",
-      "explanation": "This fallback requires poisoning the private status mutex. Every holder only moves or clones owned validated identifiers, strings, and primitive diagnostic fields; no caller callback, clock, adapter, network operation, or fallible formatter runs while this guard is held. Allocation failure aborts rather than unwinding. Supported registry operations therefore cannot poison this mutex; ordinary disconnected and failed-connection health remain independently tested."
     },
     {
       "mutant": "crates/runtime/src/engine/effects/entry.rs:210:13: replace || with && in RuntimeService::prepare_final_entry",

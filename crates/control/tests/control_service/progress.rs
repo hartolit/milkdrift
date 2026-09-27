@@ -424,6 +424,40 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
         document.digest().as_str(),
         account.declaration().budget().clone(),
     )?)?;
+    let published =
+        ControllerAccountState::establish(ControllerAccountDeclaration::for_published_invocation(
+            run.clone(),
+            milkdrift_capability::InvocationId::new("public:controller")?,
+            "method:controller",
+            account.declaration().budget().clone(),
+        )?)?;
+    assert!(
+        service
+            .controller_lifecycle_owner()
+            .assess(&assessment_context(Some(&published)))?
+            .is_some()
+    );
+    let too_large =
+        ControllerAccountState::establish(ControllerAccountDeclaration::for_published_invocation(
+            run.clone(),
+            milkdrift_capability::InvocationId::new("public:too-large")?,
+            "method:controller",
+            ControllerResourceBudget::new(
+                1_000_001,
+                Some(CurrencyCode::new("USD")?),
+                10_000,
+                10_000,
+                1_000_000,
+                64,
+                64,
+            )?,
+        )?)?;
+    assert!(matches!(
+        service
+            .controller_lifecycle_owner()
+            .assess(&assessment_context(Some(&too_large))),
+        Err(RuntimeError::InvalidHistory(_))
+    ));
     assert!(matches!(
         service
             .controller_lifecycle_owner()
