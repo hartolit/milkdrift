@@ -6,6 +6,46 @@ lanes below exercise application use, mutation sensitivity, sustained load, and 
 The [evidence package guide](../../tools/evidence/README.md) compares the tools and their entry points.
 [Status](../product/status.md#current-validationevidence-snapshot) owns the latest executed state.
 
+## Active capacity and publication retirement
+
+The ordinary control and managed lifecycle suites exercise six completed cycles with deliberately
+small operating limits: one installation, one pending evaluation, four active stored publications,
+and two registered generations per capability. Full store reopen preserves historical receipts,
+definitions and exact request replay. Incomplete evaluation intent and uncertain removal still
+consume capacity; successful removal, completed verification and retired publication free their
+respective slots. Missing count anchors or index rows refuse reopening, and integrity checks compare
+the derived indexes with their authoritative records.
+
+Publication tests invoke the production retirement maintenance operation. They retain a pending
+child across retirement/reopen, then observe the adapter disappear after settlement. A separate
+queued-serving case accepts a request before any child exists, retires its generation, refuses a
+new request using the old catalog, and restores the queued request's exact adapter on reopen.
+Terminal evidence then permits reclamation. The daemon's public invocation test also covers an
+immediate promotion/retirement while the accepted call proceeds to a successful result.
+
+```sh
+cargo test -p milkdrift-control --test control_service --all-features published::
+cargo test -p milkdrift-managed-linux --test lifecycle --all-features
+cargo test -p milkdrift-redb-store --test contracts --all-features capacity::
+cargo test -p milkdrift-daemon --test control_plane --all-features published::
+```
+
+Linux scratch unit tests exercise completed-copy turnover, exact byte/directory boundaries and
+symlink refusal. They establish filesystem accounting and cleanup behavior; the physical verifier
+fixture remains an opt-in test. See the [managed guide](../operations/managed-linux.md) for retained
+scratch cleanup and [ADR 0043](../decisions/0043-active-capacity-and-retained-history.md) for the
+format-16 storage boundary. These software regressions do not renew prior hardware qualification.
+
+Integrated verification at `b902a28` uses Rust 1.95.0, the ordinary debug profile and loopback
+listener permission. The final workspace run passes 964 unit/integration tests outside the repository
+contract target and 24 doctests, leaving eight opt-in tests ignored. Its status-wording contract
+failure was corrected in prose; all 24 repository contracts then passed separately. Build,
+format/check, warning-denying Clippy/rustdoc, deny/machete/duplicate audits and test discovery pass.
+`target/validation-repair/gate-test-final.log` preserves the full run, and
+`gate-contracts-final.log` preserves the corrected contract result. Default/all-feature API
+inventories for persistence, capability-host, control, redb-store, managed-linux, peer-http and daemon
+are under `target/public-api/`. No test-owned daemon or process helper remained after completion.
+
 ## Independent host execution
 
 Build the daemon, CLI and `headless-cli-evidence`, then run:
@@ -706,6 +746,22 @@ valid document envelopes with mismatched published source, capability or inputs,
 observation/output counts. Both transaction readers must reject those corrupt records. These checks
 exercise reachable recovery and corruption boundaries; producer validation does not make their
 reader guards redundant.
+
+The September 28 repair review reconciled all 32 survivors reported by
+[run 36323713449](https://github.com/hartolit/milkdrift/actions/runs/36323713449): 27 are caught by
+focused owner tests, four duplicated pre-write checks were deleted in favor of the transactional
+record validator, and one nested-account predicate is classified under its validated transition
+contract. Process-only and model-only unknown usage, serialized reopen and later measured settlement
+exercise that contract. The defensive predicate remains in production.
+
+The scoped campaigns use cargo-mutants 27.1.0 with passing baselines and no timeouts: record readers
+catch 18 mutations, entry/accounting boundaries 12, client grant binding two, the controller assessor
+16, and peer registry health/authority fields ten. These include additional operators and struct
+field deletions emitted outside the requested regex. The latter exposed a missing disconnect-health
+assertion, which is now caught by the full peer library suite. The campaigns qualify these exact
+branches, not every hosted partition. Raw outcomes and failing owner assertions are retained under
+`target/validation-repair/mutations-*`; the boundary/grant/controller campaigns use `0489101`, and
+the final health campaign uses `b902a28`. No hosted rerun or physical product exercise is included.
 
 Serving archival regressions use real adapter output and archive the execution at each observed
 authorization boundary after workers join. Authorized direct output reads retain exact bytes;

@@ -217,6 +217,32 @@ values; repository contracts check the version cells against source.
 
 ## Current validation/evidence snapshot
 
+### Active capacity and boundary validation
+
+Publication turnover now passes six generations through a two-slot registry across complete store
+reopen, preserving accepted calls and historical replay. Queued serving requests retain their exact
+adapter before child creation; durable retirement refuses new acceptance from an old catalog.
+Managed installation and evaluation turnover passes six cycles with one active slot, while uncertain
+removal and incomplete evaluation retain their capacity. Successful verifier observations reclaim
+scratch copies after confirmed container absence; retained failures have explicit byte/directory
+admission bounds and an operator cleanup procedure. The
+[evidence guide](../development/verification-evidence.md#active-capacity-and-publication-retirement)
+identifies the tests and the physical qualification limits.
+
+The linked mutation run's 32 survivors are resolved by 27 caught branches, four deleted duplicate
+checks and one exact reviewed classification. Scoped campaigns have passing baselines and no
+timeouts, including the additional disconnect-health assertion. These results qualify local
+software behavior. Hosted and physical results remain scoped to their recorded executions.
+Format-15 stores remain unsupported by physical format 16, as specified in
+[ADR 0043](../decisions/0043-active-capacity-and-retained-history.md).
+
+Software verification covers 988 unit/integration tests, including all 24 repository contracts,
+and 24 doctests. Eight opt-in tests remain ignored. Formatting, all-target/all-feature checking,
+warning-denying Clippy/rustdoc, dependency audits and test discovery pass. Default/all-feature API
+inventories for the seven affected libraries retain test-only facilities behind their existing
+features; the new capacity and recovery ports have named workspace consumers. Raw evidence remains
+under `target/validation-repair/` and `target/public-api/`.
+
 ### Integrated acceptance
 
 The fresh deterministic learning lane completed four held-out pairs with one baseline repair and
