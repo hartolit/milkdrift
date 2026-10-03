@@ -74,6 +74,14 @@ pub(super) fn model_configuration_document(
     directory: &TempDir,
     address: std::net::SocketAddr,
 ) -> TestResult<DaemonConfig> {
+    model_configuration_with_capacity(directory, address, 1)
+}
+
+pub(super) fn model_configuration_with_capacity(
+    directory: &TempDir,
+    address: std::net::SocketAddr,
+    concurrency: u32,
+) -> TestResult<DaemonConfig> {
     use milkdrift_model_provider::{
         AuthMode, BillingTerms, EndpointLimits, EndpointProfile, ModelFeature, ModelTokenLimits,
         ProviderProtocol, ProxyPolicy, RedirectPolicy, TlsPolicy,
@@ -103,7 +111,7 @@ pub(super) fn model_configuration_document(
         TlsPolicy::WebPkiRoots,
         ProxyPolicy::Disabled,
         std::collections::BTreeSet::from([ModelFeature::SystemRole]),
-        1,
+        concurrency,
         true,
         std::collections::BTreeSet::from(["127.0.0.1".into()]),
         std::collections::BTreeSet::from(["test".into()]),

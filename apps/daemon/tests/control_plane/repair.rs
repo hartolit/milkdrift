@@ -4,50 +4,6 @@ use super::{
     results::{Responses, prose},
     support::*,
 };
-use serde_json::Value;
-
-fn cli(
-    daemon: &RunningDaemon,
-    directory: &TempDir,
-    id: &str,
-    args: &[&str],
-    json_output: bool,
-) -> TestResult<(bool, String)> {
-    let executable = std::env::current_exe()?
-        .parent()
-        .and_then(|path| path.parent())
-        .ok_or("binary directory")?
-        .join(format!("milkdrift{}", std::env::consts::EXE_SUFFIX));
-    let mut command = std::process::Command::new(executable);
-    command
-        .arg("--endpoint")
-        .arg(daemon.endpoint.as_str())
-        .arg("--token-file")
-        .arg(directory.path().join("controller.token"))
-        .args(["--timeout-secs", "20", "--yes", "--command-id", id])
-        .args(args)
-        .current_dir(directory.path())
-        .stdin(std::process::Stdio::null());
-    if json_output {
-        command.arg("--json");
-    }
-    let output = command.output()?;
-    Ok((
-        output.status.success(),
-        String::from_utf8(output.stdout)? + &String::from_utf8_lossy(&output.stderr),
-    ))
-}
-fn cli_ok(
-    daemon: &RunningDaemon,
-    directory: &TempDir,
-    id: &str,
-    args: &[&str],
-) -> TestResult<Value> {
-    let (ok, text) = cli(daemon, directory, id, args, true)?;
-    assert!(ok, "{args:?}: {text}");
-    let value: Value = serde_json::from_str(text.lines().last().ok_or("missing CLI output")?)?;
-    Ok(value["value"].clone())
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn final_model_review_repair_preserves_history_context_and_approval_guards() -> TestResult {

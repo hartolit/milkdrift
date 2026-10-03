@@ -104,6 +104,68 @@ pub(super) fn construct(
     )
 }
 
+pub(super) fn copy(
+    owner: &Owner,
+    session: &ActorSession,
+    request: &CommandRequest,
+    source: &str,
+    workflow: &str,
+    name: &str,
+) -> Result<CommandAccepted, PublicFailure> {
+    if request.expected_revision.as_deref() != Some(source) || request.expected_sequence.is_some() {
+        return Err(super::super::read_model::conflict(
+            "copy requires the exact source revision and no run sequence",
+        ));
+    }
+    let read = owner.revision(session, source)?;
+    let (_, source) =
+        BlueprintRevisionDocument::from_json(&serde_json::to_vec(&read.document).map_err(failure)?)
+            .map_err(failure)?;
+    if source.semantic().workflow().as_str() == workflow {
+        return Err(invalid(
+            "an independent copy requires a different workflow identity",
+        ));
+    }
+    if source.semantic().agreement().is_some() {
+        return Err(invalid(
+            "the governing agreement is bound to its workflow identity; reuse this exact definition or explicitly author another governed method",
+        ));
+    }
+    let mut mutations = graph::difference(None, &source);
+    let metadata = source.semantic().metadata();
+    // Preserve descriptive extensions and every graph fact; the source is retained in immutable
+    // revision provenance and the exact copy command, without transferring any execution state.
+    mutations[0] = Mutation::SetMetadata {
+        metadata: milkdrift_blueprint::BlueprintMetadata::new(
+            name,
+            metadata.description(),
+            metadata.labels().clone(),
+            metadata.extensions().clone(),
+        )
+        .map_err(failure)?,
+    };
+    let revision = BlueprintRevision::genesis(
+        WorkflowId::new(workflow).map_err(failure)?,
+        MutationBatch::new(mutations).map_err(failure)?,
+        AuthorRef::new(session.actor.as_str()).map_err(failure)?,
+        format!("Copy of {}. {}", source.id(), request.reason),
+    )
+    .map_err(failure)?;
+    finish(
+        owner,
+        session,
+        request,
+        BlueprintDraft {
+            workflow_id: workflow.into(),
+            base_revision: None,
+            mutations: vec![],
+        },
+        revision,
+        true,
+        json!({"copied_from":source.id()}),
+    )
+}
+
 pub(super) fn execute(
     owner: &Owner,
     session: &ActorSession,

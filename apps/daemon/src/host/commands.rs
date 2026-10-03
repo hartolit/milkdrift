@@ -32,6 +32,11 @@ impl Owner {
             Command::ConstructBlueprint { draft, store } => {
                 authoring::construct(self, session, request, draft, *store)
             }
+            Command::CopyBlueprint {
+                source_revision,
+                workflow_id,
+                name,
+            } => authoring::copy(self, session, request, source_revision, workflow_id, name),
             Command::PrepareModelRepair {
                 run_id,
                 proposal_id,

@@ -323,6 +323,31 @@ INPUT` removes a connection. `workflow move FILE STEP --before OTHER` changes or
 
 Create a second independent workflow beside the first:
 
+Find and reuse saved definitions through bounded version pages. `show` returns the declared
+inputs and outputs without execution values. A run always names one exact revision; there is no
+implicit mutable preferred-version pointer. Following an empty filtered page's `next_cursor` may
+be necessary because each page scans only a bounded number of stored definitions.
+
+```sh
+milkdrift workflow list --workflow release-notes --limit 32
+milkdrift workflow show REVISION
+milkdrift --command-id copy-notes-1 workflow copy REVISION independent-notes \
+  --name "Independent release notes" --file independent.draft.json
+```
+
+Supply a different workflow identity for an independent copy. The saved copy records the exact
+source revision in its immutable provenance reason and starts its own version lineage. It copies
+definition nodes, edges, interfaces and metadata, with only the requested name and identity changed.
+It never copies old run inputs, private outputs, reservations or writable run scopes. Later edits
+leave both the source and already accepted runs unchanged. Copying requires source inspection and
+destination import permission; executing it still requires the ordinary run/capability grants.
+Governing agreements include the original workflow identity, so copying them refuses instead of
+dropping their checks. Reuse their exact saved definition or explicitly author another governed
+method. Rich definitions retain their graph on copy but still require explicit blueprint mutations
+when the model editor cannot preserve them. Saving or copying does not publish a callable service.
+
+For a separate workflow authored from scratch:
+
 ```sh
 milkdrift workflow new meeting-summary --name "Meeting summary" --file meeting.draft.json
 milkdrift workflow input meeting.draft.json brief

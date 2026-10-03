@@ -82,6 +82,15 @@ fn command_trace(command: &Command) -> CommandTrace {
     let (operation, run, revision, attempt, proposal) = match command {
         Command::AuthorBlueprint { .. } => ("author_blueprint", None, None, None, None),
         Command::ConstructBlueprint { .. } => ("construct_blueprint", None, None, None, None),
+        Command::CopyBlueprint {
+            source_revision, ..
+        } => (
+            "copy_blueprint",
+            None,
+            Some(source_revision.as_str()),
+            None,
+            None,
+        ),
         Command::PrepareModelRepair {
             run_id,
             proposal_id,

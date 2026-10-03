@@ -134,6 +134,12 @@ pub struct RevisionSummary {
 pub struct RevisionRead {
     /// Compact summary.
     pub summary: RevisionSummary,
+    /// Saved workflow display name.
+    pub name: String,
+    /// Declared per-run input contracts; no supplied values are included.
+    pub inputs: Vec<WorkflowFieldRead>,
+    /// Declared terminal result contracts; no execution results are included.
+    pub outputs: Vec<WorkflowFieldRead>,
     /// Bounded author reference.
     pub author: String,
     /// Bounded provenance reason.
@@ -144,6 +150,20 @@ pub struct RevisionRead {
     pub edge_count: u32,
     /// Canonical portable document when explicitly requested.
     pub document: Option<Value>,
+}
+
+/// One definition interface field projected for clients that do not interpret graph documents.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowFieldRead {
+    /// Interface name used when supplying inputs or selecting results.
+    pub name: String,
+    /// Owning value contract.
+    pub schema: String,
+    /// Exact contract version.
+    pub version: u32,
+    /// Whether the definition requires this field.
+    pub required: bool,
 }
 
 /// Structured bounded semantic difference.

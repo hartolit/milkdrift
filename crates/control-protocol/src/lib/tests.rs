@@ -24,7 +24,7 @@ fn start_inputs_use_named_artifacts_and_preserve_empty_request_encoding()
 #[test]
 fn authoring_wire_uses_explicit_sources_and_rejects_unknown_fields()
 -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = br#"{"protocol":{"major":2,"minor":14},"command_id":"edit-1","expected_sequence":null,"expected_revision":null,"reason":"Connect the brief","evidence":[],"command":{"type":"author_blueprint","draft":{"workflow_id":"release-notes","base_revision":null,"mutations":[]},"edit":{"type":"connect","step":"review","input":"brief","source":{"type":"run_input","name":"brief"}},"save":false}}"#;
+    let bytes = br#"{"protocol":{"major":2,"minor":15},"command_id":"edit-1","expected_sequence":null,"expected_revision":null,"reason":"Connect the brief","evidence":[],"command":{"type":"author_blueprint","draft":{"workflow_id":"release-notes","base_revision":null,"mutations":[]},"edit":{"type":"connect","step":"review","input":"brief","source":{"type":"run_input","name":"brief"}},"save":false}}"#;
     let request: CommandRequest = decode_json(bytes)?;
     request.validate()?;
     assert_eq!(

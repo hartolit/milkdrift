@@ -12,6 +12,26 @@ pub(crate) struct WorkflowArgs {
 
 #[derive(Subcommand)]
 pub(crate) enum WorkflowCommand {
+    /// Find saved versions in one bounded page; choose an exact revision when running or editing.
+    List {
+        #[arg(long)]
+        workflow: Option<String>,
+        #[arg(long, default_value_t = 32)]
+        limit: u32,
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+    /// Read a saved version's name, inputs, outputs and provenance without raw graph JSON.
+    Show { revision: String },
+    /// Save an independent copy and open its new editable draft. Governing agreements refuse copy.
+    Copy {
+        revision: String,
+        workflow: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        file: PathBuf,
+    },
     /// Create a new local draft through the daemon's authoring operation.
     New {
         workflow: String,

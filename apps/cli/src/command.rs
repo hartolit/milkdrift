@@ -53,7 +53,12 @@ impl Cli {
             RunCommand, SequenceCommand,
         };
         match &self.command {
-            TopCommand::Workflow(_) => "workflow.author",
+            TopCommand::Workflow(args) => match args.command {
+                crate::workflow_args::WorkflowCommand::List { .. } => "workflow.list",
+                crate::workflow_args::WorkflowCommand::Show { .. } => "workflow.show",
+                crate::workflow_args::WorkflowCommand::Copy { .. } => "workflow.copy",
+                _ => "workflow.author",
+            },
             TopCommand::Learning { .. } => "learning",
             TopCommand::Method { command } => match command {
                 crate::MethodCommand::Publish { .. } => "method.publish",

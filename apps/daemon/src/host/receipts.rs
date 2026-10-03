@@ -285,6 +285,7 @@ fn command_run_identity(command: &Command) -> Option<&str> {
         Command::Learning { .. }
         | Command::AuthorBlueprint { .. }
         | Command::ConstructBlueprint { .. }
+        | Command::CopyBlueprint { .. }
         | Command::PublishMethod { .. }
         | Command::InspectMethod { .. }
         | Command::ListMethods { .. }

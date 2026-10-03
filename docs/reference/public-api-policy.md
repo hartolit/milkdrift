@@ -32,6 +32,10 @@ package entry point. Consumers otherwise import the canonical owner directly.
 
 ## Surface ownership
 
+`CopyBlueprint` and `WorkflowFieldRead` are external product contracts consumed by daemon and CLI.
+Copy construction remains private and delegates validation/storage to existing blueprint owners.
+Interface reads project definition contracts without client graph parsing or execution values.
+
 `RunResultRead`, `RunOutputRead` and `ControlClient::run_result` are external product contracts
 consumed by the CLI and daemon. They compose existing authorized readers; the private daemon
 module owns result selection and action hints. They add no durable state or client execution rules.

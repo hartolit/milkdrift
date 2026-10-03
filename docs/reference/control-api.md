@@ -1,4 +1,4 @@
-# Local control API 2.14
+# Local control API 2.15
 
 The `learning` command body accepts an operation document owned by
 `milkdrift_control::learning::LearningRequest`: `select`, `declare`, `candidate`, `compare`,
@@ -33,10 +33,10 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":14}}
+{"protocol":{"major":2,"minor":15}}
 ```
 
-Version 2.14 is required on both sides. Older and newer major/minor versions are refused with
+Version 2.15 is required on both sides. Older and newer major/minor versions are refused with
 `unsupported_version`; update the client and daemon together. There is no protocol downgrade.
 Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
@@ -44,7 +44,7 @@ the negotiated envelope version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 14},
+  "protocol": {"major": 2, "minor": 15},
   "request_id": "req-1",
   "value": {}
 }
@@ -58,7 +58,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 14},
+  "protocol": {"major": 2, "minor": 15},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -115,7 +115,7 @@ administration uses the separate routes below. A command envelope has no actor f
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 14},
+  "protocol": {"major": 2, "minor": 15},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -144,6 +144,7 @@ The closed command types are:
 | `signal_run` | `run_id`, `signal_id`, `signal_type`, `correlation`, `broadcast`, `payload` | `deliver_signal` | Deliver a typed bounded signal to an exact run. |
 | `resolve_work` | `run_id`, `attempt_id`, `decision_id`, `action`, `remediation_node` | action-derived `inspect_attempt`, `retry`, `apply`, `approve`, or `terminate` | Query, retry, compensate, retain, or evidence-resolve uncertain work. |
 | `prepare_model_repair` | `run_id`, `proposal_id`, `repair` | `propose` and authorized run/revision/attempt reads | Prepare an ordinary approval-required proposal at a paused final-model failed-result hold. Exact current revision and sequence are required; the run is unchanged. |
+| `copy_blueprint` | `source_revision`, `workflow_id`, `name` | source `inspect_revision`, destination `import_blueprint` | Save a separate ungoverned definition with exact source in immutable revision provenance. Requires the source revision guard and a different workflow identity. Identity-bound governing agreements refuse. |
 | `submit_proposal` | `document` | `propose` | Submit an exact schema-1 workflow proposal through `milkdrift-control`. Missing envelope guards derive from the document's exact base and observed sequence; conflicting guards are refused. |
 | `decide_proposal` | `run_id`, `proposal_id`, `proposal_digest`, `proposed_revision`, `decision_id`, `decision` | `approve` | Approve or reject an exact proposal. |
 | `apply_proposal` | `run_id`, `proposal_id`, `proposal_digest`, `proposed_revision` | `apply` | Apply an approved prospective revision through reconciliation. |

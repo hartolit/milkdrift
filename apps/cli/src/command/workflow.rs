@@ -16,6 +16,49 @@ use file::DraftFile;
 
 pub(super) async fn execute(session: &CliSession, args: &WorkflowArgs) -> Result<(), CliError> {
     let command = &args.command;
+    match command {
+        WorkflowCommand::List {
+            workflow,
+            limit,
+            cursor,
+        } => {
+            let page = session.page_request(*limit, cursor.as_deref())?;
+            return session.output(
+                "workflow.list",
+                &session
+                    .client()
+                    .revisions(workflow.as_deref(), &page)
+                    .await?,
+            );
+        }
+        WorkflowCommand::Show { revision } => {
+            let mut read = session.client().revision(revision).await?;
+            read.document = None;
+            return session.output("workflow.show", &read);
+        }
+        WorkflowCommand::Copy {
+            revision,
+            workflow,
+            name,
+            file,
+        } => {
+            let destination = DraftFile::open(file, true, args.expected_edit.as_deref())?;
+            let request = session.command_request_with_revision(
+                Command::CopyBlueprint {
+                    source_revision: revision.clone(),
+                    workflow_id: workflow.clone(),
+                    name: name.clone(),
+                },
+                revision,
+            )?;
+            let copied = session.client().submit(&request).await?;
+            let draft: BlueprintDraft = serde_json::from_value(copied.value["draft"].clone())
+                .map_err(|error| CliError::Internal(error.to_string()))?;
+            let token = destination.replace(&draft)?;
+            return session.output("workflow.copy", &json!({"file":file,"edit_token":token,"copied_from":revision,"workflow_id":workflow,"revision_id":draft.base_revision}));
+        }
+        _ => {}
+    }
     if matches!(command, WorkflowCommand::Models) {
         let models = session
             .client()
@@ -90,7 +133,10 @@ fn path(command: &WorkflowCommand) -> Result<&Path, CliError> {
         | WorkflowCommand::Move { file, .. }
         | WorkflowCommand::Rename { file, .. }
         | WorkflowCommand::Save { file } => file,
-        WorkflowCommand::Models => {
+        WorkflowCommand::Models
+        | WorkflowCommand::List { .. }
+        | WorkflowCommand::Show { .. }
+        | WorkflowCommand::Copy { .. } => {
             return Err(CliError::Internal("model listing has no draft".to_owned()));
         }
     })

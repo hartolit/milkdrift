@@ -1,7 +1,7 @@
 //! Public invocation, restricted results, recovery and retirement through the production daemon.
 use super::support::*;
 #[path = "../support/published.rs"]
-mod fixture;
+pub(super) mod fixture;
 use fixture::definition;
 use milkdrift_capability::{
     AdmissionConstraints, CapabilityCategory, DescriptorBuilder, InvocationCounts, InvocationId,

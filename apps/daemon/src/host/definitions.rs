@@ -39,6 +39,9 @@ impl Owner {
             .to_canonical_json()
             .map_err(|error| invalid(&error.to_string()))?;
         Ok(RevisionRead {
+            name: stored.semantic().metadata().name().to_owned(),
+            inputs: interface_fields(stored.semantic().interface().inputs()),
+            outputs: interface_fields(stored.semantic().interface().outputs()),
             summary: PublicRevisionSummary {
                 revision_id: value.revision.as_str().to_owned(),
                 workflow_id: value.workflow.as_str().to_owned(),
@@ -180,4 +183,23 @@ impl Owner {
             truncated,
         })
     }
+}
+
+fn interface_fields(
+    fields: &std::collections::BTreeMap<
+        milkdrift_blueprint::FieldId,
+        milkdrift_blueprint::InterfaceField,
+    >,
+) -> Vec<milkdrift_control_protocol::WorkflowFieldRead> {
+    fields
+        .iter()
+        .map(
+            |(name, field)| milkdrift_control_protocol::WorkflowFieldRead {
+                name: name.to_string(),
+                schema: field.schema().id().to_string(),
+                version: field.schema().version(),
+                required: field.is_required(),
+            },
+        )
+        .collect()
 }

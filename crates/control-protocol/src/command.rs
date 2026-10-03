@@ -83,6 +83,13 @@ pub enum Command {
         draft: crate::BlueprintDraft,
         store: bool,
     },
+    /// Save an independent definition from an exact authorized source. Identity-bound governing
+    /// agreements refuse copying; neither run state nor authority is transferred.
+    CopyBlueprint {
+        source_revision: String,
+        workflow_id: String,
+        name: String,
+    },
     /// Build a normal approval-required proposal at the exact paused review hold. This
     /// prepares a document only; ordinary submit/approve/apply commands perform the change.
     PrepareModelRepair {
