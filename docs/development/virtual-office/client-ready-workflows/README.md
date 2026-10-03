@@ -10,8 +10,8 @@ Finish that path and fix the awkward or duplicated code it exposes. Do not rebui
 host, container, publication, or learning systems from the previous sprint.
 
 The source reference is `a04b55c0e0a3b56a1074da8861ab1d581e16a05c`; 00 inspected the newer checkout
-`d8873cfe32700522347ea4d01858e4a5ddfa9749`. Never reset to the reference. Phases 00–03 are
-complete; [03's handoff](handoffs/03.md) records the tested boundary and 04 is next.
+`d8873cfe32700522347ea4d01858e4a5ddfa9749`. Never reset to the reference. Phases 00–04 are
+complete; [04's handoff](handoffs/04.md) records the tested boundary and 05 is next.
 These temporary prompts now live in the virtual office, as their relative
 links and the repository's coordination rules require.
 
@@ -47,7 +47,8 @@ whole system passed. Run sequentially; do not start a GUI automatically after 06
 
 00 traced the CLI through `control-client`, `control-protocol`, daemon command handlers and the
 blueprint/control/runtime owners. The table records the assignments; authoring, input/recovery,
-result inspection and the supported prospective repair path are complete, while 04–06 remain unfinished.
+result inspection, prospective repair, reuse and publication/evaluation conveniences are complete,
+while 05–06 remain unfinished.
 
 | Operation | Existing owner | Needed change | Prompt |
 | --- | --- | --- | --- |

@@ -38,11 +38,17 @@ This document owns current implementation, limitations, exact versions, and qual
   to internal runs or administrative capabilities. Retirement preserves accepted calls; ancestry,
   caller revocation, cancellation and deadlines constrain future internal entry. See
   [published methods](../guides/published-methods.md).
+  Public preparation resolves the selected revision's agreement and configured service grant facts
+  into a reviewable publication document. Contracts, grant selection and limits remain explicit;
+  publishing is separate. Text-brief preparation uses the existing authorized artifact upload.
 - Selected knowledge and finite learning commands compose the existing artifact, context, proposal,
   runtime, account, verifier and publication owners. Declarations fix independent evaluation slots
   before model entry. Comparisons retain eligible, rejected and inconclusive outcomes; manual or
   separately preauthorized promotion requires current publication authority. The native Slotbook
   driver exercises held-out comparisons, independent loan/class products and staged tool recipes.
+  Named CLI commands select artifacts by identity, submit actual candidates, compare, inspect and
+  request promotion through the public learning operations. Inspection retains reasons and missing
+  measurements. Source selection and current read authority survive exact receipt replay/restart.
   [Learning methods](../guides/learning-methods.md) explains frozen source versions and operator use.
 - The CLI covers blueprint/sequence authoring, run/proposal/controller/peer/layout control,
   retained-work resolution, bounded inspection, verified create-new downloads, wait/follow deadlines,
@@ -54,6 +60,11 @@ This document owns current implementation, limitations, exact versions, and qual
   and pending blueprint mutations, with guarded atomic replacement. Editing a saved version creates
   a child without changing old definitions or runs. The [operator recipe](../../examples/operator/README.md#author-a-model-workflow)
   explains the supported model editor and its explicit refusal of richer definitions.
+  Saved-version discovery exposes declared inputs and outputs. Independent copies preserve the graph
+  and immutable source provenance under a different workflow identity, without copying execution
+  state or authority. Identity-bound governing agreements refuse independent copying; exact-version
+  reuse remains available. Concurrent controlled runs retain separate briefs, outputs and pins when
+  the copy is edited and saved.
 - Ordinary run starts accept named immutable artifacts through existing upload and workspace
   admission. The CLI can upload a separate text brief for each run of one saved revision, retain a
   private exact request before submission, and reconnect under the original host/caller/grant.

@@ -9,6 +9,26 @@ The [evidence package guide](../../tools/evidence/README.md) compares the tools 
 
 ## Active capacity and publication retirement
 
+Public reuse and request preparation have focused daemon/CLI checks alongside the core publication
+and learning suites. Build the actual CLI before tests that launch it:
+
+```sh
+cargo build -p milkdrift-cli
+cargo test -p milkdrift-daemon --test control_plane reuse::
+cargo test -p milkdrift-daemon --test control_plane published_inputs::
+cargo test -p milkdrift-daemon --test control_plane resources::configured_resource_owner_retains_exact_failed_platform_intent_across_restart
+cargo test -p milkdrift-control --test learning --all-features
+```
+
+Reuse exercises concurrent distinct briefs, immutable accepted pins and independent copied edits.
+The published-input fixture uses a controlled model with explicit billing/token bounds and a finite
+account; it asserts uploaded text reaches the model and only the declared result is returned.
+The Linux resource test retains a deliberately unavailable setup without starting a container, then
+checks authorized learning-source selection, missing-page refusal, exact replay and restart.
+Comparison tests distinguish eligibility, rejection and missing evidence; they do not establish
+that a real model learned an improvement. Publication retirement tests below also exercise the
+public preparation operation and refuse promotion without an eligible comparison.
+
 The ordinary control and managed lifecycle suites exercise six completed cycles with deliberately
 small operating limits: one installation, one pending evaluation, four active stored publications,
 and two registered generations per capability. Full store reopen preserves historical receipts,

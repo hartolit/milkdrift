@@ -5,14 +5,14 @@ Ordered unfinished work; [status](status.md) owns implementation and evidence fa
 The active [client-ready workflows sprint](../development/virtual-office/client-ready-workflows/README.md)
 completes the ordinary CLI route through shared public daemon operations. Setup, workflow
 authoring, supplied-input execution, exact request recovery, result inspection and the supported
-prospective repair path are complete; the next assignment is
-[04 — Save and reuse workflows](../development/virtual-office/client-ready-workflows/04-reusable-methods.md).
+prospective repair, reuse/copy, separate publication preparation and evaluation commands are complete;
+the next assignment is
+[05 — Keep the interface thin](../development/virtual-office/client-ready-workflows/05-client-boundary-and-contraction.md).
 
 Work proceeds in this order:
 
-1. Reuse or independently copy definitions and make existing publication and evaluation usable.
-2. Remove duplicated client rules and prove the route through a client that does not invoke the CLI.
-3. Run the integrated operator journey, full gate and authorized local-model checks; fix failures
+1. Remove duplicated client rules and prove the route through a client that does not invoke the CLI.
+2. Run the integrated operator journey, full gate and authorized local-model checks; fix failures
    before closing the sprint.
 
 The [verification schedule](../development/virtual-office/client-ready-workflows/README.md#test-as-you-build-test-the-full-system-in-06)
