@@ -44,7 +44,7 @@ pub(super) fn checked_name(name: &str) -> BuildResult<()> {
 fn schema(id: &str) -> BuildResult<SchemaRef> {
     Ok(SchemaRef::new(SchemaId::new(id)?, 1)?)
 }
-fn artifact() -> BuildResult<SchemaRef> {
+pub(super) fn artifact() -> BuildResult<SchemaRef> {
     schema("milkdrift.artifact-reference")
 }
 pub(super) fn model_source(step: &str) -> BuildResult<BindingSource> {
@@ -374,7 +374,7 @@ pub(super) fn prompt(request: &ModelTaskRequest) -> BuildResult<&str> {
     Ok(text)
 }
 
-fn add_edge(
+pub(super) fn add_edge(
     edges: &mut Vec<Edge>,
     kind: EdgeKind,
     source: &str,

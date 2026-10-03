@@ -127,7 +127,7 @@ async fn result_view_preserves_complete_empty_truncated_refused_and_uncertain_tr
                         .filter_map(|a| a.result_acceptance.as_ref())
                         .all(|a| a.accepted)
                 );
-                assert!(result.actions.is_empty());
+                assert_eq!(result.actions, vec!["start_linked_run"]);
             }
             "empty" | "truncated" => {
                 assert!(result.outputs.is_empty());
@@ -197,7 +197,7 @@ async fn result_view_preserves_complete_empty_truncated_refused_and_uncertain_tr
             );
             let ended_view = daemon.client.run_result(case).await?;
             assert!(ended_view.outputs.is_empty());
-            assert!(ended_view.actions.is_empty());
+            assert_eq!(ended_view.actions, vec!["start_linked_run"]);
         }
     }
     assert_eq!(model.requests.lock().map_err(|_| "lock")?.len(), 8);

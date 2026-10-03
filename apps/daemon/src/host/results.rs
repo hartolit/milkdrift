@@ -156,6 +156,27 @@ impl Owner {
                 actions.push(name.to_owned());
             }
         }
+        if read.terminal.is_some() {
+            let mut resources = RequestedResourceFacts::empty();
+            resources.workflow = projection.workflow().cloned();
+            if optional(self.authorize(
+                session,
+                AuthorityOperation::CreateRun,
+                resources.clone(),
+                "read:linked-run",
+            ))?
+            .is_some()
+                && optional(self.authorize(
+                    session,
+                    AuthorityOperation::StartRun,
+                    resources,
+                    "read:linked-run",
+                ))?
+                .is_some()
+            {
+                actions.push("start_linked_run".into());
+            }
+        }
         Ok(RunResultRead {
             run: read,
             workflow_name,

@@ -435,6 +435,51 @@ fn artifact_download_verifies_ranges_digest_and_preserves_existing_files() -> Te
 }
 
 #[test]
+fn result_download_reports_one_final_outcome_after_verification() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let path = root.path().join("notes.txt");
+    let metadata = json!({"artifact_id":"notes", "digest":blake3::hash(b"notes").to_hex().to_string(), "size":5, "content_type":"text/plain", "disposition_name":null, "sensitivity":"restricted"});
+    let result = json!({"run":run_state(Some("succeeded")), "workflow_name":"Release notes", "version":1, "truncated":false, "outputs":[{"name":"notes", "artifact":metadata, "preview":"notes", "preview_truncated":false}], "outputs_restricted":false, "actions":[]});
+    for (body, succeeds) in [("notes", true), ("wrong", false)] {
+        let server = Server::new(vec![
+            negotiation(),
+            response(result.clone()),
+            response(metadata.clone()),
+            format!(
+                "HTTP/1.1 206 Partial Content\r\nContent-Type: text/plain\r\nContent-Range: bytes 0-4/5\r\nContent-Length: 5\r\nConnection: close\r\n\r\n{body}"
+            ),
+        ])?;
+        let (exit, records, _) = invoke(
+            &server.endpoint,
+            &[
+                "run",
+                "result",
+                "run-one",
+                "--field",
+                "notes",
+                "--output",
+                path.to_str().ok_or("path")?,
+            ],
+            false,
+        )?;
+        assert_eq!(exit == 0, succeeds, "{records:?}");
+        assert_eq!(records.len(), 1, "{records:?}");
+        assert_eq!(records[0]["final"], true);
+        assert_eq!(records[0]["type"], "run.result");
+        assert_eq!(path.exists(), succeeds);
+        if succeeds {
+            assert_eq!(
+                records[0]["value"]["download"]["digest"],
+                metadata["digest"]
+            );
+            assert_eq!(std::fs::read_to_string(&path)?, body);
+            std::fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn stream_duplicates_and_expired_cursors_use_a_fresh_authorized_view() -> TestResult {
     use milkdrift_control_protocol::Cursor;
     let event = |position, observation: Value| -> TestResult<String> {

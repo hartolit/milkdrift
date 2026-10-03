@@ -12,6 +12,15 @@ format these facts and download the returned artifact identity with size and dig
 Current action hints pass the daemon's authority evaluator and lifecycle filter; they are not
 reservations and do not bypass command guards, risk classification or approval.
 
+The daemon also prepares ordinary model-repair proposals at the final step's existing failed-result
+review hold. It requires the exact paused run revision and sequence, preserves the failed check,
+and inserts a new model step and completeness check before a new success terminal. Selected failed
+output and original workflow-input bindings are explicit data dependencies. The existing editor
+recognizer refuses richer definitions it cannot preserve. This is a bounded construction operation,
+not an automatic repair policy. Existing control admission, protected agreements, approval and
+runtime reconciliation remain authoritative. Proposal reads expose the recorded reconciliation
+items and current sequence so clients can show impact before deciding or applying.
+
 This coordinated wire revision requires current clients and daemon together. Durable blueprint,
 proposal, run history and artifact formats are unchanged. Existing receipts retain exact replay
 under their supported request version; an older public envelope is refused at negotiation.

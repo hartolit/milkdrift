@@ -143,7 +143,8 @@ The closed command types are:
 | `pause_run`, `resume_run`, `cancel_run` | `run_id` | `pause`, `resume`, `cancel` | Durable exact-run lifecycle control. |
 | `signal_run` | `run_id`, `signal_id`, `signal_type`, `correlation`, `broadcast`, `payload` | `deliver_signal` | Deliver a typed bounded signal to an exact run. |
 | `resolve_work` | `run_id`, `attempt_id`, `decision_id`, `action`, `remediation_node` | action-derived `inspect_attempt`, `retry`, `apply`, `approve`, or `terminate` | Query, retry, compensate, retain, or evidence-resolve uncertain work. |
-| `submit_proposal` | `document` | `propose` | Submit an exact schema-1 workflow proposal through `milkdrift-control`. |
+| `prepare_model_repair` | `run_id`, `proposal_id`, `repair` | `propose` and authorized run/revision/attempt reads | Prepare an ordinary approval-required proposal at a paused final-model failed-result hold. Exact current revision and sequence are required; the run is unchanged. |
+| `submit_proposal` | `document` | `propose` | Submit an exact schema-1 workflow proposal through `milkdrift-control`. Missing envelope guards derive from the document's exact base and observed sequence; conflicting guards are refused. |
 | `decide_proposal` | `run_id`, `proposal_id`, `proposal_digest`, `proposed_revision`, `decision_id`, `decision` | `approve` | Approve or reject an exact proposal. |
 | `apply_proposal` | `run_id`, `proposal_id`, `proposal_digest`, `proposed_revision` | `apply` | Apply an approved prospective revision through reconciliation. |
 | `inspect_controller` | `run_id`, `controller_execution` | `inspect_run` | Return one authorization-filtered typed controller status from durable projection facts. |
@@ -250,7 +251,7 @@ Every route is authenticated and authority-filtered. List queries constrain or f
 | `GET /v1/runs/{run}/attempts/{attempt}` | One exact current or historical attempt; journal paging supplies older attempts without retaining lifetime history in the compact run model. Includes capability/provider/peer linkage, the frozen operation contract and idempotency-key presence, frozen snapshot/trust/implementation provenance, and separately authorized context-manifest detail when present. |
 | `GET /v1/runs/{run}/timeline?limit=&cursor=` | Paged external timeline projection with exact durable sequence anchors and bounded safe external-effect classification. |
 | `GET /v1/runs/{run}/proposals?limit=&cursor=` | Bounded proposal identities/statuses from the durable validated proposal projection; exact status remains owned by `milkdrift-control`. |
-| `GET /v1/runs/{run}/proposals/{proposal}?revision={revision}` | Exact status from `milkdrift-control`. |
+| `GET /v1/runs/{run}/proposals/{proposal}?revision={revision}` | Exact status from `milkdrift-control`, current sequence and retained reconciliation impact items (node, execution, classification, action, reason); absent plan detail is null. |
 | `GET /v1/capabilities` | Only generations within capability scope, with descriptor category and exact operation contracts, locality/peer/trust, provider profile where allowed, and scoped health/availability. |
 | `GET /v1/peers` | Only configured peer identities within `inspect_peer` scope. |
 | `GET /v1/peers/{peer}` | One authorized configured peer status. |
@@ -403,7 +404,7 @@ The current operator surface intentionally covers every legitimate external oper
 | `run start`, `reconnect`, `list`, `show`, `wait`, `pause`, `resume`, `cancel`, `signal`, `timeline` | Every run command/read; start retains a private exact request, reconnect resubmits it, and `timeline --follow` exposes the run SSE feed. |
 | `controller status`, `continue` | Both controller command variants and the exact controller read. |
 | `node`; `attempt inspect`, `resolve` | Exact node/attempt reads and `resolve_work` actions `query`, `retry`, `compensate`, `retain`, `resolve-succeeded`, and `resolve-failed`. |
-| `proposal submit`, `list`, `show`, `approve`, `reject`, `apply` | Every proposal command and read route. |
+| `proposal repair`, `submit`, `list`, `show`, `approve`, `reject`, `apply` | Public repair preparation, ordinary proposal commands and reads. Approval/application show recorded impact and use the freshly read sequence unless explicitly guarded. |
 | `capability list`, `show` | The scoped capability read; `list --follow` exposes the capability SSE feed. |
 | `provider list`, `show` | Authorized provider-profile identities and generations projected from the same scoped capability read. |
 | `peer list`, `show`, `connect`, `reload`, `disconnect`, `drain`, `revoke` | Every peer read and administration route. |

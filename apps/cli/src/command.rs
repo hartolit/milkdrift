@@ -121,6 +121,7 @@ impl Cli {
                 AttemptCommand::Resolve(_) => "attempt.resolve",
             },
             TopCommand::Proposal { command } => match command {
+                ProposalCommand::Repair(_) => "proposal.repair",
                 ProposalCommand::Submit { .. } => "proposal.submit",
                 ProposalCommand::List { .. } => "proposal.list",
                 ProposalCommand::Show { .. } => "proposal.show",

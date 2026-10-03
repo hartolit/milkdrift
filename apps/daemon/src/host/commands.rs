@@ -32,6 +32,11 @@ impl Owner {
             Command::ConstructBlueprint { draft, store } => {
                 authoring::construct(self, session, request, draft, *store)
             }
+            Command::PrepareModelRepair {
+                run_id,
+                proposal_id,
+                repair,
+            } => authoring::repair(self, session, request, run_id, proposal_id, repair),
             Command::Learning { document } => learning::execute(self, session, request, document),
             Command::PublishMethod { .. }
             | Command::InspectMethod { .. }

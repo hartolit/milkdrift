@@ -296,6 +296,14 @@ needed. The CLI keeps no automatic request archive. Uploaded content follows the
 bounded artifact retention. A different host or caller/grant is refused before resubmission.
 The output allowance of 512 is an example choice, not a promise that a model will finish within it.
 
+Read accepted notes directly with `milkdrift run result harbor-notes --details`. Once the workflow
+succeeds, `milkdrift run result harbor-notes --field notes --output harbor-notes.txt` retrieves and
+verifies the declared final artifact. A returned model response, its required completeness check,
+and the workflow outcome remain separate in the display; absent usage is unknown. If the final
+review fails its check, follow the [held model repair](../../docs/guides/headless-dogfood.md#repair-a-held-model-result)
+procedure before signalling its review hold. Editing the saved draft below affects future starts;
+repairing a paused run requires a separately approved prospective proposal.
+
 The save reply returns the daemon's exact `revision_id`. Use it as `REVISION` below. Saving with
 no changes returns the same version; changing a prompt and saving produces a child of that exact
 base. Old versions and any work already using them remain unchanged.

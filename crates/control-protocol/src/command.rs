@@ -83,6 +83,13 @@ pub enum Command {
         draft: crate::BlueprintDraft,
         store: bool,
     },
+    /// Build a normal approval-required proposal at the exact paused review hold. This
+    /// prepares a document only; ordinary submit/approve/apply commands perform the change.
+    PrepareModelRepair {
+        run_id: String,
+        proposal_id: String,
+        repair: crate::ModelRepair,
+    },
     /// Select evidence, declare and compare a study, or promote through ordinary authority.
     Learning { document: Value },
     /// Publish or promote one exact immutable workflow implementation generation.

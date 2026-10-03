@@ -665,6 +665,8 @@ enum ResolveChoice {
 
 #[derive(Subcommand)]
 enum ProposalCommand {
+    /// Prepare a checked future repair at the final model step's paused review hold.
+    Repair(RepairArgs),
     /// Submit one exact versioned proposal JSON document.
     Submit { file: PathBuf },
     /// List proposal statuses known for one run.
@@ -687,6 +689,25 @@ enum ProposalCommand {
     Reject(ProposalDecisionArgs),
     /// Apply an exact approved proposal.
     Apply(ProposalApplyArgs),
+}
+
+#[derive(Args)]
+struct RepairArgs {
+    run: String,
+    failed_step: String,
+    #[arg(long)]
+    proposal: String,
+    #[arg(long)]
+    new_step: String,
+    #[arg(long)]
+    model: String,
+    #[arg(long)]
+    prompt: PathBuf,
+    #[arg(long)]
+    maximum_output_units: u64,
+    /// New proposal file; preparing does not change the run.
+    #[arg(long)]
+    file: PathBuf,
 }
 
 #[derive(Args)]

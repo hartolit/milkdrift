@@ -12,15 +12,28 @@ pub(super) async fn execute(
     output: Option<&Path>,
 ) -> Result<(), CliError> {
     let value = session.client().run_result(run).await?;
-    if session.cli().json {
-        session.output("run.result", &value)?;
-    } else {
-        print!("{}", render(&value, details));
-    }
-    if let (Some(field), Some(output)) = (field, output) {
+    let download = if let (Some(field), Some(output)) = (field, output) {
         let result = value.outputs.iter().find(|value| value.name == field)
             .ok_or_else(|| CliError::Invalid("declared final output is unavailable; inspect the run outcome and read permissions".into()))?;
-        crate::command::artifact::download(session, &result.artifact.artifact_id, output).await?;
+        Some(
+            crate::command::artifact::download(session, &result.artifact.artifact_id, output)
+                .await?,
+        )
+    } else {
+        None
+    };
+    if session.cli().json {
+        let mut result =
+            serde_json::to_value(&value).map_err(|error| CliError::Internal(error.to_string()))?;
+        if let Some(download) = download {
+            result["download"] = download;
+        }
+        session.output("run.result", &result)?;
+    } else {
+        print!("{}", render(&value, details));
+        if let Some(download) = download {
+            session.output("artifact.get", &download)?;
+        }
     }
     Ok(())
 }
@@ -112,20 +125,20 @@ fn render(value: &RunResultRead, details: bool) -> String {
                 let _ = writeln!(
                     out,
                     "    Limits: {}",
-                    serde_json::to_string(&attempt.model_generation).unwrap_or_default()
+                    safe(&serde_json::to_string(&attempt.model_generation).unwrap_or_default())
                 );
                 let _ = writeln!(
                     out,
                     "    Usage: {}",
                     attempt.usage.as_ref().map_or_else(
                         || "unknown".into(),
-                        |usage| serde_json::to_string(usage).unwrap_or_default()
+                        |usage| safe(&serde_json::to_string(usage).unwrap_or_default())
                     )
                 );
                 let _ = writeln!(
                     out,
                     "    Selected inputs: {}",
-                    serde_json::to_string(&attempt.context).unwrap_or_default()
+                    safe(&serde_json::to_string(&attempt.context).unwrap_or_default())
                 );
                 if let Some(detail) = &attempt.terminal_detail {
                     let _ = writeln!(out, "    Evidence: {}", safe(detail));
@@ -180,13 +193,26 @@ fn render(value: &RunResultRead, details: bool) -> String {
             "This run has ended; further work requires an explicitly linked new run."
         );
     }
+    if value
+        .actions
+        .iter()
+        .any(|action| action == "start_linked_run")
+    {
+        let _ = writeln!(
+            out,
+            "New run: --evidence recovery_observation={} run start NEW_RUN {} {} --request-file NEW_REQUEST_FILE (supply required inputs; admission rechecks authority)",
+            safe(&run.run_id),
+            safe(run.workflow_id.as_deref().unwrap_or("WORKFLOW")),
+            safe(run.revision_id.as_deref().unwrap_or("REVISION"))
+        );
+    }
     let _ = writeln!(
         out,
         "Permitted next operations: {}",
         if value.actions.is_empty() {
             "none in this view".into()
         } else {
-            value.actions.join(", ")
+            safe(&value.actions.join(", "))
         }
     );
     out

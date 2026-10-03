@@ -7,6 +7,7 @@ pub(super) async fn execute(
     command: &ProposalCommand,
 ) -> Result<(), CliError> {
     match command {
+        ProposalCommand::Repair(arguments) => prepare_repair(session, arguments).await,
         ProposalCommand::Submit { file } => {
             let document = session
                 .read_json(
@@ -34,22 +35,23 @@ pub(super) async fn execute(
             &session.client().proposal(run, proposal, revision).await?,
         ),
         ProposalCommand::Approve(arguments) => {
-            session
-                .confirm("approve this exact workflow proposal")
-                .await?;
             decide(session, arguments, ProposalDecision::Approve).await
         }
         ProposalCommand::Reject(arguments) => {
-            session
-                .confirm("reject this exact workflow proposal")
-                .await?;
             decide(session, arguments, ProposalDecision::Reject).await
         }
         ProposalCommand::Apply(arguments) => {
+            let preview = impact(
+                session,
+                &arguments.run,
+                &arguments.proposal,
+                &arguments.proposed_revision,
+            )
+            .await?;
             session
                 .confirm("apply this exact workflow proposal")
                 .await?;
-            let request = session.command_request_with_revision(
+            let mut request = session.command_request_with_revision(
                 Command::ApplyProposal {
                     run_id: arguments.run.clone(),
                     proposal_id: arguments.proposal.clone(),
@@ -58,6 +60,7 @@ pub(super) async fn execute(
                 },
                 &arguments.proposed_revision,
             )?;
+            request.expected_sequence.get_or_insert(preview.sequence);
             session.output("proposal.apply", &session.client().submit(&request).await?)
         }
     }
@@ -68,7 +71,20 @@ async fn decide(
     arguments: &ProposalDecisionArgs,
     decision: ProposalDecision,
 ) -> Result<(), CliError> {
-    let request = session.command_request_with_revision(
+    let preview = impact(
+        session,
+        &arguments.run,
+        &arguments.proposal,
+        &arguments.proposed_revision,
+    )
+    .await?;
+    session
+        .confirm(match decision {
+            ProposalDecision::Approve => "approve this exact workflow proposal",
+            ProposalDecision::Reject => "reject this exact workflow proposal",
+        })
+        .await?;
+    let mut request = session.command_request_with_revision(
         Command::DecideProposal {
             run_id: arguments.run.clone(),
             proposal_id: arguments.proposal.clone(),
@@ -79,5 +95,90 @@ async fn decide(
         },
         &arguments.proposed_revision,
     )?;
+    request.expected_sequence.get_or_insert(preview.sequence);
     session.output("proposal.decide", &session.client().submit(&request).await?)
+}
+
+async fn prepare_repair(session: &CliSession, args: &crate::RepairArgs) -> Result<(), CliError> {
+    use std::io::Write as _;
+    let bytes = crate::input::read_bounded(
+        &args.prompt,
+        milkdrift_control_protocol::MAX_DOCUMENT_BYTES,
+        "repair prompt",
+    )
+    .await?;
+    let prompt = String::from_utf8(bytes)
+        .map_err(|_| CliError::Invalid("repair prompt must be UTF-8".into()))?;
+    let state = session.client().run(&args.run).await?;
+    let revision = state
+        .revision_id
+        .as_deref()
+        .ok_or_else(|| CliError::Invalid("run has no revision".into()))?;
+    let mut request = session.command_request_with_revision(
+        Command::PrepareModelRepair {
+            run_id: args.run.clone(),
+            proposal_id: args.proposal.clone(),
+            repair: milkdrift_control_protocol::ModelRepair {
+                failed_step: args.failed_step.clone(),
+                repair_step: args.new_step.clone(),
+                capability: args.model.clone(),
+                prompt,
+                maximum_output_units: args.maximum_output_units,
+            },
+        },
+        revision,
+    )?;
+    request.expected_sequence.get_or_insert(state.sequence);
+    let prepared = session.client().submit(&request).await?;
+    let document = prepared
+        .value
+        .get("document")
+        .ok_or_else(|| CliError::Internal("repair response has no proposal".into()))?;
+    let mut file = crate::output::PendingFile::create(&args.file)?;
+    file.write_all(
+        &milkdrift_control_protocol::encode_json(document)
+            .map_err(|error| CliError::Invalid(error.to_string()))?,
+    )
+    .map_err(|error| CliError::Internal(error.to_string()))?;
+    file.commit()
+        .map_err(|error| CliError::Internal(error.to_string()))?;
+    session.output("proposal.repair", &serde_json::json!({"file":args.file,"proposal_id":args.proposal,"base_revision":revision,"sequence":state.sequence,"summary":prepared.value["summary"]}))
+}
+
+async fn impact(
+    session: &CliSession,
+    run: &str,
+    proposal: &str,
+    revision: &str,
+) -> Result<milkdrift_control_protocol::ProposalRead, CliError> {
+    let value = session.client().proposal(run, proposal, revision).await?;
+    if session.cli().json {
+        println!(
+            "{}",
+            crate::output::encode(
+                "proposal.impact",
+                session.cli().command_id.as_deref(),
+                "success",
+                serde_json::to_value(&value)
+                    .map_err(|error| CliError::Internal(error.to_string()))?,
+                serde_json::Value::Null,
+                false
+            )?
+        );
+    } else {
+        println!("Affected work at run sequence {}:", value.sequence);
+        if let Some(items) = &value.impact {
+            for item in items {
+                println!(
+                    "  {}: {} — {}",
+                    serde_json::to_string(&item.node).unwrap_or_default(),
+                    item.action,
+                    serde_json::to_string(&item.reason).unwrap_or_default()
+                );
+            }
+        } else {
+            println!("  Current plan detail is unavailable; inspect the proposal before applying.");
+        }
+    }
+    Ok(value)
 }

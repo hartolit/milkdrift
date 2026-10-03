@@ -123,6 +123,8 @@ terminal controls; a truncated preview is labelled. Rejected or uncertain model 
 not final output. Read scope can hide details, and invoke-only published callers use their public
 invocation result rather than private run inspection. Offered control operations reflect current
 permissions; submitting one still rechecks its guards and applicable rules.
+In JSON mode a requested download produces one final `run.result` record after verification;
+its `download` field identifies the committed file. A failed download emits only the failure.
 
 Following starts with a current authorized run view and then new events. The initial timeline
 command still returns only its requested page; following does not fetch the rest of old history.
@@ -228,6 +230,58 @@ outside that envelope is rejected at revision adoption. The sequence document li
 generation only. Runtime retry and authority budgets, adapter timeouts/admission bounds, artifact
 budgets, and retention policies are configured and enforced by their owning layers; the import
 does not pretend to add additional ceilings and never grants authority by itself.
+
+### Repair a held model result
+
+The ordinary model-workflow editor has a narrower repair convenience. It supports a rejected
+completeness check at the **final model step's review hold**, before that hold has been signalled.
+For the release-notes example, this is `author.review.hold`. Pause the run first, using the
+sequence from `run result`. Saving a changed workflow draft affects later starts; it does not
+change an existing run. The following proposal instead changes that run's future continuation.
+
+Write `repair.txt` with the correction to request, then prepare and submit it:
+
+```sh
+milkdrift --command-id model-pause-1 --expected-sequence RUN_SEQUENCE run pause RUN_ID
+milkdrift --command-id model-repair-prepare-1 proposal repair RUN_ID review \
+  --proposal repair-final-1 --new-step repair --model operator-model \
+  --prompt repair.txt --maximum-output-units 512 --file repair.json
+milkdrift --command-id model-repair-submit-1 proposal submit repair.json
+milkdrift proposal show RUN_ID repair-final-1 PROPOSED_REVISION
+milkdrift --command-id model-repair-approve-1 proposal approve RUN_ID repair-final-1 \
+  PROPOSAL_DIGEST PROPOSED_REVISION decision-repair-1
+milkdrift --command-id model-repair-apply-1 proposal apply RUN_ID repair-final-1 \
+  PROPOSAL_DIGEST PROPOSED_REVISION
+```
+
+Preparation writes a new proposal file and leaves the run unchanged. Submission returns the
+proposal digest and proposed revision. The document binds the exact base and sequence; stale
+submission is refused. Approval and application display the recorded affected work, read the
+current sequence and ask for confirmation. Noninteractive callers must explicitly pass `--yes`.
+Each operation still needs its own permission, and proposal admission checks the frozen run grant
+and protected agreements. This convenience refuses richer definitions it cannot preserve exactly.
+
+The repair receives the selected failed model response and the final step's original run-input
+bindings. It receives no implicit earlier conversation or unrelated artifacts. The failed check
+and all completed records remain visible. New work must pass a new completeness check before its
+output can become the successful terminal result. A second rejection reaches a new review hold;
+the convenience does not recursively repair the resulting richer graph.
+
+After application, use `run result` for the next sequence, signal the hold, then resume with the
+signal reply's sequence:
+
+```sh
+milkdrift --command-id model-release-1 --expected-sequence SIGNAL_SEQUENCE \
+  run signal RUN_ID --signal-id release-repair-1 --signal-type workflow.reviewed
+milkdrift --command-id model-resume-1 --expected-sequence RESUME_SEQUENCE run resume RUN_ID
+milkdrift run result RUN_ID --details --field notes --output repaired-notes.txt
+```
+
+Signalling before applying the repair follows the unchanged failure continuation. Once terminal,
+the run cannot resume. Where the caller may create and start runs, `run result` offers a new start
+with `--evidence recovery_observation=OLD_RUN_ID`; supply a new run/command/request-file identity
+and the required inputs. That evidence links the deliberate new execution without rewriting the old
+outcome. It does not automatically copy private history or authorize new work.
 
 ## Codex as one generic coding-agent profile
 

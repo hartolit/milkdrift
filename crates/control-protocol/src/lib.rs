@@ -39,7 +39,7 @@ use thiserror::Error;
 
 mod authoring;
 mod command;
-pub use authoring::{BlueprintDraft, BlueprintEdit, ModelInputSource};
+pub use authoring::{BlueprintDraft, BlueprintEdit, ModelInputSource, ModelRepair};
 mod layout;
 mod read;
 mod result;
@@ -58,8 +58,9 @@ pub use read::{
     CapabilityProvenanceRead, CapabilityRead, ContextManifestRead, DaemonState,
     ExecutionAuthorityRead, HealthRead, HostRole, ModelGenerationRead, NestedWorkUsageRead,
     NodeRead, Observation, ObservationEnvelope, PeerCapabilityProvenanceRead,
-    PeerExecutionHealthRead, PeerRead, ProposalRead, ResultAcceptanceRead, RevisionChange,
-    RevisionDiffRead, RevisionRead, RevisionSummary, RunRead, TimelineCategory, TimelineEntry,
+    PeerExecutionHealthRead, PeerRead, ProposalImpactRead, ProposalRead, ResultAcceptanceRead,
+    RevisionChange, RevisionDiffRead, RevisionRead, RevisionSummary, RunRead, TimelineCategory,
+    TimelineEntry,
 };
 
 /// Supported control protocol major version.

@@ -139,7 +139,7 @@ pub(super) fn exact(
     let result = owner.inspect_control(
         session,
         ControlCommand::QueryProposal {
-            run,
+            run: run.clone(),
             proposal,
             proposed_revision: revision,
         },
@@ -149,7 +149,31 @@ pub(super) fn exact(
     let ControlResult::ProposalStatus { value } = result else {
         return Err(internal());
     };
+    let projection = owner
+        .workflow()?
+        .runtime
+        .projection(&run)
+        .map_err(|error| super::read_model::public_control(error.into()))?;
+    let impact = value
+        .reconciliation
+        .plan
+        .as_ref()
+        .and_then(|id| projection.reconciliation().plans().get(id))
+        .map(|plan| {
+            plan.items()
+                .iter()
+                .map(|item| milkdrift_control_protocol::ProposalImpactRead {
+                    node: item.node.as_ref().map(ToString::to_string),
+                    execution: item.execution.as_ref().map(ToString::to_string),
+                    classification: snake_debug(&item.classification),
+                    action: snake_debug(&item.action),
+                    reason: item.reason.as_str().to_owned(),
+                })
+                .collect()
+        });
     Ok(ProposalRead {
+        sequence: projection.sequence().get(),
+        impact,
         proposal_id: value.proposal.as_str().to_owned(),
         proposed_revision: value.proposed_revision.as_str().to_owned(),
         status: snake_debug(&value.reconciliation.state),

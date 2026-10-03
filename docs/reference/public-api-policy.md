@@ -35,6 +35,9 @@ package entry point. Consumers otherwise import the canonical owner directly.
 `RunResultRead`, `RunOutputRead` and `ControlClient::run_result` are external product contracts
 consumed by the CLI and daemon. They compose existing authorized readers; the private daemon
 module owns result selection and action hints. They add no durable state or client execution rules.
+`ModelRepair` and `ProposalImpactRead` are likewise external protocol contracts consumed by the
+daemon and CLI. The former requests a private daemon construction of an ordinary proposal; the
+latter projects existing runtime reconciliation items. Neither exports a new reconciliation owner.
 
 The run-start surface adds `RunInput`, consumed by the CLI and daemon as a named immutable artifact
 reference. Runtime workspace admission and authenticated artifact reads retain validation ownership.

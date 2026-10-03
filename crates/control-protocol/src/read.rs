@@ -669,6 +669,10 @@ pub struct AuthorityRead {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalRead {
+    /// Current run sequence at which these plan facts were read.
+    pub sequence: u64,
+    /// Current immutable plan items; absent after compaction or before planning.
+    pub impact: Option<Vec<ProposalImpactRead>>,
     /// Proposal identity.
     pub proposal_id: String,
     /// Exact prospective revision.
@@ -679,6 +683,22 @@ pub struct ProposalRead {
     pub approved: bool,
     /// Optional application sequence.
     pub applied_sequence: Option<u64>,
+}
+
+/// A recorded runtime classification, projected without exposing journal implementation types.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProposalImpactRead {
+    /// Definition node, when applicable.
+    pub node: Option<String>,
+    /// Existing execution whose history must be preserved.
+    pub execution: Option<String>,
+    /// Runtime's classification of existing or added work.
+    pub classification: String,
+    /// Runtime's permitted prospective action.
+    pub action: String,
+    /// Bounded explanation of this item.
+    pub reason: String,
 }
 
 /// A resumable, externally projected stream item.

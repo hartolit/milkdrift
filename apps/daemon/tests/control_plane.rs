@@ -20,6 +20,8 @@ mod operations;
 mod process;
 #[path = "control_plane/process_cleanup.rs"]
 mod process_cleanup;
+#[path = "control_plane/repair.rs"]
+mod repair;
 #[path = "control_plane/resources.rs"]
 mod resources;
 #[path = "control_plane/results.rs"]

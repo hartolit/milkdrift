@@ -15,7 +15,9 @@ use super::definitions::authorize_definition;
 
 mod edits;
 mod graph;
+mod repair;
 use graph::ModelWorkflow;
+pub(super) use repair::prepare as repair;
 
 type BuildResult<T> = Result<T, Box<dyn std::error::Error>>;
 fn failure(error: impl std::fmt::Display) -> PublicFailure {

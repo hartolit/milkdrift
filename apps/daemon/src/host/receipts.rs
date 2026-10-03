@@ -281,6 +281,7 @@ fn command_run_identity(command: &Command) -> Option<&str> {
         | Command::ContinueController { run_id, .. }
         | Command::DecideProposal { run_id, .. }
         | Command::ApplyProposal { run_id, .. } => Some(run_id),
+        Command::PrepareModelRepair { run_id, .. } => Some(run_id),
         Command::Learning { .. }
         | Command::AuthorBlueprint { .. }
         | Command::ConstructBlueprint { .. }

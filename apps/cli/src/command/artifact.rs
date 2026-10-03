@@ -47,7 +47,10 @@ pub(super) async fn execute(
         ArtifactCommand::Get {
             artifact,
             output: destination,
-        } => download(session, artifact, destination).await,
+        } => session.output(
+            "artifact.get",
+            &download(session, artifact, destination).await?,
+        ),
     }
 }
 
@@ -55,7 +58,7 @@ pub(in crate::command) async fn download(
     session: &CliSession,
     artifact: &str,
     destination: &Path,
-) -> Result<(), CliError> {
+) -> Result<serde_json::Value, CliError> {
     let metadata = session.client().artifact_metadata(artifact).await?;
     let expected_digest = blake3::Hash::from_hex(&metadata.digest).map_err(|_| {
         CliError::Internal("artifact metadata has an invalid content digest".to_owned())
@@ -104,13 +107,10 @@ pub(in crate::command) async fn download(
     }
     .await;
     result?;
-    session.output(
-        "artifact.get",
-        &json!({
-            "artifact_id": metadata.artifact_id,
-            "digest": metadata.digest,
-            "size": metadata.size,
-            "destination": destination,
-        }),
-    )
+    Ok(json!({
+        "artifact_id": metadata.artifact_id,
+        "digest": metadata.digest,
+        "size": metadata.size,
+        "destination": destination,
+    }))
 }

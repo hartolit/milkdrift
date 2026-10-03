@@ -190,6 +190,14 @@ fn human_value(value: &Value) {
                 "cycle_eligible",
                 "last_assessment_sequence",
                 "checkpoint_id",
+                "node",
+                "execution",
+                "classification",
+                "action",
+                "reason",
+                "approved",
+                "proposed_revision",
+                "proposal_digest",
             ] {
                 if let Some(value) = fields.get(key).filter(|value| !value.is_null()) {
                     println!("  {key}: {value}");
@@ -214,6 +222,9 @@ fn human_value(value: &Value) {
                 "kind",
                 "final_observation",
                 "history",
+                "impact",
+                "classification",
+                "reconciliation",
             ] {
                 if let Some(value) = fields.get(key) {
                     human_value(value);

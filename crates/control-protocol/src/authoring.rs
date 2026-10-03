@@ -17,6 +17,23 @@ pub struct BlueprintDraft {
     pub mutations: Vec<Value>,
 }
 
+/// A fresh model step after the final failed completeness check of an editor workflow.
+/// The daemon retains the original check and selects only the failed response and run inputs.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelRepair {
+    /// Existing final step held for review.
+    pub failed_step: String,
+    /// New step identity; existing nodes cannot be replaced by this convenience.
+    pub repair_step: String,
+    /// Exact permitted model capability.
+    pub capability: String,
+    /// Fresh instruction, with evidence supplied through normal input bindings.
+    pub prompt: String,
+    /// Explicit output allowance for the new invocation.
+    pub maximum_output_units: u64,
+}
+
 /// Explicit source for one named model input; no conversation history is implicitly included.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]

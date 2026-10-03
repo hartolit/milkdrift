@@ -18,10 +18,22 @@ pub(super) fn submit(
     let proposal = WorkflowProposalDocument::from_json(&bytes)
         .map_err(|error| invalid(&bounded(&error.to_string())))?;
     let digest = proposal.proposal().digest().clone();
+    // The document already binds its exact base and sequence. Optional envelope guards can
+    // narrow that request, but clients need not copy hashes out of the proposal to submit it.
+    let mut guarded = request.clone();
+    guarded
+        .expected_revision
+        .get_or_insert_with(|| proposal.proposal().base_revision().to_string());
+    if guarded.expected_sequence.is_none() {
+        guarded.expected_sequence = proposal
+            .proposal()
+            .observed_run_sequence()
+            .map(|sequence| sequence.get());
+    }
     let value = owner.execute_control_result(
         session,
-        request,
-        request.expected_sequence,
+        &guarded,
+        guarded.expected_sequence,
         Some(digest),
         ControlCommand::SubmitProposal { proposal },
         "proposal",

@@ -61,6 +61,16 @@ This document owns current implementation, limitations, exact versions, and qual
   Bounded optional waiting ends local observation without cancelling daemon work. Controlled
   endpoint and actual CLI/daemon tests cover isolated inputs and lost-reply recovery without
   repeating provider requests; integrated sprint acceptance remains open.
+- The public run-result view shows a bounded current frontier, separate invocation/acceptance/
+  workflow outcomes, authorized output previews and current permitted-action hints. The CLI
+  retrieves final artifacts with range, size and digest verification and escapes terminal controls.
+  Reconnecting observation deduplicates positions and refreshes an authorized current view after
+  resync. At an editor workflow's final failed-model review hold, a paused run can prepare an
+  ordinary approval-required repair proposal. Its new step receives the selected failed response
+  and original run inputs, retains the failed check, and must pass a fresh completeness check.
+  Controlled CLI/daemon tests cover restart, unchanged completed history, stale/unauthorized
+  refusal and terminal-run refusal. Richer definitions and repeated automatic repair are outside
+  this convenience; protected agreements retain their existing admission checks.
 - Causal context uses bounded historical discovery, explicit branch/join/subworkflow visibility,
   exact provenance, authority/sensitivity checks, deterministic budgets and omissions, and
   selected-only materialization. Required-evidence checks continue after selection stops, and
