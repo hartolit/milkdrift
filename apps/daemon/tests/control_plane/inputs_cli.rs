@@ -25,6 +25,19 @@ struct BinaryDaemon {
     client: ControlClient,
 }
 impl BinaryDaemon {
+    async fn configured(
+        directory: &TempDir,
+        model: &ModelFixture,
+    ) -> TestResult<(Self, std::path::PathBuf)> {
+        let mut config = super::authoring::model_configuration_document(directory, model.address)?;
+        let socket = std::net::TcpListener::bind("127.0.0.1:0")?;
+        config.bind = socket.local_addr()?;
+        drop(socket);
+        let endpoint = Url::parse(&format!("http://{}/", config.bind))?;
+        let path = directory.path().join("daemon.toml");
+        fs::write(&path, toml::to_string(&config)?)?;
+        Ok((Self::start(&path, endpoint, directory.path()).await?, path))
+    }
     async fn start(config: &Path, endpoint: Url, directory: &Path) -> TestResult<Self> {
         let child = std::process::Command::new(env!("CARGO_BIN_EXE_milkdrift-daemon"))
             .args(["--config"])
@@ -70,12 +83,26 @@ async fn cli(
     let endpoint = endpoint.to_string();
     let directory = directory.to_owned();
     let arguments: Vec<String> = arguments.iter().map(|value| (*value).into()).collect();
+    let seconds: u64 = arguments
+        .windows(2)
+        .find(|pair| pair[0] == "--timeout-secs")
+        .map(|pair| pair[1].parse())
+        .transpose()?
+        .unwrap_or(10);
     let result = tokio::task::spawn_blocking(move || -> Result<std::process::Output, String> {
+        let mut command = std::process::Command::new(executable);
+        command
+            .args(["--endpoint", &endpoint, "--token-file"])
+            .arg(directory.join("controller.token"))
+            .arg("--json");
+        if !arguments
+            .iter()
+            .any(|argument| argument == "--timeout-secs")
+        {
+            command.args(["--timeout-secs", "10"]);
+        }
         let mut child = ChildOwner(Some(
-            std::process::Command::new(executable)
-                .args(["--endpoint", &endpoint, "--token-file"])
-                .arg(directory.join("controller.token"))
-                .args(["--json", "--timeout-secs", "10"])
+            command
                 .args(arguments)
                 .current_dir(directory)
                 .stdout(Stdio::piped())
@@ -83,7 +110,7 @@ async fn cli(
                 .spawn()
                 .map_err(|error| error.to_string())?,
         ));
-        for _ in 0..300 {
+        for _ in 0..(seconds + 5) * 20 {
             if child
                 .0
                 .as_mut()
@@ -121,14 +148,8 @@ fn success(output: &std::process::Output) -> TestResult<Value> {
 async fn actual_cli_retains_inputs_and_reconnects_after_client_and_daemon_exit() -> TestResult {
     let directory = tempfile::tempdir()?;
     let model = ModelFixture::start().await?;
-    let mut config = super::authoring::model_configuration_document(&directory, model.address)?;
-    let socket = std::net::TcpListener::bind("127.0.0.1:0")?;
-    config.bind = socket.local_addr()?;
-    drop(socket);
-    let endpoint = Url::parse(&format!("http://{}/", config.bind))?;
-    let path = directory.path().join("daemon.toml");
-    fs::write(&path, toml::to_string(&config)?)?;
-    let daemon = BinaryDaemon::start(&path, endpoint.clone(), directory.path()).await?;
+    let (daemon, path) = BinaryDaemon::configured(&directory, &model).await?;
+    let endpoint = daemon.endpoint.clone();
     let revision = workflow(&daemon.client).await?;
     let brief = include_bytes!("../../../../examples/operator/release-notes/harbor-brief.txt");
     fs::write(directory.path().join("brief.txt"), brief)?;
@@ -233,6 +254,179 @@ async fn actual_cli_retains_inputs_and_reconnects_after_client_and_daemon_exit()
     )
     .await?;
     assert_eq!(conflict.status.code(), Some(4));
+    assert_eq!(model.requests.lock().map_err(|_| "fixture lock")?.len(), 2);
+    Ok(())
+}
+
+struct LostReplyProxy {
+    endpoint: Url,
+    accepted: Arc<std::sync::atomic::AtomicBool>,
+    task: JoinHandle<std::io::Result<()>>,
+}
+impl Drop for LostReplyProxy {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+impl LostReplyProxy {
+    async fn start(endpoint: Url) -> TestResult<Self> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let accepted = Arc::new(AtomicBool::new(false));
+        let observed = accepted.clone();
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()?;
+        let app = axum::Router::new().fallback(move |request: axum::extract::Request| {
+            let endpoint = endpoint.clone();
+            let http = http.clone();
+            let observed = observed.clone();
+            async move {
+                let (parts, body) = request.into_parts();
+                let path = parts.uri.path();
+                let is_start = path == "/v1/commands" && parts.method == axum::http::Method::POST;
+                let bytes =
+                    axum::body::to_bytes(body, milkdrift_control_protocol::MAX_DOCUMENT_BYTES)
+                        .await
+                        .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+                let url = endpoint
+                    .join(
+                        parts
+                            .uri
+                            .path_and_query()
+                            .map_or(path, |value| value.as_str()),
+                    )
+                    .map_err(|_| axum::http::StatusCode::BAD_GATEWAY)?;
+                let mut headers = parts.headers;
+                headers.remove(axum::http::header::HOST);
+                let response = http
+                    .request(parts.method, url)
+                    .headers(headers)
+                    .body(bytes)
+                    .send()
+                    .await
+                    .map_err(|_| axum::http::StatusCode::BAD_GATEWAY)?;
+                let status = response.status();
+                let body = response
+                    .bytes()
+                    .await
+                    .map_err(|_| axum::http::StatusCode::BAD_GATEWAY)?;
+                if is_start && status.is_success() && !observed.swap(true, Ordering::SeqCst) {
+                    // The daemon's acceptance reply exists, but the first client never receives it.
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+                Ok::<_, axum::http::StatusCode>((
+                    status,
+                    [(axum::http::header::CONTENT_TYPE, "application/json")],
+                    body,
+                ))
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let endpoint = Url::parse(&format!("http://{}/", listener.local_addr()?))?;
+        let task = tokio::spawn(async move { axum::serve(listener, app).await });
+        Ok(Self {
+            endpoint,
+            accepted,
+            task,
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn actual_cli_lost_start_reply_and_wait_deadline_recover_without_reexecution() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let model = ModelFixture::start().await?;
+    let (daemon, _) = BinaryDaemon::configured(&directory, &model).await?;
+    let revision = workflow(&daemon.client).await?;
+    fs::write(
+        directory.path().join("brief.txt"),
+        include_bytes!("../../../../examples/operator/release-notes/lantern-brief.txt"),
+    )?;
+    let proxy = LostReplyProxy::start(daemon.endpoint.clone()).await?;
+    let lost = cli(
+        &proxy.endpoint,
+        directory.path(),
+        &[
+            "--timeout-secs",
+            "2",
+            "--command-id",
+            "lost-start",
+            "run",
+            "start",
+            "lost",
+            "release-notes",
+            &revision,
+            "--input",
+            "brief=brief.txt",
+            "--request-file",
+            "lost.json",
+            "--wait",
+        ],
+    )
+    .await?;
+    assert_eq!(
+        lost.status.code(),
+        Some(10),
+        "{}",
+        String::from_utf8_lossy(&lost.stdout)
+    );
+    assert!(
+        proxy.accepted.load(std::sync::atomic::Ordering::SeqCst),
+        "client left before daemon accepted start"
+    );
+    let records: Vec<Value> = std::str::from_utf8(&lost.stdout)?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?;
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["type"], "run.prepared");
+    assert_eq!(records[0]["final"], false);
+    assert_eq!(records[0]["value"]["command_id"], "lost-start");
+    assert_eq!(records[1]["error"]["classification"], "timeout");
+    assert_eq!(records[1]["final"], true);
+    fs::remove_file(directory.path().join("brief.txt"))?;
+    let recovered = cli(
+        &daemon.endpoint,
+        directory.path(),
+        &[
+            "--timeout-secs",
+            "45",
+            "run",
+            "reconnect",
+            "lost.json",
+            "--wait",
+        ],
+    )
+    .await?;
+    assert!(
+        recovered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&recovered.stdout)
+    );
+    let records: Vec<Value> = std::str::from_utf8(&recovered.stdout)?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?;
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["value"]["run_id"], "lost");
+    assert_eq!(records[1]["value"]["terminal"], "succeeded");
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record["final"] == true)
+            .count(),
+        1
+    );
+    assert_eq!(model.requests.lock().map_err(|_| "fixture lock")?.len(), 2);
+    let replay = success(
+        &cli(
+            &daemon.endpoint,
+            directory.path(),
+            &["run", "reconnect", "lost.json"],
+        )
+        .await?,
+    )?;
+    assert_eq!(replay["replayed"], true);
     assert_eq!(model.requests.lock().map_err(|_| "fixture lock")?.len(), 2);
     Ok(())
 }

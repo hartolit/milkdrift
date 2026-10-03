@@ -29,21 +29,7 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
             terminal,
             poll_ms,
             max_polls,
-        } => {
-            for poll in 0..*max_polls {
-                let state = session.client().run(run).await?;
-                if let Some(outcome) = state.terminal.as_deref() {
-                    if !terminal.matches(outcome) || outcome != "succeeded" {
-                        return Err(CliError::FailedTask(Box::new(state)));
-                    }
-                    return session.output("run.wait", &state);
-                }
-                if poll + 1 < *max_polls {
-                    tokio::time::sleep(std::time::Duration::from_millis(*poll_ms)).await;
-                }
-            }
-            Err(CliError::Deadline)
-        }
+        } => wait(session, run, terminal, *poll_ms, *max_polls).await,
         RunCommand::Pause { run } => {
             submit(
                 session,
@@ -101,6 +87,28 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
             follow: should_follow,
         } => timeline(session, run, *limit, cursor.as_deref(), *should_follow).await,
     }
+}
+
+async fn wait(
+    session: &CliSession,
+    run: &str,
+    terminal: &crate::TerminalFilter,
+    poll_ms: u64,
+    max_polls: u32,
+) -> Result<(), CliError> {
+    for poll in 0..max_polls {
+        let state = session.client().run(run).await?;
+        if let Some(outcome) = state.terminal.as_deref() {
+            if !terminal.matches(outcome) || outcome != "succeeded" {
+                return Err(CliError::FailedTask(Box::new(state)));
+            }
+            return session.output("run.wait", &state);
+        }
+        if poll + 1 < max_polls {
+            tokio::time::sleep(std::time::Duration::from_millis(poll_ms)).await;
+        }
+    }
+    Err(CliError::Deadline)
 }
 
 fn signal_payload(payload: &str) -> Result<Value, CliError> {

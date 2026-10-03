@@ -150,6 +150,89 @@ pub(super) fn start_request(run: &str, revision: &str, inputs: Vec<RunInput>) ->
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn supplied_input_types_and_run_budgets_refuse_before_creation() -> TestResult {
+    use milkdrift_blueprint::{FieldId, InterfaceField, SchemaRef, WorkflowInterface};
+    let directory = tempfile::tempdir()?;
+    let model = ModelFixture::start().await?;
+    let mut config = super::authoring::model_configuration_document(&directory, model.address)?;
+    config.actors[1].authority.budget.artifact_bytes = Some(8);
+    let daemon = start(config.validate(directory.path())?, CONTROLLER_TOKEN).await?;
+    let limited = client(&daemon.endpoint, OBSERVER_TOKEN)?;
+    let input = upload(
+        &daemon.client,
+        "oversized-for-run",
+        b"more than eight bytes",
+    )
+    .await?;
+    for (name, version, caller) in [("type", 2, &daemon.client), ("budget", 1, &limited)] {
+        let definition = BlueprintRevision::genesis(
+            WorkflowId::new(name)?,
+            MutationBatch::new(vec![
+                Mutation::AddNode {
+                    node: Node::new(
+                        NodeId::new("done")?,
+                        NodeKind::Terminal {
+                            outcome: TerminalOutcome::Success,
+                        },
+                    )?,
+                },
+                Mutation::SetInterface {
+                    interface: WorkflowInterface::new(
+                        [(
+                            FieldId::new("brief")?,
+                            InterfaceField::required(SchemaRef::new(
+                                milkdrift_capability::SchemaId::new(
+                                    "milkdrift.artifact-reference",
+                                )?,
+                                version,
+                            )?),
+                        )],
+                        [],
+                    )?,
+                },
+            ])?,
+            AuthorRef::new("human:test")?,
+            "input contract refusal",
+        )?;
+        daemon
+            .client
+            .submit(&request(
+                &format!("import-{name}"),
+                None,
+                Command::ImportBlueprint {
+                    document: serde_json::from_slice(
+                        &BlueprintRevisionDocument::new(&definition).to_canonical_json()?,
+                    )?,
+                },
+            ))
+            .await?;
+        let command = request(
+            &format!("start-{name}"),
+            Some(0),
+            Command::StartRun {
+                run_id: name.into(),
+                workflow_id: name.into(),
+                revision_id: definition.id().to_string(),
+                inputs: vec![input.clone()],
+            },
+        );
+        assert!(
+            matches!(caller.submit(&command).await, Err(ClientError::Api(error)) if error.code == ErrorCode::InvalidInput),
+            "{name}"
+        );
+        assert!(daemon.client.run(name).await.is_err());
+    }
+    assert!(
+        model
+            .requests
+            .lock()
+            .map_err(|_| "fixture lock")?
+            .is_empty()
+    );
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn supplied_inputs_are_validated_frozen_isolated_and_materialized() -> TestResult {
     let directory = tempfile::tempdir()?;
     let model = ModelFixture::start().await?;

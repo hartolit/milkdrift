@@ -200,6 +200,17 @@ fn malformed_arguments_and_missing_bounds_use_stdout_only() -> TestResult {
     for arguments in [
         vec!["run", "start"],
         vec!["run", "wait", "run-one"],
+        vec!["run", "reconnect", "retained.json", "--wait"],
+        vec![
+            "run",
+            "start",
+            "run-one",
+            "workflow",
+            "revision",
+            "--request-file",
+            "retained.json",
+            "--wait",
+        ],
         vec!["capability", "list", "--follow"],
         vec!["blueprint", "show", "revision-one", "--document"],
     ] {

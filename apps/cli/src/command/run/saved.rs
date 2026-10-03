@@ -10,7 +10,7 @@ use std::path::Path;
 mod file;
 
 pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Result<(), CliError> {
-    let (saved, path, prepare_only) = match command {
+    let (saved, path, prepare_only, wait) = match command {
         RunCommand::Start {
             run,
             workflow,
@@ -19,8 +19,9 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
             input,
             request_file,
             prepare_only,
+            wait,
         } => {
-            // Reserve a new private destination before uploading or submitting anything.
+            // Prepare a private temporary file before uploading or submitting anything.
             let destination = file::PendingRequest::new(request_file)?;
             let mut supplied: Vec<RunInput> = match inputs {
                 Some(path) => serde_json::from_value(
@@ -78,9 +79,9 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
             }
             saved.validate()?;
             destination.commit(&saved)?;
-            (saved, request_file.as_path(), *prepare_only)
+            (saved, request_file.as_path(), *prepare_only, *wait)
         }
-        RunCommand::Reconnect { file } => {
+        RunCommand::Reconnect { file, wait } => {
             let saved = file::read(file)?;
             // Global identity/guard overrides cannot silently replace fields in a saved request.
             if session.cli().expected_sequence.is_some()
@@ -103,18 +104,57 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
                     "reconnect uses the saved command identity and reason".into(),
                 ));
             }
-            (saved, file.as_path(), false)
+            (saved, file.as_path(), false, *wait)
         }
         _ => return Err(CliError::Internal("expected start or reconnect".into())),
     };
     if prepare_only {
         return session.output("run.prepared", &identity(&saved, path));
     }
+    if wait {
+        announce(session, &saved, path)?;
+    }
     let accepted = session.client().submit_saved_run(&saved).await?;
     let mut value =
         serde_json::to_value(accepted).map_err(|error| CliError::Internal(error.to_string()))?;
     value["recovery"] = identity(&saved, path);
-    session.output("run.start", &value)
+    if wait {
+        let Command::StartRun { run_id, .. } = &saved.request.command else {
+            return Err(CliError::Internal("saved start missing".into()));
+        };
+        super::wait(
+            session,
+            run_id,
+            &crate::TerminalFilter::Any,
+            crate::DEFAULT_RUN_POLL_MS,
+            crate::DEFAULT_RUN_MAX_POLLS,
+        )
+        .await
+    } else {
+        session.output("run.start", &value)
+    }
+}
+
+fn announce(session: &CliSession, saved: &SavedRunRequest, path: &Path) -> Result<(), CliError> {
+    if session.cli().json {
+        println!(
+            "{}",
+            crate::output::encode(
+                "run.prepared",
+                Some(&saved.request.command_id),
+                "prepared",
+                identity(saved, path),
+                serde_json::Value::Null,
+                false
+            )?
+        );
+    } else {
+        session.output("run.prepared", &identity(saved, path))?;
+    }
+    use std::io::Write as _;
+    std::io::stdout()
+        .flush()
+        .map_err(|error| CliError::Internal(error.to_string()))
 }
 
 pub(super) fn identity(saved: &SavedRunRequest, path: &Path) -> serde_json::Value {

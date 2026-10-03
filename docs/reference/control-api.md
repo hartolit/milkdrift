@@ -44,7 +44,7 @@ the negotiated envelope version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 12},
+  "protocol": {"major": 2, "minor": 13},
   "request_id": "req-1",
   "value": {}
 }
@@ -58,7 +58,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 12},
+  "protocol": {"major": 2, "minor": 13},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -107,7 +107,7 @@ administration uses the separate routes below. A command envelope has no actor f
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 12},
+  "protocol": {"major": 2, "minor": 13},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -162,6 +162,10 @@ containing that authority and the complete command. Persist it privately before 
 `submit_saved_run` checks the current host/caller/grant and sends that exact command once; application
 receipts remain the sole execution replay owner. The CLI requires a new `--request-file` for start,
 supports `--input NAME=FILE` and `--prepare-only`, and recovers using `run reconnect FILE`.
+Start/reconnect `--wait` requires an explicit overall deadline and emits the recoverable identity
+before observation. JSON mode emits one nonfinal `run.prepared` record and one final result/error;
+without waiting, acceptance remains a single final response. Timeout/exit stops the observer;
+cancellation stays a separate command with its existing uncertain-effect semantics.
 This record has no credentials and creates no model selection earlier than runtime dispatch.
 Control protocol versions still require a coordinated upgrade. Direct invocation documents retain
 their existing version, saved request identity, replay and conflict semantics.

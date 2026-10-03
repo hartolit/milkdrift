@@ -54,6 +54,13 @@ This document owns current implementation, limitations, exact versions, and qual
   and pending blueprint mutations, with guarded atomic replacement. Editing a saved version creates
   a child without changing old definitions or runs. The [operator recipe](../../examples/operator/README.md#author-a-model-workflow)
   explains the supported model editor and its explicit refusal of richer definitions.
+- Ordinary run starts accept named immutable artifacts through existing upload and workspace
+  admission. The CLI can upload a separate text brief for each run of one saved revision, retain a
+  private exact request before submission, and reconnect under the original host/caller/grant.
+  Selected brief and prior-step bytes reach model requests through frozen context manifests.
+  Bounded optional waiting ends local observation without cancelling daemon work. Controlled
+  endpoint and actual CLI/daemon tests cover isolated inputs and lost-reply recovery without
+  repeating provider requests; integrated sprint acceptance remains open.
 - Causal context uses bounded historical discovery, explicit branch/join/subworkflow visibility,
   exact provenance, authority/sensitivity checks, deterministic budgets and omissions, and
   selected-only materialization. Required-evidence checks continue after selection stops, and
@@ -133,10 +140,8 @@ values; repository contracts check the version cells against source.
 
 ## Limitations now
 
-- Ordinary public `StartRun` carries only run, workflow and revision identities; the daemon supplies
-  an empty input list to `CreateRun`. Runtime already accepts declared initial workspace values,
-  and published calls map their supported inputs into that path. Ordinary per-run input submission
-  is not exposed. Public authoring constructs ordinary model workflows from named edits and
+- Ordinary supplied inputs require artifact-reference v1 interface fields; files use the bounded
+  upload route. Published methods retain their separate choice/artifact contracts. Public authoring
   returns validated revisions with server-derived identities. The model editor is restricted to
   fresh text steps, explicit direct inputs and completeness gates; richer definitions refuse
   editing. `construct_blueprint` accepts explicit existing mutations for advanced clients.

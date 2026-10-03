@@ -151,6 +151,8 @@ fn human_value(value: &Value) {
                 "health",
                 "command_id",
                 "host",
+                "actor",
+                "workflow_id",
                 "request_id",
                 "execution",
                 "type",
@@ -197,6 +199,7 @@ fn human_value(value: &Value) {
             }
             for key in [
                 "summary",
+                "recovery",
                 "value",
                 "items",
                 "catalog",

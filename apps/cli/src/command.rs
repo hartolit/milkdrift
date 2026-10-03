@@ -38,6 +38,8 @@ impl Cli {
             self.command,
             TopCommand::Run {
                 command: crate::RunCommand::Wait { .. }
+                    | crate::RunCommand::Start { wait: true, .. }
+                    | crate::RunCommand::Reconnect { wait: true, .. }
             } | TopCommand::Invocation {
                 command: crate::InvocationCommand::Wait { .. }
             }

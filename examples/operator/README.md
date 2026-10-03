@@ -271,8 +271,7 @@ the exact start in the new `--request-file` before submission. It also accepts `
 ```sh
 milkdrift --command-id release-harbor-1 run start harbor-notes release-notes REVISION --input brief=examples/operator/release-notes/harbor-brief.txt --request-file harbor.request.json
 milkdrift --command-id release-lantern-1 run start lantern-notes release-notes REVISION --input brief=examples/operator/release-notes/lantern-brief.txt --request-file lantern.request.json
-milkdrift run reconnect harbor.request.json
-milkdrift --timeout-secs 90 run wait harbor-notes
+milkdrift --timeout-secs 90 run reconnect harbor.request.json --wait
 ```
 
 Reconnect resends the saved request to recover its receipt. It never rereads the brief or creates a
@@ -281,6 +280,13 @@ new run identity. Editing the local brief after preparation cannot change accept
 Use a new run, command, and request-file destination for deliberately new execution. Existing
 request files are never overwritten. For already uploaded inputs or other supported media, supply
 `--inputs FILE` containing an array such as `[{"name":"brief","artifact_id":"input:…"}]`.
+
+Starts and reconnects return acceptance by default. Add `--wait` with an explicit `--timeout-secs`
+to observe completion. Before waiting, the CLI prints the recovery file, command and run identity;
+JSON mode emits a `run.prepared` record with `final: false`, followed by one final outcome.
+Closing the client or reaching its deadline ends observation while daemon work continues.
+Cancellation is a separate `run cancel` request, and its acceptance does not prove external work
+has stopped. Reconnect leaves usage accounting, uncertain effects and accepted child runs intact.
 
 Recovery files identify the host, actor, exact grant, command, workflow revision, input artifacts,
 reason, evidence and guards. They contain no credential or source-file bytes. Keep them private:

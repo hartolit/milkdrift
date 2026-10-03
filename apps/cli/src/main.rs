@@ -448,6 +448,9 @@ struct StreamArgs {
     follow: bool,
 }
 
+const DEFAULT_RUN_POLL_MS: u64 = 250;
+const DEFAULT_RUN_MAX_POLLS: u32 = 1000;
+
 #[derive(Subcommand)]
 enum RunCommand {
     /// Create and start from one exact immutable revision.
@@ -465,11 +468,19 @@ enum RunCommand {
         #[arg(long)]
         request_file: PathBuf,
         /// Save the request without starting work; reconnect submits it later.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "wait")]
         prepare_only: bool,
+        /// Observe completion after acceptance; requires explicit --timeout-secs.
+        #[arg(long)]
+        wait: bool,
     },
     /// Recover the exact saved start without rereading input files or choosing new identities.
-    Reconnect { file: PathBuf },
+    Reconnect {
+        file: PathBuf,
+        /// Observe completion after recovering acceptance; requires explicit --timeout-secs.
+        #[arg(long)]
+        wait: bool,
+    },
     /// List one bounded stable run page.
     List(PageArgs),
     /// Inspect compact current state.
@@ -479,9 +490,9 @@ enum RunCommand {
         run: String,
         #[arg(long, value_enum, default_value_t = TerminalFilter::Any)]
         terminal: TerminalFilter,
-        #[arg(long, default_value_t = 250, value_parser = clap::value_parser!(u64).range(10..=60_000))]
+        #[arg(long, default_value_t = DEFAULT_RUN_POLL_MS, value_parser = clap::value_parser!(u64).range(10..=60_000))]
         poll_ms: u64,
-        #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..=100_000))]
+        #[arg(long, default_value_t = DEFAULT_RUN_MAX_POLLS, value_parser = clap::value_parser!(u32).range(1..=100_000))]
         max_polls: u32,
     },
     /// Pause new work.
@@ -831,7 +842,8 @@ async fn run() -> ExitCode {
         && cli.timeout_secs.is_none()
     {
         let error = CliError::Invalid(
-            "run wait and noninteractive follow require explicit --timeout-secs".to_owned(),
+            "run wait, --wait, and noninteractive follow require explicit --timeout-secs"
+                .to_owned(),
         );
         emit_error(json, operation, command_id.as_deref(), &error);
         return ExitCode::from(2);

@@ -30,7 +30,7 @@ output, exits, bounds, and the complete command contract. The
 ## Use it from scripts
 
 Choose `--json`, explicit command IDs for mutations, and an overall `--timeout-secs`. `run wait`
-and noninteractive `--follow` require a deadline. `--yes` supplies local confirmation for commands
+and start/reconnect `--wait` or noninteractive `--follow` require a deadline. `--yes` supplies local confirmation for commands
 that require it; the daemon still checks authority, evidence, and optimistic guards.
 
 A successful start reply means acceptance. `run wait` checks for a terminal result, while attempt
