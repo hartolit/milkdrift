@@ -3,37 +3,55 @@ use super::{
     graph::{ModelWorkflow, Step, checked_name, model_source},
 };
 use milkdrift_blueprint::{BindingSource, FieldId, PortId};
-use milkdrift_capability::{
-    CapabilityId, CapabilityRequirement, OperationId, ProviderProfileRef, SideEffectClass,
-};
+use milkdrift_capability::{CapabilityRequirement, OperationId, PlacementRequirement};
 use milkdrift_control_protocol::{BlueprintEdit, ModelInputSource};
 use milkdrift_model::{ContentPart, Message, MessageRole, ModelTaskRequest, SessionSelection};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-fn model(
+fn selection(
     owner: &Owner,
     session: &ActorSession,
     capability: &str,
+    operation: &str,
 ) -> Result<CapabilityRequirement, PublicFailure> {
+    let operation = OperationId::new(operation).map_err(super::failure)?;
     let selected = owner
-        .capabilities(session)?
+        .capability_generations(session)?
         .into_iter()
         .find(|value| {
-            value.capability_id == capability
+            value.capability.as_str() == capability
                 && value.current
                 && !value.draining
-                && value.operations.iter().any(|op| op == "model.generate")
+                && value.operation_contracts.contains_key(&operation)
         })
         .ok_or_else(|| {
-            super::invalid("model is not available in the caller's permitted catalogue")
+            super::invalid(
+                "required capability is not available in the caller's permitted catalogue",
+            )
         })?;
-    let mut requirement =
-        CapabilityRequirement::new(OperationId::new("model.generate").map_err(super::failure)?)
-            .exact(CapabilityId::new(capability).map_err(super::failure)?)
-            .maximum_side_effect(SideEffectClass::Unknown);
+    let contract = selected
+        .operation_contracts
+        .get(&operation)
+        .ok_or_else(|| super::invalid("operation unavailable"))?;
+    // An exact identity alone leaves every omitted dimension as Any at run admission.
+    // Retain the catalogue's constraints so the author's narrow grant can admit this task.
+    let mut requirement = CapabilityRequirement::new(operation)
+        .exact(selected.capability)
+        .category(selected.category)
+        .execution_trust(selected.execution_trust)
+        .maximum_side_effect(contract.side_effect())
+        .with_placement(
+            PlacementRequirement::new(
+                Some(BTreeSet::from([selected.locality])),
+                selected.peer.map(|peer| BTreeSet::from([peer])),
+            )
+            .map_err(super::failure)?,
+        );
+    for zone in selected.trust_zones {
+        requirement = requirement.trust_zone(zone);
+    }
     if let Some(profile) = selected.provider_profile {
-        requirement =
-            requirement.provider_profile(ProviderProfileRef::new(profile).map_err(super::failure)?);
+        requirement = requirement.provider_profile(profile);
     }
     Ok(requirement)
 }
@@ -67,7 +85,14 @@ impl ModelWorkflow {
                 .requirement
                 .exact_capability()
                 .ok_or_else(|| super::invalid("model selection must be explicit"))?;
-            if model(owner, session, id.as_str())? != step.requirement {
+            if selection(owner, session, id.as_str(), "model.generate")? != step.requirement
+                || selection(
+                    owner,
+                    session,
+                    "milkdrift-workflow-control",
+                    "workflow.accept_result",
+                )? != step.acceptance_requirement
+            {
                 return Err(super::invalid(
                     "selected model profile changed; explicitly select the model again",
                 ));
@@ -99,11 +124,18 @@ impl ModelWorkflow {
                 if self.steps.iter().any(|existing| existing.id == *step) {
                     return Err("step already exists".into());
                 }
-                let requirement =
-                    model(owner, session, capability).map_err(|error| error.message)?;
+                let requirement = selection(owner, session, capability, "model.generate")
+                    .map_err(|error| error.message)?;
                 self.steps.push(Step {
                     id: step.clone(),
                     requirement,
+                    acceptance_requirement: selection(
+                        owner,
+                        session,
+                        "milkdrift-workflow-control",
+                        "workflow.accept_result",
+                    )
+                    .map_err(|error| error.message)?,
                     request: request(prompt, *maximum_output_units)?,
                     inputs: BTreeMap::new(),
                 });
@@ -113,8 +145,18 @@ impl ModelWorkflow {
                 step.request = request(prompt, step.request.maximum_output_units())?;
             }
             BlueprintEdit::Model { step, capability } => {
-                self.step_mut(step)?.requirement =
-                    model(owner, session, capability).map_err(|error| error.message)?;
+                let requirement = selection(owner, session, capability, "model.generate")
+                    .map_err(|error| error.message)?;
+                let acceptance = selection(
+                    owner,
+                    session,
+                    "milkdrift-workflow-control",
+                    "workflow.accept_result",
+                )
+                .map_err(|error| error.message)?;
+                let step = self.step_mut(step)?;
+                step.requirement = requirement;
+                step.acceptance_requirement = acceptance;
             }
             BlueprintEdit::Input { name } => {
                 FieldId::new(name)?;

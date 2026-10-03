@@ -48,10 +48,10 @@ impl Owner {
         failure.map_or(Ok(()), Err)
     }
 
-    pub(super) fn capabilities(
+    pub(super) fn capability_generations(
         &self,
         session: &ActorSession,
-    ) -> Result<Vec<CapabilityRead>, PublicFailure> {
+    ) -> Result<Vec<milkdrift_capability_host::GenerationView>, PublicFailure> {
         self.authorize(
             session,
             AuthorityOperation::ListCapabilities,
@@ -77,48 +77,54 @@ impl Owner {
             .map_err(|error| {
                 PublicFailure::new(ErrorCode::Unavailable, bounded(&error.to_string()), true)
             })
-            .map(|views| {
-                views
-                    .into_iter()
-                    .map(|view| {
-                        let operation_contracts = view
-                            .operation_contracts
+    }
+
+    pub(super) fn capabilities(
+        &self,
+        session: &ActorSession,
+    ) -> Result<Vec<CapabilityRead>, PublicFailure> {
+        self.capability_generations(session).map(|views| {
+            views
+                .into_iter()
+                .map(|view| {
+                    let operation_contracts = view
+                        .operation_contracts
+                        .iter()
+                        .map(|(operation, contract)| {
+                            super::read_model::public_operation_contract(operation, contract)
+                        })
+                        .collect::<Vec<_>>();
+                    CapabilityRead {
+                        capability_id: view.capability.as_str().to_owned(),
+                        generation: view.descriptor_revision,
+                        descriptor_digest: view.descriptor_digest,
+                        category: snake_debug(&view.category),
+                        operations: operation_contracts
                             .iter()
-                            .map(|(operation, contract)| {
-                                super::read_model::public_operation_contract(operation, contract)
-                            })
-                            .collect::<Vec<_>>();
-                        CapabilityRead {
-                            capability_id: view.capability.as_str().to_owned(),
-                            generation: view.descriptor_revision,
-                            descriptor_digest: view.descriptor_digest,
-                            category: snake_debug(&view.category),
-                            operations: operation_contracts
-                                .iter()
-                                .map(|contract| contract.operation.clone())
-                                .collect(),
-                            operation_contracts,
-                            provider_profile: view
-                                .provider_profile
-                                .map(|profile| profile.as_str().to_owned()),
-                            locality: snake_debug(&view.locality),
-                            peer_id: view.peer.map(|peer| peer.as_str().to_owned()),
-                            trust_zones: view
-                                .trust_zones
-                                .iter()
-                                .map(|zone| zone.as_str().to_owned())
-                                .collect(),
-                            execution_trust: snake_debug(&view.execution_trust),
-                            current: view.current,
-                            draining: view.draining,
-                            health: snake_debug(&view.health),
-                            available: view.available,
-                            active_permits: view.active_permits,
-                            permit_limit: view.permit_limit,
-                        }
-                    })
-                    .collect()
-            })
+                            .map(|contract| contract.operation.clone())
+                            .collect(),
+                        operation_contracts,
+                        provider_profile: view
+                            .provider_profile
+                            .map(|profile| profile.as_str().to_owned()),
+                        locality: snake_debug(&view.locality),
+                        peer_id: view.peer.map(|peer| peer.as_str().to_owned()),
+                        trust_zones: view
+                            .trust_zones
+                            .iter()
+                            .map(|zone| zone.as_str().to_owned())
+                            .collect(),
+                        execution_trust: snake_debug(&view.execution_trust),
+                        current: view.current,
+                        draining: view.draining,
+                        health: snake_debug(&view.health),
+                        available: view.available,
+                        active_permits: view.active_permits,
+                        permit_limit: view.permit_limit,
+                    }
+                })
+                .collect()
+        })
     }
 }
 

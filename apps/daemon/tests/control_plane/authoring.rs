@@ -43,6 +43,26 @@ fn initial(workflow: &str) -> BlueprintDraft {
     }
 }
 
+fn editor_scope() -> TestResult<CapabilityAuthorityScope> {
+    use std::collections::BTreeSet;
+    Ok(
+        CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
+            .only_capabilities(BTreeSet::from([
+                CapabilityId::new("writing-model")?,
+                CapabilityId::new("milkdrift-workflow-control")?,
+            ]))?
+            .only_operations(BTreeSet::from([
+                OperationId::new("model.generate")?,
+                OperationId::new("workflow.accept_result")?,
+            ]))?
+            .only_trust_zones(BTreeSet::from([
+                milkdrift_capability::TrustZone::new("test")?,
+                milkdrift_capability::TrustZone::new("milkdrift-control")?,
+            ]))?
+            .build(),
+    )
+}
+
 pub(super) fn model_configuration(
     directory: &TempDir,
     address: std::net::SocketAddr,
@@ -87,6 +107,7 @@ pub(super) fn model_configuration(
     let path = directory.path().join("model.json");
     fs::write(&path, profile.to_canonical_json()?)?;
     let mut config = configuration_document_with_process_profiles(directory, 64, vec![])?;
+    config.actors[0].authority.resources.capability = editor_scope()?;
     config.actors[1].authority = ActorGrantConfig::dangerous_administrator();
     config.actors[1].authority.resources.capability = CapabilityAuthorityScope::deny_all();
     config
@@ -232,6 +253,17 @@ async fn public_authoring_saves_reopens_and_refuses_unsafe_edits_without_executi
     }
     let saved = author(&daemon.client, &notes, "save-notes", None, true).await?;
     let original = saved.value["document"].clone();
+    let (_, authored) = BlueprintRevisionDocument::from_json(&serde_json::to_vec(&original)?)?;
+    for node in authored.semantic().nodes().values() {
+        if let NodeKind::Task { config } = node.kind() {
+            assert!(
+                CapabilityAuthorityScope::requirement_envelope(config.requirement())?
+                    .is_subset_of(&editor_scope()?),
+                "authored task {} exceeds the documented grant",
+                node.id()
+            );
+        }
+    }
     let semantic = &original["revision"]["semantic"];
     assert_eq!(semantic["interface"]["inputs"]["brief"]["required"], true);
     assert_eq!(
@@ -254,6 +286,32 @@ async fn public_authoring_saves_reopens_and_refuses_unsafe_edits_without_executi
     assert_eq!(
         semantic["nodes"]["author.review.hold"]["kind"]["type"],
         "signal_wait"
+    );
+    let control = semantic["edges"]
+        .as_object()
+        .ok_or("edges")?
+        .values()
+        .filter(|edge| edge["kind"] == "control")
+        .map(|edge| {
+            (
+                edge["source_node"].as_str().unwrap_or_default(),
+                edge["source_port"].as_str().unwrap_or_default(),
+                edge["target_node"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(control.contains(&("draft", "out", "author.draft.accept")));
+    assert!(control.contains(&("author.draft.accept", "out", "author.draft.gate")));
+    assert!(control.contains(&("author.draft.gate", "pass", "review")));
+    assert!(control.contains(&("author.review.gate", "pass", "author.done")));
+    assert!(control.contains(&("author.review.gate", "fail", "author.review.hold")));
+    assert!(control.contains(&("author.review.hold", "out", "author.review.failed")));
+    assert_eq!(
+        control
+            .iter()
+            .filter(|(_, _, target)| *target == "author.done")
+            .count(),
+        1
     );
     let saved_draft = draft(&saved)?;
     assert!(

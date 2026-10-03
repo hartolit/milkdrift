@@ -22,6 +22,8 @@ edits. Construction uses the existing model request, blueprint binding, and resu
 owners. Every model selection is explicit and rechecked against the caller's filtered catalogue.
 Each model step has a `ModelProse` check; rejection enters a signal hold whose unchanged continuation
 fails. An output is exposed only on the successful route. Task context requests only direct inputs.
+Model and acceptance requirements retain the selected catalogue's category, trust, placement and
+side-effect constraints; pinning identity alone would leave those authority dimensions unrestricted.
 Per-run value submission and their provider materialization remain separately owned execution work.
 
 The editor recognizes its supported shape by reconstructing the entire semantic definition and

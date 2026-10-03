@@ -22,6 +22,7 @@ const PREFIX: &str = "author.";
 pub(super) struct Step {
     pub(super) id: String,
     pub(super) requirement: CapabilityRequirement,
+    pub(super) acceptance_requirement: CapabilityRequirement,
     pub(super) request: ModelTaskRequest,
     pub(super) inputs: BTreeMap<String, BindingSource>,
 }
@@ -46,15 +47,12 @@ fn schema(id: &str) -> BuildResult<SchemaRef> {
 fn artifact() -> BuildResult<SchemaRef> {
     schema("milkdrift.artifact-reference")
 }
-fn node_output(step: &str) -> BuildResult<BindingSource> {
+pub(super) fn model_source(step: &str) -> BuildResult<BindingSource> {
     Ok(BindingSource::NodeOutput {
         node: NodeId::new(step)?,
         port: PortId::new("final_text")?,
         path: PathSelector::new(vec![])?,
     })
-}
-pub(super) fn model_source(step: &str) -> BuildResult<BindingSource> {
-    node_output(step)
 }
 fn generated(step: &str, role: &str) -> String {
     format!("author.{step}.{role}")
@@ -101,6 +99,13 @@ impl ModelWorkflow {
                 .body()
                 .clone();
             prompt(&request)?;
+            let acceptance = semantic
+                .nodes()
+                .get(&NodeId::new(generated(id.as_str(), "accept"))?)
+                .ok_or("missing result acceptance")?;
+            let NodeKind::Task { config: acceptance } = acceptance.kind() else {
+                return Err("unsupported result acceptance".into());
+            };
             let inputs = node
                 .data_inputs()
                 .iter()
@@ -117,6 +122,7 @@ impl ModelWorkflow {
             result.steps.push(Step {
                 id: id.to_string(),
                 requirement: config.requirement().clone(),
+                acceptance_requirement: acceptance.requirement().clone(),
                 request,
                 inputs,
             });
@@ -200,7 +206,7 @@ impl ModelWorkflow {
         if let Some((step, name)) = &self.output {
             done = done.with_data_input(
                 PortId::new(name)?,
-                DataPort::input(artifact()?, true, Some(node_output(step)?))?,
+                DataPort::input(artifact()?, true, Some(model_source(step)?))?,
             )?;
             add_edge(&mut edges, EdgeKind::Data, step, "final_text", DONE, name)?;
         }
@@ -261,10 +267,9 @@ impl ModelWorkflow {
             let gate = generated(&step.id, "gate");
             let hold = generated(&step.id, "hold");
             let failed = generated(&step.id, "failed");
-            nodes.push(result_acceptance_task(
-                NodeId::new(&accept)?,
-                ResultAcceptanceContract::new(ResultRequirement::ModelProse, BTreeSet::new())?,
-                artifact()?,
+            nodes.push(acceptance_task(
+                &accept,
+                step.acceptance_requirement.clone(),
             )?);
             nodes.push(result_acceptance_gate(
                 NodeId::new(&gate)?,
@@ -457,4 +462,29 @@ pub(super) fn difference(
         }
     }
     result
+}
+
+fn acceptance_task(id: &str, requirement: CapabilityRequirement) -> BuildResult<Node> {
+    let template = result_acceptance_task(
+        NodeId::new(id)?,
+        ResultAcceptanceContract::new(ResultRequirement::ModelProse, BTreeSet::new())?,
+        artifact()?,
+    )?;
+    let mut node = Node::new(
+        template.id().clone(),
+        NodeKind::task_direct_inputs(requirement)?,
+    )?;
+    for port in template.control_inputs() {
+        node = node.with_control_input(port.clone())?;
+    }
+    for port in template.control_outputs() {
+        node = node.with_control_output(port.clone())?;
+    }
+    for (name, port) in template.data_inputs() {
+        node = node.with_data_input(name.clone(), port.clone())?;
+    }
+    for (name, port) in template.data_outputs() {
+        node = node.with_data_output(name.clone(), port.clone())?;
+    }
+    Ok(node)
 }
