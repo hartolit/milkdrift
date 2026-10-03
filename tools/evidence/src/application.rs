@@ -29,6 +29,13 @@ use milkdrift_daemon::{
 use serde_json::{Value, json};
 use url::Url;
 
+mod diagnostics;
+
+// Ordinary CLI calls retain the existing ten-second watchdog. A wait/follow command's
+// explicit CLI budget replaces the eight seconds of work, leaving two seconds to exit.
+const CLI_WORK: Duration = Duration::from_secs(8);
+const CLI_EXIT_GRACE: Duration = Duration::from_secs(2);
+
 /// Immutable child launch inputs; configuration compilation stays with the daemon.
 pub struct DaemonLaunch {
     executable: PathBuf,
@@ -77,7 +84,12 @@ impl DaemonLaunch {
                 "daemon exited before readiness",
             )?;
             // Bound each startup probe without shortening subsequent scenario requests.
-            if tokio::time::timeout(Duration::from_secs(2), client.readiness())
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            ensure(
+                !remaining.is_zero(),
+                "daemon readiness exceeded its deadline",
+            )?;
+            if tokio::time::timeout(remaining.min(Duration::from_secs(2)), client.readiness())
                 .await
                 .is_ok_and(|result| result.is_ok_and(|ready| ready.ready))
             {
@@ -87,7 +99,12 @@ impl DaemonLaunch {
                 Instant::now() < deadline,
                 "daemon readiness exceeded its deadline",
             )?;
-            tokio::time::sleep(Duration::from_millis(25)).await;
+            tokio::time::sleep(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(25)),
+            )
+            .await;
         }
     }
 }
@@ -184,6 +201,14 @@ pub fn run_command(
     stdin: Option<&[u8]>,
     timeout: Duration,
 ) -> EvidenceResult<CliOutput> {
+    run_command_until(command, stdin, Instant::now() + timeout)
+}
+
+fn run_command_until(
+    command: &mut ProcessCommand,
+    stdin: Option<&[u8]>,
+    deadline: Instant,
+) -> EvidenceResult<CliOutput> {
     const MAX_CAPTURE: u64 = 8 * 1024 * 1024;
     let mut stdout = tempfile::tempfile()?;
     let mut stderr = tempfile::tempfile()?;
@@ -202,21 +227,54 @@ pub fn run_command(
     command
         .stdout(stdout.try_clone()?)
         .stderr(stderr.try_clone()?);
+    ensure(
+        Instant::now() < deadline,
+        "child command deadline exhausted before spawn",
+    )?;
+    let started = Instant::now();
     let mut child = OwnedChild::spawn(command)?;
-    let deadline = Instant::now() + timeout;
     let status = loop {
-        ensure(
-            stdout.metadata()?.len() <= MAX_CAPTURE && stderr.metadata()?.len() <= MAX_CAPTURE,
-            "child output exceeds evidence bound",
-        )?;
+        let overflow =
+            stdout.metadata()?.len() > MAX_CAPTURE || stderr.metadata()?.len() > MAX_CAPTURE;
+        if overflow || Instant::now() >= deadline {
+            let cause = if overflow {
+                "child output exceeds evidence bound"
+            } else {
+                "child command exceeded its deadline"
+            };
+            let elapsed = started.elapsed();
+            let observed_stdout_bytes = stdout.metadata().ok().map(|metadata| metadata.len());
+            let cleanup = match child.terminate() {
+                Ok(()) => "reaped".to_owned(),
+                Err(_) => "termination/reap failed".to_owned(),
+            };
+            let captured = (|| -> std::io::Result<String> {
+                stdout.rewind()?;
+                let mut bytes = Vec::new();
+                std::io::Read::by_ref(&mut stdout)
+                    .take(64 * 1024)
+                    .read_to_end(&mut bytes)?;
+                Ok(diagnostics::captured_summary(
+                    &String::from_utf8_lossy(&bytes),
+                    usize::try_from(stderr.metadata()?.len()).unwrap_or(usize::MAX),
+                ))
+            })()
+            .unwrap_or_else(|_| "capture summary unavailable".to_owned());
+            return Err(format!(
+                "{cause}; elapsed_ms={}; pid={}; cleanup={cleanup}; stdout_observed_bytes={observed_stdout_bytes:?}; capture_prefix_limit_bytes=65536; {captured}",
+                elapsed.as_millis(),
+                child.id()
+            )
+            .into());
+        }
         if let Some(status) = child.try_wait()? {
             break status;
         }
-        ensure(
-            Instant::now() < deadline,
-            "child command exceeded its deadline",
-        )?;
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(10)),
+        );
     };
     let read = |file: &mut fs::File| -> EvidenceResult<String> {
         file.rewind()?;
@@ -230,6 +288,7 @@ pub fn run_command(
     };
     Ok(CliOutput {
         status,
+        elapsed: started.elapsed(),
         stdout: read(&mut stdout)?,
         stderr: read(&mut stderr)?,
     })
@@ -270,6 +329,8 @@ pub struct CliRunner {
 pub struct CliOutput {
     /// Actual process exit status.
     pub status: ExitStatus,
+    // Time spent waiting for this child, excluding failure diagnostics.
+    elapsed: Duration,
     /// Bounded standard output.
     pub stdout: String,
     /// Bounded standard error; callers must not publish secret-bearing content.
@@ -298,12 +359,29 @@ impl CliRunner {
 
     /// Supplies a bounded input document and requires a successful JSON response.
     pub fn success_with_input(&self, arguments: &[&str], stdin: &[u8]) -> EvidenceResult<Value> {
-        let output = self.run(arguments, (!stdin.is_empty()).then_some(stdin))?;
+        let result = self.run(arguments, (!stdin.is_empty()).then_some(stdin));
+        self.success_result(arguments, result)
+    }
+
+    /// Requires JSON success without letting a nested probe restart an enclosing wait budget.
+    pub fn success_until(&self, arguments: &[&str], deadline: Instant) -> EvidenceResult<Value> {
+        let result = self.run_until(arguments, None, deadline);
+        self.success_result(arguments, result)
+    }
+
+    fn success_result(
+        &self,
+        arguments: &[&str],
+        result: EvidenceResult<CliOutput>,
+    ) -> EvidenceResult<Value> {
+        let output = result?;
         if !output.status.success() {
             return Err(format!(
-                "CLI command failed with exit {:?}: {}",
+                "CLI {} failed with exit {:?}; elapsed_ms={}; {}",
+                diagnostics::command_identity(arguments),
                 output.status.code(),
-                output.stdout
+                output.elapsed.as_millis(),
+                diagnostics::output_summary(&output)
             )
             .into());
         }
@@ -315,12 +393,32 @@ impl CliRunner {
         self.run_with_token(&self.token_file, arguments, stdin)
     }
 
+    /// Runs a probe under both its command allowance and the remaining enclosing budget.
+    pub fn run_until(
+        &self,
+        arguments: &[&str],
+        stdin: Option<&[u8]>,
+        deadline: Instant,
+    ) -> EvidenceResult<CliOutput> {
+        self.run_bounded(&self.token_file, arguments, stdin, Some(deadline))
+    }
+
     /// Uses an explicit credential file for authentication-refusal evidence.
     pub fn run_with_token(
         &self,
         token_file: &Path,
         arguments: &[&str],
         stdin: Option<&[u8]>,
+    ) -> EvidenceResult<CliOutput> {
+        self.run_bounded(token_file, arguments, stdin, None)
+    }
+
+    fn run_bounded(
+        &self,
+        token_file: &Path,
+        arguments: &[&str],
+        stdin: Option<&[u8]>,
+        enclosing: Option<Instant>,
     ) -> EvidenceResult<CliOutput> {
         let forbidden = self.forbidden_storage_path.as_os_str();
         ensure(
@@ -335,9 +433,44 @@ impl CliRunner {
             .arg(&self.endpoint)
             .arg("--token-file")
             .arg(token_file)
-            .arg("--json")
-            .args(arguments);
-        run_command(&mut command, stdin, Duration::from_secs(10))
+            .arg("--json");
+        let explicit = arguments.iter().enumerate().find_map(|(index, value)| {
+            if *value == "--timeout-secs" {
+                arguments.get(index + 1).copied()
+            } else {
+                value.strip_prefix("--timeout-secs=")
+            }
+        });
+        let work = match explicit {
+            Some(value) => Duration::from_secs(value.parse()?),
+            None => {
+                command
+                    .arg("--timeout-secs")
+                    .arg(CLI_WORK.as_secs().to_string());
+                CLI_WORK
+            }
+        };
+        let watchdog = work
+            .checked_add(CLI_EXIT_GRACE)
+            .ok_or("CLI budget overflow")?;
+        let deadline = Instant::now()
+            .checked_add(watchdog)
+            .ok_or("CLI deadline overflow")?;
+        command.args(arguments);
+        run_command_until(
+            &mut command,
+            stdin,
+            enclosing.map_or(deadline, |outer| outer.min(deadline)),
+        )
+        .map_err(|error| {
+            format!(
+                "CLI {}: {error}; work_ms={}; exit_grace_ms={}",
+                diagnostics::command_identity(arguments),
+                work.as_millis(),
+                CLI_EXIT_GRACE.as_millis()
+            )
+            .into()
+        })
     }
 }
 
@@ -353,7 +486,7 @@ pub fn assert_error(
         &format!(
             "CLI exit code was not stable: expected {exit}, observed {:?}: {}",
             output.status.code(),
-            output.stdout
+            diagnostics::output_summary(output)
         ),
     )?;
     ensure(
@@ -398,14 +531,18 @@ pub fn wait_for_readiness(runner: &CliRunner, daemon: &mut OwnedChild) -> Eviden
         if let Some(status) = daemon.try_wait()? {
             return Err(format!("daemon exited before readiness: {status}").into());
         }
-        let output = runner.run(&["daemon", "readiness"], None)?;
+        let output = runner.run_until(&["daemon", "readiness"], None, deadline)?;
         if output.status.success() {
             return Ok(());
         }
         if Instant::now() >= deadline {
             return Err("daemon did not become ready before its deadline".into());
         }
-        thread::sleep(Duration::from_millis(25));
+        thread::sleep(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(25)),
+        );
     }
 }
 
@@ -421,7 +558,12 @@ where
 {
     let deadline = Instant::now() + timeout;
     loop {
-        let output = runner.run(&["run", "show", run], None)?;
+        let output = match runner.run_until(&["run", "show", run], None, deadline) {
+            Ok(output) => output,
+            Err(error) => {
+                return Err(format!("{error}; {}", runner.run_diagnostics(run, None)).into());
+            }
+        };
         if output.status.success() {
             let value = one_json_line(&output.stdout)?;
             if predicate(&value) {
@@ -430,12 +572,18 @@ where
         }
         if Instant::now() >= deadline {
             return Err(format!(
-                "run {run} did not reach its bounded expected state: {}",
-                output.stdout
+                "run did not reach its bounded expected state within {} ms; last={}; {}",
+                timeout.as_millis(),
+                diagnostics::output_summary(&output),
+                runner.run_diagnostics(run, None)
             )
             .into());
         }
-        thread::sleep(Duration::from_millis(25));
+        thread::sleep(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(25)),
+        );
     }
 }
 
@@ -619,7 +767,12 @@ pub fn write_process_profile(
 
 /// Hashes a regular executable and verifies its observed size.
 pub fn hash_file(path: &Path) -> EvidenceResult<(String, u64)> {
-    let mut file = fs::File::open(path)?;
+    let mut file = fs::File::open(path).map_err(|error| {
+        format!(
+            "evidence executable could not be opened for byte pinning: {:?}",
+            error.kind()
+        )
+    })?;
     let metadata = file.metadata()?;
     ensure(
         metadata.is_file(),

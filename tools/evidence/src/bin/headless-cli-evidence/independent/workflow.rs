@@ -217,6 +217,16 @@ pub(super) fn run(
                         .is_some_and(|count| count > 0)
             },
         );
+        let completed = match completed {
+            Ok(completed) => completed,
+            Err(error) => {
+                return Err(format!(
+                    "{error}; model_requests={}",
+                    endpoint.invocations.load(Ordering::SeqCst)
+                )
+                .into());
+            }
+        };
         let controlled_read = runner.success(&["run", "show", root])?;
         let account = &controlled_read["value"]["controller_accounting"];
         let run = runner.success(&["run", "show", &workflow])?;
@@ -227,23 +237,6 @@ pub(super) fn run(
         let attempt = required_text(node, &["latest_attempt_id"])?;
         let inspected = runner.success(&["attempt", "inspect", &workflow, &attempt])?;
         let invocation = required_text(&inspected, &["value", "invocation_id"])?;
-        let completed = match completed {
-            Ok(completed) => completed,
-            Err(error) => {
-                daemon.terminate()?;
-                serving.terminate()?;
-                let store = milkdrift_redb_store::RedbStore::open(serving_directory.join("data"))?;
-                let caller = milkdrift_peer_protocol::ServingCaller::peer(
-                    &PeerId::new(target)?,
-                    &PeerId::new(source)?,
-                );
-                let retained = store.peer_execution_by_request(
-                    &caller,
-                    &PeerRequestId::new(format!("request:{invocation}"))?,
-                )?;
-                return Err(format!("{error}; child={run}; attempt={inspected}; model requests={}; serving={retained:?}", endpoint.invocations.load(Ordering::SeqCst)).into());
-            }
-        };
         if name == "uncertain-model" {
             ensure(
                 inspected["value"]["uncertain"] == true
@@ -264,8 +257,9 @@ pub(super) fn run(
         }
         if completed["value"]["terminal"] != "succeeded" {
             return Err(format!(
-                "remote {name} failed: {}; attempt={inspected}; account={account}",
-                waited.stdout
+                "remote {name} failed: wait_exit={:?}; {}",
+                waited.status.code(),
+                runner.run_diagnostics(&workflow, Some(&remote))
             )
             .into());
         }

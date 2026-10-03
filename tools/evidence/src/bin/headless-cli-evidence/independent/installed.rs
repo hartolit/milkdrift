@@ -76,15 +76,18 @@ fn observe(
     let mut after = 0_u64;
     let mut observations = 0;
     loop {
-        let value = runner.success(&[
-            "invocation",
-            "observations",
-            execution,
-            "--after",
-            &after.to_string(),
-            "--limit",
-            "128",
-        ])?;
+        let value = runner.success_until(
+            &[
+                "invocation",
+                "observations",
+                execution,
+                "--after",
+                &after.to_string(),
+                "--limit",
+                "128",
+            ],
+            deadline,
+        )?;
         let page: ObservationPage = serde_json::from_value(value["value"].clone())?;
         page.validate(128)?;
         ensure(
@@ -116,7 +119,11 @@ fn observe(
             "installed invocation did not finish within 300 seconds; retain and inspect its saved acceptance",
         )?;
         if !advanced {
-            thread::sleep(Duration::from_millis(200));
+            thread::sleep(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(200)),
+            );
         }
     }
 }

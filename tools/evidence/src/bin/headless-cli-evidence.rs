@@ -224,10 +224,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
     };
     let mut daemon = start_daemon(&arguments.daemon, &config_path)?;
     wait_for_readiness(&runner, &mut daemon)?;
-    if let Err(error) = setup::exercise_model(&runner, &arguments.examples, directory.path()) {
-        model.finish()?;
-        return Err(error);
-    }
+    setup::exercise_model(&runner, &arguments.examples, directory.path())?;
 
     runner.success(&["daemon", "readiness"])?;
     runner.success(&["daemon", "authority"])?;

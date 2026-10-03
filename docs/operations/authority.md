@@ -151,6 +151,10 @@ is refused, also compare the exact adapter's filesystem, network, secret, and re
 
 Advance `grant_revision` whenever changing a grant's content; an identity/revision pair binds one
 immutable grant. For revocation, advance the revocation generation or disable the actor and restart.
+Disabling an actor records the next revocation generation in durable serving admission. To enable
+that actor again, advance both `grant_revision` and `revocation_generation` before restarting;
+restoring the old configuration would restore revoked authority and is refused. Repeated restarts
+with the same disabled configuration remain safe.
 Existing page and reconnect
 cursors then fail closed; open streams stop future disclosure on their next bounded check;
 already-entered external work keeps its truthful terminal history.

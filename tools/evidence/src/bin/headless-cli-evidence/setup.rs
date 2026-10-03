@@ -34,6 +34,13 @@ impl MockModel {
     }
 
     pub(super) fn with_text(text: String) -> EvidenceResult<Self> {
+        Self::with_response(text, || Ok(()))
+    }
+
+    fn with_response(
+        text: String,
+        before_response: impl Fn() -> std::io::Result<()> + Send + 'static,
+    ) -> EvidenceResult<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let address = listener.local_addr()?;
         listener.set_nonblocking(true)?;
@@ -63,6 +70,7 @@ impl MockModel {
                 if disconnect.swap(false, Ordering::SeqCst) {
                     continue;
                 }
+                before_response()?;
                 let body = format!(
                     "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
                     json!({"id":"operator-response-1","model":"operator-model","choices":[{"index":0,"delta":{"role":"assistant","content":text},"finish_reason":null}]}),
@@ -209,7 +217,9 @@ pub(super) fn exercise_model(
     )?;
     let waited = runner.success(&[
         "--timeout-secs",
-        "5",
+        // The hosted unoptimized run took over six seconds through model publication and
+        // result acceptance. Allow 30 seconds for the whole chain, including CLI negotiation.
+        "30",
         "run",
         "wait",
         "run-operator-model",
@@ -219,12 +229,9 @@ pub(super) fn exercise_model(
     let run = match waited {
         Ok(run) => run,
         Err(error) => {
-            let timeline =
-                runner.success(&["run", "timeline", "run-operator-model", "--limit", "100"])?;
-            let health = runner.success(&["daemon", "health"])?;
-            let capability = runner.success(&["capability", "show", "operator-model"])?;
             return Err(format!(
-                "{error}; timeline={timeline}; health={health}; capability={capability}"
+                "{error}; {}",
+                runner.run_diagnostics("run-operator-model", Some("operator-model"))
             )
             .into());
         }
@@ -370,4 +377,81 @@ pub(super) fn checked_config(
         &format!("operator configuration was refused: {}", checked.stderr),
     )?;
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use milkdrift_evidence::application::{
+        CliRunner, application_binary, reserve_endpoint, start_daemon, wait_for_readiness,
+    };
+    use std::sync::mpsc;
+
+    #[test]
+    fn operator_model_accepts_bounded_slow_success_through_actual_applications() -> EvidenceResult {
+        let directory = tempfile::tempdir()?;
+        let examples = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/operator");
+        let daemon = application_binary("milkdrift-daemon")?;
+        let cli = application_binary("milkdrift")?;
+        let address = reserve_endpoint()?;
+        let (entered, request) = mpsc::sync_channel(1);
+        let (release, response) = mpsc::sync_channel(1);
+        let mut model = MockModel::with_response("ack".to_owned(), move || {
+            entered.send(()).map_err(std::io::Error::other)?;
+            response
+                .recv_timeout(Duration::from_secs(25))
+                .map_err(std::io::Error::other)
+        })?;
+        let token_file = write_private(
+            &directory.path().join("operator.token"),
+            super::super::TOKEN.as_bytes(),
+        )?;
+        let config = configure(
+            &examples,
+            directory.path(),
+            address,
+            &daemon,
+            vec![],
+            &model,
+        )?;
+        let runner = CliRunner {
+            executable: cli,
+            endpoint: format!("http://{address}/"),
+            token_file,
+            forbidden_storage_path: directory.path().join("data"),
+        };
+        let mut child = start_daemon(&daemon, &config)?;
+        wait_for_readiness(&runner, &mut child)?;
+        let result = thread::scope(|scope| -> EvidenceResult {
+            let (finished, completion) = mpsc::sync_channel(1);
+            let runner = &runner;
+            let examples = &examples;
+            let directory = directory.path();
+            scope.spawn(move || {
+                let _ = finished.send(exercise_model(runner, examples, directory));
+            });
+            request.recv_timeout(Duration::from_secs(10))?;
+            // Hold a real request beyond both old bounds (5s CLI / 10s child). Completion
+            // is released explicitly; a slow-success test must never pass by retrying.
+            let early = completion.recv_timeout(Duration::from_secs(11));
+            release.send(())?;
+            match early {
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    completion.recv_timeout(Duration::from_secs(20))?
+                }
+                Ok(result) => {
+                    result?;
+                    Err("model completed before the fixture released its response".into())
+                }
+                Err(error) => Err(error.into()),
+            }
+        });
+        child.terminate()?;
+        ensure(
+            child.try_wait()?.is_some(),
+            "slow-success daemon was not reaped",
+        )?;
+        model.finish()?;
+        result
+    }
 }

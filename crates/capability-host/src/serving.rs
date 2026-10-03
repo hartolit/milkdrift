@@ -334,9 +334,7 @@ impl PeerService {
                             actor: grant.actor().clone(),
                         },
                     },
-                    generation: grant
-                        .revision()
-                        .saturating_add(grant.revocation_generation()),
+                    generation: policy.authority_generation(grant)?,
                     enabled: !revoked,
                     expires_at_unix_ms: grant.valid_until().get(),
                     maximum_active: policy

@@ -373,6 +373,8 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
     )?;
     daemon.terminate()?;
     config.actors[1].enabled = true;
+    config.actors[1].grant_revision += 1;
+    config.actors[1].revocation_generation += 1;
     save_config(&config_path, &config)?;
     daemon = start_daemon(&arguments.daemon, &config_path)?;
     wait_for_readiness(&runner, &mut daemon)?;
@@ -689,6 +691,10 @@ fn inspect_node(runner: &CliRunner, run: &str, read: &Value, name: &str) -> Evid
 
 fn children(runner: &CliRunner, workflow: &str) -> EvidenceResult<Vec<String>> {
     let runs = runner.success(&["run", "list", "--limit", "100"])?;
+    child_ids(&runs, workflow)
+}
+
+fn child_ids(runs: &Value, workflow: &str) -> EvidenceResult<Vec<String>> {
     runs["value"]["items"]
         .as_array()
         .ok_or("run list absent")?
@@ -701,14 +707,19 @@ fn children(runner: &CliRunner, workflow: &str) -> EvidenceResult<Vec<String>> {
 fn wait_for_child(runner: &CliRunner, workflow: &str) -> EvidenceResult<String> {
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
-        if let Some(child) = children(runner, workflow)?.first() {
+        let runs = runner.success_until(&["run", "list", "--limit", "100"], deadline)?;
+        if let Some(child) = child_ids(&runs, workflow)?.first() {
             return Ok(child.clone());
         }
         ensure(
             std::time::Instant::now() < deadline,
             "controller child was not created",
         )?;
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(
+            deadline
+                .saturating_duration_since(std::time::Instant::now())
+                .min(Duration::from_millis(20)),
+        );
     }
 }
 

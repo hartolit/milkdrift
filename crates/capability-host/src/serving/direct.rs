@@ -227,9 +227,7 @@ impl PeerService {
         self.executions
             .publish_peer_catalog(&ServingCatalogState {
                 caller,
-                relationship_generation: grant
-                    .revision()
-                    .saturating_add(grant.revocation_generation()),
+                relationship_generation: policy.authority_generation(grant)?,
                 generation,
                 digest: snapshot.digest.as_str().to_owned(),
                 expires_at_unix_ms: snapshot.expires_at_unix_ms,

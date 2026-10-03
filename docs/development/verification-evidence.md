@@ -442,6 +442,32 @@ replay/conflict, inspection, pause/signal/resume, guarded proposal adoption, art
 abrupt-restart uncertainty resolution, durable reads, stable failure exits, and model provenance.
 Every CLI action is a real process; no CLI receives the database path.
 
+The operator model check allows thirty seconds for CLI negotiation, model output publication and
+the separate result-acceptance task. The earlier five-second observer expired in hosted run
+36692081893 even though its timeline subsequently recorded both tasks succeeding, with completion
+about 6.5 seconds after run creation. A controlled actual-binary regression holds the model response
+for eleven seconds before releasing it, challenging both that observer and the former ten-second
+subprocess watchdog. This is a software completion check, not a model latency promise.
+
+The shared application harness gives ordinary CLI commands eight seconds of work and two seconds
+to exit. Explicit `--timeout-secs` replaces the work allowance; the watchdog still leaves two seconds
+for the CLI's own bounded result. Nested readiness, run and controller-child probes share their
+enclosing monotonic deadline, including the last partial probe. Killing a child does not cancel
+submitted workflow work. Failure collection has a separate six-second allowance for selected public
+run, timeline, health and optional capability reads. It retains the original error if these reads
+fail, bounds output, and omits credentials, input/context contents and arbitrary adapter messages.
+Owned children are killed and reaped on early exits, with a separate bounded cleanup attempt.
+
+Independent hosting uses the daemon's ordinary thirty-second lease. The five-second fixture lease
+belongs to the operator crash/recovery case and is no longer copied into the peer-transfer scenario.
+Run 36362687103 retained an uncertain remote model attempt after that short lease expired during
+output reporting; extra observer time cannot resolve that uncertainty. Production lease enforcement,
+accepted-work protection and the explicit lost-response assertions remain unchanged.
+
+After the application build succeeds, quality CI runs all three scenarios even if an earlier one
+fails. Cancellation or a failed/skipped build prevents new scenario entry. Each scenario retains its
+own failing exit, so a later success cannot make the gate green.
+
 The installed controller scenario uses the same daemon composition with explicit `enabled`
 activation. Build the daemon with ordinary default features or `--all-features`, then
 run `headless-cli-evidence` with the same `--daemon` and `--cli` paths plus
@@ -461,6 +487,9 @@ The scenario checks disabled start, explicit enablement, disabled recovery of an
 account, revoked approval, exact command replay after receipt archival, retained proposal/acceptance
 artifacts after compaction, settled restart, and crash/reopen of an entered process with a retained
 artifact obligation. These are process-kill boundaries, not power-loss or escaped-descendant proof.
+Revoked approval is exercised by disabling the approver and restarting. The serving owner records
+the effective revocation in its immutable admission generation; re-enablement uses a fresh grant
+revision and revocation generation, as described in [changing authority](../operations/authority.md#changing-authority).
 Both disabled and enabled modes refuse an unmarked subworkflow placed before the marked
 repeat: its parent remains created and no child is admitted outside the cumulative account.
 The process fixture emits bounded entry progress, lives at most ten seconds, and has a thirty-second

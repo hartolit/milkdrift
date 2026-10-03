@@ -185,18 +185,29 @@ impl ServingClientPolicy {
         }
         let mut actors = BTreeSet::new();
         for grant in &self.grants {
-            if !actors.insert(grant.actor())
-                || grant
-                    .revision()
-                    .checked_add(grant.revocation_generation())
-                    .is_none()
-            {
+            if !actors.insert(grant.actor()) {
                 return Err(ServingError::Configuration(
-                    "client actors must be unique and authority generations must fit".to_owned(),
+                    "client actors must be unique".to_owned(),
                 ));
             }
+            self.authority_generation(grant)?;
         }
         Ok(())
+    }
+
+    pub(super) fn authority_generation(
+        &self,
+        grant: &milkdrift_authority::AuthorityGrant,
+    ) -> Result<u64, ServingError> {
+        // Disabling a binding advances its effective revocation without rewriting the grant.
+        // Persist that boundary so restart cannot silently restore the old authority.
+        let revocation = self.revocations.get(grant.identity()).copied().unwrap_or(0);
+        grant
+            .revision()
+            .checked_add(grant.revocation_generation().max(revocation))
+            .ok_or_else(|| {
+                ServingError::Configuration("client authority generation overflow".to_owned())
+            })
     }
 }
 

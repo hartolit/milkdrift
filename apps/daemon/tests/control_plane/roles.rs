@@ -3,6 +3,42 @@ use super::support::*;
 use milkdrift_control_protocol::HostRole;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disabled_actor_restarts_fail_closed_and_requires_fresh_authority_to_reenable() -> TestResult
+{
+    let directory = tempfile::tempdir()?;
+    let mut config = configuration_document_with_process_profiles(&directory, 16, Vec::new())?;
+    let daemon = start(config.clone().validate(directory.path())?, CONTROLLER_TOKEN).await?;
+    client(&daemon.endpoint, OBSERVER_TOKEN)?
+        .readiness()
+        .await?;
+    daemon.stop().await?;
+
+    config.actors[1].enabled = false;
+    // Repeating the disabled configuration must also be an exact, safe restart.
+    for _ in 0..2 {
+        let daemon = start(config.clone().validate(directory.path())?, CONTROLLER_TOKEN).await?;
+        let refused = client(&daemon.endpoint, OBSERVER_TOKEN)?.readiness().await;
+        assert!(
+            matches!(refused, Err(ClientError::Api(error)) if error.code == ErrorCode::Unauthenticated)
+        );
+        daemon.stop().await?;
+    }
+
+    config.actors[1].enabled = true;
+    let error = DaemonHost::start(config.clone().validate(directory.path())?)
+        .err()
+        .ok_or("revoked authority was restored without a new grant")?;
+    assert!(error.to_string().contains("peer_relationship_generation"));
+    config.actors[1].grant_revision += 1;
+    config.actors[1].revocation_generation += 1;
+    let daemon = start(config.validate(directory.path())?, CONTROLLER_TOKEN).await?;
+    client(&daemon.endpoint, OBSERVER_TOKEN)?
+        .readiness()
+        .await?;
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn removing_workflow_role_preserves_closed_history_for_offline_inspection() -> TestResult {
     use milkdrift_persistence::{EventPageQuery, RunQueryStore};
     let directory = tempfile::tempdir()?;

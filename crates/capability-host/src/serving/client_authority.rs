@@ -202,12 +202,7 @@ impl PeerService {
         {
             self.authorize_client_artifact(actor, reference)?;
         }
-        Ok((
-            decision,
-            grant
-                .revision()
-                .saturating_add(grant.revocation_generation()),
-        ))
+        Ok((decision, policy.authority_generation(grant)?))
     }
 
     pub(super) fn authorize_client_artifact(

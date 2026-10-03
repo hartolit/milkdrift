@@ -30,6 +30,10 @@ The library's `application` module owns child launch, bounded capture, readiness
 restart helpers. `OwnedChild::terminate` kills and reaps for an abrupt restart boundary;
 `OwnedChild::shutdown` separately checks public Ctrl-C shutdown on Unix. A settled-work restart
 scenario using the former does not prove graceful process shutdown.
+CLI waits derive their outer watchdog from the requested work budget. Polling callers pass their
+existing deadline to nested commands, and failed observations collect bounded public state before
+temporary evidence disappears. The [application lane](../../docs/development/verification-evidence.md#actual-binary-scenarios)
+explains those budgets, diagnostics and cleanup limits.
 
 The context, persistence, adapter, peer, and daemon modules exercise their corresponding product
 owners. `ScenarioMeasurement` keeps result bytes observable through a checksum; report fields

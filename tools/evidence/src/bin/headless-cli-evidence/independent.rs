@@ -77,6 +77,10 @@ pub(super) fn run(arguments: &Arguments) -> EvidenceResult {
     )?)?;
     config["role"] = json!("execution_only");
     config["host_id"] = json!("independent-evidence-host");
+    // The five-second lease in setup belongs to its crash/recovery case. Peer transfers
+    // include multiple durable HTTP operations; use the normal host lease for this lane.
+    config["runtime"]["lease_duration_ms"] =
+        json!(milkdrift_daemon::RuntimeHostConfig::default().lease_duration_ms);
     // The fixture is explicitly unbilled; this is not inferred from loopback locality.
     let model_path = directory.join("model-profile.json");
     let mut model_profile: Value = serde_json::from_slice(&fs::read(&model_path)?)?;

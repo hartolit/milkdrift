@@ -3,6 +3,9 @@
 use std::io::Write as _;
 
 fn main() -> std::io::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--endpoint") {
+        return stalled_cli();
+    }
     let blocks = match std::env::args().nth(1).as_deref() {
         Some("emit") | None => 32,
         Some("--overflow-fixture") => 1_152,
@@ -28,4 +31,21 @@ fn main() -> std::io::Result<()> {
     }
     stdout.flush()?;
     stderr.flush()
+}
+
+// A held socket proves this exact helper entered and that watchdog cleanup closed it.
+// The parent releases successful cases explicitly; the fallback is finite even if it dies.
+fn stalled_cli() -> std::io::Result<()> {
+    use std::{io::Read as _, net::TcpStream, time::Duration};
+    let address = std::env::args()
+        .nth(2)
+        .ok_or_else(|| std::io::Error::other("fixture endpoint absent"))?;
+    let mut control = TcpStream::connect(address)?;
+    control.set_read_timeout(Some(Duration::from_secs(30)))?;
+    control.set_write_timeout(Some(Duration::from_secs(2)))?;
+    control.write_all(&std::process::id().to_be_bytes())?;
+    let mut release = [0];
+    control.read_exact(&mut release)?;
+    println!("{{\"status\":\"success\",\"value\":null}}");
+    Ok(())
 }
