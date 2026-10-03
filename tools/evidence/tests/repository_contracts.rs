@@ -161,7 +161,9 @@ fn repository_evidence_tasks_have_one_cargo_owned_rust_path() -> TestResult {
         );
     }
     let workflow = read(repository.join(".github/workflows/mutation.yml"))?;
-    assert!(workflow.contains("cargo mutation-evidence \"${{ matrix.shard }}\""));
+    assert!(workflow.contains(
+        "cargo mutation-evidence \"$MUTATION_SHARD\" --partition \"$MUTATION_PARTITION\""
+    ));
     for document in [
         "README.md",
         "docs/development/workflow.md",

@@ -1,26 +1,25 @@
 name: cross-platform contracts
 
 on:
-  push:
-  pull_request:
   workflow_dispatch:
-  schedule:
-    - cron: "41 4 * * 1"
+    inputs:
+      runner:
+        description: "Platform to qualify (one runner, at most 60 minutes)"
+        type: choice
+        required: true
+        default: windows-2025
+        options: [ubuntu-24.04, windows-2025, macos-15]
 
 permissions:
   contents: read
 
 concurrency:
-  group: cross-platform-${{ github.ref }}
+  group: cross-platform-${{ github.ref }}-${{ inputs.runner }}
   cancel-in-progress: true
 
 jobs:
   contracts:
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-24.04, windows-2025, macos-15]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -1,22 +1,14 @@
 name: benchmark and operational evidence
 
 on:
-  push:
-    paths:
-      - ".github/workflows/benchmarks.yml"
-      - "**/*.rs"
-      - "**/Cargo.toml"
-      - "Cargo.lock"
   workflow_dispatch:
-  schedule:
-    - cron: "29 3 * * 6"
 
 permissions:
   contents: read
 
 concurrency:
   group: benchmark-evidence-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   evidence:

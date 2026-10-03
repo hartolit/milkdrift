@@ -1,22 +1,14 @@
 name: bounded operational frontier stress
 
 on:
-  push:
-    paths:
-      - ".github/workflows/stress.yml"
-      - "**/*.rs"
-      - "**/Cargo.toml"
-      - "Cargo.lock"
   workflow_dispatch:
-  schedule:
-    - cron: "17 3 * * 0"
 
 permissions:
   contents: read
 
 concurrency:
   group: bounded-operational-frontier-stress-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   runtime-bounded-operational-frontier:

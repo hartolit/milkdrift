@@ -245,7 +245,7 @@ Ordinary projection bounded-state checks remain non-ignored:
 cargo test -p milkdrift-runtime --all-features projection::tests::bounded:: -- --nocapture
 ```
 
-The five expensive persistence/operational cases are release-only manual/weekly evidence:
+The five expensive persistence/operational cases are release-only manual evidence:
 
 ```sh
 cargo test --release -p milkdrift-redb-store --test application_state --all-features release_receipt_longevity_crosses_many_hot_bounds_and_replays_after_restart -- --ignored --exact --nocapture

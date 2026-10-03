@@ -713,17 +713,18 @@ where the live runner executable cannot be replaced.
 On a host dominated by debug-symbol linking, Cargo's `CARGO_PROFILE_DEV_DEBUG=0` and
 `CARGO_PROFILE_TEST_DEBUG=0` retain test assertions while omitting debug symbols. Record these
 settings and `CARGO_BUILD_JOBS` alongside the campaign; they do not classify failed builds.
-Hosted campaigns omit debug symbols and retain assertions. Every matching push selects the
-full campaign. Authority/runtime use four disjoint partitions each, and controller/peer use eight
-each; the other groups use one. These partitions divide mutation rebuilds and test runs among
-more jobs, at the cost of more baseline builds. Total completion time also depends on hosted
-runner availability; each job has a 180-minute timeout. Locally,
-`cargo mutation-evidence peer --partition 0/8` runs the first partition. The pinned tool owns
-partition parsing and selection; qualification requires the union of every partition to match the
-unpartitioned mutant list exactly. Partitioning preserves the selected tests and enforces each
-mutation's separate deadlines.
-Hosted builds allow 600 seconds and use two Cargo compiler jobs. Each peer partition runs one
-mutation worker so application tests do not compete with another mutation's compilation; its test
+Hosted campaigns are manual: select one semantic shard and one partition per dispatch. Each run
+uses one Linux runner, one mutation worker and a 60-minute job limit, with debug symbols omitted
+and assertions retained. There is no automatic full-campaign matrix. Partitioning divides the work
+but repeats baseline builds, so adding runners can increase total runner-minutes even when it
+reduces elapsed time. Choose a partition small enough to finish within the job allowance; a timeout
+leaves incomplete evidence, not a successful campaign. For example, a manual `peer` dispatch with
+partition `0/8`, or local `cargo mutation-evidence peer --partition 0/8`, runs the first partition.
+The pinned tool owns partition parsing and selection; qualification requires the union of every
+partition to match the unpartitioned mutant list exactly. Partitioning preserves the selected
+tests and enforces each mutation's separate deadlines.
+Hosted builds allow 600 seconds and use two Cargo compiler jobs. The single mutation worker
+keeps application tests from competing with another mutation's compilation. The peer shard's test
 selection includes the redb owner's contracts as well as peer, daemon, process, and evidence tests.
 The peer group excludes the three process/model-only external fixture scenarios, which configure
 no peers and previously produced unrelated HTTP timeouts before peer assertions ran. They remain
@@ -877,24 +878,30 @@ prompts, provider payloads, artifact bytes, and environment values are excluded.
 
 ## CI and qualification
 
-| Workflow | Configured evidence |
-| --- | --- |
-| [quality](../../.github/workflows/quality.yml) | Linux full gate, actual CLI/daemon independent-host and operator scenarios, deterministic local model, and installed controller qualification/refusal scenario. |
-| [platform](../../.github/workflows/platform.yml) | Pinned Ubuntu, Windows, macOS checks and selected domain/protocol/client/process tests. |
-| [mutation](../../.github/workflows/mutation.yml) | Seven weekly/manual shards and complete mutation artifacts. |
-| [benchmarks](../../.github/workflows/benchmarks.yml) | Smoke/full distributions, operational reports, worker saturation. |
-| [stress](../../.github/workflows/stress.yml) | Receipt, peer, controller lifecycle/admission, and runtime frontier longevity. |
+| Workflow | Trigger and configured job allowance | Configured evidence |
+| --- | --- | --- |
+| [quality](../../.github/workflows/quality.yml) | PRs and pushes to `main`; one Linux job, 45 minutes. | Full Rust gate, actual CLI/daemon independent-host and operator scenarios, deterministic local model, and installed controller qualification/refusal scenario. |
+| [platform](../../.github/workflows/platform.yml) | Manual; select one Ubuntu, Windows or macOS runner, 60 minutes. | Workspace checks and selected domain/protocol/client/process tests. |
+| [mutation](../../.github/workflows/mutation.yml) | Manual; select one shard/partition, one Linux job, 60 minutes. | Selected mutation outcomes and logs; complete coverage requires every partition. |
+| [benchmarks](../../.github/workflows/benchmarks.yml) | Manual; one Linux job, 60 minutes. | Smoke/full distributions, operational reports, worker saturation. |
+| [stress](../../.github/workflows/stress.yml) | Manual; one Linux job, 60 minutes. | Receipt, peer, controller lifecycle/admission, and runtime frontier longevity. |
 
 Actions use immutable SHAs, jobs have timeouts/read permissions/concurrency limits, and platform
 logs remain available on failure. Workflow definitions establish configured lanes, not successful
 execution. Closure requires successful runs on their declared hosts for the source being qualified;
 a local or cross-target check cannot substitute.
-The mutation, benchmark, and stress workflows also run when their own workflow file changes, so
-edits to manual/weekly evidence commands are checked before their next scheduled run.
-Mutation, benchmark, and stress lanes also run for Rust source and Cargo manifest/lockfile changes.
-Mutation configuration edits also trigger its checks; its uncertainty group covers external text
-normalization and bounded reasons as well as retained-effect classification.
-A newer push supersedes the older mutation run on the same branch.
+Only quality runs automatically. A feature-branch push does not also launch a duplicate quality
+job for its PR. The four additional evidence workflows have no push, PR or scheduled trigger;
+their results must be requested when the change needs that qualification. This keeps an ordinary
+PR update to one runner instead of automatically launching every platform and mutation partition.
+The ordinary gate remains complete; a green quality run does not claim the additional lanes ran.
+
+Use GitHub's **Run workflow** control, or an explicit dispatch such as
+`gh workflow run mutation.yml --ref main -f shard=peer -f partition=0/8`, when that evidence is
+needed. A workflow disabled in repository settings must first be enabled, after confirming the
+default branch contains these manual-only triggers. A newer run supersedes an older run for the
+same workflow and ref; platform runs are also separated by the selected OS. Retain partial logs
+after cancellation, and do not count a cancelled or timed-out partition as complete coverage.
 
 Deterministic fault/reopen, clock rollback, reservation/artifact, conformance, and corruption tests
 prove software invariants, not filesystem power-loss behavior, sandbox strength, provider service
