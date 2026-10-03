@@ -92,18 +92,10 @@ The final full check is still required even when earlier focused tests passed.
 
 ## Commit working changes regularly
 
-Each prompt gives natural commit points. Complete a coherent change, run its focused checks,
-review the diff, and commit before starting the next distinct change. Do not wait until the end
-of the prompt. Keep a shared API change with its required callers when splitting would break them.
-
-Start with `git status --short`. Stage explicit files or hunks, review `git diff --cached`, and
-check whitespace. Include related tests. Do not stage someone else's changes, credentials, private
-inputs, or generated logs. Use messages explaining the working change.
-
-Preserve the checkpoints: no automatic squash, amend of earlier work, rebase, hard reset, or force
-push. Fix a committed mistake in a new commit. Revert only when safe for other contributors and
-record why. If interrupted with unfinished edits, record the last tested commit and remaining work;
-do not pretend it is complete. A final documentation commit does not replace implementation commits.
+Use the [small-commit procedure](../../workflow.md#commit-working-changes-regularly) at each prompt's
+natural commit points. This sprint assigns local commits after coherent changes and their focused
+checks. Preserve the checkpoints and keep required API callers together. Pushing needs separate
+authorization.
 
 ## Finish
 

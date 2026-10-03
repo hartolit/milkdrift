@@ -30,6 +30,23 @@ Apply the selected practices, including the [implementation steps](practices/imp
 when changing code. Revisit the design and explanation when evidence changes; preserve the
 assignment's responsibility and exclusions.
 
+### Commit working changes regularly
+
+When commits are assigned, finish a coherent change, run its required checks, review the diff,
+and commit before starting the next distinct change. Keep a shared API change with the callers
+and tests it needs to work. Commit by responsibility rather than file count; do not save all
+implementation for one final commit or use a documentation commit in its place.
+
+Start with `git status --short`. Stage explicit files or hunks, review `git diff --cached`, and
+run `git diff --cached --check`. Include related tests and documentation. Preserve other
+contributors' edits; leave credentials, private inputs and generated logs out of commits.
+Use a message explaining the working change. A local commit does not authorize a push.
+
+Preserve these checkpoints: do not automatically squash, amend earlier work, rebase, hard reset,
+or force push. Correct committed mistakes in a new commit. Revert only when safe for other
+contributors and explain why. If interrupted, record the last tested commit and unfinished work
+in the assigned handoff instead of calling the change complete.
+
 ### Before finishing
 
 1. Search again for old types, helpers, literals, factories, readers, call paths, and terminology.
@@ -98,7 +115,7 @@ A change is incomplete when the new and old designs both remain valid paths for 
 
 Choose by what changed, including uncommitted work being integrated, rather than by filename or
 task label. For mixed changes, combine the applicable checks; executable changes require the full
-gate. Review the final diff,
+gate, subject only to the explicitly assigned sprint schedule below. Review the final diff,
 run `git diff --check`, and report the checks actually run. A discussion or planned experiment
 is not executed evidence.
 
@@ -107,7 +124,7 @@ is not executed evidence.
 | Prose, planning, policy, or whiteboard notes only | Read for accuracy and consistency, check local links and document structure with the documentation contracts below, and inspect affected Markdown formatting. No full Rust gate is required. |
 | Rust comments, rustdoc, or Rust documentation examples only | The prose checks, `cargo fmt --all -- --check`, affected package doctests, and warning-denying rustdoc. Run relevant owner tests when needed to substantiate a changed behavior explanation or example. |
 | CLI/configuration examples inside documentation | The prose checks plus existing command parsing or production-reader checks for the changed examples. Run the relevant scenario when the claim depends on its execution, and state any unavailable prerequisites. |
-| Executable code, tests, fixtures, manifests/lockfiles, schema/data files, runtime configuration, build scripts, or CI behavior | The full local gate below, plus any relevant focused or evidence suites. |
+| Executable code, tests, fixtures, manifests/lockfiles, schema/data files, runtime configuration, build scripts, or CI behavior | The full local gate below, plus relevant focused or evidence suites; an explicitly assigned sprint may schedule the full gate as described below. |
 
 Documentation checks use the existing repository contract target:
 
@@ -127,6 +144,26 @@ Use the PowerShell environment handling below for rustdoc. Maintained CLI exampl
 also check maintained example documents through their production readers. A Markdown file used
 as executable input still needs the executable-change checks. New compatibility, security, or
 interoperability claims need the evidence required by their owner, regardless of file type.
+
+### Explicit multi-phase sprint schedule
+
+An explicitly assigned multi-phase sprint may name its final prompt as the owner of the full
+gate and integrated operator journey. Its README must identify the ordered phases, focused
+checks for each phase, and final acceptance prompt before implementation starts. This changes
+when the full gate runs, not which behavior must work or which tests must pass. Ordinary work
+outside that schedule keeps the requirements above.
+
+During implementation, compile affected packages and callers; run focused behavior, refusal,
+recovery and affected example checks. Write and run a regression with its fix, verify that test
+filters discover the intended cases, and finish each owned boundary with its callers and docs.
+Do not defer known in-scope defects to the final prompt. Each early handoff records the tested
+commit, checks, limits and remaining integrated checks; it is not full-system acceptance.
+
+The named final prompt runs the full gate and required operator/evidence scenarios on the
+integrated code and fixes failures. Use focused reruns while fixing defects, then verify the
+final executable state with the full gate and combined journey. Required missing access or
+unresolved failures keep acceptance open unless the user explicitly changes scope. Do not
+weaken assertions, add skip markers, disable jobs, or edit CI to implement this schedule.
 
 For a documentation sprint, workers run the checks for their changed area and the coordinator
 verifies the integrated result. Do not repeat unchanged successful checks at every phase handoff;

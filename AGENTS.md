@@ -74,8 +74,10 @@ implementation evidence for current versions.
 - Make no support, safety, portability, or interoperability claim that tests or evidence do not
   establish.
 - Before completion, follow the [verification policy](docs/development/workflow.md#choose-verification-for-the-change).
-  Executable changes require the full gate. Prose, planning, and documentation-only changes use
-  the checks specified there; report the checks actually run and any limits on the evidence.
+  Executable changes require the full gate unless an explicitly assigned multi-phase sprint
+  schedules it in a named final prompt under that policy. Earlier phases must finish their
+  focused checks and are not full-system acceptance. Prose, planning, and documentation-only
+  changes use the checks specified there; report the checks actually run and any limits on the evidence.
 
 Use `docs/development/workflow.md` for assignment procedure, completion, focused suites, evidence
 lanes, fixture rules, and public-API review. Individual practices own the detailed development rules.

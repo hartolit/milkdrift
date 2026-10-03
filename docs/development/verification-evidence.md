@@ -1,7 +1,8 @@
 # Verification and operational evidence
 
 Use this guide to choose a reproducible check and understand what its observations support.
-The ordinary [full gate](workflow.md#full-local-gate) checks executable changes; the additional
+The ordinary [full gate](workflow.md#full-local-gate) checks executable changes, at the point
+required by the [verification policy](workflow.md#choose-verification-for-the-change); the additional
 lanes below exercise application use, mutation sensitivity, sustained load, and external resources.
 The [evidence package guide](../../tools/evidence/README.md) compares the tools and their entry points.
 [Status](../product/status.md#current-validationevidence-snapshot) owns the latest executed state.
