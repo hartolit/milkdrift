@@ -3,18 +3,17 @@
 Ordered unfinished work; [status](status.md) owns implementation and evidence facts.
 
 The active [client-ready workflows sprint](../development/virtual-office/client-ready-workflows/README.md)
-completes the ordinary CLI route through shared public daemon operations. Its setup is adopted;
-the next assignment is [01 — Create and edit workflows](../development/virtual-office/client-ready-workflows/01-workflow-authoring.md).
+completes the ordinary CLI route through shared public daemon operations. Setup and workflow
+authoring are complete; the next assignment is
+[02 — Run with inputs and reconnect](../development/virtual-office/client-ready-workflows/02-inputs-execution-and-recovery.md).
 
 Work proceeds in this order:
 
-1. Create, edit, validate, save and reopen workflows; select permitted models, prompts and connections
-   without hand-written graph JSON or client-calculated semantic identities.
-2. Run one saved revision with supplied inputs and recover the exact request after a lost reply.
-3. Read progress and accepted results, then repair eligible future work through ordinary proposals.
-4. Reuse or independently copy definitions and make existing publication and evaluation usable.
-5. Remove duplicated client rules and prove the route through a client that does not invoke the CLI.
-6. Run the integrated operator journey, full gate and authorized local-model checks; fix failures
+1. Run one saved revision with supplied inputs and recover the exact request after a lost reply.
+2. Read progress and accepted results, then repair eligible future work through ordinary proposals.
+3. Reuse or independently copy definitions and make existing publication and evaluation usable.
+4. Remove duplicated client rules and prove the route through a client that does not invoke the CLI.
+5. Run the integrated operator journey, full gate and authorized local-model checks; fix failures
    before closing the sprint.
 
 The [verification schedule](../development/virtual-office/client-ready-workflows/README.md#test-as-you-build-test-the-full-system-in-06)

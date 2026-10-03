@@ -10,8 +10,9 @@ Finish that path and fix the awkward or duplicated code it exposes. Do not rebui
 host, container, publication, or learning systems from the previous sprint.
 
 The source reference is `a04b55c0e0a3b56a1074da8861ab1d581e16a05c`; 00 inspected the newer checkout
-`d8873cfe32700522347ea4d01858e4a5ddfa9749`. Never reset to the reference. Setup is adopted and 01 is
-the next assignment. These temporary prompts now live in the virtual office, as their relative
+`d8873cfe32700522347ea4d01858e4a5ddfa9749`. Never reset to the reference. Setup and authoring are
+complete; [01's handoff](handoffs/01.md) records the tested boundary and 02 is next.
+These temporary prompts now live in the virtual office, as their relative
 links and the repository's coordination rules require.
 
 ## Svelte first; the daemon owns the behavior
@@ -45,7 +46,8 @@ whole system passed. Run sequentially; do not start a GUI automatically after 06
 ## Existing route and assigned changes
 
 00 traced the CLI through `control-client`, `control-protocol`, daemon command handlers and the
-blueprint/control/runtime owners. The table records gaps to complete, not newly implemented behavior.
+blueprint/control/runtime owners. The table records the assignments; 01's authoring operations
+are complete, while later phases remain unfinished.
 
 | Operation | Existing owner | Needed change | Prompt |
 | --- | --- | --- | --- |
