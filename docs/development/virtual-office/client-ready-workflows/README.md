@@ -10,8 +10,8 @@ Finish that path and fix the awkward or duplicated code it exposes. Do not rebui
 host, container, publication, or learning systems from the previous sprint.
 
 The source reference is `a04b55c0e0a3b56a1074da8861ab1d581e16a05c`; 00 inspected the newer checkout
-`d8873cfe32700522347ea4d01858e4a5ddfa9749`. Never reset to the reference. Setup and authoring are
-complete; [01's handoff](handoffs/01.md) records the tested boundary and 02 is next.
+`d8873cfe32700522347ea4d01858e4a5ddfa9749`. Never reset to the reference. Phases 00–02 are
+complete; [02's handoff](handoffs/02.md) records the tested boundary and 03 is next.
 These temporary prompts now live in the virtual office, as their relative
 links and the repository's coordination rules require.
 
@@ -46,28 +46,27 @@ whole system passed. Run sequentially; do not start a GUI automatically after 06
 ## Existing route and assigned changes
 
 00 traced the CLI through `control-client`, `control-protocol`, daemon command handlers and the
-blueprint/control/runtime owners. The table records the assignments; 01's authoring operations
-are complete, while later phases remain unfinished.
+blueprint/control/runtime owners. The table records the assignments; 01's authoring and 02's
+input/recovery operations are complete, while later phases remain unfinished.
 
 | Operation | Existing owner | Needed change | Prompt |
 | --- | --- | --- | --- |
 | Create/edit/save | Blueprint genesis/revise and mutations; daemon definitions; CLI blueprint commands | Public construction and validation from ordinary edits, with server-derived identities and guarded save/reopen | 01 |
 | Choose model/write prompt/connect | Authorized capability reads; model task and blueprint binding types | Usable authoring over those contracts, including available choices and complete-output gates | 01 |
-| Supply inputs/start | Public `StartRun`; daemon runs; control/runtime `CreateRun` | Carry bounded named inputs through the existing workspace input path instead of the current empty list | 02 |
+| Supply inputs/start | Public `StartRun`; daemon runs; control/runtime `CreateRun` | Carry bounded named inputs through the existing workspace input path | 02 |
 | Recover request/observe | Daemon receipts; control-client submit/reads/SSE; CLI session and wait | Retain exact start requests before submission and reconnect without new identities or changed inputs | 02 |
 | Read final result | Daemon run/node/attempt/acceptance projections and artifact reads | Compact authoritative result and permitted-action views; verified output retrieval | 03 |
 | Change future work | Control proposals/risk/approval; runtime reconciliation, pause and signal | Public edit/proposal conveniences and a nonterminal review hold; preserve failed/completed history | 03 |
 | Reuse/copy/publish/evaluate | Immutable revisions; control publication/learning; daemon and CLI method commands | Public copy/request construction and clearer existing evaluation use without another store or engine | 04 |
 | Use another frontend | Control protocol/client and daemon | Remove remaining indispensable CLI rules; exercise the same operations without CLI or private builders, then integrated acceptance | 05–06 |
 
-The input gap is confirmed in [public StartRun](../../../../crates/control-protocol/src/command.rs)
-and [daemon start](../../../../apps/daemon/src/host/commands/runs.rs): only run/workflow/revision
-identities arrive, and `CreateRun` receives `Vec::new()`. The
+02 completed input submission in [public StartRun](../../../../crates/control-protocol/src/command.rs)
+and [daemon start](../../../../apps/daemon/src/host/commands/runs.rs). The
 [runtime admission owner](../../../../crates/runtime/src/engine/command_planning/admission.rs)
-already accepts initial workspace values and checks declared names, required inputs, committed
-artifacts and budgets. [Published calls](../../../../crates/control/src/published.rs) already map
-their choice/artifact contract into those values. Complete ordinary input submission in 02; do
-not create another input store or silently widen publication permissions.
+accepts initial workspace values and checks declared names, required inputs, committed
+artifacts and budgets. [Published calls](../../../../crates/control/src/published.rs) map
+their separate choice/artifact contracts into those values. Preserve those shared owners and
+distinct permissions in later phases.
 
 For unfinished edits, use an ordinary bounded local file containing the workflow/base reference
 and pending existing blueprint mutations. Saving that file may retain an incomplete graph; it
@@ -79,19 +78,16 @@ Submitting sends one complete edit batch against genesis or the exact saved base
 daemon operation. The daemon invokes blueprint genesis/revise, model request construction and
 validation under the caller's authority, returns diagnostics or the validated canonical revision,
 and saves accepted definitions through the existing revision store. Clients reuse returned
-identities rather than calculating hashes. Extend the existing definition command family in 01;
-the current [CLI-local constructor](../../../../apps/cli/src/command/blueprint.rs) and daemon
-import/validate of prebuilt documents are insufficient for that route. Reuse the existing mutation
-meaning; add no draft database, workflow language or duplicate executor. Exact wire design and
-compatibility checks belong to the implementing phase.
+identities rather than calculating hashes. 01 completed this public route. The
+[CLI-local constructor](../../../../apps/cli/src/command/blueprint.rs) remains for governed-method
+bootstrap before daemon setup. Preserve the existing mutation meaning; add no draft database,
+workflow language or duplicate executor. [01's handoff](handoffs/01.md) records its focused checks.
 
-01–02 must also follow each brief/draft binding into the prepared provider request. The current
-[model preparation](../../../../adapters/model-provider/src/adapter.rs) verifies direct manifest
-inputs but does not add them to materialized context parts; a connected artifact reference alone
-is not proof that its text reaches the model. Complete that route through existing model request
-and causal-context selection/materialization owners. Do not concatenate inputs in a client or
-invent a second context mechanism. Controlled endpoints must assert the received brief/draft bytes
-and absence of unrelated evidence.
+02 followed each brief/draft binding into the prepared provider request.
+[Model preparation](../../../../adapters/model-provider/src/adapter.rs) now materializes selected
+direct inputs through the existing context path. Preserve that route rather than concatenating
+inputs in clients or introducing another context mechanism. Controlled endpoints assert brief/draft
+bytes and absence of unrelated evidence.
 
 ## One example throughout
 

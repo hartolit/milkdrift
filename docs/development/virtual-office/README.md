@@ -9,9 +9,9 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-The [client-ready workflows sprint](client-ready-workflows/README.md) is active. Setup 00 and
-authoring 01 are complete; [02 — Run with inputs and reconnect](client-ready-workflows/02-inputs-execution-and-recovery.md)
-is next.
+The [client-ready workflows sprint](client-ready-workflows/README.md) is active. Phases 00–02 are
+complete; [03 — Read results and fix future steps](client-ready-workflows/03-inspection-and-prospective-repair.md)
+is next. [02's handoff](client-ready-workflows/handoffs/02.md) records focused acceptance.
 Phases run sequentially, with focused checks in 01–05 and full acceptance in 06 under the
 [verification policy](../workflow.md#explicit-multi-phase-sprint-schedule). The
 [roadmap](../../product/roadmap.md) owns the authorized scope; the
