@@ -11,6 +11,7 @@ mod input;
 mod inspection;
 mod invocation;
 mod layout;
+mod learning;
 mod method;
 mod peer;
 mod proposal;
@@ -60,7 +61,7 @@ impl Cli {
                 crate::workflow_args::WorkflowCommand::Copy { .. } => "workflow.copy",
                 _ => "workflow.author",
             },
-            TopCommand::Learning { .. } => "learning",
+            TopCommand::Learning(..) => "learning",
             TopCommand::Method { command } => match command {
                 crate::MethodCommand::Prepare { .. } => "method.prepare",
                 crate::MethodCommand::Publish { .. } => "method.publish",
@@ -238,18 +239,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<(), CliError> {
     let session = CliSession::connect(cli).await?;
     match &session.cli().command {
         TopCommand::Workflow(args) => workflow::execute(&session, args).await,
-        TopCommand::Learning { file } => {
-            let document = session
-                .read_json(
-                    file,
-                    milkdrift_control_protocol::MAX_DOCUMENT_BYTES,
-                    "learning operation",
-                )
-                .await?;
-            let request = session
-                .command_request(milkdrift_control_protocol::Command::Learning { document })?;
-            session.output("learning", &session.client().submit(&request).await?)
-        }
+        TopCommand::Learning(args) => learning::execute(&session, args).await,
         TopCommand::Method { command } => method::execute(&session, command).await,
         TopCommand::Resource(args) => resource::execute(&session, args).await,
         TopCommand::Invocation { command } => invocation::execute(&session, command).await,

@@ -3,7 +3,7 @@ use super::{LearningDeclaration, LearningReceiptReference};
 use milkdrift_blueprint::RevisionId;
 use milkdrift_capability::managed::ManagedName;
 use milkdrift_persistence::published::PublishedMethod;
-use milkdrift_workspace::{ArtifactReference, RunId};
+use milkdrift_workspace::{ArtifactId, ArtifactReference, RunId};
 use serde::{Deserialize, Serialize};
 
 /// An explicit bounded page of one permitted source run, frozen at selection.
@@ -40,10 +40,35 @@ pub struct KnowledgeSelection {
     pub approval: Option<LearningReceiptReference>,
 }
 
+/// Explicit source choices whose artifact identities the daemon resolves under current read authority.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct KnowledgeSelectionDraft {
+    /// Exact method to which this guidance applies.
+    pub method: RevisionId,
+    /// Managed setup containing the ordinary knowledge entry point.
+    pub workspace: ManagedName,
+    /// Uploaded or exported entry-point artifact; the server supplies its immutable reference.
+    pub guidance: ArtifactId,
+    /// Explicit supplementary evidence identities, at most 32.
+    pub artifacts: Vec<ArtifactId>,
+    /// Exact bounded source pages, with no implicit history search.
+    pub pages: Vec<SourcePage>,
+    /// Prior selected version, if this updates its guidance.
+    pub supersedes: Option<LearningReceiptReference>,
+    /// Required promotion when changing the applicable method.
+    pub approval: Option<LearningReceiptReference>,
+}
+
 /// Versioned operation body shared by CLI/API and automated callers.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum LearningRequest {
+    /// Select permitted sources by identity without client-assembled artifact hashes.
+    SelectSources {
+        /// Explicit method, setup, files and pages; all authority checks still apply.
+        selection: KnowledgeSelectionDraft,
+    },
     /// Freeze permitted knowledge and exact history pages in the command receipt.
     Select {
         /// Scope, immutable files and exact pages to select.
@@ -114,7 +139,7 @@ impl LearningRequest {
     #[must_use]
     pub const fn operation(&self) -> &'static str {
         match self {
-            Self::Select { .. } => "learning.select",
+            Self::Select { .. } | Self::SelectSources { .. } => "learning.select",
             Self::Declare { .. } => "learning.declare",
             Self::Candidate { .. } => "learning.candidate",
             Self::Compare { .. } => "learning.compare",

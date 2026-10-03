@@ -30,3 +30,9 @@ read and publication authority before exposing the prepared document. Publishing
 facts through the existing separate command; a saved preparation is not a grant or an acceptance.
 The CLI's text-input convenience uploads through the same bounded input endpoint and freezes the
 returned reference. It does not alter published input contracts or artifact permission scope.
+
+Evaluation source preparation likewise resolves explicit artifact IDs through current authorized
+reads before freezing the existing knowledge selection. Named CLI commands carry ordinary learning
+requests and reference accepted receipts by actor and command. Human inspection retains the full
+comparison, including missing measurements and reasons. Scores, eligibility and publication remain
+with the existing evaluation and publication owners; no client-generated comparison is accepted.

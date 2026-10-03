@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 mod request;
-pub use request::{KnowledgeSelection, LearningRequest, SourcePage};
+pub use request::{KnowledgeSelection, KnowledgeSelectionDraft, LearningRequest, SourcePage};
 
 /// Current declaration and comparison format.
 pub const LEARNING_SCHEMA_VERSION: u32 = 1;

@@ -14,6 +14,8 @@ mod durability;
 mod inputs;
 #[path = "control_plane/inputs_cli.rs"]
 mod inputs_cli;
+#[path = "control_plane/learning.rs"]
+mod learning;
 #[path = "control_plane/operations.rs"]
 mod operations;
 #[path = "support/process.rs"]

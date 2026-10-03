@@ -124,7 +124,16 @@ pub(crate) fn success<T: Serialize>(cli: &Cli, kind: &str, value: &T) -> Result<
         );
     } else {
         println!("{kind}");
-        human_value(&value);
+        if kind.starts_with("learning.") {
+            // Fixed criteria, missing measurements and reasons must survive human presentation.
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&value)
+                    .map_err(|error| CliError::Internal(error.to_string()))?
+            );
+        } else {
+            human_value(&value);
+        }
     }
     Ok(())
 }

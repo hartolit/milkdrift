@@ -32,6 +32,11 @@ package entry point. Consumers otherwise import the canonical owner directly.
 
 ## Surface ownership
 
+`learning::KnowledgeSelectionDraft` and `LearningRequest::SelectSources` are public request
+contracts consumed by the daemon and CLI. Artifact references are resolved through existing
+authorized readers; the private handler passes them to the unchanged selection owner. Named CLI
+evaluation commands only format that request family and display its immutable results.
+
 `PublicationDraft` and `PublishedWorkflowService::prepare_publication` are workspace adapter
 contracts consumed by the daemon's public `PrepareMethod` operation. The existing publication
 owner retains service lookup and contract validation; preparation adds no persistent registry.

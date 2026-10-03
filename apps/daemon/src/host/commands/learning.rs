@@ -99,6 +99,37 @@ pub(super) fn execute(
     let decision = owner.authorize(session, authority_operation, resources, operation)?;
     owner.record_security_decision(&decision)?;
     let record = match command {
+        LearningRequest::SelectSources { selection } => {
+            if selection.artifacts.len() > 32
+                || selection.pages.is_empty()
+                || selection.pages.len() > 8
+            {
+                return Err(invalid(
+                    "selection requires 1..=8 exact pages and at most 32 artifacts",
+                ));
+            }
+            revision(owner, session, request, &selection.method)?;
+            let guidance = selected_reference(owner, session, &selection.guidance)?;
+            let artifacts = selection
+                .artifacts
+                .iter()
+                .map(|id| selected_reference(owner, session, id))
+                .collect::<Result<Vec<_>, _>>()?;
+            select(
+                owner,
+                session,
+                request,
+                KnowledgeSelection {
+                    method: selection.method,
+                    workspace: selection.workspace,
+                    guidance,
+                    artifacts,
+                    pages: selection.pages,
+                    supersedes: selection.supersedes,
+                    approval: selection.approval,
+                },
+            )?
+        }
         LearningRequest::Select { selection } => select(owner, session, request, selection)?,
         LearningRequest::Declare { declaration } => declare(owner, session, request, declaration)?,
         LearningRequest::Candidate {
@@ -324,6 +355,21 @@ fn revision(
         .revision(revision)
         .map_err(public_persistence)?
         .ok_or_else(not_found)
+}
+
+fn selected_reference(
+    owner: &mut Owner,
+    session: &ActorSession,
+    artifact: &milkdrift_workspace::ArtifactId,
+) -> Result<ArtifactReference, PublicFailure> {
+    owner.artifact_metadata(session, artifact.as_str())?;
+    Ok(owner
+        .store
+        .metadata(artifact)
+        .map_err(public_persistence)?
+        .ok_or_else(not_found)?
+        .reference()
+        .clone())
 }
 
 fn authorize_artifact(

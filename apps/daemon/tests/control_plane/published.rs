@@ -165,6 +165,31 @@ async fn invoke_only_published_outputs_replay_retirement_and_restart() -> TestRe
     let method: PublishedMethod =
         serde_json::from_slice(&fs::read(directory.path().join("method.json"))?)?;
     assert_eq!(serde_json::to_value(&method)?, prepared.value);
+    let (promoted_without_comparison, _) = cli(
+        &daemon,
+        &directory,
+        "unearned-promotion",
+        &[
+            "learning",
+            "promote",
+            "method.json",
+            "--comparison",
+            "human:integration-controller",
+            "prepare-cli",
+            "--expected-previous-version",
+            "1",
+        ],
+        true,
+    )?;
+    assert!(!promoted_without_comparison);
+    assert!(
+        invoker
+            .execution_discovery()
+            .await?
+            .catalog
+            .entries
+            .is_empty()
+    );
     assert_eq!(
         method.agreement,
         revision.semantic().agreement().ok_or("agreement")?.digest()

@@ -21,8 +21,22 @@ decisions, limitations and approved guidance. Edit it through the authorized wor
 Export the exact bytes as an artifact before selecting them for another task. Editing the file
 does not update a prepared invocation's context.
 
-`milkdrift learning FILE` accepts the strict `control::learning::LearningRequest` document through
-the ordinary command API. A `select` request names an applicable revision, managed workspace,
+Use named learning commands for the ordinary path. Each result shows its receipt's actor and
+command ID; subsequent commands take that pair directly. Select immutable artifacts by ID:
+
+```sh
+milkdrift --command-id source-knowledge learning select REVISION --workspace setup --guidance GUIDANCE_ARTIFACT --artifact SOURCE_ARTIFACT --page source-run 1 32
+milkdrift learning inspect human:operator source-knowledge
+```
+
+Replace the actor with the authenticated actor shown in the result. Repeat `--page RUN FIRST COUNT`
+for each selected page, and `--artifact ID` for each extra artifact. The public `select_sources`
+request resolves these identities through authorized metadata reads, then uses the same selection
+operation as an exact-reference request. No client computes artifact hashes or writes receipt
+records. `--supersedes ACTOR COMMAND` and `--approval ACTOR COMMAND` select existing decisions.
+
+`milkdrift learning FILE` also accepts the strict `control::learning::LearningRequest` document
+through the ordinary command API for advanced requests. A selection names a revision, managed workspace,
 guidance artifact, at most 32 supplementary artifacts and 1–8 exact source pages of at most 64
 events each. Page `first` is inclusive. The daemon checks current revision, artifact content,
 workspace-value scope and timeline authority, then freezes the public event projection and exact
@@ -38,11 +52,13 @@ access to its private implementation history.
 
 For example, after the maintained study, inspect its evaluator's comparison:
 
-```json
-{"type":"inspect","receipt":{"actor":"agent:slotbook-evaluator","command":"learning-comparison"}}
+```sh
+milkdrift learning inspect agent:slotbook-evaluator learning-comparison
 ```
 
-Save this document and submit it with a fresh command ID. Repeating an accepted command with the
+Inspection shows the full fixed result, including outcomes, paired measurements, reasons and
+unknown values in human output as well as `--json`. It never refreshes an earlier comparison.
+Repeating an accepted command with the
 same ID and bytes returns its original result; changing those bytes conflicts, including after
 restart and receipt archival. Use a new ID for a new decision or an updated observation.
 
@@ -54,6 +70,17 @@ worker and verifier installations, their exact recipe digests and generations, o
 verifier and effect-policy digests, budgets, threshold and future publication generation. These
 facts are immutable. An evaluation-design change requires another declaration before its proposal
 run exists. Record effective model/tool provenance and unknown settings explicitly.
+
+Keep the advanced criterion in a `LearningDeclaration` document and submit it before generation:
+
+```sh
+milkdrift --command-id fixed-study learning declare criterion.json
+milkdrift --command-id proposed-method learning candidate actual-proposal.json --declaration human:evaluator fixed-study --expected-benefit 'Fewer failed submissions on the fixed inputs' --applicability 'The declared method and checks' --counterevidence 'A regression or an unmet required check'
+```
+
+`actual-proposal.json` is the ordinary proposal containing the model's retained output and exact
+provenance. The attached benefit and counterevidence are hypotheses; these flags do not supply
+scores or make a manually edited workflow a learned candidate.
 `input_field` names the workflow field that must receive the held-out artifact; `candidate_output`
 names the terminal field that must return the exact final verified artifact. Both fields must exist
 in the baseline interface. Two artifact identities containing identical bytes do not supply two
@@ -106,6 +133,16 @@ and verification targets for every slot. `compare` resolves actual child runs th
 receipts, reads their bounded journals and settled controller accounts, and checks every verifier
 result against the private managed-evaluation owner. Uploaded reports and model scores cannot
 qualify a method. Comparison retains the actual observations, references, usage and reasons.
+
+```sh
+milkdrift --command-id compared-method learning compare --declaration human:evaluator fixed-study --candidate agent:proposer proposed-method
+milkdrift learning inspect human:evaluator compared-method
+```
+
+The actor in each reference is the actor that submitted that earlier command. Submit the comparison
+under a new command ID when you want a later observation of previously missing work; the earlier
+result remains immutable. Missing values are not zero failures. The server rejects extra score
+fields and reads the declared executions itself.
 The terminal product must match the verifier's candidate, and the public invocation must complete
 successfully. Internal success followed by missing or failed result delivery is insufficient.
 Elapsed time includes delivery through the public invocation's terminal observation; unavailable
@@ -129,7 +166,17 @@ effects were harmless. This finite reader supports the maintained direct method 
 a general recursive evaluator of arbitrary workflow trees.
 
 An eligible comparison can be submitted to `promote` with the exact future publication document
-and expected previous version. This uses the ordinary publication owner and a separate current
+and expected previous version:
+
+```sh
+milkdrift --command-id prepare-candidate method prepare candidate-publication.json --output candidate-method.json
+milkdrift --command-id promote-candidate learning promote candidate-method.json --comparison human:evaluator compared-method --expected-previous-version 1
+```
+
+The preparation document explicitly chooses the candidate revision and reviewed service/limits as
+described in [publication](published-methods.md). Promotion refuses rejected or inconclusive
+comparisons, a receipt of another kind, and any publication that differs from the eligible candidate.
+This uses the ordinary publication owner and a separate current
 `method.publish` grant. Alternatively, before proposal generation, `preauthorize` records a full
 future publication template, exact declaration, expected previous version and permitted executor.
 `auto_promote` may replace only that template's baseline revision with the eligible candidate.

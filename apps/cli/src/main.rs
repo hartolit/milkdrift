@@ -13,6 +13,7 @@ use url::Url;
 mod command;
 mod error;
 mod input;
+mod learning_args;
 mod output;
 mod session;
 mod workflow_args;
@@ -85,10 +86,7 @@ enum TopCommand {
     /// Create, edit and save ordinary model workflows through the daemon.
     Workflow(workflow_args::WorkflowArgs),
     /// Select evidence, declare a comparison, submit a candidate, compare, promote or inspect.
-    Learning {
-        /// Strict learning operation document, with exact prior receipt references.
-        file: PathBuf,
-    },
+    Learning(learning_args::LearningArgs),
     /// Publish and administer exact reusable workflow capabilities on this host.
     Method {
         #[command(subcommand)]

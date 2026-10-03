@@ -1,7 +1,7 @@
 # Local control API 2.15
 
 The `learning` command body accepts an operation document owned by
-`milkdrift_control::learning::LearningRequest`: `select`, `declare`, `candidate`, `compare`,
+`milkdrift_control::learning::LearningRequest`: `select`, `select_sources`, `declare`, `candidate`, `compare`,
 `preauthorize`, `auto_promote`, `promote`, or `inspect`. It uses the same authenticated command envelope and hot/cold receipt
 replay as other commands. `milkdrift learning FILE` submits that document. Each operation requires
 its named `learning.*` capability operation on `milkdrift-workflow-control`; candidate submission
@@ -12,7 +12,11 @@ preauthorized operator's current grant and exact template, under the named execu
 `learning.auto_promote` permission. Receipt references contain the
 authenticated `actor` and exact `command`; knowing a reference does not grant inspection.
 
-Selection publishes a restricted immutable source artifact and returns its exact reference.
+`select_sources` accepts `KnowledgeSelectionDraft`, naming guidance and supplementary artifacts by
+ID. Authorized server reads resolve their exact references before the ordinary `learning.select`
+checks and receipt. It accepts no hashes or scores. The CLI's named `learning select`, `declare`,
+`candidate`, `compare`, `inspect` and `promote` commands use this same request family; advanced
+documents remain supported. Selection publishes a restricted immutable source artifact and returns its exact reference.
 Comparison reads the declared run, account and private verifier records and reports `eligible`,
 `rejected`, or `inconclusive`; client-supplied scores are not accepted.
 Declarations name `input_field` and `candidate_output` so a passing check cannot qualify an unused

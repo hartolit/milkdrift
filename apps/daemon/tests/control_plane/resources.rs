@@ -97,12 +97,16 @@ async fn configured_resource_owner_retains_exact_failed_platform_intent_across_r
     assert_eq!(state.state, "pending");
     assert!(!state.diagnostics.is_empty());
     assert!(state.capabilities.is_empty());
+    // Selection requires an existing managed setup, not a successful physical apply. The
+    // deliberately unavailable fixture retains that setup without starting a container.
+    let selected = super::learning::selection_roundtrip(&daemon, &directory).await?;
     let observer = client(&daemon.endpoint, OBSERVER_TOKEN)?;
     assert!(
         matches!(observer.manage_resources(&request).await, Err(ClientError::Api(ref e)) if e.code == ErrorCode::Unauthorized)
     );
     daemon.stop().await?;
     let reopened = start(config.validate(directory.path())?, CONTROLLER_TOKEN).await?;
+    super::learning::selection_after_restart(&reopened, &selected).await?;
     assert_eq!(reopened.client.manage_resources(&request).await?, accepted);
     assert_eq!(
         reopened.client.manage_resources(&inspect).await?.pending,
