@@ -13,7 +13,7 @@ authentication, runs a small workflow, and shows process/model setup. The CLI us
 | Author model steps, prompts and connections | `workflow new`, `models`, `add`, `prompt`, `connect`, `output`, `save`, `open` |
 | Create and compare immutable definitions | `blueprint validate`, `import`, `show`, `export`, `list`, `diff` |
 | Turn implementation prompts into a workflow | `sequence validate`, `compile`, `import`, `show`, `status`, `stage`, `remediate` |
-| Start or control work | `run start`, `pause`, `resume`, `cancel`, `signal` |
+| Start or control work | `run start --request-file FILE`, `reconnect FILE`, `pause`, `resume`, `cancel`, `signal` |
 | Observe progress and outcomes | `run list`, `show`, `wait`, `timeline`; `node`; `attempt inspect` |
 | Address an unknown external outcome | `attempt resolve`, with an explicit decision and evidence |
 | Review a prospective change | `proposal submit`, `list`, `show`, `approve`, `reject`, `apply` |
@@ -38,7 +38,11 @@ inspection and artifact download expose the supporting evidence. Failed or cance
 remain failure exits even when selected by the wait filter. Ctrl-C or an expired CLI deadline
 ends the local request/observation and does not itself cancel the workflow.
 
-After a lost command reply, retain the same ID and complete request: changed reason, guards,
+For run starts, choose an explicit new `--request-file` and recover with `run reconnect FILE`.
+The client saves the exact start before sending it and checks the original host/caller/grant before
+replay. `--input NAME=FILE` uploads frozen text; `--prepare-only` stops after saving. Keep the private
+record while the result is uncertain, then remove it deliberately; there is no automatic archive.
+For other lost command replies, retain the same ID and complete request: changed reason, guards,
 evidence, or document bytes can conflict. Commands that construct a proposal from fresh reads,
 such as `sequence remediate`, need the [recovery guidance](../../docs/guides/headless-dogfood.md#failure-and-remediation)
 before being invoked again. Pages are explicit; a timeline page cursor and a run-stream cursor

@@ -457,6 +457,23 @@ impl CliRunner {
             .checked_add(watchdog)
             .ok_or("CLI deadline overflow")?;
         command.args(arguments);
+        if arguments.windows(2).any(|pair| pair == ["run", "start"])
+            && !arguments.contains(&"--request-file")
+        {
+            // Finite scenarios own these explicit recovery files with their credential directory.
+            // Each submission gets a destination, including deliberate canonical replay/conflict
+            // probes. Recovery scenarios pass their own retained path instead.
+            static REQUEST_FILE: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
+            let index = REQUEST_FILE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let directory = self
+                .token_file
+                .parent()
+                .ok_or("credential directory is absent")?;
+            command
+                .arg("--request-file")
+                .arg(directory.join(format!("run-request-{}-{index}.json", std::process::id())));
+        }
         run_command_until(
             &mut command,
             stdin,

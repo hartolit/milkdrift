@@ -90,7 +90,7 @@ milkdrift --command-id sequence-plan-import-v1 \
   sequence import examples/headless-dogfood-sequence.md
 milkdrift sequence show REVISION_ID
 milkdrift --command-id run-plan-start-v1 --expected-revision REVISION_ID \
-  run start RUN_ID WORKFLOW_ID REVISION_ID
+  run start RUN_ID WORKFLOW_ID REVISION_ID --request-file plan-run.request.json
 milkdrift --json --timeout-secs 60 run timeline RUN_ID --limit 100 --follow
 ```
 

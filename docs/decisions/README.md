@@ -57,3 +57,4 @@ verify it; these decisions do not change current readers, configuration options 
 - [0042 — Compare reusable methods against independently declared evidence](0042-selected-evidence-and-method-evaluation.md)
 - [0043 — Completed history releases active host capacity](0043-active-capacity-and-retained-history.md)
 - [0044 — Public workflow authoring over existing mutations](0044-public-workflow-authoring.md)
+- [0045 — Supplied run inputs and exact client recovery](0045-supplied-run-inputs-and-recovery.md)

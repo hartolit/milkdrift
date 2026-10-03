@@ -100,6 +100,7 @@ impl DaemonHost {
                 .filter_map(|value| value.as_str().map(str::to_owned))
                 .collect();
             Ok(milkdrift_control_protocol::AuthorityRead {
+                host: owner.host_id.to_string(),
                 grant_digest: session
                     .grant
                     .digest()

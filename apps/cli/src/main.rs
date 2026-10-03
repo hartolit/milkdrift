@@ -458,7 +458,18 @@ enum RunCommand {
         /// JSON array of named uploaded artifact references.
         #[arg(long)]
         inputs: Option<PathBuf>,
+        /// Upload a UTF-8 text file as a named restricted input; may be repeated.
+        #[arg(long, value_name = "NAME=FILE")]
+        input: Vec<String>,
+        /// New private file retaining the exact request before submission.
+        #[arg(long)]
+        request_file: PathBuf,
+        /// Save the request without starting work; reconnect submits it later.
+        #[arg(long)]
+        prepare_only: bool,
     },
+    /// Recover the exact saved start without rereading input files or choosing new identities.
+    Reconnect { file: PathBuf },
     /// List one bounded stable run page.
     List(PageArgs),
     /// Inspect compact current state.
@@ -806,17 +817,23 @@ async fn run() -> ExitCode {
     };
     let json = cli.json;
     let operation = cli.operation();
-    let command_id = cli
-        .command_id
-        .get_or_insert_with(session::generated_command_id)
-        .clone();
+    if !matches!(
+        cli.command,
+        TopCommand::Run {
+            command: RunCommand::Reconnect { .. }
+        }
+    ) {
+        cli.command_id
+            .get_or_insert_with(session::generated_command_id);
+    }
+    let command_id = cli.command_id.clone();
     if (cli.is_wait() || (cli.is_follow() && !std::io::stdout().is_terminal()))
         && cli.timeout_secs.is_none()
     {
         let error = CliError::Invalid(
             "run wait and noninteractive follow require explicit --timeout-secs".to_owned(),
         );
-        emit_error(json, operation, Some(&command_id), &error);
+        emit_error(json, operation, command_id.as_deref(), &error);
         return ExitCode::from(2);
     }
     let deadline = cli
@@ -838,7 +855,7 @@ async fn run() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            emit_error(json, operation, Some(&command_id), &error);
+            emit_error(json, operation, command_id.as_deref(), &error);
             ExitCode::from(exit_code(&error))
         }
     }
@@ -919,6 +936,8 @@ mod tests {
             "run-one",
             "workflow-one",
             "revision-one",
+            "--request-file",
+            "run-one.request.json",
         ])?;
         assert!(cli.json);
         assert_eq!(cli.command_id.as_deref(), Some("command-fixed"));

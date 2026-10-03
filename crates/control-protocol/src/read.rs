@@ -649,6 +649,8 @@ pub struct ArtifactMetadataRead {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorityRead {
+    /// Stable serving installation identity, independent of its current transport address.
+    pub host: String,
     /// Server-owned actor identity.
     pub actor: String,
     /// Exact configured grant identity.

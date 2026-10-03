@@ -45,7 +45,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Daemon did not become ready' }
 $import = & $cli --json --command-id starter-import blueprint import starter.json | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { throw 'Blueprint import failed' }
 $revision = $import.value.value.revision_id
-& $cli --json --command-id starter-start run start run-starter operator-starter $revision
+& $cli --json --command-id starter-start run start run-starter operator-starter $revision --request-file starter.request.json
 if ($LASTEXITCODE -ne 0) { throw 'Run start failed' }
 & $cli --json --timeout-secs 10 run wait run-starter --terminal succeeded
 if ($LASTEXITCODE -ne 0) { throw 'Starter did not succeed' }

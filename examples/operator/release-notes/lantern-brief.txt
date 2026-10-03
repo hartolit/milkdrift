@@ -1,0 +1,1 @@
+Lantern Rally 0.8: improve checkpoint hints; no new vehicles.

@@ -3,38 +3,12 @@ use serde_json::Value;
 
 use crate::{RunCommand, error::CliError, session::CliSession};
 
+mod saved;
+
 pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Result<(), CliError> {
     match command {
-        RunCommand::Start {
-            run,
-            workflow,
-            revision,
-            inputs,
-        } => {
-            let inputs = match inputs {
-                Some(path) => serde_json::from_value(
-                    session
-                        .read_json(
-                            path,
-                            milkdrift_control_protocol::MAX_DOCUMENT_BYTES,
-                            "run inputs",
-                        )
-                        .await?,
-                )
-                .map_err(|error| CliError::Invalid(error.to_string()))?,
-                None => Vec::new(),
-            };
-            submit(
-                session,
-                "run.start",
-                Command::StartRun {
-                    inputs,
-                    run_id: run.clone(),
-                    workflow_id: workflow.clone(),
-                    revision_id: revision.clone(),
-                },
-            )
-            .await
+        RunCommand::Start { .. } | RunCommand::Reconnect { .. } => {
+            saved::execute(session, command).await
         }
         RunCommand::List(page) => {
             let request = session.page_request(page.limit, page.cursor.as_deref())?;

@@ -156,6 +156,16 @@ Published methods retain their separate choice/artifact contracts and service au
 Initial values and artifact bytes are immutable; changing the source file cannot change a run.
 An explicit start guard must name sequence zero and the same revision as the command.
 
+`AuthorityRead.host` exposes the stable installation identity alongside the authenticated actor
+and immutable grant. `ControlClient::prepare_run` creates a bounded schema-1 `SavedRunRequest`
+containing that authority and the complete command. Persist it privately before submission.
+`submit_saved_run` checks the current host/caller/grant and sends that exact command once; application
+receipts remain the sole execution replay owner. The CLI requires a new `--request-file` for start,
+supports `--input NAME=FILE` and `--prepare-only`, and recovers using `run reconnect FILE`.
+This record has no credentials and creates no model selection earlier than runtime dispatch.
+Control protocol versions still require a coordinated upgrade. Direct invocation documents retain
+their existing version, saved request identity, replay and conflict semantics.
+
 Authoring `draft` contains `workflow_id`, nullable `base_revision`, and `mutations` using the
 existing blueprint mutation wire form. `expected_revision` must equal the base and
 `expected_sequence` must be absent. `author_blueprint` accepts `rename`, `add_model`, `prompt`,
@@ -376,7 +386,7 @@ The current operator surface intentionally covers every legitimate external oper
 | `daemon health`, `readiness`, `authority` | Detailed/coarse health and actor/grant reads; `health --follow` exposes the health SSE feed. |
 | `blueprint validate`, `import`, `export`, `show`, `list`, `diff` | Both definition commands and every revision read/diff route. `show --document` emits exact canonical bytes; `show --output FILE` creates a new file. |
 | `sequence validate`, `compile`, `import`, `show`, `status`, `stage`, `remediate` | Prompt-sequence command variants plus owner-derived stage association and prospective proposal construction. These are conveniences over ordinary revision/run/proposal operations, not another workflow model. |
-| `run start`, `list`, `show`, `wait`, `pause`, `resume`, `cancel`, `signal`, `timeline` | Every run command/read; `timeline --follow` exposes the run SSE feed. |
+| `run start`, `reconnect`, `list`, `show`, `wait`, `pause`, `resume`, `cancel`, `signal`, `timeline` | Every run command/read; start retains a private exact request, reconnect resubmits it, and `timeline --follow` exposes the run SSE feed. |
 | `controller status`, `continue` | Both controller command variants and the exact controller read. |
 | `node`; `attempt inspect`, `resolve` | Exact node/attempt reads and `resolve_work` actions `query`, `retry`, `compensate`, `retain`, `resolve-succeeded`, and `resolve-failed`. |
 | `proposal submit`, `list`, `show`, `approve`, `reject`, `apply` | Every proposal command and read route. |

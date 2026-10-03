@@ -542,6 +542,18 @@ fn every_maintained_example_has_a_production_reader() -> TestResult {
                     &document,
                 )?)?;
             }
+            "operator/release-notes/harbor-brief.txt"
+            | "operator/release-notes/lantern-brief.txt" => {
+                std::str::from_utf8(&bytes)?;
+                let upload = milkdrift_control_protocol::InputUploadRequest::from_content(
+                    "host:example".into(),
+                    "example-brief".into(),
+                    "text/plain".into(),
+                    "restricted".into(),
+                    &bytes,
+                )?;
+                assert_eq!(upload.content()?, bytes);
+            }
             "operator/direct-process-inputs.json" => {
                 let inputs: Vec<milkdrift_capability::InputReference> =
                     serde_json::from_slice(&bytes)?;

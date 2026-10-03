@@ -34,6 +34,9 @@ package entry point. Consumers otherwise import the canonical owner directly.
 
 The run-start surface adds `RunInput`, consumed by the CLI and daemon as a named immutable artifact
 reference. Runtime workspace admission and authenticated artifact reads retain validation ownership.
+`SavedRunRequest` and the client's prepare/submit methods are consumed by the CLI's private recovery
+file path; `AuthorityRead.host` binds that record to the serving installation. These are client
+recovery contracts, with no new execution-history or capability-selection owner.
 
 The workflow authoring surface adds `BlueprintDraft`, `BlueprintEdit`, `ModelInputSource`, and
 the `AuthorBlueprint`/`ConstructBlueprint` command variants in control-protocol. They are external

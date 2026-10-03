@@ -203,7 +203,7 @@ Validate and restart the daemon, then run:
 milkdrift --json provider show local-model-loopback
 milkdrift --json --command-id model-validate blueprint validate model.json
 milkdrift --json --command-id model-import blueprint import model.json
-milkdrift --json --command-id model-start run start run-model operator-starter REVISION
+milkdrift --json --command-id model-start run start run-model operator-starter REVISION --request-file model-run.request.json
 milkdrift --json --timeout-secs 180 run wait run-model --terminal succeeded
 milkdrift --json run show run-model
 milkdrift --json attempt inspect run-model ATTEMPT_ID
@@ -264,13 +264,31 @@ whose unchanged continuation fails. This is a completeness check, not a judgment
 are accurate or useful. The [result acceptance guide](../../docs/guides/result-acceptance.md)
 explains the evidence and control branch.
 
-These authoring commands make no model request or run. To supply a brief, upload it as `text/plain`
-with `artifact upload`, then pass a JSON array such as
-`[{"name":"brief","artifact_id":"RETURNED_ARTIFACT_ID"}]` using `run start --inputs FILE`.
-Use the exact saved revision for each run and a new run/command identity for deliberately new work.
-The daemon freezes initial values and verifies artifact access, bytes and budgets before creation.
-The output allowance of 512 is an example choice, not a promise that a particular model will
-finish within it.
+These authoring commands make no model request or run. Use the saved revision in both starts below.
+`--input` reads a bounded UTF-8 file, uploads it as a restricted `text/plain` artifact, and retains
+the exact start in the new `--request-file` before submission. It also accepts `NAME=-` for stdin.
+
+```sh
+milkdrift --command-id release-harbor-1 run start harbor-notes release-notes REVISION --input brief=examples/operator/release-notes/harbor-brief.txt --request-file harbor.request.json
+milkdrift --command-id release-lantern-1 run start lantern-notes release-notes REVISION --input brief=examples/operator/release-notes/lantern-brief.txt --request-file lantern.request.json
+milkdrift run reconnect harbor.request.json
+milkdrift --timeout-secs 90 run wait harbor-notes
+```
+
+Reconnect resends the saved request to recover its receipt. It never rereads the brief or creates a
+new run identity. Editing the local brief after preparation cannot change accepted work. Add
+`--prepare-only` to a start to save it without running; reconnect can submit that exact record later.
+Use a new run, command, and request-file destination for deliberately new execution. Existing
+request files are never overwritten. For already uploaded inputs or other supported media, supply
+`--inputs FILE` containing an array such as `[{"name":"brief","artifact_id":"input:…"}]`.
+
+Recovery files identify the host, actor, exact grant, command, workflow revision, input artifacts,
+reason, evidence and guards. They contain no credential or source-file bytes. Keep them private:
+Unix creation uses mode 0600 and reconnect refuses group/other access and symlinks. Keep a record
+while work is active or its outcome is uncertain; remove it deliberately when recovery is no longer
+needed. The CLI keeps no automatic request archive. Uploaded content follows the daemon's existing
+bounded artifact retention. A different host or caller/grant is refused before resubmission.
+The output allowance of 512 is an example choice, not a promise that a model will finish within it.
 
 The save reply returns the daemon's exact `revision_id`. Use it as `REVISION` below. Saving with
 no changes returns the same version; changing a prompt and saving produces a child of that exact

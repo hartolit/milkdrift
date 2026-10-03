@@ -98,6 +98,7 @@ impl Cli {
             },
             TopCommand::Run { command } => match command {
                 RunCommand::Start { .. } => "run.start",
+                RunCommand::Reconnect { .. } => "run.reconnect",
                 RunCommand::List(_) => "run.list",
                 RunCommand::Show { .. } => "run.show",
                 RunCommand::Wait { .. } => "run.wait",

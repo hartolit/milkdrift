@@ -37,6 +37,8 @@ use thiserror::Error;
 use url::Url;
 
 mod invocation;
+mod saved_run;
+pub use saved_run::SavedRunRequest;
 
 /// Default maximum artifact range materialized by one client call.
 pub const DEFAULT_MAX_ARTIFACT_RANGE_BYTES: usize = 8 * 1024 * 1024;

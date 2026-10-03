@@ -98,8 +98,8 @@ impl ModelFixture {
                 let text = body.to_string();
                 let product = if text.contains("Harbor Host 1.4") { "Harbor" } else { "Lantern" };
                 let stage = if text.contains("Review the draft") { "revised" } else { "draft" };
-                requests.lock().expect("fixture lock").push(body);
-                axum::Json(json!({"id":"controlled", "model":"controlled-writer", "choices":[{"index":0,"message":{"role":"assistant","content":format!("{product} {stage} release notes")},"finish_reason":"stop"}], "usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30}}))
+                requests.lock().map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?.push(body);
+                Ok::<_, axum::http::StatusCode>(axum::Json(json!({"id":"controlled", "model":"controlled-writer", "choices":[{"index":0,"message":{"role":"assistant","content":format!("{product} {stage} release notes")},"finish_reason":"stop"}], "usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30}})))
             }
         )).with_state(requests.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -278,6 +278,19 @@ async fn supplied_inputs_are_validated_frozen_isolated_and_materialized() -> Tes
         }
     }
     let original = start_request("harbor", &revision, vec![first]);
+    let saved = daemon.client.prepare_run(original.clone()).await?;
+    assert_eq!(saved.authority.host, "host:local");
+    let mut wrong_host = saved.clone();
+    wrong_host.authority.host = "host:other".into();
+    assert!(matches!(
+        daemon.client.submit_saved_run(&wrong_host).await,
+        Err(ClientError::Configuration(_))
+    ));
+    assert!(matches!(
+        hidden.submit_saved_run(&saved).await,
+        Err(ClientError::Configuration(_))
+    ));
+    assert!(daemon.client.submit_saved_run(&saved).await?.replayed);
     let mut changed = original.clone();
     changed.reason = "different exact request".into();
     assert!(
@@ -286,6 +299,7 @@ async fn supplied_inputs_are_validated_frozen_isolated_and_materialized() -> Tes
     daemon.stop().await?;
     let restarted = start(plan, CONTROLLER_TOKEN).await?;
     assert!(restarted.client.submit(&original).await?.replayed);
+    assert!(restarted.client.submit_saved_run(&saved).await?.replayed);
     assert_eq!(model.requests.lock().map_err(|_| "fixture lock")?.len(), 4);
     restarted.stop().await
 }
