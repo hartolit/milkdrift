@@ -37,7 +37,9 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
 
+mod authoring;
 mod command;
+pub use authoring::{BlueprintDraft, BlueprintEdit, ModelInputSource};
 mod layout;
 mod read;
 mod upload;
@@ -60,7 +62,7 @@ pub use read::{
 /// Supported control protocol major version.
 const PROTOCOL_MAJOR: u16 = 2;
 /// Supported control protocol minor version.
-const PROTOCOL_MINOR: u16 = 11;
+const PROTOCOL_MINOR: u16 = 12;
 /// Independent presentation-layout document version.
 const LAYOUT_SCHEMA_VERSION: u32 = 1;
 const AUTHENTICATED_CURSOR_SCHEMA_VERSION: u8 = 2;

@@ -28,6 +28,12 @@ commands exist in the contract, but [production activation](../../docs/product/s
 gated. Peer administration has separate routes described in the
 [wire reference](../../docs/reference/control-api.md).
 
+For ordinary model workflows, send `AuthorBlueprint` with a `BlueprintDraft` and one
+`BlueprintEdit`. Retain the returned mutations locally; the daemon owns model selection checks,
+graph construction, result gates and identities. Set `save` only when ready to store a revision.
+`ConstructBlueprint` submits existing mutations for definitions outside the ordinary editor.
+Both return canonical documents without starting a run.
+
 ## Read and continue
 
 `RunRead` shows the current execution frontier. `AttemptRead` supplies exact current or historical

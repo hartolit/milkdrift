@@ -1,5 +1,7 @@
 //! Loopback-only integration coverage for the durable daemon control plane.
 
+#[path = "control_plane/authoring.rs"]
+mod authoring;
 #[path = "control_plane/control_workflows.rs"]
 mod control_workflows;
 #[path = "control_plane/direct.rs"]

@@ -56,3 +56,4 @@ verify it; these decisions do not change current readers, configuration options 
 - [0041 — Published methods bind a starting revision and recoverable service invocation](0041-published-method-invocation.md)
 - [0042 — Compare reusable methods against independently declared evidence](0042-selected-evidence-and-method-evaluation.md)
 - [0043 — Completed history releases active host capacity](0043-active-capacity-and-retained-history.md)
+- [0044 — Public workflow authoring over existing mutations](0044-public-workflow-authoring.md)

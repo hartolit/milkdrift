@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn authoring_wire_uses_explicit_sources_and_rejects_unknown_fields()
+-> Result<(), Box<dyn std::error::Error>> {
+    let bytes = br#"{"protocol":{"major":2,"minor":12},"command_id":"edit-1","expected_sequence":null,"expected_revision":null,"reason":"Connect the brief","evidence":[],"command":{"type":"author_blueprint","draft":{"workflow_id":"release-notes","base_revision":null,"mutations":[]},"edit":{"type":"connect","step":"review","input":"brief","source":{"type":"run_input","name":"brief"}},"save":false}}"#;
+    let request: CommandRequest = decode_json(bytes)?;
+    request.validate()?;
+    assert_eq!(
+        decode_json::<CommandRequest>(&encode_json(&request)?)?,
+        request
+    );
+    let mut value: Value = serde_json::from_slice(bytes)?;
+    value["command"]["edit"]["source"]["conversation"] = Value::Bool(true);
+    assert!(decode_json::<CommandRequest>(&serde_json::to_vec(&value)?).is_err());
+    value["command"]["edit"]["source"] = serde_json::json!({"type":"all_history"});
+    assert!(decode_json::<CommandRequest>(&serde_json::to_vec(&value)?).is_err());
+    Ok(())
+}
+
+#[test]
 fn run_accounting_distinguishes_legacy_unavailable_from_explicit_inactive()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut document = serde_json::json!({"run_id":"ordinary", "sequence":1, "lifecycle":"created", "terminal":null,

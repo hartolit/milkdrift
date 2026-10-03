@@ -1,4 +1,4 @@
-# Local control API 2.11
+# Local control API 2.12
 
 The `learning` command body accepts an operation document owned by
 `milkdrift_control::learning::LearningRequest`: `select`, `declare`, `candidate`, `compare`,
@@ -33,10 +33,10 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":11}}
+{"protocol":{"major":2,"minor":12}}
 ```
 
-Version 2.11 is required on both sides. Older and newer major/minor versions are refused with
+Version 2.12 is required on both sides. Older and newer major/minor versions are refused with
 `unsupported_version`; update the client and daemon together. There is no protocol downgrade.
 Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
@@ -44,7 +44,7 @@ the negotiated envelope version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 11},
+  "protocol": {"major": 2, "minor": 12},
   "request_id": "req-1",
   "value": {}
 }
@@ -58,7 +58,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 11},
+  "protocol": {"major": 2, "minor": 12},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -107,7 +107,7 @@ administration uses the separate routes below. A command envelope has no actor f
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 11},
+  "protocol": {"major": 2, "minor": 12},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -125,6 +125,8 @@ The closed command types are:
 
 | Type | Required body fields | Authority operation | Purpose |
 | --- | --- | --- | --- |
+| `author_blueprint` | `draft`, optional `edit`, `save` | `validate_blueprint` or `import_blueprint`, plus permitted catalogue/base reads | Apply an ordinary model workflow edit and return its pending mutations; optionally save the validated revision. |
+| `construct_blueprint` | `draft`, `store` | `validate_blueprint` or `import_blueprint`, plus base read | Construct a canonical revision from a complete existing mutation batch without client-derived hashes. |
 | `import_blueprint` | `document` | `import_blueprint` | Validate and store an exact immutable workflow/revision. |
 | `validate_blueprint` | `document` | `validate_blueprint` | Validate one exact workflow/revision without storing it. |
 | `import_prompt_sequence` | `document` | `import_blueprint` | Compile bounded schema-3 JSON/Markdown-derived data and store the ordinary immutable revision. |
@@ -143,6 +145,24 @@ The closed command types are:
 Evidence kinds accepted by the daemon are `authority_decision`, `worker_observation`, `external_receipt`, `artifact`, and `recovery_observation`. A success returns `CommandAccepted`: `command_id`, `replayed`, optional `resulting_sequence`, stable `result_type`, and a bounded command-specific `value`.
 
 Acceptance is not task completion. Read the run and exact attempts to establish execution outcome.
+
+Authoring `draft` contains `workflow_id`, nullable `base_revision`, and `mutations` using the
+existing blueprint mutation wire form. `expected_revision` must equal the base and
+`expected_sequence` must be absent. `author_blueprint` accepts `rename`, `add_model`, `prompt`,
+`model`, `input`, `connect`, `disconnect`, `output`, `remove`, and `move` gestures, defined by
+`BlueprintEdit`. A connection selects a declared `run_input` or an earlier `step`; the latter
+selects only `final_text`. `add_model` requires explicit `maximum_output_units`. Each generated
+step uses the existing `ModelProse` acceptance gate. The editor refuses definitions outside its
+exact supported shape; `construct_blueprint` remains available for explicit rich mutations.
+
+Replies contain `draft`, `revision_id`, the canonical `document`, and an editor `workflow` view.
+Saving clears pending mutations and advances the returned base. An unchanged save retains the
+same revision. Neither command starts work or adopts a revision into an existing run. The model
+catalogue supplies explicit capability/profile choices; changing a profile requires explicit
+reselection. Separate drafts may create branches from the same immutable parent. See
+[ADR 0044](../decisions/0044-public-workflow-authoring.md) and the
+[authoring recipe](../../examples/operator/README.md).
+
 Controller commands use the installed lifecycle when the daemon explicitly enables it. Startup
 defaults to disabled; see [activation and recovery](../operations/daemon.md#controller-activation).
 
@@ -432,7 +452,7 @@ See [managed operations](../operations/managed-linux.md) for exact CLI use and r
 
 ## Governed methods and protected publication
 
-Protocol 2.11 run reads include `published_source` (the accepted public operation or local attempt,
+Protocol 2.12 run reads include `published_source` (the accepted public operation or local attempt,
 visible under internal run inspection), `governing_agreement` (the accepted origin binding or null),
 and `agreement_adoptions` (the cumulative prospective adoption count). These project runtime history;
 clients cannot update them. Blueprint schema 3 includes an explicit agreement or null.

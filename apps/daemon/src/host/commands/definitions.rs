@@ -134,7 +134,7 @@ pub(super) fn prompt_sequence(
     })
 }
 
-fn authorize_definition(
+pub(super) fn authorize_definition(
     owner: &Owner,
     session: &ActorSession,
     workflow: milkdrift_blueprint::WorkflowId,

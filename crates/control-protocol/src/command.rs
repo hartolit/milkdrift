@@ -71,6 +71,18 @@ impl CommandRequest {
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 #[allow(missing_docs)] // Variant prose documents each compact operation payload.
 pub enum Command {
+    /// Apply an optional ordinary edit and return the pending mutations. With `save`, validate
+    /// the complete definition and store it. The envelope revision guard must match the base.
+    AuthorBlueprint {
+        draft: crate::BlueprintDraft,
+        edit: Option<crate::BlueprintEdit>,
+        save: bool,
+    },
+    /// Construct a canonical definition from existing mutations using server-owned identities.
+    ConstructBlueprint {
+        draft: crate::BlueprintDraft,
+        store: bool,
+    },
     /// Select evidence, declare and compare a study, or promote through ordinary authority.
     Learning { document: Value },
     /// Publish or promote one exact immutable workflow implementation generation.

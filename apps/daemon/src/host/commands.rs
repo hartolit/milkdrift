@@ -4,6 +4,7 @@ use super::{Owner, PublicFailure, layouts};
 use crate::auth::ActorSession;
 use milkdrift_control_protocol::{Command, CommandAccepted, CommandRequest};
 
+mod authoring;
 mod control;
 mod controllers;
 mod definitions;
@@ -24,6 +25,12 @@ impl Owner {
     ) -> Result<CommandAccepted, PublicFailure> {
         self.workflow()?;
         match &request.command {
+            Command::AuthorBlueprint { draft, edit, save } => {
+                authoring::execute(self, session, request, draft, edit.as_ref(), *save)
+            }
+            Command::ConstructBlueprint { draft, store } => {
+                authoring::construct(self, session, request, draft, *store)
+            }
             Command::Learning { document } => learning::execute(self, session, request, document),
             Command::PublishMethod { .. }
             | Command::InspectMethod { .. }

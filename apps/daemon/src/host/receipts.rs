@@ -235,7 +235,10 @@ fn application_effect(
                 ApplicationCommandEffect::None,
             ))
         }
-        Command::ImportPromptSequence { .. } | Command::ValidatePromptSequence { .. } => {
+        Command::ImportPromptSequence { .. }
+        | Command::ValidatePromptSequence { .. }
+        | Command::AuthorBlueprint { .. }
+        | Command::ConstructBlueprint { .. } => {
             let revision = result
                 .value
                 .get("revision_id")
@@ -279,6 +282,8 @@ fn command_run_identity(command: &Command) -> Option<&str> {
         | Command::DecideProposal { run_id, .. }
         | Command::ApplyProposal { run_id, .. } => Some(run_id),
         Command::Learning { .. }
+        | Command::AuthorBlueprint { .. }
+        | Command::ConstructBlueprint { .. }
         | Command::PublishMethod { .. }
         | Command::InspectMethod { .. }
         | Command::ListMethods { .. }

@@ -117,7 +117,7 @@ values; repository contracts check the version cells against source.
 | Redb internal document format / physical schema | 20 / 16 | Older/future stores refused; no migration. |
 | Application command receipt / layout record | 1 / 1 | Exact supported contracts. |
 | Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
-| External control / authenticated cursor | 2.11 / 2 | Only the exact current protocol and cursor forms are accepted. |
+| External control / authenticated cursor | 2.12 / 2 | Only the exact current protocol and cursor forms are accepted. |
 | Peer protocol and catalog messages | 1.5 | Earlier minors refused. |
 | Daemon configuration | 13 | TOML; JSON and earlier versions refused. |
 | Managed resource request / inventory | 3 | Exact schema, bounded typed recipe references, preserved receipts and guarded transitions. |
@@ -130,8 +130,11 @@ values; repository contracts check the version cells against source.
 - Ordinary public `StartRun` carries only run, workflow and revision identities; the daemon supplies
   an empty input list to `CreateRun`. Runtime already accepts declared initial workspace values,
   and published calls map their supported inputs into that path. Ordinary per-run input submission
-  is not exposed. CLI `blueprint create` constructs a revision locally from a mutation document;
-  daemon blueprint validation/import currently require an already constructed revision document.
+  is not exposed. Public authoring constructs ordinary model workflows from named edits and
+  returns validated revisions with server-derived identities. The model editor is restricted to
+  fresh text steps, explicit direct inputs and completeness gates; richer definitions refuse
+  editing. `construct_blueprint` accepts explicit existing mutations for advanced clients.
+  Offline `blueprint create`/`govern` still support governed-method bootstrap before daemon setup.
 - Execution-only startup omits runtime, control and workflow workers and can serve incoming peers.
   Authenticated clients can discover, prepare, submit, inspect, cancel and follow direct process
   and fresh-model invocations, and upload/download bounded artifacts through the public API/CLI.
