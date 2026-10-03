@@ -435,6 +435,85 @@ fn artifact_download_verifies_ranges_digest_and_preserves_existing_files() -> Te
 }
 
 #[test]
+fn stream_duplicates_and_expired_cursors_use_a_fresh_authorized_view() -> TestResult {
+    use milkdrift_control_protocol::Cursor;
+    let event = |position, observation: Value| -> TestResult<String> {
+        Ok(format!(
+            "data: {}\n\n",
+            json!({"protocol":ProtocolVersion::CURRENT,"cursor":Cursor::new("run:run-one",position)?,"feed":"run:run-one","observed_at_ms":1,"observation":observation})
+        ))
+    };
+    let status = json!({"type":"run_status","value":run_state(None)});
+    let sse = |body: String| {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    };
+    let body = [
+        event(10, status.clone())?,
+        event(10, status.clone())?,
+        event(8, status.clone())?,
+        event(12, status.clone())?,
+        event(
+            18,
+            json!({"type":"resync_required","value":{"reason":"cursor expired"}}),
+        )?,
+    ]
+    .concat();
+    let fresh = json!({"run":run_state(None),"workflow_name":"Example","version":1,"truncated":false,"outputs":[],"outputs_restricted":false,"actions":["pause"]});
+    let next = [
+        event(20, status)?,
+        event(
+            21,
+            json!({"type":"stream_closing","value":{"reason":"authorization changed"}}),
+        )?,
+    ]
+    .concat();
+    let server = Server::new(vec![
+        negotiation(),
+        response(json!({"items":[],"next_cursor":null,"observed_cursor":null})),
+        sse(body),
+        response(fresh),
+        sse(next),
+    ])?;
+    let (exit, records, _) = invoke(
+        &server.endpoint,
+        &[
+            "--timeout-secs",
+            "5",
+            "run",
+            "timeline",
+            "run-one",
+            "--follow",
+        ],
+        false,
+    )?;
+    assert_ne!(exit, 0);
+    let observations = records
+        .iter()
+        .filter(|r| r["type"] == "run.observation")
+        .collect::<Vec<_>>();
+    assert_eq!(observations.len(), 5, "{records:?}");
+    assert_eq!(
+        records
+            .iter()
+            .filter(|r| r["type"] == "run.result.fresh")
+            .count(),
+        1
+    );
+    assert_eq!(
+        observations[2]["value"]["observation"]["type"],
+        "resync_required"
+    );
+    assert_eq!(
+        observations[4]["value"]["observation"]["type"],
+        "stream_closing"
+    );
+    Ok(())
+}
+
+#[test]
 fn cli_refuses_mismatched_negotiation_success_and_error_versions() -> TestResult {
     for minor in [
         ProtocolVersion::CURRENT.minor - 1,

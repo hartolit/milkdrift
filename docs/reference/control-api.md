@@ -317,8 +317,10 @@ or replays a command.
 
 The CLI's `run timeline --follow` first reads a timeline page, then starts a fresh run stream.
 Its `--cursor` applies to that page; a `timeline:{run}` continuation cannot resume `run:{run}`.
-The stream can repeat timeline facts already shown in the initial page. Consumers combining both
-use the durable timeline sequence to identify those repeated facts.
+The fresh stream starts with the current run view and observes only later events. It does not
+drain old pages. The shared client suppresses duplicate or older feed positions and ends after
+delivering a closing or resync notice. On resync the CLI reads a fresh authorized view and opens
+a new cursor-free subscription within its existing reconnect/deadline bounds.
 
 ## Layout schema 1
 

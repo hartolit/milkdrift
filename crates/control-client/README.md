@@ -41,7 +41,9 @@ that the first command was unaccepted or an external effect did not happen.
 `subscribe` reconnects with the last cursor it decoded and yields errors to the consumer along
 the way. That cursor is not an acknowledgement that the consumer persisted the observation. A
 consumer resuming after its own restart must save a cursor only after handling its item. Treat
-`ResyncRequired` as a request for a fresh view, and choose how to respond to `StreamClosing`.
+`ResyncRequired` as a request for a fresh authorized view, then subscribe without a cursor.
+The client suppresses duplicate or older positions within a subscription. Both `ResyncRequired`
+and `StreamClosing` end the subscription after their notice; the caller decides whether to reopen.
 Malformed/truncated frames and nonretryable API errors end the subscription. Dropping the stream
 stops local observation; it does not cancel a run.
 

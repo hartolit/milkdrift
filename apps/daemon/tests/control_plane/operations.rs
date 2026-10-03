@@ -120,10 +120,24 @@ async fn daemon_stream_reconnect_auth_rotation_and_shutdown() -> TestResult {
     assert_eq!(first.feed, "run:run-stream");
     let first_position = first.cursor.position_for("run:run-stream")?;
     let mut last_timeline = match &first.observation {
-        Observation::Timeline(entry) => entry.sequence,
-        _ => 0,
+        Observation::RunStatus(status) => status.sequence,
+        other => {
+            return Err(
+                format!("fresh subscription must start at the current view: {other:?}").into(),
+            );
+        }
     };
     drop(stream);
+    daemon
+        .client
+        .submit(&request(
+            "stream-pause-before-reconnect",
+            Some(last_timeline),
+            Command::PauseRun {
+                run_id: "run-stream".into(),
+            },
+        ))
+        .await?;
 
     let mut resumed = daemon
         .client
@@ -163,7 +177,7 @@ async fn daemon_stream_reconnect_auth_rotation_and_shutdown() -> TestResult {
         .submit(&request(
             "stream-pause-after-idle",
             Some(head),
-            Command::PauseRun {
+            Command::ResumeRun {
                 run_id: "run-stream".to_owned(),
             },
         ))

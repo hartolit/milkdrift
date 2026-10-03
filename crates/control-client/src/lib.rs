@@ -568,7 +568,9 @@ impl ControlClient {
     /// Opens an SSE feed and reconnects with the latest observed cursor.
     ///
     /// Retryable failures are yielded before reconnecting; there is no overall retry limit.
-    /// The consumer owns its deadline and handles `ResyncRequired`/`StreamClosing` observations.
+    /// The consumer owns its deadline and handles `ResyncRequired`/`StreamClosing` observations,
+    /// which are yielded once before ending. A resync requires an authorized fresh read and a
+    /// new subscription without a cursor. Duplicate or older feed positions are suppressed.
     /// The resume cursor advances on decoding, not on durable consumer acknowledgement.
     /// A nonretryable API error or malformed frame ends the stream. Dropping it stops local
     /// observation without cancelling work on the daemon. Heartbeat comments are ignored.
@@ -585,6 +587,13 @@ impl ControlClient {
                 return;
             }
             let mut resume = cursor;
+            let feed = if feed_path == "v1/stream/health" { "daemon-health".to_owned() }
+                else if feed_path == "v1/stream/capabilities" { "capability-health".to_owned() }
+                else { format!("run:{}", feed_path.trim_start_matches("v1/runs/").trim_end_matches("/stream")) };
+            let mut position = match resume.as_ref().map(|cursor| cursor.position_for(&feed)).transpose() {
+                Ok(position) => position,
+                Err(error) => { yield Err(error.into()); return; }
+            };
             loop {
                 let mut path = feed_path.clone();
                 push_cursor(&mut path, resume.as_ref());
@@ -634,6 +643,20 @@ impl ControlClient {
                         match parse_sse_data(&frame) {
                             Ok(None) => {}
                             Ok(Some(observation)) => {
+                                if observation.feed != feed {
+                                    yield Err(ClientError::Stream("observation belongs to another feed".to_owned()));
+                                    return;
+                                }
+                                let next = match observation.cursor.position_for(&feed) {
+                                    Ok(next) => next,
+                                    Err(error) => { yield Err(error.into()); return; }
+                                };
+                                if matches!(observation.observation, milkdrift_control_protocol::Observation::ResyncRequired { .. } | milkdrift_control_protocol::Observation::StreamClosing { .. }) {
+                                    yield Ok(observation);
+                                    return;
+                                }
+                                if position.is_some_and(|position| next <= position) { continue; }
+                                position = Some(next);
                                 resume = Some(observation.cursor.clone());
                                 yield Ok(observation);
                             }

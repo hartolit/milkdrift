@@ -124,6 +124,13 @@ not final output. Read scope can hide details, and invoke-only published callers
 invocation result rather than private run inspection. Offered control operations reflect current
 permissions; submitting one still rechecks its guards and applicable rules.
 
+Following starts with a current authorized run view and then new events. The initial timeline
+command still returns only its requested page; following does not fetch the rest of old history.
+The shared client suppresses duplicate positions when reconnecting. If a feed reports an expired
+cursor, the CLI obtains a fresh authorized view and subscribes again without that cursor, within
+`--max-reconnects` and the overall timeout. Authorization failure or a closing notice ends
+observation. Closing the view never cancels the run.
+
 The timeline maps compacted historical nodes to exact attempt identities. Attempt inspection pages
 the authoritative journal when an attempt has left the compact frontier and exposes its frozen
 capability snapshot, process/model generation, authority-linked context-manifest reference,

@@ -61,6 +61,7 @@ pub(super) async fn run_stream(
         "run stream subscription established"
     );
     let output = stream! {
+        let mut establish = true;
         'events: loop {
             let Some(current_session) = state.host.authenticate_header(Some(&bearer)) else {
                 if let Ok(event) = observation_event(&state.host, &feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision).await {
@@ -83,6 +84,24 @@ pub(super) async fn run_stream(
                     yield Ok(event);
                 }
                 break;
+            }
+            if establish {
+                establish = false;
+                let status = match state.host.run(session.clone(), run.clone()).await {
+                    Ok(status) => status,
+                    Err(_) => break,
+                };
+                if stream_position / 2 > status.sequence {
+                    if let Ok(event) = observation_event(&state.host, &feed, stream_position, Observation::ResyncRequired { reason: "run cursor is ahead of the retained run head".to_owned() }, &session, &decision).await {
+                        yield Ok(event);
+                    }
+                    break;
+                }
+                if stream_position == 0 {
+                    stream_position = status.sequence.saturating_mul(2).saturating_add(1);
+                    let Ok(event) = observation_event(&state.host, &feed, stream_position, Observation::RunStatus(status), &session, &decision).await else { break; };
+                    yield Ok(event);
+                }
             }
             let last_sequence = stream_position / 2;
             if stream_position != 0 && stream_position % 2 == 0 {
