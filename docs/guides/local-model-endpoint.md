@@ -224,7 +224,10 @@ target/debug/local-model-evidence \
   --output target/local-model-real
 ```
 
-The lane waits at most 180 seconds for model terminal evidence; `--timeout-secs` accepts 1–3,600.
+Each workflow-state observation waits at most 180 seconds by default; `--timeout-secs` accepts
+1–3,600 and applies to the initial hold, model completion, acceptance, continuation, uncertainty
+and local refusal checks. The allowance starts separately for each expected state, so it is not
+a total scenario deadline. Nested CLI probes share that observation's remaining time.
 Its default output allowance is 64 units. Set `--max-output-units` (1–65,536) when the chosen model
 needs a larger bounded allowance before returning final text. The harness deadline is separate
 from the adapter's HTTP timeout. The adapter currently uses the smaller of the profile's request

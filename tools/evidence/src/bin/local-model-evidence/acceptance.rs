@@ -22,6 +22,7 @@ pub(super) fn scenario(
         write_model_profile, write_private,
     };
     use std::collections::BTreeMap;
+    let timeout = Duration::from_secs(arguments.timeout_secs);
     let directory = output.join("acceptance-session");
     fs::create_dir(&directory)?;
     let mut empty = ControlledEndpoint::response("", "length")?;
@@ -176,7 +177,7 @@ pub(super) fn scenario(
         ("remediation", "acceptance.remediate", "repair"),
         ("before-continuation", "acceptance.continue", "dependent"),
     ] {
-        let state = wait_for_run(&runner, "acceptance-run", Duration::from_secs(20), |run| {
+        let state = wait_for_run(&runner, "acceptance-run", timeout, |run| {
             node(run, boundary).is_some() && node(run, absent).is_none()
         })?;
         ensure(
@@ -270,7 +271,7 @@ pub(super) fn scenario(
             "exact authorized release replay changed its durable result",
         )?;
     }
-    let completed = wait_for_run(&runner, "acceptance-run", Duration::from_secs(20), |run| {
+    let completed = wait_for_run(&runner, "acceptance-run", timeout, |run| {
         run["value"]["terminal"] == "succeeded"
     })?;
     ensure(

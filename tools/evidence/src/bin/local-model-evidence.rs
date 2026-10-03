@@ -82,7 +82,7 @@ struct Arguments {
     /// Capability identity assigned to the real profile.
     #[arg(long, default_value = SUCCESS_CAPABILITY)]
     model_capability: String,
-    /// Hard bound for the real model's terminal evidence, including provider response time.
+    /// Hard bound for each observed workflow state, including model response time.
     #[arg(long, default_value_t = 180, value_parser = clap::value_parser!(u64).range(1..=3600))]
     timeout_secs: u64,
     /// Bounded model output allowance; reasoning models may need more than the smoke default.
@@ -372,9 +372,12 @@ fn run(arguments: Arguments) -> EvidenceResult {
         SUCCESS_WORKFLOW,
         success_blueprint.id().as_str(),
     ])?;
-    let waiting = wait_for_run(&runner, SUCCESS_RUN, Duration::from_secs(10), |run| {
-        node(run, "model-release").is_some() && node(run, "model").is_none()
-    })?;
+    let waiting = wait_for_run(
+        &runner,
+        SUCCESS_RUN,
+        Duration::from_secs(arguments.timeout_secs),
+        |run| node(run, "model-release").is_some() && node(run, "model").is_none(),
+    )?;
     let waiting_sequence = required_u64(&waiting, &["value", "sequence"])?;
     daemon.terminate()?;
     daemon = start_daemon(&arguments.daemon, &config)?;
@@ -478,6 +481,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
         &failure_blueprint,
         &failure_document,
         &failure_path,
+        Duration::from_secs(arguments.timeout_secs),
     )?;
     let failure_request = failure_endpoint.join()?;
     ensure(
@@ -938,6 +942,7 @@ fn run_uncertainty_scenario(
     blueprint: &BlueprintRevision,
     document: &[u8],
     path: &Path,
+    timeout: Duration,
 ) -> EvidenceResult<UncertaintyObservation> {
     runner.success_with_input(
         &[
@@ -965,7 +970,7 @@ fn run_uncertainty_scenario(
         FAILURE_WORKFLOW,
         blueprint.id().as_str(),
     ])?;
-    let uncertain = wait_for_run(runner, FAILURE_RUN, Duration::from_secs(10), |run| {
+    let uncertain = wait_for_run(runner, FAILURE_RUN, timeout, |run| {
         run["value"]["uncertainty_count"]
             .as_u64()
             .is_some_and(|count| count == 1)

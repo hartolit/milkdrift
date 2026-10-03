@@ -34,6 +34,7 @@ fn run_case(
     output: &std::path::Path,
     rejected: bool,
 ) -> EvidenceResult<serde_json::Value> {
+    let timeout = Duration::from_secs(arguments.timeout_secs);
     let directory = output.join(if rejected {
         "continuation-rejected"
     } else {
@@ -218,7 +219,7 @@ fn run_case(
         "continuation-workflow",
         initial.id().as_str(),
     ])?;
-    let waiting = wait_for_run(&runner, RUN, Duration::from_secs(20), |run| {
+    let waiting = wait_for_run(&runner, RUN, timeout, |run| {
         node(run, "hold").is_some() && node(run, "continued").is_none()
     })?;
     let id = required_text(
@@ -331,7 +332,7 @@ fn run_case(
         "{}",
     ])?;
     if rejected {
-        let stopped = wait_for_run(&runner, RUN, Duration::from_secs(20), |run| {
+        let stopped = wait_for_run(&runner, RUN, timeout, |run| {
             run["value"]["terminal"] == "failed"
         })?;
         ensure(
@@ -361,7 +362,7 @@ fn run_case(
         daemon.terminate()?;
         return Ok(json!({"requests":1,"rejected_prior_refused":true,"restart_boundaries":1}));
     }
-    let completed = wait_for_run(&runner, RUN, Duration::from_secs(20), |run| {
+    let completed = wait_for_run(&runner, RUN, timeout, |run| {
         run["value"]["terminal"] == "succeeded"
     })?;
     let id = required_text(

@@ -80,7 +80,7 @@ pub(super) fn scenario(arguments: &Arguments, output: &Path) -> EvidenceResult<V
     let state = wait_for_run(
         &runner,
         "run-local-refusal",
-        Duration::from_secs(15),
+        Duration::from_secs(arguments.timeout_secs),
         |run| run["value"]["lifecycle"] == "terminal" && node(run, "model").is_some(),
     )?;
     let model = node(&state, "model").ok_or("refused model absent")?;
