@@ -54,8 +54,10 @@ implementation evidence for current versions.
 
 ## Required development behavior
 
-- Implement repository-owned executables, examples, fixtures, and development tooling in Rust.
+- Implement backend executables, backend tooling, examples, and fixtures in Rust.
   Do not add interpreter scripts or embed another language to bypass the maintained Rust owners.
+  An explicitly authorized Svelte frontend may use its native languages as a thin daemon client;
+  this does not authorize frontend work or move backend semantics into a client.
 - Inspect current source, consumers, tests, manifests, and Git context before planning a change.
 - Complete an owned boundary end to end: implementation, refusal paths, tests, docs, and evidence.
 - Prefer deletion, private modules, and narrow visibility. Do not add generic `common`, framework,
@@ -68,9 +70,11 @@ implementation evidence for current versions.
 - Write documentation to explain purpose, use, and consequences in plain language. Follow the
   [documentation practice](docs/development/practices/documentation.md) for prose,
   code comments, and package READMEs; naming technical properties is not an explanation.
-- Follow the finite authorization in [the roadmap](docs/product/roadmap.md): adaptive methods,
-  independent hosts, managed Linux resources, publication, and evaluated reuse are assigned work.
-  UI, inference, new provider families, and unrelated workflow primitives remain excluded.
+- Follow the finite authorization in [the roadmap](docs/product/roadmap.md): the current sprint
+  completes ordinary workflow authoring, supplied-input execution, inspection, prospective repair,
+  and reuse through shared daemon operations. Preserve the existing host, managed-resource,
+  publication, and evaluation behavior. GUI implementation, inference, new provider families,
+  and unrelated workflow primitives remain excluded.
 - Make no support, safety, portability, or interoperability claim that tests or evidence do not
   establish.
 - Before completion, follow the [verification policy](docs/development/workflow.md#choose-verification-for-the-change).

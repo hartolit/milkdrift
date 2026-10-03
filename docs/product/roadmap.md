@@ -2,12 +2,33 @@
 
 Ordered unfinished work; [status](status.md) owns implementation and evidence facts.
 
-The user authorized the finite adaptive methods and independent hosts implementation. Its direction
-is adopted in vision, architecture, and ADRs 0038–0041. Integrated physical acceptance now passes
-with explicitly assisted application source; unaided model coding is not a closure requirement.
+The active [client-ready workflows sprint](../development/virtual-office/client-ready-workflows/README.md)
+completes the ordinary CLI route through shared public daemon operations. Its setup is adopted;
+the next assignment is [01 — Create and edit workflows](../development/virtual-office/client-ready-workflows/01-workflow-authoring.md).
 
-No implementation sprint or successor assignment is currently open. Further work needs a concrete
-operator need and its own bounded authorization; the whiteboard retains questions for that decision.
+Work proceeds in this order:
+
+1. Create, edit, validate, save and reopen workflows; select permitted models, prompts and connections
+   without hand-written graph JSON or client-calculated semantic identities.
+2. Run one saved revision with supplied inputs and recover the exact request after a lost reply.
+3. Read progress and accepted results, then repair eligible future work through ordinary proposals.
+4. Reuse or independently copy definitions and make existing publication and evaluation usable.
+5. Remove duplicated client rules and prove the route through a client that does not invoke the CLI.
+6. Run the integrated operator journey, full gate and authorized local-model checks; fix failures
+   before closing the sprint.
+
+The [verification schedule](../development/virtual-office/client-ready-workflows/README.md#test-as-you-build-test-the-full-system-in-06)
+assigns focused checks to 01–05 and full acceptance to 06. Early handoffs do not establish full-system
+acceptance. Missing required model access keeps final acceptance open. Each prompt assigns its own
+bounded work; adopting the sprint does not automatically execute later prompts.
+
+Svelte is the first future GUI, and every frontend uses the daemon's public operations. This sprint
+adds no GUI code or dependencies and does not authorize an automatic GUI successor.
+
+The previous adaptive methods and independent hosts implementation is closed. Its integrated
+physical acceptance includes explicitly assisted application source; unaided model coding was not
+a closure requirement. Preserve that behavior and its regression coverage while completing the
+client route.
 
 The managed resource, protected adaptation, publication and evaluated-learning implementations
 have finite desktop and UM790 qualification. Current coverage and limits belong to

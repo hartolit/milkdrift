@@ -127,6 +127,11 @@ values; repository contracts check the version cells against source.
 
 ## Limitations now
 
+- Ordinary public `StartRun` carries only run, workflow and revision identities; the daemon supplies
+  an empty input list to `CreateRun`. Runtime already accepts declared initial workspace values,
+  and published calls map their supported inputs into that path. Ordinary per-run input submission
+  is not exposed. CLI `blueprint create` constructs a revision locally from a mutation document;
+  daemon blueprint validation/import currently require an already constructed revision document.
 - Execution-only startup omits runtime, control and workflow workers and can serve incoming peers.
   Authenticated clients can discover, prepare, submit, inspect, cancel and follow direct process
   and fresh-model invocations, and upload/download bounded artifacts through the public API/CLI.
@@ -212,7 +217,7 @@ values; repository contracts check the version cells against source.
   peer tombstones grow for the store generation. No storage migration, online destructive rotation,
   export/delete operation, automatic proposal-index rebuild, whole-database authenticity, rollback
   protection, or filesystem power-loss qualification is claimed.
-- No UI is implemented or authorized. Actual graceful OS-signal evidence is qualified on the
+- No GUI is implemented. Actual graceful OS-signal evidence is qualified on the
   hosted Linux runner; forced Windows child termination does not qualify that platform claim.
 
 ## Current validation/evidence snapshot

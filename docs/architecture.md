@@ -6,6 +6,16 @@ accepts facts durably and asks external capabilities to perform work. Independen
 also admits direct operations without a workflow. Clients inspect the owning service's
 projections instead of opening storage or reconstructing adapter behavior themselves.
 
+**Svelte is the first GUI; every frontend is a thin client of the daemon.** Iced may be reconsidered
+later; a desktop wrapper may use Tauri. Backend code and backend tooling remain Rust. The CLI,
+Svelte and future clients use the same public command/read boundary. A frontend may keep unfinished
+edits and canvas layout, but only daemon-validated submissions become executable revisions.
+The daemon and its domain libraries own construction, validation, semantic identities, authority,
+execution, recovery and saved results. Essential operations must be available without CLI-private
+helpers or client-side copies of those rules. Canvas, timeline and inspector views project these
+facts; they do not own workflow state. This is the client boundary to complete, not a claim that
+a GUI or every authoring operation already exists.
+
 Offline `storage-admin` is a separate daemon executable path under OS file-owner authority.
 Redb owns source locking, private inspection copies and complete stopped-generation copies;
 the application composes redacted diagnostics with runtime's pure projection/context checks.

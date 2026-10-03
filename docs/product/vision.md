@@ -1098,7 +1098,7 @@ A valid bearer token, peer certificate, or local login must not imply access to 
 One authoritative daemon owns a workflow domain. Its workflow-enabled composition is:
 
 ```text
-                        Iced / CLI / API clients
+                       Svelte / CLI / API clients
                                   |
                                   v
                          Milkdrift daemon
@@ -1135,9 +1135,17 @@ capability hosting, serving recovery and installed resource management. Role rem
 live or unresolved workflow obligations. Clients, including future cross-platform graphical clients,
 continue to submit scoped commands rather than open a host's database.
 
-## 24. The Iced control center
+## 24. The Svelte control center
 
-The UI is not the product's source of truth. It is the native operator workbench over the daemon's stable command and query model.
+**Svelte is the first GUI; every frontend is a thin client of the daemon.** A desktop wrapper may
+use Tauri; Iced may be reconsidered later. The GUI is an operator workbench over the daemon's
+public commands and read models. Backend code and backend tooling remain Rust.
+
+Clients may keep unfinished edits, arrange a canvas, and help fill in forms. Those edits become
+executable definitions only when submitted and validated by the daemon. Workflow construction,
+semantic identities, permissions, execution, recovery, and saved results belong to the daemon and
+its Rust libraries. A frontend must not need CLI subprocesses, private Rust helpers, database
+access, or a second implementation of those rules.
 
 It should have three primary perspectives.
 
@@ -1400,7 +1408,7 @@ milkdrift/
 |
 `-- clients
       CLI
-      Iced canvas / timeline / inspector
+      Svelte canvas / timeline / inspector
       future clients
 ```
 
