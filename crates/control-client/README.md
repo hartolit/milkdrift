@@ -19,7 +19,7 @@ operation. The [daemon guide](../../docs/operations/daemon.md) explains the matc
 | Invoke independently | `execution_discovery`, `invoke`, `invocation_lookup`, `invocation`, `invocation_observations`, and `cancel_invocation` operate the common serving owner in either daemon role. Preserve the exact host/catalog/request across retries. |
 | Supply an input file | `upload_input` publishes bounded verified content with a caller-scoped upload ID. No destination path or producer claim is accepted. |
 | Change workflow or run state | `submit` sends one `CommandRequest` and does not retry it automatically. Retain the exact request to recover a lost reply. |
-| Inspect current or past work | `run`, `node`, `attempt`, and `timeline` expose authorized views. A compact run does not contain every historical attempt. |
+| Inspect current or past work | `run_result` explains current progress, checks, terminal output fields and permitted actions. `run`, `node`, `attempt`, and `timeline` expose additional authorized evidence. A compact run does not contain every historical attempt. |
 | Browse definitions or proposals | `revisions`, `runs`, and `proposals` return one page per call. Reuse its cursor with the same filters. |
 | Inspect available execution hosts | Capability, peer, and authority reads expose the caller's permitted view. `peer_action` explicitly changes a configured relationship. |
 | Download output | Read artifact metadata, then fetch ranges. Verify the assembled file's size and digest as the CLI's [download owner](../../apps/cli/src/command/artifact.rs) does. |

@@ -280,6 +280,15 @@ impl DaemonHost {
             .await
     }
 
+    pub(crate) async fn run_result(
+        &self,
+        session: ActorSession,
+        run: String,
+    ) -> Result<milkdrift_control_protocol::RunResultRead, PublicFailure> {
+        self.dispatch(false, move |owner| owner.run_result(&session, &run))
+            .await
+    }
+
     pub(crate) async fn node(
         &self,
         session: ActorSession,

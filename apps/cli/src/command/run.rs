@@ -3,6 +3,7 @@ use serde_json::Value;
 
 use crate::{RunCommand, error::CliError, session::CliSession};
 
+mod result;
 mod saved;
 
 pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Result<(), CliError> {
@@ -24,6 +25,12 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
             let run = session.client().run(run).await?;
             session.output("run.show", &run)
         }
+        RunCommand::Result {
+            run,
+            details,
+            field,
+            output,
+        } => result::execute(session, run, *details, field.as_deref(), output.as_deref()).await,
         RunCommand::Wait {
             run,
             terminal,

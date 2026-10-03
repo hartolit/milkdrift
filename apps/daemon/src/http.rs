@@ -118,6 +118,7 @@ pub(crate) fn router(host: DaemonHost) -> Router {
         "/v1/runs/{run}" => get(run), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRun), RouteResourceMapping::Run;
         "/v1/runs/{run}/nodes/{execution}" => get(node), RouteAuthorityMapping::Exact(AuthorityOperation::InspectNodeExecution), RouteResourceMapping::Run;
         "/v1/runs/{run}/attempts/{attempt}" => get(attempt), RouteAuthorityMapping::Exact(AuthorityOperation::InspectAttempt), RouteResourceMapping::Run;
+        "/v1/runs/{run}/result" => get(reads::run_result), RouteAuthorityMapping::Exact(AuthorityOperation::InspectRun), RouteResourceMapping::Run;
         "/v1/runs/{run}/timeline" => get(timeline), RouteAuthorityMapping::Exact(AuthorityOperation::InspectTimeline), RouteResourceMapping::Run;
         "/v1/runs/{run}/stream" => get(run_stream), RouteAuthorityMapping::StreamDerived, RouteResourceMapping::Run;
         "/v1/runs/{run}/proposals" => get(proposals), RouteAuthorityMapping::Exact(AuthorityOperation::InspectProposal), RouteResourceMapping::Run;

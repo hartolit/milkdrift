@@ -485,6 +485,18 @@ enum RunCommand {
     List(PageArgs),
     /// Inspect compact current state.
     Show { run: String },
+    /// Show progress, required checks, final output and permitted next operations.
+    Result {
+        run: String,
+        /// Include model choice, limits, input selection, usage and failure evidence.
+        #[arg(long)]
+        details: bool,
+        /// Download a declared final output to a new file with digest verification.
+        #[arg(long, requires = "output")]
+        field: Option<String>,
+        #[arg(long, requires = "field")]
+        output: Option<PathBuf>,
+    },
     /// Wait for a terminal outcome with an explicit global --timeout-secs deadline.
     Wait {
         run: String,

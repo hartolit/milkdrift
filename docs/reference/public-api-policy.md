@@ -32,6 +32,10 @@ package entry point. Consumers otherwise import the canonical owner directly.
 
 ## Surface ownership
 
+`RunResultRead`, `RunOutputRead` and `ControlClient::run_result` are external product contracts
+consumed by the CLI and daemon. They compose existing authorized readers; the private daemon
+module owns result selection and action hints. They add no durable state or client execution rules.
+
 The run-start surface adds `RunInput`, consumed by the CLI and daemon as a named immutable artifact
 reference. Runtime workspace admission and authenticated artifact reads retain validation ownership.
 `SavedRunRequest` and the client's prepare/submit methods are consumed by the CLI's private recovery

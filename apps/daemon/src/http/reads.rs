@@ -213,6 +213,20 @@ async fn run_response(
     success(request_id, value)
 }
 
+pub(super) async fn run_result(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(run): Path<String>,
+) -> Result<Response, ApiError> {
+    let (request_id, session) = authenticate(&state, &headers)?;
+    let value = state
+        .host
+        .run_result(session, run)
+        .await
+        .map_err(|error| owner_error(error, request_id.clone()))?;
+    success(request_id, value)
+}
+
 pub(super) async fn node(
     State(state): State<AppState>,
     headers: HeaderMap,

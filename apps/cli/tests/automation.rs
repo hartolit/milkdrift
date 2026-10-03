@@ -369,6 +369,72 @@ fn lost_stream_and_malformed_protocol_are_finite() -> TestResult {
 }
 
 #[test]
+fn artifact_download_verifies_ranges_digest_and_preserves_existing_files() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let path = root.path().join("result.txt");
+    let bytes = "complete notes";
+    let metadata = json!({"artifact_id":"notes", "digest":blake3::hash(bytes.as_bytes()).to_hex().to_string(), "size":bytes.len(), "content_type":"text/plain", "disposition_name":null, "sensitivity":"restricted"});
+    for (body, range, succeeds) in [
+        (bytes, "bytes 0-13/14", true),
+        ("changed notes!", "bytes 0-13/14", false),
+        (bytes, "bytes 1-14/15", false),
+        (bytes, "invalid", false),
+    ] {
+        let range_response = format!(
+            "HTTP/1.1 206 Partial Content\r\nContent-Type: text/plain\r\nContent-Range: {range}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let server = Server::new(vec![
+            negotiation(),
+            response(metadata.clone()),
+            range_response,
+        ])?;
+        let (exit, _, _) = invoke(
+            &server.endpoint,
+            &[
+                "artifact",
+                "get",
+                "notes",
+                "--output",
+                path.to_str().ok_or("path")?,
+            ],
+            false,
+        )?;
+        assert_eq!(exit == 0, succeeds);
+        if succeeds {
+            assert_eq!(std::fs::read_to_string(&path)?, bytes);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                assert_eq!(
+                    std::fs::metadata(&path)?.permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+            std::fs::remove_file(&path)?;
+        } else {
+            assert!(!path.exists());
+        }
+    }
+    std::fs::write(&path, "keep")?;
+    let server = Server::new(vec![negotiation(), response(metadata)])?;
+    let (exit, _, _) = invoke(
+        &server.endpoint,
+        &[
+            "artifact",
+            "get",
+            "notes",
+            "--output",
+            path.to_str().ok_or("path")?,
+        ],
+        false,
+    )?;
+    assert_ne!(exit, 0);
+    assert_eq!(std::fs::read_to_string(&path)?, "keep");
+    Ok(())
+}
+
+#[test]
 fn cli_refuses_mismatched_negotiation_success_and_error_versions() -> TestResult {
     for minor in [
         ProtocolVersion::CURRENT.minor - 1,

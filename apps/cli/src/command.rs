@@ -103,6 +103,7 @@ impl Cli {
                 RunCommand::Reconnect { .. } => "run.reconnect",
                 RunCommand::List(_) => "run.list",
                 RunCommand::Show { .. } => "run.show",
+                RunCommand::Result { .. } => "run.result",
                 RunCommand::Wait { .. } => "run.wait",
                 RunCommand::Pause { .. } => "run.pause",
                 RunCommand::Resume { .. } => "run.resume",

@@ -22,6 +22,8 @@ mod process;
 mod process_cleanup;
 #[path = "control_plane/resources.rs"]
 mod resources;
+#[path = "control_plane/results.rs"]
+mod results;
 #[path = "control_plane/roles.rs"]
 mod roles;
 #[path = "control_plane/support.rs"]

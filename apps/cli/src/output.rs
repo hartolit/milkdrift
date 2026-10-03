@@ -19,16 +19,19 @@ pub(crate) struct PendingFile {
 
 impl PendingFile {
     pub(crate) fn create(path: &std::path::Path) -> Result<Self, CliError> {
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .map_err(|error| {
-                CliError::Invalid(format!(
-                    "output must be a new writable file: {:?}",
-                    error.kind()
-                ))
-            })?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let file = options.open(path).map_err(|error| {
+            CliError::Invalid(format!(
+                "output must be a new writable file: {:?}",
+                error.kind()
+            ))
+        })?;
         Ok(Self {
             file: Some(file),
             path: path.to_owned(),

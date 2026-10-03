@@ -358,6 +358,16 @@ impl ControlClient {
         .await
     }
 
+    /// Reads current progress, terminal outputs and currently permitted control actions.
+    /// Output previews and attempt evidence are separately authorized by the daemon.
+    pub async fn run_result(
+        &self,
+        run: &str,
+    ) -> Result<milkdrift_control_protocol::RunResultRead, ClientError> {
+        self.safe_get(&format!("v1/runs/{}/result", path_segment(run)?))
+            .await
+    }
+
     /// Reads one bounded projected timeline page.
     pub async fn timeline(
         &self,
@@ -495,20 +505,43 @@ impl ControlClient {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("application/octet-stream")
             .to_owned();
-        let complete_size = response
+        let (returned_start, returned_end, complete_size) = response
             .headers()
             .get(header::CONTENT_RANGE)
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.rsplit('/').next())
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(u64::try_from(requested).unwrap_or(u64::MAX));
+            .and_then(|value| value.strip_prefix("bytes "))
+            .and_then(|value| value.split_once('/'))
+            .and_then(|(range, size)| {
+                let (start, end) = range.split_once('-')?;
+                Some((
+                    start.parse::<u64>().ok()?,
+                    end.parse::<u64>().ok()?,
+                    size.parse::<u64>().ok()?,
+                ))
+            })
+            .ok_or_else(|| {
+                ClientError::Stream("artifact response has no valid Content-Range".to_owned())
+            })?;
+        if response.status() != StatusCode::PARTIAL_CONTENT
+            || returned_start != start
+            || returned_end < returned_start
+            || returned_end > end
+            || returned_end >= complete_size
+        {
+            return Err(ClientError::Stream(
+                "artifact response range differs from the requested content".to_owned(),
+            ));
+        }
         let bytes = bounded_body(
             response,
             requested.min(self.config.max_artifact_range_bytes),
         )
         .await?;
-        let returned_end =
-            start.saturating_add(u64::try_from(bytes.len()).unwrap_or(0).saturating_sub(1));
+        if u64::try_from(bytes.len()).ok() != Some(returned_end - returned_start + 1) {
+            return Err(ClientError::Stream(
+                "artifact response is incomplete".to_owned(),
+            ));
+        }
         Ok(ArtifactRange {
             start,
             end: returned_end,

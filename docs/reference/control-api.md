@@ -1,4 +1,4 @@
-# Local control API 2.13
+# Local control API 2.14
 
 The `learning` command body accepts an operation document owned by
 `milkdrift_control::learning::LearningRequest`: `select`, `declare`, `candidate`, `compare`,
@@ -33,10 +33,10 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":13}}
+{"protocol":{"major":2,"minor":14}}
 ```
 
-Version 2.13 is required on both sides. Older and newer major/minor versions are refused with
+Version 2.14 is required on both sides. Older and newer major/minor versions are refused with
 `unsupported_version`; update the client and daemon together. There is no protocol downgrade.
 Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
@@ -44,7 +44,7 @@ the negotiated envelope version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 13},
+  "protocol": {"major": 2, "minor": 14},
   "request_id": "req-1",
   "value": {}
 }
@@ -58,7 +58,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 13},
+  "protocol": {"major": 2, "minor": 14},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -93,6 +93,14 @@ atomic, exact upload replay returns the same artifact and changed bytes conflict
 uploads are reclaimed before startup opens admission; per-actor cumulative quotas survive restart.
 The ordinary artifact metadata/range routes download both inputs and outputs.
 
+`GET /v1/runs/{run}/result` returns `RunResultRead`: a compact frontier enriched with separately
+authorized attempt evidence, saved workflow name/version, successful terminal output fields and
+current permitted control operations. Up to 32 frontier nodes and 32 output fields are returned;
+`truncated` marks omissions. Text previews contain at most 4,096 bytes per field and are explicitly
+labelled when partial. Clients must escape untrusted preview text for their display. Workspace,
+artifact and attempt reads remain independently scoped; unreadable final fields set
+`outputs_restricted`. Current action hints do not replace command validation or approval.
+
 Use the [independent execution recipe](../../examples/operator/README.md#independent-execution).
 `invocation prepare` obtains discovery and writes a create-new exact request file without execution.
 For an idempotent-write operation it derives the operation's idempotency key from the supplied
@@ -107,7 +115,7 @@ administration uses the separate routes below. A command envelope has no actor f
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 13},
+  "protocol": {"major": 2, "minor": 14},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,

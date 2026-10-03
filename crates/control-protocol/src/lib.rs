@@ -42,6 +42,8 @@ mod command;
 pub use authoring::{BlueprintDraft, BlueprintEdit, ModelInputSource};
 mod layout;
 mod read;
+mod result;
+pub use result::{RunOutputRead, RunResultRead};
 mod upload;
 pub use upload::{InputUploadRequest, MAX_INPUT_UPLOAD_BYTES};
 
@@ -63,7 +65,7 @@ pub use read::{
 /// Supported control protocol major version.
 const PROTOCOL_MAJOR: u16 = 2;
 /// Supported control protocol minor version.
-const PROTOCOL_MINOR: u16 = 13;
+const PROTOCOL_MINOR: u16 = 14;
 /// Independent presentation-layout document version.
 const LAYOUT_SCHEMA_VERSION: u32 = 1;
 const AUTHENTICATED_CURSOR_SCHEMA_VERSION: u8 = 2;

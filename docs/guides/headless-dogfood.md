@@ -111,6 +111,19 @@ milkdrift artifact get ARTIFACT_ID --output NEW_OUTPUT_FILE
 milkdrift daemon authority
 ```
 
+For a compact operator view, use `milkdrift run result RUN_ID`. It shows the saved workflow
+name/version, current steps, invocation outcomes, required result decisions and declared final
+outputs. `--details` adds model/profile, requested limits, selected inputs, reported usage and
+failure evidence. Missing usage stays unknown. A model returning text does not establish that
+its required check passed or that the workflow finished.
+
+`milkdrift run result RUN_ID --field OUTPUT_NAME --output NEW_OUTPUT_FILE` downloads a declared
+successful terminal output and verifies its size and digest. Previews are bounded and escape
+terminal controls; a truncated preview is labelled. Rejected or uncertain model output is evidence,
+not final output. Read scope can hide details, and invoke-only published callers use their public
+invocation result rather than private run inspection. Offered control operations reflect current
+permissions; submitting one still rechecks its guards and applicable rules.
+
 The timeline maps compacted historical nodes to exact attempt identities. Attempt inspection pages
 the authoritative journal when an attempt has left the compact frontier and exposes its frozen
 capability snapshot, process/model generation, authority-linked context-manifest reference,

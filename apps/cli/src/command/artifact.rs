@@ -51,7 +51,7 @@ pub(super) async fn execute(
     }
 }
 
-async fn download(
+pub(in crate::command) async fn download(
     session: &CliSession,
     artifact: &str,
     destination: &Path,
