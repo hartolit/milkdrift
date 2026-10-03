@@ -209,7 +209,7 @@ impl CliSession {
         }
         Ok(())
     }
-    async fn read_bounded(
+    pub(crate) async fn read_bounded(
         &self,
         path: &Path,
         maximum: usize,

@@ -225,6 +225,95 @@ retain uncertainty. Inspect the exact attempt and use `attempt resolve --action 
 explicitly authorized resolution; do not assume retry is safe. [Model evidence](../../docs/guides/local-model-endpoint.md)
 documents optional structural qualification and hermetic failure tests.
 
+## Author a model workflow
+
+Use a running workflow-enabled daemon and a model profile configured as above. The caller needs
+blueprint validation/import and inspection, catalogue/profile reads, and permission to select the
+model and the control acceptance capability. Use a credential scoped to `release-notes`, then
+one scoped to `meeting-summary` for the second workflow, or an existing explicitly broader grant.
+The starter configuration's `operator-starter` scope does not cover these identities. Configure
+the scopes through the existing [authority configuration](../../docs/operations/authority.md).
+Running the saved definition also needs `model.generate`, `workflow.accept_result`, artifact
+and workspace access. These commands use the endpoint and credential environment configured
+earlier. Choose the exact capability shown by `workflow models`; the example assumes
+`operator-model`. Profile credentials remain with the daemon.
+
+From the repository root, create a draft/review workflow using the maintained prompt files:
+
+```sh
+milkdrift workflow models
+milkdrift workflow new release-notes --name "Release notes" --file release-notes.draft.json
+milkdrift workflow input release-notes.draft.json brief
+milkdrift workflow add release-notes.draft.json draft --model operator-model \
+  --prompt examples/operator/release-notes/draft.txt --maximum-output-units 512
+milkdrift workflow add release-notes.draft.json review --model operator-model \
+  --prompt examples/operator/release-notes/review.txt --maximum-output-units 512
+milkdrift workflow connect release-notes.draft.json draft brief --run-input brief
+milkdrift workflow connect release-notes.draft.json review brief --run-input brief
+milkdrift workflow connect release-notes.draft.json review draft --from-step draft
+milkdrift workflow output release-notes.draft.json review --name notes
+milkdrift workflow inspect release-notes.draft.json
+milkdrift --command-id release-notes-save-1 workflow save release-notes.draft.json
+```
+
+The `brief` declaration names a value supplied separately on each run. It is not embedded in the
+definition. The review's bindings select that brief and only the draft step's final text; there is no
+implicit conversation history. Every step requires a canonical model response with natural `stop`
+and non-whitespace final text. Empty responses and `length` finishes enter a visible review hold,
+whose unchanged continuation fails. This is a completeness check, not a judgment that the notes
+are accurate or useful. The [result acceptance guide](../../docs/guides/result-acceptance.md)
+explains the evidence and control branch.
+
+The supplied-input start operation is still pending in the active sprint. These commands author
+the reusable definition and make no model request or run. The existing model example above remains
+the runnable fixed-prompt example. The output allowance of 512 is an example choice, not a promise
+that a particular model will finish within it.
+
+The save reply returns the daemon's exact `revision_id`. Use it as `REVISION` below. Saving with
+no changes returns the same version; changing a prompt and saving produces a child of that exact
+base. Old versions and any work already using them remain unchanged.
+
+```sh
+milkdrift workflow open REVISION --file reopened.draft.json
+milkdrift workflow prompt reopened.draft.json review --prompt examples/operator/release-notes/review.txt
+milkdrift --command-id release-notes-save-2 workflow save reopened.draft.json
+milkdrift workflow inspect reopened.draft.json
+```
+
+`--prompt -` reads UTF-8 text from standard input. `workflow model FILE STEP CAPABILITY` explicitly
+changes a model; no unavailable choice is silently substituted. `workflow disconnect FILE STEP
+INPUT` removes a connection. `workflow move FILE STEP --before OTHER` changes order, and omitting
+`--before` moves the step to the end. A reorder that puts a source after its consumer refuses.
+`workflow remove FILE STEP` refuses while another step or the selected output still uses it.
+
+Create a second independent workflow beside the first:
+
+```sh
+milkdrift workflow new meeting-summary --name "Meeting summary" --file meeting.draft.json
+milkdrift workflow input meeting.draft.json brief
+milkdrift workflow add meeting.draft.json summarize --model operator-model \
+  --prompt examples/operator/release-notes/meeting.txt --maximum-output-units 256
+milkdrift workflow connect meeting.draft.json summarize brief --run-input brief
+milkdrift workflow output meeting.draft.json summarize --name summary
+milkdrift --command-id meeting-save-1 workflow save meeting.draft.json
+```
+
+Draft files contain the workflow identity, exact optional base, and pending ordinary blueprint
+mutations. They may lack steps or a final output while editing; `save` requires both and nonempty
+prompts. They contain neither credentials nor per-run values. New/open destinations must not exist.
+Edits hold a companion `.lock` file's OS lock and check the original bytes before atomically
+publishing a complete replacement. The empty lock file may remain; the OS releases the lock on
+process exit. An interrupted write leaves the previous draft intact, although forced termination
+can leave an unpromoted temporary file in its directory. This does not establish power-loss
+durability. Do not edit a draft outside the CLI while a command is in progress.
+
+`inspect --json` returns `edit_token`. Supply it with `workflow --expected-edit TOKEN ...` to refuse
+changes since that inspection. Independently copied drafts may intentionally branch from the same
+immutable base; there is no mutable latest-version pointer. Rich imported definitions that this
+editor cannot reproduce exactly refuse before a draft is written. Advanced clients may submit
+existing mutations through the public `construct_blueprint` operation. Existing offline
+`blueprint create` and `govern` serve the separate governed-method bootstrap.
+
 ## Author, inspect and change future work
 
 `blueprint validate` calls the daemon's strict reader without storing a revision.

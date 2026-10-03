@@ -161,7 +161,7 @@ same revision. Neither command starts work or adopts a revision into an existing
 catalogue supplies explicit capability/profile choices; changing a profile requires explicit
 reselection. Separate drafts may create branches from the same immutable parent. See
 [ADR 0044](../decisions/0044-public-workflow-authoring.md) and the
-[authoring recipe](../../examples/operator/README.md).
+[authoring recipe](../../examples/operator/README.md#author-a-model-workflow).
 
 Controller commands use the installed lifecycle when the daemon explicitly enables it. Startup
 defaults to disabled; see [activation and recovery](../operations/daemon.md#controller-activation).

@@ -15,6 +15,7 @@ mod error;
 mod input;
 mod output;
 mod session;
+mod workflow_args;
 
 #[cfg(test)]
 #[path = "tests/documentation.rs"]
@@ -81,6 +82,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum TopCommand {
+    /// Create, edit and save ordinary model workflows through the daemon.
+    Workflow(workflow_args::WorkflowArgs),
     /// Select evidence, declare a comparison, submit a candidate, compare, promote or inspect.
     Learning {
         /// Strict learning operation document, with exact prior receipt references.

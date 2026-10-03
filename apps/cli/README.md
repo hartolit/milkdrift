@@ -10,6 +10,7 @@ authentication, runs a small workflow, and shows process/model setup. The CLI us
 | Task | Command family |
 | --- | --- |
 | Check connectivity and your grant | `daemon readiness`, `health`, `authority` |
+| Author model steps, prompts and connections | `workflow new`, `models`, `add`, `prompt`, `connect`, `output`, `save`, `open` |
 | Create and compare immutable definitions | `blueprint validate`, `import`, `show`, `export`, `list`, `diff` |
 | Turn implementation prompts into a workflow | `sequence validate`, `compile`, `import`, `show`, `status`, `stage`, `remediate` |
 | Start or control work | `run start`, `pause`, `resume`, `cancel`, `signal` |
@@ -46,6 +47,13 @@ belong to different feeds. A following timeline can therefore repeat facts from 
 Artifact downloads and blueprint/sequence exports require a new destination file. The artifact
 command assembles bounded ranges and verifies size and digest before committing its output.
 An interrupted uncommitted output is removed on normal cleanup; existing files are never replaced.
+
+The [model workflow recipe](../../examples/operator/README.md#author-a-model-workflow) uses a local
+draft of pending mutations. `workflow` commands send editing gestures to the daemon; they do not
+calculate graph identities or call models. Draft edits lock the file and atomically replace it
+only after the reply and an unchanged-byte check. `--expected-edit TOKEN` additionally guards the
+version inspected by a script or another session. `save` stores a new immutable revision;
+`open` reopens an exact revision into a new file. Unsupported rich definitions refuse editing.
 
 ## Contribute
 

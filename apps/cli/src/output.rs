@@ -134,7 +134,21 @@ fn human_value(value: &Value) {
             }
         }
         Value::Object(fields) => {
+            if let Some(workflow) = fields.get("workflow") {
+                println!(
+                    "  {}",
+                    serde_json::to_string_pretty(workflow).unwrap_or_default()
+                );
+            }
             for key in [
+                "file",
+                "edit_token",
+                "saved",
+                "base_revision",
+                "pending_mutations",
+                "generation",
+                "available",
+                "health",
                 "command_id",
                 "host",
                 "request_id",

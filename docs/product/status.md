@@ -48,6 +48,12 @@ This document owns current implementation, limitations, exact versions, and qual
   retained-work resolution, bounded inspection, verified create-new downloads, wait/follow deadlines,
   and stable machine output. [Production examples](../../examples/operator/README.md) provide
   fresh-directory setup and ordinary process/model workflows.
+- Ordinary `workflow` commands create independent model workflows, edit prompts from files/stdin,
+  connect named inputs and selected earlier results, choose an accepted final output, and save or
+  reopen exact revisions through public daemon authoring. Draft files retain only base references
+  and pending blueprint mutations, with guarded atomic replacement. Editing a saved version creates
+  a child without changing old definitions or runs. The [operator recipe](../../examples/operator/README.md#author-a-model-workflow)
+  explains the supported model editor and its explicit refusal of richer definitions.
 - Causal context uses bounded historical discovery, explicit branch/join/subworkflow visibility,
   exact provenance, authority/sensitivity checks, deterministic budgets and omissions, and
   selected-only materialization. Required-evidence checks continue after selection stops, and

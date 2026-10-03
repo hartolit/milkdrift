@@ -17,6 +17,7 @@ mod resource;
 mod run;
 mod sequence;
 mod stream;
+mod workflow;
 
 impl Cli {
     pub(crate) fn is_follow(&self) -> bool {
@@ -50,6 +51,7 @@ impl Cli {
             RunCommand, SequenceCommand,
         };
         match &self.command {
+            TopCommand::Workflow(_) => "workflow.author",
             TopCommand::Learning { .. } => "learning",
             TopCommand::Method { command } => match command {
                 crate::MethodCommand::Publish { .. } => "method.publish",
@@ -223,6 +225,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<(), CliError> {
     }
     let session = CliSession::connect(cli).await?;
     match &session.cli().command {
+        TopCommand::Workflow(args) => workflow::execute(&session, args).await,
         TopCommand::Learning { file } => {
             let document = session
                 .read_json(

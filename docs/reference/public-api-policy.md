@@ -32,6 +32,13 @@ package entry point. Consumers otherwise import the canonical owner directly.
 
 ## Surface ownership
 
+The workflow authoring surface adds `BlueprintDraft`, `BlueprintEdit`, `ModelInputSource`, and
+the `AuthorBlueprint`/`ConstructBlueprint` command variants in control-protocol. They are external
+product contracts consumed by the CLI and daemon through the existing control-client transport.
+Only the daemon interprets editor gestures, builds existing blueprint/model values, and derives
+revision identities. Its supported-shape recognizer and graph construction remain private; no
+new blueprint executor, mutable draft store, or production test helper is exported.
+
 The [architecture package map](../architecture.md#owners-and-dependency-direction) identifies each
 production consumer boundary. Public semantic documents, adapter ports, and application entry
 points must meet the classification above; private provider payloads, storage rows, daemon routes,

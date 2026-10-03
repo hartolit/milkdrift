@@ -527,6 +527,21 @@ fn every_maintained_example_has_a_production_reader() -> TestResult {
             "local-model/continuation-request.example.json" | "operator/direct-model-task.json" => {
                 milkdrift_model::ModelTaskRequestDocument::from_json(&bytes)?;
             }
+            "operator/release-notes/draft.txt"
+            | "operator/release-notes/review.txt"
+            | "operator/release-notes/meeting.txt" => {
+                // Raw UTF-8 prompts become one text message. The daemon/CLI authoring test
+                // separately sends these exact files through the public construction route.
+                let prompt = std::str::from_utf8(&bytes)?;
+                let document = serde_json::json!({"schema_version":1,"request":{
+                    "messages":[{"role":"user","parts":[{"type":"text","text":prompt}],"tool_call_id":null}],
+                    "tools":[],"structured_output":null,"session":{"type":"fresh"},
+                    "reasoning":null,"maximum_output_units":512,"streaming":false,"extensions":{}
+                }});
+                milkdrift_model::ModelTaskRequestDocument::from_json(&serde_json::to_vec(
+                    &document,
+                )?)?;
+            }
             "operator/direct-process-inputs.json" => {
                 let inputs: Vec<milkdrift_capability::InputReference> =
                     serde_json::from_slice(&bytes)?;

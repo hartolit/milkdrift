@@ -1,0 +1,1 @@
+Review the selected draft against the original brief. Remove unsupported claims, restore missing caveats, and return revised release notes as final text. Use only the brief and draft supplied to this step.

@@ -1,0 +1,1 @@
+Write concise release notes using only the supplied brief. Include changes, fixes and limits. Do not invent features or promises. Return the release notes as final text.

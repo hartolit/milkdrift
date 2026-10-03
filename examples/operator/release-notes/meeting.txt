@@ -1,0 +1,1 @@
+Summarize the supplied meeting brief. Preserve decisions and explicitly assigned actions. Do not invent owners or dates.
