@@ -32,6 +32,9 @@ package entry point. Consumers otherwise import the canonical owner directly.
 
 ## Surface ownership
 
+The run-start surface adds `RunInput`, consumed by the CLI and daemon as a named immutable artifact
+reference. Runtime workspace admission and authenticated artifact reads retain validation ownership.
+
 The workflow authoring surface adds `BlueprintDraft`, `BlueprintEdit`, `ModelInputSource`, and
 the `AuthorBlueprint`/`ConstructBlueprint` command variants in control-protocol. They are external
 product contracts consumed by the CLI and daemon through the existing control-client transport.

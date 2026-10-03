@@ -59,6 +59,7 @@ async fn inherited_pipes_settle_drain_cancel_and_retain_without_duplicate_entry(
                 "cleanup-start",
                 None,
                 Command::StartRun {
+                    inputs: Vec::new(),
                     run_id: "run-cleanup".to_owned(),
                     workflow_id: "daemon-process".to_owned(),
                     revision_id: revision,

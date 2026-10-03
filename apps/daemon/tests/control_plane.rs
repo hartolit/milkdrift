@@ -10,6 +10,8 @@ mod control_workflows;
 mod direct;
 #[path = "control_plane/durability.rs"]
 mod durability;
+#[path = "control_plane/inputs.rs"]
+mod inputs;
 #[path = "control_plane/operations.rs"]
 mod operations;
 #[path = "support/process.rs"]

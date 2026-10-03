@@ -155,6 +155,7 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
         .submit(&command(
             "peer-process-start",
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: "run-peer-process".to_owned(),
                 workflow_id: "daemon-peer-process".to_owned(),
                 revision_id: revision.to_owned(),
@@ -288,6 +289,7 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
             .submit(&command(
                 &format!("peer-turnover-start-{index}"),
                 Command::StartRun {
+                    inputs: Vec::new(),
                     run_id: run_id.clone(),
                     workflow_id: "daemon-peer-process".to_owned(),
                     revision_id: revision.to_owned(),
@@ -330,6 +332,7 @@ async fn exercise_peer_execution_turnover(turnovers: usize) -> TestResult {
         .submit(&command(
             "peer-process-restart-start",
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: "run-peer-process-after-restart".to_owned(),
                 workflow_id: "daemon-peer-process".to_owned(),
                 revision_id: revision.to_owned(),

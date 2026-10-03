@@ -8,6 +8,7 @@ mod authoring;
 mod control;
 mod controllers;
 mod definitions;
+mod inputs;
 mod learning;
 mod proposals;
 mod publications;
@@ -52,7 +53,16 @@ impl Owner {
                 run_id,
                 workflow_id,
                 revision_id,
-            } => runs::start(self, session, request, run_id, workflow_id, revision_id),
+                inputs,
+            } => runs::start(
+                self,
+                session,
+                request,
+                run_id,
+                workflow_id,
+                revision_id,
+                inputs,
+            ),
             Command::PauseRun { run_id } => runs::pause(self, session, request, run_id),
             Command::ResumeRun { run_id } => runs::resume(self, session, request, run_id),
             Command::CancelRun { run_id } => runs::cancel(self, session, request, run_id),

@@ -24,6 +24,7 @@ async fn daemon_requires_current_control_version_before_dispatch() -> TestResult
             "unsupported-control-version",
             None,
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: "unsupported-control-version".to_owned(),
                 workflow_id: "absent-workflow".to_owned(),
                 revision_id: "absent-revision".to_owned(),
@@ -103,6 +104,7 @@ async fn daemon_stream_reconnect_auth_rotation_and_shutdown() -> TestResult {
             "stream-start",
             None,
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: "run-stream".to_owned(),
                 workflow_id: "golden".to_owned(),
                 revision_id: revision,
@@ -291,6 +293,7 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
             "process-start",
             None,
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: "run-process".to_owned(),
                 workflow_id: "daemon-process".to_owned(),
                 revision_id: revision.to_owned(),

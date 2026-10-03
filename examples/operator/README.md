@@ -264,10 +264,13 @@ whose unchanged continuation fails. This is a completeness check, not a judgment
 are accurate or useful. The [result acceptance guide](../../docs/guides/result-acceptance.md)
 explains the evidence and control branch.
 
-The supplied-input start operation is still pending in the active sprint. These commands author
-the reusable definition and make no model request or run. The existing model example above remains
-the runnable fixed-prompt example. The output allowance of 512 is an example choice, not a promise
-that a particular model will finish within it.
+These authoring commands make no model request or run. To supply a brief, upload it as `text/plain`
+with `artifact upload`, then pass a JSON array such as
+`[{"name":"brief","artifact_id":"RETURNED_ARTIFACT_ID"}]` using `run start --inputs FILE`.
+Use the exact saved revision for each run and a new run/command identity for deliberately new work.
+The daemon freezes initial values and verifies artifact access, bytes and budgets before creation.
+The output allowance of 512 is an example choice, not a promise that a particular model will
+finish within it.
 
 The save reply returns the daemon's exact `revision_id`. Use it as `REVISION` below. Saving with
 no changes returns the same version; changing a prompt and saving produces a child of that exact

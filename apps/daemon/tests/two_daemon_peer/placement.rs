@@ -143,6 +143,7 @@ async fn import_and_start(
         .submit(&command(
             &format!("start-{workflow}"),
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: format!("run-{workflow}"),
                 workflow_id: workflow.to_owned(),
                 revision_id: revision.to_owned(),

@@ -1,4 +1,4 @@
-# Local control API 2.12
+# Local control API 2.13
 
 The `learning` command body accepts an operation document owned by
 `milkdrift_control::learning::LearningRequest`: `select`, `declare`, `candidate`, `compare`,
@@ -33,10 +33,10 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":12}}
+{"protocol":{"major":2,"minor":13}}
 ```
 
-Version 2.12 is required on both sides. Older and newer major/minor versions are refused with
+Version 2.13 is required on both sides. Older and newer major/minor versions are refused with
 `unsupported_version`; update the client and daemon together. There is no protocol downgrade.
 Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
@@ -131,7 +131,7 @@ The closed command types are:
 | `validate_blueprint` | `document` | `validate_blueprint` | Validate one exact workflow/revision without storing it. |
 | `import_prompt_sequence` | `document` | `import_blueprint` | Compile bounded schema-3 JSON/Markdown-derived data and store the ordinary immutable revision. |
 | `validate_prompt_sequence` | `document` | `validate_blueprint` | Compile and validate a prompt sequence without storing its generated revision. |
-| `start_run` | `run_id`, `workflow_id`, `revision_id` | `create_run`, then `start_run` | Atomically create then start at an exact revision through ordinary control authority. |
+| `start_run` | `run_id`, `workflow_id`, `revision_id`, `inputs` | `create_run`, then `start_run` | Create then start at an exact revision through ordinary control authority; stable command receipts recover the gap between these two commits. |
 | `pause_run`, `resume_run`, `cancel_run` | `run_id` | `pause`, `resume`, `cancel` | Durable exact-run lifecycle control. |
 | `signal_run` | `run_id`, `signal_id`, `signal_type`, `correlation`, `broadcast`, `payload` | `deliver_signal` | Deliver a typed bounded signal to an exact run. |
 | `resolve_work` | `run_id`, `attempt_id`, `decision_id`, `action`, `remediation_node` | action-derived `inspect_attempt`, `retry`, `apply`, `approve`, or `terminate` | Query, retry, compensate, retain, or evidence-resolve uncertain work. |
@@ -145,6 +145,16 @@ The closed command types are:
 Evidence kinds accepted by the daemon are `authority_decision`, `worker_observation`, `external_receipt`, `artifact`, and `recovery_observation`. A success returns `CommandAccepted`: `command_id`, `replayed`, optional `resulting_sequence`, stable `result_type`, and a bounded command-specific `value`.
 
 Acceptance is not task completion. Read the run and exact attempts to establish execution outcome.
+
+`start_run.inputs` is an array of `{ "name": "brief", "artifact_id": "input:…" }` values;
+omitting it means no inputs. Ordinary supplied inputs require interface schema
+`milkdrift.artifact-reference` version 1. Upload files through `POST /v1/artifact-inputs` first.
+The daemon checks metadata and content-read permission, complete bytes and digest, and workspace
+budgets before creation. The runtime's existing initial-workspace admission checks declared and
+required names, duplicates, committed references and budgets for both ordinary and published runs.
+Published methods retain their separate choice/artifact contracts and service authority.
+Initial values and artifact bytes are immutable; changing the source file cannot change a run.
+An explicit start guard must name sequence zero and the same revision as the command.
 
 Authoring `draft` contains `workflow_id`, nullable `base_revision`, and `mutations` using the
 existing blueprint mutation wire form. `expected_revision` must equal the base and
@@ -452,7 +462,7 @@ See [managed operations](../operations/managed-linux.md) for exact CLI use and r
 
 ## Governed methods and protected publication
 
-Protocol 2.12 run reads include `published_source` (the accepted public operation or local attempt,
+Current run reads include `published_source` (the accepted public operation or local attempt,
 visible under internal run inspection), `governing_agreement` (the accepted origin binding or null),
 and `agreement_adoptions` (the cumulative prospective adoption count). These project runtime history;
 clients cannot update them. Blueprint schema 3 includes an explicit agreement or null.

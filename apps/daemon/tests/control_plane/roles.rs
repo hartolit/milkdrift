@@ -85,6 +85,7 @@ async fn removing_workflow_role_preserves_closed_history_for_offline_inspection(
             "closed-start",
             None,
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: "closed-run".to_owned(),
                 workflow_id: "golden".to_owned(),
                 revision_id: revision.id().to_string(),
@@ -186,6 +187,7 @@ async fn execution_only_refuses_live_workflow_obligations_without_rewriting_hist
             "role-start",
             None,
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: "role-live-run".to_owned(),
                 workflow_id: "golden".to_owned(),
                 revision_id: revision,

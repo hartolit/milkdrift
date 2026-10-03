@@ -39,6 +39,7 @@ async fn daemon_command_idempotency_restart_and_stale_conflict() -> TestResult {
             "start-run",
             None,
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: "run-integration".to_owned(),
                 workflow_id: "golden".to_owned(),
                 revision_id: revision,
@@ -228,6 +229,7 @@ async fn proposal_listing_uses_durable_projection_and_survives_restart() -> Test
             "proposal-index-start",
             None,
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: "run-proposal-index".to_owned(),
                 workflow_id: "golden".to_owned(),
                 revision_id: revision_id.clone(),

@@ -67,6 +67,13 @@ pub(super) fn model_configuration(
     directory: &TempDir,
     address: std::net::SocketAddr,
 ) -> TestResult<DaemonPlan> {
+    Ok(model_configuration_document(directory, address)?.validate(directory.path())?)
+}
+
+pub(super) fn model_configuration_document(
+    directory: &TempDir,
+    address: std::net::SocketAddr,
+) -> TestResult<DaemonConfig> {
     use milkdrift_model_provider::{
         AuthMode, BillingTerms, EndpointLimits, EndpointProfile, ModelFeature, ModelTokenLimits,
         ProviderProtocol, ProxyPolicy, RedirectPolicy, TlsPolicy,
@@ -108,6 +115,12 @@ pub(super) fn model_configuration(
     fs::write(&path, profile.to_canonical_json()?)?;
     let mut config = configuration_document_with_process_profiles(directory, 64, vec![])?;
     config.actors[0].authority.resources.capability = editor_scope()?;
+    config.actors[0].authority.resources.network = NetworkScope::new(
+        std::collections::BTreeSet::from([milkdrift_authority::NetworkProfileRef::new(
+            "writing-profile",
+        )?]),
+        std::collections::BTreeSet::from([address.to_string()]),
+    )?;
     config.actors[1].authority = ActorGrantConfig::dangerous_administrator();
     config.actors[1].authority.resources.capability = CapabilityAuthorityScope::deny_all();
     config
@@ -117,7 +130,7 @@ pub(super) fn model_configuration(
             capability_id: "writing-model".into(),
             profile: path,
         });
-    Ok(config.validate(directory.path())?)
+    Ok(config)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

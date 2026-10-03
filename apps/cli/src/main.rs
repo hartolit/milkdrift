@@ -455,6 +455,9 @@ enum RunCommand {
         run: String,
         workflow: String,
         revision: String,
+        /// JSON array of named uploaded artifact references.
+        #[arg(long)]
+        inputs: Option<PathBuf>,
     },
     /// List one bounded stable run page.
     List(PageArgs),
@@ -922,7 +925,7 @@ mod tests {
         assert!(matches!(
             cli.command,
             TopCommand::Run {
-                command: RunCommand::Start { run, workflow, revision }
+                command: RunCommand::Start { run, workflow, revision, .. }
             } if run == "run-one" && workflow == "workflow-one" && revision == "revision-one"
         ));
         Ok(())

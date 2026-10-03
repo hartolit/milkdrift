@@ -259,7 +259,13 @@ impl ModelWorkflow {
                     DataPort::input(artifact()?, true, Some(source.clone()))?,
                 )?;
             }
-            for name in ["final_text", "model_response"] {
+            for name in [
+                "final_text",
+                "model_response",
+                "structured_output",
+                "tool_calls",
+                "provider_metadata",
+            ] {
                 task = task.with_data_output(PortId::new(name)?, DataPort::output(artifact()?))?;
             }
             nodes.push(task);

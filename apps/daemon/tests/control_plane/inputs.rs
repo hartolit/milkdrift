@@ -1,0 +1,291 @@
+//! Supplied briefs traverse upload, run workspace, causal selection, and real model HTTP.
+use super::support::*;
+use milkdrift_control_protocol::{
+    BlueprintDraft, BlueprintEdit, InputUploadRequest, ModelInputSource, RunInput,
+};
+use serde_json::{Value, json};
+
+pub(super) async fn workflow(client: &ControlClient) -> TestResult<String> {
+    let mut draft = BlueprintDraft {
+        workflow_id: "release-notes".into(),
+        base_revision: None,
+        mutations: vec![],
+    };
+    let edits = [
+        BlueprintEdit::Input {
+            name: "brief".into(),
+        },
+        BlueprintEdit::AddModel {
+            step: "draft".into(),
+            capability: "writing-model".into(),
+            prompt: "Draft release notes from the brief.".into(),
+            maximum_output_units: 512,
+        },
+        BlueprintEdit::AddModel {
+            step: "review".into(),
+            capability: "writing-model".into(),
+            prompt: "Review the draft against the original brief.".into(),
+            maximum_output_units: 512,
+        },
+        BlueprintEdit::Connect {
+            step: "draft".into(),
+            input: "brief".into(),
+            source: ModelInputSource::RunInput {
+                name: "brief".into(),
+            },
+        },
+        BlueprintEdit::Connect {
+            step: "review".into(),
+            input: "brief".into(),
+            source: ModelInputSource::RunInput {
+                name: "brief".into(),
+            },
+        },
+        BlueprintEdit::Connect {
+            step: "review".into(),
+            input: "draft".into(),
+            source: ModelInputSource::Step {
+                step: "draft".into(),
+            },
+        },
+        BlueprintEdit::Output {
+            step: "review".into(),
+            name: "notes".into(),
+        },
+    ];
+    for (index, edit) in edits.into_iter().enumerate() {
+        let reply = client
+            .submit(&request(
+                &format!("author-{index}"),
+                None,
+                Command::AuthorBlueprint {
+                    draft,
+                    edit: Some(edit),
+                    save: false,
+                },
+            ))
+            .await?;
+        draft = serde_json::from_value(reply.value["draft"].clone())?;
+    }
+    let reply = client
+        .submit(&request(
+            "save-notes",
+            None,
+            Command::AuthorBlueprint {
+                draft,
+                edit: None,
+                save: true,
+            },
+        ))
+        .await?;
+    Ok(reply.value["revision_id"]
+        .as_str()
+        .ok_or("revision missing")?
+        .into())
+}
+
+pub(super) struct ModelFixture {
+    pub(super) address: SocketAddr,
+    pub(super) requests: Arc<std::sync::Mutex<Vec<Value>>>,
+    task: JoinHandle<std::io::Result<()>>,
+}
+
+impl ModelFixture {
+    pub(super) async fn start() -> TestResult<Self> {
+        let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let app = axum::Router::new().route("/v1/chat/completions", axum::routing::post(
+            |axum::extract::State(requests): axum::extract::State<Arc<std::sync::Mutex<Vec<Value>>>>, axum::Json(body): axum::Json<Value>| async move {
+                let text = body.to_string();
+                let product = if text.contains("Harbor Host 1.4") { "Harbor" } else { "Lantern" };
+                let stage = if text.contains("Review the draft") { "revised" } else { "draft" };
+                requests.lock().expect("fixture lock").push(body);
+                axum::Json(json!({"id":"controlled", "model":"controlled-writer", "choices":[{"index":0,"message":{"role":"assistant","content":format!("{product} {stage} release notes")},"finish_reason":"stop"}], "usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30}}))
+            }
+        )).with_state(requests.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let task = tokio::spawn(async move { axum::serve(listener, app).await });
+        Ok(Self {
+            address,
+            requests,
+            task,
+        })
+    }
+}
+impl Drop for ModelFixture {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+pub(super) async fn upload(client: &ControlClient, id: &str, bytes: &[u8]) -> TestResult<RunInput> {
+    let artifact = client
+        .upload_input(&InputUploadRequest::from_content(
+            "host:local".into(),
+            id.into(),
+            "text/plain".into(),
+            "restricted".into(),
+            bytes,
+        )?)
+        .await?;
+    Ok(RunInput {
+        name: "brief".into(),
+        artifact_id: artifact.artifact_id,
+    })
+}
+
+pub(super) fn start_request(run: &str, revision: &str, inputs: Vec<RunInput>) -> CommandRequest {
+    let mut command = request(
+        &format!("start-{run}"),
+        Some(0),
+        Command::StartRun {
+            run_id: run.into(),
+            workflow_id: "release-notes".into(),
+            revision_id: revision.into(),
+            inputs,
+        },
+    );
+    command.expected_revision = Some(revision.into());
+    command
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn supplied_inputs_are_validated_frozen_isolated_and_materialized() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let model = ModelFixture::start().await?;
+    let mut config = super::authoring::model_configuration_document(&directory, model.address)?;
+    config.actors[1].authority.resources.artifacts = ArtifactAuthorityScope::none();
+    let plan = config.validate(directory.path())?;
+    let daemon = start(plan.clone(), CONTROLLER_TOKEN).await?;
+    let revision = workflow(&daemon.client).await?;
+    let harbor = b"Harbor Host 1.4: add preview environments; no billing change.";
+    let lantern = b"Lantern Rally 0.8: improve checkpoint hints; no new vehicles.";
+    let first = upload(&daemon.client, "harbor", harbor).await?;
+    let second = upload(&daemon.client, "lantern", lantern).await?;
+    let _unrelated = upload(&daemon.client, "unrelated", b"UNRELATED-PRIVATE-CONTENT").await?;
+    let hidden = client(&daemon.endpoint, OBSERVER_TOKEN)?;
+    assert!(
+        matches!(hidden.submit(&start_request("private", &revision, vec![first.clone()])).await,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::Unauthorized)
+    );
+    assert!(daemon.client.run("private").await.is_err());
+    let mut corrupt = InputUploadRequest::from_content(
+        "host:local".into(),
+        "corrupt".into(),
+        "text/plain".into(),
+        "restricted".into(),
+        harbor,
+    )?;
+    corrupt.digest = "0".repeat(64);
+    assert!(daemon.client.upload_input(&corrupt).await.is_err());
+    corrupt.content_base64 =
+        "A".repeat(milkdrift_control_protocol::MAX_INPUT_UPLOAD_BYTES.div_ceil(3) * 4 + 4);
+    assert!(daemon.client.upload_input(&corrupt).await.is_err());
+    let mut unexpected = first.clone();
+    unexpected.name = "other".into();
+    let mut missing = first.clone();
+    missing.artifact_id = "missing".into();
+    for (run, inputs) in [
+        ("absent", vec![]),
+        ("duplicate", vec![first.clone(), first.clone()]),
+        ("unexpected", vec![unexpected]),
+        ("missing", vec![missing]),
+    ] {
+        assert!(
+            daemon
+                .client
+                .submit(&start_request(run, &revision, inputs))
+                .await
+                .is_err(),
+            "{run}"
+        );
+        assert!(daemon.client.run(run).await.is_err());
+    }
+    assert!(
+        model
+            .requests
+            .lock()
+            .map_err(|_| "fixture lock")?
+            .is_empty()
+    );
+    for (run, input) in [("harbor", first.clone()), ("lantern", second)] {
+        let command = start_request(run, &revision, vec![input]);
+        daemon.client.submit(&command).await?;
+        let state = wait_for_run(&daemon.client, run, Duration::from_secs(45), |state| {
+            state.terminal.is_some()
+        })
+        .await?;
+        if state.terminal.as_deref() != Some("succeeded") {
+            daemon.stop().await?;
+            use milkdrift_persistence::RunQueryStore as _;
+            let store = RedbStore::open(directory.path().join("data"))?;
+            let events = store.events(&milkdrift_persistence::EventPageQuery::new(
+                RunId::new(run)?,
+                None,
+                PageSize::new(100)?,
+            )?)?;
+            return Err(serde_json::to_string_pretty(&events.events)?.into());
+        }
+        assert_eq!(
+            state.terminal.as_deref(),
+            Some("succeeded"),
+            "{}",
+            serde_json::to_string_pretty(&state)?
+        );
+        assert_eq!(state.revision_id.as_deref(), Some(revision.as_str()));
+        let review_id = attempt_id_for_node(&daemon.client, run, "review").await?;
+        let review = daemon.client.attempt(run, &review_id).await?;
+        let output = review
+            .outputs
+            .iter()
+            .find(|output| output.name == "final_text")
+            .ok_or("review final text missing")?;
+        let bytes = daemon
+            .client
+            .artifact_range(&output.artifact.artifact_id, 0, output.artifact.size - 1)
+            .await?
+            .bytes;
+        assert_eq!(
+            std::str::from_utf8(&bytes)?,
+            if run == "harbor" {
+                "Harbor revised release notes"
+            } else {
+                "Lantern revised release notes"
+            }
+        );
+        assert!(daemon.client.submit(&command).await?.replayed);
+    }
+    let requests = model.requests.lock().map_err(|_| "fixture lock")?.clone();
+    assert_eq!(requests.len(), 4);
+    for (index, body) in requests.iter().enumerate() {
+        let text = body.to_string();
+        let (brief, absent) = if index < 2 {
+            (harbor.as_slice(), "Lantern Rally")
+        } else {
+            (lantern.as_slice(), "Harbor Host")
+        };
+        assert!(text.contains(std::str::from_utf8(brief)?), "{body}");
+        assert!(!text.contains(absent));
+        assert!(!text.contains("UNRELATED-PRIVATE-CONTENT"));
+        if index % 2 == 1 {
+            assert!(text.contains(if index < 2 {
+                "Harbor draft release notes"
+            } else {
+                "Lantern draft release notes"
+            }));
+        } else {
+            assert!(!text.contains("draft release notes"));
+        }
+    }
+    let original = start_request("harbor", &revision, vec![first]);
+    let mut changed = original.clone();
+    changed.reason = "different exact request".into();
+    assert!(
+        matches!(daemon.client.submit(&changed).await, Err(ClientError::Api(error)) if error.code == ErrorCode::Conflict)
+    );
+    daemon.stop().await?;
+    let restarted = start(plan, CONTROLLER_TOKEN).await?;
+    assert!(restarted.client.submit(&original).await?.replayed);
+    assert_eq!(model.requests.lock().map_err(|_| "fixture lock")?.len(), 4);
+    restarted.stop().await
+}

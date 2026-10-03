@@ -117,6 +117,8 @@ pub enum Command {
         run_id: String,
         workflow_id: String,
         revision_id: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        inputs: Vec<RunInput>,
     },
     /// Pause new work for a run.
     PauseRun { run_id: String },
@@ -172,6 +174,20 @@ pub enum Command {
     },
     /// Optimistically replace presentation-only layout state.
     PutLayout { layout: LayoutDocument },
+}
+
+/// One named immutable artifact supplied to the pinned workflow interface.
+///
+/// Publish local file bytes through the input upload route first. The daemon resolves this
+/// identity under the caller's content-read authority before creating the run; server paths
+/// and arbitrary workspace references cannot be submitted here.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunInput {
+    /// Exact interface field name.
+    pub name: String,
+    /// Committed artifact identity, whose content and metadata are immutable.
+    pub artifact_id: String,
 }
 
 /// Public resolution choice for retained external work.

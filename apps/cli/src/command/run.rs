@@ -9,11 +9,26 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
             run,
             workflow,
             revision,
+            inputs,
         } => {
+            let inputs = match inputs {
+                Some(path) => serde_json::from_value(
+                    session
+                        .read_json(
+                            path,
+                            milkdrift_control_protocol::MAX_DOCUMENT_BYTES,
+                            "run inputs",
+                        )
+                        .await?,
+                )
+                .map_err(|error| CliError::Invalid(error.to_string()))?,
+                None => Vec::new(),
+            };
             submit(
                 session,
                 "run.start",
                 Command::StartRun {
+                    inputs,
                     run_id: run.clone(),
                     workflow_id: workflow.clone(),
                     revision_id: revision.clone(),

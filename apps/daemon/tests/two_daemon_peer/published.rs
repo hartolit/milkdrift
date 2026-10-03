@@ -201,6 +201,7 @@ async fn peer_publication_creates_one_run_and_transfers_only_the_accepted_result
         .submit(&command(
             "start",
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: "peer-published".to_owned(),
                 workflow_id: revision.semantic().workflow().to_string(),
                 revision_id: revision.id().to_string(),

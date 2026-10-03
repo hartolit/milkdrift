@@ -107,6 +107,7 @@ async fn headless_dogfood_failure_remediation_and_restart_are_durable() -> TestR
             "dogfood-start",
             None,
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: "run-headless-dogfood".to_owned(),
                 workflow_id: "daemon-headless-dogfood".to_owned(),
                 revision_id: revision_id.clone(),
@@ -397,6 +398,7 @@ async fn daemon_accepts_commands_across_hot_receipt_turnovers_and_replays_cold_a
         "capacity-start-remains-replayable",
         None,
         Command::StartRun {
+            inputs: Vec::new(),
             run_id: "run-capacity-accepted".to_owned(),
             workflow_id: "golden".to_owned(),
             revision_id: revision.to_owned(),
@@ -467,6 +469,7 @@ async fn scoped_read_matrix_and_continuations_fail_closed() -> TestResult {
             "matrix-start-golden",
             None,
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: "run-matrix".to_owned(),
                 workflow_id: "golden".to_owned(),
                 revision_id: golden_revision.clone(),
@@ -479,6 +482,7 @@ async fn scoped_read_matrix_and_continuations_fail_closed() -> TestResult {
             "matrix-start-process",
             None,
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: "run-matrix-process".to_owned(),
                 workflow_id: "daemon-process".to_owned(),
                 revision_id: process_revision.clone(),

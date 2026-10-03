@@ -42,7 +42,7 @@ fn clock_test_config(
     owner_test_config(root, token, 32)
 }
 
-fn owner_test_config(
+pub(in crate::host) fn owner_test_config(
     root: &std::path::Path,
     token: &std::path::Path,
     request_queue: u32,

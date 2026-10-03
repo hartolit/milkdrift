@@ -1,9 +1,30 @@
 use super::*;
 
 #[test]
+fn start_inputs_use_named_artifacts_and_preserve_empty_request_encoding()
+-> Result<(), Box<dyn std::error::Error>> {
+    let old_shape = serde_json::json!({"type":"start_run", "run_id":"run", "workflow_id":"workflow", "revision_id":"revision"});
+    let command: Command = decode_json(&serde_json::to_vec(&old_shape)?)?;
+    assert_eq!(serde_json::to_value(command)?, old_shape);
+    let mut with_inputs = old_shape.clone();
+    with_inputs["inputs"] = serde_json::json!([{"name":"brief", "artifact_id":"input:one"}]);
+    let command: Command = decode_json(&serde_json::to_vec(&with_inputs)?)?;
+    assert_eq!(serde_json::to_value(command)?, with_inputs);
+    for inputs in [
+        serde_json::json!([{"name":"brief", "path":"/server/file"}]),
+        serde_json::json!([{"name":"brief", "artifact_id":42}]),
+        serde_json::json!({"brief":"input:one"}),
+    ] {
+        with_inputs["inputs"] = inputs;
+        assert!(decode_json::<Command>(&serde_json::to_vec(&with_inputs)?).is_err());
+    }
+    Ok(())
+}
+
+#[test]
 fn authoring_wire_uses_explicit_sources_and_rejects_unknown_fields()
 -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = br#"{"protocol":{"major":2,"minor":12},"command_id":"edit-1","expected_sequence":null,"expected_revision":null,"reason":"Connect the brief","evidence":[],"command":{"type":"author_blueprint","draft":{"workflow_id":"release-notes","base_revision":null,"mutations":[]},"edit":{"type":"connect","step":"review","input":"brief","source":{"type":"run_input","name":"brief"}},"save":false}}"#;
+    let bytes = br#"{"protocol":{"major":2,"minor":13},"command_id":"edit-1","expected_sequence":null,"expected_revision":null,"reason":"Connect the brief","evidence":[],"command":{"type":"author_blueprint","draft":{"workflow_id":"release-notes","base_revision":null,"mutations":[]},"edit":{"type":"connect","step":"review","input":"brief","source":{"type":"run_input","name":"brief"}},"save":false}}"#;
     let request: CommandRequest = decode_json(bytes)?;
     request.validate()?;
     assert_eq!(

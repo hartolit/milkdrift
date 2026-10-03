@@ -45,6 +45,7 @@ pub(super) async fn run_process_scenario(
             "external-process-start",
             None,
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: PROCESS_RUN.to_owned(),
                 workflow_id: PROCESS_WORKFLOW.to_owned(),
                 revision_id: revision.clone(),
@@ -426,6 +427,7 @@ pub(super) async fn run_model_scenario(
             "external-model-start",
             None,
             Command::StartRun {
+                inputs: Vec::new(),
                 run_id: MODEL_RUN.to_owned(),
                 workflow_id: MODEL_WORKFLOW.to_owned(),
                 revision_id: revision.clone(),

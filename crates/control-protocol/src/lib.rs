@@ -47,6 +47,7 @@ pub use upload::{InputUploadRequest, MAX_INPUT_UPLOAD_BYTES};
 
 pub use command::{
     Command, CommandAccepted, CommandRequest, EvidenceRef, ProposalDecision, ResolveAction,
+    RunInput,
 };
 pub use layout::{LayoutDocument, LayoutPoint, LayoutViewport};
 pub use read::{
@@ -62,7 +63,7 @@ pub use read::{
 /// Supported control protocol major version.
 const PROTOCOL_MAJOR: u16 = 2;
 /// Supported control protocol minor version.
-const PROTOCOL_MINOR: u16 = 12;
+const PROTOCOL_MINOR: u16 = 13;
 /// Independent presentation-layout document version.
 const LAYOUT_SCHEMA_VERSION: u32 = 1;
 const AUTHENTICATED_CURSOR_SCHEMA_VERSION: u8 = 2;

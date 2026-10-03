@@ -10,13 +10,54 @@ use super::super::{
 };
 
 pub(super) fn start(
-    owner: &Owner,
+    owner: &mut Owner,
     session: &ActorSession,
     request: &CommandRequest,
     run_id: &str,
     workflow_id: &str,
     revision_id: &str,
+    inputs: &[milkdrift_control_protocol::RunInput],
 ) -> Result<CommandAccepted, PublicFailure> {
+    let (run, create_sequence) = create(
+        owner,
+        session,
+        request,
+        run_id,
+        workflow_id,
+        revision_id,
+        inputs,
+    )?;
+    let sequence = owner.execute_control(
+        session,
+        request,
+        Some(create_sequence),
+        ControlCommand::StartRun { run },
+        "start",
+    )?;
+    accepted_sequence(request, sequence, "run_started")
+}
+
+fn create(
+    owner: &mut Owner,
+    session: &ActorSession,
+    request: &CommandRequest,
+    run_id: &str,
+    workflow_id: &str,
+    revision_id: &str,
+    inputs: &[milkdrift_control_protocol::RunInput],
+) -> Result<(RunId, u64), PublicFailure> {
+    if request
+        .expected_sequence
+        .is_some_and(|sequence| sequence != 0)
+        || request
+            .expected_revision
+            .as_deref()
+            .is_some_and(|guard| guard != revision_id)
+    {
+        return Err(invalid(
+            "start requires sequence zero and the requested revision",
+        ));
+    }
     let run = RunId::new(run_id.to_owned()).map_err(|error| invalid(&error.to_string()))?;
     let workflow =
         WorkflowId::new(workflow_id.to_owned()).map_err(|error| invalid(&error.to_string()))?;
@@ -41,6 +82,14 @@ pub(super) fn start(
         artifact_bytes,
     )
     .map_err(|error| invalid(&error.to_string()))?;
+    let inputs = super::inputs::resolve(
+        owner,
+        session,
+        revision_id,
+        &root_scope,
+        &workspace_budget,
+        inputs,
+    )?;
     let create_sequence = owner.execute_control(
         session,
         request,
@@ -51,18 +100,11 @@ pub(super) fn start(
             revision,
             root_scope,
             workspace_budget,
-            inputs: Vec::new(),
+            inputs,
         },
         "create",
     )?;
-    let sequence = owner.execute_control(
-        session,
-        request,
-        Some(create_sequence),
-        ControlCommand::StartRun { run },
-        "start",
-    )?;
-    accepted_sequence(request, sequence, "run_started")
+    Ok((run, create_sequence))
 }
 
 pub(super) fn pause(
@@ -204,3 +246,6 @@ where
     )?;
     accepted_sequence(request, sequence, &format!("run_{suffix}d"))
 }
+
+#[cfg(test)]
+mod tests;

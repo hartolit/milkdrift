@@ -581,7 +581,9 @@ impl ModelEndpointAdapter {
         let mut parts = Vec::new();
         let mut continuation = None;
         for entry in manifest.entries() {
-            if let ContextSource::DirectInput { name, reference } = entry.source() {
+            let (input, media_type) = if let ContextSource::DirectInput { name, reference } =
+                entry.source()
+            {
                 let input = request
                     .inputs()
                     .iter()
@@ -591,38 +593,49 @@ impl ModelEndpointAdapter {
                             "direct context input contradicts the frozen manifest",
                         )
                     })?;
-                let bytes = self
-                    .data
-                    .read_input_bytes(context, input, limits)
-                    .map_err(|_| AdapterError::rejected("direct context content is unavailable"))?;
-                materialization.record(bytes.len())?;
-                verify_context_bytes(entry, &bytes)?;
-                continue;
-            }
-            let name = format!(
-                "{}{:04}",
-                milkdrift_capability::CONTEXT_ITEM_INPUT_PREFIX,
-                entry.ordinal()
-            );
-            expected.insert(name.clone());
-            let input = request
-                .inputs()
-                .iter()
-                .find(|input| input.name() == name)
-                .ok_or_else(|| AdapterError::rejected("selected context input is missing"))?;
+                let media = if entry.selected_artifact() && name != MODEL_TASK_INPUT_NAME {
+                    self.data
+                        .resolve_artifact_reference(context, input)
+                        .map_err(|_| {
+                            AdapterError::rejected("direct context artifact is unavailable")
+                        })?
+                        .media_type()
+                        .ok_or_else(|| {
+                            AdapterError::rejected("direct artifact media type is absent")
+                        })?
+                        .to_owned()
+                } else {
+                    "application/json".to_owned()
+                };
+                (input, media)
+            } else {
+                let name = format!(
+                    "{}{:04}",
+                    milkdrift_capability::CONTEXT_ITEM_INPUT_PREFIX,
+                    entry.ordinal()
+                );
+                expected.insert(name.clone());
+                let input = request
+                    .inputs()
+                    .iter()
+                    .find(|input| input.name() == name)
+                    .ok_or_else(|| AdapterError::rejected("selected context input is missing"))?;
+                let media = match entry.source() {
+                    ContextSource::Artifact { reference } => reference.media_type().as_str(),
+                    _ => "application/json",
+                };
+                (input, media.to_owned())
+            };
             let bytes = self
                 .data
                 .read_input_bytes(context, input, limits)
                 .map_err(|_| AdapterError::rejected("selected context content is unavailable"))?;
             materialization.record(bytes.len())?;
             verify_context_bytes(entry, &bytes)?;
-            let media_type = match entry.source() {
-                ContextSource::Artifact { reference } => reference.media_type().as_str(),
-                ContextSource::DirectInput { .. }
-                | ContextSource::NodeExecution { .. }
-                | ContextSource::Event { .. }
-                | ContextSource::WorkspaceValue { .. } => "application/json",
-            };
+            // The task document is interpreted by load_task, not repeated as user evidence.
+            if input.name() == milkdrift_model::MODEL_TASK_INPUT_NAME {
+                continue;
+            }
             if entry.reason() == milkdrift_model::ContextInclusionReason::Continuation {
                 if media_type != milkdrift_model::CONTINUATION_MEDIA_TYPE || continuation.is_some()
                 {
