@@ -7,6 +7,7 @@ mod blueprint;
 mod capability;
 mod controller;
 mod daemon;
+mod input;
 mod inspection;
 mod invocation;
 mod layout;
@@ -61,6 +62,7 @@ impl Cli {
             },
             TopCommand::Learning { .. } => "learning",
             TopCommand::Method { command } => match command {
+                crate::MethodCommand::Prepare { .. } => "method.prepare",
                 crate::MethodCommand::Publish { .. } => "method.publish",
                 crate::MethodCommand::Show { .. } => "method.inspect",
                 crate::MethodCommand::List { .. } => "method.list",

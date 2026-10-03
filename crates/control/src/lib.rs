@@ -83,4 +83,4 @@ pub const CONTROLLER_INSPECT_OPERATION: &str = "controller.inspect";
 pub const CONTROLLER_CONTINUE_OPERATION: &str = "controller.continue";
 
 mod published;
-pub use published::{PublishedWorkflowService, PublishedWorkflowStore};
+pub use published::{PublicationDraft, PublishedWorkflowService, PublishedWorkflowStore};

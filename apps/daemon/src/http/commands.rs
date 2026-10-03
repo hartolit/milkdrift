@@ -103,6 +103,7 @@ fn command_trace(command: &Command) -> CommandTrace {
             Some(proposal_id.as_str()),
         ),
         Command::Learning { .. } => ("learning", None, None, None, None),
+        Command::PrepareMethod { .. } => ("prepare_method", None, None, None, None),
         Command::PublishMethod { .. } => ("publish_method", None, None, None, None),
         Command::InspectMethod { .. } => ("inspect_method", None, None, None, None),
         Command::ListMethods { .. } => ("list_methods", None, None, None, None),

@@ -7,6 +7,7 @@ use std::{
 };
 mod authority;
 mod lifecycle;
+mod preparation;
 mod result;
 mod validation;
 use milkdrift_authority::{
@@ -35,6 +36,7 @@ use milkdrift_runtime::{
 use milkdrift_workspace::{
     RunId, ScopeId, ValueKey, WorkspaceScope, WorkspaceValue, WorkspaceValueEntry,
 };
+pub use preparation::PublicationDraft;
 
 /// Publication and run storage must address the same durable host. Definitions, receipts and
 /// public operations remain in their existing owners; this trait is only their composition port.

@@ -21,3 +21,12 @@ Saving and copying do not publish a service or repin accepted execution. The coo
 change requires matching daemon and client builds; durable blueprint and receipt formats remain
 unchanged. Clients display the server's interface projection and use returned revision identities.
 No template store or mutable preferred-version registry is introduced.
+
+Publication preparation is a transient control operation over `PublicationDraft`. The existing
+publication owner resolves the stored agreement and operator-configured service identity, then
+runs ordinary publication validation without registering a capability. Descriptor contracts,
+service grant selection and every allowance remain reviewed inputs. The daemon checks revision
+read and publication authority before exposing the prepared document. Publishing rechecks current
+facts through the existing separate command; a saved preparation is not a grant or an acceptance.
+The CLI's text-input convenience uploads through the same bounded input endpoint and freezes the
+returned reference. It does not alter published input contracts or artifact permission scope.

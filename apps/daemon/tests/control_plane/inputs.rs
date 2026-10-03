@@ -6,6 +6,13 @@ use milkdrift_control_protocol::{
 use serde_json::{Value, json};
 
 pub(super) async fn workflow(client: &ControlClient) -> TestResult<String> {
+    workflow_with_draft(client, "draft").await
+}
+
+pub(super) async fn workflow_with_draft(
+    client: &ControlClient,
+    draft_step: &str,
+) -> TestResult<String> {
     let mut draft = BlueprintDraft {
         workflow_id: "release-notes".into(),
         base_revision: None,
@@ -16,7 +23,7 @@ pub(super) async fn workflow(client: &ControlClient) -> TestResult<String> {
             name: "brief".into(),
         },
         BlueprintEdit::AddModel {
-            step: "draft".into(),
+            step: draft_step.into(),
             capability: "writing-model".into(),
             prompt: "Draft release notes from the brief.".into(),
             maximum_output_units: 512,
@@ -28,7 +35,7 @@ pub(super) async fn workflow(client: &ControlClient) -> TestResult<String> {
             maximum_output_units: 512,
         },
         BlueprintEdit::Connect {
-            step: "draft".into(),
+            step: draft_step.into(),
             input: "brief".into(),
             source: ModelInputSource::RunInput {
                 name: "brief".into(),
@@ -45,7 +52,7 @@ pub(super) async fn workflow(client: &ControlClient) -> TestResult<String> {
             step: "review".into(),
             input: "draft".into(),
             source: ModelInputSource::Step {
-                step: "draft".into(),
+                step: draft_step.into(),
             },
         },
         BlueprintEdit::Output {

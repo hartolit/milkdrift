@@ -273,7 +273,10 @@ enum InvocationCommand {
         request_id: String,
         /// JSON array of named inline or artifact input references.
         #[arg(long)]
-        inputs: PathBuf,
+        inputs: Option<PathBuf>,
+        /// Upload a UTF-8 file as a named restricted text input; may be repeated.
+        #[arg(long, value_name = "NAME=FILE")]
+        input: Vec<String>,
         /// New file to retain for submission and exact replay.
         #[arg(long)]
         output: PathBuf,
@@ -561,6 +564,12 @@ impl TerminalFilter {
 
 #[derive(Subcommand)]
 enum MethodCommand {
+    /// Prepare a reviewed publication using the daemon's agreement and configured grant facts.
+    Prepare {
+        file: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Validate and publish an exact method document; the next generation promotes a replacement.
     Publish {
         file: PathBuf,

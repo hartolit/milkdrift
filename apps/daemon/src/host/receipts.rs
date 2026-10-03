@@ -286,6 +286,7 @@ fn command_run_identity(command: &Command) -> Option<&str> {
         | Command::AuthorBlueprint { .. }
         | Command::ConstructBlueprint { .. }
         | Command::CopyBlueprint { .. }
+        | Command::PrepareMethod { .. }
         | Command::PublishMethod { .. }
         | Command::InspectMethod { .. }
         | Command::ListMethods { .. }

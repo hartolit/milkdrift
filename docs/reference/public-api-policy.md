@@ -32,6 +32,10 @@ package entry point. Consumers otherwise import the canonical owner directly.
 
 ## Surface ownership
 
+`PublicationDraft` and `PublishedWorkflowService::prepare_publication` are workspace adapter
+contracts consumed by the daemon's public `PrepareMethod` operation. The existing publication
+owner retains service lookup and contract validation; preparation adds no persistent registry.
+
 `CopyBlueprint` and `WorkflowFieldRead` are external product contracts consumed by daemon and CLI.
 Copy construction remains private and delegates validation/storage to existing blueprint owners.
 Interface reads project definition contracts without client graph parsing or execution values.

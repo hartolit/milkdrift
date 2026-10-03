@@ -67,6 +67,7 @@ pub(super) async fn execute(
             host,
             request_id,
             inputs,
+            input,
             output,
         } => {
             use milkdrift_capability::{
@@ -74,16 +75,20 @@ pub(super) async fn execute(
                 InvocationValueReference, OperationId, ResolvedCapabilitySnapshot, SideEffectClass,
             };
             let invalid = |error: &dyn std::fmt::Display| CliError::Invalid(error.to_string());
-            let inputs: Vec<InputReference> = serde_json::from_value(
-                session
-                    .read_json(
-                        inputs,
-                        milkdrift_control_protocol::MAX_DOCUMENT_BYTES,
-                        "invocation inputs",
-                    )
-                    .await?,
-            )
-            .map_err(|error| invalid(&error))?;
+            let mut destination = crate::output::PendingFile::create(output)?;
+            let mut inputs: Vec<InputReference> = match inputs {
+                Some(inputs) => serde_json::from_value(
+                    session
+                        .read_json(
+                            inputs,
+                            milkdrift_control_protocol::MAX_DOCUMENT_BYTES,
+                            "invocation inputs",
+                        )
+                        .await?,
+                )
+                .map_err(|error| invalid(&error))?,
+                None => Vec::new(),
+            };
             if inputs.iter().any(|input| {
                 matches!(
                     input.value(),
@@ -125,6 +130,33 @@ pub(super) async fn execute(
             let selection =
                 ResolvedCapabilitySnapshot::from_descriptor(&entry.descriptor, &operation)
                     .map_err(|error| invalid(&error))?;
+            let mut names: std::collections::BTreeSet<String> =
+                inputs.iter().map(|input| input.name().to_owned()).collect();
+            if names.len() != inputs.len() {
+                return Err(CliError::Invalid("input names must be distinct".into()));
+            }
+            for (name, artifact) in super::input::upload_text(
+                session,
+                host,
+                request_id,
+                "invocation-input",
+                input,
+                &mut names,
+            )
+            .await?
+            {
+                let reference = milkdrift_capability::ArtifactReference::new(
+                    artifact.artifact_id,
+                    artifact.digest,
+                    Some(artifact.content_type),
+                    Some(artifact.size),
+                )
+                .map_err(|error| invalid(&error))?;
+                inputs.push(
+                    InputReference::new(name, InvocationValueReference::Artifact { reference })
+                        .map_err(|error| invalid(&error))?,
+                );
+            }
             // The saved request ID is already the caller's stable replay identity. Operations
             // promising idempotent writes also require a key at adapter entry.
             let key = (selection.operation_contract().side_effect()
@@ -156,7 +188,11 @@ pub(super) async fn execute(
                 .validate_request(&request.request)
                 .map_err(|error| invalid(&error))?;
             let bytes = serde_json::to_vec_pretty(&request).map_err(|error| invalid(&error))?;
-            session.write_exact_document(Some(output), &bytes)?;
+            use std::io::Write as _;
+            destination
+                .write_all(&bytes)
+                .and_then(|()| destination.commit())
+                .map_err(|error| invalid(&error))?;
             session.output(
                 "invocation.prepare",
                 &serde_json::json!({

@@ -512,7 +512,10 @@ workflow terminal remain distinct. See the [runnable example](../../examples/ada
 
 ## Published workflow capabilities
 
-The ordinary command endpoint accepts `publish_method { document, expected_previous_version }`,
+The ordinary command endpoint accepts `prepare_method { document }` with a reviewed
+`PublicationDraft`: it checks revision reads and `method.publish` authority, derives the stored
+agreement and configured service grant facts, and returns an ordinary method without publishing.
+It also accepts `publish_method { document, expected_previous_version }`,
 `inspect_method { capability, generation }`, `list_methods { after_capability, after_generation,
 limit }`, and `retire_method { capability, generation, expected_version }`. The document is the
 schema-1 persistence-owned `PublishedMethod`; inspection and listing return retained records.

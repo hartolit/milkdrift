@@ -2,7 +2,33 @@ use crate::{MethodCommand, error::CliError, session::CliSession};
 use milkdrift_control_protocol::Command;
 
 pub(super) async fn execute(session: &CliSession, command: &MethodCommand) -> Result<(), CliError> {
+    if let MethodCommand::Prepare { file, output } = command {
+        use std::io::Write as _;
+        let mut destination = crate::output::PendingFile::create(output)?;
+        let document = session
+            .read_json(
+                file,
+                milkdrift_control_protocol::MAX_DOCUMENT_BYTES,
+                "publication choices",
+            )
+            .await?;
+        let request = session.command_request(Command::PrepareMethod { document })?;
+        let prepared = session.client().submit(&request).await?;
+        let bytes = serde_json::to_vec_pretty(&prepared.value)
+            .map_err(|error| CliError::Internal(error.to_string()))?;
+        destination
+            .write_all(&bytes)
+            .and_then(|()| destination.commit())
+            .map_err(|error| CliError::Internal(error.to_string()))?;
+        return session.output(
+            "method.prepared",
+            &serde_json::json!({"file":output,"method":prepared.value}),
+        );
+    }
     let (body, label) = match command {
+        MethodCommand::Prepare { .. } => {
+            return Err(CliError::Internal("preparation already handled".into()));
+        }
         MethodCommand::Publish {
             file,
             expected_previous_version,

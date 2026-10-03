@@ -99,7 +99,12 @@ pub enum Command {
     },
     /// Select evidence, declare and compare a study, or promote through ordinary authority.
     Learning { document: Value },
-    /// Publish or promote one exact immutable workflow implementation generation.
+    /// Resolve reviewed choices into a publication document without publishing it.
+    PrepareMethod {
+        /// Reviewed publication choices; the owner derives agreement and service grant facts.
+        document: Value,
+    },
+    /// Publish an exact reviewed method as a separate operation after preparation.
     PublishMethod {
         document: Value,
         expected_previous_version: Option<u64>,

@@ -21,6 +21,12 @@ pub(super) fn execute(
             invalid("publication services are unavailable during recovery controls")
         })?;
     let (capability, operation) = match &request.command {
+        Command::PrepareMethod { document } => {
+            let draft: milkdrift_control::PublicationDraft =
+                serde_json::from_value(document.clone())
+                    .map_err(|error| invalid(&error.to_string()))?;
+            (Some(draft.descriptor.identity().clone()), "method.publish")
+        }
         Command::PublishMethod { document, .. } => {
             let method: PublishedMethod = serde_json::from_value(document.clone())
                 .map_err(|error| invalid(&error.to_string()))?;
@@ -50,6 +56,18 @@ pub(super) fn execute(
     )?;
     owner.record_security_decision(&decision)?;
     let value = match &request.command {
+        Command::PrepareMethod { document } => {
+            let draft: milkdrift_control::PublicationDraft =
+                serde_json::from_value(document.clone())
+                    .map_err(|error| invalid(&error.to_string()))?;
+            owner.revision(session, draft.revision.as_str())?;
+            serde_json::to_value(
+                publications
+                    .prepare_publication(draft)
+                    .map_err(public_control)?,
+            )
+            .map_err(|_| internal())?
+        }
         Command::PublishMethod {
             document,
             expected_previous_version,
@@ -137,7 +155,12 @@ pub(super) fn execute(
         command_id: request.command_id.clone(),
         replayed: false,
         resulting_sequence: None,
-        result_type: operation.to_owned(),
+        result_type: if matches!(request.command, Command::PrepareMethod { .. }) {
+            "method.prepared"
+        } else {
+            operation
+        }
+        .to_owned(),
         value,
     })
 }

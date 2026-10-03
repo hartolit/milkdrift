@@ -21,13 +21,14 @@ Keep that grant scoped to the reviewed service. Publication does not combine the
 publisher's grants. An execution-only host refuses this configuration; it can still consume a
 publication on another workflow-enabled host through an authorized peer relationship.
 
-Import the immutable starting revision, including its governing agreement, through ordinary
-blueprint control. Construct the schema-1 `PublishedMethod` document defined by
-[the owning contract](../../crates/persistence/src/published.rs). Its descriptor exposes exactly
+Saving a workflow does not publish it. Use `workflow list` and `workflow show REVISION` to choose
+an immutable version and inspect its inputs and outputs. Import its reviewed governing agreement
+through ordinary blueprint control. Supply a `PublicationDraft` document defined by
+[the preparation contract](../../crates/control/src/published/preparation.rs). Its descriptor exposes exactly
 `method.invoke`, category `tool`, local ownership, and the maximum side-effect class of all work
 the agreement permits. The document supplies:
 
-- The exact revision and agreement digest, documentation, service actor and immutable grant facts.
+- The exact `revision`, `documentation`, and explicitly chosen `service_grant` ID.
 - Every required public input, mapped to the identically named workflow input. JSON choices are a
   finite reviewed list; artifact inputs specify a media type and maximum byte count. The caller
   needs actual current read permission for supplied references, and content is validated.
@@ -37,8 +38,16 @@ the agreement permits. The document supplies:
   and duration. Zero model/process/token dimensions prohibit that work. No currency means no
   monetary allowance; supported unbilled adapters still consume their other dimensions.
 
-Obtain grant identities and digests through the authorized `daemon authority` read. Do not invent
-grant digests or copy credentials into method documents. Internal adapters must already be installed;
+The remaining field names are `descriptor`, `inputs`, `outputs`, `workspace_budget`, `allowance`,
+`maximum_outstanding`, `maximum_depth` and `maximum_duration_ms`. No limits or contracts have
+implicit permissive defaults. `method prepare` resolves the stored agreement and the configured
+service's actor, grant revision, digest and revocation generation. It validates the same contracts
+as publication, then writes the ordinary schema-1 `PublishedMethod` document for review. It does
+not register a capability or execute a run. The public `prepare_method` command accepts the same
+draft, so another client needs neither a CLI nor digest calculations. Preparation requires
+`method.publish` administration and read access to the selected revision.
+
+Do not copy credentials into method documents. Internal adapters must already be installed;
 publication refuses unsupported capability envelopes or service authority. The first generation is
 1. Changes to implementation, constraints or authority require a new consecutive generation, even
 when the descriptor's input/output schema version remains compatible.
@@ -46,6 +55,7 @@ when the descriptor's input/output schema version remains compatible.
 ## Publish, replace and retire
 
 ```sh
+milkdrift --command-id prepare-slotbook-1 method prepare publication-v1.json --output method-v1.json
 milkdrift --yes --command-id publish-slotbook-1 method publish method-v1.json
 milkdrift method show method:slotbook --generation 1
 milkdrift method list --limit 32
@@ -89,6 +99,22 @@ request. Inspect that document before submitting it. Exact replay recovers its a
 an archived summary; changing its bytes under the same key conflicts. A different authenticated
 caller cannot use the receipt. A transport timeout or disconnect does not cancel accepted work.
 `invocation cancel` records a separate request; its acknowledgement is not proof of termination.
+
+For a published text brief, use the same bounded upload route as ordinary run inputs:
+
+```sh
+milkdrift invocation prepare method:notes method.invoke --host host:notes --request-id notes-1 --input brief=brief.txt --output notes-call.json
+milkdrift invocation submit notes-call.json
+```
+
+`--input` uploads restricted UTF-8 text and inserts the returned immutable artifact reference;
+it does not turn an artifact contract into inline JSON. Repeat it for distinct names, or use
+`--inputs` for an explicit array of other allowed reference types. Upload and input reads require
+their own configured artifact scope and byte allowance. An invoker with no artifact scope may
+call a method without inputs and read its declared outputs, but cannot upload a brief. Grant only
+the selected input identities; general private artifact access is unnecessary. A non-CLI client
+uses `POST /v1/inputs` and passes the returned reference through the ordinary invocation route.
+Existing output files are refused before uploading. Keep the saved call document for exact replay.
 
 Invocation needs `InvokeCapability`; receipt inspection needs `Inspect`, result references/bytes
 need `ReadCapabilityOutput`, and cancellation needs `CancelCapability`, all scoped to the public

@@ -43,7 +43,8 @@ impl Owner {
                 repair,
             } => authoring::repair(self, session, request, run_id, proposal_id, repair),
             Command::Learning { document } => learning::execute(self, session, request, document),
-            Command::PublishMethod { .. }
+            Command::PrepareMethod { .. }
+            | Command::PublishMethod { .. }
             | Command::InspectMethod { .. }
             | Command::ListMethods { .. }
             | Command::RetireMethod { .. } => publications::execute(self, session, request),

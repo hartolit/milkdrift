@@ -7,10 +7,9 @@ use milkdrift_capability::{
     AdmissionConstraints, CapabilityCategory, DescriptorBuilder, InvocationCounts, InvocationId,
     InvocationRequest, Locality, ResolvedCapabilitySnapshot, TerminalStatus,
 };
+use milkdrift_control::PublicationDraft;
 use milkdrift_peer_protocol::{DirectInvocationRequest, InvocationAcceptance, PeerRequestId};
-use milkdrift_persistence::published::{
-    PublishedMethod, PublishedOutput, PublishedServiceIdentity,
-};
+use milkdrift_persistence::published::{PublishedMethod, PublishedOutput};
 use serde_json::json;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -91,26 +90,12 @@ async fn invoke_only_published_outputs_replay_retirement_and_restart() -> TestRe
     )]))
     .execution_trust(process.descriptor.execution_trust())
     .build()?;
-    let authority = daemon.client.authority().await?;
-    let method = PublishedMethod {
+    let draft = PublicationDraft {
         documentation: "Run the fixed governed fixture and return only its accepted result."
             .to_owned(),
-        schema_version: 1,
         descriptor,
         revision: revision.id().clone(),
-        agreement: revision
-            .semantic()
-            .agreement()
-            .ok_or("agreement absent")?
-            .digest()
-            .to_owned(),
-        service: PublishedServiceIdentity {
-            actor: ActorRef::new(authority.actor)?,
-            grant: milkdrift_authority::GrantId::new(authority.grant_id)?,
-            grant_revision: authority.grant_revision,
-            grant_digest: milkdrift_authority::GrantDigest::new(&authority.grant_digest)?,
-            revocation_generation: 0,
-        },
+        service_grant: milkdrift_authority::GrantId::new("grant:integration-controller")?,
         inputs: BTreeMap::new(),
         outputs: BTreeMap::from([(
             "result".to_owned(),
@@ -128,6 +113,66 @@ async fn invoke_only_published_outputs_replay_retirement_and_restart() -> TestRe
         maximum_depth: 4,
         maximum_duration_ms: 30000,
     };
+    let prepare = request(
+        "prepare",
+        None,
+        Command::PrepareMethod {
+            document: serde_json::to_value(&draft)?,
+        },
+    );
+    assert!(invoker.submit(&prepare).await.is_err());
+    let mut wrong = draft.clone();
+    wrong.service_grant = milkdrift_authority::GrantId::new("grant:integration-observer")?;
+    assert!(
+        daemon
+            .client
+            .submit(&request(
+                "wrong-service",
+                None,
+                Command::PrepareMethod {
+                    document: serde_json::to_value(wrong)?
+                }
+            ))
+            .await
+            .is_err()
+    );
+    let prepared = daemon.client.submit(&prepare).await?;
+    assert_eq!(daemon.client.submit(&prepare).await?.value, prepared.value);
+    assert!(
+        invoker
+            .execution_discovery()
+            .await?
+            .catalog
+            .entries
+            .is_empty()
+    );
+    fs::write(
+        directory.path().join("publication.json"),
+        serde_json::to_vec(&draft)?,
+    )?;
+    cli_ok(
+        &daemon,
+        &directory,
+        "prepare-cli",
+        &[
+            "method",
+            "prepare",
+            "publication.json",
+            "--output",
+            "method.json",
+        ],
+    )?;
+    let method: PublishedMethod =
+        serde_json::from_slice(&fs::read(directory.path().join("method.json"))?)?;
+    assert_eq!(serde_json::to_value(&method)?, prepared.value);
+    assert_eq!(
+        method.agreement,
+        revision.semantic().agreement().ok_or("agreement")?.digest()
+    );
+    assert_eq!(
+        method.service.grant_digest.as_str(),
+        daemon.client.authority().await?.grant_digest
+    );
     let publish = request(
         "publish",
         None,

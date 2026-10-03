@@ -35,3 +35,5 @@ mod support;
 
 #[path = "control_plane/published.rs"]
 mod published;
+#[path = "control_plane/published_inputs.rs"]
+mod published_inputs;
