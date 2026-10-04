@@ -132,6 +132,12 @@ fn old_and_future_config_versions_are_rejected_truthfully() -> Result<(), Box<dy
     for unsupported in
         (1..DAEMON_CONFIG_SCHEMA_VERSION).chain(std::iter::once(DAEMON_CONFIG_SCHEMA_VERSION + 1))
     {
+        assert_eq!(
+            ConfigError::UnsupportedVersion(unsupported).to_string(),
+            format!(
+                "unsupported daemon configuration version {unsupported}; supported version is {DAEMON_CONFIG_SCHEMA_VERSION}"
+            ),
+        );
         let directory = tempfile::tempdir()?;
         let value = source.replacen(
             "schema_version = 13",

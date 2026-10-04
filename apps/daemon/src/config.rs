@@ -30,7 +30,7 @@ pub enum ConfigError {
     #[error("invalid daemon configuration TOML: {0}")]
     Toml(String),
     /// The schema version is unsupported.
-    #[error("unsupported daemon configuration version {0}; supported version is 10")]
+    #[error("unsupported daemon configuration version {0}; supported version is {supported}", supported = DAEMON_CONFIG_SCHEMA_VERSION)]
     UnsupportedVersion(u32),
     /// A host-safety invariant is invalid.
     #[error("invalid daemon configuration: {0}")]
