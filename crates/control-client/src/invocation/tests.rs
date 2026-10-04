@@ -82,3 +82,30 @@ async fn request_lookup_refuses_a_valid_response_for_another_key() -> TestResult
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn output_ranges_require_progress_but_allow_an_empty_complete_artifact() -> TestResult {
+    let execution = PeerExecutionId::new("execution:output")?;
+    for (size, bytes, complete, valid) in [
+        (1, vec![], false, false),
+        (1, vec![42], true, true),
+        (0, vec![], true, true),
+    ] {
+        let chunk = json!({
+            "execution":execution,"offset":0,"bytes":bytes,"complete":complete,
+            "metadata": {
+                "reference":{"artifact":"output","digest":"0".repeat(64),"media_type":"text/plain","size_bytes":size},
+                "sensitivity":"restricted","retention":{"type":"while_referenced"},
+                "provenance":{"producer":{"type":"external","source":"fixture"},"causes":[]}
+            }
+        });
+        // Establish that a failure tests the range contract, not malformed metadata.
+        let _: milkdrift_peer_protocol::InvocationOutputChunk =
+            serde_json::from_value(chunk.clone())?;
+        let (client, worker) = response(chunk)?;
+        let result = client.invocation_output(&execution, "output", 0, 1).await;
+        worker.join().map_err(|_| "fixture panicked")??;
+        assert_eq!(result.is_ok(), valid, "{result:?}");
+    }
+    Ok(())
+}

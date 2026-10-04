@@ -75,18 +75,11 @@ pub(in crate::command) async fn download(
                 .client()
                 .artifact_range(artifact, offset, end)
                 .await?;
-            if range.bytes.is_empty()
-                || range.start != offset
-                || range.complete_size != metadata.size
-                || range.end
-                    != offset.saturating_add(
-                        u64::try_from(range.bytes.len())
-                            .unwrap_or(0)
-                            .saturating_sub(1),
-                    )
-            {
+            // The client verifies each HTTP range. This file owner checks that all ranges
+            // still describe the immutable artifact whose digest it will verify below.
+            if range.complete_size != metadata.size {
                 return Err(CliError::Internal(
-                    "artifact range identity or size was inconsistent".to_owned(),
+                    "artifact size changed between metadata and content".to_owned(),
                 ));
             }
             file.write_all(&range.bytes).map_err(|error| {

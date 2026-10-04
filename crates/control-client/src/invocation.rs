@@ -173,6 +173,7 @@ impl ControlClient {
             || chunk.metadata.reference().artifact().as_str() != artifact
             || chunk.offset != offset
             || chunk.bytes.len() > maximum as usize
+            || (chunk.bytes.is_empty() && !chunk.complete)
             || offset
                 .checked_add(chunk.bytes.len() as u64)
                 .is_none_or(|end| {

@@ -33,11 +33,6 @@ pub(super) async fn execute(
                         "output metadata changed between ranges".to_owned(),
                     ));
                 }
-                if chunk.bytes.is_empty() && !chunk.complete {
-                    return Err(CliError::Internal(
-                        "output download made no progress".to_owned(),
-                    ));
-                }
                 std::io::Write::write_all(&mut file, &chunk.bytes)
                     .map_err(|error| CliError::Internal(error.to_string()))?;
                 hash.update(&chunk.bytes);
