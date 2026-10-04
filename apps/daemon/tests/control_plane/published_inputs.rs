@@ -18,14 +18,31 @@ async fn published_brief_uses_uploaded_text_and_declared_result() -> TestResult 
     let model = ModelFixture::start().await?;
     let mut config = super::authoring::model_configuration_document(&directory, model.address)?;
     // Controlled accounts require explicit billing and token bounds, even for this loopback fixture.
-    let profile_path = &config.adapters.model_profiles[0].profile;
+    let profile_path = &config
+        .adapters
+        .model_profiles
+        .first()
+        .ok_or("model profile absent")?
+        .profile;
     let mut profile: serde_json::Value = serde_json::from_slice(&fs::read(profile_path)?)?;
-    profile["billing"] = json!({"type":"unbilled","source":"controlled loopback fixture"});
-    profile["limits"]["max_response_bytes"] = json!(8192);
-    profile["token_limits"] = json!({"type":"byte_bpe","template_tokens_per_message":0,"template_tokens_per_request":0,"maximum_input_tokens":262144,"maximum_output_tokens":512,"output_control":"max_tokens","source":"bounded encoded request including selected context metadata; controlled fixture reports 20 input and 10 output tokens"});
+    *profile
+        .pointer_mut("/billing")
+        .ok_or("fixture field /billing absent")? =
+        json!({"type":"unbilled","source":"controlled loopback fixture"});
+    *profile
+        .pointer_mut("/limits/max_response_bytes")
+        .ok_or("fixture field /limits/max_response_bytes absent")? = json!(8192);
+    *profile
+        .pointer_mut("/token_limits")
+        .ok_or("fixture field /token_limits absent")? = json!({"type":"byte_bpe","template_tokens_per_message":0,"template_tokens_per_request":0,"maximum_input_tokens":262144,"maximum_output_tokens":512,"output_control":"max_tokens","source":"bounded encoded request including selected context metadata; controlled fixture reports 20 input and 10 output tokens"});
     fs::write(profile_path, serde_json::to_vec(&profile)?)?;
-    config.actors[0].authority.resources.capability =
-        CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown);
+    config
+        .actors
+        .get_mut(0)
+        .ok_or("fixture actor absent")?
+        .authority
+        .resources
+        .capability = CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown);
     config.runtime.controller_activation = milkdrift_daemon::ControllerActivation::Enabled;
     config.runtime.effect_threads = 1;
     config.runtime.effect_queue = 1;
@@ -145,14 +162,21 @@ async fn published_brief_uses_uploaded_text_and_declared_result() -> TestResult 
     let call: DirectInvocationRequest =
         serde_json::from_slice(&fs::read(directory.path().join("call.json"))?)?;
     assert!(matches!(
-        call.request.inputs()[0].value(),
+        call.request.inputs().first().ok_or("input absent")?.value(),
         milkdrift_capability::InvocationValueReference::Artifact { .. }
     ));
     let mut inline = serde_json::to_value(&call)?;
-    inline["request_id"] = json!("inline-refused");
-    inline["request"]["invocation"] = json!("inline-refused");
+    *inline
+        .pointer_mut("/request_id")
+        .ok_or("fixture field /request_id absent")? = json!("inline-refused");
+    *inline
+        .pointer_mut("/request/invocation")
+        .ok_or("fixture field /request/invocation absent")? = json!("inline-refused");
     // The publication accepts an artifact brief, never inline text substituted by a client.
-    inline["request"]["inputs"][0]["value"] = json!({"type":"inline","value":"Harbor Host 1.4"});
+    *inline
+        .pointer_mut("/request/inputs/0/value")
+        .ok_or("fixture field /request/inputs/0/value absent")? =
+        json!({"type":"inline","value":"Harbor Host 1.4"});
     let inline: DirectInvocationRequest = serde_json::from_value(inline)?;
     let refused = daemon.client.invoke(&inline).await?;
     // Serving admission may accept before the publication validates its method-specific contract.
@@ -218,10 +242,16 @@ async fn published_brief_uses_uploaded_text_and_declared_result() -> TestResult 
                     let state = daemon.client.run(&run.run_id).await?;
                     for node in state.nodes {
                         if let Some(attempt) = node.latest_attempt_id {
-                            eprintln!(
-                                "internal attempt: {:?}",
-                                daemon.client.attempt(&run.run_id, &attempt).await?
-                            );
+                            #[expect(
+                                clippy::print_stderr,
+                                reason = "A failed publication includes the authorized attempt view in captured test diagnostics."
+                            )]
+                            {
+                                eprintln!(
+                                    "internal attempt: {:?}",
+                                    daemon.client.attempt(&run.run_id, &attempt).await?
+                                );
+                            }
                         }
                     }
                 }
@@ -234,7 +264,16 @@ async fn published_brief_uses_uploaded_text_and_declared_result() -> TestResult 
             assert_eq!(terminal.outputs().len(), 1);
             let output = daemon
                 .client
-                .invocation_output(&execution, terminal.outputs()[0].identity(), 0, 4096)
+                .invocation_output(
+                    &execution,
+                    terminal
+                        .outputs()
+                        .first()
+                        .ok_or("output absent")?
+                        .identity(),
+                    0,
+                    4096,
+                )
                 .await?;
             assert_eq!(output.bytes, b"Harbor revised release notes");
             break;

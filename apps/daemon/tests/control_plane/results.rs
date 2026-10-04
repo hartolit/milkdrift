@@ -85,7 +85,11 @@ async fn result_view_preserves_complete_empty_truncated_refused_and_uncertain_tr
     ])
     .await?;
     let mut config = super::authoring::model_configuration_document(&directory, model.address)?;
-    config.actors[1].preset = milkdrift_daemon::AuthorityPresetConfig::Invoker;
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .preset = milkdrift_daemon::AuthorityPresetConfig::Invoker;
     let daemon = start(config.validate(directory.path())?, CONTROLLER_TOKEN).await?;
     let revision = workflow(&daemon.client).await?;
     let input = upload(&daemon.client, "brief", b"Harbor Host 1.4 release brief").await?;
@@ -116,9 +120,14 @@ async fn result_view_preserves_complete_empty_truncated_refused_and_uncertain_tr
             "complete" => {
                 assert_eq!(result.run.terminal.as_deref(), Some("succeeded"));
                 assert_eq!(result.outputs.len(), 1);
-                assert_eq!(result.outputs[0].name, "notes");
+                assert_eq!(result.outputs.first().ok_or("output absent")?.name, "notes");
                 assert_eq!(
-                    result.outputs[0].preview.as_deref(),
+                    result
+                        .outputs
+                        .first()
+                        .ok_or("output absent")?
+                        .preview
+                        .as_deref(),
                     Some("Complete notes\n\u{1b}[31m")
                 );
                 assert!(

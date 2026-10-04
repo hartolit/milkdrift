@@ -18,12 +18,26 @@ async fn direct_process_upload_replay_and_restart_have_no_workflow_records() -> 
     let profile_path = configured_process_profile(&directory)?;
     let marker = directory.path().join("external-entries");
     let mut profile: serde_json::Value = serde_json::from_slice(&fs::read(&profile_path)?)?;
-    profile["profile"]["capability"] = json!("operator-process");
-    profile["profile"]["arguments"] = json!(["append-stdin", marker]);
-    profile["profile"]["side_effect"] = json!("non_idempotent_write");
-    profile["profile"]["inputs"] = json!([{"input":"source","relative_path":"source.txt"}]);
-    profile["profile"]["stdin"] = json!({"type":"input","input":"source","max_bytes":1024});
-    profile["profile"]["stdout"] = json!({"max_capture_bytes":1024,"stream_progress":false,"max_progress_events":0,"overflow_action":"terminate","artifact_name":"result"});
+    *profile
+        .pointer_mut("/profile/capability")
+        .ok_or("fixture field /profile/capability absent")? = json!("operator-process");
+    *profile
+        .pointer_mut("/profile/arguments")
+        .ok_or("fixture field /profile/arguments absent")? = json!(["append-stdin", marker]);
+    *profile
+        .pointer_mut("/profile/side_effect")
+        .ok_or("fixture field /profile/side_effect absent")? = json!("non_idempotent_write");
+    *profile
+        .pointer_mut("/profile/inputs")
+        .ok_or("fixture field /profile/inputs absent")? =
+        json!([{"input":"source","relative_path":"source.txt"}]);
+    *profile
+        .pointer_mut("/profile/stdin")
+        .ok_or("fixture field /profile/stdin absent")? =
+        json!({"type":"input","input":"source","max_bytes":1024});
+    *profile
+        .pointer_mut("/profile/stdout")
+        .ok_or("fixture field /profile/stdout absent")? = json!({"max_capture_bytes":1024,"stream_progress":false,"max_progress_events":0,"overflow_action":"terminate","artifact_name":"result"});
     fs::write(&profile_path, serde_json::to_vec(&profile)?)?;
     let mut config =
         configuration_document_with_process_profiles(&directory, 32, vec![profile_path])?;
@@ -33,8 +47,18 @@ async fn direct_process_upload_replay_and_restart_have_no_workflow_records() -> 
     let mut example: DaemonConfig = toml::from_str(include_str!(
         "../../../../examples/operator/execution-only.toml"
     ))?;
-    config.actors[0].authority = example.actors.remove(0).authority;
-    config.actors[0].authority.resources.filesystem = vec![
+    config
+        .actors
+        .get_mut(0)
+        .ok_or("fixture actor absent")?
+        .authority = example.actors.remove(0).authority;
+    config
+        .actors
+        .get_mut(0)
+        .ok_or("fixture actor absent")?
+        .authority
+        .resources
+        .filesystem = vec![
         milkdrift_authority::FilesystemScope::from_canonical_host_path(
             super::process::executable()?
                 .parent()
@@ -49,7 +73,11 @@ async fn direct_process_upload_replay_and_restart_have_no_workflow_records() -> 
             ]),
         )?,
     ];
-    config.actors[1].authority = ActorGrantConfig::dangerous_administrator();
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .authority = ActorGrantConfig::dangerous_administrator();
     config.serving.clients.maximum_uploaded_artifacts = 1;
     let plan = config.validate(directory.path())?;
     let daemon = start(plan.clone(), CONTROLLER_TOKEN).await?;
@@ -141,10 +169,13 @@ async fn direct_process_upload_replay_and_restart_have_no_workflow_records() -> 
             output_units: None,
             observations: 32,
         },
-        deadline_unix_ms: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_millis() as u64
-            + 30_000,
+        deadline_unix_ms: u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis(),
+        )?
+        .checked_add(30_000)
+        .ok_or("invocation deadline overflow")?,
     };
     let accepted = daemon.client.invoke(&request).await?;
     let InvocationAcceptance::Accepted { execution, .. } = accepted else {

@@ -13,13 +13,20 @@ async fn independent_copy_is_editable_and_retains_source_without_run_state() -> 
     // Two accepted runs may enter the controlled endpoint concurrently.
     let mut config =
         super::authoring::model_configuration_with_capacity(&directory, model.address, 2)?;
-    config.actors[1].preset = AuthorityPresetConfig::Invoker;
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .preset = AuthorityPresetConfig::Invoker;
     let plan = config.validate(directory.path())?;
     let daemon = start(plan.clone(), CONTROLLER_TOKEN).await?;
     let source = workflow(&daemon.client).await?;
     let original = daemon.client.revision(&source).await?;
-    assert_eq!(original.inputs[0].name, "brief");
-    assert_eq!(original.outputs[0].name, "notes");
+    assert_eq!(original.inputs.first().ok_or("input absent")?.name, "brief");
+    assert_eq!(
+        original.outputs.first().ok_or("output absent")?.name,
+        "notes"
+    );
     let listing = cli_ok(
         &daemon,
         &directory,
@@ -27,13 +34,28 @@ async fn independent_copy_is_editable_and_retains_source_without_run_state() -> 
         &["workflow", "list", "--workflow", "release-notes"],
     )?;
     assert!(
-        listing["items"]
+        listing
+            .pointer("/items")
+            .ok_or("fixture field /items absent")?
             .as_array()
-            .is_some_and(|items| items.iter().any(|item| item["revision_id"] == source))
+            .is_some_and(|items| items.iter().any(|item| item
+                .pointer("/revision_id")
+                .and_then(serde_json::Value::as_str)
+                == Some(source.as_str())))
     );
     let shown = cli_ok(&daemon, &directory, "show", &["workflow", "show", &source])?;
-    assert_eq!(shown["inputs"][0]["name"], "brief");
-    assert!(shown["document"].is_null());
+    assert_eq!(
+        shown
+            .pointer("/inputs/0/name")
+            .ok_or("fixture field /inputs/0/name absent")?,
+        "brief"
+    );
+    assert!(
+        shown
+            .pointer("/document")
+            .ok_or("fixture field /document absent")?
+            .is_null()
+    );
     let hidden = client(&daemon.endpoint, OBSERVER_TOKEN)?;
     let mut copy = request(
         "copy-denied",
@@ -71,7 +93,11 @@ async fn independent_copy_is_editable_and_retains_source_without_run_state() -> 
             "copy.json",
         ],
     )?;
-    let copied_id = copied["revision_id"].as_str().ok_or("copied revision")?;
+    let copied_id = copied
+        .pointer("/revision_id")
+        .ok_or("fixture field /revision_id absent")?
+        .as_str()
+        .ok_or("copied revision")?;
     let definition = daemon.client.revision(copied_id).await?;
     assert_eq!(definition.summary.workflow_id, "independent-notes");
     assert!(definition.reason.contains(&source));
@@ -133,10 +159,19 @@ async fn independent_copy_is_editable_and_retains_source_without_run_state() -> 
         "save-copy",
         &["workflow", "save", "copy.json"],
     )?;
-    assert_ne!(saved["revision_id"], copied_id);
+    assert_ne!(
+        saved
+            .pointer("/revision_id")
+            .ok_or("fixture field /revision_id absent")?,
+        copied_id
+    );
     let file: serde_json::Value =
         serde_json::from_slice(&fs::read(directory.path().join("copy.json"))?)?;
-    let draft: BlueprintDraft = serde_json::from_value(file["draft"].clone())?;
+    let draft: BlueprintDraft = serde_json::from_value(
+        file.pointer("/draft")
+            .ok_or("fixture field /draft absent")?
+            .clone(),
+    )?;
     assert_eq!(draft.workflow_id, "independent-notes");
     for (run, pinned, output) in [
         (
@@ -153,7 +188,13 @@ async fn independent_copy_is_editable_and_retains_source_without_run_state() -> 
         assert_eq!(state.revision_id.as_deref(), Some(pinned));
         assert_eq!(state.terminal.as_deref(), Some("succeeded"));
         assert_eq!(
-            daemon.client.run_result(run).await?.outputs[0]
+            daemon
+                .client
+                .run_result(run)
+                .await?
+                .outputs
+                .first()
+                .ok_or("output absent")?
                 .preview
                 .as_deref(),
             Some(output)

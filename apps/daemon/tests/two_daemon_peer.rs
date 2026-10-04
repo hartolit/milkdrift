@@ -386,7 +386,9 @@ async fn assert_peer_protocol_boundary(endpoint: &Url) -> TestResult {
     let current = serde_json::to_value(ProtocolEnvelope::v1(request.clone()))?;
     for minor in [1_u16, 2, 3, 4, 6] {
         let mut incompatible = current.clone();
-        incompatible["protocol"]["minor"] = serde_json::json!(minor);
+        *incompatible
+            .pointer_mut("/protocol/minor")
+            .ok_or("fixture field /protocol/minor absent")? = serde_json::json!(minor);
         let response = client
             .post(endpoint.join("peer/v1/handshake")?)
             .bearer_auth(PEER_TOKEN)

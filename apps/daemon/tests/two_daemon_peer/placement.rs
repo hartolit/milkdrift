@@ -16,13 +16,22 @@ fn placement_profile(
     let path = configured_process_profile(root)?;
     fs::write(root.path().join("repository.txt"), repository)?;
     let mut document: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
-    document["profile"]["arguments"] = json!(["placement", root.path(), host]);
-    document["profile"]["side_effect"] = json!("non_idempotent_write");
-    document["profile"]["stdout"] = json!({
+    *document
+        .pointer_mut("/profile/arguments")
+        .ok_or("fixture field /profile/arguments absent")? =
+        json!(["placement", root.path(), host]);
+    *document
+        .pointer_mut("/profile/side_effect")
+        .ok_or("fixture field /profile/side_effect absent")? = json!("non_idempotent_write");
+    *document
+        .pointer_mut("/profile/stdout")
+        .ok_or("fixture field /profile/stdout absent")? = json!({
         "max_capture_bytes":1024,"stream_progress":false,"max_progress_events":0,
         "overflow_action":"terminate","artifact_name":"host_result"
     });
-    document["profile"]["limits"]["wall_timeout_ms"] = json!(5000);
+    *document
+        .pointer_mut("/profile/limits/wall_timeout_ms")
+        .ok_or("fixture field /profile/limits/wall_timeout_ms absent")? = json!(5000);
     fs::write(&path, serde_json::to_vec(&document)?)?;
     Ok(path)
 }
@@ -136,7 +145,10 @@ async fn import_and_start(
             },
         ))
         .await?;
-    let revision = imported.value["revision_id"]
+    let revision = imported
+        .value
+        .pointer("/revision_id")
+        .ok_or("fixture field /revision_id absent")?
         .as_str()
         .ok_or("import omitted revision")?;
     Ok(client
@@ -235,34 +247,45 @@ async fn two_repository_hosts_enforce_placement_return_artifacts_and_retain_sele
         "local-lookalike",
     )?;
     let mut second = match &origin_config.peers {
-        PeerHostConfig::Enabled { relationships, .. } => relationships[0].clone(),
-        _ => return Err("peers disabled".into()),
+        PeerHostConfig::Enabled { relationships, .. } => {
+            relationships.first().ok_or("relationship absent")?.clone()
+        }
+        PeerHostConfig::Disabled => return Err("peers disabled".into()),
     };
     second.peer_id = "peer-b".to_owned();
     second.endpoint = b_url.to_string();
     if let PeerHostConfig::Enabled { relationships, .. } = &mut origin_config.peers {
         relationships.push(second);
     }
-    origin_config.actors[0].authority.resources.network = NetworkScope::new(
+    origin_config
+        .actors
+        .get_mut(0)
+        .ok_or("fixture actor absent")?
+        .authority
+        .resources
+        .network = NetworkScope::new(
         BTreeSet::from([
             NetworkProfileRef::new("peer:peer-a")?,
             NetworkProfileRef::new("peer:peer-b")?,
         ]),
         BTreeSet::from([a_address.to_string(), b_address.to_string()]),
     )?;
-    origin_config.actors[0].authority.resources.capability =
-        CapabilityAuthorityScopeBuilder::new(SideEffectClass::NonIdempotentWrite)
-            .only_categories(BTreeSet::from([CapabilityCategory::Process]))?
-            .only_operations(BTreeSet::from([OperationId::new("process.execute")?]))?
-            .only_execution_trust_classes(BTreeSet::from([
-                ExecutionTrustClass::TrustedHostProcess,
-            ]))?
-            .only_localities(BTreeSet::from([Locality::Peer]))?
-            .only_peers(BTreeSet::from([
-                PeerId::new("peer-a")?,
-                PeerId::new("peer-b")?,
-            ]))?
-            .build();
+    origin_config
+        .actors
+        .get_mut(0)
+        .ok_or("fixture actor absent")?
+        .authority
+        .resources
+        .capability = CapabilityAuthorityScopeBuilder::new(SideEffectClass::NonIdempotentWrite)
+        .only_categories(BTreeSet::from([CapabilityCategory::Process]))?
+        .only_operations(BTreeSet::from([OperationId::new("process.execute")?]))?
+        .only_execution_trust_classes(BTreeSet::from([ExecutionTrustClass::TrustedHostProcess]))?
+        .only_localities(BTreeSet::from([Locality::Peer]))?
+        .only_peers(BTreeSet::from([
+            PeerId::new("peer-a")?,
+            PeerId::new("peer-b")?,
+        ]))?
+        .build();
     let a = start_plan(a_config.clone().validate(a_root.path())?, a_listener).await?;
     let b = start_plan(b_config.clone().validate(b_root.path())?, b_listener).await?;
     let origin = start_plan(
@@ -285,8 +308,13 @@ async fn two_repository_hosts_enforce_placement_return_artifacts_and_retain_sele
         assert_eq!(fs::read_to_string(root.path().join("entries"))?, expected);
         assert_eq!(attempt.peer_id.as_deref(), Some(host));
         assert_eq!(
-            attempt.requirement.as_ref().ok_or("missing requirement")?["placement"]["peers"],
-            json!([host])
+            attempt
+                .requirement
+                .as_ref()
+                .ok_or("missing requirement")?
+                .pointer("/placement/peers")
+                .ok_or("placement peers absent")?,
+            &json!([host])
         );
         let provenance = attempt
             .capability_provenance

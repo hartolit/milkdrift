@@ -134,16 +134,27 @@ async fn final_model_review_repair_preserves_history_context_and_approval_guards
         "submit-final",
         &["proposal", "submit", "repair.json"],
     )?;
-    let submitted = &submitted["value"];
-    let proposed = submitted["proposed_revision"]
+    let submitted = &submitted
+        .pointer("/value")
+        .ok_or("fixture field /value absent")?;
+    let proposed = submitted
+        .pointer("/proposed_revision")
+        .ok_or("fixture field /proposed_revision absent")?
         .as_str()
         .ok_or("proposed revision")?
         .to_owned();
-    let digest = submitted["proposal_digest"]
+    let digest = submitted
+        .pointer("/proposal_digest")
+        .ok_or("fixture field /proposal_digest absent")?
         .as_str()
         .ok_or("proposal digest")?
         .to_owned();
-    assert_eq!(submitted["applied"], false);
+    assert_eq!(
+        submitted
+            .pointer("/applied")
+            .ok_or("fixture field /applied absent")?,
+        false
+    );
     let impact = daemon
         .client
         .proposal("repair-run", "repair-final", &proposed)
@@ -242,7 +253,9 @@ async fn final_model_review_repair_preserves_history_context_and_approval_guards
             "workflow.reviewed",
         ],
     )?;
-    let resume_sequence = signalled["resulting_sequence"]
+    let resume_sequence = signalled
+        .pointer("/resulting_sequence")
+        .ok_or("fixture field /resulting_sequence absent")?
         .as_u64()
         .ok_or("signal sequence")?
         .to_string();
@@ -291,7 +304,9 @@ async fn final_model_review_repair_preserves_history_context_and_approval_guards
         .await?
         .items;
     assert_eq!(
-        &history[..original_history.len()],
+        history
+            .get(..original_history.len())
+            .ok_or("retained history shortened")?,
         original_history.as_slice()
     );
     assert_eq!(
@@ -300,7 +315,12 @@ async fn final_model_review_repair_preserves_history_context_and_approval_guards
     );
     let result = daemon.client.run_result("repair-run").await?;
     assert_eq!(
-        result.outputs[0].preview.as_deref(),
+        result
+            .outputs
+            .first()
+            .ok_or("output absent")?
+            .preview
+            .as_deref(),
         Some("Complete repaired notes\n\u{1b}[31m")
     );
     assert!(
@@ -339,7 +359,7 @@ async fn final_model_review_repair_preserves_history_context_and_approval_guards
     );
     let requests = model.requests.lock().map_err(|_| "fixture lock")?.clone();
     assert_eq!(requests.len(), 3);
-    let repaired = requests[2].to_string();
+    let repaired = requests.get(2).ok_or("repair request absent")?.to_string();
     assert!(repaired.contains("SELECTED FAILED RESULT"));
     assert!(repaired.contains("Harbor Host 1.4"));
     assert!(!repaired.contains("PRIVATE EARLIER DRAFT"));

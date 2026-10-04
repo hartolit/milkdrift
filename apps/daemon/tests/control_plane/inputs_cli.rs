@@ -22,8 +22,10 @@ async fn cli(
     let arguments: Vec<String> = arguments.iter().map(|value| (*value).into()).collect();
     let seconds: u64 = arguments
         .windows(2)
-        .find(|pair| pair[0] == "--timeout-secs")
-        .map(|pair| pair[1].parse())
+        .find_map(|pair| match pair {
+            [flag, value] if flag == "--timeout-secs" => Some(value.parse()),
+            _ => None,
+        })
         .transpose()?
         .unwrap_or(10);
     let result = tokio::task::spawn_blocking(move || -> Result<std::process::Output, String> {
@@ -89,7 +91,10 @@ fn success(output: &std::process::Output) -> TestResult<Value> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    Ok(serde_json::from_slice::<Value>(&output.stdout)?["value"].clone())
+    Ok(serde_json::from_slice::<Value>(&output.stdout)?
+        .pointer("/value")
+        .ok_or("response field absent")?
+        .clone())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -122,8 +127,18 @@ async fn actual_cli_retains_inputs_and_reconnects_after_client_and_daemon_exit()
         )
         .await?,
     )?;
-    assert_eq!(prepared["command_id"], "retained-start");
-    assert_eq!(prepared["host"], "host:local");
+    assert_eq!(
+        prepared
+            .pointer("/command_id")
+            .ok_or("fixture field /command_id absent")?,
+        "retained-start"
+    );
+    assert_eq!(
+        prepared
+            .pointer("/host")
+            .ok_or("fixture field /host absent")?,
+        "host:local"
+    );
     assert!(
         model
             .requests
@@ -149,7 +164,12 @@ async fn actual_cli_retains_inputs_and_reconnects_after_client_and_daemon_exit()
         )
         .await?,
     )?;
-    assert_eq!(accepted["command_id"], "retained-start");
+    assert_eq!(
+        accepted
+            .pointer("/command_id")
+            .ok_or("fixture field /command_id absent")?,
+        "retained-start"
+    );
     wait_for_run(
         &daemon.client,
         "retained",
@@ -165,7 +185,12 @@ async fn actual_cli_retains_inputs_and_reconnects_after_client_and_daemon_exit()
         )
         .await?,
     )?;
-    assert_eq!(replay["replayed"], true);
+    assert_eq!(
+        replay
+            .pointer("/replayed")
+            .ok_or("fixture field /replayed absent")?,
+        true
+    );
     assert_eq!(fs::read(directory.path().join("retained.json"))?, retained);
     {
         let requests = model.requests.lock().map_err(|_| "fixture lock")?;
@@ -185,7 +210,9 @@ async fn actual_cli_retains_inputs_and_reconnects_after_client_and_daemon_exit()
                 &["run", "reconnect", "retained.json"]
             )
             .await?
-        )?["replayed"],
+        )?
+        .pointer("/replayed")
+        .ok_or("response field absent")?,
         true
     );
     let mut altered: milkdrift_control_client::SavedRunRequest =
@@ -336,11 +363,46 @@ async fn actual_cli_lost_start_reply_and_wait_deadline_recover_without_reexecuti
         .map(serde_json::from_str)
         .collect::<Result<_, _>>()?;
     assert_eq!(records.len(), 2);
-    assert_eq!(records[0]["type"], "run.prepared");
-    assert_eq!(records[0]["final"], false);
-    assert_eq!(records[0]["value"]["command_id"], "lost-start");
-    assert_eq!(records[1]["error"]["classification"], "timeout");
-    assert_eq!(records[1]["final"], true);
+    assert_eq!(
+        records
+            .first()
+            .ok_or("record absent")?
+            .pointer("/type")
+            .ok_or("response field absent")?,
+        "run.prepared"
+    );
+    assert_eq!(
+        records
+            .first()
+            .ok_or("record absent")?
+            .pointer("/final")
+            .ok_or("response field absent")?,
+        false
+    );
+    assert_eq!(
+        records
+            .first()
+            .ok_or("record absent")?
+            .pointer("/value/command_id")
+            .ok_or("response field absent")?,
+        "lost-start"
+    );
+    assert_eq!(
+        records
+            .get(1)
+            .ok_or("record absent")?
+            .pointer("/error/classification")
+            .ok_or("response field absent")?,
+        "timeout"
+    );
+    assert_eq!(
+        records
+            .get(1)
+            .ok_or("record absent")?
+            .pointer("/final")
+            .ok_or("response field absent")?,
+        true
+    );
     fs::remove_file(directory.path().join("brief.txt"))?;
     let recovered = cli(
         &daemon.endpoint,
@@ -365,12 +427,29 @@ async fn actual_cli_lost_start_reply_and_wait_deadline_recover_without_reexecuti
         .map(serde_json::from_str)
         .collect::<Result<_, _>>()?;
     assert_eq!(records.len(), 2);
-    assert_eq!(records[0]["value"]["run_id"], "lost");
-    assert_eq!(records[1]["value"]["terminal"], "succeeded");
+    assert_eq!(
+        records
+            .first()
+            .ok_or("record absent")?
+            .pointer("/value/run_id")
+            .ok_or("response field absent")?,
+        "lost"
+    );
+    assert_eq!(
+        records
+            .get(1)
+            .ok_or("record absent")?
+            .pointer("/value/terminal")
+            .ok_or("response field absent")?,
+        "succeeded"
+    );
     assert_eq!(
         records
             .iter()
-            .filter(|record| record["final"] == true)
+            .filter(|record| record
+                .pointer("/final")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true))
             .count(),
         1
     );
@@ -383,7 +462,12 @@ async fn actual_cli_lost_start_reply_and_wait_deadline_recover_without_reexecuti
         )
         .await?,
     )?;
-    assert_eq!(replay["replayed"], true);
+    assert_eq!(
+        replay
+            .pointer("/replayed")
+            .ok_or("fixture field /replayed absent")?,
+        true
+    );
     assert_eq!(model.requests.lock().map_err(|_| "fixture lock")?.len(), 2);
     proxy.stop().await?;
     daemon.stop()?;

@@ -269,7 +269,10 @@ async fn proposal_listing_uses_durable_projection_and_survives_restart() -> Test
         )
         .await?;
     assert_eq!(listed.items.len(), 1);
-    assert_eq!(listed.items[0].proposal_id, "proposal-daemon-index");
+    assert_eq!(
+        listed.items.first().ok_or("proposal absent")?.proposal_id,
+        "proposal-daemon-index"
+    );
     daemon.stop().await?;
 
     let restarted = start(config, CONTROLLER_TOKEN).await?;

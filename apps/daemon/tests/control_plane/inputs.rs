@@ -72,7 +72,13 @@ pub(super) async fn workflow_with_draft(
                 },
             ))
             .await?;
-        draft = serde_json::from_value(reply.value["draft"].clone())?;
+        draft = serde_json::from_value(
+            reply
+                .value
+                .pointer("/draft")
+                .ok_or("fixture field /draft absent")?
+                .clone(),
+        )?;
     }
     let reply = client
         .submit(&request(
@@ -85,7 +91,10 @@ pub(super) async fn workflow_with_draft(
             },
         ))
         .await?;
-    Ok(reply.value["revision_id"]
+    Ok(reply
+        .value
+        .pointer("/revision_id")
+        .ok_or("fixture field /revision_id absent")?
         .as_str()
         .ok_or("revision missing")?
         .into())
@@ -162,7 +171,13 @@ async fn supplied_input_types_and_run_budgets_refuse_before_creation() -> TestRe
     let directory = tempfile::tempdir()?;
     let model = ModelFixture::start().await?;
     let mut config = super::authoring::model_configuration_document(&directory, model.address)?;
-    config.actors[1].authority.budget.artifact_bytes = Some(8);
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .authority
+        .budget
+        .artifact_bytes = Some(8);
     let daemon = start(config.validate(directory.path())?, CONTROLLER_TOKEN).await?;
     let limited = client(&daemon.endpoint, OBSERVER_TOKEN)?;
     let input = upload(
@@ -244,7 +259,13 @@ async fn supplied_inputs_are_validated_frozen_isolated_and_materialized() -> Tes
     let directory = tempfile::tempdir()?;
     let model = ModelFixture::start().await?;
     let mut config = super::authoring::model_configuration_document(&directory, model.address)?;
-    config.actors[1].authority.resources.artifacts = ArtifactAuthorityScope::none();
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .authority
+        .resources
+        .artifacts = ArtifactAuthorityScope::none();
     let plan = config.validate(directory.path())?;
     let daemon = start(plan.clone(), CONTROLLER_TOKEN).await?;
     let revision = workflow(&daemon.client).await?;

@@ -46,7 +46,10 @@ fn cli_ok(
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    Ok(serde_json::from_slice::<serde_json::Value>(&output.stdout)?["value"].clone())
+    Ok(serde_json::from_slice::<serde_json::Value>(&output.stdout)?
+        .pointer("/value")
+        .ok_or("response field absent")?
+        .clone())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -85,7 +88,11 @@ async fn actual_cli_authors_prompts_connections_and_guarded_files() -> TestResul
             &directory,
             &[
                 "--expected-edit",
-                created["edit_token"].as_str().ok_or("token")?,
+                created
+                    .pointer("/edit_token")
+                    .ok_or("fixture field /edit_token absent")?
+                    .as_str()
+                    .ok_or("token")?,
                 "rename",
                 "notes.json",
                 "Stale"
@@ -196,24 +203,50 @@ async fn actual_cli_authors_prompts_connections_and_guarded_files() -> TestResul
         assert_eq!(fs::read(directory.path().join("notes.json"))?, before);
     }
     let saved = cli_ok(&daemon, &directory, &["save", "notes.json"], None)?;
-    let revision = saved["revision_id"].as_str().ok_or("revision")?;
+    let revision = saved
+        .pointer("/revision_id")
+        .ok_or("fixture field /revision_id absent")?
+        .as_str()
+        .ok_or("revision")?;
     let read = cli_ok(
         &daemon,
         &directory,
         &["open", revision, "--file", "reopened.json"],
         None,
     )?;
-    assert_eq!(read["workflow"], saved["workflow"]);
-    assert_eq!(read["workflow"]["steps"][1]["prompt"], review);
+    assert_eq!(
+        read.pointer("/workflow")
+            .ok_or("fixture field /workflow absent")?,
+        saved
+            .pointer("/workflow")
+            .ok_or("fixture field /workflow absent")?
+    );
+    assert_eq!(
+        read.pointer("/workflow/steps/1/prompt")
+            .ok_or("fixture field /workflow/steps/1/prompt absent")?,
+        review
+    );
     let file_before = fs::read(directory.path().join("reopened.json"))?;
     let inspected = cli_ok(&daemon, &directory, &["inspect", "reopened.json"], None)?;
-    assert_eq!(inspected["workflow"], saved["workflow"]);
+    assert_eq!(
+        inspected
+            .pointer("/workflow")
+            .ok_or("fixture field /workflow absent")?,
+        saved
+            .pointer("/workflow")
+            .ok_or("fixture field /workflow absent")?
+    );
     assert_eq!(
         fs::read(directory.path().join("reopened.json"))?,
         file_before
     );
     let unchanged = cli_ok(&daemon, &directory, &["save", "reopened.json"], None)?;
-    assert_eq!(unchanged["revision_id"], revision);
+    assert_eq!(
+        unchanged
+            .pointer("/revision_id")
+            .ok_or("fixture field /revision_id absent")?,
+        revision
+    );
     assert_eq!(
         fs::read(directory.path().join("reopened.json"))?,
         file_before
@@ -226,7 +259,12 @@ async fn actual_cli_authors_prompts_connections_and_guarded_files() -> TestResul
         Some("Check every claim against the brief."),
     )?;
     let edited = cli_ok(&daemon, &directory, &["save", "reopened.json"], None)?;
-    assert_ne!(edited["revision_id"], revision);
+    assert_ne!(
+        edited
+            .pointer("/revision_id")
+            .ok_or("fixture field /revision_id absent")?,
+        revision
+    );
     assert_eq!(daemon.client.revision(revision).await?.document, old);
     cli_ok(
         &daemon,

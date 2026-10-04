@@ -17,7 +17,9 @@ async fn invoke_only_published_outputs_replay_retirement_and_restart() -> TestRe
     let directory = TempDir::new()?;
     let profile = configured_process_profile(&directory)?;
     let mut value: serde_json::Value = serde_json::from_slice(&fs::read(&profile)?)?;
-    value["profile"]["stdout"] = json!({"max_capture_bytes":1024,"stream_progress":false,"max_progress_events":0,"overflow_action":"terminate","artifact_name":"result"});
+    *value
+        .pointer_mut("/profile/stdout")
+        .ok_or("fixture field /profile/stdout absent")? = json!({"max_capture_bytes":1024,"stream_progress":false,"max_progress_events":0,"overflow_action":"terminate","artifact_name":"result"});
     fs::write(&profile, serde_json::to_vec(&value)?)?;
     let mut config = configuration_document_with_process_profiles(&directory, 64, vec![profile])?;
     config.runtime.controller_activation = milkdrift_daemon::ControllerActivation::Enabled;
@@ -32,21 +34,57 @@ async fn invoke_only_published_outputs_replay_retirement_and_restart() -> TestRe
         milkdrift_authority::GrantId::new("grant:integration-controller")?,
     );
     // No arbitrary artifact, workspace, run, revision, resource or secret authority.
-    config.actors[1].preset = AuthorityPresetConfig::Invoker;
-    config.actors[1].authority.dangerous_allow_broad_authority = true;
-    config.actors[1].authority.resources.artifacts = ArtifactAuthorityScope::none();
-    config.actors[1].authority.resources.workflow_run = WorkflowRunScope::Any;
-    config.actors[1].authority.resources.capability =
-        CapabilityAuthorityScopeBuilder::new(SideEffectClass::ReadOnly)
-            .only_capabilities(std::collections::BTreeSet::from([CapabilityId::new(
-                "method:echo",
-            )?]))?
-            .only_categories(std::collections::BTreeSet::from([CapabilityCategory::Tool]))?
-            .only_operations(std::collections::BTreeSet::from([OperationId::new(
-                "method.invoke",
-            )?]))?
-            .build();
-    config.actors[1].authority.budget = config.actors[0].authority.budget;
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .preset = AuthorityPresetConfig::Invoker;
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .authority
+        .dangerous_allow_broad_authority = true;
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .authority
+        .resources
+        .artifacts = ArtifactAuthorityScope::none();
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .authority
+        .resources
+        .workflow_run = WorkflowRunScope::Any;
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .authority
+        .resources
+        .capability = CapabilityAuthorityScopeBuilder::new(SideEffectClass::ReadOnly)
+        .only_capabilities(std::collections::BTreeSet::from([CapabilityId::new(
+            "method:echo",
+        )?]))?
+        .only_categories(std::collections::BTreeSet::from([CapabilityCategory::Tool]))?
+        .only_operations(std::collections::BTreeSet::from([OperationId::new(
+            "method.invoke",
+        )?]))?
+        .build();
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .authority
+        .budget = config
+        .actors
+        .get_mut(0)
+        .ok_or("fixture actor absent")?
+        .authority
+        .budget;
     let plan = config.validate(directory.path())?;
     let daemon = start(plan.clone(), CONTROLLER_TOKEN).await?;
     let invoker = client(&daemon.endpoint, OBSERVER_TOKEN)?;
@@ -213,7 +251,11 @@ async fn invoke_only_published_outputs_replay_retirement_and_restart() -> TestRe
         Err(ClientError::Api(error)) if error.code == ErrorCode::Conflict));
     let discovery = invoker.execution_discovery().await?;
     assert_eq!(discovery.catalog.entries.len(), 1);
-    let entry = &discovery.catalog.entries[0];
+    let entry = discovery
+        .catalog
+        .entries
+        .first()
+        .ok_or("catalog entry absent")?;
     let request_doc = DirectInvocationRequest {
         host: discovery.host,
         request_id: PeerRequestId::new("public-call")?,
@@ -233,10 +275,13 @@ async fn invoke_only_published_outputs_replay_retirement_and_restart() -> TestRe
             BTreeMap::new(),
         )?,
         limits: discovery.limits,
-        deadline_unix_ms: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_millis() as u64
-            + 60000,
+        deadline_unix_ms: u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis(),
+        )?
+        .checked_add(60000)
+        .ok_or("invocation deadline overflow")?,
     };
     let accepted = invoker.invoke(&request_doc).await?;
     let InvocationAcceptance::Accepted { execution, .. } = accepted else {
@@ -244,7 +289,9 @@ async fn invoke_only_published_outputs_replay_retirement_and_restart() -> TestRe
     };
     let mut promoted = method.clone();
     let mut newer = serde_json::to_value(&promoted.descriptor)?;
-    newer["descriptor_revision"] = json!(2);
+    *newer
+        .pointer_mut("/descriptor_revision")
+        .ok_or("fixture field /descriptor_revision absent")? = json!(2);
     promoted.descriptor = serde_json::from_value(newer)?;
     daemon
         .client
@@ -301,20 +348,26 @@ async fn invoke_only_published_outputs_replay_retirement_and_restart() -> TestRe
             break terminal.clone();
         }
         if tokio::time::Instant::now() >= deadline {
-            eprintln!(
-                "runs: {:?}",
-                daemon
-                    .client
-                    .runs(
-                        None,
-                        None,
-                        &PageRequest {
-                            limit: 10,
-                            cursor: None
-                        }
-                    )
-                    .await?
-            );
+            #[expect(
+                clippy::print_stderr,
+                reason = "The failed integration case includes its authorized bounded run page in captured test diagnostics."
+            )]
+            {
+                eprintln!(
+                    "runs: {:?}",
+                    daemon
+                        .client
+                        .runs(
+                            None,
+                            None,
+                            &PageRequest {
+                                limit: 10,
+                                cursor: None
+                            }
+                        )
+                        .await?
+                );
+            }
             return Err(format!("public operation stalled: {page:?}").into());
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -366,7 +419,7 @@ async fn invoke_only_published_outputs_replay_retirement_and_restart() -> TestRe
         1,
         "one accepted call must own one real internal run"
     );
-    let child = &runs.items[0];
+    let child = runs.items.first().ok_or("run absent")?;
     assert_eq!(child.revision_id.as_deref(), Some(revision.id().as_str()));
     assert!(invoker.run(&child.run_id).await.is_err());
     assert!(

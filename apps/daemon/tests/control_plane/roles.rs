@@ -13,7 +13,11 @@ async fn disabled_actor_restarts_fail_closed_and_requires_fresh_authority_to_ree
         .await?;
     daemon.stop().await?;
 
-    config.actors[1].enabled = false;
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .enabled = false;
     // Repeating the disabled configuration must also be an exact, safe restart.
     for _ in 0..2 {
         let daemon = start(config.clone().validate(directory.path())?, CONTROLLER_TOKEN).await?;
@@ -24,13 +28,25 @@ async fn disabled_actor_restarts_fail_closed_and_requires_fresh_authority_to_ree
         daemon.stop().await?;
     }
 
-    config.actors[1].enabled = true;
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .enabled = true;
     let error = DaemonHost::start(config.clone().validate(directory.path())?)
         .err()
         .ok_or("revoked authority was restored without a new grant")?;
     assert!(error.to_string().contains("peer_relationship_generation"));
-    config.actors[1].grant_revision += 1;
-    config.actors[1].revocation_generation += 1;
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .grant_revision += 1;
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .revocation_generation += 1;
     let daemon = start(config.validate(directory.path())?, CONTROLLER_TOKEN).await?;
     client(&daemon.endpoint, OBSERVER_TOKEN)?
         .readiness()

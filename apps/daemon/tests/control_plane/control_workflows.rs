@@ -20,7 +20,10 @@ async fn prompt_sequence_validate_import_inspect_and_restart_are_one_control_pat
         ))
         .await?;
     assert_eq!(validated.result_type, "prompt_sequence_valid");
-    let revision = validated.value["revision_id"]
+    let revision = validated
+        .value
+        .pointer("/revision_id")
+        .ok_or("fixture field /revision_id absent")?
         .as_str()
         .ok_or("validation omitted revision")?
         .to_owned();
@@ -37,10 +40,27 @@ async fn prompt_sequence_validate_import_inspect_and_restart_are_one_control_pat
         ))
         .await?;
     assert_eq!(imported.result_type, "prompt_sequence_imported");
-    assert_eq!(imported.value["revision_id"], revision);
-    assert_eq!(imported.value["stages"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        imported
+            .value
+            .pointer("/revision_id")
+            .ok_or("fixture field /revision_id absent")?,
+        revision.as_str()
+    );
+    assert_eq!(
+        imported
+            .value
+            .pointer("/stages")
+            .ok_or("fixture field /stages absent")?
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
     assert!(
-        imported.value["import_digest"]
+        imported
+            .value
+            .pointer("/import_digest")
+            .ok_or("fixture field /import_digest absent")?
             .as_str()
             .is_some_and(|value| value.starts_with("b3_"))
     );
@@ -97,7 +117,10 @@ async fn headless_dogfood_failure_remediation_and_restart_are_durable() -> TestR
             },
         ))
         .await?;
-    let revision_id = imported.value["revision_id"]
+    let revision_id = imported
+        .value
+        .pointer("/revision_id")
+        .ok_or("fixture field /revision_id absent")?
         .as_str()
         .ok_or("dogfood import omitted revision")?
         .to_owned();
@@ -159,7 +182,13 @@ async fn headless_dogfood_failure_remediation_and_restart_are_durable() -> TestR
     let reviewer_context = reviewer_attempt
         .context
         .ok_or("reviewer context is absent")?;
-    assert_eq!(reviewer_context.policy["session"], "fresh");
+    assert_eq!(
+        reviewer_context
+            .policy
+            .pointer("/session")
+            .ok_or("fixture field /session absent")?,
+        "fresh"
+    );
     assert!(
         serde_json::to_string(&reviewer_context.policy)?.contains("prior_prompt"),
         "review policy must explicitly exclude chronological prior prompts"
@@ -185,7 +214,13 @@ async fn headless_dogfood_failure_remediation_and_restart_are_durable() -> TestR
             .as_ref()
             .ok_or("base revision document is absent")?,
     )?;
-    let good_verification = sequence.sequence().stages[0].verification.clone();
+    let good_verification = sequence
+        .sequence()
+        .stages
+        .first()
+        .ok_or("stage absent")?
+        .verification
+        .clone();
     let proposal = build_remediation_proposal(
         &sequence,
         &base_bytes,
@@ -213,11 +248,21 @@ async fn headless_dogfood_failure_remediation_and_restart_are_durable() -> TestR
     );
     submit_request.expected_revision = Some(revision_id.clone());
     let submitted = daemon.client.submit(&submit_request).await?;
-    let proposed_revision = submitted.value["proposed_revision"]
+    let proposed_revision = submitted
+        .value
+        .pointer("/proposed_revision")
+        .ok_or("fixture field /proposed_revision absent")?
         .as_str()
         .ok_or("proposal response omitted proposed revision")?
         .to_owned();
-    assert!(!submitted.value["applied"].as_bool().unwrap_or(false));
+    assert!(
+        !submitted
+            .value
+            .pointer("/applied")
+            .ok_or("fixture field /applied absent")?
+            .as_bool()
+            .unwrap_or(false)
+    );
     daemon.stop().await?;
 
     let restarted = start(config.clone(), CONTROLLER_TOKEN).await?;
@@ -327,7 +372,12 @@ async fn headless_dogfood_failure_remediation_and_restart_are_durable() -> TestR
             .await?;
         assert_eq!(inspected.context_access, "authorized");
         assert_eq!(
-            inspected.context.ok_or("coding context absent")?.policy["session"],
+            inspected
+                .context
+                .ok_or("coding context absent")?
+                .policy
+                .pointer("/session")
+                .ok_or("fixture field /session absent")?,
             "fresh"
         );
     }
@@ -527,8 +577,20 @@ async fn scoped_read_matrix_and_continuations_fail_closed() -> TestResult {
     ));
     let visible = observer.capabilities().await?;
     assert_eq!(visible.len(), 1);
-    assert_eq!(visible[0].capability_id, "milkdrift-workflow-control");
-    assert!(visible[0].provider_profile.is_none());
+    assert_eq!(
+        visible
+            .first()
+            .ok_or("visible capability absent")?
+            .capability_id,
+        "milkdrift-workflow-control"
+    );
+    assert!(
+        visible
+            .first()
+            .ok_or("visible capability absent")?
+            .provider_profile
+            .is_none()
+    );
     assert_eq!(
         observer
             .revisions(
@@ -639,8 +701,18 @@ async fn scoped_read_matrix_and_continuations_fail_closed() -> TestResult {
     daemon.stop().await?;
 
     let mut narrowed = document;
-    narrowed.actors[0].grant_revision = 2;
-    narrowed.actors[0].authority.resources.capability = CapabilityAuthorityScope::deny_all();
+    narrowed
+        .actors
+        .get_mut(0)
+        .ok_or("fixture actor absent")?
+        .grant_revision = 2;
+    narrowed
+        .actors
+        .get_mut(0)
+        .ok_or("fixture actor absent")?
+        .authority
+        .resources
+        .capability = CapabilityAuthorityScope::deny_all();
     let narrowed = narrowed.validate(directory.path())?;
     let restarted = start(narrowed, CONTROLLER_TOKEN).await?;
     assert!(matches!(

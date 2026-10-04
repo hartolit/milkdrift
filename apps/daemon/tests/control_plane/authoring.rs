@@ -25,7 +25,13 @@ async fn author(
     client.submit(&command).await
 }
 fn draft(result: &CommandAccepted) -> TestResult<BlueprintDraft> {
-    Ok(serde_json::from_value(result.value["draft"].clone())?)
+    Ok(serde_json::from_value(
+        result
+            .value
+            .pointer("/draft")
+            .ok_or("fixture field /draft absent")?
+            .clone(),
+    )?)
 }
 fn add(step: &str) -> BlueprintEdit {
     BlueprintEdit::AddModel {
@@ -122,15 +128,37 @@ pub(super) fn model_configuration_with_capacity(
     let path = directory.path().join("model.json");
     fs::write(&path, profile.to_canonical_json()?)?;
     let mut config = configuration_document_with_process_profiles(directory, 64, vec![])?;
-    config.actors[0].authority.resources.capability = editor_scope()?;
-    config.actors[0].authority.resources.network = NetworkScope::new(
+    config
+        .actors
+        .get_mut(0)
+        .ok_or("fixture actor absent")?
+        .authority
+        .resources
+        .capability = editor_scope()?;
+    config
+        .actors
+        .get_mut(0)
+        .ok_or("fixture actor absent")?
+        .authority
+        .resources
+        .network = NetworkScope::new(
         std::collections::BTreeSet::from([milkdrift_authority::NetworkProfileRef::new(
             "writing-profile",
         )?]),
         std::collections::BTreeSet::from([address.to_string()]),
     )?;
-    config.actors[1].authority = ActorGrantConfig::dangerous_administrator();
-    config.actors[1].authority.resources.capability = CapabilityAuthorityScope::deny_all();
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .authority = ActorGrantConfig::dangerous_administrator();
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("fixture actor absent")?
+        .authority
+        .resources
+        .capability = CapabilityAuthorityScope::deny_all();
     config
         .adapters
         .model_profiles
@@ -273,7 +301,11 @@ async fn public_authoring_saves_reopens_and_refuses_unsafe_edits_without_executi
         );
     }
     let saved = author(&daemon.client, &notes, "save-notes", None, true).await?;
-    let original = saved.value["document"].clone();
+    let original = saved
+        .value
+        .pointer("/document")
+        .ok_or("fixture field /document absent")?
+        .clone();
     let (_, authored) = BlueprintRevisionDocument::from_json(&serde_json::to_vec(&original)?)?;
     for node in authored.semantic().nodes().values() {
         if let NodeKind::Task { config } = node.kind() {
@@ -285,42 +317,69 @@ async fn public_authoring_saves_reopens_and_refuses_unsafe_edits_without_executi
             );
         }
     }
-    let semantic = &original["revision"]["semantic"];
-    assert_eq!(semantic["interface"]["inputs"]["brief"]["required"], true);
+    let semantic = original
+        .pointer("/revision/semantic")
+        .ok_or("fixture field /revision/semantic absent")?;
     assert_eq!(
-        semantic["nodes"]["review"]["data_inputs"]["brief"]["binding"],
-        json!({"type":"workflow_input","field":"brief"})
+        semantic
+            .pointer("/interface/inputs/brief/required")
+            .ok_or("fixture field /interface/inputs/brief/required absent")?,
+        true
     );
     assert_eq!(
-        semantic["nodes"]["review"]["data_inputs"]["draft"]["binding"],
-        json!({"type":"node_output","node":"draft","port":"final_text","path":[]})
+        semantic
+            .pointer("/nodes/review/data_inputs/brief/binding")
+            .ok_or("fixture field /nodes/review/data_inputs/brief/binding absent")?,
+        &json!({"type":"workflow_input","field":"brief"})
     );
     assert_eq!(
-        semantic["nodes"]["review"]["kind"]["config"]["context_policy"]["ancestor_depth"],
-        serde_json::Value::Null
+        semantic
+            .pointer("/nodes/review/data_inputs/draft/binding")
+            .ok_or("fixture field /nodes/review/data_inputs/draft/binding absent")?,
+        &json!({"type":"node_output","node":"draft","port":"final_text","path":[]})
     );
     assert_eq!(
-        semantic["nodes"]["author.review.accept"]["data_inputs"]["milkdrift.acceptance"]["binding"]
-            ["value"]["requirement"],
-        json!({"type":"model_prose"})
+        semantic
+            .pointer("/nodes/review/kind/config/context_policy/ancestor_depth")
+            .ok_or(
+                "fixture field /nodes/review/kind/config/context_policy/ancestor_depth absent"
+            )?,
+        &serde_json::Value::Null
     );
     assert_eq!(
-        semantic["nodes"]["author.review.hold"]["kind"]["type"],
+        semantic.pointer("/nodes/author.review.accept/data_inputs/milkdrift.acceptance/binding/value/requirement").ok_or("acceptance requirement absent")?,
+        &json!({"type":"model_prose"})
+    );
+    assert_eq!(
+        semantic
+            .pointer("/nodes/author.review.hold/kind/type")
+            .ok_or("fixture field /nodes/author.review.hold/kind/type absent")?,
         "signal_wait"
     );
-    let control = semantic["edges"]
+    let control = semantic
+        .pointer("/edges")
+        .ok_or("fixture field /edges absent")?
         .as_object()
         .ok_or("edges")?
         .values()
-        .filter(|edge| edge["kind"] == "control")
-        .map(|edge| {
-            (
-                edge["source_node"].as_str().unwrap_or_default(),
-                edge["source_port"].as_str().unwrap_or_default(),
-                edge["target_node"].as_str().unwrap_or_default(),
-            )
+        .filter(|edge| edge.get("kind").and_then(serde_json::Value::as_str) == Some("control"))
+        .map(|edge| -> TestResult<_> {
+            Ok((
+                edge.pointer("/source_node")
+                    .ok_or("fixture field /source_node absent")?
+                    .as_str()
+                    .unwrap_or_default(),
+                edge.pointer("/source_port")
+                    .ok_or("fixture field /source_port absent")?
+                    .as_str()
+                    .unwrap_or_default(),
+                edge.pointer("/target_node")
+                    .ok_or("fixture field /target_node absent")?
+                    .as_str()
+                    .unwrap_or_default(),
+            ))
         })
-        .collect::<std::collections::BTreeSet<_>>();
+        .collect::<TestResult<std::collections::BTreeSet<_>>>()?;
     assert!(control.contains(&("draft", "out", "author.draft.accept")));
     assert!(control.contains(&("author.draft.accept", "out", "author.draft.gate")));
     assert!(control.contains(&("author.draft.gate", "pass", "review")));
@@ -358,7 +417,13 @@ async fn public_authoring_saves_reopens_and_refuses_unsafe_edits_without_executi
         Some(original.clone())
     );
     let unchanged = author(&daemon.client, &saved_draft, "save-unchanged", None, true).await?;
-    assert_eq!(unchanged.value["document"], original);
+    assert_eq!(
+        unchanged
+            .value
+            .pointer("/document")
+            .ok_or("fixture field /document absent")?,
+        &original
+    );
     let replay = author(&daemon.client, &notes, "save-notes", None, true).await?;
     assert!(replay.replayed);
     assert_eq!(saved.value, replay.value);
@@ -392,8 +457,23 @@ async fn public_authoring_saves_reopens_and_refuses_unsafe_edits_without_executi
         true,
     )
     .await?;
-    assert_ne!(edited.value["revision_id"], saved.value["revision_id"]);
-    assert_eq!(edited.value["document"]["revision"]["parents"], json!([id]));
+    assert_ne!(
+        edited
+            .value
+            .pointer("/revision_id")
+            .ok_or("fixture field /revision_id absent")?,
+        saved
+            .value
+            .pointer("/revision_id")
+            .ok_or("fixture field /revision_id absent")?
+    );
+    assert_eq!(
+        edited
+            .value
+            .pointer("/document/revision/parents")
+            .ok_or("fixture field /document/revision/parents absent")?,
+        &json!([id])
+    );
     assert_eq!(
         daemon.client.revision(id).await?.document,
         Some(original.clone())
@@ -460,7 +540,12 @@ async fn public_authoring_saves_reopens_and_refuses_unsafe_edits_without_executi
             .revision(rich_draft.base_revision.as_deref().ok_or("rich id")?)
             .await?
             .document,
-        Some(rich.value["document"].clone())
+        Some(
+            rich.value
+                .pointer("/document")
+                .ok_or("fixture field /document absent")?
+                .clone()
+        )
     );
     assert!(
         daemon

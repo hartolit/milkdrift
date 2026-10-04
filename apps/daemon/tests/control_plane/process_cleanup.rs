@@ -24,10 +24,16 @@ async fn inherited_pipes_settle_drain_cancel_and_retain_without_duplicate_entry(
         let mut profile: serde_json::Value = serde_json::from_slice(&fs::read(&profile_path)?)?;
         // Deliberately exceed the former 800 ms wall budget before the holder starts.
         // Shutdown timing starts only after both processes have published readiness.
-        profile["profile"]["arguments"] =
+        *profile
+            .pointer_mut("/profile/arguments")
+            .ok_or("fixture field /profile/arguments absent")? =
             json!(["escaped-pipes", pids, release, "wait", parent_exit, "1000"]);
-        profile["profile"]["side_effect"] = json!("unknown");
-        profile["profile"]["limits"]["wall_timeout_ms"] = json!(30000);
+        *profile
+            .pointer_mut("/profile/side_effect")
+            .ok_or("fixture field /profile/side_effect absent")? = json!("unknown");
+        *profile
+            .pointer_mut("/profile/limits/wall_timeout_ms")
+            .ok_or("fixture field /profile/limits/wall_timeout_ms absent")? = json!(30000);
         fs::write(&profile_path, serde_json::to_vec(&profile)?)?;
         let mut config =
             configuration_document_with_process_profiles(&directory, 16, vec![profile_path])?;
@@ -49,7 +55,10 @@ async fn inherited_pipes_settle_drain_cancel_and_retain_without_duplicate_entry(
                 },
             ))
             .await?;
-        let revision = imported.value["revision_id"]
+        let revision = imported
+            .value
+            .pointer("/revision_id")
+            .ok_or("fixture field /revision_id absent")?
             .as_str()
             .ok_or("missing revision")?
             .to_owned();
@@ -106,9 +115,11 @@ async fn inherited_pipes_settle_drain_cancel_and_retain_without_duplicate_entry(
             stopped?;
         }
         let entered = cleanup::read_pids(&pids);
-        assert!(!cleanup::process_alive(entered[0])?);
+        assert!(!cleanup::process_alive(
+            *entered.first().ok_or("parent pid absent")?
+        )?);
         assert!(
-            cleanup::process_alive(entered[1])?,
+            cleanup::process_alive(*entered.get(1).ok_or("child pid absent")?)?,
             "local closure must not imply external termination"
         );
         // Reopening the same store also proves the old owner and effect workers

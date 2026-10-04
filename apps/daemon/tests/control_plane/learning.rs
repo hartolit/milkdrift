@@ -72,13 +72,26 @@ pub(super) async fn selection_roundtrip(
     ];
     let selected = cli_ok(daemon, directory, "selected-knowledge", &args)?;
     assert_eq!(
-        selected["receipt"],
-        json!({"actor":"human:integration-controller","command":"selected-knowledge"})
+        selected
+            .pointer("/receipt")
+            .ok_or("fixture field /receipt absent")?,
+        &json!({"actor":"human:integration-controller","command":"selected-knowledge"})
     );
-    let record = &selected["value"];
-    assert_eq!(record["kind"], "selection");
-    let reference: ArtifactReference =
-        serde_json::from_value(record["selection"]["guidance"].clone())?;
+    let record = selected
+        .pointer("/value")
+        .ok_or("fixture field /value absent")?;
+    assert_eq!(
+        record
+            .pointer("/kind")
+            .ok_or("fixture field /kind absent")?,
+        "selection"
+    );
+    let reference: ArtifactReference = serde_json::from_value(
+        record
+            .pointer("/selection/guidance")
+            .ok_or("fixture field /selection/guidance absent")?
+            .clone(),
+    )?;
     let metadata = daemon
         .client
         .artifact_metadata(&guidance.artifact_id)
@@ -87,15 +100,19 @@ pub(super) async fn selection_roundtrip(
     assert_eq!(reference.digest().to_hex(), metadata.digest);
     assert_eq!(reference.size_bytes(), metadata.size);
     assert_eq!(
-        record["pages"][0]["events"]
+        record
+            .pointer("/pages/0/events")
+            .ok_or("fixture field /pages/0/events absent")?
             .as_array()
             .ok_or("events")?
             .len(),
         1
     );
     assert_eq!(
-        cli_ok(daemon, directory, "selected-knowledge", &args)?["value"],
-        *record
+        cli_ok(daemon, directory, "selected-knowledge", &args)?
+            .get("value")
+            .ok_or("selected record absent")?,
+        record
     );
     let inspected = cli_ok(
         daemon,
@@ -108,8 +125,20 @@ pub(super) async fn selection_roundtrip(
             "selected-knowledge",
         ],
     )?;
-    assert_eq!(inspected["value"], *record);
-    assert_eq!(inspected["receipt"], selected["receipt"]);
+    assert_eq!(
+        inspected
+            .pointer("/value")
+            .ok_or("fixture field /value absent")?,
+        record
+    );
+    assert_eq!(
+        inspected
+            .pointer("/receipt")
+            .ok_or("fixture field /receipt absent")?,
+        selected
+            .pointer("/receipt")
+            .ok_or("fixture field /receipt absent")?
+    );
     let (ok, text) = cli(
         daemon,
         directory,
@@ -133,7 +162,7 @@ pub(super) async fn selection_roundtrip(
                 "private-selection",
                 None,
                 Command::Learning {
-                    document: json!({"type":"inspect","receipt":selected["receipt"]})
+                    document: json!({"type":"inspect","receipt":selected.pointer("/receipt").ok_or("fixture field /receipt absent")?})
                 }
             ))
             .await
@@ -154,7 +183,9 @@ pub(super) async fn selection_roundtrip(
         matches!(missing, Err(ClientError::Api(error)) if error.message.contains("missing evidence"))
     );
     let mut hidden = selection;
-    hidden["guidance"] = json!("artifact:absent");
+    *hidden
+        .pointer_mut("/guidance")
+        .ok_or("fixture field /guidance absent")? = json!("artifact:absent");
     assert!(
         daemon
             .client
@@ -186,7 +217,7 @@ pub(super) async fn selection_roundtrip(
         true,
     )?;
     assert!(!ok);
-    let fabricated = json!({"type":"compare","declaration":selected["receipt"],"candidate":selected["receipt"],"scores":[100]});
+    let fabricated = json!({"type":"compare","declaration":selected.pointer("/receipt").ok_or("fixture field /receipt absent")?,"candidate":selected.pointer("/receipt").ok_or("fixture field /receipt absent")?,"scores":[100]});
     assert!(
         daemon
             .client

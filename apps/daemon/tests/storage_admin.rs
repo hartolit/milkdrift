@@ -42,8 +42,18 @@ fn maintenance_binary_inspects_backs_up_restores_and_refuses_existing_destinatio
             String::from_utf8_lossy(&output.stderr)
         );
         let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-        assert_eq!(report["kind"], "inspection_report");
-        assert_eq!(report["execution_authorized"], false);
+        assert_eq!(
+            report
+                .pointer("/kind")
+                .ok_or("fixture field /kind absent")?,
+            "inspection_report"
+        );
+        assert_eq!(
+            report
+                .pointer("/execution_authorized")
+                .ok_or("fixture field /execution_authorized absent")?,
+            false
+        );
     }
     let backup = parent.path().join("backup");
     let restored = parent.path().join("restored");

@@ -28,7 +28,12 @@ fn operator_configuration_accepts_bare_relative_and_absolute_paths_before_storag
         );
         let document: toml::Value = toml::from_str(std::str::from_utf8(&output.stdout)?)?;
         assert_eq!(
-            Path::new(document["data_root"].as_str().ok_or("missing data root")?),
+            Path::new(
+                document
+                    .get("data_root")
+                    .and_then(toml::Value::as_str)
+                    .ok_or("missing data root")?
+            ),
             directory.path().canonicalize()?.join("data")
         );
         if let Some(previous) = effective.as_ref() {

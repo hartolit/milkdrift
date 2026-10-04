@@ -32,7 +32,9 @@ fn configure(
             .first()
             .ok_or("process absent")?;
         let mut profile: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
-        profile["profile"]["stdout"] = json!({"max_capture_bytes":1024,"stream_progress":false,
+        *profile
+            .pointer_mut("/profile/stdout")
+            .ok_or("fixture field /profile/stdout absent")? = json!({"max_capture_bytes":1024,"stream_progress":false,
             "max_progress_events":0,"overflow_action":"terminate","artifact_name":"result"});
         fs::write(path, serde_json::to_vec(&profile)?)?;
         config.runtime.publication_services.insert(
@@ -275,12 +277,25 @@ async fn peer_publication_creates_one_run_and_transfers_only_the_accepted_result
         )
         .await?;
     assert_eq!(runs.items.len(), 1);
-    let internal = daemon_a.client.run(&runs.items[0].run_id).await?;
+    let internal = daemon_a
+        .client
+        .run(&runs.items.first().ok_or("run absent")?.run_id)
+        .await?;
     let source = internal
         .published_source
         .ok_or("internal link not inspectable")?;
-    assert_eq!(source["type"], "serving");
-    assert_eq!(source["caller"]["principal"]["peer"], "peer-b");
+    assert_eq!(
+        source
+            .pointer("/type")
+            .ok_or("fixture field /type absent")?,
+        "serving"
+    );
+    assert_eq!(
+        source
+            .pointer("/caller/principal/peer")
+            .ok_or("fixture field /caller/principal/peer absent")?,
+        "peer-b"
+    );
     assert_eq!(internal.terminal.as_deref(), Some("succeeded"));
     daemon_b.stop().await?;
     daemon_a.stop().await?;

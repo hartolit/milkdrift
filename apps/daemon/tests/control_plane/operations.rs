@@ -393,9 +393,21 @@ async fn daemon_configured_process_adapter_executes_to_terminal() -> TestResult 
             .iter()
             .any(|entry| {
                 entry.summary == "external-effect contract frozen"
-                    && entry.detail["side_effect"] == "none"
-                    && entry.detail["idempotency"] == "unsupported"
-                    && entry.detail["idempotency_key_present"] == false
+                    && entry
+                        .detail
+                        .pointer("/side_effect")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("none")
+                    && entry
+                        .detail
+                        .pointer("/idempotency")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("unsupported")
+                    && entry
+                        .detail
+                        .pointer("/idempotency_key_present")
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(false)
             })
     );
     let provenance = attempt

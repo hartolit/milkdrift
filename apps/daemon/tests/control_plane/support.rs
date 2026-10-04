@@ -113,7 +113,10 @@ pub(super) fn cli_ok(
     assert!(ok, "{args:?}: {text}");
     let value: serde_json::Value =
         serde_json::from_str(text.lines().last().ok_or("missing CLI output")?)?;
-    Ok(value["value"].clone())
+    Ok(value
+        .pointer("/value")
+        .ok_or("fixture field /value absent")?
+        .clone())
 }
 
 impl RunningDaemon {
@@ -259,7 +262,10 @@ pub(super) struct DogfoodProfiles {
     pub(super) reviewer: std::path::PathBuf,
 }
 
-#[allow(clippy::too_many_arguments)] // Test fixture mirrors every independently variable process-profile field.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The fixture constructs the independent executable, input, output, and authority fields used by the profile refusal tests."
+)]
 pub(super) fn write_dogfood_process_profile(
     directory: &TempDir,
     repository: &std::path::Path,

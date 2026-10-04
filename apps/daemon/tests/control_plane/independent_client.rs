@@ -40,8 +40,10 @@ impl JsonClient {
         let status = response.status();
         let value: Value = response.json().await?;
         assert_eq!(
-            value["protocol"],
-            serde_json::to_value(ProtocolVersion::CURRENT)?
+            value
+                .pointer("/protocol")
+                .ok_or("fixture field /protocol absent")?,
+            &serde_json::to_value(ProtocolVersion::CURRENT)?
         );
         Ok((status, value))
     }
@@ -49,13 +51,19 @@ impl JsonClient {
     async fn get(&self, path: &str) -> TestResult<Value> {
         let (status, reply) = self.response(Method::GET, path, None).await?;
         assert!(status.is_success(), "{path}: {reply}");
-        Ok(reply["value"].clone())
+        Ok(reply
+            .pointer("/value")
+            .ok_or("fixture field /value absent")?
+            .clone())
     }
 
     async fn post(&self, path: &str, body: &Value) -> TestResult<Value> {
         let (status, reply) = self.response(Method::POST, path, Some(body)).await?;
         assert!(status.is_success(), "{path}: {reply}");
-        Ok(reply["value"].clone())
+        Ok(reply
+            .pointer("/value")
+            .ok_or("fixture field /value absent")?
+            .clone())
     }
 
     async fn command(&self, id: &str, base: &Value, command: Value) -> TestResult<Value> {
@@ -86,13 +94,16 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
         .ok_or("capabilities")?
         .iter()
         .find(|entry| {
-            entry["current"] == true
-                && entry["draining"] == false
-                && entry["operations"]
-                    .as_array()
+            entry.get("current").and_then(Value::as_bool) == Some(true)
+                && entry.get("draining").and_then(Value::as_bool) == Some(false)
+                && entry
+                    .get("operations")
+                    .and_then(Value::as_array)
                     .is_some_and(|ops| ops.contains(&json!("model.generate")))
         })
-        .ok_or("model choice")?["capability_id"]
+        .ok_or("model choice")?
+        .get("capability_id")
+        .ok_or("capability id absent")?
         .clone();
     assert!(capability.is_string(), "{catalog}");
 
@@ -115,8 +126,16 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
                 json!({"type":"author_blueprint","draft":draft,"edit":edit,"save":false}),
             )
             .await?;
-        draft = reply["value"]["draft"].clone();
-        assert!(draft["mutations"].is_array());
+        draft = reply
+            .pointer("/value/draft")
+            .ok_or("fixture field /value/draft absent")?
+            .clone();
+        assert!(
+            draft
+                .pointer("/mutations")
+                .ok_or("fixture field /mutations absent")?
+                .is_array()
+        );
     }
     let saved = client
         .command(
@@ -125,10 +144,17 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
             json!({"type":"author_blueprint","draft":draft,"edit":null,"save":true}),
         )
         .await?;
-    let revision = saved["value"]["revision_id"].clone();
+    let revision = saved
+        .pointer("/value/revision_id")
+        .ok_or("fixture field /value/revision_id absent")?
+        .clone();
     let revision_id = revision.as_str().ok_or("saved revision")?;
     let read = client.get(&format!("v1/revisions/{revision_id}")).await?;
-    assert_eq!(read["summary"]["workflow_id"], "release-notes");
+    assert_eq!(
+        read.pointer("/summary/workflow_id")
+            .ok_or("fixture field /summary/workflow_id absent")?,
+        "release-notes"
+    );
     assert!(
         model
             .requests
@@ -140,7 +166,12 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
     // Encoding/hashing content is upload transport, not workflow identity or input selection.
     let brief = include_bytes!("../../../../examples/operator/release-notes/harbor-brief.txt");
     let upload = serde_json::to_value(InputUploadRequest::from_content(
-        authority["host"].as_str().ok_or("host")?.into(),
+        authority
+            .pointer("/host")
+            .ok_or("fixture field /host absent")?
+            .as_str()
+            .ok_or("host")?
+            .into(),
         "json-brief".into(),
         "text/plain".into(),
         "restricted".into(),
@@ -151,13 +182,21 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
         "json-start",
         &revision,
         json!({"type":"start_run","run_id":"json-run","workflow_id":"release-notes",
-            "revision_id":revision,"inputs":[{"name":"brief","artifact_id":input["artifact_id"]}]}),
+            "revision_id":revision,"inputs":[{"name":"brief","artifact_id":input.pointer("/artifact_id").ok_or("fixture field /artifact_id absent")?}]}),
     );
-    request["expected_sequence"] = json!(0);
+    *request
+        .pointer_mut("/expected_sequence")
+        .ok_or("fixture field /expected_sequence absent")? = json!(0);
     let mut invalid = request.clone();
-    invalid["command_id"] = json!("json-missing-input");
-    invalid["command"]["run_id"] = json!("invalid");
-    invalid["command"]["inputs"] = json!([]);
+    *invalid
+        .pointer_mut("/command_id")
+        .ok_or("fixture field /command_id absent")? = json!("json-missing-input");
+    *invalid
+        .pointer_mut("/command/run_id")
+        .ok_or("fixture field /command/run_id absent")? = json!("invalid");
+    *invalid
+        .pointer_mut("/command/inputs")
+        .ok_or("fixture field /command/inputs absent")? = json!([]);
     let (status, _) = client
         .response(Method::POST, "v1/commands", Some(&invalid))
         .await?;
@@ -179,7 +218,11 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
     let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
     let result = loop {
         let result = client.get("v1/runs/json-run/result").await?;
-        if result["run"]["terminal"].is_string() {
+        if result
+            .pointer("/run/terminal")
+            .ok_or("fixture field /run/terminal absent")?
+            .is_string()
+        {
             break result;
         }
         if tokio::time::Instant::now() >= deadline {
@@ -187,12 +230,32 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     };
-    assert_eq!(result["run"]["terminal"], "succeeded");
-    assert_eq!(result["outputs"][0]["name"], "notes");
-    let artifact = &result["outputs"][0]["artifact"];
-    let artifact_id = artifact["artifact_id"].as_str().ok_or("final artifact")?;
+    assert_eq!(
+        result
+            .pointer("/run/terminal")
+            .ok_or("fixture field /run/terminal absent")?,
+        "succeeded"
+    );
+    assert_eq!(
+        result
+            .pointer("/outputs/0/name")
+            .ok_or("fixture field /outputs/0/name absent")?,
+        "notes"
+    );
+    let artifact = result
+        .pointer("/outputs/0/artifact")
+        .ok_or("fixture field /outputs/0/artifact absent")?;
+    let artifact_id = artifact
+        .pointer("/artifact_id")
+        .ok_or("fixture field /artifact_id absent")?
+        .as_str()
+        .ok_or("final artifact")?;
     let metadata = client.get(&format!("v1/artifacts/{artifact_id}")).await?;
-    let size = metadata["size"].as_u64().ok_or("artifact size")?;
+    let size = metadata
+        .pointer("/size")
+        .ok_or("fixture field /size absent")?
+        .as_u64()
+        .ok_or("artifact size")?;
     assert!(size > 0);
     let response = client
         .http
@@ -203,7 +266,11 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
         .await?;
     assert_eq!(response.status(), reqwest::StatusCode::PARTIAL_CONTENT);
     assert_eq!(
-        response.headers()["content-range"],
+        response
+            .headers()
+            .get("content-range")
+            .ok_or("content range absent")?
+            .to_str()?,
         format!("bytes 0-{}/{size}", size - 1)
     );
     let bytes = response.bytes().await?;
@@ -211,7 +278,11 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
     assert_eq!(bytes.len() as u64, size);
     assert_eq!(
         blake3::hash(&bytes).to_hex().as_str(),
-        metadata["digest"].as_str().ok_or("digest")?
+        metadata
+            .pointer("/digest")
+            .ok_or("fixture field /digest absent")?
+            .as_str()
+            .ok_or("digest")?
     );
     assert_eq!(model.requests.lock().map_err(|_| "fixture lock")?.len(), 2);
 
@@ -220,33 +291,82 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
     let restarted = BinaryDaemon::start(&config, endpoint.clone(), directory.path()).await?;
     let client = JsonClient::new(endpoint)?;
     let retained: Value = serde_json::from_slice(&fs::read(&file)?)?;
-    assert_eq!(client.get("v1/authority").await?, retained["authority"]);
     assert_eq!(
-        client.post("v1/commands", &retained["request"]).await?["replayed"],
+        &client.get("v1/authority").await?,
+        retained
+            .pointer("/authority")
+            .ok_or("fixture field /authority absent")?
+    );
+    assert_eq!(
+        client
+            .post(
+                "v1/commands",
+                retained
+                    .pointer("/request")
+                    .ok_or("fixture field /request absent")?
+            )
+            .await?
+            .get("replayed")
+            .ok_or("replay flag absent")?,
         true
     );
     assert_eq!(
-        client.get("v1/runs/json-run/result").await?["outputs"],
-        result["outputs"]
+        client
+            .get("v1/runs/json-run/result")
+            .await?
+            .get("outputs")
+            .ok_or("outputs absent")?,
+        result
+            .pointer("/outputs")
+            .ok_or("fixture field /outputs absent")?
     );
-    let mut changed = retained["request"].clone();
-    changed["reason"] = json!("changed request");
+    let mut changed = retained
+        .pointer("/request")
+        .ok_or("fixture field /request absent")?
+        .clone();
+    *changed
+        .pointer_mut("/reason")
+        .ok_or("fixture field /reason absent")? = json!("changed request");
     let (status, refusal) = client
         .response(Method::POST, "v1/commands", Some(&changed))
         .await?;
     assert_eq!(status, reqwest::StatusCode::CONFLICT);
-    assert_eq!(refusal["code"], "conflict");
+    assert_eq!(
+        refusal
+            .pointer("/code")
+            .ok_or("fixture field /code absent")?,
+        "conflict"
+    );
 
     let copied = client.command("json-copy", &revision,
         json!({"type":"copy_blueprint","source_revision":revision,"workflow_id":"independent-notes","name":"Independent notes"})).await?;
-    let copy = copied["value"]["revision_id"]
+    let copy = copied
+        .pointer("/value/revision_id")
+        .ok_or("fixture field /value/revision_id absent")?
         .as_str()
         .ok_or("copy revision")?;
     assert_ne!(copy, revision_id);
     let copy_read = client.get(&format!("v1/revisions/{copy}")).await?;
-    assert_eq!(copy_read["summary"]["workflow_id"], "independent-notes");
-    assert_eq!(copy_read["inputs"], read["inputs"]);
-    assert_eq!(copy_read["outputs"], read["outputs"]);
+    assert_eq!(
+        copy_read
+            .pointer("/summary/workflow_id")
+            .ok_or("fixture field /summary/workflow_id absent")?,
+        "independent-notes"
+    );
+    assert_eq!(
+        copy_read
+            .pointer("/inputs")
+            .ok_or("fixture field /inputs absent")?,
+        read.pointer("/inputs")
+            .ok_or("fixture field /inputs absent")?
+    );
+    assert_eq!(
+        copy_read
+            .pointer("/outputs")
+            .ok_or("fixture field /outputs absent")?,
+        read.pointer("/outputs")
+            .ok_or("fixture field /outputs absent")?
+    );
     assert_eq!(
         client.get(&format!("v1/revisions/{revision_id}")).await?,
         read

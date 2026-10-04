@@ -20,11 +20,20 @@ async fn preparation_case(effect: &str, expected_key: Option<&str>) -> TestResul
     let directory = TempDir::new()?;
     let profile_path = configured_process_profile(&directory)?;
     let mut profile: serde_json::Value = serde_json::from_slice(&fs::read(&profile_path)?)?;
-    profile["profile"]["side_effect"] = json!(effect);
+    *profile
+        .pointer_mut("/profile/side_effect")
+        .ok_or("fixture field /profile/side_effect absent")? = json!(effect);
     if expected_key.is_some() {
-        profile["profile"]["idempotency"] = json!("capability_scoped");
-        profile["profile"]["arguments"] = json!(["echo", "{{key}}"]);
-        profile["profile"]["substitutions"] = json!({"key":{"type":"idempotency_key"}});
+        *profile
+            .pointer_mut("/profile/idempotency")
+            .ok_or("fixture field /profile/idempotency absent")? = json!("capability_scoped");
+        *profile
+            .pointer_mut("/profile/arguments")
+            .ok_or("fixture field /profile/arguments absent")? = json!(["echo", "{{key}}"]);
+        *profile
+            .pointer_mut("/profile/substitutions")
+            .ok_or("fixture field /profile/substitutions absent")? =
+            json!({"key":{"type":"idempotency_key"}});
     }
     fs::write(&profile_path, serde_json::to_vec(&profile)?)?;
     let mut config =
@@ -80,18 +89,40 @@ async fn preparation_case(effect: &str, expected_key: Option<&str>) -> TestResul
     ] {
         let mut value = serde_json::to_value(&draft)?;
         match mutation {
-            "host" => value["host"] = json!("host:other"),
-            "capability" => value["capability"] = json!("hidden-or-missing"),
-            "operation" => value["operation"] = json!("missing.operation"),
+            "host" => {
+                *value
+                    .pointer_mut("/host")
+                    .ok_or("fixture field /host absent")? = json!("host:other")
+            }
+            "capability" => {
+                *value
+                    .pointer_mut("/capability")
+                    .ok_or("fixture field /capability absent")? = json!("hidden-or-missing")
+            }
+            "operation" => {
+                *value
+                    .pointer_mut("/operation")
+                    .ok_or("fixture field /operation absent")? = json!("missing.operation")
+            }
             "limits" => {
-                value["limits"] = serde_json::to_value(&discovery.limits)?;
-                value["limits"]["artifact_bytes"] = json!(discovery.limits.artifact_bytes + 1);
+                *value
+                    .pointer_mut("/limits")
+                    .ok_or("fixture field /limits absent")? =
+                    serde_json::to_value(&discovery.limits)?;
+                *value
+                    .pointer_mut("/limits/artifact_bytes")
+                    .ok_or("fixture field /limits/artifact_bytes absent")? =
+                    json!(discovery.limits.artifact_bytes + 1);
             }
             "workspace" => {
-                value["inputs"] = json!([{"name":"source","value":{"type":"workspace_value","identity":"private","version":"1"}}])
+                *value
+                    .pointer_mut("/inputs")
+                    .ok_or("fixture field /inputs absent")? = json!([{"name":"source","value":{"type":"workspace_value","identity":"private","version":"1"}}])
             }
             "duplicate" => {
-                value["inputs"] = json!([
+                *value
+                    .pointer_mut("/inputs")
+                    .ok_or("fixture field /inputs absent")? = json!([
                     {"name":"source","value":{"type":"inline","value":"first"}},
                     {"name":"source","value":{"type":"inline","value":"second"}}
                 ])
