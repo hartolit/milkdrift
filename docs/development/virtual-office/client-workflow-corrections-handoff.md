@@ -17,8 +17,20 @@ tests pass; eight documentation contracts pass; focused Clippy and fresh applica
 pass. Logs use the `diagnostics-*` and `registration-docs.log` names under the evidence root.
 No progress cause or final acceptance is yet claimed.
 
-Next: one isolated execution of each reported test, then three ordinary parallel control-plane
-suite executions with fresh fixtures; retain every result, no lucky-retry campaign. Then demonstrate
-and commit the responsible fix, implement scoped copy, and run final integrated verification.
+The declared reproduction campaign completed: both isolated cases passed (31.68/34.03 seconds);
+three ordinary parallel suites returned 41/42, 42/42, 42/42. The additional failure was a binary
+daemon exit before readiness; its discarded logs cannot establish a cause. Startup failures now
+retain bounded private logs plus a selected redacted CI bundle (`39d9677`); its two focused tests
+and Clippy pass. No retry result replaces the failed campaign.
+
+The owner ran full maintenance after every request, including worker clock requests. A debugger
+snapshot found effect entry waiting on that queue while its owner replayed history during effect
+claim maintenance. The production regression brackets one request on the owner thread and proves
+six unwanted clock samples on old behavior; it passes after interval-based maintenance. Both
+original cases then pass in 6.62/10.91 seconds, with unchanged deadlines, capacity and overlap.
+Eight owner tests, all-target daemon Clippy, fresh binaries and the ordinary 43-test suite pass
+(51.15 seconds). Evidence: `maintenance-*` and `reuse-debugger.log` in the evidence root.
+
+Next: commit the demonstrated maintenance fix, implement scoped copy, and run final integrated verification.
 Historical live/native evidence remains historical unless an affected owner requires a new
 finite qualification.

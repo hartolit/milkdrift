@@ -264,8 +264,11 @@ impl Owner {
         maintenance: Duration,
         health: &SharedHealth,
     ) {
+        let mut next_maintenance = std::time::Instant::now() + maintenance;
         loop {
-            match receiver.recv_timeout(maintenance) {
+            match receiver
+                .recv_timeout(next_maintenance.saturating_duration_since(std::time::Instant::now()))
+            {
                 Ok(mut request) => {
                     request.mark_dequeued();
                     let stop_owner = request.stop_owner;
@@ -286,18 +289,22 @@ impl Owner {
                     if stop_owner {
                         return;
                     }
-                    if !self.request_panicked {
-                        self.maintenance(health);
-                    }
-                }
-                Err(RecvTimeoutError::Timeout) if !self.request_panicked => {
-                    self.maintenance(health)
                 }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
                     self.shutdown_without_caller(health);
                     return;
                 }
+            }
+            if std::time::Instant::now() >= next_maintenance {
+                if !self.request_panicked {
+                    self.maintenance(health);
+                }
+                // A full pass may itself exceed the interval. Give queued persistence,
+                // clock, and read calls an interval to progress before another pass;
+                // catching up missed ticks would amplify contention. Checking after
+                // requests also prevents a continuously busy queue from starving maintenance.
+                next_maintenance = std::time::Instant::now() + maintenance;
             }
         }
     }

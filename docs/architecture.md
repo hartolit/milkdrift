@@ -734,6 +734,10 @@ Queue saturation has a typed overload response. External work runs on fixed work
 global lock. Weak peer-facing store handles and managed-resource handles prevent idle routers from
 extending storage ownership. The daemon owner retains the managed lifecycle until its workers
 finish, then releases it when joined; an idle HTTP connection cannot block the next store open.
+Maintenance runs when its configured interval expires, checked after requests as well as idle
+waits. A completed pass starts the next interval; missed ticks do not accumulate. This lets queued
+clock samples, reports, and reads progress between expensive scheduler/history passes while a busy
+request queue cannot indefinitely defer maintenance.
 
 One fallible daemon clock advances a durable high-water fact before authorization, expiry,
 scheduling, or timestamps; artifact acceptance advances it in the same transaction. Failure or

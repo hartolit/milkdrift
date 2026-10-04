@@ -47,6 +47,15 @@ pub(in crate::host) fn owner_test_config(
     token: &std::path::Path,
     request_queue: u32,
 ) -> Result<crate::DaemonPlan, ConfigError> {
+    owner_test_config_with_interval(root, token, request_queue, 100)
+}
+
+fn owner_test_config_with_interval(
+    root: &std::path::Path,
+    token: &std::path::Path,
+    request_queue: u32,
+    maintenance_interval_ms: u64,
+) -> Result<crate::DaemonPlan, ConfigError> {
     DaemonConfig {
         schema_version: crate::DAEMON_CONFIG_SCHEMA_VERSION,
         role: milkdrift_control_protocol::HostRole::WorkflowEnabled,
@@ -72,6 +81,7 @@ pub(in crate::host) fn owner_test_config(
         }],
         runtime: RuntimeHostConfig {
             request_queue,
+            maintenance_interval_ms,
             ..RuntimeHostConfig::default()
         },
         adapters: AdapterConfig::default(),
@@ -215,6 +225,52 @@ async fn maintenance_refreshes_capability_health_after_an_idle_minute()
     assert!(
         refreshed,
         "idle daemon left its healthy capabilities permanently stale"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn queued_requests_do_not_each_trigger_a_full_maintenance_pass()
+-> Result<(), Box<dyn std::error::Error>> {
+    struct CountingClock(AtomicU64);
+    impl DaemonClockSource for CountingClock {
+        fn now_unix_ms(&self) -> Result<u64, DaemonClockError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(100)
+        }
+    }
+    let (root, initial) = queue_test_host()?;
+    initial.shutdown().await?;
+    let plan = owner_test_config_with_interval(
+        root.path(),
+        &root.path().join("operator.token"),
+        32,
+        60_000,
+    )?;
+    let clock = Arc::new(CountingClock(AtomicU64::new(0)));
+    let host = DaemonHost::start_with_clock(plan, clock.clone())?;
+    let serving = host.peer_service().ok_or("serving owner absent")?;
+    assert!(
+        serving
+            .shutdown_workers(std::time::Duration::from_secs(5))
+            .clean
+    );
+    // Sample on the owner thread, so both measurements bracket exactly one queued
+    // request boundary. No effect, serving worker, or user operation needs the clock.
+    let before_clock = clock.clone();
+    let before = host
+        .dispatch(false, move |_| Ok(before_clock.0.load(Ordering::SeqCst)))
+        .await
+        .map_err(|error| error.message)?;
+    let after_clock = clock.clone();
+    let after = host
+        .dispatch(false, move |_| Ok(after_clock.0.load(Ordering::SeqCst)))
+        .await
+        .map_err(|error| error.message)?;
+    host.shutdown().await?;
+    assert_eq!(
+        after, before,
+        "a read forced scheduler/retention work before its next configured interval"
     );
     Ok(())
 }
