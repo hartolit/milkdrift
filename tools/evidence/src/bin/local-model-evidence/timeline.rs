@@ -89,7 +89,7 @@ impl TimelineFollower {
             }
             Ok(())
         })();
-        self.finished = Some(outcome.as_ref().map(|()| ()).map_err(ToString::to_string));
+        self.finished = Some(outcome.as_ref().map_err(ToString::to_string).copied());
         outcome
     }
 }

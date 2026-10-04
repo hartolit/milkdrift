@@ -19,7 +19,10 @@ fn container(name: &str) -> EvidenceResult<Value> {
         .cloned()
         .ok_or_else(|| "served container absent".into())
 }
-#[allow(clippy::too_many_arguments)] // Each input is retained evidence for this single qualification scenario.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each input is retained evidence for this single qualification scenario."
+)]
 pub(super) fn finish(
     s: &mut Session,
     args: &Qualify,

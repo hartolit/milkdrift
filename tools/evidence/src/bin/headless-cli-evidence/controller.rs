@@ -224,7 +224,7 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         serde_json::to_vec_pretty(&rejection)?,
     )?;
     let source = inspect_node(&runner, &child, &rejected, "verify")?;
-    let reviewed = review.inspect(&runner, &directory, &child, &rejected, "review")?;
+    let reviewed = review::Review::inspect(&runner, &directory, &child, &rejected, "review")?;
     let authority = &source["value"]["execution_authority"];
     let claim = milkdrift_runtime::CommandAuthorityClaim::new(
         milkdrift_authority::GrantId::new(required_text(authority, &["grant_id"])?)?,
@@ -416,7 +416,8 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         node(&child_done, "model-budget-release").is_some(),
         "repair did not pass independent verification, acceptance and final review",
     )?;
-    let _final_review = review.inspect(&runner, &directory, &child, &child_done, "final-review")?;
+    let _final_review =
+        review::Review::inspect(&runner, &directory, &child, &child_done, "final-review")?;
     review.verify_count()?;
     let accepted = inspect_node(&runner, &child, &child_done, "second-acceptance")?;
     ensure(

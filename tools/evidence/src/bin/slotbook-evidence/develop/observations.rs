@@ -293,7 +293,7 @@ mod tests {
         let path = root.path().join("report.json");
         let stderr = "é: compiler error\n".repeat(8192);
         let bytes = serde_json::to_vec(&json!({"exit_code":1,"stderr":stderr,"stdout":"build"}))?;
-        assert!(bytes.len() > SELECTED_REPORT_BYTES as usize);
+        assert!(bytes.len() > usize::try_from(SELECTED_REPORT_BYTES)?);
         fs::write(&path, &bytes)?;
         let selected = selected_report(&path, true)?;
         let excerpt = text(&selected["stderr"]["text"])?;

@@ -208,7 +208,7 @@ impl Session {
     fn command(&self, caller: Caller) -> Command {
         let mut command = Command::new(&self.cli);
         let port = if matches!(caller, Caller::Origin) {
-            self.origin.as_ref().map(|(_, p)| *p).unwrap_or(self.port)
+            self.origin.as_ref().map_or(self.port, |(_, p)| *p)
         } else {
             self.port
         };

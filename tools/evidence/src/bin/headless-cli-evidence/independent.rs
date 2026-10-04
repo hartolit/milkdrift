@@ -1,5 +1,4 @@
 //! Black-box independent calls use public upload, discovery, saved requests and observations.
-use std::io::Write as _;
 #[path = "independent/installed.rs"]
 mod installed;
 #[path = "independent/workflow.rs"]

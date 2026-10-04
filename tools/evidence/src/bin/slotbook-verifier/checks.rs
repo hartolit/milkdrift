@@ -80,9 +80,7 @@ fn path(item: &Value) -> EvidenceResult<String> {
     let id = item.get("id").ok_or("booking identity absent")?;
     Ok(format!(
         "/reservations/{}",
-        id.as_str()
-            .map(str::to_owned)
-            .unwrap_or_else(|| id.to_string())
+        id.as_str().map_or_else(|| id.to_string(), str::to_owned)
     ))
 }
 fn clear(s: &Service) -> EvidenceResult {

@@ -291,7 +291,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
             model_profiles: vec![
                 ModelProfileConfig {
                     capability_id: arguments.model_capability.clone(),
-                    profile: success_profile.clone(),
+                    profile: success_profile,
                 },
                 ModelProfileConfig {
                     capability_id: FAILURE_CAPABILITY.to_owned(),

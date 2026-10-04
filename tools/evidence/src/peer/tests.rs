@@ -549,7 +549,7 @@ fn observation_quota_cancellation_replay_and_recovery_are_exact() -> EvidenceRes
     )?;
 
     let acknowledgement = PeerCancellationAcknowledgement {
-        request_id: exact.request_id.clone(),
+        request_id: exact.request_id,
         execution: cancellation_execution.clone(),
         disposition: CancellationDisposition::Accepted,
         terminal_boundary: false,

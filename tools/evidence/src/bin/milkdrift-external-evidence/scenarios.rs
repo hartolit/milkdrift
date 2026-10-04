@@ -11,7 +11,10 @@ use super::{
     Value, build_remediation_proposal, client_error, decode_json, json, workflows,
 };
 
-#[allow(clippy::too_many_arguments)] // Scenario inputs keep source provenance and the wait bound explicit.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Scenario inputs keep source provenance and the wait bound explicit."
+)]
 pub(super) async fn run_process_scenario(
     config: &DaemonLaunch,
     token: &str,
@@ -394,7 +397,10 @@ pub(super) async fn run_process_scenario(
     Ok(evidence)
 }
 
-#[allow(clippy::too_many_arguments)] // Exact profile, fixture observations, and operator bounds have separate owners.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Exact profile, fixture observations, and operator bounds have separate owners."
+)]
 pub(super) async fn run_model_scenario(
     config: &DaemonLaunch,
     token: &str,

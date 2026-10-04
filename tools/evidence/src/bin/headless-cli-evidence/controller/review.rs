@@ -277,7 +277,6 @@ impl Review {
     }
 
     pub(super) fn inspect(
-        &self,
         runner: &CliRunner,
         directory: &Path,
         run: &str,

@@ -14,7 +14,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     io::Write as _,
-    net::{Ipv4Addr, SocketAddr},
+    net::SocketAddr,
     path::{Path, PathBuf},
     process::ExitCode,
     sync::{
@@ -243,13 +243,10 @@ async fn run_scenarios(
     )?;
     let helpers = generated_profiles(repository, session_root)?;
     let mock = if arguments.fixture {
-        Some(
-            start_mock_endpoint(
-                arguments.max_output_units,
-                arguments.fixture_failure == Some(FixtureFailure::ModelTruncated),
-            )
-            .await?,
-        )
+        Some(start_mock_endpoint(
+            arguments.max_output_units,
+            arguments.fixture_failure == Some(FixtureFailure::ModelTruncated),
+        )?)
     } else {
         None
     };
@@ -269,8 +266,7 @@ async fn run_scenarios(
         arguments
             .daemon
             .clone()
-            .map(Ok)
-            .unwrap_or_else(|| application_binary("milkdrift-daemon"))
+            .map_or_else(|| application_binary("milkdrift-daemon"), Ok)
             .map_err(|error| error.to_string())?,
         session_root,
         repository,
@@ -361,7 +357,10 @@ async fn run_scenarios(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)] // Harness assembly keeps independently audited paths, profiles, and secrets explicit.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Harness assembly keeps independently audited paths, profiles, and secrets explicit."
+)]
 fn configuration(
     executable: PathBuf,
     session_root: &Path,
@@ -501,7 +500,10 @@ fn configuration(
     Ok((launch, configuration_digest, process_token, model_token))
 }
 
-#[allow(clippy::too_many_arguments)] // Evidence grants spell out every bounded resource input at the audit boundary.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Evidence grants spell out every bounded resource input at the audit boundary."
+)]
 fn explicit_grant(
     workflow: &str,
     capabilities: &BTreeSet<String>,
@@ -691,10 +693,7 @@ fn secret_sources(
     Ok(result)
 }
 
-async fn start_mock_endpoint(
-    max_output_units: u64,
-    truncated: bool,
-) -> HarnessResult<MockEndpoint> {
+fn start_mock_endpoint(max_output_units: u64, truncated: bool) -> HarnessResult<MockEndpoint> {
     let requests = Arc::new(AtomicUsize::new(0));
     let request_lines = Arc::new(Mutex::new(Vec::new()));
     let thread_requests = requests.clone();
