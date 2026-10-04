@@ -15,6 +15,10 @@ impl RunProjection {
         event: &RunEventEnvelope,
     ) -> Result<(), RuntimeError> {
         let sequence = event.sequence();
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "The exhaustive apply_kind dispatcher selects this event family; other variants indicate an internal routing bug."
+        )]
         match event.kind() {
             RunEventKind::RepeatContinuationDecided {
                 repeat_execution,
@@ -62,7 +66,8 @@ impl RunProjection {
                     .get(&pending_request.frontier_iteration)
                     .ok_or_else(|| invalid_at(event, "pending repeat frontier is missing"))?;
                 if continuation.rejected
-                    || continuation.request_count != continuation.decision_count + 1
+                    || Some(continuation.request_count)
+                        != continuation.decision_count.checked_add(1)
                     || self.latest_iteration.get(repeat_execution)
                         != Some(&pending_request.frontier_iteration)
                     || frontier.repeat_execution != *repeat_execution
@@ -155,15 +160,13 @@ impl RunProjection {
                         }
                         continuation.requests.last().is_none_or(|request| {
                             let expected = match request.cause {
-                                RepeatContinuationCause::IterationLimit => {
+                                RepeatContinuationCause::IterationLimit
+                                | RepeatContinuationCause::ControllerCheckpoint { .. } => {
                                     RepeatTerminationReason::MaximumIterations
                                 }
                                 RepeatContinuationCause::DurationBudget { .. }
                                 | RepeatContinuationCause::CostBudget { .. } => {
                                     RepeatTerminationReason::BudgetExhausted
-                                }
-                                RepeatContinuationCause::ControllerCheckpoint { .. } => {
-                                    RepeatTerminationReason::MaximumIterations
                                 }
                             };
                             *termination != expected

@@ -230,7 +230,7 @@ pub fn persist_context_manifest(
     )
     .map_err(|error| ContextBuildError::Persistence(error.to_string()))?;
     let metadata = ArtifactMetadata::new(
-        reference.clone(),
+        reference,
         ArtifactSensitivity::Restricted,
         ArtifactRetention::WhileReferenced,
         provenance,

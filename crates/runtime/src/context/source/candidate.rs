@@ -170,7 +170,10 @@ impl DurableContextCandidateSource<'_> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)] // Output provenance needs the exact execution, attempt, value, and event plus scope exposure and cached causal distances.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Output provenance needs the exact execution, attempt, value, and event plus scope exposure and cached causal distances."
+    )]
     pub(super) fn output_candidate(
         &self,
         request: &ContextSourceRequest<'_>,
@@ -283,7 +286,10 @@ impl DurableContextCandidateSource<'_> {
         })
     }
 
-    #[allow(clippy::too_many_arguments)] // Journal provenance binds event roles and actor to the exact execution/attempt and cached causal distances.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Journal provenance binds event roles and actor to the exact execution/attempt and cached causal distances."
+    )]
     pub(super) fn event_candidate(
         &self,
         request: &ContextSourceRequest<'_>,
@@ -300,9 +306,10 @@ impl DurableContextCandidateSource<'_> {
         let summary = summarize_context_event(event)?;
         let bytes = serde_json::to_vec(summary.value())
             .map_err(|error| ContextBuildError::Policy(error.to_string()))?;
-        let revision = execution
-            .map(|execution| execution.revision.clone())
-            .unwrap_or_else(|| request.identity.revision.clone());
+        let revision = execution.map_or_else(
+            || request.identity.revision.clone(),
+            |execution| execution.revision.clone(),
+        );
         let distance = execution
             .map(|execution| self.distance(request, execution, distances))
             .transpose()?

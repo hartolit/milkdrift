@@ -220,7 +220,7 @@ impl RuntimeService {
                     plan.events.push(RunEventKind::NodeTerminal {
                         execution: attempt_view.execution().clone(),
                         attempt: attempt.clone(),
-                        report_sequence: self.next_report_sequence(projection, attempt)?,
+                        report_sequence: Self::next_report_sequence(projection, attempt)?,
                         outcome: NodeOutcome::Cancelled,
                         error_class: None,
                         detail: acknowledgement
@@ -319,7 +319,7 @@ impl RuntimeService {
                 completed_units,
                 total_units,
             } => {
-                let expected = self.next_report_sequence(projection, attempt)?;
+                let expected = Self::next_report_sequence(projection, attempt)?;
                 if report.sequence() != expected {
                     return Err(RuntimeError::InvalidTransition(format!(
                         "progress report sequence must be exactly {expected}"
@@ -363,7 +363,7 @@ impl RuntimeService {
                 "output report requires a running attempt".to_owned(),
             ));
         }
-        let expected = self.next_report_sequence(projection, attempt)?;
+        let expected = Self::next_report_sequence(projection, attempt)?;
         if report_sequence != expected {
             return Err(RuntimeError::InvalidTransition(format!(
                 "output report sequence must be exactly {expected}"
@@ -532,7 +532,7 @@ impl RuntimeService {
             .attempts()
             .get(attempt)
             .ok_or_else(|| RuntimeError::InvalidTransition(format!("unknown attempt {attempt}")))?;
-        let expected = self.next_report_sequence(projection, attempt)?;
+        let expected = Self::next_report_sequence(projection, attempt)?;
         if report_sequence != expected || attempt_view.is_completed() {
             return Err(RuntimeError::InvalidTransition(format!(
                 "terminal report sequence must be exactly {expected} and attempt must be active"
@@ -622,7 +622,7 @@ impl RuntimeService {
                 .push(ControllerAccountAction::SettleTerminal {
                     account: account.declaration().account().clone(),
                     reservation,
-                    usage: terminal_usage.clone(),
+                    usage: terminal_usage,
                 });
         }
         let (outcome, error_class, detail) = match terminal.status() {
@@ -688,7 +688,10 @@ impl RuntimeService {
         Ok(plan)
     }
 
-    #[allow(clippy::too_many_arguments)] // Execution identity, prior attempt/number, observation time, failure class, retry hint, and rationale are independently durable retry-policy inputs.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Execution identity, prior attempt/number, observation time, failure class, retry hint, and rationale are independently durable retry-policy inputs."
+    )]
     pub(in crate::engine) fn build_retry_event(
         &self,
         execution: &NodeExecutionId,
@@ -754,7 +757,6 @@ impl RuntimeService {
     }
 
     pub(in crate::engine) fn next_report_sequence(
-        &self,
         projection: &RunProjection,
         attempt: &AttemptId,
     ) -> Result<u64, RuntimeError> {

@@ -393,7 +393,7 @@ impl RuntimeService {
                 .map_err(|error| RuntimeError::Scheduling(error.to_string()))?;
             let Some(parent_declaration) = node.data_inputs().get(&port) else {
                 if interface_field.is_required() {
-                    return self.complete_deterministic_with_outcome(
+                    return Self::complete_deterministic_with_outcome(
                         transition,
                         node,
                         parent_execution,
@@ -415,7 +415,7 @@ impl RuntimeService {
             ) {
                 Ok(resolved) => resolved,
                 Err(RuntimeError::Scheduling(_)) => {
-                    return self.complete_deterministic_with_outcome(
+                    return Self::complete_deterministic_with_outcome(
                         transition,
                         node,
                         parent_execution,
@@ -429,7 +429,7 @@ impl RuntimeService {
             };
             if resolved.is_empty() {
                 if interface_field.is_required() || parent_declaration.is_required() {
-                    return self.complete_deterministic_with_outcome(
+                    return Self::complete_deterministic_with_outcome(
                         transition,
                         node,
                         parent_execution,
@@ -442,7 +442,7 @@ impl RuntimeService {
                 continue;
             }
             if resolved.len() != 1 {
-                return self.complete_deterministic_with_outcome(
+                return Self::complete_deterministic_with_outcome(
                     transition,
                     node,
                     parent_execution,
@@ -491,7 +491,7 @@ impl RuntimeService {
             parent_execution: parent_execution.clone(),
             child_run: self.next_run_id()?,
             child_revision: reference.revision().clone(),
-            scope: scope.clone(),
+            scope,
             ownership: SubworkflowOwnership::Attached,
             inputs,
         })?;

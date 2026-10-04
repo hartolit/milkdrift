@@ -280,12 +280,10 @@ impl CapabilityResolutionContext {
             self.node,
             self.execution
                 .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "revision-check".into()),
+                .map_or_else(|| "revision-check".into(), ToString::to_string),
             self.attempt
                 .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "unscheduled".into()),
+                .map_or_else(|| "unscheduled".into(), ToString::to_string),
             descriptor.identity(),
             boundary,
         );
@@ -338,7 +336,10 @@ pub struct ExecutionDispatch {
 }
 
 impl ExecutionDispatch {
-    #[allow(clippy::too_many_arguments)] // Run/revision/node/execution/attempt/lease coordinates, three authority snapshots, resolution, and request are independently immutable dispatch facts.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Run/revision/node/execution/attempt/lease coordinates, three authority snapshots, resolution, and request are independently immutable dispatch facts."
+    )]
     pub(crate) fn from_snapshot(
         run: RunId,
         revision: RevisionId,

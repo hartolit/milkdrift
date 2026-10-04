@@ -69,8 +69,8 @@ impl RepeatFrontier {
         }
     }
 
-    const fn latest(&self) -> &Option<RepeatIterationFrontier> {
-        &self.latest
+    const fn latest(&self) -> Option<&RepeatIterationFrontier> {
+        self.latest.as_ref()
     }
 
     const fn latest_child_state(&self) -> Option<SubworkflowState> {
@@ -103,13 +103,13 @@ impl RuntimeService {
             if frontier.has_active_child() {
                 return Ok(());
             }
-            if let Some((iteration, _, IterationState::Active)) = latest.as_ref() {
+            if let Some((iteration, _, IterationState::Active)) = latest {
                 transition.push_event(RunEventKind::RepeatConditionRecorded {
                     iteration: iteration.clone(),
                     result: false,
                 })?;
             }
-            let last_iteration = latest.as_ref().map(|(iteration, _, _)| iteration.clone());
+            let last_iteration = latest.map(|(iteration, _, _)| iteration.clone());
             if !transition
                 .projection()
                 .repeat_terminations()
@@ -121,7 +121,7 @@ impl RuntimeService {
                     last_iteration,
                 })?;
             }
-            return self.complete_deterministic_with_outcome(
+            return Self::complete_deterministic_with_outcome(
                 transition,
                 node,
                 execution,
@@ -129,7 +129,7 @@ impl RuntimeService {
                 None,
             );
         }
-        if let Some((iteration, _, IterationState::ConditionRecorded(true))) = latest.as_ref()
+        if let Some((iteration, _, IterationState::ConditionRecorded(true))) = latest
             && config.termination() == RepeatTermination::AwaitApproval
             && let Some(continuation) = transition
                 .projection()
@@ -140,15 +140,13 @@ impl RuntimeService {
                 let termination = continuation.requests().last().map_or(
                     RepeatTerminationReason::MaximumIterations,
                     |request| match request.cause() {
-                        RepeatContinuationCause::IterationLimit => {
+                        RepeatContinuationCause::IterationLimit
+                        | RepeatContinuationCause::ControllerCheckpoint { .. } => {
                             RepeatTerminationReason::MaximumIterations
                         }
                         RepeatContinuationCause::DurationBudget { .. }
                         | RepeatContinuationCause::CostBudget { .. } => {
                             RepeatTerminationReason::BudgetExhausted
-                        }
-                        RepeatContinuationCause::ControllerCheckpoint { .. } => {
-                            RepeatTerminationReason::MaximumIterations
                         }
                     },
                 );
@@ -157,7 +155,7 @@ impl RuntimeService {
                     termination,
                     last_iteration: Some(iteration.clone()),
                 })?;
-                return self.complete_deterministic_with_outcome(
+                return Self::complete_deterministic_with_outcome(
                     transition,
                     node,
                     execution,
@@ -171,7 +169,7 @@ impl RuntimeService {
                 return Ok(());
             }
         }
-        let authority_budget_override = latest.as_ref().is_some_and(|(_, number, state)| {
+        let authority_budget_override = latest.is_some_and(|(_, number, state)| {
             transition
                 .projection()
                 .repeat_continuations()
@@ -193,7 +191,7 @@ impl RuntimeService {
         let budget_status = if authority_budget_override {
             RepeatBudgetStatus::Within
         } else {
-            self.repeat_budget_exhaustion(
+            Self::repeat_budget_exhaustion(
                 config,
                 transition.projection(),
                 execution,
@@ -213,7 +211,7 @@ impl RuntimeService {
 
         if config.termination() == RepeatTermination::AwaitApproval
             && let Some((iteration, iteration_number, IterationState::ConditionRecorded(true))) =
-                latest.as_ref()
+                latest
         {
             let effective_limit = transition
                 .projection()
@@ -249,7 +247,7 @@ impl RuntimeService {
                 .map_or(RepeatContinuationCause::IterationLimit, |request| {
                     request.cause().clone()
                 });
-            return self.request_repeat_continuation(
+            return Self::request_repeat_continuation(
                 transition, node, execution, iteration, config, cause,
             );
         }
@@ -304,7 +302,7 @@ impl RuntimeService {
         if !active_children.is_empty() {
             return Ok(());
         }
-        if let Some((iteration, _, IterationState::Active)) = latest.as_ref() {
+        if let Some((iteration, _, IterationState::Active)) = latest {
             transition.push_event(RunEventKind::RepeatConditionRecorded {
                 iteration: iteration.clone(),
                 result: config.termination() == RepeatTermination::AwaitApproval
@@ -313,18 +311,18 @@ impl RuntimeService {
         }
         if config.termination() == RepeatTermination::AwaitApproval
             && !accounting_overflow
-            && let Some((iteration, _, _)) = latest.as_ref()
+            && let Some((iteration, _, _)) = latest
         {
             let RepeatBudgetStatus::Exhausted(cause) = budget_status else {
                 return Err(RuntimeError::InvalidHistory(
                     "repeat budget exhaustion has no typed continuation cause".to_owned(),
                 ));
             };
-            return self.request_repeat_continuation(
+            return Self::request_repeat_continuation(
                 transition, node, execution, iteration, config, cause,
             );
         }
-        let last_iteration = latest.as_ref().map(|(iteration, _, _)| iteration.clone());
+        let last_iteration = latest.map(|(iteration, _, _)| iteration.clone());
         transition.push_event(RunEventKind::RepeatTerminated {
             repeat_execution: execution.clone(),
             termination: RepeatTerminationReason::BudgetExhausted,
@@ -345,11 +343,11 @@ impl RuntimeService {
             }
         };
         if outcome == NodeOutcome::Succeeded
-            && let Some(iteration) = latest.as_ref().map(|(iteration, _, _)| iteration)
+            && let Some(iteration) = latest.map(|(iteration, _, _)| iteration)
         {
             self.publish_repeat_latest_outputs(transition, execution, scope_reference, iteration)?;
         }
-        self.complete_deterministic_with_outcome(
+        Self::complete_deterministic_with_outcome(
             transition,
             node,
             execution,
@@ -416,7 +414,7 @@ impl RuntimeService {
                 termination: RepeatTerminationReason::BodyFailure,
                 last_iteration: Some(iteration.clone()),
             })?;
-            return self.complete_deterministic_with_outcome(
+            return Self::complete_deterministic_with_outcome(
                 transition,
                 node,
                 execution,
@@ -438,7 +436,7 @@ impl RuntimeService {
                     termination: RepeatTerminationReason::ConditionEvaluationFailed,
                     last_iteration: Some(iteration.clone()),
                 })?;
-                return self.complete_deterministic_with_outcome(
+                return Self::complete_deterministic_with_outcome(
                     transition,
                     node,
                     execution,
@@ -458,7 +456,7 @@ impl RuntimeService {
                     termination: RepeatTerminationReason::ConditionEvaluationFailed,
                     last_iteration: Some(iteration.clone()),
                 })?;
-                return self.complete_deterministic_with_outcome(
+                return Self::complete_deterministic_with_outcome(
                     transition,
                     node,
                     execution,
@@ -481,7 +479,7 @@ impl RuntimeService {
                 last_iteration: Some(iteration.clone()),
             })?;
             self.publish_repeat_latest_outputs(transition, execution, scope_reference, &iteration)?;
-            return self.complete_deterministic(transition, node, execution);
+            return Self::complete_deterministic(transition, node, execution);
         }
         let effective_limit = transition
             .projection()
@@ -507,7 +505,7 @@ impl RuntimeService {
                     .map_or(RepeatContinuationCause::IterationLimit, |request| {
                         request.cause().clone()
                     });
-                return self.request_repeat_continuation(
+                return Self::request_repeat_continuation(
                     transition, node, execution, &iteration, config, cause,
                 );
             }
@@ -538,8 +536,9 @@ impl RuntimeService {
                     &iteration,
                 )?;
             }
-            return self
-                .complete_deterministic_with_outcome(transition, node, execution, outcome, detail);
+            return Self::complete_deterministic_with_outcome(
+                transition, node, execution, outcome, detail,
+            );
         }
         self.create_repeat_iteration(
             transition,
@@ -554,7 +553,6 @@ impl RuntimeService {
     }
 
     fn request_repeat_continuation(
-        &self,
         transition: &mut PlanTransition<'_>,
         node: &Node,
         execution: &NodeExecutionId,
@@ -582,15 +580,13 @@ impl RuntimeService {
             );
         if request_count >= MAX_REPEAT_CONTINUATION_DECISIONS {
             let termination = match cause {
-                RepeatContinuationCause::IterationLimit => {
+                RepeatContinuationCause::IterationLimit
+                | RepeatContinuationCause::ControllerCheckpoint { .. } => {
                     RepeatTerminationReason::MaximumIterations
                 }
                 RepeatContinuationCause::DurationBudget { .. }
                 | RepeatContinuationCause::CostBudget { .. } => {
                     RepeatTerminationReason::BudgetExhausted
-                }
-                RepeatContinuationCause::ControllerCheckpoint { .. } => {
-                    RepeatTerminationReason::MaximumIterations
                 }
             };
             transition.push_event(RunEventKind::RepeatTerminated {
@@ -598,7 +594,7 @@ impl RuntimeService {
                 termination,
                 last_iteration: Some(frontier_iteration.clone()),
             })?;
-            return self.complete_deterministic_with_outcome(
+            return Self::complete_deterministic_with_outcome(
                 transition,
                 node,
                 execution,
@@ -651,7 +647,7 @@ impl RuntimeService {
                     })?
                     .iteration()
                     .clone();
-                return self.request_repeat_continuation(
+                return Self::request_repeat_continuation(
                     transition,
                     node,
                     execution,
@@ -676,7 +672,7 @@ impl RuntimeService {
                     termination: RepeatTerminationReason::BudgetExhausted,
                     last_iteration,
                 })?;
-                return self.complete_deterministic_with_outcome(
+                return Self::complete_deterministic_with_outcome(
                     transition,
                     node,
                     execution,
@@ -785,7 +781,6 @@ impl RuntimeService {
     }
 
     fn repeat_budget_exhaustion(
-        &self,
         config: &milkdrift_blueprint::RepeatConfig,
         projection: &RunProjection,
         execution: &NodeExecutionId,

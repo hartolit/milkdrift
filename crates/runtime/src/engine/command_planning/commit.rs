@@ -107,7 +107,7 @@ impl RuntimeService {
             document.issued_at(),
         )?;
         let should_checkpoint =
-            self.should_checkpoint_projection(projection.sequence(), &candidate);
+            Self::should_checkpoint_projection(projection.sequence(), &candidate);
         let projection_payload = should_checkpoint
             .then(|| encode_projection_snapshot(&candidate))
             .transpose()?;

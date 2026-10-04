@@ -86,10 +86,10 @@ impl RunProjection {
             if reference == ancestor {
                 return true;
             }
-            if remaining == 0 {
+            let Some(next_remaining) = remaining.checked_sub(1) else {
                 return false;
-            }
-            remaining -= 1;
+            };
+            remaining = next_remaining;
             current = self.scopes.get(reference).and_then(WorkspaceScope::parent);
         }
         false

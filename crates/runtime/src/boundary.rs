@@ -104,7 +104,10 @@ impl SequentialIdGenerator {
         if prefix.is_empty()
             || prefix.len() > 64
             || !prefix.is_ascii()
-            || !prefix.as_bytes()[0].is_ascii_alphanumeric()
+            || !prefix
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
             || !prefix
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))

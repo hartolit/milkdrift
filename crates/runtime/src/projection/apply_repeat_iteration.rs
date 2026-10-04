@@ -19,6 +19,10 @@ impl RunProjection {
         event: &RunEventEnvelope,
     ) -> Result<(), RuntimeError> {
         let sequence = event.sequence();
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "The exhaustive apply_kind dispatcher selects this event family; other variants indicate an internal routing bug."
+        )]
         match event.kind() {
             RunEventKind::RepeatIterationCreated {
                 repeat_execution,

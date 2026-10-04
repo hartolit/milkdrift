@@ -295,7 +295,7 @@ impl RuntimeService {
                 reference,
             )?,
             NodeKind::Join { config } => {
-                self.drive_join_node(transition, &execution_revision, node, execution, config)?
+                Self::drive_join_node(transition, &execution_revision, node, execution, config)?
             }
         }
         Ok(())
@@ -319,10 +319,10 @@ impl RuntimeService {
                     &execution,
                     &scope_reference,
                 ) {
-                    Ok(true) => self.complete_deterministic(transition, node, &execution)?,
+                    Ok(true) => Self::complete_deterministic(transition, node, &execution)?,
                     Ok(false) => {}
                     Err(RuntimeError::Scheduling(_)) => {
-                        self.complete_deterministic_with_outcome(
+                        Self::complete_deterministic_with_outcome(
                             transition,
                             node,
                             &execution,
@@ -336,7 +336,7 @@ impl RuntimeService {
                 }
             }
             TerminalOutcome::Failure => {
-                self.complete_deterministic_with_outcome(
+                Self::complete_deterministic_with_outcome(
                     transition,
                     node,
                     &execution,
@@ -376,7 +376,7 @@ impl RuntimeService {
                         evidence: Vec::new(),
                     })?;
                 }
-                self.complete_deterministic_with_outcome(
+                Self::complete_deterministic_with_outcome(
                     transition,
                     node,
                     &execution,
@@ -437,7 +437,7 @@ impl RuntimeService {
             .get(&execution)
             .is_some_and(|wait| wait.is_completed())
         {
-            self.complete_deterministic(transition, node, &execution)?;
+            Self::complete_deterministic(transition, node, &execution)?;
         }
         Ok(())
     }
@@ -519,7 +519,7 @@ impl RuntimeService {
             .get(&execution)
             .is_some_and(|wait| wait.is_completed())
         {
-            self.complete_deterministic(transition, node, &execution)?;
+            Self::complete_deterministic(transition, node, &execution)?;
         }
         Ok(())
     }
@@ -546,7 +546,7 @@ impl RuntimeService {
             ) {
                 Ok(context) => context,
                 Err(RuntimeError::Scheduling(_)) => {
-                    self.complete_deterministic_with_outcome(
+                    Self::complete_deterministic_with_outcome(
                         transition,
                         node,
                         &execution,
@@ -575,7 +575,7 @@ impl RuntimeService {
                 }
             }
             if evaluation_failed {
-                self.complete_deterministic_with_outcome(
+                Self::complete_deterministic_with_outcome(
                     transition,
                     node,
                     &execution,
@@ -587,7 +587,7 @@ impl RuntimeService {
                 return Ok(());
             }
             let Some(selected) = selected.or_else(|| config.fallback().cloned()) else {
-                self.complete_deterministic_with_outcome(
+                Self::complete_deterministic_with_outcome(
                     transition,
                     node,
                     &execution,
@@ -602,7 +602,7 @@ impl RuntimeService {
                 execution: execution.clone(),
                 selected_port: selected,
             })?;
-            self.complete_deterministic(transition, node, &execution)?;
+            Self::complete_deterministic(transition, node, &execution)?;
         }
         Ok(())
     }
@@ -691,7 +691,7 @@ impl RuntimeService {
                 .is_some()
         });
         if expansion_complete {
-            self.complete_deterministic(transition, node, &execution)?;
+            Self::complete_deterministic(transition, node, &execution)?;
         }
         Ok(())
     }
@@ -711,7 +711,7 @@ impl RuntimeService {
             .find(|child| child.parent_execution() == &execution);
         if let Some(child) = child {
             if let SubworkflowState::Terminal(outcome) = child.state() {
-                self.complete_deterministic_with_outcome(
+                Self::complete_deterministic_with_outcome(
                     transition,
                     node,
                     &execution,
@@ -733,7 +733,6 @@ impl RuntimeService {
     }
 
     fn drive_join_node(
-        &self,
         transition: &mut PlanTransition<'_>,
         execution_revision: &BlueprintRevision,
         node: &Node,
@@ -741,7 +740,7 @@ impl RuntimeService {
         config: &JoinConfig,
     ) -> Result<(), RuntimeError> {
         if !transition.projection().joins().contains_key(&execution) {
-            self.try_satisfy_join(transition, execution_revision, node, &execution, config)?;
+            Self::try_satisfy_join(transition, execution_revision, node, &execution, config)?;
         }
         Ok(())
     }

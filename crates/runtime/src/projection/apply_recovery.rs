@@ -18,6 +18,10 @@ impl RunProjection {
         event: &RunEventEnvelope,
     ) -> Result<(), RuntimeError> {
         let sequence = event.sequence();
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "The exhaustive apply_kind dispatcher selects this event family; other variants indicate an internal routing bug."
+        )]
         match event.kind() {
             RunEventKind::RecoveryStarted {
                 controller,
@@ -214,8 +218,9 @@ impl RunProjection {
                     AuthorityDecision::Retain
                     | AuthorityDecision::Query
                     | AuthorityDecision::Retry
-                    | AuthorityDecision::Compensate => None,
-                    AuthorityDecision::Approve | AuthorityDecision::Reject => None,
+                    | AuthorityDecision::Compensate
+                    | AuthorityDecision::Approve
+                    | AuthorityDecision::Reject => None,
                 };
                 if let Some(outcome) = resolved {
                     attempt_view.state = AttemptState::Resolved(outcome);

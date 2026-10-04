@@ -21,7 +21,12 @@ impl RunProjection {
         let attempt = match &execution_view.state {
             super::node::NodeExecutionState::Scheduled(attempt)
             | super::node::NodeExecutionState::Running(attempt) => attempt,
-            _ => return false,
+            super::node::NodeExecutionState::Eligible
+            | super::node::NodeExecutionState::RetryPending(_)
+            | super::node::NodeExecutionState::Uncertain(_)
+            | super::node::NodeExecutionState::Terminal(_)
+            | super::node::NodeExecutionState::CancelledBeforeDispatch
+            | super::node::NodeExecutionState::RemovedProspectively(_) => return false,
         };
         self.attempts.get(attempt).is_some_and(|attempt_view| {
             attempt_view.execution == *execution
@@ -45,6 +50,10 @@ impl RunProjection {
         event: &RunEventEnvelope,
     ) -> Result<(), RuntimeError> {
         let sequence = event.sequence();
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "The exhaustive apply_kind dispatcher selects this event family; other variants indicate an internal routing bug."
+        )]
         match event.kind() {
             RunEventKind::RevisionAdoptionRequested {
                 reconciliation,

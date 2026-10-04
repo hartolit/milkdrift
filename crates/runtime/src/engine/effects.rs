@@ -147,7 +147,7 @@ impl RuntimeService {
                 }
                 AttemptState::Running if cancellations => {
                     if let Some(cancellation) =
-                        self.cancellation_dispatch(&indexed.run, &projection, &indexed.attempt)?
+                        Self::cancellation_dispatch(&indexed.run, &projection, &indexed.attempt)?
                     {
                         actions.push(EffectAction::Cancel(cancellation));
                     }
@@ -358,7 +358,6 @@ impl RuntimeService {
     }
 
     fn cancellation_dispatch(
-        &self,
         run: &RunId,
         projection: &crate::RunProjection,
         attempt: &AttemptId,

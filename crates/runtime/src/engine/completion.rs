@@ -34,12 +34,11 @@ use std::collections::BTreeSet;
 
 impl RuntimeService {
     pub(super) fn complete_deterministic(
-        &self,
         transition: &mut PlanTransition<'_>,
         node: &Node,
         execution: &NodeExecutionId,
     ) -> Result<(), RuntimeError> {
-        self.complete_deterministic_with_outcome(
+        Self::complete_deterministic_with_outcome(
             transition,
             node,
             execution,
@@ -49,7 +48,6 @@ impl RuntimeService {
     }
 
     pub(super) fn complete_deterministic_with_outcome(
-        &self,
         transition: &mut PlanTransition<'_>,
         node: &Node,
         execution: &NodeExecutionId,
@@ -559,7 +557,6 @@ impl RuntimeService {
     }
 
     pub(super) fn try_satisfy_join(
-        &self,
         transition: &mut PlanTransition<'_>,
         _revision: &BlueprintRevision,
         node: &Node,
@@ -637,7 +634,7 @@ impl RuntimeService {
                     .iter()
                     .any(|result| result.outcome == RunOutcome::Succeeded);
                 if !has_success && active.is_empty() {
-                    return self.complete_deterministic_with_outcome(
+                    return Self::complete_deterministic_with_outcome(
                         transition,
                         node,
                         execution,
@@ -674,7 +671,7 @@ impl RuntimeService {
                     .filter(|result| result.outcome == RunOutcome::Succeeded)
                     .count();
                 if successes < required_usize && active.is_empty() {
-                    return self.complete_deterministic_with_outcome(
+                    return Self::complete_deterministic_with_outcome(
                         transition,
                         node,
                         execution,
@@ -718,7 +715,7 @@ impl RuntimeService {
             branches: selected,
             retained_branches: retained,
         })?;
-        self.complete_deterministic(transition, node, execution)
+        Self::complete_deterministic(transition, node, execution)
     }
 
     pub(super) fn add_ready_successors(

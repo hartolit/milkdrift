@@ -500,7 +500,6 @@ impl RuntimeService {
     }
 
     pub(super) fn should_checkpoint_projection(
-        &self,
         previous: RunSequence,
         current: &RunProjection,
     ) -> bool {
@@ -843,13 +842,7 @@ impl RuntimeService {
         };
         let (outcome, rejection) = match planned {
             Ok(plan) => (
-                self.commit_accepted(
-                    command,
-                    receipt,
-                    projection,
-                    plan,
-                    durable_authorization.clone(),
-                )?,
+                self.commit_accepted(command, receipt, projection, plan, durable_authorization)?,
                 None,
             ),
             Err(error) if durable_rejection(&error) => {

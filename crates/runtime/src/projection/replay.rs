@@ -711,7 +711,78 @@ impl RunProjection {
                 .subworkflows
                 .get(subworkflow)
                 .is_some_and(|child| child.ownership == SubworkflowOwnership::Detached),
-            _ => false,
+            RunEventKind::PublishedInvocationPlanned { .. }
+            | RunEventKind::AgreementAccepted { .. }
+            | RunEventKind::RunCreated { .. }
+            | RunEventKind::ExecutionAuthorityEstablished { .. }
+            | RunEventKind::RevisionPinned { .. }
+            | RunEventKind::RunStarted
+            | RunEventKind::RunPaused { .. }
+            | RunEventKind::RunResumed { .. }
+            | RunEventKind::RunCancellationRequested { .. }
+            | RunEventKind::RunTerminationRequested { .. }
+            | RunEventKind::RunTerminal { .. }
+            | RunEventKind::NodeBecameEligible { .. }
+            | RunEventKind::NodeExecutionCancelledBeforeDispatch { .. }
+            | RunEventKind::NodeExecutionCancellationRequested { .. }
+            | RunEventKind::NodeScheduled { .. }
+            | RunEventKind::CapabilityResolved { .. }
+            | RunEventKind::CapabilityResolutionDecisionRecorded { .. }
+            | RunEventKind::SideEffectClassified { .. }
+            | RunEventKind::LeaseGranted { .. }
+            | RunEventKind::CapabilityEntryDecisionRecorded { .. }
+            | RunEventKind::CapabilityAdapterEntryDecisionRecorded { .. }
+            | RunEventKind::LeaseHeartbeatRecorded { .. }
+            | RunEventKind::LeaseExpired { .. }
+            | RunEventKind::NodeReLeased { .. }
+            | RunEventKind::NodeStarted { .. }
+            | RunEventKind::NodeProgressRecorded { .. }
+            | RunEventKind::AttemptUsageRecorded { .. }
+            | RunEventKind::InvocationCancellationAcknowledged { .. }
+            | RunEventKind::NodeOutputPublished { .. }
+            | RunEventKind::DeterministicOutputPublished { .. }
+            | RunEventKind::DeterministicNodeTerminal { .. }
+            | RunEventKind::NodePreDispatchFailed { .. }
+            | RunEventKind::CapabilityResolutionDenied { .. }
+            | RunEventKind::StructuredSuccessorScanCompleted { .. }
+            | RunEventKind::NodeTerminal { .. }
+            | RunEventKind::NodeRetryScheduled { .. }
+            | RunEventKind::ExternalOutcomeUncertain { .. }
+            | RunEventKind::LateTerminalEvidenceRecorded { .. }
+            | RunEventKind::ArtifactPublished { .. }
+            | RunEventKind::BranchScopeCreated { .. }
+            | RunEventKind::BranchRouteSelected { .. }
+            | RunEventKind::BranchChildAdded { .. }
+            | RunEventKind::BranchCancellationRequested { .. }
+            | RunEventKind::BranchTerminal { .. }
+            | RunEventKind::JoinSatisfied { .. }
+            | RunEventKind::ControllerAssessmentRecorded { .. }
+            | RunEventKind::RepeatIterationCreated { .. }
+            | RunEventKind::RepeatConditionRecorded { .. }
+            | RunEventKind::RepeatContinuationRequested { .. }
+            | RunEventKind::RepeatContinuationDecided { .. }
+            | RunEventKind::RepeatTerminated { .. }
+            | RunEventKind::TimerRegistered { .. }
+            | RunEventKind::TimerFired { .. }
+            | RunEventKind::TimerCancelled { .. }
+            | RunEventKind::WaitRegistered { .. }
+            | RunEventKind::WaitSatisfied { .. }
+            | RunEventKind::WaitCancelled { .. }
+            | RunEventKind::SignalReceived { .. }
+            | RunEventKind::SignalBroadcastScanAdvanced { .. }
+            | RunEventKind::SignalDeduplicated { .. }
+            | RunEventKind::SignalConsumed { .. }
+            | RunEventKind::SubworkflowCreated { .. }
+            | RunEventKind::SubworkflowOutputImported { .. }
+            | RunEventKind::SubworkflowCancellationRequested { .. }
+            | RunEventKind::RevisionAdoptionRequested { .. }
+            | RunEventKind::ReconciliationPlanRecorded { .. }
+            | RunEventKind::ReconciliationDecisionRecorded { .. }
+            | RunEventKind::ReconciliationApplied { .. }
+            | RunEventKind::ReconciliationExecutionRemoved { .. }
+            | RunEventKind::ReconciliationCancellationRequested { .. }
+            | RunEventKind::ReconciliationRemediationCreated { .. }
+            | RunEventKind::RemediationWorkCreated { .. } => false,
         }
     }
 
@@ -748,7 +819,77 @@ impl RunProjection {
                 | RunEventKind::ReconciliationRemediationCreated {
                     plan: event_plan, ..
                 } => event_plan == &plan.plan,
-                _ => false,
+                RunEventKind::PublishedRunBound { .. }
+                | RunEventKind::PublishedInvocationPlanned { .. }
+                | RunEventKind::AgreementAccepted { .. }
+                | RunEventKind::RunCreated { .. }
+                | RunEventKind::ExecutionAuthorityEstablished { .. }
+                | RunEventKind::RevisionPinned { .. }
+                | RunEventKind::RunStarted
+                | RunEventKind::RunPaused { .. }
+                | RunEventKind::RunResumed { .. }
+                | RunEventKind::RunCancellationRequested { .. }
+                | RunEventKind::RunTerminationRequested { .. }
+                | RunEventKind::RunTerminal { .. }
+                | RunEventKind::NodeBecameEligible { .. }
+                | RunEventKind::NodeExecutionCancelledBeforeDispatch { .. }
+                | RunEventKind::NodeExecutionCancellationRequested { .. }
+                | RunEventKind::NodeScheduled { .. }
+                | RunEventKind::CapabilityResolved { .. }
+                | RunEventKind::CapabilityResolutionDecisionRecorded { .. }
+                | RunEventKind::SideEffectClassified { .. }
+                | RunEventKind::LeaseGranted { .. }
+                | RunEventKind::CapabilityEntryDecisionRecorded { .. }
+                | RunEventKind::CapabilityAdapterEntryDecisionRecorded { .. }
+                | RunEventKind::LeaseHeartbeatRecorded { .. }
+                | RunEventKind::LeaseExpired { .. }
+                | RunEventKind::NodeReLeased { .. }
+                | RunEventKind::NodeStarted { .. }
+                | RunEventKind::NodeProgressRecorded { .. }
+                | RunEventKind::AttemptUsageRecorded { .. }
+                | RunEventKind::InvocationCancellationAcknowledged { .. }
+                | RunEventKind::NodeOutputPublished { .. }
+                | RunEventKind::DeterministicOutputPublished { .. }
+                | RunEventKind::DeterministicNodeTerminal { .. }
+                | RunEventKind::NodePreDispatchFailed { .. }
+                | RunEventKind::CapabilityResolutionDenied { .. }
+                | RunEventKind::StructuredSuccessorScanCompleted { .. }
+                | RunEventKind::NodeTerminal { .. }
+                | RunEventKind::NodeRetryScheduled { .. }
+                | RunEventKind::ExternalOutcomeUncertain { .. }
+                | RunEventKind::LateTerminalEvidenceRecorded { .. }
+                | RunEventKind::ExternalOutcomeRetained { .. }
+                | RunEventKind::ArtifactPublished { .. }
+                | RunEventKind::BranchScopeCreated { .. }
+                | RunEventKind::BranchRouteSelected { .. }
+                | RunEventKind::BranchChildAdded { .. }
+                | RunEventKind::BranchCancellationRequested { .. }
+                | RunEventKind::BranchTerminal { .. }
+                | RunEventKind::JoinSatisfied { .. }
+                | RunEventKind::ControllerAssessmentRecorded { .. }
+                | RunEventKind::RepeatIterationCreated { .. }
+                | RunEventKind::RepeatConditionRecorded { .. }
+                | RunEventKind::RepeatContinuationRequested { .. }
+                | RunEventKind::RepeatContinuationDecided { .. }
+                | RunEventKind::RepeatTerminated { .. }
+                | RunEventKind::TimerRegistered { .. }
+                | RunEventKind::TimerFired { .. }
+                | RunEventKind::TimerCancelled { .. }
+                | RunEventKind::WaitRegistered { .. }
+                | RunEventKind::WaitSatisfied { .. }
+                | RunEventKind::WaitCancelled { .. }
+                | RunEventKind::SignalReceived { .. }
+                | RunEventKind::SignalBroadcastScanAdvanced { .. }
+                | RunEventKind::SignalDeduplicated { .. }
+                | RunEventKind::SignalConsumed { .. }
+                | RunEventKind::SubworkflowCreated { .. }
+                | RunEventKind::SubworkflowTerminal { .. }
+                | RunEventKind::SubworkflowOutputImported { .. }
+                | RunEventKind::SubworkflowCancellationRequested { .. }
+                | RunEventKind::RecoveryStarted { .. }
+                | RunEventKind::RecoveryClassified { .. }
+                | RunEventKind::RecoveryDecisionRecorded { .. }
+                | RunEventKind::RemediationWorkCreated { .. } => false,
             };
             if !belongs_to_plan {
                 plan.stale_sequence = Some(event.sequence());

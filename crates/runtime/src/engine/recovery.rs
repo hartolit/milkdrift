@@ -84,7 +84,7 @@ impl RuntimeService {
             let summaries = self.next_nonterminal_page(&self.recovery_cursor, limit, "recovery")?;
             let mut validated = Vec::with_capacity(summaries.len());
             for summary in summaries {
-                let projection = self.active_recovery_component(
+                let projection = Self::active_recovery_component(
                     &summary.run,
                     "authoritative history",
                     self.projection(&summary.run),
@@ -235,8 +235,10 @@ impl RuntimeService {
                             if !attempt.is_unresolved() {
                                 plan.events.push(RunEventKind::ExternalOutcomeUncertain {
                                     attempt: attempt.attempt().clone(),
-                                    report_sequence: self
-                                        .next_report_sequence(&projection, attempt.attempt())?,
+                                    report_sequence: Self::next_report_sequence(
+                                        &projection,
+                                        attempt.attempt(),
+                                    )?,
                                     side_effect: attempt
                                         .side_effect()
                                         .map_or(SideEffectClass::Unknown, |classification| {
@@ -293,8 +295,10 @@ impl RuntimeService {
                                 .map_or(SideEffectClass::Unknown, |value| value.side_effect());
                             plan.events.push(RunEventKind::ExternalOutcomeUncertain {
                                 attempt: attempt.attempt().clone(),
-                                report_sequence: self
-                                    .next_report_sequence(&projection, attempt.attempt())?,
+                                report_sequence: Self::next_report_sequence(
+                                    &projection,
+                                    attempt.attempt(),
+                                )?,
                                 side_effect,
                                 reason: Reason::new(
                                     "lease expired and external side effects cannot be established",
@@ -385,7 +389,7 @@ impl RuntimeService {
             ));
         }
 
-        let head = self.active_recovery_component(
+        let head = Self::active_recovery_component(
             run,
             "journal head",
             self.store.head(run).map_err(RuntimeError::from),
@@ -401,12 +405,12 @@ impl RuntimeService {
             ));
         }
 
-        let (runnable, timers, leases) = self.active_recovery_component(
+        let (runnable, timers, leases) = Self::active_recovery_component(
             run,
             "derived discovery indexes",
             self.discovery_expectations(run, projection),
         )?;
-        self.active_recovery_component(
+        Self::active_recovery_component(
             run,
             "derived discovery indexes",
             self.store
@@ -414,7 +418,7 @@ impl RuntimeService {
                 .map_err(RuntimeError::from),
         )?;
 
-        let revision = self.active_recovery_component(
+        let revision = Self::active_recovery_component(
             run,
             "pinned revision",
             self.current_revision(projection),
@@ -434,12 +438,12 @@ impl RuntimeService {
                 "active history has no pinned workspace budget",
             )
         })?;
-        let durable_usage = self.active_recovery_component(
+        let durable_usage = Self::active_recovery_component(
             run,
             "workspace accounting",
             self.store.workspace_usage(run).map_err(RuntimeError::from),
         )?;
-        self.active_recovery_component(
+        Self::active_recovery_component(
             run,
             "workspace accounting",
             budget
@@ -454,7 +458,7 @@ impl RuntimeService {
                 "active history has no root scope",
             )
         })?;
-        self.active_recovery_component(
+        Self::active_recovery_component(
             run,
             "root workspace scope",
             self.validate_projected_scope(projection, root_scope.reference(), &[]),
@@ -463,7 +467,7 @@ impl RuntimeService {
             if reference == root_scope.reference() {
                 continue;
             }
-            self.active_recovery_component(
+            Self::active_recovery_component(
                 run,
                 "workspace scope",
                 self.validate_projected_scope(projection, reference, &[]),
@@ -472,7 +476,7 @@ impl RuntimeService {
 
         let mut projected_value_usage = WorkspaceUsage::EMPTY;
         for reference in projection.inputs() {
-            let entry = self.active_recovery_component(
+            let entry = Self::active_recovery_component(
                 run,
                 "supplied run input",
                 self.projected_workspace_value(projection, reference, &[]),
@@ -480,12 +484,12 @@ impl RuntimeService {
             self.validate_active_workspace_artifact(run, entry.value().as_artifact())?;
         }
         for reference in projection.workspace_values() {
-            let entry = self.active_recovery_component(
+            let entry = Self::active_recovery_component(
                 run,
                 "workspace value",
                 self.projected_workspace_value(projection, reference, &[]),
             )?;
-            projected_value_usage = self.active_recovery_component(
+            projected_value_usage = Self::active_recovery_component(
                 run,
                 "workspace accounting",
                 budget
@@ -520,7 +524,7 @@ impl RuntimeService {
         }
 
         for (artifact, expected) in projection.artifacts() {
-            let durable = self.active_recovery_component(
+            let durable = Self::active_recovery_component(
                 run,
                 "artifact metadata",
                 self.store.metadata(artifact).map_err(RuntimeError::from),
@@ -625,7 +629,7 @@ impl RuntimeService {
                                 ),
                             ));
                         }
-                        self.active_recovery_component(
+                        Self::active_recovery_component(
                             run,
                             "frozen invocation input",
                             self.projected_workspace_value(projection, &reference, &[]),
@@ -649,7 +653,7 @@ impl RuntimeService {
         let Some(reference) = reference else {
             return Ok(());
         };
-        let durable = self.active_recovery_component(
+        let durable = Self::active_recovery_component(
             run,
             "workspace artifact metadata",
             self.store
@@ -680,7 +684,7 @@ impl RuntimeService {
         let artifact = ArtifactId::new(reference.identity()).map_err(|error| {
             Self::active_recovery_invalid(run, "frozen invocation artifact", error.to_string())
         })?;
-        let durable = self.active_recovery_component(
+        let durable = Self::active_recovery_component(
             run,
             "frozen invocation artifact",
             self.store.metadata(&artifact).map_err(RuntimeError::from),
@@ -708,7 +712,6 @@ impl RuntimeService {
     }
 
     fn active_recovery_component<T>(
-        &self,
         run: &RunId,
         component: &'static str,
         result: Result<T, RuntimeError>,

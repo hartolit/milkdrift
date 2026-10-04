@@ -46,7 +46,7 @@ impl RuntimeService {
                 .collect());
         }
         let references =
-            self.incoming_data_references(revision, projection, node, port, occurrence_scope);
+            Self::incoming_data_references(revision, projection, node, port, occurrence_scope);
         for reference in &references {
             self.projected_workspace_value(projection, reference, pending_workspace)?;
         }
@@ -57,7 +57,6 @@ impl RuntimeService {
     }
 
     fn incoming_data_references(
-        &self,
         revision: &BlueprintRevision,
         projection: &RunProjection,
         node: &Node,
@@ -497,8 +496,7 @@ impl RuntimeService {
             {
                 Some(durable)
             }
-            (Some(pending), Some(_)) => Some(pending),
-            (Some(pending), None) => Some(pending),
+            (Some(pending), _) => Some(pending),
             (None, Some(durable)) => Some(durable),
             (None, None) => None,
         };

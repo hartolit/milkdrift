@@ -507,7 +507,9 @@ pub(super) fn reconciliation_history(
                 // attempt-local cancel-and-restart action is not enactable.
                 cancellation_safe: false,
             },
-            NodeExecutionState::Eligible => HistoricalExecutionState::Pending,
+            NodeExecutionState::Eligible | NodeExecutionState::RemovedProspectively(_) => {
+                HistoricalExecutionState::Pending
+            }
             NodeExecutionState::RetryPending(_) => HistoricalExecutionState::Active {
                 side_effect,
                 cancellation_safe: false,
@@ -525,7 +527,6 @@ pub(super) fn reconciliation_history(
             NodeExecutionState::CancelledBeforeDispatch => HistoricalExecutionState::Completed {
                 side_effect: SideEffectClass::None,
             },
-            NodeExecutionState::RemovedProspectively(_) => HistoricalExecutionState::Pending,
             NodeExecutionState::Terminal(_) => HistoricalExecutionState::Completed { side_effect },
         };
         result
@@ -594,10 +595,11 @@ pub(super) fn recovery_classification(
         return RecoveryClassification::Uncertain;
     };
     match side_effect.side_effect() {
-        SideEffectClass::None | SideEffectClass::ReadOnly => RecoveryClassification::Retryable,
         // Projection validation already requires every idempotent-write
         // classification to carry a supported, stable idempotency key.
-        SideEffectClass::IdempotentWrite => RecoveryClassification::Retryable,
+        SideEffectClass::None | SideEffectClass::ReadOnly | SideEffectClass::IdempotentWrite => {
+            RecoveryClassification::Retryable
+        }
         SideEffectClass::NonIdempotentWrite | SideEffectClass::Unknown => {
             RecoveryClassification::Uncertain
         }

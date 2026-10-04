@@ -325,7 +325,6 @@ impl RuntimeService {
     }
 
     pub(super) fn plan_timer(
-        &self,
         document: &RunCommandDocument,
         projection: &RunProjection,
     ) -> Result<CommandPlan, RuntimeError> {

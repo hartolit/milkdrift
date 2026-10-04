@@ -33,7 +33,7 @@ impl RuntimeService {
             .get(execution)
             .is_some_and(|value| value.outputs().is_empty())
         {
-            return self.complete_deterministic(transition, node, execution);
+            return Self::complete_deterministic(transition, node, execution);
         }
         let values = self.ordered_reducer_references(
             revision,
@@ -54,7 +54,7 @@ impl RuntimeService {
         let (value, artifact) = match config.strategy() {
             ReducerStrategy::Collect => {
                 let Ok(json_value) = serde_json::to_value(&values) else {
-                    return self.complete_deterministic_with_outcome(
+                    return Self::complete_deterministic_with_outcome(
                         transition,
                         node,
                         execution,
@@ -65,7 +65,7 @@ impl RuntimeService {
                     );
                 };
                 let Ok(collected) = BoundedJson::new(json_value) else {
-                    return self.complete_deterministic_with_outcome(
+                    return Self::complete_deterministic_with_outcome(
                         transition,
                         node,
                         execution,
@@ -105,6 +105,6 @@ impl RuntimeService {
             value: reference,
             artifact,
         })?;
-        self.complete_deterministic(transition, node, execution)
+        Self::complete_deterministic(transition, node, execution)
     }
 }

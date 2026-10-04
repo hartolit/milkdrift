@@ -770,7 +770,7 @@ impl RunProjection {
         if self.subworkflows.values().any(|child| {
             child.imports.iter().enumerate().any(|(index, import)| {
                 !child.outputs.contains(&import.child_value)
-                    || child.imports[..index].iter().any(|prior| {
+                    || child.imports.iter().take(index).any(|prior| {
                         prior.child_value == import.child_value
                             || prior.parent_value == import.parent_value
                     })

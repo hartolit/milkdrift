@@ -54,7 +54,7 @@ impl RuntimeService {
                 }))
             }
             RunCommand::DeliverSignal { .. } => self.plan_signal(document, projection),
-            RunCommand::FireTimer { .. } => self.plan_timer(document, projection),
+            RunCommand::FireTimer { .. } => Self::plan_timer(document, projection),
             RunCommand::RequestRevisionAdoption {
                 reconciliation,
                 revision,
@@ -70,7 +70,7 @@ impl RuntimeService {
                 plan,
                 decision,
                 outcome,
-            } => self.plan_reconciliation_decision(document, projection, plan, decision, *outcome),
+            } => Self::plan_reconciliation_decision(document, projection, plan, decision, *outcome),
             RunCommand::ApplyReconciliation { plan } => {
                 self.plan_reconciliation_application(document.run_id(), projection, plan)
             }

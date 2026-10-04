@@ -95,7 +95,7 @@ impl RuntimeService {
             });
         let admission = AdmissionRequest {
             run: entry.run.clone(),
-            branch: branch.clone(),
+            branch,
             operation: requirement.operation().clone(),
         };
         let (usage, lease_revision) = self.admission_usage()?;
@@ -254,17 +254,16 @@ impl RuntimeService {
             attempt: attempt.clone(),
             invocation: invocation.clone(),
             idempotency_key: idempotency_key.clone(),
-            request: request.clone(),
+            request,
         };
         let mut schedule_events = Vec::new();
         // The journal owns artifact reference discovery and accounting. Introduce each
         // exact input/manifest before output provenance can cite it, including direct
         // artifact bindings that were never supplied as initial workspace values.
-        for artifact in scheduled
-            .required_artifacts()?
-            .into_iter()
-            .collect::<BTreeSet<_>>()
-        {
+        let mut artifacts = scheduled.required_artifacts()?;
+        artifacts.sort_unstable();
+        artifacts.dedup();
+        for artifact in artifacts {
             if !projection.artifacts().contains_key(artifact.artifact()) {
                 let metadata = self.store.metadata(artifact.artifact())?
                     .filter(|metadata| metadata.reference() == &artifact)
@@ -285,14 +284,14 @@ impl RuntimeService {
             RunEventKind::CapabilityResolved {
                 execution: execution.execution().clone(),
                 attempt: attempt.clone(),
-                requirement: requirement.clone(),
+                requirement,
                 snapshot: resolution.snapshot().clone(),
             },
             RunEventKind::SideEffectClassified {
                 attempt: attempt.clone(),
                 side_effect: contract.side_effect(),
                 idempotency: contract.idempotency(),
-                idempotency_key: idempotency_key.clone(),
+                idempotency_key,
             },
             RunEventKind::LeaseGranted {
                 lease: lease.clone(),
@@ -381,7 +380,10 @@ impl RuntimeService {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)] // Revision/projection/node/scope coordinates and immutable invocation, capability, idempotency, context, and time facts are independently validated request inputs.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Revision/projection/node/scope coordinates and immutable invocation, capability, idempotency, context, and time facts are independently validated request inputs."
+    )]
     fn invocation_request(
         &self,
         revision: &BlueprintRevision,

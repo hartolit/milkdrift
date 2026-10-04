@@ -78,9 +78,7 @@ impl DurableContextCandidateSource<'_> {
         let facts = self.artifact_facts(request, &reference, reference.artifact().as_str())?;
         Ok(ContextCandidate {
             kind: ContextSemanticKind::Artifact,
-            source: Some(ContextSource::Artifact {
-                reference: reference.clone(),
-            }),
+            source: Some(ContextSource::Artifact { reference }),
             content_digest: facts.content_digest,
             source_revision: request.identity.revision.clone(),
             execution: None,

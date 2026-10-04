@@ -16,6 +16,10 @@ impl RunProjection {
         event: &RunEventEnvelope,
     ) -> Result<(), RuntimeError> {
         let sequence = event.sequence();
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "The exhaustive apply_kind dispatcher selects this event family; other variants indicate an internal routing bug."
+        )]
         match event.kind() {
             RunEventKind::NodeScheduled {
                 node,
@@ -333,7 +337,7 @@ impl RunProjection {
                     *idempotency != IdempotencyBehavior::Unsupported
                         && idempotency_key.is_some()
                         && attempt_position.is_some_and(|position| {
-                            execution_attempts[..position].iter().all(|prior| {
+                            execution_attempts.iter().take(position).all(|prior| {
                                 self.attempts
                                     .get(prior)
                                     .and_then(|attempt| attempt.side_effect.as_ref())

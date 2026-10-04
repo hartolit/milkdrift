@@ -418,21 +418,23 @@ fn classify_removed(history: Option<&NodeHistory>) -> (ReconciliationClassificat
 fn allowed_actions(
     classification: ReconciliationClassification,
     policy: ReconciliationPolicy,
-) -> &'static [ReconciliationAction] {
+) -> (ReconciliationAction, Option<ReconciliationAction>) {
     use ReconciliationAction as Action;
     use ReconciliationClassification as Classification;
 
-    const PRESERVE: &[Action] = &[Action::Preserve];
-    const USE_NEW: &[Action] = &[Action::UseNewOnNextInvocation];
-    const REMOVE: &[Action] = &[Action::RemoveUnstarted];
-    const REJECT: &[Action] = &[Action::RejectRetrospectiveRewrite];
-    const AUTHORITY: &[Action] = &[Action::RequireAuthority];
-    const CANCEL_OR_REJECT: &[Action] =
-        &[Action::CancelAndRestart, Action::RejectRetrospectiveRewrite];
-    const REMEDIATE_OR_REJECT: &[Action] = &[
+    const PRESERVE: (Action, Option<Action>) = (Action::Preserve, None);
+    const USE_NEW: (Action, Option<Action>) = (Action::UseNewOnNextInvocation, None);
+    const REMOVE: (Action, Option<Action>) = (Action::RemoveUnstarted, None);
+    const REJECT: (Action, Option<Action>) = (Action::RejectRetrospectiveRewrite, None);
+    const AUTHORITY: (Action, Option<Action>) = (Action::RequireAuthority, None);
+    const CANCEL_OR_REJECT: (Action, Option<Action>) = (
+        Action::CancelAndRestart,
+        Some(Action::RejectRetrospectiveRewrite),
+    );
+    const REMEDIATE_OR_REJECT: (Action, Option<Action>) = (
         Action::CompensateOrRemediate,
-        Action::RejectRetrospectiveRewrite,
-    ];
+        Some(Action::RejectRetrospectiveRewrite),
+    );
 
     match classification {
         Classification::UnchangedCompleted
@@ -506,7 +508,7 @@ fn action_for(
                 Action::RejectRetrospectiveRewrite
             }
         }
-        _ => allowed_actions(classification, policy)[0],
+        _ => allowed_actions(classification, policy).0,
     }
 }
 
@@ -515,7 +517,8 @@ pub(crate) fn reconciliation_action_is_valid(
     action: ReconciliationAction,
     policy: ReconciliationPolicy,
 ) -> bool {
-    allowed_actions(classification, policy).contains(&action)
+    let (primary, alternative) = allowed_actions(classification, policy);
+    primary == action || alternative == Some(action)
 }
 fn incompatible_subworkflow(old: &NodeKind, new: &NodeKind) -> bool {
     match (old, new) {

@@ -99,7 +99,6 @@ impl RuntimeService {
     }
 
     pub(super) fn plan_reconciliation_decision(
-        &self,
         document: &RunCommandDocument,
         projection: &RunProjection,
         plan: &ReconciliationPlanId,
@@ -419,7 +418,6 @@ impl RuntimeService {
                     reason: document.reason().clone(),
                 });
             }
-            ExternalWorkAction::Query => {}
             ExternalWorkAction::Retry => {
                 plan.events.push(retry_event.ok_or_else(|| {
                     RuntimeError::InvalidHistory(
@@ -455,7 +453,9 @@ impl RuntimeService {
                     reason: document.reason().clone(),
                 });
             }
-            ExternalWorkAction::ResolveSucceeded | ExternalWorkAction::ResolveFailed => {}
+            ExternalWorkAction::Query
+            | ExternalWorkAction::ResolveSucceeded
+            | ExternalWorkAction::ResolveFailed => {}
         }
         Ok(plan)
     }

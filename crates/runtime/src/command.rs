@@ -383,7 +383,10 @@ struct AuthorizedCommandIntent<'a> {
 
 impl RunCommandDocument {
     /// Constructs and validates a complete command envelope.
-    #[allow(clippy::too_many_arguments)] // Command/run/actor identity, expected sequence, time, reason, evidence, and closed command payload are independently signed admission facts.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Command/run/actor identity, expected sequence, time, reason, evidence, and closed command payload are independently signed admission facts."
+    )]
     pub fn new(
         command_id: CommandId,
         run_id: RunId,
@@ -588,48 +591,48 @@ impl RunCommandDocument {
             ),
             RunCommand::StartRun => (
                 AuthorityOperation::StartRun,
-                workflow_context.clone(),
+                workflow_context,
                 AuthorityBudget::default(),
             ),
             RunCommand::PauseRun => (
                 AuthorityOperation::Pause,
-                workflow_context.clone(),
+                workflow_context,
                 AuthorityBudget::default(),
             ),
             RunCommand::ResumeRun => (
                 AuthorityOperation::Resume,
-                workflow_context.clone(),
+                workflow_context,
                 AuthorityBudget::default(),
             ),
             RunCommand::RequestCancellation => (
                 AuthorityOperation::Cancel,
-                workflow_context.clone(),
+                workflow_context,
                 AuthorityBudget::default(),
             ),
             RunCommand::DeliverSignal { .. } => (
                 AuthorityOperation::DeliverSignal,
-                workflow_context.clone(),
+                workflow_context,
                 AuthorityBudget::default(),
             ),
             RunCommand::FireTimer { .. } => (
                 AuthorityOperation::FireTimer,
-                workflow_context.clone(),
+                workflow_context,
                 AuthorityBudget::default(),
             ),
             RunCommand::RequestRevisionAdoption { .. } => (
                 AuthorityOperation::Propose,
-                workflow_context.clone(),
+                workflow_context,
                 AuthorityBudget::default(),
             ),
             RunCommand::DecideReconciliation { .. }
             | RunCommand::DecideRepeatContinuation { .. } => (
                 AuthorityOperation::Approve,
-                workflow_context.clone(),
+                workflow_context,
                 AuthorityBudget::default(),
             ),
             RunCommand::ApplyReconciliation { .. } => (
                 AuthorityOperation::Apply,
-                workflow_context.clone(),
+                workflow_context,
                 AuthorityBudget::default(),
             ),
             RunCommand::ResolveExternalWork { action, .. } => (
