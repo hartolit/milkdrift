@@ -108,6 +108,20 @@ needs a named category, real consumer, validating construction where invalid sta
 and tests at the owning boundary. A smaller item count is diagnostic evidence, not permission to
 hide an actual port, schema, or semantic type.
 
+Repository contracts parse Cargo manifests and Rust syntax before checking dependency direction,
+explicit exports and selected private construction boundaries. Dependency aliases, build edges,
+optional declarations and target-specific sections receive the same ownership review. Separate
+product-only Cargo resolutions check helper features; a workspace all-feature graph cannot prove
+the default surface. Outside-workspace consumer probes also compile valid calls and refuse raw
+revision/selector mutation and default helper imports, then admit explicitly enabled helpers.
+
+The syntax checks recognize declarations, grouped exports and conditional attributes without
+treating comments or strings as code. They do not resolve arbitrary aliases, expand every macro,
+prove that a constructor validates correctly, or establish that a reachable adapter executes.
+Keep compiler probes, reader/refusal tests, actual-client cases, composition/conformance tests and
+the default/all-feature inventory review for those separate claims. A new package or export is an
+ownership decision; update the exact checked boundary with its real consumer and negative evidence.
+
 The managed boundary adds three intentional surfaces: `capability::managed` is the portable
 request/inspection and descriptor-binding contract used by CLI, client and adapters;
 `persistence::managed` is durable inventory plus transactional use/lifecycle ports implemented by
