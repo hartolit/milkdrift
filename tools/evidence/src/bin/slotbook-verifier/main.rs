@@ -1,4 +1,5 @@
 //! Operator-owned finite HTTP verifier, pinned by executable digest outside editable workers.
+use std::io::Write as _;
 mod case;
 mod checks;
 mod service;
@@ -84,6 +85,10 @@ fn main() -> EvidenceResult {
     let result = service.observe();
     let cleanup = service.cleanup();
     cleanup?;
-    println!("{}", serde_json::to_string(&result?)?);
+    writeln!(
+        std::io::stdout().lock(),
+        "{}",
+        serde_json::to_string(&result?)?
+    )?;
     Ok(())
 }

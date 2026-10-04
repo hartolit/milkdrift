@@ -16,8 +16,13 @@ fn measured(result: EvidenceResult<ScenarioMeasurement>) -> ScenarioMeasurement 
     match result {
         Ok(measurement) => measurement,
         Err(error) => {
-            eprintln!("benchmark fixture failed: {error}");
-            std::process::exit(1);
+            #[expect(
+                clippy::panic,
+                reason = "A failed benchmark fixture cannot yield a measurement; unwinding runs its owners' cleanup instead of exiting without destructors."
+            )]
+            {
+                panic!("benchmark fixture failed: {error}");
+            }
         }
     }
 }

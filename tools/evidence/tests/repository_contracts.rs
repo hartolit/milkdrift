@@ -203,10 +203,16 @@ fn production_sources_over_the_review_threshold_have_exact_bounded_exceptions() 
         .iter()
         .filter(|source| source.production && source.lines > COHESION_REVIEW_LINES)
     {
-        println!(
-            "cohesion review: {} has {} implementation lines ({} physical)",
-            source.path, source.lines, source.physical_lines
-        );
+        #[expect(
+            clippy::print_stdout,
+            reason = "This repository test reports measured cohesion-review candidates; the following independent assertion still decides acceptance."
+        )]
+        {
+            println!(
+                "cohesion review: {} has {} implementation lines ({} physical)",
+                source.path, source.lines, source.physical_lines
+            );
+        }
     }
     let errors = cohesion_policy_errors(PRODUCTION_COHESION_EXCEPTIONS, &sources);
     assert!(

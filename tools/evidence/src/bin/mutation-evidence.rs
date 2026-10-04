@@ -7,6 +7,7 @@ use std::{
     env,
     ffi::OsString,
     fmt, fs,
+    io::Write as _,
     path::{Path, PathBuf},
     process::{Command, ExitCode},
 };
@@ -307,7 +308,13 @@ fn main() -> ExitCode {
     match execute(Arguments::parse()) {
         Ok(exit_code) => ExitCode::from(exit_code),
         Err(failure) => {
-            eprintln!("mutation-evidence: {}", failure.message);
+            #[expect(
+                clippy::print_stderr,
+                reason = "Final mutation-runner failure diagnostic; no successful measurement can follow this branch."
+            )]
+            {
+                eprintln!("mutation-evidence: {}", failure.message);
+            }
             ExitCode::from(failure.exit_code)
         }
     }
@@ -347,11 +354,15 @@ fn execute(arguments: Arguments) -> ToolResult<u8> {
     let classified =
         classify_mutation_outcomes(&mutants_output, &repository.join(CLASSIFICATION_PATH))?;
     for entry in classified {
-        println!(
+        writeln!(
+            std::io::stdout().lock(),
             "CLASSIFIED {}: {}",
             entry.classification.name(),
             entry.mutant
-        );
+        )
+        .map_err(|error| {
+            ToolFailure::operational(format!("classification output failed: {error}"))
+        })?;
     }
     Ok(0)
 }

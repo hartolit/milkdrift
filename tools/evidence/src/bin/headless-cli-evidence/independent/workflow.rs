@@ -15,6 +15,7 @@ use milkdrift_capability::{
 use milkdrift_evidence::application::required_text;
 use milkdrift_peer_protocol::PeerRequestId;
 use milkdrift_persistence::{PeerExecutionSnapshot, PeerExecutionStore};
+use std::io::Write as _;
 use std::sync::atomic::Ordering;
 
 pub(super) fn run(
@@ -360,9 +361,10 @@ pub(super) fn run(
             "imported output lost the authenticated serving producer",
         )?;
     }
-    println!(
+    writeln!(
+        std::io::stdout().lock(),
         "independent remote hosting: actual origin/serving daemon and CLI, same process/model operations, staged inputs/manifests, useful imported outputs, real workflow origins, controller settlement and unknown usage across lost reply/restart verified"
-    );
+    )?;
     Ok(())
 }
 
@@ -406,10 +408,11 @@ fn measure_idle(role: &str, process: u32) -> EvidenceResult {
             "kernel".into(),
             json!(std::fs::read_to_string("/proc/sys/kernel/osrelease")?.trim()),
         );
-        println!(
+        writeln!(
+            std::io::stdout().lock(),
             "idle role evidence (development binary, same-machine loopback, before requests): role={role}, process={process}, measurement={}",
             Value::Object(measured)
-        );
+        )?;
     }
     #[cfg(windows)]
     {
@@ -433,12 +436,16 @@ fn measure_idle(role: &str, process: u32) -> EvidenceResult {
             "idle Windows process observation failed",
         )?;
         let measured: Value = serde_json::from_str(&result.stdout)?;
-        println!(
+        writeln!(
+            std::io::stdout().lock(),
             "idle role evidence (debug binary, same-machine loopback, before requests): role={role}, process={process}, measurement={measured}"
-        );
+        )?;
     }
     #[cfg(not(any(windows, target_os = "linux")))]
-    println!("idle role observation not measured on this platform: role={role}, process={process}");
+    writeln!(
+        std::io::stdout().lock(),
+        "idle role observation not measured on this platform: role={role}, process={process}"
+    )?;
     Ok(())
 }
 

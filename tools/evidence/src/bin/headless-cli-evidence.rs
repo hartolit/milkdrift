@@ -3,6 +3,7 @@
 //! Deterministic process and model fixtures make replay, inspection, control, artifact, and
 //! restart assertions repeatable. They do not qualify real-agent/model interoperability.
 
+use std::io::Write as _;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -89,56 +90,71 @@ struct Arguments {
     examples: PathBuf,
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
+    match entry() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            #[expect(
+                clippy::print_stderr,
+                reason = "Final process-boundary diagnostic after the evidence operation has failed; the exit remains unsuccessful if reporting fails."
+            )]
+            {
+                eprintln!("headless CLI evidence failed: {error}");
+            }
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn entry() -> EvidenceResult {
     if let Some(mode) = std::env::args_os()
         .nth(1)
         .and_then(|value| value.into_string().ok())
     {
         match mode.as_str() {
             "--fixture-independent" => {
-                if let Err(error) = independent::process_fixture() {
-                    eprintln!("independent fixture failed: {error}");
-                    std::process::exit(1);
-                }
-                return;
+                return independent::process_fixture();
             }
             "--fixture-artifact" => {
-                println!("headless-cli-artifact");
-                return;
+                writeln!(std::io::stdout().lock(), "headless-cli-artifact")?;
+                return Ok(());
             }
             "--fixture-wait" => {
                 thread::sleep(Duration::from_secs(5));
-                return;
+                return Ok(());
             }
             "--fixture-controller-work" => {
-                println!("unsatisfactory");
-                return;
+                writeln!(std::io::stdout().lock(), "unsatisfactory")?;
+                return Ok(());
             }
             "--fixture-controller-repair" => {
-                println!("correct");
-                return;
+                writeln!(std::io::stdout().lock(), "correct")?;
+                return Ok(());
             }
             "--fixture-controller-race" => {
-                println!("entered bounded concurrent process");
+                writeln!(
+                    std::io::stdout().lock(),
+                    "entered bounded concurrent process"
+                )?;
                 thread::sleep(Duration::from_secs(10));
-                return;
+                return Ok(());
             }
             "--fixture-controller-crash" => {
-                if let Err(error) = fs::write("effect.txt", b"one external fixture effect") {
-                    eprintln!("cannot record fixture effect: {error}");
-                    std::process::exit(1);
-                }
-                println!("recorded non-idempotent fixture effect");
+                fs::write("effect.txt", b"one external fixture effect")?;
+                writeln!(
+                    std::io::stdout().lock(),
+                    "recorded non-idempotent fixture effect"
+                )?;
                 thread::sleep(Duration::from_secs(10));
-                return;
+                return Ok(());
             }
             "--fixture-controller-verify" => {
                 let correct =
                     fs::read_to_string("work.txt").is_ok_and(|text| text.trim() == "correct");
                 record_verification(
                     serde_json::json!({"checkpoint":"fixture-v1", "checked_checkpoint":"fixture-v1", "checks":{"correct":correct}, "coding":{"type":"changed"}}),
-                );
-                return;
+                )?;
+                return Ok(());
             }
             "--fixture-controller-verify-repository" => {
                 let repository = std::env::args_os().nth(2).map(PathBuf::from);
@@ -148,23 +164,17 @@ fn main() {
                 let correct = actual.trim() == "42";
                 record_verification(
                     serde_json::json!({"checkpoint":"fixture-v1","checked_checkpoint":"fixture-v1","checks":{"correct":correct},"coding":{"type":"changed"}}),
-                );
-                return;
+                )?;
+                return Ok(());
             }
             _ => {}
         }
     }
-    if let Err(error) = run(Arguments::parse()) {
-        eprintln!("headless CLI evidence failed: {error}");
-        std::process::exit(1);
-    }
+    run(Arguments::parse())
 }
 
-fn record_verification(value: serde_json::Value) {
-    if let Err(error) = fs::write("verification.json", value.to_string()) {
-        eprintln!("cannot record independent verification: {error}");
-        std::process::exit(1);
-    }
+fn record_verification(value: serde_json::Value) -> EvidenceResult {
+    fs::write("verification.json", value.to_string()).map_err(Into::into)
 }
 
 fn run(arguments: Arguments) -> EvidenceResult {
@@ -679,9 +689,10 @@ fn run(arguments: Arguments) -> EvidenceResult {
     let unavailable = runner.run(&["daemon", "health"], None)?;
     assert_error(&unavailable, 5, "unavailable", None)?;
     model.finish()?;
-    println!(
+    writeln!(
+        std::io::stdout().lock(),
         "headless CLI evidence passed: actual daemon/CLI, restart, replay/conflict, proposal, artifact, and uncertainty paths"
-    );
+    )?;
     Ok(())
 }
 

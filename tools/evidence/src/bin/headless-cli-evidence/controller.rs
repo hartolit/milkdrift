@@ -1,4 +1,5 @@
 //! Isolated actual-binary controller installation, remediation, account and restart evidence.
+use std::io::Write as _;
 use std::{collections::BTreeMap, fs, path::Path, process::Command, time::Duration};
 
 use milkdrift_authority::ActorRef;
@@ -617,10 +618,11 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         serde_json::to_vec_pretty(&report)?,
     )?;
     daemon.terminate()?;
-    println!(
+    writeln!(
+        std::io::stdout().lock(),
         "controller qualification evidence passed: {}",
         directory.join("report.json").display()
-    );
+    )?;
     Ok(())
 }
 

@@ -23,6 +23,46 @@ fn runner(executable: PathBuf, endpoint: String) -> CliRunner {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn fixture_output_failure_exits_without_bypassing_child_cleanup() -> EvidenceResult {
+    use std::{
+        os::{fd::OwnedFd, unix::net::UnixStream},
+        process::{Command, Stdio},
+    };
+    for (executable, argument) in [
+        (env!("CARGO_BIN_EXE_evidence-process-helper"), "emit"),
+        (
+            env!("CARGO_BIN_EXE_headless-cli-evidence"),
+            "--fixture-artifact",
+        ),
+    ] {
+        let (writer, reader) = UnixStream::pair()?;
+        drop(reader);
+        let mut child = OwnedChild::spawn(
+            Command::new(executable)
+                .arg(argument)
+                .stdin(Stdio::null())
+                .stdout(Stdio::from(OwnedFd::from(writer)))
+                .stderr(Stdio::null()),
+        )?;
+        let started = Instant::now();
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break status;
+            }
+            ensure(
+                started.elapsed() < Duration::from_secs(5),
+                "fixture ignored failed stdout",
+            )?;
+            thread::sleep(Duration::from_millis(5));
+        };
+        child.terminate()?;
+        assert_eq!(status.code(), Some(1));
+    }
+    Ok(())
+}
+
 fn accept(listener: &TcpListener) -> EvidenceResult<TcpStream> {
     listener.set_nonblocking(true)?;
     let deadline = Instant::now() + Duration::from_secs(3);

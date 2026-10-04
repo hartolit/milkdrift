@@ -172,10 +172,19 @@ impl ControlledEndpoint {
     }
 }
 
-fn main() {
-    if let Err(error) = run(Arguments::parse()) {
-        eprintln!("local model evidence failed: {error}");
-        std::process::exit(1);
+fn main() -> std::process::ExitCode {
+    match run(Arguments::parse()) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            #[expect(
+                clippy::print_stderr,
+                reason = "Final process-boundary diagnostic after the evidence operation has failed; reporting cannot turn it into success."
+            )]
+            {
+                eprintln!("local model evidence failed: {error}");
+            }
+            std::process::ExitCode::FAILURE
+        }
     }
 }
 
@@ -544,7 +553,11 @@ fn run(arguments: Arguments) -> EvidenceResult {
     });
     let report_path = output.join("report.json");
     fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
-    println!("local model evidence passed: {}", report_path.display());
+    writeln!(
+        std::io::stdout().lock(),
+        "local model evidence passed: {}",
+        report_path.display()
+    )?;
     Ok(())
 }
 

@@ -1,4 +1,5 @@
 //! Black-box independent calls use public upload, discovery, saved requests and observations.
+use std::io::Write as _;
 #[path = "independent/installed.rs"]
 mod installed;
 #[path = "independent/workflow.rs"]
@@ -246,9 +247,10 @@ pub(super) fn run(arguments: &Arguments) -> EvidenceResult {
         "workflow remote model did not retain causal selection",
     )?;
     model.finish()?;
-    println!(
+    writeln!(
+        std::io::stdout().lock(),
         "independent hosting: actual daemon/CLI process and fresh model outputs, public upload/download, exact replay/restart, direct provenance and no workflow records verified"
-    );
+    )?;
     Ok(())
 }
 

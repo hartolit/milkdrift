@@ -1,5 +1,6 @@
 //! Release-mode operational evidence runner emitting JSON and CSV artifacts.
 
+use std::io::Write as _;
 use std::{fs, path::PathBuf, process::Command};
 
 use milkdrift_evidence::{
@@ -10,10 +11,19 @@ use milkdrift_evidence::{
     peer_observation_paths, projection_rebuild, projection_snapshot_tail,
 };
 
-fn main() {
-    if let Err(error) = run() {
-        eprintln!("operational evidence failed: {error}");
-        std::process::exit(1);
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            #[expect(
+                clippy::print_stderr,
+                reason = "Final process-boundary diagnostic after the evidence operation has failed; reporting cannot turn it into success."
+            )]
+            {
+                eprintln!("operational evidence failed: {error}");
+            }
+            std::process::ExitCode::FAILURE
+        }
     }
 }
 
@@ -88,7 +98,11 @@ fn run() -> EvidenceResult {
         ));
     }
     fs::write(output.join("scenario-summary.csv"), csv)?;
-    println!("{}", output.join("operational-evidence.json").display());
+    writeln!(
+        std::io::stdout().lock(),
+        "{}",
+        output.join("operational-evidence.json").display()
+    )?;
     Ok(())
 }
 

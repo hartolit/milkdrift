@@ -4,6 +4,7 @@ use milkdrift_evidence::{
     application::{OwnedChild, ensure, run_command, write_private},
 };
 use serde_json::{Value, json};
+use std::io::Write as _;
 use std::{
     collections::BTreeMap,
     fs,
@@ -295,7 +296,7 @@ impl Session {
                 output.stdout, output.stderr
             ),
         )?;
-        println!("{label}");
+        writeln!(std::io::stdout().lock(), "{label}")?;
         if final_page["type"] == "invocation.wait" {
             let mut observations = BTreeMap::new();
             for page in &pages {

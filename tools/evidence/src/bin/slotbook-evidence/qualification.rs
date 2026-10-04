@@ -1,3 +1,4 @@
+use std::io::Write as _;
 mod invocation;
 mod results;
 use super::{
@@ -74,7 +75,10 @@ pub(super) fn run(args: Qualify) -> EvidenceResult {
     let stop = session.stop();
     result?;
     stop?;
-    println!("finite Rust binary qualification passed");
+    writeln!(
+        std::io::stdout().lock(),
+        "finite Rust binary qualification passed"
+    )?;
     Ok(())
 }
 fn qualify(s: &mut Session, args: &Qualify, candidate_bytes: &[u8]) -> EvidenceResult {

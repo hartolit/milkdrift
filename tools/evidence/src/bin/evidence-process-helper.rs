@@ -46,6 +46,9 @@ fn stalled_cli() -> std::io::Result<()> {
     control.write_all(&std::process::id().to_be_bytes())?;
     let mut release = [0];
     control.read_exact(&mut release)?;
-    println!("{{\"status\":\"success\",\"value\":null}}");
+    writeln!(
+        std::io::stdout().lock(),
+        "{{\"status\":\"success\",\"value\":null}}"
+    )?;
     Ok(())
 }

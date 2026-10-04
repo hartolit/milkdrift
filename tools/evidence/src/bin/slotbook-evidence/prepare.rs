@@ -4,6 +4,7 @@ use milkdrift_evidence::{
     application::{ensure, run_command, write_private},
 };
 use serde_json::{Value, json};
+use std::io::Write as _;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -320,9 +321,10 @@ pub(super) fn run(args: Prepare) -> EvidenceResult {
         "repair-mutations.json",
         &json!([{"type":"replace_node","node":repair},{"type":"add_node","node":investigate},{"type":"replace_edge","edge":edge("control-1","repair.begin","repair.investigate","control","out","in")},{"type":"add_edge","edge":edge("investigated","repair.investigate","repair.end","control","out","in")}]),
     )?;
-    println!(
+    writeln!(
+        std::io::stdout().lock(),
         "{}",
         json!({"root":root,"agreement":agreement,"policy":policy_digest,"candidate_lane":"compiled seeded fixtures, not model output"})
-    );
+    )?;
     Ok(())
 }

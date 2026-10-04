@@ -130,7 +130,13 @@ async fn main() -> ExitCode {
         return match fixture::run(std::env::args().skip(2).collect()) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
-                eprintln!("evidence fixture: {error}");
+                #[expect(
+                    clippy::print_stderr,
+                    reason = "Final fixture failure diagnostic; the process already returns failure."
+                )]
+                {
+                    eprintln!("evidence fixture: {error}");
+                }
                 ExitCode::FAILURE
             }
         };
@@ -139,7 +145,13 @@ async fn main() -> ExitCode {
     match execute(arguments).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("milkdrift-external-evidence: {error}");
+            #[expect(
+                clippy::print_stderr,
+                reason = "Final external-evidence failure diagnostic; the process already returns failure."
+            )]
+            {
+                eprintln!("milkdrift-external-evidence: {error}");
+            }
             ExitCode::from(1)
         }
     }

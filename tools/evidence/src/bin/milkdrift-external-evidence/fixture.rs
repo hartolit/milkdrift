@@ -4,6 +4,7 @@ use milkdrift_evidence::{
     application::{ensure, run_command},
 };
 use serde_json::{Value, json};
+use std::io::Write as _;
 use std::{fs, io::Read, path::Path, process::Command, time::Duration};
 
 fn checkpoint(git: &str) -> EvidenceResult<String> {
@@ -59,7 +60,10 @@ pub(super) fn run(arguments: Vec<String>) -> EvidenceResult {
             ensure(compile.status.success(), "fixture test compilation failed")?;
             let tests = run_command(&mut Command::new(binary), None, Duration::from_secs(10))?;
             ensure(tests.status.success(), "fixture test failed")?;
-            println!("fixture coding process inspected and repaired calculator.rs");
+            writeln!(
+                std::io::stdout().lock(),
+                "fixture coding process inspected and repaired calculator.rs"
+            )?;
             let mut input = Vec::new();
             std::io::stdin().take(65_537).read_to_end(&mut input)?;
             ensure(input.len() <= 65_536, "fixture prompt exceeds bound")

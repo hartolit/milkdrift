@@ -9,6 +9,7 @@ use milkdrift_capability::{ArtifactReference, TerminalStatus};
 use milkdrift_evidence::application::{required_text, wait_for_run};
 use milkdrift_peer_protocol::ObservationHistory;
 use serde::Deserialize;
+use std::io::Write as _;
 use std::{
     io::Read,
     path::PathBuf,
@@ -376,9 +377,10 @@ pub(crate) fn run(args: &Arguments) -> EvidenceResult {
         &json!({"schema_version":1,"direct":direct,"workflows":workflows,
         "limits":"Operator-started host topology; physical identities and external entry counters require separate host observations. Real-model text is checked for a nonempty result, not application quality."}),
     )?;
-    println!(
+    writeln!(
+        std::io::stdout().lock(),
         "installed direct process/model and coordinator workflows completed; retain this directory for explicit restart replay"
-    );
+    )?;
     Ok(())
 }
 
@@ -478,8 +480,9 @@ fn replay(serving: &CliRunner, coordinator: &CliRunner, root: &Path) -> Evidence
         "replay.json",
         &json!({"schema_version":1,"direct_acceptances_retained":true,"single_workflow_attempts_retained":true,"output_bytes_rechecked":true}),
     )?;
-    println!(
+    writeln!(
+        std::io::stdout().lock(),
         "installed restart replay retained direct acceptances, outputs and single workflow attempts; external counters must be checked separately"
-    );
+    )?;
     Ok(())
 }
