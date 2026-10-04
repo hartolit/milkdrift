@@ -566,10 +566,20 @@ fn controller_artifact_charge_is_exact_replay_safe_abort_safe_and_restart_durabl
             budget.clone(),
             expected_usage,
         )?;
-        let _ = store.begin_publication(&exact)?;
+        assert_eq!(
+            store.begin_publication(&exact)?,
+            milkdrift_persistence::BeginArtifactOutcome::Writable
+        );
         let _ = store.write_chunk(exact.publication(), 0, exact_bytes)?;
-        let _ = store.commit_publication(exact.publication())?;
-        let _ = store.begin_publication(&exact)?;
+        assert!(matches!(
+            store.commit_publication(exact.publication())?,
+            milkdrift_persistence::CommitArtifactOutcome::Published { metadata, .. }
+                if &metadata == exact.metadata()
+        ));
+        assert_eq!(
+            store.begin_publication(&exact)?,
+            milkdrift_persistence::BeginArtifactOutcome::AlreadyCommitted(exact.metadata().clone())
+        );
         assert_eq!(
             store
                 .controller_account(&account)?
@@ -588,7 +598,10 @@ fn controller_artifact_charge_is_exact_replay_safe_abort_safe_and_restart_durabl
             budget.clone(),
             after_exact,
         )?;
-        let _ = store.begin_publication(&aborted)?;
+        assert_eq!(
+            store.begin_publication(&aborted)?,
+            milkdrift_persistence::BeginArtifactOutcome::Writable
+        );
         let _ = store.write_chunk(aborted.publication(), 0, b"a")?;
         store.abort_publication(aborted.publication())?;
         assert_eq!(
@@ -609,9 +622,16 @@ fn controller_artifact_charge_is_exact_replay_safe_abort_safe_and_restart_durabl
             budget.clone(),
             after_exact,
         )?;
-        let _ = store.begin_publication(&dedup)?;
+        assert_eq!(
+            store.begin_publication(&dedup)?,
+            milkdrift_persistence::BeginArtifactOutcome::Writable
+        );
         let _ = store.write_chunk(dedup.publication(), 0, exact_bytes)?;
-        let _ = store.commit_publication(dedup.publication())?;
+        assert!(matches!(
+            store.commit_publication(dedup.publication())?,
+            milkdrift_persistence::CommitArtifactOutcome::Published { metadata, .. }
+                if &metadata == dedup.metadata()
+        ));
         assert_eq!(
             store
                 .controller_account(&account)?
@@ -630,7 +650,10 @@ fn controller_artifact_charge_is_exact_replay_safe_abort_safe_and_restart_durabl
             budget,
             after_dedup,
         )?;
-        let _ = store.begin_publication(&excess)?;
+        assert_eq!(
+            store.begin_publication(&excess)?,
+            milkdrift_persistence::BeginArtifactOutcome::Writable
+        );
         let _ = store.write_chunk(excess.publication(), 0, b"x")?;
         assert!(matches!(
             store.commit_publication(excess.publication()),
@@ -902,9 +925,16 @@ fn publish_controller_artifacts(
             budget.clone(),
             store.workspace_usage(run)?,
         )?;
-        let _ = store.begin_publication(&request)?;
+        assert_eq!(
+            store.begin_publication(&request)?,
+            milkdrift_persistence::BeginArtifactOutcome::Writable
+        );
         let _ = store.write_chunk(&publication, 0, bytes)?;
-        let _ = store.commit_publication(&publication)?;
+        assert!(matches!(
+            store.commit_publication(&publication)?,
+            milkdrift_persistence::CommitArtifactOutcome::Published { metadata, .. }
+                if &metadata == request.metadata()
+        ));
     }
     Ok(())
 }

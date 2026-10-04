@@ -269,18 +269,21 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
             milkdrift_persistence::AttemptId::new(format!("attempt-controller-progress-{suffix}"))?;
         let reservation =
             ControllerReservationId::for_attempt(missing_usage.declaration().account(), &attempt)?;
-        let _ = missing_usage.admit(
-            reservation.clone(),
-            attempt,
-            CapabilityCategory::Model,
-            &InvocationAdmissionEnvelope::new(
-                milkdrift_capability::AdmissionUnit::ModelTokens,
-                AdmissionBound::NotApplicable,
-                output_bound,
-                AdmissionBound::NotApplicable,
-                cost_bound,
-            ),
-        )?;
+        assert!(matches!(
+            missing_usage.admit(
+                reservation.clone(),
+                attempt,
+                CapabilityCategory::Model,
+                &InvocationAdmissionEnvelope::new(
+                    milkdrift_capability::AdmissionUnit::ModelTokens,
+                    AdmissionBound::NotApplicable,
+                    output_bound,
+                    AdmissionBound::NotApplicable,
+                    cost_bound,
+                ),
+            )?,
+            ControllerAdmissionOutcome::Reserved { .. }
+        ));
         missing_usage.settle_terminal(&reservation, None)?;
         let progress = service.controller_lifecycle_owner().progress(
             &document,
@@ -337,18 +340,21 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
         contract_account.declaration().account(),
         &contract_attempt,
     )?;
-    let _ = contract_account.admit(
-        contract_reservation.clone(),
-        contract_attempt,
-        CapabilityCategory::Process,
-        &InvocationAdmissionEnvelope::new(
-            milkdrift_capability::AdmissionUnit::ModelTokens,
-            AdmissionBound::Bounded(5),
-            AdmissionBound::NotApplicable,
-            AdmissionBound::NotApplicable,
-            AdmissionBound::NotApplicable,
-        ),
-    )?;
+    assert!(matches!(
+        contract_account.admit(
+            contract_reservation.clone(),
+            contract_attempt,
+            CapabilityCategory::Process,
+            &InvocationAdmissionEnvelope::new(
+                milkdrift_capability::AdmissionUnit::ModelTokens,
+                AdmissionBound::Bounded(5),
+                AdmissionBound::NotApplicable,
+                AdmissionBound::NotApplicable,
+                AdmissionBound::NotApplicable,
+            ),
+        )?,
+        ControllerAdmissionOutcome::Reserved { .. }
+    ));
     contract_account.settle_terminal(
         &contract_reservation,
         Some(&AttemptUsage {
@@ -380,18 +386,21 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
         integrity_account.declaration().account(),
         &integrity_attempt,
     )?;
-    let _ = integrity_account.admit(
-        integrity_reservation.clone(),
-        integrity_attempt,
-        CapabilityCategory::Model,
-        &InvocationAdmissionEnvelope::new(
-            milkdrift_capability::AdmissionUnit::ModelTokens,
-            AdmissionBound::NotApplicable,
-            AdmissionBound::NotApplicable,
-            AdmissionBound::NotApplicable,
-            AdmissionBound::Bounded(AdmissionMonetaryBound::new(5, "USD")?),
-        ),
-    )?;
+    assert!(matches!(
+        integrity_account.admit(
+            integrity_reservation.clone(),
+            integrity_attempt,
+            CapabilityCategory::Model,
+            &InvocationAdmissionEnvelope::new(
+                milkdrift_capability::AdmissionUnit::ModelTokens,
+                AdmissionBound::NotApplicable,
+                AdmissionBound::NotApplicable,
+                AdmissionBound::NotApplicable,
+                AdmissionBound::Bounded(AdmissionMonetaryBound::new(5, "USD")?),
+            ),
+        )?,
+        ControllerAdmissionOutcome::Reserved { .. }
+    ));
     integrity_account.settle_terminal(
         &integrity_reservation,
         Some(&AttemptUsage {
