@@ -71,7 +71,6 @@ use read_model::{
     public_execution_authority, public_invocation_artifact, public_operation_contract,
     public_persistence, snake_debug, unauthorized,
 };
-use shutdown::EffectShutdownOutcome;
 
 const OWNER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
 const APPLICATION_COMMAND_SCHEMA_VERSION: u32 = 1;

@@ -164,6 +164,10 @@ pub(crate) fn router(host: DaemonHost) -> Router {
 }
 
 /// Serves until `shutdown` resolves, then closes admission, drains the host, and joins it.
+///
+/// # Errors
+/// Returns listener/serving errors and propagates incomplete or failed host shutdown.
+/// A closed shutdown-result channel also fails rather than implying successful cleanup.
 pub async fn serve<F>(
     listener: tokio::net::TcpListener,
     host: DaemonHost,
@@ -184,7 +188,9 @@ where
         if let Err(error) = &result {
             warn!(phase = "shutdown", outcome = "error", "{error}");
         }
-        let _ = shutdown_result.send(result);
+        if shutdown_result.send(result).is_err() {
+            tracing::debug!("host shutdown finished after the HTTP caller stopped waiting");
+        }
     };
     axum::serve(listener, router(host))
         .with_graceful_shutdown(graceful)

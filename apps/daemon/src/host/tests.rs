@@ -235,9 +235,13 @@ async fn owner_queue_overload_and_dropped_reply_release_occupancy()
     drop(abandoned);
     let mut request = OwnerRequest {
         execute: Box::new(move |_| {
-            let _ = entered.send(());
+            assert!(entered.send(()).is_ok());
             let outcome = released.recv_timeout(Duration::from_secs(5));
-            let _ = reply.send(outcome);
+            assert!(outcome.is_ok());
+            assert!(
+                reply.send(outcome).is_err(),
+                "caller intentionally abandoned this reply"
+            );
         }),
         stop_owner: false,
         queued: None,
@@ -252,7 +256,7 @@ async fn owner_queue_overload_and_dropped_reply_release_occupancy()
     let (reply, response) = oneshot::channel();
     let mut queued = OwnerRequest {
         execute: Box::new(move |owner| {
-            let _ = reply.send(owner.now());
+            assert!(reply.send(owner.now()).is_ok());
         }),
         stop_owner: false,
         queued: None,
@@ -323,8 +327,8 @@ async fn shutdown_retries_a_full_owner_queue_within_its_existing_deadline()
     let (release, released) = sync_channel(1);
     let mut blocking = OwnerRequest {
         execute: Box::new(move |_| {
-            let _ = entered.send(());
-            let _ = released.recv_timeout(Duration::from_secs(5));
+            assert!(entered.send(()).is_ok());
+            assert!(released.recv_timeout(Duration::from_secs(5)).is_ok());
         }),
         stop_owner: false,
         queued: None,

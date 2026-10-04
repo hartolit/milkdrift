@@ -54,7 +54,11 @@ impl OwnerQueue {
                     owner_thread,
                     "durable operation escaped the daemon owner thread"
                 );
-                let _ = reply.send(operation());
+                if reply.send(operation()).is_err() {
+                    tracing::debug!(
+                        "durable operation completed after its caller stopped waiting; retained evidence governs retry"
+                    );
+                }
             }),
             stop_owner: false,
             queued: None,
@@ -101,7 +105,7 @@ impl OwnerCallFailure {
     }
 }
 
-use super::{DaemonHost, EffectShutdownOutcome, Owner, PublicFailure, health::QueuedRequestGuard};
+use super::{DaemonHost, Owner, PublicFailure, health::QueuedRequestGuard};
 use milkdrift_control_protocol::ErrorCode;
 use std::{sync::mpsc::Receiver, sync::mpsc::RecvTimeoutError, time::Duration};
 use tokio::sync::oneshot;
@@ -172,14 +176,23 @@ impl DaemonHost {
         let mut pending = OwnerRequest {
             execute: Box::new(move |owner| {
                 if require_ready && !request_health.accepting_controls() {
-                    let _ = reply.send(Err(PublicFailure::new(
-                        ErrorCode::Unavailable,
-                        "daemon is not ready",
-                        true,
-                    )));
+                    if reply
+                        .send(Err(PublicFailure::new(
+                            ErrorCode::Unavailable,
+                            "daemon is not ready",
+                            true,
+                        )))
+                        .is_err()
+                    {
+                        tracing::debug!("control caller left before receiving readiness refusal");
+                    }
                     return;
                 }
-                let _ = reply.send(operation(owner));
+                if reply.send(operation(owner)).is_err() {
+                    tracing::debug!(
+                        "control operation completed after its caller stopped waiting; retained evidence governs retry"
+                    );
+                }
             }),
             stop_owner,
             queued: None,
@@ -282,7 +295,7 @@ impl Owner {
                 }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
-                    let _ = self.shutdown(health, None, EffectShutdownOutcome::failed());
+                    self.shutdown_without_caller(health);
                     return;
                 }
             }

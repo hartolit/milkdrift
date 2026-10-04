@@ -23,14 +23,37 @@ impl DaemonHost {
             .map_err(|error| HostError::Shutdown(error.message));
         self.health.set_lifecycle(Lifecycle::Draining);
         let registries = self.peer_registries.values().cloned().collect::<Vec<_>>();
-        tokio::task::spawn_blocking(move || {
+        let disconnected = tokio::task::spawn_blocking(move || {
+            let mut failure = None;
             for registry in registries {
-                let _ = registry.disconnect();
+                if let Err(error) = registry.disconnect() {
+                    warn!(
+                        phase = "draining",
+                        "peer disconnect failed: {}",
+                        bounded(&error.to_string())
+                    );
+                    if failure.is_none() {
+                        failure = Some(error);
+                    }
+                }
             }
+            failure.map_or(Ok(()), |error| {
+                Err(HostError::Shutdown(format!(
+                    "peer disconnect failed: {}",
+                    bounded(&error.to_string())
+                )))
+            })
         })
         .await
-        .map_err(|_| HostError::Shutdown("peer disconnect task failed".to_owned()))?;
-        durable
+        .map_err(|_| HostError::Shutdown("peer disconnect task failed".to_owned()))
+        .and_then(|result| result);
+        match (durable, disconnected) {
+            (Err(durable), Err(disconnected)) => {
+                Err(HostError::Shutdown(format!("{durable}; {disconnected}")))
+            }
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Ok(()), Ok(())) => Ok(()),
+        }
     }
 
     /// Closes admission, drains peer/effect workers under policy, and joins the owner thread.
@@ -38,6 +61,10 @@ impl DaemonHost {
     /// An error can follow completed cleanup when effects remain unresolved or a worker/owner
     /// failed. Inspect retained work after recovery; the error is not permission to replay an
     /// external effect with a new identity.
+    ///
+    /// # Errors
+    /// Returns admission-close, peer-disconnect, queue, deadline or joining failures, and
+    /// reports retained invocations when cleanup cannot establish a clean shutdown.
     pub async fn shutdown(&self) -> Result<(), HostError> {
         let shutdown_started = std::time::Instant::now();
         let drain_error = self.begin_draining().await.err();
@@ -227,6 +254,59 @@ pub(super) fn shutdown_effect_workers(
 }
 
 impl Owner {
+    // With every sender gone, worker persistence calls refuse immediately instead of waiting
+    // on this owner. It can therefore join workers here before releasing durable storage.
+    pub(super) fn shutdown_without_caller(&mut self, health: &SharedHealth) {
+        let started = std::time::Instant::now();
+        let deadline = Duration::from_millis(self.shutdown.deadline_ms);
+        if let Some(workflow) = &self.workflow {
+            workflow.runtime.begin_shutdown();
+        }
+        let peer = self
+            .peer_service
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
+            .map(|service| service.shutdown_workers(deadline));
+        let effects = if let Some(workers) = self.effect_workers.take() {
+            shutdown_effect_workers(
+                &workers,
+                EffectShutdownMode::Retain,
+                deadline.saturating_sub(started.elapsed()),
+                health,
+            )
+        } else {
+            match self
+                .capability_host
+                .shutdown_with_deadline(false, deadline.saturating_sub(started.elapsed()))
+            {
+                Ok(Some(report)) => EffectShutdownOutcome {
+                    clean: report.unresolved_invocations.is_empty(),
+                    unresolved_invocations: report.unresolved_invocations.len(),
+                    outstanding_effects: 0,
+                },
+                Ok(None) | Err(_) => EffectShutdownOutcome::failed(),
+            }
+        };
+        match self.shutdown(health, peer, effects) {
+            Ok(ShutdownOutcome {
+                clean: true,
+                unresolved: 0,
+            }) => {}
+            Ok(outcome) => {
+                health.failure("shutdown after caller disconnect remains unconfirmed");
+                warn!(
+                    unresolved = outcome.unresolved,
+                    "caller disconnected with unresolved shutdown work"
+                );
+            }
+            Err(error) => {
+                health.failure("shutdown after caller disconnect failed");
+                health.set_lifecycle(Lifecycle::Failed);
+                warn!(code = ?error.code, "shutdown after caller disconnect failed");
+            }
+        }
+    }
+
     pub(super) fn take_effect_workers_for_shutdown(
         &mut self,
     ) -> Result<Option<(EffectWorkerHost, EffectShutdownMode)>, PublicFailure> {

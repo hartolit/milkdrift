@@ -64,6 +64,13 @@ and starts workers before returning ready. `serve` connects a listener and shutd
 that host. A caller embedding the library must arrange orderly shutdown; dropping a socket is
 not the completion of the host's lifecycle.
 
+Startup failure attempts bounded rollback and includes unconfirmed cleanup in the returned error.
+If the last library caller disappears, the owner closes worker admission and attempts shutdown
+before releasing storage; retained work remains uncertain when that deadline expires. Ordinary
+shutdown reports peer disconnect failures after attempting every registry. Input upload errors
+also identify unconfirmed publication aborts, preserving the original error and the exact upload
+identity for retry or startup orphan recovery.
+
 The private modules divide that operation:
 
 - `config` compiles operator choices; `auth` maps rotating credential sources to exact grants.
