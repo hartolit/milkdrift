@@ -255,7 +255,7 @@ impl RuntimeService {
                 Vec::new(),
                 RunCommand::RequestCancellation,
             )?;
-            let _ = self.handle_internal_command(&cancel)?;
+            self.handle_internal_command(&cancel)?;
             child = self.projection(&attached.run)?;
         } else if child.lifecycle() == RunLifecycle::Created {
             let start = RunCommandDocument::new(
@@ -268,7 +268,7 @@ impl RuntimeService {
                 Vec::new(),
                 RunCommand::StartRun,
             )?;
-            let _ = self.handle_internal_command(&start)?;
+            self.handle_internal_command(&start)?;
             child = self.projection(&attached.run)?;
         }
         Ok(child)
@@ -365,7 +365,7 @@ impl RuntimeService {
                     });
             }
         }
-        let _ = self.commit_internal_plan(
+        self.commit_internal_plan(
             parent_run,
             now,
             SystemTransition::ObserveChildTerminal,

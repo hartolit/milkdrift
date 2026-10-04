@@ -348,7 +348,7 @@ impl RuntimeService {
             error_class: ErrorClass::InvalidRequest,
             detail: Some(BoundedDetail::new(detail)?),
         });
-        let _ = self.commit_internal_plan(
+        self.commit_internal_plan(
             run,
             occurred_at,
             SystemTransition::TerminalizePreDispatchFailure {
@@ -370,7 +370,7 @@ impl RuntimeService {
             execution: execution.clone(),
             authorization,
         });
-        let _ = self.commit_internal_plan(
+        self.commit_internal_plan(
             run,
             occurred_at,
             SystemTransition::TerminalizePreDispatchFailure {

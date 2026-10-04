@@ -129,7 +129,7 @@ impl RuntimeService {
                             Vec::new(),
                             RunCommand::FireTimer { timer: timer.timer },
                         )?;
-                        let _ = self.handle_internal_command(&command)?;
+                        self.handle_internal_command(&command)?;
                     }
                 }
                 self.propagate_cancellation(now, limit)?;
@@ -218,7 +218,7 @@ impl RuntimeService {
                     workspace,
                     ..CommandPlan::default()
                 };
-                let _ = self.commit_internal_plan(
+                self.commit_internal_plan(
                     &summary.run,
                     now,
                     SystemTransition::DriveStructuredProgress,
@@ -309,7 +309,7 @@ impl RuntimeService {
                         execution,
                     });
                 }
-                let _ = self.commit_internal_plan(
+                self.commit_internal_plan(
                     &summary.run,
                     now,
                     SystemTransition::RestartReconciledExecution,

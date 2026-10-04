@@ -298,7 +298,7 @@ impl RuntimeService {
                 ],
                 ..CommandPlan::default()
             };
-            let _ = self.commit_internal_plan(
+            self.commit_internal_plan(
                 run,
                 now,
                 SystemTransition::DenyCapabilityEntry {
@@ -593,7 +593,7 @@ impl RuntimeService {
                 ),
             }
         }
-        let _ = self.commit_internal_plan(
+        self.commit_internal_plan(
             run,
             now,
             SystemTransition::DispatchOutcomeUncertain {

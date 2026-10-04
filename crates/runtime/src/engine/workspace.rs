@@ -233,7 +233,7 @@ impl RuntimeService {
                             key
                         )));
                     }
-                    let _ = self.projected_latest_workspace_value(
+                    self.projected_latest_workspace_value(
                         projection,
                         input_scope,
                         &key,

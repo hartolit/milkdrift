@@ -18,7 +18,7 @@ pub(super) mod serde_map {
 
     use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
-    pub fn serialize<K, V, S>(map: &BTreeMap<K, V>, serializer: S) -> Result<S::Ok, S::Error>
+    pub(crate) fn serialize<K, V, S>(map: &BTreeMap<K, V>, serializer: S) -> Result<S::Ok, S::Error>
     where
         K: Serialize + Ord,
         V: Serialize,
@@ -27,7 +27,7 @@ pub(super) mod serde_map {
         map.iter().collect::<Vec<_>>().serialize(serializer)
     }
 
-    pub fn deserialize<'de, K, V, D>(deserializer: D) -> Result<BTreeMap<K, V>, D::Error>
+    pub(crate) fn deserialize<'de, K, V, D>(deserializer: D) -> Result<BTreeMap<K, V>, D::Error>
     where
         K: Deserialize<'de> + Ord,
         V: Deserialize<'de>,
@@ -101,7 +101,7 @@ pub use structured::{
     IterationState, JoinProjection, RepeatContinuationDecisionProjection,
     RepeatContinuationProjection, RepeatContinuationRequestProjection, RepeatTermination,
     SignalProjection, SubworkflowOutputImport, SubworkflowProjection, SubworkflowState,
-    WaitCancellationProjection, WaitProjection,
+    SubworkflowUsageSummary, WaitCancellationProjection, WaitProjection,
 };
 
 #[cfg(test)]

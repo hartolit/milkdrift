@@ -21,6 +21,9 @@ use milkdrift_workspace::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::Ordering;
 
+#[cfg(test)]
+mod tests;
+
 type DiscoveryExpectations = (
     Vec<RunnableIndexEntry>,
     Vec<TimerIndexEntry>,
@@ -365,16 +368,12 @@ impl RuntimeService {
         if requested == 0 || !self.structured_scan_budget_active.load(Ordering::Acquire) {
             return requested;
         }
-        let mut claimed = 0;
-        let _ = self.structured_scan_budget.try_update(
-            Ordering::AcqRel,
-            Ordering::Acquire,
-            |remaining| {
-                claimed = requested.min(remaining);
-                Some(remaining.saturating_sub(claimed))
-            },
-        );
-        claimed
+        let previous =
+            self.structured_scan_budget
+                .update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                    remaining.saturating_sub(requested)
+                });
+        requested.min(previous)
     }
 
     pub(super) fn runnable_executions(

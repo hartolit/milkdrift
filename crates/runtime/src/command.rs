@@ -773,7 +773,7 @@ impl RunCommandDocument {
             }
             _ => {}
         }
-        let _ = self.to_canonical_json()?;
+        self.to_canonical_json()?;
         Ok(())
     }
 }

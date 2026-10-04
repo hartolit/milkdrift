@@ -308,7 +308,7 @@ impl RuntimeService {
                         | RecoveryClassification::Uncertain => {}
                     }
                 }
-                let _ = self.commit_internal_plan(
+                self.commit_internal_plan(
                     &summary.run,
                     now,
                     SystemTransition::RecoverNonterminalRun,
@@ -935,7 +935,7 @@ impl RuntimeService {
                 }
             }
             if !propagation.events.is_empty() {
-                let _ = self.commit_internal_plan(
+                self.commit_internal_plan(
                     &summary.run,
                     now,
                     SystemTransition::PropagateStructuredCancellation,

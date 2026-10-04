@@ -18,7 +18,7 @@ use crate::RuntimeError;
 
 /// Historical execution state considered by prospective reconciliation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum HistoricalExecutionState {
+pub(crate) enum HistoricalExecutionState {
     /// Execution has not crossed its scheduling/dispatch boundary.
     Pending,
     /// An attempt is scheduled, leased, or running.
@@ -61,7 +61,7 @@ impl HistoricalExecutionState {
 /// One semantic node may execute repeatedly in independent branch, iteration, and
 /// subworkflow scopes. Reconciliation therefore retains each execution separately.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NodeHistory {
+pub(crate) struct NodeHistory {
     execution: NodeExecutionId,
     scope: ScopeReference,
     created_sequence: RunSequence,
@@ -71,7 +71,7 @@ pub struct NodeHistory {
 impl NodeHistory {
     /// Constructs one exact scoped execution history.
     #[must_use]
-    pub const fn new(
+    pub(crate) const fn new(
         execution: NodeExecutionId,
         scope: ScopeReference,
         created_sequence: RunSequence,
@@ -87,26 +87,26 @@ impl NodeHistory {
 
     /// Stable logical execution identity.
     #[must_use]
-    pub const fn execution(&self) -> &NodeExecutionId {
+    pub(crate) const fn execution(&self) -> &NodeExecutionId {
         &self.execution
     }
 
     /// Exact branch, iteration, subworkflow, or run-root scope.
     #[must_use]
-    pub const fn scope(&self) -> &ScopeReference {
+    pub(crate) const fn scope(&self) -> &ScopeReference {
         &self.scope
     }
 
     /// Sequence at which this execution became eligible.
     #[must_use]
-    pub const fn created_sequence(&self) -> RunSequence {
+    pub(crate) const fn created_sequence(&self) -> RunSequence {
         self.created_sequence
     }
 }
 
 /// Immutable persisted prospective reconciliation plan.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReconciliationPlan {
+pub(crate) struct ReconciliationPlan {
     reconciliation: ReconciliationId,
     plan: ReconciliationPlanId,
     from_revision: milkdrift_blueprint::RevisionId,
@@ -181,13 +181,13 @@ impl ReconciliationPlan {
     /// Closed classifications and prospective actions.
     #[cfg(test)]
     #[must_use]
-    pub fn items(&self) -> &[ReconciliationItem] {
+    fn items(&self) -> &[ReconciliationItem] {
         &self.items
     }
 
     /// Event fact persisted before any plan application.
     #[must_use]
-    pub fn recorded_event(&self) -> RunEventKind {
+    pub(crate) fn recorded_event(&self) -> RunEventKind {
         RunEventKind::ReconciliationPlanRecorded {
             reconciliation: self.reconciliation.clone(),
             plan: self.plan.clone(),
@@ -201,7 +201,7 @@ impl ReconciliationPlan {
     /// Returns whether at least one item requires an authority decision.
     #[cfg(test)]
     #[must_use]
-    pub fn requires_authority(&self) -> bool {
+    fn requires_authority(&self) -> bool {
         self.items
             .iter()
             .any(|item| item.action == ReconciliationAction::RequireAuthority)
@@ -210,7 +210,7 @@ impl ReconciliationPlan {
     /// Returns whether the plan contains an impossible retrospective rewrite.
     #[cfg(test)]
     #[must_use]
-    pub fn is_rejected(&self) -> bool {
+    fn is_rejected(&self) -> bool {
         self.items
             .iter()
             .any(|item| item.action == ReconciliationAction::RejectRetrospectiveRewrite)
@@ -224,7 +224,7 @@ impl ReconciliationPlan {
 /// recording approval or applying changes. Application must reject intervening work that
 /// makes the plan stale instead of silently replanning under an old approval. Completed
 /// and committed work retain their original meaning even if their nodes change or disappear.
-pub fn plan_reconciliation(
+pub(crate) fn plan_reconciliation(
     reconciliation: ReconciliationId,
     plan: ReconciliationPlanId,
     old: &BlueprintRevision,
