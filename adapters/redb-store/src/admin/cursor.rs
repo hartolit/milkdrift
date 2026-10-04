@@ -17,6 +17,9 @@ use super::{
 const INTEGRITY_CURSOR_VERSION: u8 = 3;
 const INTEGRITY_CURSOR_PREFIX_BYTES: usize = 33;
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) fn make_integrity_cursor(
     family: IntegrityScanFamily,
     key: &[u8],
@@ -33,16 +36,20 @@ pub(crate) fn make_integrity_cursor(
 pub(crate) fn integrity_cursor_state(
     cursor: &IntegrityScanCursor,
 ) -> Result<([u8; 32], &[u8]), PersistenceError> {
-    if cursor.after_key().len() <= INTEGRITY_CURSOR_PREFIX_BYTES
-        || cursor.after_key()[0] != INTEGRITY_CURSOR_VERSION
-    {
+    let Some((&INTEGRITY_CURSOR_VERSION, rest)) = cursor.after_key().split_first() else {
         return Err(PersistenceError::InvalidCursor(
             "integrity cursor has an invalid schema-anchor prefix".to_owned(),
         ));
-    }
-    let mut anchor = [0_u8; 32];
-    anchor.copy_from_slice(&cursor.after_key()[1..INTEGRITY_CURSOR_PREFIX_BYTES]);
-    Ok((anchor, &cursor.after_key()[INTEGRITY_CURSOR_PREFIX_BYTES..]))
+    };
+    let Some((anchor, key)) = rest
+        .split_first_chunk::<32>()
+        .filter(|(_, key)| !key.is_empty())
+    else {
+        return Err(PersistenceError::InvalidCursor(
+            "integrity cursor has an invalid schema-anchor prefix".to_owned(),
+        ));
+    };
+    Ok((*anchor, key))
 }
 
 pub(crate) fn integrity_cursor_anchor(
@@ -134,24 +141,21 @@ pub(crate) type ArtifactDigestCursorState<'a> = (u64, Option<String>, u64, Optio
 pub(crate) fn parse_artifact_digest_cursor(
     state: &[u8],
 ) -> Result<ArtifactDigestCursorState<'_>, PersistenceError> {
-    if state.len() < 18 {
+    let Some((header, payload)) = state.split_first_chunk::<18>() else {
         return Err(PersistenceError::InvalidCursor(
             "artifact digest integrity cursor state is truncated".to_owned(),
         ));
-    }
-    let total = u64::from_be_bytes(state[0..8].try_into().map_err(|_| {
+    };
+    let total = u64::from_be_bytes(header[0..8].try_into().map_err(|_| {
         PersistenceError::InvalidCursor("artifact digest total is malformed".to_owned())
     })?);
-    let size = u64::from_be_bytes(state[8..16].try_into().map_err(|_| {
+    let size = u64::from_be_bytes(header[8..16].try_into().map_err(|_| {
         PersistenceError::InvalidCursor("artifact digest size is malformed".to_owned())
     })?);
-    let digest_length = usize::from(u16::from_be_bytes(state[16..18].try_into().map_err(
+    let digest_length = usize::from(u16::from_be_bytes(header[16..18].try_into().map_err(
         |_| PersistenceError::InvalidCursor("artifact digest length is malformed".to_owned()),
     )?));
-    let digest_end = 18_usize.checked_add(digest_length).ok_or_else(|| {
-        PersistenceError::InvalidCursor("artifact digest cursor length overflows".to_owned())
-    })?;
-    let digest_bytes = state.get(18..digest_end).ok_or_else(|| {
+    let (digest_bytes, key) = payload.split_at_checked(digest_length).ok_or_else(|| {
         PersistenceError::InvalidCursor("artifact digest cursor is truncated".to_owned())
     })?;
     let digest = if digest_bytes.is_empty() {
@@ -167,12 +171,11 @@ pub(crate) fn parse_artifact_digest_cursor(
                 .to_owned(),
         )
     };
-    let key = state
-        .get(digest_end..)
-        .filter(|key| !key.is_empty())
-        .ok_or_else(|| {
-            PersistenceError::InvalidCursor("artifact digest cursor has no physical key".to_owned())
-        })?;
+    if key.is_empty() {
+        return Err(PersistenceError::InvalidCursor(
+            "artifact digest cursor has no physical key".to_owned(),
+        ));
+    }
     Ok((total, digest, size, Some(key)))
 }
 
@@ -256,35 +259,29 @@ pub(crate) type DeleteGuardCursorState<'a> = (&'a [u8], bool, Option<&'a [u8]>);
 pub(crate) fn parse_delete_guard_cursor(
     state: &[u8],
 ) -> Result<DeleteGuardCursorState<'_>, PersistenceError> {
-    if state.len() < 4 || state[0] != DELETE_GUARD_CURSOR_VERSION {
+    let [DELETE_GUARD_CURSOR_VERSION, high, low, phase, payload @ ..] = state else {
         return Err(PersistenceError::InvalidCursor(
             "artifact delete-guard cursor is malformed".to_owned(),
         ));
-    }
-    let guard_length = usize::from(u16::from_be_bytes([state[1], state[2]]));
-    let guard_end = 4_usize.checked_add(guard_length).ok_or_else(|| {
-        PersistenceError::InvalidCursor("artifact delete-guard cursor overflows".to_owned())
-    })?;
-    let guard = state
-        .get(4..guard_end)
-        .filter(|key| !key.is_empty())
+    };
+    let guard_length = usize::from(u16::from_be_bytes([*high, *low]));
+    let (guard, path) = payload
+        .split_at_checked(guard_length)
+        .filter(|(key, _)| !key.is_empty())
         .ok_or_else(|| {
             PersistenceError::InvalidCursor(
                 "artifact delete-guard cursor has no guard key".to_owned(),
             )
         })?;
-    match state[3] {
-        0 if state.len() == guard_end => Ok((guard, false, None)),
-        1 if state.len() == guard_end => Ok((guard, true, None)),
+    match phase {
+        0 if path.is_empty() => Ok((guard, false, None)),
+        1 if path.is_empty() => Ok((guard, true, None)),
         2 => {
-            let path = state
-                .get(guard_end..)
-                .filter(|key| !key.is_empty())
-                .ok_or_else(|| {
-                    PersistenceError::InvalidCursor(
-                        "artifact delete-guard cursor has no path key".to_owned(),
-                    )
-                })?;
+            if path.is_empty() {
+                return Err(PersistenceError::InvalidCursor(
+                    "artifact delete-guard cursor has no path key".to_owned(),
+                ));
+            }
             Ok((guard, true, Some(path)))
         }
         _ => Err(PersistenceError::InvalidCursor(
