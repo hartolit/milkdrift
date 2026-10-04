@@ -106,7 +106,7 @@ fn older_and_future_internal_document_formats_are_refused_without_migration()
                 document: "redb internal document envelope",
                 found: observed,
                 supported: 20,
-            }) if observed == found as u32
+            }) if u64::from(observed) == found
         ));
     }
     Ok(())

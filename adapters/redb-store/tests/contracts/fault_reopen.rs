@@ -38,7 +38,7 @@ fn older_and_future_storage_schemas_are_refused() -> Result<(), Box<dyn std::err
                 document: "storage",
                 found: observed,
                 supported: 16
-            }) if observed == found as u32
+            }) if u64::from(observed) == found
         ));
     }
     Ok(())
@@ -358,7 +358,7 @@ fn malformed_stored_event_is_classified_as_corruption() -> Result<(), Box<dyn st
     {
         let mut events = write.open_table(EVENTS)?;
         let mut key = Vec::new();
-        key.extend_from_slice(&(run.as_str().len() as u32).to_be_bytes());
+        key.extend_from_slice(&u32::try_from(run.as_str().len())?.to_be_bytes());
         key.extend_from_slice(run.as_str().as_bytes());
         key.extend_from_slice(&1_u64.to_be_bytes());
         events.insert(key.as_slice(), b"not-json".as_slice())?;
@@ -518,7 +518,7 @@ fn missing_or_lowered_journal_heads_are_never_interpreted_as_empty()
     {
         let mut events = write.open_table(EVENTS)?;
         let mut key = Vec::new();
-        key.extend_from_slice(&(first.receipt().run().as_str().len() as u32).to_be_bytes());
+        key.extend_from_slice(&u32::try_from(first.receipt().run().as_str().len())?.to_be_bytes());
         key.extend_from_slice(first.receipt().run().as_str().as_bytes());
         key.extend_from_slice(&RunSequence::FIRST.get().to_be_bytes());
         let _removed = events.remove(key.as_slice())?;

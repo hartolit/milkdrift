@@ -66,14 +66,28 @@ fn setup(store: &RedbStore) -> TestResult<CapabilityDescriptor> {
     let mut value: serde_json::Value = serde_json::from_slice(include_bytes!(
         "../../../../crates/capability/tests/fixtures/descriptor-v1.json"
     ))?;
-    value["descriptor"]["descriptor_revision"] = json!(1);
-    value["descriptor"]["extensions"][MANAGED_BINDING_EXTENSION] = serde_json::to_value(binding)?;
+    *value
+        .pointer_mut("/descriptor/descriptor_revision")
+        .ok_or("missing descriptor revision")? = json!(1);
+    value
+        .pointer_mut("/descriptor/extensions")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing descriptor extensions")?
+        .insert(
+            MANAGED_BINDING_EXTENSION.to_owned(),
+            serde_json::to_value(binding)?,
+        );
     let descriptor = CapabilityDescriptorDocument::from_json(&serde_json::to_vec(&value)?)?
         .body()
         .clone();
-    value["descriptor"]["identity"] = json!("independent-model");
-    value["descriptor"]["extensions"][MANAGED_BINDING_EXTENSION]["resources"] =
-        json!([{"resource":"attached","mutation":false}]);
+    *value
+        .pointer_mut("/descriptor/identity")
+        .ok_or("missing descriptor identity")? = json!("independent-model");
+    *value
+        .pointer_mut("/descriptor/extensions")
+        .and_then(|extensions| extensions.get_mut(MANAGED_BINDING_EXTENSION))
+        .and_then(|binding| binding.get_mut("resources"))
+        .ok_or("missing binding resources")? = json!([{"resource":"attached","mutation":false}]);
     let reader = CapabilityDescriptorDocument::from_json(&serde_json::to_vec(&value)?)?
         .body()
         .clone();

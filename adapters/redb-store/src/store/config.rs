@@ -18,6 +18,10 @@ pub(crate) const DEFAULT_MAX_ACTIVE_PUBLICATIONS: u32 = 4096;
 /// Injected clock sampled within storage transactions for durable boundary facts.
 pub trait StoreClock: Send + Sync {
     /// Returns the current timestamp for a watermark, publication, or archival observation.
+    ///
+    /// # Errors
+    /// Returns clock sampling failures. The system implementation refuses pre-epoch time
+    /// and timestamps that cannot be represented as `u64` milliseconds.
     fn now(&self) -> Result<TimestampMillis, PersistenceError>;
 }
 

@@ -550,11 +550,10 @@ pub(crate) fn validate_nonterminal_membership(
         .map_err(error::redb)?
         .map(|marker| marker.value());
     match (summary.state, marker) {
-        (IndexedRunState::Terminal, None) => Ok(()),
         (IndexedRunState::Terminal, Some(_)) => Err(error::corruption(
             "terminal run remains in nonterminal discovery",
         )),
-        (_, Some(1)) => Ok(()),
+        (IndexedRunState::Terminal, None) | (_, Some(1)) => Ok(()),
         (_, Some(_)) => Err(error::corruption(
             "nonterminal discovery contains an invalid marker",
         )),
@@ -575,11 +574,10 @@ pub(crate) fn validate_nonterminal_membership_in_transaction(
         .map_err(error::redb)?
         .map(|marker| marker.value());
     match (summary.state, marker) {
-        (IndexedRunState::Terminal, None) => Ok(()),
         (IndexedRunState::Terminal, Some(_)) => Err(error::corruption(
             "terminal run remains in nonterminal discovery",
         )),
-        (_, Some(1)) => Ok(()),
+        (IndexedRunState::Terminal, None) | (_, Some(1)) => Ok(()),
         (_, Some(_)) => Err(error::corruption(
             "nonterminal discovery contains an invalid marker",
         )),

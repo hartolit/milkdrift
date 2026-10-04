@@ -149,7 +149,7 @@ fn serving_output_and_transfer_have_distinct_durable_owners_without_runs()
         ArtifactPublicationId::new("host-output-publication")?,
         host.clone(),
         invocation,
-        metadata.clone(),
+        metadata,
         budget.clone(),
         WorkspaceUsage::EMPTY,
     )?;

@@ -74,7 +74,10 @@ fn runnable_page_is_bounded_by_distinct_runs_not_noisy_run_rows()
         }
     }
     assert_eq!(one_at_a_time.len(), 2);
-    assert_ne!(one_at_a_time[0].run, one_at_a_time[1].run);
+    let [first, second] = one_at_a_time.as_slice() else {
+        return Err("expected two runnable entries".into());
+    };
+    assert_ne!(first.run, second.run);
     assert!(one_at_a_time.iter().any(|entry| entry.run == quiet_run));
     Ok(())
 }
@@ -122,7 +125,10 @@ fn runnable_pages_advance_across_future_rows_and_removed_anchors()
         PageSize::new(1)?,
     )?;
     assert_eq!(second.entries.len(), 1);
-    assert_eq!(second.entries[0].run, eligible_run);
+    assert_eq!(
+        second.entries.first().ok_or("missing eligible entry")?.run,
+        eligible_run
+    );
 
     let anchor_directory = TempDir::new()?;
     let anchor_store = RedbStore::open(anchor_directory.path())?;
@@ -150,7 +156,10 @@ fn runnable_pages_advance_across_future_rows_and_removed_anchors()
     let first_page =
         anchor_store.runnable_page(TimestampMillis::new(10), None, PageSize::new(1)?)?;
     assert_eq!(first_page.entries.len(), 1);
-    assert_eq!(first_page.entries[0].run, first_run);
+    assert_eq!(
+        first_page.entries.first().ok_or("missing first entry")?.run,
+        first_run
+    );
     let removal = accepted_followup_request(
         first_run.clone(),
         "command-remove-anchor",
@@ -177,7 +186,14 @@ fn runnable_pages_advance_across_future_rows_and_removed_anchors()
         PageSize::new(1)?,
     )?;
     assert_eq!(second_page.entries.len(), 1);
-    assert_eq!(second_page.entries[0].run, second_run);
+    assert_eq!(
+        second_page
+            .entries
+            .first()
+            .ok_or("missing second entry")?
+            .run,
+        second_run
+    );
     assert!(second_page.next.is_none());
     Ok(())
 }
@@ -275,7 +291,7 @@ fn summary_and_nonterminal_cursors_advance_by_last_scanned_head()
         workflow: Some(WorkflowId::new("workflow-empty")?),
     };
     let first = store.run_summaries(&RunSummaryPageQuery {
-        filter: empty_filter.clone(),
+        filter: empty_filter,
         cursor: None,
         limit: PageSize::new(1)?,
     })?;
@@ -312,7 +328,10 @@ fn summary_and_nonterminal_cursors_advance_by_last_scanned_head()
         cursor = Some(next);
     }
     assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].run, matching_run);
+    assert_eq!(
+        matches.first().ok_or("missing matching entry")?.run,
+        matching_run
+    );
 
     let terminal_directory = TempDir::new()?;
     let terminal_store = RedbStore::open(terminal_directory.path())?;
@@ -348,7 +367,15 @@ fn summary_and_nonterminal_cursors_advance_by_last_scanned_head()
     )?)?;
     let terminal_page = terminal_store.nonterminal_run_page(None, PageSize::new(2)?)?;
     assert_eq!(terminal_page.runs.len(), 1);
-    assert_eq!(terminal_page.runs[0].run.as_str(), "run-terminal-z-active");
+    assert_eq!(
+        terminal_page
+            .runs
+            .first()
+            .ok_or("missing terminal run")?
+            .run
+            .as_str(),
+        "run-terminal-z-active"
+    );
     assert!(terminal_page.next.is_none());
     Ok(())
 }

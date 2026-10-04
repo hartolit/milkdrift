@@ -91,10 +91,15 @@ fn revision_lookup_and_integrity_scan_detect_physical_key_mismatches()
         let mut revisions = write.open_table(REVISIONS)?;
         revisions.insert(wrong_revision.as_str(), revision_bytes.as_slice())?;
         let mut events = write.open_table(EVENTS)?;
-        let event_bytes = request.events()[0].to_canonical_json()?;
+        let event_bytes = request
+            .events()
+            .first()
+            .ok_or("missing accepted event")?
+            .to_canonical_json()?;
         let mut wrong_event_key = Vec::new();
-        wrong_event_key
-            .extend_from_slice(&(request.receipt().run().as_str().len() as u32).to_be_bytes());
+        wrong_event_key.extend_from_slice(
+            &u32::try_from(request.receipt().run().as_str().len())?.to_be_bytes(),
+        );
         wrong_event_key.extend_from_slice(request.receipt().run().as_str().as_bytes());
         wrong_event_key.extend_from_slice(&2_u64.to_be_bytes());
         events.insert(wrong_event_key.as_slice(), event_bytes.as_slice())?;

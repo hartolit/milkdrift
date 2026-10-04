@@ -52,7 +52,7 @@ pub(super) fn read_file(path: &Path) -> Result<File, PersistenceError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
-        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
+        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits().cast_signed());
     }
     #[cfg(windows)]
     {
@@ -147,7 +147,11 @@ pub(super) fn hash_file(path: &Path) -> Result<(u64, String), PersistenceError> 
         size = size
             .checked_add(count as u64)
             .ok_or_else(|| error::corruption("file size overflow"))?;
-        digest.update(&buffer[..count]);
+        digest.update(
+            buffer
+                .get(..count)
+                .ok_or_else(|| error::corruption("file read exceeds buffer"))?,
+        );
     }
     Ok((size, digest.finalize().to_hex().to_string()))
 }

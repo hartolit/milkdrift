@@ -140,7 +140,9 @@ mod tests {
         assert!(decode::<Example>(&bytes, "other example").is_err());
 
         let mut tampered: serde_json::Value = serde_json::from_slice(&bytes)?;
-        tampered["payload"]["first"] = serde_json::json!(9);
+        *tampered
+            .pointer_mut("/payload/first")
+            .ok_or("missing test payload field")? = serde_json::json!(9);
         let tampered = serde_json::to_vec(&tampered)?;
         assert!(decode::<Example>(&tampered, "example").is_err());
 

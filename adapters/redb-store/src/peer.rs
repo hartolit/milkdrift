@@ -632,18 +632,18 @@ impl PeerExecutionStore for RedbStore {
             });
         }
         let is_terminal = observation.event.kind().terminal().is_some();
-        let phase_allows =
-            match &record.phase {
-                PeerExecutionPhase::Entered { .. }
-                | PeerExecutionPhase::AwaitingWorkflow { .. } => true,
-                PeerExecutionPhase::CancellationRequested { evidence, .. } => {
-                    evidence.is_some() || is_terminal
-                }
-                PeerExecutionPhase::DispatchClaimed { .. } => is_terminal,
-                PeerExecutionPhase::Uncertain { .. } => true,
-                PeerExecutionPhase::DispatchAvailable { .. }
-                | PeerExecutionPhase::Terminal { .. } => false,
-            };
+        let phase_allows = match &record.phase {
+            PeerExecutionPhase::Entered { .. }
+            | PeerExecutionPhase::AwaitingWorkflow { .. }
+            | PeerExecutionPhase::Uncertain { .. } => true,
+            PeerExecutionPhase::CancellationRequested { evidence, .. } => {
+                evidence.is_some() || is_terminal
+            }
+            PeerExecutionPhase::DispatchClaimed { .. } => is_terminal,
+            PeerExecutionPhase::DispatchAvailable { .. } | PeerExecutionPhase::Terminal { .. } => {
+                false
+            }
+        };
         if !phase_allows {
             return Err(PersistenceError::ImmutableConflict {
                 entity: "peer_execution_phase",

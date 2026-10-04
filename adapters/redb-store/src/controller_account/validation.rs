@@ -148,7 +148,7 @@ pub(super) fn validate_event_transaction_contract(
                 "controller settlement usage differs from its terminal event".to_owned(),
             ));
         }
-        if settlement_actions[..index].iter().any(|prior| {
+        if settlement_actions.iter().take(index).any(|prior| {
             matches!(
                 prior,
                 ControllerAccountAction::SettleTerminal {
@@ -345,7 +345,7 @@ pub(super) fn validate_lineage_transaction_contract(
     if child_runs
         .iter()
         .enumerate()
-        .any(|(index, child)| child_runs[..index].iter().any(|prior| prior == child))
+        .any(|(index, child)| child_runs.iter().take(index).any(|prior| prior == child))
     {
         return Err(PersistenceError::InvalidDocument(
             "one command cannot create the same controller child run twice".to_owned(),

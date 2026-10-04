@@ -29,7 +29,17 @@ fn journal_reopens_and_idempotency_conflicts_without_duplicate_events()
         PageSize::new(10)?,
     )?)?;
     assert_eq!(page.events.len(), 1);
-    assert_eq!(page.events[0].event_id(), request.events()[0].event_id());
+    assert_eq!(
+        page.events
+            .first()
+            .ok_or("missing stored event")?
+            .event_id(),
+        request
+            .events()
+            .first()
+            .ok_or("missing accepted event")?
+            .event_id()
+    );
     Ok(())
 }
 
@@ -547,9 +557,7 @@ fn deleted_inherited_source_history_is_corruption() -> Result<(), Box<dyn std::e
                 vec![source_one.reference().clone()],
             )?],
             vec![
-                WorkspaceMutation::CreateScope {
-                    scope: root.clone(),
-                },
+                WorkspaceMutation::CreateScope { scope: root },
                 WorkspaceMutation::PutValue {
                     entry: source_one.clone(),
                 },

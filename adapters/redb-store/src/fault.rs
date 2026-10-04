@@ -7,6 +7,13 @@ use milkdrift_persistence::StorageFailureClass;
 /// Stable durability boundaries exposed for deterministic crash/failure tests.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
+#[cfg_attr(
+    not(feature = "test-admin"),
+    expect(
+        unreachable_pub,
+        reason = "Durability boundaries are re-exported only by test-admin; default builds keep the same internal fault paths."
+    )
+)]
 pub enum FaultPoint {
     /// Before a reusable method generation and its head become durable together.
     BeforePublishedMethodCommit,
@@ -143,8 +150,19 @@ pub enum FaultPoint {
 }
 
 /// Synchronous test hook. Production configuration defaults to a no-op hook.
+#[cfg_attr(
+    not(feature = "test-admin"),
+    expect(
+        unreachable_pub,
+        reason = "The injectable hook is re-exported only by test-admin; default builds use its internal no-op implementation."
+    )
+)]
 pub trait FaultInjector: Send + Sync {
     /// Returns an error to fail at the selected boundary.
+    ///
+    /// # Errors
+    /// Returns the injected failure for this boundary. A post-commit failure does not undo
+    /// durable changes; callers must recover using the retained operation evidence.
     fn check(&self, point: FaultPoint) -> Result<(), PersistenceError>;
 }
 

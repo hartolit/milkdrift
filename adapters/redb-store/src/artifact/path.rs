@@ -39,8 +39,7 @@ pub(crate) fn publication_age_key(
     publication: &ArtifactPublicationId,
 ) -> Result<Vec<u8>, PersistenceError> {
     let publication = codec::component(publication.as_str())?;
-    let mut key = Vec::with_capacity(std::mem::size_of::<u64>() + publication.len());
-    key.extend_from_slice(&created_at_millis.to_be_bytes());
+    let mut key = created_at_millis.to_be_bytes().to_vec();
     key.extend_from_slice(&publication);
     Ok(key)
 }
@@ -96,8 +95,7 @@ pub(crate) fn artifact_path_entry(
         &identity,
         record.publication.as_str(),
     ])?;
-    let mut storage_key = Vec::with_capacity(9 + logical_key.len());
-    storage_key.push(kind.ordered_tag());
+    let mut storage_key = vec![kind.ordered_tag()];
     storage_key.extend_from_slice(&record.created_at_millis.to_be_bytes());
     storage_key.extend_from_slice(&logical_key);
     Ok(ArtifactPathEntry {
@@ -138,8 +136,7 @@ pub(crate) fn decode_artifact_path_entry(
             "invalid artifact path publication identity: {cause}"
         ))
     })?;
-    let mut expected_key = Vec::with_capacity(9 + logical_key.len());
-    expected_key.push(kind.ordered_tag());
+    let mut expected_key = vec![kind.ordered_tag()];
     expected_key.extend_from_slice(&created_at_millis.to_be_bytes());
     expected_key.extend_from_slice(logical_key);
     if storage_key != expected_key {
@@ -586,7 +583,11 @@ pub(crate) fn verify_opened_blob(
                 "artifact changed size during verification",
             ));
         }
-        hasher.update(&buffer[..count]);
+        hasher.update(
+            buffer
+                .get(..count)
+                .ok_or_else(|| error::corruption("artifact read exceeds buffer"))?,
+        );
     }
     if read_total != reference.size_bytes()
         || hasher.finalize().as_bytes() != reference.digest().as_bytes()

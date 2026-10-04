@@ -8,6 +8,9 @@ use std::path::Path;
 /// Creates a new private temporary directory for offline-storage tests. Unix uses
 /// explicit mode 0700; Windows removes inherited access on this new empty directory.
 /// Never changes permissions on an existing operator directory.
+///
+/// # Errors
+/// Returns failures creating the temporary directory or establishing its private permissions.
 pub fn private_offline_directory() -> Result<tempfile::TempDir, PersistenceError> {
     crate::offline::private_test_directory()
 }
@@ -30,6 +33,9 @@ use crate::{
 /// This deliberately creates corrupt storage for an integration test. The
 /// target is expressed as a logical scope reference; physical table names and
 /// key encodings remain adapter-owned.
+///
+/// # Errors
+/// Refuses a missing scope row and returns key-encoding or database open/write failures.
 pub fn remove_workspace_scope(
     root: &Path,
     reference: &ScopeReference,
@@ -43,6 +49,9 @@ pub fn remove_workspace_scope(
 /// This deliberately creates corrupt storage for an integration test. The
 /// target is expressed as a logical value reference; physical table names and
 /// key encodings remain adapter-owned.
+///
+/// # Errors
+/// Refuses a missing value row and returns key-encoding or database open/write failures.
 pub fn remove_workspace_value(
     root: &Path,
     reference: &WorkspaceValueReference,
@@ -55,6 +64,9 @@ pub fn remove_workspace_value(
 ///
 /// This deliberately creates an orphan record for an integration test. The
 /// adapter still owns the durable envelope, checksum, table, and key encoding.
+///
+/// # Errors
+/// Refuses an existing value identity and returns encoding or database open/write failures.
 pub fn insert_orphan_workspace_value(
     root: &Path,
     entry: &WorkspaceValueEntry,
@@ -83,6 +95,10 @@ pub fn insert_orphan_workspace_value(
 ///
 /// This creates the otherwise-undetectable-by-pairing symmetric-loss shape used to
 /// prove runtime startup compares derived discovery against authoritative replay.
+///
+/// # Errors
+/// Refuses a run without runnable rows or inconsistent paired indexes, and returns corrupt
+/// row decoding, key-encoding or database open/write failures.
 pub fn remove_run_runnable_discovery(root: &Path, run: &RunId) -> Result<(), PersistenceError> {
     let database = open_database(root)?;
     let write = database.begin_write().map_err(error::redb)?;
@@ -141,6 +157,10 @@ pub fn remove_run_runnable_discovery(root: &Path, run: &RunId) -> Result<(), Per
 ///
 /// This creates an unsupported or corrupt optional optimization so cross-crate
 /// tests can prove the adapter rejects it and runtime recovery replays the journal.
+///
+/// # Errors
+/// Refuses a missing latest pointer/snapshot or malformed snapshot identity, and returns
+/// key-encoding or database open/write failures. The supplied document is deliberately unchecked.
 pub fn replace_latest_snapshot_document(
     root: &Path,
     run: &RunId,

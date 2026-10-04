@@ -134,7 +134,7 @@ fn receipts_layouts_proposals_and_audit_are_incremental_and_restart_durable() ->
                 digest: stored.digest().clone(),
                 author: wrong_generation_receipt.actor().clone(),
                 updated_at: TimestampMillis::new(12),
-                document: layout_one.clone(),
+                document: layout_one,
             }),
         }),
         Err(PersistenceError::Corruption(_))
@@ -274,7 +274,10 @@ fn receipts_layouts_proposals_and_audit_are_incremental_and_restart_durable() ->
     ));
     let proposals = store.proposal_index(&run, &page(10)?)?;
     assert_eq!(proposals.items.len(), 1);
-    assert_eq!(proposals.items[0].proposal, "proposal-application");
+    assert_eq!(
+        proposals.items.first().ok_or("missing proposal")?.proposal,
+        "proposal-application"
+    );
     assert_eq!(store.rebuild_proposal_index()?, 1);
 
     for index in 0..3 {
@@ -294,8 +297,14 @@ fn receipts_layouts_proposals_and_audit_are_incremental_and_restart_durable() ->
     }
     let audit = store.security_audit(&page(10)?)?;
     assert_eq!(audit.items.len(), 2);
-    assert_eq!(audit.items[0].sequence, 2);
-    assert_eq!(audit.items[1].sequence, 3);
+    assert_eq!(
+        audit
+            .items
+            .iter()
+            .map(|item| item.sequence)
+            .collect::<Vec<_>>(),
+        [2, 3]
+    );
 
     let mut cursor = None;
     loop {
@@ -397,7 +406,7 @@ fn reopen_reestablishes_smaller_receipt_and_audit_bounds_before_ready() -> TestR
 
     assert!(matches!(
         store.commit_application_command(&ApplicationCommandCommit {
-            receipt: receipts[0].clone(),
+            receipt: receipts.first().ok_or("missing receipt")?.clone(),
             effect: ApplicationCommandEffect::None,
         })?,
         ApplicationCommandCommitOutcome::Replayed(_)
@@ -554,7 +563,7 @@ fn malformed_application_rows_surface_typed_corruption() -> TestResult {
     let write = database.begin_write()?;
     {
         let mut layouts = write.open_table(LAYOUTS)?;
-        let key = compound_key(&[workflow.as_str(), revision.as_str()]);
+        let key = compound_key(&[workflow.as_str(), revision.as_str()])?;
         layouts.insert(key.as_slice(), b"not-json".as_slice())?;
     }
     write.commit()?;
@@ -720,13 +729,13 @@ fn authority_error(error: milkdrift_authority::AuthorityError) -> PersistenceErr
     PersistenceError::InvalidDocument(error.to_string())
 }
 
-fn compound_key(components: &[&str]) -> Vec<u8> {
+fn compound_key(components: &[&str]) -> Result<Vec<u8>, std::num::TryFromIntError> {
     let mut key = Vec::new();
     for component in components {
-        key.extend_from_slice(&(component.len() as u32).to_be_bytes());
+        key.extend_from_slice(&u32::try_from(component.len())?.to_be_bytes());
         key.extend_from_slice(component.as_bytes());
     }
-    key
+    Ok(key)
 }
 
 #[path = "support/fault.rs"]

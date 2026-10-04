@@ -92,6 +92,11 @@ impl OfflineStore {
     /// private parent. The held source lock excludes a supported writer throughout.
     /// Unknown root components, links, limits and failed copies are refused. A partial
     /// destination keeps its execution guard and lacks a completion manifest.
+    ///
+    /// # Errors
+    /// Refuses invalid producer provenance, unsafe/existing destinations, unsupported source
+    /// components or inventory bounds, changed file sizes/digests, and filesystem or verification
+    /// failures. A failed copy may leave a guarded partial destination requiring operator cleanup.
     pub fn backup(
         &self,
         destination: &Path,
@@ -158,6 +163,10 @@ impl OfflineStore {
     /// Verifies a completed backup's bounded manifest, exact inventory, all file
     /// digests and current readers. It acquires the same exclusive source ownership
     /// as inspection. A missing completion marker is never accepted as a backup.
+    ///
+    /// # Errors
+    /// Returns offline-open failures and refuses missing/invalid manifests, mismatched schema,
+    /// provenance, inventory or digests, and reader results inconsistent with the manifest.
     pub fn verify_backup(
         root: &Path,
         scratch_parent: &Path,
@@ -168,6 +177,10 @@ impl OfflineStore {
 
     /// Restores a verified backup into a create-new isolated directory. The result
     /// retains its inspection-only guard and every replay/clock/account fact.
+    ///
+    /// # Errors
+    /// Returns [`Self::verify_backup`] verification failures and [`Self::backup`] destination
+    /// or copy failures. The destination may retain an incomplete guarded copy after failure.
     pub fn restore(
         root: &Path,
         destination: &Path,

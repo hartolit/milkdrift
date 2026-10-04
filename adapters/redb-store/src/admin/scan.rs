@@ -4,7 +4,10 @@ use super::{
     cursor::push_failure, error,
 };
 
-#[allow(clippy::too_many_arguments)] // One bounded phase shares cursor and result state with the integrity driver.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "One bounded phase shares cursor and result state with the integrity driver."
+)]
 pub(crate) fn scan_binary_phase<V: redb::Value + 'static>(
     phase: u8,
     start_phase: u8,
@@ -49,7 +52,10 @@ pub(crate) fn scan_binary_phase<V: redb::Value + 'static>(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)] // One bounded phase shares cursor and result state with the integrity driver.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "One bounded phase shares cursor and result state with the integrity driver."
+)]
 pub(crate) fn scan_string_phase<V: redb::Value + 'static>(
     phase: u8,
     start_phase: u8,
@@ -102,7 +108,10 @@ pub(crate) fn scan_string_phase<V: redb::Value + 'static>(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)] // One bounded phase shares cursor and result state with the integrity driver.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "One bounded phase shares cursor and result state with the integrity driver."
+)]
 pub(crate) fn scan_u64_bytes_phase(
     phase: u8,
     start_phase: u8,

@@ -185,7 +185,7 @@ pub(super) fn scan(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceE
                         || record.revision != revision
                         || record.source
                         != (crate::controller_account::ControllerAccountRevisionSource::ArtifactPublication {
-                            publication: publication.clone(),
+                            publication,
                         })
                     {
                         return Err(error::corruption(

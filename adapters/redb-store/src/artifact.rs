@@ -297,8 +297,7 @@ fn validate_publication_controller_charge(
         ) => Some(reservation),
     };
     match (&record.state, binding, charge) {
-        (PublicationState::Writable, _, None) => Ok(false),
-        (PublicationState::Released, _, None) => Ok(false),
+        (PublicationState::Writable | PublicationState::Released, _, None) => Ok(false),
         (PublicationState::Committed { .. }, None, None) if expected_reservation.is_none() => {
             Ok(false)
         }
@@ -458,12 +457,11 @@ pub(crate) fn validate_path_scrub(
         ));
     }
     match (&record.state, entry.kind) {
-        (PublicationState::Writable, _) => {}
-        (
+        (PublicationState::Writable | PublicationState::Released, _)
+        | (
             PublicationState::Committed { .. },
             path::ArtifactPathKind::TempPending | path::ArtifactPathKind::TempReady,
         ) => {}
-        (PublicationState::Released, _) => {}
         _ => {
             return Err(error::corruption(
                 "artifact path is invalid for publication state",

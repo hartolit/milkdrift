@@ -607,9 +607,8 @@ impl ArtifactStore for RedbStore {
             return Ok(());
         };
         let expected_usage = match record.state {
-            PublicationState::Writable => record.expected_usage,
+            PublicationState::Writable | PublicationState::Released => record.expected_usage,
             PublicationState::Committed { .. } => record.resulting_usage,
-            PublicationState::Released => record.expected_usage,
         };
         let actual = crate::journal::validate_workspace_domain_in_transaction(
             &write,
@@ -719,7 +718,14 @@ impl ArtifactStore for RedbStore {
         let path = self.content_path(request.reference().digest());
         let mut file = open_regular_for_read(&path)?;
         super::path::verify_opened_blob(&mut file, request.reference(), self.max_read_bytes)?;
-        let remaining = request.reference().size_bytes() - request.offset();
+        let remaining = request
+            .reference()
+            .size_bytes()
+            .checked_sub(request.offset())
+            .ok_or_else(|| PersistenceError::Bounds {
+                location: "artifact.read.offset",
+                reason: "read offset exceeds artifact size".to_owned(),
+            })?;
         let count = remaining.min(u64::from(request.maximum_bytes()));
         let count = usize::try_from(count).map_err(|_| PersistenceError::Bounds {
             location: "artifact.read.maximum_bytes",
@@ -734,7 +740,7 @@ impl ArtifactStore for RedbStore {
         Ok(ArtifactReadChunk {
             offset: request.offset(),
             bytes,
-            end_of_artifact: request.offset() + count as u64 == request.reference().size_bytes(),
+            end_of_artifact: count as u64 == remaining,
         })
     }
 

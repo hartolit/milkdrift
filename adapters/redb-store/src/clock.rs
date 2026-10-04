@@ -14,6 +14,9 @@ impl RedbStore {
     /// Returns both the raw observation and its watermark outcome. A caller must inspect
     /// the outcome: `RejectedRollback` is a successful comparison, not usable current
     /// time. Sampling/store errors likewise provide no accepted time for a new decision.
+    ///
+    /// # Errors
+    /// Returns failures sampling the injected clock or reading/committing its durable watermark.
     pub fn sample_clock(
         &self,
     ) -> Result<(TimestampMillis, ClockWatermarkObservation), PersistenceError> {
@@ -124,7 +127,9 @@ mod tests {
         fn now(&self) -> Result<TimestampMillis, PersistenceError> {
             let now = self.now.load(Ordering::SeqCst);
             if self.armed.load(Ordering::SeqCst) {
-                let _ = self.sampled.try_send(());
+                self.sampled.try_send(()).map_err(|cause| {
+                    error::corruption(format!("clock test sample notification failed: {cause}"))
+                })?;
             }
             Ok(TimestampMillis::new(now))
         }
@@ -146,9 +151,11 @@ mod tests {
         let write = store.database().begin_write()?;
         clock.armed.store(true, Ordering::SeqCst);
         let (started, start) = mpsc::sync_channel(1);
-        let sampling_store = store.clone();
+        let sampling_store = store;
         let sampling = thread::spawn(move || {
-            let _ = started.send(());
+            started.send(()).map_err(|cause| {
+                error::corruption(format!("clock test start notification failed: {cause}"))
+            })?;
             sampling_store.sample_clock()
         });
         start.recv_timeout(Duration::from_secs(2))?;

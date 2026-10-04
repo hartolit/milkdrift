@@ -68,7 +68,7 @@ fn snapshot_pointer_deletion_is_rejected_but_lowered_journal_head_is_corruption(
         let write = database.begin_write()?;
         if delete_pointer {
             let mut latest = write.open_table(SNAPSHOT_LATEST)?;
-            let _ = latest.remove(request.receipt().run().as_str())?;
+            assert!(latest.remove(request.receipt().run().as_str())?.is_some());
         } else {
             let mut heads = write.open_table(RUN_HEADS)?;
             heads.insert(request.receipt().run().as_str(), 0)?;

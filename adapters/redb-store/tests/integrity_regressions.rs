@@ -650,7 +650,7 @@ fn paired_artifact_reference_loss_cannot_reopen_double_charging()
             .map(|item| item.map(|(key, _)| key.value().to_vec()))
             .collect::<Result<Vec<_>, _>>()?;
         for key in keys {
-            let _ = references.remove(key.as_slice())?;
+            assert!(references.remove(key.as_slice())?.is_some());
         }
     }
     {
@@ -660,7 +660,7 @@ fn paired_artifact_reference_loss_cannot_reopen_double_charging()
             .map(|item| item.map(|(key, _)| key.value().to_vec()))
             .collect::<Result<Vec<_>, _>>()?;
         for key in keys {
-            let _ = ownership.remove(key.as_slice())?;
+            assert!(ownership.remove(key.as_slice())?.is_some());
         }
     }
     write.commit()?;
@@ -768,7 +768,11 @@ fn artifact_and_revision_primary_digest_pairs_fail_closed_after_deletion()
         let write = database.begin_write()?;
         if delete_primary {
             let mut metadata = write.open_table(ARTIFACT_METADATA)?;
-            let _ = metadata.remove(request.metadata().reference().artifact().as_str())?;
+            assert!(
+                metadata
+                    .remove(request.metadata().reference().artifact().as_str())?
+                    .is_some()
+            );
         } else {
             let mut by_digest = write.open_table(ARTIFACTS_BY_DIGEST)?;
             let key = by_digest
@@ -779,7 +783,7 @@ fn artifact_and_revision_primary_digest_pairs_fail_closed_after_deletion()
                 .0
                 .value()
                 .to_vec();
-            let _ = by_digest.remove(key.as_slice())?;
+            assert!(by_digest.remove(key.as_slice())?.is_some());
         }
         write.commit()?;
         drop(database);
@@ -804,7 +808,7 @@ fn artifact_and_revision_primary_digest_pairs_fail_closed_after_deletion()
         let write = database.begin_write()?;
         if delete_primary {
             let mut revisions = write.open_table(REVISIONS)?;
-            let _ = revisions.remove(revision.id().as_str())?;
+            assert!(revisions.remove(revision.id().as_str())?.is_some());
         } else {
             let mut by_digest = write.open_table(REVISIONS_BY_DIGEST)?;
             let key = by_digest
@@ -815,7 +819,7 @@ fn artifact_and_revision_primary_digest_pairs_fail_closed_after_deletion()
                 .0
                 .value()
                 .to_vec();
-            let _ = by_digest.remove(key.as_slice())?;
+            assert!(by_digest.remove(key.as_slice())?.is_some());
         }
         write.commit()?;
         drop(database);
@@ -911,7 +915,7 @@ fn missing_temp_owner_cannot_delete_a_live_writable_publication()
             .0
             .value()
             .to_owned();
-        let _ = owners.remove(key.as_str())?;
+        assert!(owners.remove(key.as_str())?.is_some());
     }
     write.commit()?;
     drop(database);
@@ -958,11 +962,13 @@ fn aggregate_artifact_counter_deletion_lowering_and_real_limit_are_fail_closed()
                     .value()
                     .to_vec();
                 let mut envelope: serde_json::Value = serde_json::from_slice(&bytes)?;
-                envelope["payload"]["committed_content_bytes"] = json!(0);
+                *envelope
+                    .pointer_mut("/payload/committed_content_bytes")
+                    .ok_or("missing artifact accounting total")? = json!(0);
                 let lowered = serde_json::to_vec(&envelope)?;
                 accounting.insert("artifact_content_bytes", lowered.as_slice())?;
             } else {
-                let _ = accounting.remove("artifact_content_bytes")?;
+                assert!(accounting.remove("artifact_content_bytes")?.is_some());
             }
         }
         write.commit()?;

@@ -149,13 +149,37 @@ fn archived_readers_refuse_cross_bound_links_and_malformed_output_manifests() ->
             "generation" => value.capability_generation += 1,
             "count" => value.accounting.outputs -= 1,
             "execution" => {
-                value.output_observations[0].execution = PeerExecutionId::new("execution:other")?
+                value
+                    .output_observations
+                    .first_mut()
+                    .ok_or("missing first test observation")?
+                    .execution = PeerExecutionId::new("execution:other")?
             }
-            "order" => value.output_observations[1] = value.output_observations[0].clone(),
-            "sequence" => value.output_observations[1] = output(&value.execution, count + 1)?,
+            "order" => {
+                let first = value
+                    .output_observations
+                    .first()
+                    .ok_or("missing first test observation")?
+                    .clone();
+                *value
+                    .output_observations
+                    .get_mut(1)
+                    .ok_or("missing second test observation")? = first;
+            }
+            "sequence" => {
+                *value
+                    .output_observations
+                    .get_mut(1)
+                    .ok_or("missing second test observation")? =
+                    output(&value.execution, count + 1)?
+            }
             "nonoutput" => {
-                value.output_observations[0].category = ObservationCategory::Progress;
-                value.output_observations[0].event = InvocationEvent::new(
+                let observation = value
+                    .output_observations
+                    .first_mut()
+                    .ok_or("missing first test observation")?;
+                observation.category = ObservationCategory::Progress;
+                observation.event = InvocationEvent::new(
                     InvocationId::new("invocation:origin")?,
                     1,
                     InvocationEventKind::Progress {

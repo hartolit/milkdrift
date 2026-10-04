@@ -34,7 +34,8 @@ fn validate_versions(found: u64, internal: Option<u64>) -> Result<(), Persistenc
         return Err(PersistenceError::UnsupportedVersion {
             document: "storage",
             found: u32::try_from(found).unwrap_or(u32::MAX),
-            supported: STORAGE_SCHEMA_VERSION as u32,
+            supported: u32::try_from(STORAGE_SCHEMA_VERSION)
+                .map_err(|_| error::corruption("supported storage schema exceeds u32"))?,
         });
     }
     let internal = internal
@@ -43,7 +44,8 @@ fn validate_versions(found: u64, internal: Option<u64>) -> Result<(), Persistenc
         return Err(PersistenceError::UnsupportedVersion {
             document: "redb internal document envelope",
             found: u32::try_from(internal).unwrap_or(u32::MAX),
-            supported: INTERNAL_DOCUMENT_FORMAT_VERSION as u32,
+            supported: u32::try_from(INTERNAL_DOCUMENT_FORMAT_VERSION)
+                .map_err(|_| error::corruption("supported document format exceeds u32"))?,
         });
     }
     Ok(())

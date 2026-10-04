@@ -37,50 +37,80 @@ pub enum InspectionFamily {
 /// can continue past damage without claiming the omitted record was healthy.
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[allow(missing_docs)] // Each variant documents its complete diagnostic projection.
 pub enum InspectionRecord {
     /// Verified resource inventory projection; platform data remains outside store backups.
     Managed {
+        /// Durable installation state without live platform inspection.
         installation: milkdrift_capability::managed::ManagedResponse,
     },
     /// Existing verifiable lease discovery evidence, never a renewed lease.
-    Lease { lease: LeaseIndexEntry },
+    Lease {
+        /// Retained lease identity, epoch and expiry observation.
+        lease: LeaseIndexEntry,
+    },
     /// Resource totals and exact unresolved reservations, without raw provider evidence.
     Account {
+        /// Account whose retained resource obligations are projected.
         account: ControllerAccountId,
+        /// Revision at which these totals and reservations were read.
         revision: u64,
+        /// Usage already charged to this account.
         settled: ControllerResourceTotals,
+        /// Resources still held by unresolved reservations.
         outstanding: ControllerResourceTotals,
+        /// Whether the account currently refuses further admissions.
         blocked: bool,
+        /// Exact outstanding reservations for reconciliation.
         reservations: Vec<ControllerReservation>,
     },
     /// Digests permit identification without exposing canonical request/result content.
     Receipt {
+        /// Original idempotent command identity.
         command: String,
+        /// Actor that owns the command's receipt scope.
         actor: String,
+        /// Fingerprint of the canonical accepted request.
         request_digest: String,
+        /// Fingerprint of the canonical retained result.
         result_digest: String,
+        /// Durable completion observation, without sampling current time.
         completed_at_unix_ms: u64,
     },
     /// Durable remote execution/request link and conservative uncertainty classification.
     Peer {
+        /// Durable remote execution identity.
         execution: String,
+        /// Caller that owns the retained request scope.
         caller: String,
+        /// Original request identity bound to this execution.
         request: String,
+        /// Fingerprint used for exact request replay/conflict checks.
         request_digest: String,
+        /// Whether this projection comes from the retained tombstone.
         archived: bool,
+        /// Retained execution/uncertainty classification.
         phase: String,
+        /// Last durable observation position.
         observation_sequence: u64,
     },
     /// Names, provenance, causal links, and artifact content are deliberately omitted.
     Artifact {
+        /// Logical artifact identity without its provenance or content.
         artifact: String,
+        /// Expected immutable content fingerprint.
         digest: String,
+        /// Expected content length.
         bytes: u64,
+        /// Whether content was checked and its verification outcome.
         content_health: String,
     },
     /// Failed record at an opaque key; details cannot echo corrupt protected payloads.
-    Failure { key: String, classification: String },
+    Failure {
+        /// Opaque position of the damaged record.
+        key: String,
+        /// Safe failure category without raw protected payloads.
+        classification: String,
+    },
 }
 
 /// One bounded diagnostic page. An empty page with a continuation is not exhaustion.
@@ -123,6 +153,9 @@ struct Cursor {
 
 impl OfflineStore {
     /// Reads schema, clock and constant-time table counts without a history scan.
+    ///
+    /// # Errors
+    /// Returns database/table read failures or a missing/corrupt durable clock watermark.
     pub fn overview(&self) -> Result<StorageOverview, PersistenceError> {
         let read = self.store.database().begin_read().map_err(error::redb)?;
         let mut row_counts = Vec::new();
@@ -160,6 +193,11 @@ impl OfflineStore {
 
     /// Reads at most 128 records, retaining corruption explicitly. Artifact hashing
     /// is opt-in and cursor-bound; other families refuse that option.
+    ///
+    /// # Errors
+    /// Refuses more than 128 records, hashing outside the artifact family, and malformed,
+    /// oversized or source/family/mode-incompatible cursors. Returns table traversal failures;
+    /// individual unreadable records are represented by [`InspectionRecord::Failure`].
     pub fn inspect(
         &self,
         family: InspectionFamily,

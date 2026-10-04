@@ -8,6 +8,11 @@ impl RedbStore {
     /// Reclaims interrupted public input uploads before this store admits new work.
     /// Workflow outputs and resumable peer transfers keep their writable publications.
     /// The caller must keep admission closed and follow the bounded cursor to exhaustion.
+    ///
+    /// # Errors
+    /// Refuses a future age threshold or incompatible/malformed cursor and returns storage,
+    /// integrity, clock or filesystem cleanup failures. Earlier reclamation steps can have
+    /// committed; retry from retained state without assuming that an error proves removal.
     pub fn recover_interrupted_client_inputs(
         &self,
         request: OrphanCleanupRequest,

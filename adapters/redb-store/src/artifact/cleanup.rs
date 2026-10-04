@@ -18,7 +18,6 @@ use super::{
         decode_publication, optional_publication_in_transaction, publication_in_transaction,
     },
 };
-#[allow(clippy::too_many_arguments)] // One bounded indexed scan shares cleanup accounting and cursor state with its caller.
 pub(crate) fn expire_writable_publications(
     store: &RedbStore,
     request: &OrphanCleanupRequest,
@@ -74,7 +73,9 @@ pub(crate) fn expire_writable_publications(
                     "publication-age index key does not match its document",
                 ));
             }
-            *examined += 1;
+            *examined = examined
+                .checked_add(1)
+                .ok_or_else(|| error::corruption("cleanup candidate count overflow"))?;
             *last_cursor = Some(OrphanCleanupCursor::new(
                 OrphanCleanupFamily::WritablePublications,
                 age_key.to_vec(),
@@ -365,7 +366,9 @@ pub(crate) fn cleanup_temporary_files(
     drop(paths);
     drop(read);
     for entry in entries {
-        *examined += 1;
+        *examined = examined
+            .checked_add(1)
+            .ok_or_else(|| error::corruption("cleanup candidate count overflow"))?;
         *last_cursor = Some(OrphanCleanupCursor::new(
             OrphanCleanupFamily::TemporaryFiles,
             entry.storage_key.clone(),
@@ -436,7 +439,9 @@ pub(crate) fn cleanup_content_files(
     drop(paths);
     drop(read);
     for entry in entries {
-        *examined += 1;
+        *examined = examined
+            .checked_add(1)
+            .ok_or_else(|| error::corruption("cleanup candidate count overflow"))?;
         *last_cursor = Some(OrphanCleanupCursor::new(
             OrphanCleanupFamily::ContentFiles,
             entry.storage_key.clone(),
@@ -455,7 +460,10 @@ pub(crate) fn decode_cleanup_path_cursor(
 ) -> Result<Option<Vec<u8>>, PersistenceError> {
     after
         .map(|bytes| {
-            if bytes.is_empty() || bytes[0] > ArtifactPathKind::ContentIntent.ordered_tag() {
+            if bytes
+                .first()
+                .is_none_or(|tag| *tag > ArtifactPathKind::ContentIntent.ordered_tag())
+            {
                 return Err(PersistenceError::InvalidCursor(
                     "artifact cleanup cursor does not contain a valid path-inventory key"
                         .to_owned(),

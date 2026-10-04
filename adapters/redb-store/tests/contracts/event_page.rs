@@ -409,9 +409,14 @@ fn in_memory_event_pages_satisfy_the_shared_cursor_contract() -> ContractResult 
     )?;
     let store = MemoryEventStore::new(
         run.clone(),
-        vec![first.events()[0].clone(), second.events()[0].clone()],
+        first
+            .events()
+            .iter()
+            .chain(second.events())
+            .cloned()
+            .collect(),
     );
-    let third_event = third.events()[0].clone();
+    let third_event = third.events().first().ok_or("missing third event")?.clone();
 
     assert_event_page_contract(&store, &run, || {
         store.append(third_event)?;

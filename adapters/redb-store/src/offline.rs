@@ -64,6 +64,11 @@ impl OfflineStore {
     /// Locks an existing source and creates a verified private database copy. Missing,
     /// unsupported, unsafe-path and already-open stores fail without changing the source.
     /// `scratch_parent` must be a private existing directory owned by the operator.
+    ///
+    /// # Errors
+    /// Refuses unsafe/unowned paths, scratch inside the source, a held database lock, empty
+    /// or oversized databases and unsupported/corrupt storage formats. Returns copy, digest
+    /// verification and filesystem/database failures without starting runtime recovery.
     pub fn open(root: &Path, scratch_parent: &Path) -> Result<Self, PersistenceError> {
         paths::private_directory(scratch_parent)?;
         paths::directory(root)?;
@@ -139,6 +144,9 @@ impl OfflineStore {
     }
 
     /// Reads the exact immutable governing revision for a historical attempt.
+    ///
+    /// # Errors
+    /// Returns database read failures or invalid retained revision envelopes/contracts.
     pub fn revision(&self, id: &RevisionId) -> Result<Option<BlueprintRevision>, PersistenceError> {
         self.store.revision(id)
     }
@@ -146,6 +154,10 @@ impl OfflineStore {
     /// Reads one bounded, digest-verified artifact under OS-owner authority. Callers
     /// must redact protected evidence before exporting diagnostics. No workflow grant
     /// or fabricated actor is used by offline administration.
+    ///
+    /// # Errors
+    /// Refuses excessive read bounds, missing/mismatched metadata, unsafe content paths,
+    /// size/digest mismatches and filesystem/database read failures.
     pub fn artifact_bytes(
         &self,
         reference: &ArtifactReference,
@@ -188,6 +200,10 @@ impl OfflineStore {
 
     /// Continues the existing integrity scanner without repair. Content hashing is
     /// an explicit request choice and remains bound into its resumable cursor.
+    ///
+    /// # Errors
+    /// Refuses stale, malformed or mode-incompatible cursors and returns failures opening
+    /// the scan's storage tables. Record failures discovered by the scan remain in its result.
     pub fn scan_integrity(
         &self,
         request: IntegrityScanRequest,
@@ -215,11 +231,17 @@ fn copy_database(
     let mut digest = blake3::Hasher::new();
     let mut offset = 0;
     while offset < length {
-        let count = (length - offset).min(COPY_CHUNK_BYTES as u64) as usize;
+        let remaining = length
+            .checked_sub(offset)
+            .ok_or_else(|| error::corruption("database copy offset exceeds length"))?;
+        let count = usize::try_from(remaining.min(COPY_CHUNK_BYTES as u64))
+            .map_err(|_| error::corruption("database copy chunk exceeds usize"))?;
         let bytes = source.read(offset, count).map_err(error::io)?;
         output.write_all(&bytes).map_err(error::io)?;
         digest.update(&bytes);
-        offset += count as u64;
+        offset = offset
+            .checked_add(count as u64)
+            .ok_or_else(|| error::corruption("database copy offset overflow"))?;
     }
     output.sync_all().map_err(error::io)?;
     let digest = digest.finalize().to_hex().to_string();

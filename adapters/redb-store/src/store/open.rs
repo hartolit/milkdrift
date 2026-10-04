@@ -19,6 +19,10 @@ impl fmt::Debug for RedbStore {
 
 impl RedbStore {
     /// Opens or creates a durable local store with default bounds.
+    ///
+    /// # Errors
+    /// Returns the path, schema, clock, retention and storage failures described by
+    /// [`Self::open_with_config`].
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, PersistenceError> {
         Self::open_with_config(RedbStoreConfig::new(root))
     }
@@ -32,6 +36,11 @@ impl RedbStore {
     /// not imply an untouched directory. Reopening uses those same durable records.
     ///
     /// Workflow recovery and full historical integrity scans are separate operations.
+    ///
+    /// # Errors
+    /// Refuses invalid bounds, unsafe paths, inspection-only clones, unsupported/corrupt
+    /// storage and clock rollback. Returns filesystem, database, injected-clock/hook and
+    /// retention failures; earlier durable initialization or archival may already have committed.
     #[tracing::instrument(
         name = "milkdrift.redb_store.open",
         skip_all,

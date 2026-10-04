@@ -26,7 +26,11 @@ fn cleanup_file_delete_fault_boundaries_are_restart_safe() -> Result<(), Box<dyn
         {
             let store = RedbStore::open(directory.path())?;
             store.begin_publication(&request)?;
-            store.write_chunk(request.publication(), 0, &bytes[..1])?;
+            store.write_chunk(
+                request.publication(),
+                0,
+                bytes.get(..1).ok_or("test artifact prefix is absent")?,
+            )?;
         }
         let store = RedbStore::open_with_config(
             RedbStoreConfig::new(directory.path())
@@ -92,7 +96,11 @@ fn artifact_path_intent_and_finalize_faults_resume_after_reopen()
         {
             let store = RedbStore::open(directory.path())?;
             store.begin_publication(&request)?;
-            store.write_chunk(request.publication(), 0, &bytes[..1])?;
+            store.write_chunk(
+                request.publication(),
+                0,
+                bytes.get(..1).ok_or("test artifact prefix is absent")?,
+            )?;
         }
         let cleanup_request = OrphanCleanupRequest {
             observed_at: TimestampMillis::new(u64::MAX),

@@ -24,7 +24,7 @@ fn final_entry_rejects_unlinked_and_duplicate_admission_actions() -> TestResult 
     )?;
     let action = ControllerAccountAction::AdmitEntry {
         account: declaration.account().clone(),
-        reservation: reservation.clone(),
+        reservation,
         attempt: attempt.clone(),
         category: CapabilityCategory::Tool,
         envelope: envelope.clone(),
@@ -84,7 +84,7 @@ fn final_entry_rejects_unlinked_and_duplicate_admission_actions() -> TestResult 
             RunEventKind::CapabilityAdapterEntryDecisionRecorded {
                 attempt: attempt.clone(),
                 authorization: decision(true, "admission-unterminated-reservation")?,
-                controller_admission: outcome.clone(),
+                controller_admission: outcome,
             },
             RunEventKind::NodeTerminal {
                 execution: NodeExecutionId::new("execution-admission-unterminated-reservation")?,
@@ -402,7 +402,7 @@ fn final_entry_integrity_distinguishes_denied_uncontrolled_and_reserved_links() 
                 },
                 RunEventKind::NodeTerminal {
                     execution: NodeExecutionId::new("execution-reserved-link")?,
-                    attempt: attempt.clone(),
+                    attempt,
                     report_sequence: 3,
                     outcome: NodeOutcome::Succeeded,
                     error_class: None,

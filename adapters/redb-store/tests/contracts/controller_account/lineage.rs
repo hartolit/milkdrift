@@ -25,12 +25,14 @@ fn controller_establishment_cannot_bind_an_unrelated_originating_run() -> TestRe
         None,
         vec![ControllerAccountAction::Establish {
             declaration: declared.clone(),
-            bind_run: owner.clone(),
+            bind_run: owner,
         }],
     )?;
     valid.validate()?;
     let mut wire = serde_json::to_value(&valid)?;
-    wire["actions"][0]["bind_run"] = serde_json::to_value(&unrelated)?;
+    *wire
+        .pointer_mut("/actions/0/bind_run")
+        .ok_or("missing binding action")? = serde_json::to_value(&unrelated)?;
     let untrusted: ControllerAccountTransaction = serde_json::from_value(wire)?;
     assert!(
         matches!(untrusted.validate(), Err(PersistenceError::InvalidDocument(message)) if message.contains("originating run"))
@@ -110,7 +112,9 @@ fn controller_transaction_bounds_guards_and_fingerprint_are_exact() -> TestResul
     let roundtrip: ControllerAccountTransaction = serde_json::from_value(wire.clone())?;
     assert_eq!(roundtrip, valid);
     roundtrip.validate()?;
-    wire["fingerprint"] =
+    *wire
+        .get_mut("fingerprint")
+        .ok_or("missing transaction fingerprint")? =
         serde_json::to_value(IntegrityDigest::hash(b"different canonical request"))?;
     let altered: ControllerAccountTransaction = serde_json::from_value(wire)?;
     assert!(matches!(

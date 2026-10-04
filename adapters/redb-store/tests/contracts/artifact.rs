@@ -200,7 +200,11 @@ fn artifact_cleanup_uses_the_injected_publication_clock() -> Result<(), Box<dyn 
         WorkspaceUsage::EMPTY,
     )?;
     store.begin_publication(&request)?;
-    store.write_chunk(request.publication(), 0, &bytes[..1])?;
+    store.write_chunk(
+        request.publication(),
+        0,
+        bytes.get(..1).ok_or("test artifact prefix is absent")?,
+    )?;
 
     let retained = store.cleanup_orphans(OrphanCleanupRequest {
         observed_at: TimestampMillis::new(100),
@@ -346,7 +350,11 @@ fn artifact_abort_fault_boundaries_are_retryable_and_release_ownership()
                 .with_fault_injector(Arc::new(FailOnce::new(point))),
         )?;
         store.begin_publication(&request)?;
-        store.write_chunk(request.publication(), 0, &bytes[..3])?;
+        store.write_chunk(
+            request.publication(),
+            0,
+            bytes.get(..3).ok_or("test artifact prefix is absent")?,
+        )?;
         assert!(store.abort_publication(request.publication()).is_err());
         drop(store);
 
@@ -400,7 +408,11 @@ fn cleanup_fault_boundaries_expire_writable_sessions_and_release_reservations()
                 .with_fault_injector(Arc::new(FailOnce::new(point))),
         )?;
         store.begin_publication(&request)?;
-        store.write_chunk(request.publication(), 0, &bytes[..3])?;
+        store.write_chunk(
+            request.publication(),
+            0,
+            bytes.get(..3).ok_or("test artifact prefix is absent")?,
+        )?;
         assert!(store.cleanup_orphans(cleanup_request.clone()).is_err());
         drop(store);
 
@@ -515,7 +527,11 @@ fn orphan_cleanup_cursors_visit_every_family_without_starvation()
             WorkspaceUsage::EMPTY,
         )?;
         store.begin_publication(&request)?;
-        store.write_chunk(request.publication(), 0, &bytes[..1])?;
+        store.write_chunk(
+            request.publication(),
+            0,
+            bytes.get(..1).ok_or("test artifact prefix is absent")?,
+        )?;
     }
     drop(store);
     for index in 0..4 {

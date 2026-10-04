@@ -214,7 +214,9 @@ fn malformed_backup_provenance_is_refused_before_copy_and_on_verification() -> T
         );
         assert!(!destination.exists());
         let mut manifest: serde_json::Value = serde_json::from_slice(&original)?;
-        manifest["producer"] = serde_json::to_value(producer)?;
+        *manifest
+            .get_mut("producer")
+            .ok_or("missing test manifest producer")? = serde_json::to_value(producer)?;
         fs::write(&manifest_path, serde_json::to_vec(&manifest)?)?;
         assert!(OfflineStore::verify_backup(&backup, parent.path()).is_err());
         assert!(OfflineStore::restore(&backup, &destination, parent.path()).is_err());
