@@ -428,6 +428,31 @@ mod tests {
     }
 
     #[test]
+    fn standalone_commands_use_the_declared_toolchain_outside_the_workspace() -> CheckResult {
+        let directory = tempfile::tempdir()?;
+        let mut gate = Gate {
+            root: directory.path().to_owned(),
+            output: directory.path().to_owned(),
+            toolchain: directory
+                .path()
+                .join("missing-toolchain")
+                .to_string_lossy()
+                .into_owned(),
+            checks: Vec::new(),
+        };
+        // An inherited working toolchain must not conceal a missing explicit selection.
+        assert!(!gate.run("invalid-selection", "rustc", &["--version"])?);
+        gate.toolchain = super::selected_toolchain(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+        )?;
+        assert!(gate.run("pinned-selection", "rustc", &["--version"])?);
+        let version =
+            std::fs::read_to_string(&gate.checks.last().ok_or("missing version")?.stdout)?;
+        assert!(version.contains(&gate.toolchain));
+        Ok(())
+    }
+
+    #[test]
     fn source_provenance_keeps_a_digest_without_copying_diff_secrets() -> CheckResult {
         let repository = tempfile::tempdir()?;
         let evidence = tempfile::tempdir()?;
