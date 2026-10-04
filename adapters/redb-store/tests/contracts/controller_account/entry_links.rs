@@ -223,7 +223,10 @@ fn final_entry_integrity_distinguishes_denied_uncontrolled_and_reserved_links() 
             RunSequence::ZERO,
             RunEventKind::RunStarted,
         )?;
-        let _ = store.commit_command(&allowed_start)?;
+        assert!(matches!(
+            store.commit_command(&allowed_start)?,
+            AtomicRunCommitOutcome::Committed(_)
+        ));
         let allowed = request(
             &allowed_child,
             "command-allowed-uncontrolled",
@@ -235,7 +238,10 @@ fn final_entry_integrity_distinguishes_denied_uncontrolled_and_reserved_links() 
                 controller_admission: ControllerAdmissionOutcome::NotControlled,
             },
         )?;
-        let _ = store.commit_command(&allowed)?;
+        assert!(matches!(
+            store.commit_command(&allowed)?,
+            AtomicRunCommitOutcome::Committed(_)
+        ));
         bind_child(&store, &denied_child, &origin, "denied-child")?;
         let denied = request(
             &denied_child,
@@ -248,7 +254,10 @@ fn final_entry_integrity_distinguishes_denied_uncontrolled_and_reserved_links() 
                 controller_admission: ControllerAdmissionOutcome::NotControlled,
             },
         )?;
-        let _ = store.commit_command(&denied)?;
+        assert!(matches!(
+            store.commit_command(&denied)?,
+            AtomicRunCommitOutcome::Committed(_)
+        ));
 
         bind_child(&store, &reserved_child, &origin, "reserved-child")?;
         let state = store
@@ -293,7 +302,10 @@ fn final_entry_integrity_distinguishes_denied_uncontrolled_and_reserved_links() 
                 expected_outcome: outcome,
             }],
         )?)?;
-        let _ = store.commit_command(&reserved)?;
+        assert!(matches!(
+            store.commit_command(&reserved)?,
+            AtomicRunCommitOutcome::Committed(_)
+        ));
         let missing_settlement = request(
             &reserved_child,
             "command-reserved-link-missing-settlement",
@@ -408,7 +420,10 @@ fn final_entry_integrity_distinguishes_denied_uncontrolled_and_reserved_links() 
                 usage: Some(usage),
             }],
         )?)?;
-        let _ = store.commit_command(&terminal)?;
+        assert!(matches!(
+            store.commit_command(&terminal)?,
+            AtomicRunCommitOutcome::Committed(_)
+        ));
         let settled = store
             .controller_account(origin.account())?
             .ok_or("originating controller account disappeared after settlement")?;
@@ -448,7 +463,10 @@ fn final_entry_integrity_distinguishes_denied_uncontrolled_and_reserved_links() 
                 expected_outcome: late_outcome,
             }],
         )?)?;
-        let _ = store.commit_command(&late_entry)?;
+        assert!(matches!(
+            store.commit_command(&late_entry)?,
+            AtomicRunCommitOutcome::Committed(_)
+        ));
         let late_admitted = store
             .controller_account(origin.account())?
             .ok_or("originating controller account disappeared before late settlement")?;
@@ -493,7 +511,10 @@ fn final_entry_integrity_distinguishes_denied_uncontrolled_and_reserved_links() 
                 usage: Some(late_usage),
             }],
         )?)?;
-        let _ = store.commit_command(&late_terminal)?;
+        assert!(matches!(
+            store.commit_command(&late_terminal)?,
+            AtomicRunCommitOutcome::Committed(_)
+        ));
         let late_settled = store
             .controller_account(origin.account())?
             .ok_or("originating controller account disappeared after late settlement")?;

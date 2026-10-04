@@ -251,7 +251,10 @@ fn controller_lineage_actions_require_exact_activation_and_child_events() -> Tes
         established_head,
         activation(&declaration, "lineage-bound-activation", established_head)?,
     )?;
-    let _ = store.commit_command(&bound_activation)?;
+    assert!(matches!(
+        store.commit_command(&bound_activation)?,
+        AtomicRunCommitOutcome::Committed(_)
+    ));
 
     let activated_head = store
         .run_summary(&owner)?
@@ -285,7 +288,10 @@ fn controller_lineage_actions_require_exact_activation_and_child_events() -> Tes
             ControllerAssessmentBoundary::CycleEntry,
         )?,
     )?;
-    let _ = store.commit_command(&bound_assessment)?;
+    assert!(matches!(
+        store.commit_command(&bound_assessment)?,
+        AtomicRunCommitOutcome::Committed(_)
+    ));
     let assessed_head = store
         .run_summary(&owner)?
         .ok_or("controller lineage owner summary is absent after bound assessment")?
@@ -396,7 +402,10 @@ fn controller_lineage_actions_require_exact_activation_and_child_events() -> Tes
             },
         ],
     )?)?;
-    let _ = store.commit_command(&multi_child_binding)?;
+    assert!(matches!(
+        store.commit_command(&multi_child_binding)?,
+        AtomicRunCommitOutcome::Committed(_)
+    ));
     assert_eq!(
         store.controller_account_binding(&first_multi_child)?,
         Some(declaration.account().clone())
@@ -523,7 +532,10 @@ fn controller_lineage_actions_require_exact_activation_and_child_events() -> Tes
         vec![RunEventKind::RunStarted; 16],
         Vec::new(),
     )?;
-    let _ = store.commit_command(&seed)?;
+    assert!(matches!(
+        store.commit_command(&seed)?,
+        AtomicRunCommitOutcome::Committed(_)
+    ));
     let legacy = RunEventEnvelope::from_json(include_bytes!(
         "../../../../../crates/persistence/tests/fixtures/run-event-controller-assessment-v2.json"
     ))?;
@@ -607,7 +619,10 @@ fn controller_assessment_integrity_requires_the_exact_durable_declaration() -> T
             .first()
             .ok_or("controller assessment event is absent")?
             .clone();
-        let _ = store.commit_command(&assessment)?;
+        assert!(matches!(
+            store.commit_command(&assessment)?,
+            AtomicRunCommitOutcome::Committed(_)
+        ));
         assert!(!has_integrity_failure(&store)?);
         (declaration, recorded)
     };

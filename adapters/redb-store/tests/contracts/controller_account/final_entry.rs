@@ -19,7 +19,10 @@ fn denied_uncontrolled_final_entry_is_valid_only_for_a_denied_decision() -> Test
             controller_admission: ControllerAdmissionOutcome::NotControlled,
         },
     )?;
-    let _ = store.commit_command(&denied)?;
+    assert!(matches!(
+        store.commit_command(&denied)?,
+        AtomicRunCommitOutcome::Committed(_)
+    ));
     assert!(!has_integrity_failure(&store)?);
     Ok(())
 }
@@ -38,7 +41,10 @@ fn allowed_uncontrolled_final_entry_is_corrupt_after_a_late_binding() -> TestRes
         RunSequence::ZERO,
         RunEventKind::RunStarted,
     )?;
-    let _ = store.commit_command(&start)?;
+    assert!(matches!(
+        store.commit_command(&start)?,
+        AtomicRunCommitOutcome::Committed(_)
+    ));
     let allowed = request(
         &child,
         "command-allowed-link-only",
@@ -50,7 +56,10 @@ fn allowed_uncontrolled_final_entry_is_corrupt_after_a_late_binding() -> TestRes
             controller_admission: ControllerAdmissionOutcome::NotControlled,
         },
     )?;
-    let _ = store.commit_command(&allowed)?;
+    assert!(matches!(
+        store.commit_command(&allowed)?,
+        AtomicRunCommitOutcome::Committed(_)
+    ));
     bind_child(&store, &child, &origin, "allowed-link-late-bind")?;
     assert!(has_integrity_failure(&store)?);
     Ok(())
@@ -103,7 +112,10 @@ fn reserved_final_entry_must_match_both_binding_and_attempt_identity() -> TestRe
                 expected_outcome: outcome,
             }],
         )?)?;
-        let _ = store.commit_command(&reserved)?;
+        assert!(matches!(
+            store.commit_command(&reserved)?,
+            AtomicRunCommitOutcome::Committed(_)
+        ));
         assert!(!has_integrity_failure(&store)?);
     }
 
@@ -171,7 +183,10 @@ fn reserved_final_entry_reservation_must_match_its_attempt_identity() -> TestRes
             .first()
             .ok_or("reserved final-entry event is absent")?
             .clone();
-        let _ = store.commit_command(&entry)?;
+        assert!(matches!(
+            store.commit_command(&entry)?,
+            AtomicRunCommitOutcome::Committed(_)
+        ));
         assert!(!has_integrity_failure(&store)?);
     }
 

@@ -87,7 +87,10 @@ fn integrity_rejects_a_checksum_correct_account_totals_rewrite() -> TestResult {
                 expected_outcome: outcome,
             }],
         )?)?;
-        let _ = store.commit_command(&request)?;
+        assert!(matches!(
+            store.commit_command(&request)?,
+            AtomicRunCommitOutcome::Committed(_)
+        ));
         assert_eq!(
             store
                 .controller_account(declaration.account())?

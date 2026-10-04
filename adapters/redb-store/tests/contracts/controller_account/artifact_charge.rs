@@ -33,9 +33,19 @@ fn preexisting_artifact_charge_is_corruption_not_a_conflict() -> TestResult {
             workspace_budget()?,
             WorkspaceUsage::EMPTY,
         )?;
-        let _ = store.begin_publication(&publication)?;
-        let _ = store.write_chunk(&first_publication, 0, bytes)?;
-        let _ = store.commit_publication(&first_publication)?;
+        assert!(matches!(
+            store.begin_publication(&publication)?,
+            BeginArtifactOutcome::Writable
+        ));
+        assert!(
+            store
+                .write_chunk(&first_publication, 0, bytes)?
+                .complete_size
+        );
+        assert!(matches!(
+            store.commit_publication(&first_publication)?,
+            milkdrift_persistence::CommitArtifactOutcome::Published { .. }
+        ));
     }
     let database = Database::open(directory.path().join("milkdrift.redb"))?;
     let write = database.begin_write()?;
@@ -76,8 +86,15 @@ fn preexisting_artifact_charge_is_corruption_not_a_conflict() -> TestResult {
         workspace_budget()?,
         store.workspace_usage(&run)?,
     )?;
-    let _ = store.begin_publication(&publication)?;
-    let _ = store.write_chunk(&second_publication, 0, bytes)?;
+    assert!(matches!(
+        store.begin_publication(&publication)?,
+        BeginArtifactOutcome::Writable
+    ));
+    assert!(
+        store
+            .write_chunk(&second_publication, 0, bytes)?
+            .complete_size
+    );
     assert_storage_corruption(store.commit_publication(&second_publication));
     Ok(())
 }
@@ -120,9 +137,15 @@ fn preexisting_mismatched_artifact_charge_is_an_immutable_conflict() -> TestResu
                 workspace_budget()?,
                 WorkspaceUsage::EMPTY,
             )?;
-            let _ = store.begin_publication(&publication)?;
-            let _ = store.write_chunk(&first, 0, bytes)?;
-            let _ = store.commit_publication(&first)?;
+            assert!(matches!(
+                store.begin_publication(&publication)?,
+                BeginArtifactOutcome::Writable
+            ));
+            assert!(store.write_chunk(&first, 0, bytes)?.complete_size);
+            assert!(matches!(
+                store.commit_publication(&first)?,
+                milkdrift_persistence::CommitArtifactOutcome::Published { .. }
+            ));
             declaration.account().clone()
         };
         let database = Database::open(directory.path().join("milkdrift.redb"))?;
@@ -188,8 +211,11 @@ fn preexisting_mismatched_artifact_charge_is_an_immutable_conflict() -> TestResu
             workspace_budget()?,
             store.workspace_usage(&run)?,
         )?;
-        let _ = store.begin_publication(&publication)?;
-        let _ = store.write_chunk(&second, 0, bytes)?;
+        assert!(matches!(
+            store.begin_publication(&publication)?,
+            BeginArtifactOutcome::Writable
+        ));
+        assert!(store.write_chunk(&second, 0, bytes)?.complete_size);
         assert!(matches!(
             store.commit_publication(&second),
             Err(PersistenceError::ImmutableConflict {
@@ -233,9 +259,15 @@ fn committed_bound_publication_requires_its_reverse_controller_charge_link() -> 
             workspace_budget()?,
             WorkspaceUsage::EMPTY,
         )?;
-        let _ = store.begin_publication(&request)?;
-        let _ = store.write_chunk(&publication, 0, bytes)?;
-        let _ = store.commit_publication(&publication)?;
+        assert!(matches!(
+            store.begin_publication(&request)?,
+            BeginArtifactOutcome::Writable
+        ));
+        assert!(store.write_chunk(&publication, 0, bytes)?.complete_size);
+        assert!(matches!(
+            store.commit_publication(&publication)?,
+            milkdrift_persistence::CommitArtifactOutcome::Published { .. }
+        ));
         assert!(!has_integrity_failure(&store)?);
     }
 
@@ -289,9 +321,15 @@ fn controller_artifact_charge_linkage_rejects_checksum_correct_field_corruption(
                 workspace_budget()?,
                 WorkspaceUsage::EMPTY,
             )?;
-            let _ = store.begin_publication(&request)?;
-            let _ = store.write_chunk(&publication, 0, bytes)?;
-            let _ = store.commit_publication(&publication)?;
+            assert!(matches!(
+                store.begin_publication(&request)?,
+                BeginArtifactOutcome::Writable
+            ));
+            assert!(store.write_chunk(&publication, 0, bytes)?.complete_size);
+            assert!(matches!(
+                store.commit_publication(&publication)?,
+                milkdrift_persistence::CommitArtifactOutcome::Published { .. }
+            ));
             assert!(!has_integrity_failure(&store)?);
             declaration
         };

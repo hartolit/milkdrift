@@ -126,7 +126,12 @@ fn artifact_path_intent_and_finalize_faults_resume_after_reopen()
             cursor = Some(next);
         }
         for _ in 0..4 {
-            let _ = reopened.cleanup_orphans(cleanup_request.clone())?;
+            assert!(
+                reopened
+                    .cleanup_orphans(cleanup_request.clone())?
+                    .next_cursor
+                    .is_none()
+            );
         }
         assert!(
             std::fs::read_dir(directory.path().join("artifacts/.tmp"))?

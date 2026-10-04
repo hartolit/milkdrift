@@ -331,7 +331,10 @@ fn bind_child(
         suffix,
         &format!("transition-bind-{suffix}"),
     )?;
-    let _ = store.commit_command(&request)?;
+    assert!(matches!(
+        store.commit_command(&request)?,
+        AtomicRunCommitOutcome::Committed(_)
+    ));
     Ok(())
 }
 
@@ -463,7 +466,10 @@ fn account_reestablishment_and_transition_fingerprints_are_exact() -> TestResult
             bind_run: run.clone(),
         }],
     )?)?;
-    let _ = store.commit_command(&redeclare)?;
+    assert!(matches!(
+        store.commit_command(&redeclare)?,
+        AtomicRunCommitOutcome::Committed(_)
+    ));
     let second_head = store
         .run_summary(&run)?
         .ok_or("controller run summary is absent after reestablishment")?
@@ -735,9 +741,15 @@ fn unbound_publication_integrity_rejects_an_invocation_reservation_owner() -> Te
             workspace_budget()?,
             WorkspaceUsage::EMPTY,
         )?;
-        let _ = store.begin_publication(&request)?;
-        let _ = store.write_chunk(&publication, 0, bytes)?;
-        let _ = store.commit_publication(&publication)?;
+        assert!(matches!(
+            store.begin_publication(&request)?,
+            BeginArtifactOutcome::Writable
+        ));
+        assert!(store.write_chunk(&publication, 0, bytes)?.complete_size);
+        assert!(matches!(
+            store.commit_publication(&publication)?,
+            milkdrift_persistence::CommitArtifactOutcome::Published { .. }
+        ));
         assert!(!has_integrity_failure(&store)?);
     }
 
@@ -817,7 +829,10 @@ fn invocation_artifact_above_reservation_blocks_account_without_charging_metadat
             expected_outcome: outcome,
         }],
     )?)?;
-    let _ = store.commit_command(&entry)?;
+    assert!(matches!(
+        store.commit_command(&entry)?,
+        AtomicRunCommitOutcome::Committed(_)
+    ));
 
     let bytes = b"xx";
     let artifact = ArtifactId::new("artifact-controller-envelope-excess")?;
@@ -845,8 +860,15 @@ fn invocation_artifact_above_reservation_blocks_account_without_charging_metadat
         WorkspaceUsage::EMPTY,
         reservation,
     )?;
-    let _ = store.begin_publication(&publication)?;
-    let _ = store.write_chunk(publication.publication(), 0, bytes)?;
+    assert!(matches!(
+        store.begin_publication(&publication)?,
+        BeginArtifactOutcome::Writable
+    ));
+    assert!(
+        store
+            .write_chunk(publication.publication(), 0, bytes)?
+            .complete_size
+    );
     assert!(matches!(
         store.commit_publication(publication.publication()),
         Err(PersistenceError::Bounds {
