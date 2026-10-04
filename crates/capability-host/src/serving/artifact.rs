@@ -48,6 +48,9 @@ pub enum PeerArtifactError {
     Unavailable,
 }
 
+#[cfg(test)]
+mod tests;
+
 /// Negotiate and transfer artifact bytes after the peer service authorizes execution ownership.
 ///
 /// The service uses [`Self::transfer_facts`] to reauthorize each chunk. Implementations preserve
@@ -473,7 +476,11 @@ impl PeerArtifactStore for CorePeerArtifactStore {
             && let Some(publication) = publication.as_ref()
         {
             if let Err(error) = self.core.commit_publication(publication) {
-                let _ = self.core.abort_publication(publication);
+                if let Err(cleanup) = self.core.abort_publication(publication) {
+                    return Err(PeerArtifactError::Persistence(format!(
+                        "{error}; publication cleanup also failed and the session may remain: {cleanup}"
+                    )));
+                }
                 return Err(map_persistence(error));
             }
             return Ok(ArtifactTransferDecision::AlreadyPresent);
