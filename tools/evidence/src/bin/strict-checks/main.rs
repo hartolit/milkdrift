@@ -312,6 +312,23 @@ fn summarize(gate: &Gate) -> CheckResult {
     Ok(())
 }
 
+fn fingerprint_diff(root: &Path, output: &Path) -> CheckResult {
+    // Keep exact-byte provenance without copying a potentially secret-bearing diff into
+    // uploaded diagnostics. The commit and changed paths are captured by ordinary commands.
+    let diff = Command::new("git")
+        .current_dir(root)
+        .args(["diff", "--binary", "HEAD", "--", "."])
+        .output()?;
+    if !diff.status.success() {
+        return Err("source diff fingerprint failed".into());
+    }
+    fs::write(
+        output.join("source-diff.blake3"),
+        format!("{}\n", blake3::hash(&diff.stdout)),
+    )?;
+    Ok(())
+}
+
 fn execute(arguments: Arguments) -> CheckResult<bool> {
     let root = std::env::current_dir()?;
     if !root.join("rust-toolchain.toml").is_file() {
@@ -329,7 +346,8 @@ fn execute(arguments: Arguments) -> CheckResult<bool> {
     };
     gate.run("source-head", "git", &["rev-parse", "HEAD"])?;
     gate.run("source-status", "git", &["status", "--short"])?;
-    gate.run("source-diff", "git", &["diff", "HEAD", "--", "."])?;
+    gate.run("source-diff", "git", &["diff", "--stat", "HEAD", "--", "."])?;
+    fingerprint_diff(&gate.root, &gate.output)?;
     gate.run("rust-version", "rustc", &["-Vv"])?;
     gate.cargo("clippy-version", &["clippy", "--version"])?;
     gate.cargo("deny-version", &["deny", "--version"])?;
@@ -386,6 +404,59 @@ mod tests {
             "a later success must not erase failed checks"
         );
         assert!(output.path().join("checks.json").is_file());
+        Ok(())
+    }
+
+    #[test]
+    fn source_provenance_keeps_a_digest_without_copying_diff_secrets() -> CheckResult {
+        let repository = tempfile::tempdir()?;
+        let evidence = tempfile::tempdir()?;
+        for arguments in [
+            vec!["init", "--quiet"],
+            vec![
+                "-c",
+                "user.name=Checker fixture",
+                "-c",
+                "user.email=checker@example.invalid",
+                "commit",
+                "--allow-empty",
+                "--quiet",
+                "-m",
+                "fixture",
+            ],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .current_dir(repository.path())
+                    .args(arguments)
+                    .status()?
+                    .success()
+            );
+        }
+        std::fs::write(
+            repository.path().join("input.txt"),
+            "private-sentinel-value",
+        )?;
+        assert!(
+            std::process::Command::new("git")
+                .current_dir(repository.path())
+                .args(["add", "input.txt"])
+                .status()?
+                .success()
+        );
+        super::fingerprint_diff(repository.path(), evidence.path())?;
+        let first = std::fs::read_to_string(evidence.path().join("source-diff.blake3"))?;
+        assert!(!first.contains("private-sentinel-value"));
+        assert_eq!(first.trim().len(), 64);
+        std::fs::write(
+            repository.path().join("input.txt"),
+            "changed-private-sentinel",
+        )?;
+        super::fingerprint_diff(repository.path(), evidence.path())?;
+        assert_ne!(
+            first,
+            std::fs::read_to_string(evidence.path().join("source-diff.blake3"))?
+        );
         Ok(())
     }
 }
