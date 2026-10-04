@@ -14,7 +14,7 @@ use milkdrift_workspace::{
 
 impl Owner {
     pub(super) fn upload_input(
-        &mut self,
+        &self,
         session: &ActorSession,
         request: &InputUploadRequest,
     ) -> Result<ArtifactMetadataRead, PublicFailure> {
@@ -128,28 +128,30 @@ impl Owner {
         let mut cleanup = UploadCleanup {
             store: self.store.as_ref(),
             publication: &publication,
-            committed: false,
+            finished: false,
         };
-        let state = self
-            .store
-            .begin_publication(&begin)
-            .map_err(public_persistence)?;
-        let offset = usize::try_from(state.next_offset().unwrap_or(0))
-            .map_err(|_| invalid("upload offset exceeds platform"))?;
-        let remaining = bytes
-            .get(offset..)
-            .ok_or_else(|| invalid("upload offset exceeds exact content"))?;
-        if !remaining.is_empty() {
-            self.store
-                .write_chunk(&publication, offset as u64, remaining)
+        let outcome = (|| {
+            let state = self
+                .store
+                .begin_publication(&begin)
                 .map_err(public_persistence)?;
-        }
-        let outcome = self
-            .store
-            .commit_publication(&publication)
-            .map_err(public_persistence)?;
-        cleanup.committed = true;
-        Ok(public_artifact_metadata(outcome.metadata()))
+            let offset = usize::try_from(state.next_offset().unwrap_or(0))
+                .map_err(|_| invalid("upload offset exceeds platform"))?;
+            let remaining = bytes
+                .get(offset..)
+                .ok_or_else(|| invalid("upload offset exceeds exact content"))?;
+            if !remaining.is_empty() {
+                self.store
+                    .write_chunk(&publication, offset as u64, remaining)
+                    .map_err(public_persistence)?;
+            }
+            let committed = self
+                .store
+                .commit_publication(&publication)
+                .map_err(public_persistence)?;
+            Ok(public_artifact_metadata(committed.metadata()))
+        })();
+        cleanup.finish(outcome)
     }
 }
 
@@ -157,12 +159,40 @@ impl Owner {
 struct UploadCleanup<'a> {
     store: &'a dyn ArtifactStore,
     publication: &'a ArtifactPublicationId,
-    committed: bool,
+    finished: bool,
+}
+impl UploadCleanup<'_> {
+    fn finish(
+        &mut self,
+        outcome: Result<ArtifactMetadataRead, PublicFailure>,
+    ) -> Result<ArtifactMetadataRead, PublicFailure> {
+        self.finished = true;
+        outcome.map_err(|mut original| {
+            if let Err(error) = self.store.abort_publication(self.publication) {
+                let cleanup = public_persistence(error);
+                original
+                    .details
+                    .insert("publication_cleanup".to_owned(), "unconfirmed".to_owned());
+                original.details.insert(
+                    "cleanup_error_code".to_owned(),
+                    format!("{:?}", cleanup.code),
+                );
+            }
+            original
+        })
+    }
 }
 impl Drop for UploadCleanup<'_> {
     fn drop(&mut self) {
-        if !self.committed {
-            let _ = self.store.abort_publication(self.publication);
+        if !self.finished
+            && let Err(error) = self.store.abort_publication(self.publication)
+        {
+            // The owner contains the panic and closes admission. Retained staging stays
+            // with the store's orphan recovery; never expose storage paths in diagnostics.
+            tracing::warn!(code = ?public_persistence(error).code, "panicked input upload cleanup remains unconfirmed");
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
