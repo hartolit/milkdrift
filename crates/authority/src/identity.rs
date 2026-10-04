@@ -50,7 +50,10 @@ fn validate_identity(value: &str, kind: &'static str) -> Result<(), AuthorityErr
         });
     }
     if !value.is_ascii()
-        || !value.as_bytes()[0].is_ascii_alphanumeric()
+        || !value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
         || !value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
         })
@@ -106,6 +109,9 @@ impl GrantDigest {
     }
 
     /// Parses one lowercase BLAKE3 grant digest.
+    ///
+    /// # Errors
+    /// Rejects any spelling other than `b3_` followed by 64 lowercase hexadecimal characters.
     pub fn new(value: impl Into<String>) -> Result<Self, AuthorityError> {
         let value = value.into();
         if !milkdrift_contracts::is_canonical_blake3_digest(&value) {
@@ -151,6 +157,10 @@ pub struct SecretRef(String);
 
 impl SecretRef {
     /// Constructs a validated opaque secret reference.
+    ///
+    /// # Errors
+    /// Rejects empty/oversized text, a nonalphanumeric prefix, or characters outside
+    /// the safe ASCII identity alphabet. No secret lookup occurs here.
     pub fn new(value: impl Into<String>) -> Result<Self, AuthorityError> {
         let value = value.into();
         validate_identity(&value, "SecretRef")?;

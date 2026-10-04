@@ -15,6 +15,10 @@ use crate::{
 /// authentication, trustworthy resource/time facts, enforcement, and durable recording.
 pub trait AuthorityEvaluator: Send + Sync {
     /// Evaluates only the supplied immutable facts and returns an exact snapshot.
+    ///
+    /// # Errors
+    /// Returns an error when supplied facts are invalid or the implementation cannot
+    /// produce a valid bound snapshot. An ordinary authority denial is a successful result.
     fn evaluate(
         &self,
         request: &AuthorityRequest,
@@ -35,6 +39,9 @@ pub struct GrantSetEvaluator {
 
 impl GrantSetEvaluator {
     /// Constructs an evaluator from exact immutable revisions.
+    ///
+    /// # Errors
+    /// Rejects policy version zero or conflicting content under one grant identity/revision.
     pub fn new(
         policy: PolicyId,
         policy_version: u32,

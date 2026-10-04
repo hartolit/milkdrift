@@ -57,7 +57,10 @@ fn safe_reference(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 192
         && value.is_ascii()
-        && value.as_bytes()[0].is_ascii_alphanumeric()
+        && value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
         })
@@ -135,6 +138,11 @@ impl<'de> Deserialize<'de> for ExecutionAuthorityBasis {
 
 impl ExecutionAuthorityBasis {
     /// Freezes the exact allowed start decision as the run's execution basis.
+    /// The caller supplies the workflow, run and lineage revision from the accepted creation.
+    ///
+    /// # Errors
+    /// Rejects a denied/non-start decision, invalid grant/policy versions or decision
+    /// digest, or canonical encoding failure.
     pub fn from_start_decision(
         decision: &AuthorityDecisionSnapshot,
         workflow: WorkflowId,
@@ -169,6 +177,7 @@ impl ExecutionAuthorityBasis {
     }
 
     /// Derives a new exact request without widening the frozen grant reference.
+    #[must_use]
     pub fn request(
         &self,
         decision: DecisionId,

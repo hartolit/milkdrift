@@ -36,6 +36,9 @@ impl<T> Selection<T> {
     }
 
     /// Selects one nonempty bounded set of exact values.
+    ///
+    /// # Errors
+    /// Rejects an empty set or more than 128 values. Use [`Self::any`] for an explicit wildcard.
     pub fn only(values: BTreeSet<T>) -> Result<Self, AuthorityError> {
         validate_count(values.len())?;
         Ok(Self {

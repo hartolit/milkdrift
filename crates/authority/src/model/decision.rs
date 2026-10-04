@@ -333,6 +333,10 @@ impl<'de> Deserialize<'de> for AuthorityDecisionSnapshot {
 
 impl AuthorityDecisionSnapshot {
     /// Constructs and digests the output of an authority evaluator implementation.
+    ///
+    /// # Errors
+    /// Rejects invalid request facts, policy version zero, empty/excess reason codes,
+    /// `Allowed` mixed with denial reasons, or canonical encoding failure.
     pub fn from_evaluation(
         policy: PolicyId,
         policy_version: u32,
@@ -419,6 +423,9 @@ impl AuthorityDecisionSnapshot {
         matches!(self.outcome, DecisionOutcome::Allow)
     }
     /// Canonical bounded JSON encoding.
+    ///
+    /// # Errors
+    /// Rejects encoding failure or decision facts exceeding document byte/structure bounds.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, AuthorityError> {
         canonical_json(self)
     }
@@ -428,7 +435,11 @@ impl AuthorityDecisionSnapshot {
             || self.policy_version == 0
             || self.reason_codes.is_empty()
             || self.reason_codes.len() > MAX_DIAGNOSTIC_CODES
-            || self.reason_codes.windows(2).any(|pair| pair[0] >= pair[1])
+            || self
+                .reason_codes
+                .iter()
+                .zip(self.reason_codes.iter().skip(1))
+                .any(|(left, right)| left >= right)
             || (self.reason_codes.contains(&DecisionReasonCode::Allowed)
                 && self.reason_codes.len() != 1)
             || self.digest != self.compute_digest()?

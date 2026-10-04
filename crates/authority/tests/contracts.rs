@@ -319,7 +319,7 @@ fn filesystem_scope_uses_canonical_family_and_component_containment() -> TestRes
     )?);
     assert!(!filesystem_is_allowed(
         FilesystemScope::new("/", read.clone())?,
-        FilesystemScope::new("C:/work", read.clone())?,
+        FilesystemScope::new("C:/work", read)?,
     )?);
     assert_eq!(
         FilesystemScope::dangerous_all_access_windows_drive('c')?.root(),
@@ -347,6 +347,9 @@ fn filesystem_scope_rejects_ambiguous_and_hostile_roots() -> TestResult {
         "/work//child",
         "/work/",
         "C:relative",
+        "C",
+        "C:",
+        "Ç:/work",
         "c:/work",
         "C:\\work",
         "C:/work\\child",
@@ -357,6 +360,7 @@ fn filesystem_scope_rejects_ambiguous_and_hostile_roots() -> TestResult {
         "C:/work/NUL",
         "C:/work/con.txt",
         "C:/work/COM1",
+        "C:/work/LPT9.txt",
         "C:/work/name?",
         "//server/share",
         "//?/C:/work",
@@ -439,7 +443,8 @@ fn grant_schema_has_a_canonical_golden_fixture_and_hostile_bounds() -> TestResul
     );
     for unsupported in [1, 2, 3, 5] {
         let mut old: serde_json::Value = serde_json::from_slice(&grant.to_canonical_json()?)?;
-        old["schema_version"] = serde_json::json!(unsupported);
+        *old.get_mut("schema_version")
+            .ok_or("missing grant schema version")? = serde_json::json!(unsupported);
         assert!(AuthorityGrant::from_json(&serde_json::to_vec(&old)?).is_err());
     }
     assert!(AuthorityGrant::from_json(br#"{"schema_version":1,"schema_version":1}"#).is_err());
@@ -447,7 +452,9 @@ fn grant_schema_has_a_canonical_golden_fixture_and_hostile_bounds() -> TestResul
     assert!(FilesystemScope::new("/workspace/../secret", set(AccessMode::Read)).is_err());
     assert!(NetworkScope::new(BTreeSet::new(), set("user@example.com".to_owned())).is_err());
     let mut hostile: serde_json::Value = serde_json::from_slice(&grant.to_canonical_json()?)?;
-    hostile["resources"]["filesystem"] = serde_json::json!([{
+    *hostile
+        .pointer_mut("/resources/filesystem")
+        .ok_or("missing filesystem scopes")? = serde_json::json!([{
         "root": "/workspace/../secret",
         "access": ["read"]
     }]);
@@ -872,13 +879,13 @@ fn human_and_ai_actors_receive_identical_results_for_equivalent_grants() -> Test
         BTreeMap::new(),
     )?;
     let mut outcomes = Vec::new();
-    for (index, grant) in grants.iter().enumerate() {
+    for (index, (grant, actor)) in grants.iter().zip(&actors).enumerate() {
         let mut resources = RequestedResourceFacts::empty();
         resources.workflow = Some(workflow.clone());
         resources.run = Some(RunId::new("run-shared")?);
         let decision = evaluator.evaluate(&AuthorityRequest {
             decision: DecisionId::new(format!("decision:shared-{index}"))?,
-            actor: actors[index].clone(),
+            actor: actor.clone(),
             grant: grant.identity().clone(),
             grant_revision: grant.revision(),
             grant_digest: grant.digest()?,
@@ -891,9 +898,12 @@ fn human_and_ai_actors_receive_identical_results_for_equivalent_grants() -> Test
         })?;
         outcomes.push((decision.outcome(), decision.reason_codes().to_vec()));
     }
-    assert_eq!(outcomes[0], outcomes[1]);
+    let [human, ai] = outcomes.as_slice() else {
+        return Err("expected both human and AI outcomes".into());
+    };
+    assert_eq!(human, ai);
     assert!(matches!(
-        outcomes[0].0,
+        human.0,
         milkdrift_authority::DecisionOutcome::Allow
     ));
     Ok(())

@@ -23,6 +23,10 @@ pub struct ProtectedEffectPolicy {
 }
 impl ProtectedEffectPolicy {
     /// Read one bounded strict policy document before authoring its immutable agreement reference.
+    ///
+    /// # Errors
+    /// Rejects input above 64 KiB, malformed/duplicate JSON, unknown fields or a policy
+    /// refused by [`Self::validate`].
     pub fn from_json(bytes: &[u8]) -> Result<Self, AuthorityError> {
         if bytes.len() > 65_536 {
             return Err(invalid("effect policy exceeds 64 KiB"));
@@ -35,6 +39,10 @@ impl ProtectedEffectPolicy {
     }
 
     /// Validate operator input before making it available to delegated callers.
+    ///
+    /// # Errors
+    /// Rejects unsupported schema, empty/duplicate/excess checks or invalid names,
+    /// a malformed verifier digest, or size/lifetime outside the finite policy bounds.
     pub fn validate(&self) -> Result<(), AuthorityError> {
         if self.schema_version != 1
             || self.required_checks.is_empty()
@@ -63,6 +71,9 @@ impl ProtectedEffectPolicy {
         Ok(())
     }
     /// Immutable policy identity committed by the blueprint agreement.
+    ///
+    /// # Errors
+    /// Rejects an invalid policy or canonical encoding beyond policy JSON bounds.
     pub fn digest(&self) -> Result<String, AuthorityError> {
         self.validate()?;
         let bytes = milkdrift_contracts::canonical_json_bytes(
@@ -81,6 +92,10 @@ impl ProtectedEffectPolicy {
         Ok(format!("b3_{}", hash.finalize()))
     }
     /// Evaluate already-authenticated evidence against the active policy and current boundary time.
+    ///
+    /// # Errors
+    /// Rejects invalid, incomplete, failed or expired evidence; mismatched policy/verifier/
+    /// producer, check order or lifetime; and a candidate larger than the policy permits.
     pub fn require_pass(
         &self,
         evidence: &CandidateEvaluation,

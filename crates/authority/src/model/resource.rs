@@ -220,15 +220,10 @@ impl CanonicalFilesystemRoot {
         }
         let (family, remainder) = if let Some(remainder) = text.strip_prefix('/') {
             (FilesystemRootFamily::Unix, remainder)
-        } else if text.len() >= 3
-            && text.as_bytes()[0].is_ascii_uppercase()
-            && text.as_bytes()[0].is_ascii_alphabetic()
-            && text.as_bytes()[1] == b':'
-            && text.as_bytes()[2] == b'/'
-        {
+        } else if let [drive @ b'A'..=b'Z', b':', b'/', ..] = text.as_bytes() {
             (
-                FilesystemRootFamily::WindowsDrive(text.as_bytes()[0]),
-                &text[3..],
+                FilesystemRootFamily::WindowsDrive(*drive),
+                text.get(3..).ok_or_else(invalid_filesystem_scope)?,
             )
         } else {
             return Err(invalid_filesystem_scope());
@@ -275,10 +270,10 @@ fn windows_component_is_canonical(component: &str) -> bool {
         return false;
     }
     let bytes = upper.as_bytes();
-    if bytes.len() == 4
-        && (bytes.starts_with(b"COM") || bytes.starts_with(b"LPT"))
-        && matches!(bytes[3], b'1'..=b'9')
-    {
+    if matches!(
+        bytes,
+        [b'C', b'O', b'M', b'1'..=b'9'] | [b'L', b'P', b'T', b'1'..=b'9']
+    ) {
         return false;
     }
     !["COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³"]
@@ -323,6 +318,9 @@ impl FilesystemScope {
     }
 
     /// Deliberately broad all-access scope for one explicit Windows drive.
+    ///
+    /// # Errors
+    /// Rejects a drive that is not one ASCII letter.
     pub fn dangerous_all_access_windows_drive(drive: char) -> Result<Self, AuthorityError> {
         if !drive.is_ascii_alphabetic() {
             return Err(invalid_filesystem_scope());
@@ -349,6 +347,10 @@ impl FilesystemScope {
     }
 
     /// Constructs one canonical durable Unix or Windows drive-absolute root.
+    ///
+    /// # Errors
+    /// Rejects empty access, relative/oversized roots, traversal or ambiguous separators,
+    /// controls, and Windows reserved names or noncanonical drive/component spellings.
     pub fn new(
         root: impl Into<String>,
         access: BTreeSet<AccessMode>,
@@ -366,6 +368,10 @@ impl FilesystemScope {
     ///
     /// This performs no filesystem access. The caller remains responsible for canonicalizing and
     /// inspecting the native path at its trust boundary before calling this conversion.
+    ///
+    /// # Errors
+    /// Rejects unsupported host path forms, non-UTF-8 components, or a durable root/access
+    /// combination refused by [`Self::new`].
     pub fn from_canonical_host_path(
         path: &Path,
         access: BTreeSet<AccessMode>,
@@ -500,6 +506,10 @@ impl NetworkScope {
     }
 
     /// Constructs a bounded non-secret network scope.
+    ///
+    /// # Errors
+    /// Rejects more than 128 profiles/destinations or a destination that is empty,
+    /// oversized, non-ASCII, or contains `/`, `@`, space, tab or newline.
     pub fn new(
         profiles: BTreeSet<NetworkProfileRef>,
         destinations: BTreeSet<String>,
@@ -628,6 +638,9 @@ impl Default for ArtifactAuthorityScope {
 
 impl ArtifactAuthorityScope {
     /// Constructs a bounded artifact allow scope with an explicit identity selector.
+    ///
+    /// # Errors
+    /// Rejects a sensitivity set outside 1..=3 values; use [`Self::none`] to deny all.
     pub fn new(
         identities: Selection<ArtifactId>,
         sensitivities: BTreeSet<ArtifactSensitivity>,
@@ -798,6 +811,9 @@ pub struct PeerAuthorityScope {
 
 impl PeerAuthorityScope {
     /// Constructs an exact or explicitly broad peer scope.
+    ///
+    /// # Errors
+    /// Rejects more than 128 peers or a wildcard combined with an explicit allowlist.
     pub fn new(identities: BTreeSet<PeerId>, allow_any: bool) -> Result<Self, AuthorityError> {
         if identities.len() > MAX_SCOPE_ITEMS || (allow_any && !identities.is_empty()) {
             return Err(AuthorityError::InvalidContract(
@@ -882,6 +898,9 @@ pub struct WorkspaceAuthorityScope {
 
 impl WorkspaceAuthorityScope {
     /// Constructs an exact or explicitly run-wide workspace scope.
+    ///
+    /// # Errors
+    /// Rejects more than 128 scopes or a run wildcard combined with an explicit allowlist.
     pub fn new(scopes: BTreeSet<ScopeId>, allow_any_in_run: bool) -> Result<Self, AuthorityError> {
         if scopes.len() > MAX_SCOPE_ITEMS || (allow_any_in_run && !scopes.is_empty()) {
             return Err(AuthorityError::InvalidContract(

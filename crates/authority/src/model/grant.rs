@@ -120,14 +120,24 @@ impl AuthorityGrant {
         self.revocation_generation
     }
     /// Canonical bounded JSON encoding.
+    ///
+    /// # Errors
+    /// Rejects encoding failure or grant facts exceeding document byte/structure bounds.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, AuthorityError> {
         canonical_json(self)
     }
     /// Domain-separated digest of this exact immutable grant revision.
+    ///
+    /// # Errors
+    /// Propagates a refusal to canonically encode this grant from [`Self::to_canonical_json`].
     pub fn digest(&self) -> Result<GrantDigest, AuthorityError> {
         Ok(GrantDigest::for_bytes(&self.to_canonical_json()?))
     }
     /// Strictly decodes and validates one schema-v4 grant.
+    ///
+    /// # Errors
+    /// Rejects malformed/duplicate JSON, unsupported schema, unknown fields, excessive
+    /// size/structure, invalid selectors/resources or contradictory validity facts.
     pub fn from_json(bytes: &[u8]) -> Result<Self, AuthorityError> {
         if bytes.len() > crate::document::MAX_AUTHORITY_DOCUMENT_BYTES {
             return Err(AuthorityError::Bounds {
@@ -238,6 +248,10 @@ impl AuthorityGrantBuilder {
         self
     }
     /// Validates and publishes the immutable grant revision.
+    ///
+    /// # Errors
+    /// Rejects an unsupported schema, revision zero, empty/excess operations, inverted
+    /// validity, invalid resource scopes or extensions, and excessive document bounds.
     pub fn build(self) -> Result<AuthorityGrant, AuthorityError> {
         let grant = self.grant;
         if grant.schema_version != AUTHORITY_GRANT_SCHEMA_VERSION_V4 {
@@ -301,7 +315,7 @@ impl AuthorityGrantBuilder {
                 "authority extension keys must be DNS-namespaced".to_owned(),
             ));
         }
-        let _ = canonical_json(&grant)?;
+        canonical_json(&grant)?;
         Ok(grant)
     }
 }

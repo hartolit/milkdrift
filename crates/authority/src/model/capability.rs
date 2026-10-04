@@ -52,6 +52,9 @@ impl CapabilityAuthorityScope {
     /// Unspecified requirement dimensions become explicit `Any` selectors. Exact identity,
     /// operation, provider profile, category, trust-zone, and execution-trust facts become
     /// nonempty `Only` selectors.
+    ///
+    /// # Errors
+    /// Rejects a requested dimension exceeding the authority selector limit of 128 values.
     pub fn requirement_envelope(
         requirement: &CapabilityRequirement,
     ) -> Result<Self, AuthorityError> {
@@ -250,6 +253,9 @@ impl CapabilityAuthorityScopeBuilder {
     }
 
     /// Narrows capability identities to a nonempty exact allowlist.
+    ///
+    /// # Errors
+    /// Rejects empty or excessive sets as specified by [`Selection::only`].
     pub fn only_capabilities(
         mut self,
         values: BTreeSet<CapabilityId>,
@@ -259,6 +265,9 @@ impl CapabilityAuthorityScopeBuilder {
     }
 
     /// Narrows categories to a nonempty exact allowlist.
+    ///
+    /// # Errors
+    /// Rejects empty or excessive sets as specified by [`Selection::only`].
     pub fn only_categories(
         mut self,
         values: BTreeSet<CapabilityCategory>,
@@ -268,6 +277,9 @@ impl CapabilityAuthorityScopeBuilder {
     }
 
     /// Narrows operations to a nonempty exact allowlist.
+    ///
+    /// # Errors
+    /// Rejects empty or excessive sets as specified by [`Selection::only`].
     pub fn only_operations(
         mut self,
         values: BTreeSet<OperationId>,
@@ -277,6 +289,9 @@ impl CapabilityAuthorityScopeBuilder {
     }
 
     /// Narrows provider profiles to a nonempty exact allowlist.
+    ///
+    /// # Errors
+    /// Rejects empty or excessive sets as specified by [`Selection::only`].
     pub fn only_provider_profiles(
         mut self,
         values: BTreeSet<ProviderProfileRef>,
@@ -286,12 +301,18 @@ impl CapabilityAuthorityScopeBuilder {
     }
 
     /// Narrows trust zones to a nonempty exact allowlist.
+    ///
+    /// # Errors
+    /// Rejects empty or excessive sets as specified by [`Selection::only`].
     pub fn only_trust_zones(mut self, values: BTreeSet<TrustZone>) -> Result<Self, AuthorityError> {
         self.trust_zones = Selection::only(values)?;
         Ok(self)
     }
 
     /// Narrows execution trust classes to a nonempty exact allowlist.
+    ///
+    /// # Errors
+    /// Rejects empty or excessive sets as specified by [`Selection::only`].
     pub fn only_execution_trust_classes(
         mut self,
         values: BTreeSet<ExecutionTrustClass>,
@@ -301,12 +322,18 @@ impl CapabilityAuthorityScopeBuilder {
     }
 
     /// Narrows localities to a nonempty exact allowlist.
+    ///
+    /// # Errors
+    /// Rejects empty or excessive sets as specified by [`Selection::only`].
     pub fn only_localities(mut self, values: BTreeSet<Locality>) -> Result<Self, AuthorityError> {
         self.localities = Selection::only(values)?;
         Ok(self)
     }
 
     /// Narrows authenticated peers to a nonempty exact allowlist.
+    ///
+    /// # Errors
+    /// Rejects empty or excessive sets as specified by [`Selection::only`].
     pub fn only_peers(mut self, values: BTreeSet<PeerId>) -> Result<Self, AuthorityError> {
         self.peers = Selection::only(values)?;
         Ok(self)

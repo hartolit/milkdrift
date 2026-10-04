@@ -56,9 +56,15 @@ fn selector_and_scope_wire_shapes_are_distinct_canonical_and_exact() -> TestResu
         .build();
     assert_eq!(serde_json::to_string(&deny)?, r#"{"type":"deny_all"}"#);
     let allow_json = serde_json::to_value(&allow)?;
-    assert_eq!(allow_json["type"], "allow");
-    assert_eq!(allow_json["identities"]["type"], "any");
-    assert_eq!(allow_json["operations"]["type"], "only");
+    assert_eq!(allow_json.get("type"), Some(&serde_json::json!("allow")));
+    assert_eq!(
+        allow_json.pointer("/identities/type"),
+        Some(&serde_json::json!("any"))
+    );
+    assert_eq!(
+        allow_json.pointer("/operations/type"),
+        Some(&serde_json::json!("only"))
+    );
     assert_ne!(serde_json::to_vec(&deny)?, serde_json::to_vec(&allow)?);
     Ok(())
 }
@@ -315,7 +321,7 @@ fn placement_envelope_proves_narrowed_grant_without_catalog_assumptions() -> Tes
     let base = CapabilityRequirement::new(OperationId::new("tool.inspect")?)
         .maximum_side_effect(SideEffectClass::ReadOnly);
     assert!(!CapabilityAuthorityScope::requirement_envelope(&base)?.is_subset_of(&grant));
-    for allowed in [peers.clone(), BTreeSet::from([PeerId::new("peer-a")?])] {
+    for allowed in [peers, BTreeSet::from([PeerId::new("peer-a")?])] {
         let requirement = base
             .clone()
             .with_placement(PlacementRequirement::new(None, Some(allowed))?);
