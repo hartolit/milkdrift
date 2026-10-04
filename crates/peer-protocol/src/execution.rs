@@ -1009,15 +1009,17 @@ impl ObservationPage {
                 "terminal observation page contradicts its durable status".to_owned(),
             ));
         }
-        let mut expected = self.after_sequence.saturating_add(1);
+        let mut previous = self.after_sequence;
         for observation in &self.observations {
             observation.validate()?;
-            if observation.execution != self.execution || observation.sequence != expected {
+            if observation.execution != self.execution
+                || previous.checked_add(1) != Some(observation.sequence)
+            {
                 return Err(PeerProtocolError::InvalidContract(
                     "observation page is not contiguous for one execution".to_owned(),
                 ));
             }
-            expected = expected.saturating_add(1);
+            previous = observation.sequence;
         }
         let expected_next = self
             .observations

@@ -401,6 +401,54 @@ fn archived_observation_history_is_typed_closed_and_truthfully_uncertain() -> Te
 }
 
 #[test]
+fn observation_pages_refuse_sequence_overflow_without_rejecting_the_last_sequence() -> TestResult {
+    use milkdrift_capability::{InvocationEvent, InvocationEventKind};
+    use milkdrift_peer_protocol::{ObservationCategory, PeerObservation};
+
+    let execution = PeerExecutionId::new("execution-sequence-boundary")?;
+    let observation = PeerObservation {
+        execution: execution.clone(),
+        sequence: u64::MAX,
+        category: ObservationCategory::Progress,
+        event: InvocationEvent::new(
+            InvocationId::new("invocation-sequence-boundary")?,
+            u64::MAX,
+            InvocationEventKind::Progress {
+                message: "last representable observation".to_owned(),
+                completed_units: None,
+                total_units: None,
+            },
+        )?,
+        observed_at_unix_ms: 1,
+    };
+    let mut page = ObservationPage {
+        status: RemoteExecutionStatus::Running,
+        execution,
+        after_sequence: u64::MAX - 1,
+        observations: vec![observation.clone()],
+        next_sequence: u64::MAX,
+        terminal: false,
+        closed: false,
+        history: ObservationHistory::Hot,
+    };
+    page.validate(2)?;
+    page.observations.push(observation);
+    assert!(
+        page.validate(2).is_err(),
+        "duplicate maximum is not contiguous"
+    );
+    page.observations.truncate(1);
+    page.after_sequence = u64::MAX;
+    assert!(
+        page.validate(2).is_err(),
+        "no observation follows the maximum cursor"
+    );
+    page.observations.clear();
+    page.validate(2)?;
+    Ok(())
+}
+
+#[test]
 fn delegated_publication_depth_ceiling_is_retained_and_cannot_be_omitted() -> TestResult {
     use milkdrift_capability::PublicationAncestor;
     let request = request_with_artifact_limit("depth", Some(1), 1024)?;
