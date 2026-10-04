@@ -14,6 +14,10 @@ use std::{
 pub(crate) const HELPER_TIMEOUT: Duration = Duration::from_secs(45);
 // Engine inspection and fixed protection probes are bounded control-plane documents.
 pub(crate) const HELPER_OUTPUT_BYTES: usize = 1_048_576;
+// A failed helper gets one short force/reap allowance; it cannot turn a request timeout
+// into an unbounded wait. Failure to observe exit remains an explicit platform error.
+#[cfg(target_os = "linux")]
+const HELPER_REAP_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub(crate) struct CommandOutput {
     pub(crate) success: bool,
@@ -74,104 +78,122 @@ pub(crate) fn run(
             child,
             reaped: false,
         };
-        let mut stdout = owned
-            .child
-            .stdout
-            .take()
-            .ok_or_else(|| platform_error("helper stdout missing"))?;
-        let mut stderr = owned
-            .child
-            .stderr
-            .take()
-            .ok_or_else(|| platform_error("helper stderr missing"))?;
-        fcntl_setfl(
-            &stdout,
-            fcntl_getfl(&stdout).map_err(platform_error)? | OFlags::NONBLOCK,
-        )
-        .map_err(platform_error)?;
-        fcntl_setfl(
-            &stderr,
-            fcntl_getfl(&stderr).map_err(platform_error)? | OFlags::NONBLOCK,
-        )
-        .map_err(platform_error)?;
-        let deadline = Instant::now()
-            .checked_add(timeout)
-            .ok_or_else(|| rejected("helper timeout cannot be represented"))?;
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let mut out_eof = false;
-        let mut err_eof = false;
-        let mut exited = false;
-        loop {
-            if cancel.is_some_and(|c| c.load(Ordering::Acquire)) {
-                return Err(platform_error(
-                    "helper cancelled; external resource stop still requires inspection",
-                ));
-            }
-            if Instant::now() >= deadline {
-                return Err(platform_error(
-                    "helper deadline exceeded; external outcome remains uncertain",
-                ));
-            }
-            let read_pipe = |pipe: &mut dyn Read,
-                             bytes: &mut Vec<u8>,
-                             eof: &mut bool,
-                             other_bytes: usize|
-             -> Result<(), ManagedError> {
-                let mut chunk = [0; 8192];
-                // Finite reads per pass keep cancellation/deadline checks responsive under output flood.
-                for _ in 0..16 {
-                    let remaining = limit.saturating_sub(other_bytes.saturating_add(bytes.len()));
-                    let read_bound = chunk.len().min(remaining.saturating_add(1));
-                    match pipe.read(&mut chunk[..read_bound]) {
-                        Ok(0) => {
-                            *eof = true;
-                            break;
-                        }
-                        Ok(n) => {
-                            if n > remaining {
-                                return Err(platform_error("helper output limit exceeded"));
-                            }
-                            bytes.extend_from_slice(&chunk[..n]);
-                        }
-                        Err(e)
-                            if matches!(
-                                e.kind(),
-                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
-                            ) =>
-                        {
-                            break;
-                        }
-                        Err(e) => return Err(platform_error(e)),
-                    }
+        // Contain unwinding inside the process owner so every post-spawn exit reaches
+        // the same fallible cleanup path, including partial pipe setup.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut stdout = owned
+                .child
+                .stdout
+                .take()
+                .ok_or_else(|| platform_error("helper stdout missing"))?;
+            let mut stderr = owned
+                .child
+                .stderr
+                .take()
+                .ok_or_else(|| platform_error("helper stderr missing"))?;
+            fcntl_setfl(
+                &stdout,
+                fcntl_getfl(&stdout).map_err(platform_error)? | OFlags::NONBLOCK,
+            )
+            .map_err(platform_error)?;
+            fcntl_setfl(
+                &stderr,
+                fcntl_getfl(&stderr).map_err(platform_error)? | OFlags::NONBLOCK,
+            )
+            .map_err(platform_error)?;
+            let deadline = Instant::now()
+                .checked_add(timeout)
+                .ok_or_else(|| rejected("helper timeout cannot be represented"))?;
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+            let mut out_eof = false;
+            let mut err_eof = false;
+            let mut exited = false;
+            loop {
+                if cancel.is_some_and(|c| c.load(Ordering::Acquire)) {
+                    return Err(platform_error(
+                        "helper cancelled; external resource stop still requires inspection",
+                    ));
                 }
-                Ok(())
-            };
-            read_pipe(&mut stdout, &mut out, &mut out_eof, err.len())?;
-            read_pipe(&mut stderr, &mut err, &mut err_eof, out.len())?;
-            if !exited {
-                use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
-                // Keep the leader unreaped until pipes close. Its reserved PID prevents a timeout
-                // cleanup from targeting a recycled process group after the helper exits first.
-                exited = waitid(
-                    WaitId::Pid(Pid::from_child(&owned.child)),
-                    WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
-                )
-                .map_err(platform_error)?
-                .is_some();
+                if Instant::now() >= deadline {
+                    return Err(platform_error(
+                        "helper deadline exceeded; external outcome remains uncertain",
+                    ));
+                }
+                let read_pipe = |pipe: &mut dyn Read,
+                                 bytes: &mut Vec<u8>,
+                                 eof: &mut bool,
+                                 other_bytes: usize|
+                 -> Result<(), ManagedError> {
+                    let mut chunk = [0; 8192];
+                    // Finite reads per pass keep cancellation/deadline checks responsive under output flood.
+                    for _ in 0..16 {
+                        let remaining =
+                            limit.saturating_sub(other_bytes.saturating_add(bytes.len()));
+                        let read_bound = chunk.len().min(remaining.saturating_add(1));
+                        match pipe.read(
+                            chunk
+                                .get_mut(..read_bound)
+                                .ok_or_else(|| platform_error("helper read bound exceeded"))?,
+                        ) {
+                            Ok(0) => {
+                                *eof = true;
+                                break;
+                            }
+                            Ok(n) => {
+                                if n > remaining {
+                                    return Err(platform_error("helper output limit exceeded"));
+                                }
+                                bytes.extend_from_slice(chunk.get(..n).ok_or_else(|| {
+                                    platform_error("helper read exceeded its buffer")
+                                })?);
+                            }
+                            Err(e)
+                                if matches!(
+                                    e.kind(),
+                                    std::io::ErrorKind::WouldBlock
+                                        | std::io::ErrorKind::Interrupted
+                                ) =>
+                            {
+                                break;
+                            }
+                            Err(e) => return Err(platform_error(e)),
+                        }
+                    }
+                    Ok(())
+                };
+                read_pipe(&mut stdout, &mut out, &mut out_eof, err.len())?;
+                read_pipe(&mut stderr, &mut err, &mut err_eof, out.len())?;
+                if !exited {
+                    use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
+                    // Keep the leader unreaped until pipes close. Its reserved PID prevents a timeout
+                    // cleanup from targeting a recycled process group after the helper exits first.
+                    exited = waitid(
+                        WaitId::Pid(Pid::from_child(&owned.child)),
+                        WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+                    )
+                    .map_err(platform_error)?
+                    .is_some();
+                }
+                if exited && out_eof && err_eof {
+                    let status = owned.child.wait().map_err(platform_error)?;
+                    owned.reaped = true;
+                    return Ok(CommandOutput {
+                        success: status.success(),
+                        exit_code: status.code(),
+                        stdout: out,
+                        stderr: err,
+                    });
+                }
+                std::thread::sleep(Duration::from_millis(10));
             }
-            if exited && out_eof && err_eof {
-                let status = owned.child.wait().map_err(platform_error)?;
-                owned.reaped = true;
-                return Ok(CommandOutput {
-                    success: status.success(),
-                    exit_code: status.code(),
-                    stdout: out,
-                    stderr: err,
-                });
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        }))
+        .unwrap_or_else(|_| {
+            Err(platform_error(
+                "helper observation panicked; external outcome remains uncertain",
+            ))
+        });
+        owned.finish(outcome)
     }
 }
 
@@ -181,15 +203,55 @@ struct OwnedChild {
     reaped: bool,
 }
 #[cfg(target_os = "linux")]
-impl Drop for OwnedChild {
-    fn drop(&mut self) {
-        if !self.reaped {
-            let _ = rustix::process::kill_process_group(
-                rustix::process::Pid::from_child(&self.child),
-                rustix::process::Signal::KILL,
-            );
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+impl OwnedChild {
+    fn finish(
+        &mut self,
+        outcome: Result<CommandOutput, ManagedError>,
+    ) -> Result<CommandOutput, ManagedError> {
+        if self.reaped {
+            return outcome;
+        }
+        let group = rustix::process::kill_process_group(
+            rustix::process::Pid::from_child(&self.child),
+            rustix::process::Signal::KILL,
+        )
+        .or_else(|error| {
+            if error == rustix::io::Errno::SRCH {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        });
+        let kill = self.child.kill();
+        let reaped = wait_for_reap(HELPER_REAP_TIMEOUT, || self.child.try_wait());
+        self.reaped = reaped.is_ok();
+        if group.is_err() || reaped.is_err() {
+            return Err(platform_error(format!(
+                "helper cleanup unconfirmed: group={group:?}, kill={kill:?}, reap={reaped:?}; original={}",
+                outcome
+                    .as_ref()
+                    .err()
+                    .map_or_else(|| "completed helper".to_owned(), ToString::to_string),
+            )));
+        }
+        outcome
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_reap(
+    timeout: Duration,
+    mut observe: impl FnMut() -> std::io::Result<Option<std::process::ExitStatus>>,
+) -> Result<(), String> {
+    let started = Instant::now();
+    loop {
+        match observe() {
+            Ok(Some(_)) => return Ok(()),
+            Err(error) => return Err(format!("helper wait failed: {:?}", error.kind())),
+            Ok(None) if started.elapsed() >= timeout => {
+                return Err("helper reap deadline exceeded".to_owned());
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
         }
     }
 }

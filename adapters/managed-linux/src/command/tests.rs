@@ -6,6 +6,42 @@ use std::{
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[test]
+fn cleanup_requires_exit_evidence_and_exposes_wait_failure() {
+    let mut observations = 0;
+    let result = wait_for_reap(Duration::ZERO, || {
+        observations += 1;
+        Ok(None)
+    });
+    assert_eq!(result, Err("helper reap deadline exceeded".to_owned()));
+    assert_eq!(
+        observations, 1,
+        "an expired budget must not start another wait"
+    );
+    let error = wait_for_reap(Duration::from_secs(1), || {
+        Err(std::io::ErrorKind::PermissionDenied.into())
+    });
+    assert!(error.is_err_and(|error| error.contains("PermissionDenied")));
+}
+
+#[test]
+fn failed_helper_is_killed_and_reaped_before_returning_the_original_error() -> Result {
+    use std::os::unix::process::CommandExt as _;
+    let child = Command::new("/bin/sleep")
+        .arg("10")
+        .process_group(0)
+        .spawn()?;
+    let mut owned = OwnedChild {
+        child,
+        reaped: false,
+    };
+    let error = owned.finish(Err(platform_error("injected observation failure")));
+    assert!(error.is_err_and(|error| error.to_string().contains("injected observation failure")));
+    assert!(owned.reaped);
+    assert!(owned.child.try_wait()?.is_some());
+    Ok(())
+}
+
+#[test]
 fn helper_output_is_combined_and_overflow_stops_capture() -> Result {
     let command = |text: &str, limit| {
         run(
