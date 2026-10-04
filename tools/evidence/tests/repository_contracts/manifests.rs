@@ -162,6 +162,46 @@ fn inheritance_errors(manifest: &Value) -> Vec<String> {
     errors
 }
 
+fn internal_declaration_errors(
+    workspace: &Value,
+    metadata: &Metadata,
+    repository: &Path,
+) -> TestResult<Vec<String>> {
+    let mut errors = Vec::new();
+    let version = workspace["workspace"]["package"]["version"]
+        .as_str()
+        .ok_or("workspace version must be explicit")?;
+    for (alias, declaration) in workspace["workspace"]["dependencies"]
+        .as_table()
+        .ok_or("missing workspace dependencies")?
+    {
+        let name = declaration
+            .get("package")
+            .and_then(Value::as_str)
+            .unwrap_or(alias);
+        if !name.starts_with("milkdrift-") {
+            continue;
+        }
+        let package = metadata.packages.iter().find(|package| {
+            package.name == name && metadata.workspace_members.contains(&package.id)
+        });
+        let path = declaration.get("path").and_then(Value::as_str);
+        let exact_version = format!("={version}");
+        if declaration.get("version").and_then(Value::as_str) != Some(exact_version.as_str()) {
+            errors.push(format!(
+                "{alias}: internal version must be exactly {exact_version}"
+            ));
+        }
+        match (package, path) {
+            (Some(package), Some(path))
+                if repository.join(path).join("Cargo.toml").canonicalize()?
+                    == package.manifest_path => {}
+            _ => errors.push(format!("{alias}: internal path must name its Cargo member")),
+        }
+    }
+    Ok(errors)
+}
+
 #[test]
 fn every_backend_manifest_is_a_cargo_member_and_inherits_policy() -> TestResult {
     let repository = root()?;
@@ -177,7 +217,7 @@ fn every_backend_manifest_is_a_cargo_member_and_inherits_policy() -> TestResult 
     collect_files(&repository, &mut paths, &|path| {
         path.file_name().is_some_and(|v| v == "Cargo.toml")
     })?;
-    let mut errors = Vec::new();
+    let mut errors = internal_declaration_errors(&workspace, &metadata, &repository)?;
     for path in paths {
         if path == repository.join("Cargo.toml") {
             continue;
@@ -264,5 +304,47 @@ fn dependency_parser_preserves_aliases_tables_kinds_and_targets() -> TestResult 
             && errors.contains("nested workspace")
             && errors.contains("version")
     );
+    Ok(())
+}
+
+#[test]
+fn cargo_discovery_exposes_excluded_and_nested_backend_packages() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let directory = temporary.path();
+    std::fs::write(
+        directory.join("Cargo.toml"),
+        "[workspace]\nmembers=['member']\nexclude=['hidden']\nresolver='3'\n",
+    )?;
+    for name in ["member", "hidden", "nested"] {
+        std::fs::create_dir_all(directory.join(name).join("src"))?;
+        std::fs::write(directory.join(name).join("src/lib.rs"), "")?;
+        let nested = if name == "nested" {
+            "[workspace]\n"
+        } else {
+            ""
+        };
+        std::fs::write(
+            directory.join(name).join("Cargo.toml"),
+            format!("[package]\nname='{name}'\nversion='0.0.0'\n{nested}"),
+        )?;
+    }
+    let discovered = metadata(directory)?;
+    let mut paths = Vec::new();
+    collect_files(directory, &mut paths, &|path| {
+        path.file_name().is_some_and(|name| name == "Cargo.toml")
+    })?;
+    let hidden: Vec<_> = paths
+        .into_iter()
+        .filter(|path| {
+            *path != directory.join("Cargo.toml")
+                && !discovered
+                    .packages
+                    .iter()
+                    .any(|package| package.manifest_path == *path)
+        })
+        .collect();
+    assert_eq!(hidden.len(), 2);
+    assert!(hidden.contains(&directory.join("hidden/Cargo.toml")));
+    assert!(hidden.contains(&directory.join("nested/Cargo.toml")));
     Ok(())
 }

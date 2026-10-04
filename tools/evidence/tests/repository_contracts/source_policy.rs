@@ -21,6 +21,7 @@ struct Structure {
     types: Vec<String>,
     functions: Vec<String>,
     errors: Vec<String>,
+    broad_suppressions: Vec<Attribute>,
 }
 
 fn use_paths(tree: &UseTree, prefix: &str, paths: &mut Vec<String>) {
@@ -46,6 +47,15 @@ fn path_name(path: &syn::Path) -> String {
 }
 
 impl<'ast> Visit<'ast> for Structure {
+    fn visit_file(&mut self, file: &'ast syn::File) {
+        self.broad_suppressions.extend(file.attrs.iter().cloned());
+        visit::visit_file(self, file);
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        self.broad_suppressions.extend(item.attrs.iter().cloned());
+        visit::visit_item_mod(self, item);
+    }
     fn visit_item_enum(&mut self, item: &'ast syn::ItemEnum) {
         self.types.push(item.ident.to_string());
         visit::visit_item_enum(self, item);
@@ -237,6 +247,26 @@ fn suppression_errors(meta: &Meta, errors: &mut Vec<String>) -> syn::Result<()> 
         }
     }
     Ok(())
+}
+
+fn contains_suppression(meta: &Meta) -> syn::Result<bool> {
+    if meta.path().is_ident("allow") || meta.path().is_ident("expect") {
+        return Ok(true);
+    }
+    if let Meta::List(list) = meta
+        && list.path.is_ident("cfg_attr")
+    {
+        for child in list
+            .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?
+            .iter()
+            .skip(1)
+        {
+            if contains_suppression(child)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn cfg_enabled(meta: &Meta, helpers: bool) -> syn::Result<bool> {
@@ -461,7 +491,17 @@ pub(super) fn repository_suppression_errors() -> TestResult<Vec<String>> {
     })?;
     let mut errors = Vec::new();
     for path in sources {
-        for attribute in structure(&read(&path)?)?.attributes {
+        let syntax = structure(&read(&path)?)?;
+        for attribute in syntax.broad_suppressions {
+            if contains_suppression(&attribute.meta)? {
+                errors.push(format!(
+                    "{}:{}: file/module suppression must be narrowed to the actual operation",
+                    path.display(),
+                    attribute.pound_token.span.start().line
+                ));
+            }
+        }
+        for attribute in syntax.attributes {
             let mut found = Vec::new();
             suppression_errors(&attribute.meta, &mut found)?;
             errors.extend(found.into_iter().map(|error| {
