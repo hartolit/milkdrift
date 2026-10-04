@@ -153,9 +153,13 @@ impl Owner {
                 cursor
                     .position_for_bound(&feed, &binding, session.cursor_key())
                     .map_err(public_protocol)
+                    .and_then(|position| {
+                        position
+                            .checked_add(1)
+                            .ok_or_else(|| invalid("timeline cursor cannot advance"))
+                    })
             })
             .transpose()?
-            .map(|position| position.saturating_add(1))
             .unwrap_or(1);
         let result = match self.inspect_control(
             session,

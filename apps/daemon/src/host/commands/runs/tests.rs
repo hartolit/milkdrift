@@ -100,11 +100,25 @@ async fn interrupted_create_and_start_recover_exact_internal_commands()
             .map_err(|error| error.message)?;
         assert!(
             restarted
-                .command(session, command)
+                .command(session.clone(), command)
                 .await
                 .map_err(|error| error.message)?
                 .replayed
         );
+        let feed = "timeline:recovery-run";
+        let exhausted = milkdrift_control_protocol::Cursor::new_bound(
+            feed,
+            u64::MAX,
+            session.cursor_binding(feed),
+            &session.grant.digest()?.to_string(),
+            session.cursor_key(),
+        )?;
+        let exhausted_page = restarted
+            .timeline(session, "recovery-run".into(), Some(exhausted), 10)
+            .await;
+        assert!(matches!(exhausted_page, Err(error)
+            if error.code == milkdrift_control_protocol::ErrorCode::InvalidInput
+                && error.message == "timeline cursor cannot advance"));
         restarted.shutdown().await?;
         drop(restarted);
         let store = milkdrift_redb_store::RedbStore::open(directory.path().join("data"))?;
