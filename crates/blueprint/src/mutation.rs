@@ -121,6 +121,9 @@ impl MutationBatch {
     /// Accepts 1..=512 operations within the document bounds. This checks the batch's
     /// shape and encoding; targets, dependencies, and graph validity are checked when
     /// a revision applies it.
+    ///
+    /// # Errors
+    /// Rejects an empty/excessive operation list or canonical encoding beyond document bounds.
     pub fn new(operations: Vec<Mutation>) -> Result<Self, MutationError> {
         let bytes = crate::document::canonical_value_bytes(&operations)
             .map_err(|error| MutationError::Serialization(error.to_string()))?;

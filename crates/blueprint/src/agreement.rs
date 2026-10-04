@@ -42,6 +42,10 @@ milkdrift_contracts::deserialize_via!(AdaptationScope, ScopeWire, |wire| {
 
 impl AdaptationScope {
     /// Read an author-supplied scope with the same duplicate and size refusals as a revision.
+    ///
+    /// # Errors
+    /// Rejects input above 65,536 bytes, malformed/duplicate JSON, unknown fields,
+    /// or invalid prefix, node/revision limits and capability requirements.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ModelError> {
         if bytes.len() > 65_536 {
             return Err(invalid("adaptation scope exceeds 65536 bytes"));
@@ -52,6 +56,10 @@ impl AdaptationScope {
     }
 
     /// Establish an explicit bounded task region. This does not grant invocation authority.
+    ///
+    /// # Errors
+    /// Rejects a prefix that is oversized, not a node identity or missing its trailing dot,
+    /// a zero/excess node limit, or empty, duplicate or excessive requirements.
     pub fn new(
         node_prefix: String,
         maximum_nodes: u16,
@@ -67,7 +75,7 @@ impl AdaptationScope {
             || requirements
                 .iter()
                 .enumerate()
-                .any(|(index, value)| requirements[..index].contains(value))
+                .any(|(index, value)| requirements.iter().take(index).any(|prior| prior == value))
         {
             return Err(invalid("invalid bounded adaptation scope"));
         }
@@ -80,6 +88,9 @@ impl AdaptationScope {
     }
 
     /// Set the cumulative revision ceiling for the accepted run. It never resets on restart.
+    ///
+    /// # Errors
+    /// Rejects a ceiling outside 1..=1,024 revisions.
     pub fn with_maximum_revisions(mut self, maximum: u16) -> Result<Self, ModelError> {
         if maximum == 0 || maximum > 1024 {
             return Err(invalid("adaptation revisions must be between 1 and 1024"));
@@ -151,6 +162,10 @@ milkdrift_contracts::deserialize_via!(GoverningAgreement, AgreementWire, |wire| 
 impl GoverningAgreement {
     /// Freeze the immutable enclosing program while leaving the declared task region editable.
     /// The supplied policy must be the digest of an operator-owned effect policy, never prose.
+    ///
+    /// # Errors
+    /// Rejects an already governed baseline, invalid policy identity, absent protected
+    /// program, or editable tasks outside the scope's count and capability envelopes.
     pub fn seal(
         name: NodeId,
         baseline: &BlueprintRevision,
@@ -255,6 +270,10 @@ impl GoverningAgreement {
 ///
 /// An agreement cannot be introduced, removed or replaced in an already accepted run. A new
 /// agreement requires a separate run so earlier failures cannot acquire new compliance meaning.
+///
+/// # Errors
+/// Rejects an agreement change or a new definition that changes protected structure
+/// or exceeds the accepted editable task region.
 pub fn validate_agreement_adoption(
     old: &BlueprintRevision,
     new: &BlueprintRevision,

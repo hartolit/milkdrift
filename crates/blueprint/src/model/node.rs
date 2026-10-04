@@ -86,6 +86,9 @@ impl TaskConfig {
     /// Declares the canonical semantic roles of this task's published outputs.
     /// Later tasks can request these roles as context. They tag every output occurrence;
     /// runtime does not infer roles from a port name or from the output's prose.
+    ///
+    /// # Errors
+    /// Rejects more than 256 output roles.
     pub fn with_output_context_roles(
         mut self,
         roles: BTreeSet<ContextSemanticRole>,
@@ -105,6 +108,9 @@ impl TaskConfig {
     /// context checks enabled. This does not declare the node's data ports or bindings.
     ///
     /// Use [`Self::new`] to make a different choice. Errors are the same as for that constructor.
+    ///
+    /// # Errors
+    /// Rejects invalid capability requirement bounds or failure to encode the context policy.
     pub fn direct_inputs(requirement: CapabilityRequirement) -> Result<Self, ModelError> {
         Self::new(requirement, TaskContextPolicy::default())
     }
@@ -191,6 +197,9 @@ pub enum NodeKind {
 
 impl NodeKind {
     /// Constructs a task with an explicit immutable context policy.
+    ///
+    /// # Errors
+    /// Propagates the requirement and context-policy refusals from [`TaskConfig::new`].
     pub fn task(
         requirement: CapabilityRequirement,
         context_policy: TaskContextPolicy,
@@ -201,6 +210,9 @@ impl NodeKind {
     }
 
     /// Constructs a task with the deliberate direct-declared-inputs-only policy.
+    ///
+    /// # Errors
+    /// Propagates the requirement and default-policy refusals from [`TaskConfig::direct_inputs`].
     pub fn task_direct_inputs(requirement: CapabilityRequirement) -> Result<Self, ModelError> {
         Ok(Self::Task {
             config: TaskConfig::direct_inputs(requirement)?,
@@ -250,6 +262,10 @@ milkdrift_contracts::deserialize_via!(Node, NodeWire, |wire| {
 
 impl Node {
     /// Constructs a node before declaring its ports.
+    ///
+    /// # Errors
+    /// Rejects invalid task requirements/context, zero wait duration, or invalid branch/repeat
+    /// conditions. Relationships to other nodes are checked when the revision is validated.
     pub fn new(id: NodeId, kind: NodeKind) -> Result<Self, ModelError> {
         let node = Self {
             id,
@@ -264,6 +280,9 @@ impl Node {
     }
 
     /// Adds a declared control input, returning a new node value.
+    ///
+    /// # Errors
+    /// Rejects a duplicate control input or a total port count above 256.
     pub fn with_control_input(mut self, port: PortId) -> Result<Self, ModelError> {
         if !self.control_inputs.insert(port) {
             return Err(ModelError::new("node.control_inputs", "duplicate port"));
@@ -273,6 +292,9 @@ impl Node {
     }
 
     /// Adds a declared control output, returning a new node value.
+    ///
+    /// # Errors
+    /// Rejects a duplicate control output or a total port count above 256.
     pub fn with_control_output(mut self, port: PortId) -> Result<Self, ModelError> {
         if !self.control_outputs.insert(port) {
             return Err(ModelError::new("node.control_outputs", "duplicate port"));
@@ -282,6 +304,9 @@ impl Node {
     }
 
     /// Adds a declared data input.
+    ///
+    /// # Errors
+    /// Rejects an output-direction port, a duplicate data input or more than 256 total ports.
     pub fn with_data_input(mut self, port: PortId, value: DataPort) -> Result<Self, ModelError> {
         value.ensure_direction(PortDirection::Input)?;
         if self.data_inputs.insert(port, value).is_some() {
@@ -292,6 +317,9 @@ impl Node {
     }
 
     /// Adds a declared data output.
+    ///
+    /// # Errors
+    /// Rejects an input-direction port, a duplicate data output or more than 256 total ports.
     pub fn with_data_output(mut self, port: PortId, value: DataPort) -> Result<Self, ModelError> {
         value.ensure_direction(PortDirection::Output)?;
         if self.data_outputs.insert(port, value).is_some() {

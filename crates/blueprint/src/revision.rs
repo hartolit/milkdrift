@@ -39,6 +39,10 @@ impl BlueprintRevision {
     ///
     /// The candidate must pass graph validation, have no merge parents, and carry a
     /// reason of 1..=2,048 UTF-8 bytes. Failure returns no partially built revision.
+    ///
+    /// # Errors
+    /// Rejects invalid mutations/graphs, merge parents, invalid reason length or a
+    /// candidate that cannot be encoded within revision bounds.
     pub fn genesis(
         workflow: WorkflowId,
         batch: MutationBatch,
@@ -65,6 +69,10 @@ impl BlueprintRevision {
     /// Ordinarily this revision becomes the sole parent. [`crate::Mutation::SetMergeParents`]
     /// records a caller-resolved merge and must include this exact base; it does not load
     /// other parents or merge their graphs. The sequence advances along this base lineage.
+    ///
+    /// # Errors
+    /// Rejects a stale base, invalid mutations/graph, merge parents omitting the base,
+    /// sequence overflow, invalid reason length or canonical encoding failure.
     pub fn revise(
         &self,
         expected_base: &RevisionId,
@@ -224,7 +232,11 @@ fn validate_revision_metadata(
             "non-genesis revision requires at least one parent".to_owned(),
         ));
     }
-    if !parents.windows(2).all(|window| window[0] < window[1]) {
+    if !parents
+        .iter()
+        .zip(parents.iter().skip(1))
+        .all(|(left, right)| left < right)
+    {
         return Err(MutationError::InvalidRevision(
             "parent identities must be distinct and canonically sorted".to_owned(),
         ));

@@ -42,6 +42,9 @@ pub struct PathSelector(Vec<PathSegment>);
 
 impl PathSelector {
     /// Constructs a selector with at most 32 segments.
+    ///
+    /// # Errors
+    /// Rejects more than 32 path segments; an empty selector selects the whole value.
     pub fn new(segments: Vec<PathSegment>) -> Result<Self, ConditionError> {
         if segments.len() > MAX_PATH_SEGMENTS {
             return Err(ConditionError {

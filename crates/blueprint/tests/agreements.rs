@@ -261,7 +261,10 @@ fn agreement_readers_refuse_identity_version_and_unknown_field_changes() -> Test
         ("extra", serde_json::json!(true)),
     ] {
         let mut changed = original.clone();
-        changed[key] = value;
+        changed
+            .as_object_mut()
+            .ok_or("agreement must be an object")?
+            .insert(key.to_owned(), value);
         assert!(serde_json::from_value::<GoverningAgreement>(changed).is_err());
     }
     assert!(AdaptationScope::new("repair".to_owned(), 4, vec![requirement()?]).is_err());

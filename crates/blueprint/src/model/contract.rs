@@ -36,6 +36,9 @@ milkdrift_contracts::deserialize_via!(SchemaRef, SchemaRefWire, |wire| Self::new
 
 impl SchemaRef {
     /// Creates a reference to a nonzero schema version.
+    ///
+    /// # Errors
+    /// Rejects schema version zero.
     pub fn new(id: SchemaId, version: u32) -> Result<Self, ModelError> {
         if version == 0 {
             return Err(ModelError::new("schema.version", "must be nonzero"));
@@ -126,6 +129,9 @@ milkdrift_contracts::deserialize_via!(WorkflowInterface, WorkflowInterfaceWire, 
 
 impl WorkflowInterface {
     /// Constructs a bounded workflow interface.
+    ///
+    /// # Errors
+    /// Rejects duplicate field identities or excessive input/output collections.
     pub fn new(
         inputs: impl IntoIterator<Item = (FieldId, InterfaceField)>,
         outputs: impl IntoIterator<Item = (FieldId, InterfaceField)>,
@@ -203,6 +209,10 @@ milkdrift_contracts::deserialize_via!(BlueprintMetadata, BlueprintMetadataWire, 
 
 impl BlueprintMetadata {
     /// Creates bounded package metadata.
+    ///
+    /// # Errors
+    /// Rejects empty/oversized name or labels, excessive description or collection sizes,
+    /// or extensions whose serialized payload exceeds the metadata byte limit.
     pub fn new(
         name: impl Into<String>,
         description: impl Into<String>,
@@ -390,6 +400,9 @@ impl DataPort {
     /// `required` means the value must resolve before execution. With no binding, declare
     /// an incoming data edge in the revision. A required input cannot bind an optional
     /// workflow field; the graph validator reports that mismatch.
+    ///
+    /// # Errors
+    /// Rejects an empty or oversized durable workspace/artifact binding reference.
     pub fn input(
         schema: SchemaRef,
         required: bool,

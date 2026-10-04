@@ -570,13 +570,11 @@ fn validate_control_topology(semantic: &SemanticBlueprint, diagnostics: &mut Vec
             .with_context("entry_count", entries.len().to_string()),
         );
     }
-    let terminals: Vec<_> = semantic
+    let has_terminal = semantic
         .nodes()
-        .iter()
-        .filter(|(_, node)| matches!(node.kind(), NodeKind::Terminal { .. }))
-        .map(|(id, _)| id)
-        .collect();
-    if terminals.is_empty() {
+        .values()
+        .any(|node| matches!(node.kind(), NodeKind::Terminal { .. }));
+    if !has_terminal {
         push(
             diagnostics,
             Diagnostic::new(

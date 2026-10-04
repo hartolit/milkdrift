@@ -42,6 +42,9 @@ milkdrift_contracts::deserialize_via!(BranchConfig, BranchConfigWire, |wire| Sel
 
 impl BranchConfig {
     /// Constructs a branch with one or more condition arms and an optional fallback.
+    ///
+    /// # Errors
+    /// Rejects an arm count outside 1..=64, a fallback also used as an arm, or invalid conditions.
     pub fn new(
         arms: BTreeMap<PortId, Condition>,
         fallback: Option<PortId>,
@@ -105,6 +108,9 @@ milkdrift_contracts::deserialize_via!(ForkConfig, ForkConfigWire, |wire| Self::n
 
 impl ForkConfig {
     /// Constructs a fork with at least two isolated branches.
+    ///
+    /// # Errors
+    /// Rejects a branch count outside 2..=64.
     pub fn new(branches: BTreeSet<PortId>) -> Result<Self, ModelError> {
         if !(2..=64).contains(&branches.len()) {
             return Err(ModelError::new(
@@ -226,6 +232,9 @@ milkdrift_contracts::deserialize_via!(ReducerConfig, ReducerConfigWire, |wire| S
 
 impl ReducerConfig {
     /// Constructs a reducer requiring at least one input item.
+    ///
+    /// # Errors
+    /// Rejects a zero minimum item count.
     pub fn new(
         input_port: PortId,
         item_schema: SchemaRef,
@@ -322,6 +331,9 @@ pub struct CostCurrencyCode(String);
 
 impl CostCurrencyCode {
     /// Validates an uppercase three-letter currency code.
+    ///
+    /// # Errors
+    /// Rejects any spelling other than exactly three uppercase ASCII letters.
     pub fn new(value: impl Into<String>) -> Result<Self, ModelError> {
         let value = value.into();
         if value.len() != 3 || !value.bytes().all(|byte| byte.is_ascii_uppercase()) {
@@ -452,6 +464,9 @@ impl RepeatConfig {
     /// `maximum_iterations` must be in 1..=10,000. Zero durations/costs, an unpaired
     /// cost/currency, and an oversized condition are refused. The calling node's ports
     /// must match the pinned body's interface when the revision is validated.
+    ///
+    /// # Errors
+    /// Rejects the invalid iteration, budget and condition choices described above.
     pub fn new(
         body: PinnedSubworkflow,
         condition: Condition,

@@ -256,15 +256,25 @@ fn task_context_policy_is_required_and_unknown_legacy_fields_are_rejected() -> T
     assert!(serde_json::from_value::<NodeKind>(wire).is_err());
 
     let mut hostile = serde_json::to_value(TaskContextPolicy::default())?;
-    hostile["ancestor_depth"] = serde_json::json!(0);
+    hostile
+        .as_object_mut()
+        .ok_or("policy must be an object")?
+        .insert("ancestor_depth".to_owned(), serde_json::json!(0));
     assert!(serde_json::from_value::<TaskContextPolicy>(hostile).is_err());
 
     let mut hostile = serde_json::to_value(TaskContextPolicy::default())?;
-    hostile["explicit_evidence"] = serde_json::json!([""]);
+    hostile
+        .as_object_mut()
+        .ok_or("policy must be an object")?
+        .insert("explicit_evidence".to_owned(), serde_json::json!([""]));
     assert!(serde_json::from_value::<TaskContextPolicy>(hostile).is_err());
 
     let mut hostile = serde_json::to_value(TaskContextPolicy::default())?;
-    hostile["budget"]["max_candidate_records"] = serde_json::json!(0);
+    hostile
+        .get_mut("budget")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing context budget")?
+        .insert("max_candidate_records".to_owned(), serde_json::json!(0));
     assert!(serde_json::from_value::<TaskContextPolicy>(hostile).is_err());
     Ok(())
 }
@@ -397,8 +407,8 @@ fn fork_join_and_reducer_are_structurally_separate() -> TestResult {
             config: JoinConfig::new(id("fork")?, JoinPolicy::All),
         },
     )?
-    .with_control_input(a.clone())?
-    .with_control_input(b.clone())?
+    .with_control_input(a)?
+    .with_control_input(b)?
     .with_control_output(port("next")?)?;
     let reducer = Node::new(
         id("reducer")?,
@@ -726,9 +736,7 @@ fn deliberate_merge_requires_explicit_resolved_candidate() -> TestResult {
 
 #[test]
 fn hostile_depth_path_and_future_version_are_rejected() -> TestResult {
-    let segments = (0..33)
-        .map(|index| PathSegment::Index(index as u16))
-        .collect();
+    let segments = (0_u16..33).map(PathSegment::Index).collect();
     assert!(PathSelector::new(segments).is_err());
 
     let future = br#"{"schema_version":4,"revision":{}}"#;
@@ -900,9 +908,6 @@ fn blueprint_golden_fixture_is_exact_and_canonical() -> TestResult {
         BlueprintRevisionDocument::from_json(include_bytes!("fixtures/revision-v2.json")),
         Err(DocumentError::UnsupportedVersion { found: 2, .. })
     ));
-    if fixture.is_empty() {
-        eprintln!("{}", String::from_utf8(bytes.clone())?);
-    }
     assert_eq!(bytes, fixture);
     let (document, decoded) = BlueprintRevisionDocument::from_json(fixture)?;
     assert_eq!(decoded, revision);
@@ -1009,8 +1014,9 @@ fn placement_changes_revision_identity_and_roundtrips_without_reinterpreting_old
     let (_, decoded) = BlueprintRevisionDocument::from_json(&bytes)?;
     assert_eq!(decoded, a);
     let mut tampered: serde_json::Value = serde_json::from_slice(&bytes)?;
-    tampered["revision"]["semantic"]["nodes"]["task"]["kind"]["config"]["requirement"]["placement"]
-        ["peers"] = serde_json::json!(["peer-b"]);
+    *tampered
+        .pointer_mut("/revision/semantic/nodes/task/kind/config/requirement/placement/peers")
+        .ok_or("missing task placement peers")? = serde_json::json!(["peer-b"]);
     assert!(BlueprintRevisionDocument::from_json(&serde_json::to_vec(&tampered)?).is_err());
     assert_eq!(
         BlueprintRevisionDocument::new(&old).to_canonical_json()?,

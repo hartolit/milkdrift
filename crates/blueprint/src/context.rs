@@ -147,6 +147,9 @@ milkdrift_contracts::deserialize_via!(
 
 impl ContextArtifactSelector {
     /// Creates and bounds an artifact metadata selector.
+    ///
+    /// # Errors
+    /// Rejects a selector set above 256 entries or a name/media type outside 1..=255 bytes.
     pub fn new(
         names: BTreeSet<String>,
         media_types: BTreeSet<String>,
@@ -300,6 +303,9 @@ impl ContextBudget {
     ///
     /// Items must be in 1..=65,536; byte allowances and a supplied unit allowance must
     /// be nonzero. The artifact-count limit is reduced to fit `max_items` if necessary.
+    ///
+    /// # Errors
+    /// Rejects zero allowances or an item count above 65,536.
     pub fn new(
         max_items: u32,
         max_bytes: u64,
@@ -332,6 +338,10 @@ impl ContextBudget {
     /// Candidate records must be in 1..=65,536, artifacts in 1..=`max_items`, and manifest
     /// bytes in 1..=2,097,152. Per-item bytes must be nonzero. Event summaries may be zero
     /// but cannot exceed candidate records. Invalid combinations return [`ModelError`].
+    ///
+    /// # Errors
+    /// Rejects discovery limits outside the ranges above or inconsistent with the
+    /// selected item count; the original budget is consumed without publishing a replacement.
     pub fn with_discovery_limits(
         mut self,
         max_candidate_records: u32,
@@ -657,7 +667,10 @@ impl TaskContextPolicy {
     /// selector set, overlapping included/excluded categories, or invalid budgets.
     /// [`ContextBudget`] owns the numeric constraints. Node existence is checked when
     /// the graph is validated; source availability and authority during preparation.
-    #[allow(clippy::too_many_arguments)] // Selection, ordering, omission, and budget policies are validated together as one immutable selector.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Selection, ordering, omission, and budget policies are validated together as one immutable selector"
+    )]
     pub fn new(
         include_direct_inputs: bool,
         ancestor_depth: Option<u16>,
@@ -840,6 +853,9 @@ impl TaskContextPolicy {
     /// The manifest saves this digest so its selection can be tied to the task definition.
     /// Canonical JSON makes set ordering irrelevant; encoding beyond the policy's JSON
     /// bounds returns [`ModelError`].
+    ///
+    /// # Errors
+    /// Rejects canonical encoding failure or policy JSON exceeding structural bounds.
     pub fn digest(&self) -> Result<ContentDigest, ModelError> {
         let bytes = canonical_json_bytes(self, POLICY_JSON_LIMITS)
             .map_err(|error| ModelError::new("context", format!("{error:?}")))?;

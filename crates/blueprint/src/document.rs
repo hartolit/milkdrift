@@ -163,6 +163,9 @@ impl BlueprintRevisionDocument {
     }
 
     /// Serializes as recursively key-sorted compact JSON.
+    ///
+    /// # Errors
+    /// Rejects encoding failure or a revision envelope exceeding document byte/structure bounds.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, DocumentError> {
         canonical_value_bytes(self)
     }
@@ -172,6 +175,10 @@ impl BlueprintRevisionDocument {
     ///
     /// Input is limited to 4,194,304 bytes. Acceptance verifies the document itself;
     /// storage still resolves parents, and runtime resolves pinned child revisions.
+    ///
+    /// # Errors
+    /// Rejects the malformed, unsupported or contradictory input described above,
+    /// including excessive document size/structure and invalid revision ancestry metadata.
     pub fn from_json(bytes: &[u8]) -> Result<(Self, BlueprintRevision), DocumentError> {
         if bytes.len() > MAX_BLUEPRINT_DOCUMENT_BYTES {
             return Err(DocumentError::Bounds {
@@ -225,6 +232,9 @@ impl BlueprintRevisionDocument {
 ///
 /// Reconciliation uses this with [`node_dependency_fingerprint`] to distinguish a
 /// change to what the task does from a change to which work it depends on.
+///
+/// # Errors
+/// Rejects a node that cannot be canonically encoded within document bounds.
 pub fn node_configuration_fingerprint(node: &Node) -> Result<NodeFingerprint, DocumentError> {
     let bytes = canonical_value_bytes(node)?;
     let mut hasher = blake3::Hasher::new();
@@ -237,6 +247,9 @@ pub fn node_configuration_fingerprint(node: &Node) -> Result<NodeFingerprint, Do
 ///
 /// The fingerprint is independent of map insertion order and deliberately excludes
 /// the node configuration, allowing reconciliation to classify dependency-only edits.
+///
+/// # Errors
+/// Rejects incident dependencies that cannot be canonically encoded within document bounds.
 pub fn node_dependency_fingerprint(
     semantic: &SemanticBlueprint,
     node: &NodeId,
