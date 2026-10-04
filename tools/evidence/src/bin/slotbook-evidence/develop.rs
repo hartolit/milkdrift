@@ -78,16 +78,28 @@ pub(super) fn run(args: Arguments) -> EvidenceResult {
             &args.root.join("evidence"),
             &args.root.join("host/operator.token"),
         )?;
-        s.protected = load(args.root.join("evidence/bootstrap.json"))?["recipe"].clone();
-        s.worker = load(args.root.join("evidence/worker-preview.json"))?["recipe"].clone();
+        s.protected = load(args.root.join("evidence/bootstrap.json"))?
+            .pointer("/recipe")
+            .ok_or("missing /recipe")?
+            .clone();
+        s.worker = load(args.root.join("evidence/worker-preview.json"))?
+            .pointer("/recipe")
+            .ok_or("missing /recipe")?
+            .clone();
         ensure(
-            load(args.root.join("worker-recipe.json"))?["worker_image"] == args.image,
+            load(args.root.join("worker-recipe.json"))?
+                .pointer("/worker_image")
+                .ok_or("missing /worker_image")?
+                == args.image.as_str(),
             "resume image differs from the retained source worker",
         )?;
         let config: Value =
             toml::from_str(&fs::read_to_string(args.root.join("host/daemon.toml"))?)?;
         ensure(
-            config["adapters"]["model_profiles"] == model_profiles(&args)?,
+            config
+                .pointer("/adapters/model_profiles")
+                .ok_or("missing /adapters/model_profiles")?
+                == &model_profiles(&args)?,
             "resume model configuration differs",
         )?;
         configure_author(&s)?;
@@ -110,8 +122,9 @@ pub(super) fn run(args: Arguments) -> EvidenceResult {
     // The source worker compiles actual returned Rust, unlike the fixture-copy qualifier.
     let worker_path = args.root.join("worker-recipe.json");
     let mut worker = load(&worker_path)?;
-    worker["worker_limits"] = json!({"memory_bytes":2147483648u64,"cpu_percent":400,"pids":256,"temporary_bytes":268435456});
-    worker["task_timeout_ms"] = json!(300000);
+    let worker_fields = worker.as_object_mut().ok_or("expected JSON object")?;
+    worker_fields.insert("worker_limits".into(), json!({"memory_bytes":2147483648u64,"cpu_percent":400,"pids":256,"temporary_bytes":268435456}));
+    worker_fields.insert("task_timeout_ms".into(), json!(300000));
     fs::write(worker_path, serde_json::to_vec(&worker)?)?;
     let mut s = Session::prepare(&Qualify {
         root: args.root.clone(),
@@ -151,7 +164,10 @@ fn declared_inputs(args: &Arguments) -> EvidenceResult<Value> {
         .transpose()?;
     let mut inputs = json!({"authoring_version":authoring::VERSION,"image":args.image,"model_profile":profile,"model_profile_digest":profile_digest,"repair_model_profile":repair,"repair_model_profile_digest":repair_digest,"maximum_attempts":args.maximum_attempts,"seeded_initial":args.seeded_initial,"port":args.port});
     if let Some(path) = &args.assisted_source {
-        inputs["assisted_source"] = assisted::input(path)?.0;
+        inputs
+            .as_object_mut()
+            .ok_or("expected JSON object")?
+            .insert("assisted_source".into(), assisted::input(path)?.0);
     }
     Ok(inputs)
 }
@@ -162,7 +178,9 @@ fn configure(args: &Arguments, s: &Session) -> EvidenceResult {
     };
     let profile_path = profile_path.canonicalize()?;
     let profile = load(&profile_path)?;
-    let endpoint = url::Url::parse(text(&profile["base_url"])?)?;
+    let endpoint = url::Url::parse(text(
+        profile.pointer("/base_url").ok_or("missing /base_url")?,
+    )?)?;
     let destination = format!(
         "{}:{}",
         endpoint.host_str().ok_or("model host absent")?,
@@ -172,30 +190,60 @@ fn configure(args: &Arguments, s: &Session) -> EvidenceResult {
     );
     let path = s.root.join("host/daemon.toml");
     let mut config: Value = toml::from_str(&fs::read_to_string(&path)?)?;
-    config["adapters"]["model_profiles"] = model_profiles(args)?;
-    let mut profiles = vec![profile["identity"].clone()];
+    config
+        .pointer_mut("/adapters")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /adapters")?
+        .insert("model_profiles".into(), model_profiles(args)?);
+    let mut profiles = vec![
+        profile
+            .pointer("/identity")
+            .ok_or("missing /identity")?
+            .clone(),
+    ];
     let mut destinations = vec![destination];
     let mut capabilities = vec![json!(MODEL)];
     if let Some(path) = &args.repair_model_profile {
         let path = path.canonicalize()?;
         let repair = load(&path)?;
-        let url = url::Url::parse(text(&repair["base_url"])?)?;
+        let url = url::Url::parse(text(
+            repair.pointer("/base_url").ok_or("missing /base_url")?,
+        )?)?;
         destinations.push(format!(
             "{}:{}",
             url.host_str().ok_or("repair host absent")?,
             url.port_or_known_default().ok_or("repair port absent")?
         ));
-        profiles.push(repair["identity"].clone());
+        profiles.push(
+            repair
+                .pointer("/identity")
+                .ok_or("missing /identity")?
+                .clone(),
+        );
         capabilities.push(json!(REPAIR_MODEL));
     }
-    let actor = &mut config["actors"][0];
-    actor["authority"]["resources"]["capability"]["identities"]["values"]
+    let actor = config
+        .pointer_mut("/actors/0")
+        .ok_or("operator actor absent")?;
+    actor
+        .pointer_mut("/authority/resources/capability/identities/values")
+        .ok_or("missing /authority/resources/capability/identities/values")?
         .as_array_mut()
         .ok_or("capability grant absent")?
         .extend(capabilities);
-    actor["authority"]["resources"]["network"] =
-        json!({"profiles":profiles,"destinations":destinations});
-    actor["authority"]["budget"]["duration_ms"] = json!(14400000);
+    actor
+        .pointer_mut("/authority/resources")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /authority/resources")?
+        .insert(
+            "network".into(),
+            json!({"profiles":profiles,"destinations":destinations}),
+        );
+    actor
+        .pointer_mut("/authority/budget")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /authority/budget")?
+        .insert("duration_ms".into(), json!(14400000));
     fs::write(path, toml::to_string_pretty(&config)?)?;
     Ok(())
 }
@@ -214,20 +262,45 @@ fn model_profiles(args: &Arguments) -> EvidenceResult<Value> {
 fn configure_author(s: &Session) -> EvidenceResult {
     let path = s.root.join("host/daemon.toml");
     let mut config: Value = toml::from_str(&fs::read_to_string(&path)?)?;
-    let mut author = config["actors"][0].clone();
-    author["actor"] = json!(AUTHOR);
-    author["credential_ref"] = json!("credential:source-author");
-    author["grant_id"] = json!("grant:source-author");
-    author["preset"] = json!("advisor");
-    let resources = &mut author["authority"]["resources"];
-    resources["workflow_run"] = json!({"type":"workflow","workflow":"slotbook"});
-    resources["capability"]["identities"] =
-        json!({"type":"only","values":["managed.slotbook-build.worker","milkdrift.resources"]});
-    resources["capability"]["operations"] = json!({"type":"only","values":["workspace.execute","resource.evaluate_candidate","resource.publish_candidate"]});
-    resources["filesystem"] = json!([]);
-    resources["network"] = json!({"profiles":[],"destinations":[]});
-    resources["artifacts"] = json!({"type":"deny_all"});
-    let actors = config["actors"].as_array_mut().ok_or("actors absent")?;
+    let mut author = config
+        .pointer("/actors/0")
+        .ok_or("missing /actors/0")?
+        .clone();
+    let author_fields = author.as_object_mut().ok_or("expected JSON object")?;
+    author_fields.insert("actor".into(), json!(AUTHOR));
+    author_fields.insert("credential_ref".into(), json!("credential:source-author"));
+    author_fields.insert("grant_id".into(), json!("grant:source-author"));
+    author_fields.insert("preset".into(), json!("advisor"));
+    let resources = author
+        .pointer_mut("/authority/resources")
+        .ok_or("author resources absent")?;
+    resources
+        .as_object_mut()
+        .ok_or("author resources are not an object")?
+        .insert(
+            "workflow_run".into(),
+            json!({"type":"workflow","workflow":"slotbook"}),
+        );
+    let capability_fields = resources
+        .pointer_mut("/capability")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /capability")?;
+    capability_fields.insert(
+        "identities".into(),
+        json!({"type":"only","values":["managed.slotbook-build.worker","milkdrift.resources"]}),
+    );
+    capability_fields.insert("operations".into(), json!({"type":"only","values":["workspace.execute","resource.evaluate_candidate","resource.publish_candidate"]}));
+    let resource_fields = resources
+        .as_object_mut()
+        .ok_or("author resources are not an object")?;
+    resource_fields.insert("filesystem".into(), json!([]));
+    resource_fields.insert("network".into(), json!({"profiles":[],"destinations":[]}));
+    resource_fields.insert("artifacts".into(), json!({"type":"deny_all"}));
+    let actors = config
+        .pointer_mut("/actors")
+        .ok_or("missing /actors")?
+        .as_array_mut()
+        .ok_or("actors absent")?;
     if let Some(existing) = actors.iter().find(|a| a["actor"] == AUTHOR) {
         ensure(existing == &author, "retained source author grant differs")?;
         return Ok(());
@@ -237,7 +310,14 @@ fn configure_author(s: &Session) -> EvidenceResult {
     if !token.exists() {
         prepare::credential(&token)?;
     }
-    config["secret_sources"]["credential:source-author"] = json!({"type":"file","path":token});
+    config
+        .pointer_mut("/secret_sources")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /secret_sources")?
+        .insert(
+            "credential:source-author".into(),
+            json!({"type":"file","path":token}),
+        );
     fs::write(path, toml::to_string_pretty(&config)?)?;
     Ok(())
 }
@@ -272,8 +352,12 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
             Expected::Success,
         )?;
         ensure(
-            ready["pending"].is_null()
-                && (ready["state"] == "stopped" || ready["state"] == "running"),
+            ready
+                .pointer("/pending")
+                .is_some_and(serde_json::Value::is_null)
+                && (ready.pointer("/state").and_then(serde_json::Value::as_str) == Some("stopped")
+                    || ready.pointer("/state").and_then(serde_json::Value::as_str)
+                        == Some("running")),
             "installation did not finish preparation",
         )?;
         installed.insert(name, ready);
@@ -289,13 +373,21 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
         installed
             .get("slotbook-build")
             .ok_or("worker observation absent")?,
-        &setup["slotbook-build"],
+        setup
+            .pointer("/slotbook-build")
+            .ok_or("missing /slotbook-build")?,
     )?;
-    let version = number(&setup["slotbook-test"]["version"])?;
-    let mut revision = load(s.root.join("governed.json"))?["revision"].clone();
+    let version = number(
+        setup
+            .pointer("/slotbook-test/version")
+            .ok_or("missing /slotbook-test/version")?,
+    )?;
+    let mut revision = load(s.root.join("governed.json"))?
+        .pointer("/revision")
+        .ok_or("missing /revision")?
+        .clone();
     ensure(
-        revision["semantic"]["nodes"]["verify-candidate"]["data_inputs"]["target"]["binding"]["value"]
-            ["expected_version"]
+        revision.pointer("/semantic/nodes/verify-candidate/data_inputs/target/binding/value/expected_version").ok_or("missing /semantic/nodes/verify-candidate/data_inputs/target/binding/value/expected_version")?
             == version,
         "target version differs from the frozen method",
     )?;
@@ -329,12 +421,19 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
             "development-seed-wait",
             args!["invocation", "wait", execution],
         )?;
-        let candidate = observed["value"]["observations"]
+        let candidate = observed
+            .pointer("/value/observations")
+            .ok_or("seed observations absent")?
             .as_array()
             .ok_or("seed observations absent")?
             .iter()
-            .find(|o| o["category"] == "artifact" && o["event"]["kind"]["name"] == "stdout")
-            .ok_or("seed candidate absent")?["event"]["kind"]["reference"]
+            .find(|o| {
+                o["category"] == "artifact"
+                    && o.pointer("/event/kind/name").and_then(Value::as_str) == Some("stdout")
+            })
+            .ok_or("seed candidate absent")?
+            .pointer("/event/kind/reference")
+            .ok_or("missing /event/kind/reference")?
             .clone();
         let evaluated = qualification::target(
             s,
@@ -347,14 +446,23 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
         let evidence = qualification::evidence(
             s,
             "seed-evidence",
-            text(&evaluated["evaluation"]["identity"])?,
+            text(
+                evaluated
+                    .pointer("/evaluation/identity")
+                    .ok_or("missing /evaluation/identity")?,
+            )?,
         )?;
         ensure(
-            evidence["complete"] == true && !qualification::passed(&evidence),
+            evidence
+                .pointer("/complete")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+                && !qualification::passed(&evidence),
             "seeded candidate did not fail the fixed checks",
         )?;
-        selected["seeded_candidate"] = candidate;
-        selected["trusted_evaluation"] = evidence;
+        let selected_fields = selected.as_object_mut().ok_or("expected JSON object")?;
+        selected_fields.insert("seeded_candidate".into(), candidate);
+        selected_fields.insert("trusted_evaluation".into(), evidence);
     }
     let mut attempts = Vec::new();
     let mut accepted = false;
@@ -367,7 +475,10 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
         let proposed = match generated {
             proposal::Outcome::Ready(path) => path,
             proposal::Outcome::Invalid(failure) => {
-                selected["invalid_proposal"] = failure.clone();
+                selected
+                    .as_object_mut()
+                    .ok_or("expected JSON object")?
+                    .insert("invalid_proposal".into(), failure.clone());
                 attempts.push(failure);
                 continue;
             }
@@ -376,7 +487,7 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
             &format!("source-{index}-proposal-submit"),
             args![
                 "--expected-revision",
-                text(&revision["id"])?,
+                text(revision.pointer("/id").ok_or("missing /id")?)?,
                 "proposal",
                 "submit",
                 proposed.display()
@@ -386,10 +497,17 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
         )?;
         // Invalid proposals are retained as negative evidence; do not substitute a mutation.
         ensure(
-            submitted["status"] == "success",
+            submitted
+                .pointer("/status")
+                .and_then(serde_json::Value::as_str)
+                == Some("success"),
             "source proposal was not authorized",
         )?;
-        let next = text(&submitted["value"]["value"]["proposed_revision"])?;
+        let next = text(
+            submitted
+                .pointer("/value/value/proposed_revision")
+                .ok_or("missing /value/value/proposed_revision")?,
+        )?;
         let revision_path = s.root.join(format!("source-{index}-revision.json"));
         if !revision_path.exists() {
             s.ok(
@@ -403,32 +521,51 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
                 ],
             )?;
         }
-        revision = load(revision_path)?["revision"].clone();
+        revision = load(revision_path)?
+            .pointer("/revision")
+            .ok_or("missing /revision")?
+            .clone();
         let run = format!("slotbook-source-{index}");
         s.ok(
             &format!("source-{index}-start"),
             args!["run", "start", run, "slotbook", next],
         )?;
         let result = observe(s, &run, index)?;
-        selected = json!({"run":result["run"]["run_id"],"terminal":result["run"]["terminal"],"attempts":result["attempts"],"source":source_snapshot(s,index)?,"omission":"Complete source and selected compiler/verifier diagnostics are supplied with exact artifact references; full run inspection is retained separately."});
-        accepted = result["run"]["terminal"] == "succeeded";
+        selected = json!({"run":result.pointer("/run/run_id").ok_or("missing /run/run_id")?,"terminal":result.pointer("/run/terminal").ok_or("missing /run/terminal")?,"attempts":result.pointer("/attempts").ok_or("missing /attempts")?,"source":source_snapshot(s,index)?,"omission":"Complete source and selected compiler/verifier diagnostics are supplied with exact artifact references; full run inspection is retained separately."});
+        accepted = result
+            .pointer("/run/terminal")
+            .and_then(serde_json::Value::as_str)
+            == Some("succeeded");
         attempts.push(result);
         if accepted {
             break;
         }
     }
     let target = qualification::inspect(s, "source-final-target")?;
-    let evaluation = if target["accepted_evaluation"].is_string() {
+    let evaluation = if target
+        .pointer("/accepted_evaluation")
+        .ok_or("missing /accepted_evaluation")?
+        .is_string()
+    {
         qualification::evidence(
             s,
             "source-final-evidence",
-            text(&target["accepted_evaluation"])?,
+            text(
+                target
+                    .pointer("/accepted_evaluation")
+                    .ok_or("missing /accepted_evaluation")?,
+            )?,
         )?
     } else {
         Value::Null
     };
     ensure(
-        !accepted || (qualification::passed(&evaluation) && target["observed_running"] == true),
+        !accepted
+            || (qualification::passed(&evaluation)
+                && target
+                    .pointer("/observed_running")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true)),
         "successful source run lacks applicable protected publication",
     )?;
     if accepted {
@@ -438,8 +575,12 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
                     nodes.iter().any(|n| {
                         n["selected_outputs"].as_array().is_some_and(|outputs| {
                             outputs.iter().any(|o| {
-                                o["completed_evaluation"]["identity"]
-                                    == target["accepted_evaluation"]
+                                o.pointer("/completed_evaluation/identity")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|identity| {
+                                        target.get("accepted_evaluation").and_then(Value::as_str)
+                                            == Some(identity)
+                                    })
                             })
                         })
                     })
@@ -448,9 +589,14 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
             "published evaluation does not belong to this source run",
         )?;
     } else {
-        crate::preservation::unchanged(&target, &setup["slotbook-test"])?;
+        crate::preservation::unchanged(
+            &target,
+            setup
+                .pointer("/slotbook-test")
+                .ok_or("missing /slotbook-test")?,
+        )?;
     }
-    let result = json!({"source_input":"slotbook-source-workshop","source_origin":lane,"seeded_initial":args.seeded_initial,"attempts":attempts,"accepted":accepted,"evaluation":evaluation,"target":target,"worker":setup["slotbook-build"],"limit":"Finite source/repair workflow evidence with the recorded source origin, not autonomous model competence, held-out learning or power-loss qualification."});
+    let result = json!({"source_input":"slotbook-source-workshop","source_origin":lane,"seeded_initial":args.seeded_initial,"attempts":attempts,"accepted":accepted,"evaluation":evaluation,"target":target,"worker":setup.pointer("/slotbook-build").ok_or("missing /slotbook-build")?,"limit":"Finite source/repair workflow evidence with the recorded source origin, not autonomous model competence, held-out learning or power-loss qualification."});
     s.write("development-result.json", &result)?;
     finish(s, &result, args.remove_disposable)
 }
@@ -472,7 +618,7 @@ fn finish(s: &Session, result: &Value, remove: bool) -> EvidenceResult {
                 "worker"
             }];
             let guarded = crate::preservation::unchanged(&state, expected)?;
-            if state["state"] != "removed" {
+            if state.pointer("/state").ok_or("missing /state")? != "removed" {
                 s.resource(
                     &format!("{name}-remove"),
                     "remove",
@@ -492,7 +638,10 @@ fn finish(s: &Session, result: &Value, remove: bool) -> EvidenceResult {
             )?;
             crate::preservation::unchanged(&after, &state)?;
             ensure(
-                after["state"] == "removed" && after["pending"].is_null(),
+                after.pointer("/state").and_then(serde_json::Value::as_str) == Some("removed")
+                    && after
+                        .pointer("/pending")
+                        .is_some_and(serde_json::Value::is_null),
                 "disposable installation removal incomplete",
             )?;
         }

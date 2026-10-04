@@ -37,11 +37,12 @@ pub(super) fn schema() -> Value {
     }})
 }
 
-pub(super) fn mapping(base: &Value, index: u8, source: &Value) -> Value {
+pub(super) fn mapping(base: &Value, index: u8, source: &Value) -> EvidenceResult<Value> {
     let expected = source["digest"].as_str().unwrap_or("absent");
     let node = prepare::worker(
         "repair.begin",
-        &base["semantic"]["nodes"]["repair.begin"]["kind"]["config"]["requirement"],
+        base.pointer("/semantic/nodes/repair.begin/kind/config/requirement")
+            .ok_or("missing /semantic/nodes/repair.begin/kind/config/requirement")?,
         &[
             "/bin/sh",
             "-c",
@@ -52,7 +53,9 @@ pub(super) fn mapping(base: &Value, index: u8, source: &Value) -> Value {
         ],
         false,
     );
-    json!({"version":VERSION,"source_digest":source["digest"],"document":{"schema_version":1,"draft":{"identity":format!("source-proposal-{index}"),"proposer":AUTHOR,"provenance":{"type":"direct"},"workflow":"slotbook","run":null,"base_revision":base["id"],"base_digest":base["content_digest"],"observed_run_sequence":null,"mutation":[{"type":"replace_node","node":node}],"rationale":"MODEL_RATIONALE","rationale_artifact":null,"risk_notes":["Finite candidate; the unchanged trusted verifier decides acceptance."],"assumptions":["Approved Rust compiler and JSON library in the isolated managed worker."],"evidence":[],"artifacts":[],"application_policy":"propose_only","requested_action":null,"claimed_stop":"complete"}}})
+    Ok(
+        json!({"version":VERSION,"source_digest":source["digest"],"document":{"schema_version":1,"draft":{"identity":format!("source-proposal-{index}"),"proposer":AUTHOR,"provenance":{"type":"direct"},"workflow":"slotbook","run":null,"base_revision":base["id"],"base_digest":base["content_digest"],"observed_run_sequence":null,"mutation":[{"type":"replace_node","node":node}],"rationale":"MODEL_RATIONALE","rationale_artifact":null,"risk_notes":["Finite candidate; the unchanged trusted verifier decides acceptance."],"assumptions":["Approved Rust compiler and JSON library in the isolated managed worker."],"evidence":[],"artifacts":[],"application_policy":"propose_only","requested_action":null,"claimed_stop":"complete"}}}),
+    )
 }
 
 pub(super) fn proposal(
@@ -72,9 +75,14 @@ pub(super) fn proposal(
         "model source or rationale exceeds its UTF-8 byte bound",
     )?;
     let mut document = mapping["document"].clone();
-    document["draft"]["mutation"][0]["node"]["data_inputs"]["command"]["binding"]["value"]["argv"]
-        [5] = json!(input.application_source);
-    document["draft"]["rationale"] = json!(input.rationale);
+    *document
+        .pointer_mut("/draft/mutation/0/node/data_inputs/command/binding/value/argv/5")
+        .ok_or("source argument slot absent")? = json!(input.application_source);
+    document
+        .pointer_mut("/draft")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /draft")?
+        .insert("rationale".into(), json!(input.rationale));
     Ok(milkdrift_control::WorkflowProposalDocument::from_json(
         &serde_json::to_vec(&document)?,
     )?)
@@ -112,7 +120,7 @@ mod tests {
                 format!("b3_{}", "c".repeat(64)),
             ),
         ] {
-            let mapping = mapping(&base, 1, &snapshot);
+            let mapping = mapping(&base, 1, &snapshot)?;
             let parsed = proposal(
                 &mapping,
                 json!({"application_source":source,"rationale":"Implement or repair the API."}),

@@ -62,8 +62,14 @@ pub(super) fn source_snapshot(s: &mut Session, index: u8) -> EvidenceResult<Valu
         &format!("{name}-wait"),
         args!["invocation", "wait", execution],
     )?;
-    let artifact = snapshot_artifact(serde_json::from_value(observed["value"].clone())?)?;
-    let size = super::number(&artifact["size_bytes"])?;
+    let artifact = snapshot_artifact(serde_json::from_value(
+        observed.pointer("/value").ok_or("missing /value")?.clone(),
+    )?)?;
+    let size = super::number(
+        artifact
+            .pointer("/size_bytes")
+            .ok_or("missing /size_bytes")?,
+    )?;
     ensure(size <= 32768, "source exceeds the bounded repair context")?;
     let path = s.root.join(format!("{name}.rs"));
     if !path.exists() {
@@ -72,7 +78,7 @@ pub(super) fn source_snapshot(s: &mut Session, index: u8) -> EvidenceResult<Valu
             args![
                 "artifact",
                 "get",
-                text(&artifact["identity"])?,
+                text(artifact.pointer("/identity").ok_or("missing /identity")?)?,
                 "--output",
                 path.display()
             ],
@@ -81,7 +87,7 @@ pub(super) fn source_snapshot(s: &mut Session, index: u8) -> EvidenceResult<Valu
     let source = String::from_utf8(read_artifact(
         &path,
         size,
-        text(&artifact["digest"])?,
+        text(artifact.pointer("/digest").ok_or("missing /digest")?)?,
         32768,
     )?)?;
     Ok(
@@ -115,12 +121,22 @@ fn snapshot_artifact(page: ObservationPage) -> EvidenceResult<Value> {
 pub(super) fn observe(s: &Session, run: &str, index: u8) -> EvidenceResult<Value> {
     let mut state = Value::Null;
     for poll in 0..=240 {
-        state = s.ok(
-            &format!("source-{index}-observe-{poll}"),
-            args!["run", "show", run],
-        )?["value"]
+        state = s
+            .ok(
+                &format!("source-{index}-observe-{poll}"),
+                args!["run", "show", run],
+            )?
+            .pointer("/value")
+            .ok_or("missing /value")?
             .clone();
-        if !state["terminal"].is_null() || state["uncertainty_count"] != 0 {
+        if state
+            .pointer("/terminal")
+            .is_some_and(|value| !value.is_null())
+            || state
+                .pointer("/uncertainty_count")
+                .ok_or("missing /uncertainty_count")?
+                != 0
+        {
             break;
         }
         ensure(
@@ -130,22 +146,35 @@ pub(super) fn observe(s: &Session, run: &str, index: u8) -> EvidenceResult<Value
         thread::sleep(Duration::from_secs(5));
     }
     ensure(
-        state["uncertainty_count"] == 0,
+        state
+            .pointer("/uncertainty_count")
+            .and_then(serde_json::Value::as_u64)
+            == Some(0),
         "source execution uncertain; inspect before any further effect",
     )?;
     let mut attempts = Vec::new();
-    for node in state["nodes"].as_array().ok_or("source nodes absent")? {
+    for node in state
+        .pointer("/nodes")
+        .ok_or("missing /nodes")?
+        .as_array()
+        .ok_or("source nodes absent")?
+    {
         if !node["latest_attempt_id"].is_string() {
             continue;
         }
         let id = text(&node["latest_attempt_id"])?;
-        let attempt = s.ok(
-            &format!("source-{index}-attempt-{id}"),
-            args!["attempt", "inspect", run, id],
-        )?["value"]
+        let attempt = s
+            .ok(
+                &format!("source-{index}-attempt-{id}"),
+                args!["attempt", "inspect", run, id],
+            )?
+            .pointer("/value")
+            .ok_or("missing /value")?
             .clone();
         let mut outputs = Vec::new();
-        for output in attempt["outputs"]
+        for output in attempt
+            .pointer("/outputs")
+            .ok_or("missing /outputs")?
             .as_array()
             .ok_or("attempt outputs absent")?
         {
@@ -161,8 +190,9 @@ pub(super) fn observe(s: &Session, run: &str, index: u8) -> EvidenceResult<Value
                     SELECTED_REPORT_BYTES
                 };
                 ensure(
-                    output["artifact"]["size"]
-                        .as_u64()
+                    output
+                        .pointer("/artifact/size")
+                        .and_then(serde_json::Value::as_u64)
                         .is_some_and(|size| size <= limit),
                     "diagnostic artifact exceeds its read allowance",
                 )?;
@@ -175,19 +205,29 @@ pub(super) fn observe(s: &Session, run: &str, index: u8) -> EvidenceResult<Value
                     args![
                         "artifact",
                         "get",
-                        text(&output["artifact"]["artifact_id"])?,
+                        text(
+                            output
+                                .pointer("/artifact/artifact_id")
+                                .ok_or("missing /artifact/artifact_id")?
+                        )?,
                         "--output",
                         path.display()
                     ],
                 )?;
                 let content = selected_report(&path, worker)?;
                 let evaluation = if output["name"] == "resource_result"
-                    && content["evaluation"]["identity"].is_string()
+                    && content
+                        .pointer("/evaluation/identity")
+                        .is_some_and(Value::is_string)
                 {
                     qualification::evidence(
                         s,
                         &format!("source-{index}-{id}-completed-evaluation"),
-                        text(&content["evaluation"]["identity"])?,
+                        text(
+                            content
+                                .pointer("/evaluation/identity")
+                                .ok_or("missing /evaluation/identity")?,
+                        )?,
                     )?
                 } else {
                     Value::Null
@@ -195,7 +235,7 @@ pub(super) fn observe(s: &Session, run: &str, index: u8) -> EvidenceResult<Value
                 outputs.push(json!({"reference":output["artifact"],"content":content,"completed_evaluation":evaluation}));
             }
         }
-        attempts.push(json!({"attempt_id":id,"node":node["node_id"],"state":attempt["state"],"terminal":attempt["terminal"],"terminal_detail":attempt["terminal_detail"],"uncertain":attempt["uncertain"],"selected_outputs":outputs}));
+        attempts.push(json!({"attempt_id":id,"node":node["node_id"],"state":attempt.pointer("/state").ok_or("missing /state")?,"terminal":attempt.pointer("/terminal").ok_or("missing /terminal")?,"terminal_detail":attempt.pointer("/terminal_detail").ok_or("missing /terminal_detail")?,"uncertain":attempt.pointer("/uncertain").ok_or("missing /uncertain")?,"selected_outputs":outputs}));
     }
     Ok(json!({"run":state,"attempts":attempts}))
 }
@@ -210,7 +250,7 @@ fn selected_report(path: &Path, worker: bool) -> EvidenceResult<Value> {
     let mut content: Value = serde_json::from_slice(&bytes)?;
     if worker {
         // Keep the full artifact; disclose every omitted byte in the selected excerpts.
-        content = json!({"exit_code":content["exit_code"],"stderr":excerpt(text(&content["stderr"])?,12288),"stdout":excerpt(text(&content["stdout"])?,1024)});
+        content = json!({"exit_code":content.pointer("/exit_code").ok_or("missing /exit_code")?,"stderr":excerpt(text(content.pointer("/stderr").ok_or("missing /stderr")?)?,12288),"stdout":excerpt(text(content.pointer("/stdout").ok_or("missing /stdout")?)?,1024)});
     }
     ensure(
         serde_json::to_vec(&content)?.len() as u64 <= SELECTED_REPORT_BYTES,

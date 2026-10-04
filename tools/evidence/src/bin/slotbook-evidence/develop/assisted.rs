@@ -22,11 +22,14 @@ pub(super) fn proposal(
 ) -> EvidenceResult<PathBuf> {
     let (identity, source) = input(path)?;
     ensure(
-        load(s.root.join("development-inputs.json"))?["assisted_source"] == identity,
+        load(s.root.join("development-inputs.json"))?
+            .pointer("/assisted_source")
+            .ok_or("missing /assisted_source")?
+            == &identity,
         "assisted source changed after its declared input was frozen",
     )?;
     let mapped = authoring::proposal(
-        &authoring::mapping(base, 1, &selected["source"]),
+        &authoring::mapping(base, 1, &selected["source"])?,
         json!({
             "application_source":source,
             "rationale":"Explicit operator-assisted correction. Keep authenticated mutations, private names and durable bookings; the unchanged trusted verifier decides acceptance. No local model authored this correction."
@@ -37,7 +40,10 @@ pub(super) fn proposal(
         .as_object_mut()
         .ok_or("proposal absent")?
         .remove("digest");
-    draft["mutation"] = serde_json::to_value(mapped.proposal().mutation().operations())?;
+    draft.as_object_mut().ok_or("expected JSON object")?.insert(
+        "mutation".into(),
+        serde_json::to_value(mapped.proposal().mutation().operations())?,
+    );
     let document = json!({"schema_version":1,"draft":draft});
     authoring::retain(&s.root, "source-1-assisted-proposal.json", &document)
 }
