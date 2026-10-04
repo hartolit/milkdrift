@@ -61,6 +61,10 @@ pub struct LayoutDocument {
 
 impl LayoutDocument {
     /// Validates associations, finite coordinates, counts, byte size, and digest.
+    ///
+    /// # Errors
+    /// Rejects unsupported schema versions, invalid associations, zero generations, excessive counts
+    /// or bytes, invalid coordinates/dimensions/viewport, oversized annotations, and digest mismatch.
     pub fn validate(&self) -> Result<(), ProtocolError> {
         if self.schema_version != LAYOUT_SCHEMA_VERSION {
             return Err(ProtocolError::UnsupportedMajor {
@@ -130,6 +134,10 @@ impl LayoutDocument {
     }
 
     /// Computes the domain-separated content digest without semantic blueprint data.
+    ///
+    /// # Errors
+    /// Returns serialization errors for the unsigned layout. Computing a digest alone does not validate
+    /// associations, coordinate bounds, or the encoded document size.
     pub fn computed_digest(&self) -> Result<String, ProtocolError> {
         let mut unsigned = self.clone();
         unsigned.digest.clear();
@@ -142,6 +150,10 @@ impl LayoutDocument {
     }
 
     /// Replaces the digest with the value computed from current content.
+    ///
+    /// # Errors
+    /// Returns digest encoding errors or any layout validation failure, including invalid coordinates,
+    /// associations, generation, and size bounds.
     pub fn seal(mut self) -> Result<Self, ProtocolError> {
         self.digest = self.computed_digest()?;
         self.validate()?;

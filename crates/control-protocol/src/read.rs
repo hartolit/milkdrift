@@ -745,7 +745,6 @@ pub struct ObservationEnvelope {
     content = "value",
     deny_unknown_fields
 )]
-#[allow(missing_docs)] // Variant prose documents each compact observation payload.
 pub enum Observation {
     /// Projected timeline fact.
     Timeline(TimelineEntry),
@@ -756,9 +755,15 @@ pub enum Observation {
     /// Daemon lifecycle/health change.
     DaemonHealth(HealthRead),
     /// Server is shutting down this stream.
-    StreamClosing { reason: String },
+    StreamClosing {
+        /// Redacted explanation of why this stream is closing.
+        reason: String,
+    },
     /// Subscriber fell outside retained stream history.
-    ResyncRequired { reason: String },
+    ResyncRequired {
+        /// Redacted explanation of why the client must reload bounded current state.
+        reason: String,
+    },
 }
 
 /// Frozen peer catalog facts, independent of current connection health.

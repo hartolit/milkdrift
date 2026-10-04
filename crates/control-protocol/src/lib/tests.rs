@@ -6,8 +6,14 @@ fn start_inputs_use_named_artifacts_and_preserve_empty_request_encoding()
     let old_shape = serde_json::json!({"type":"start_run", "run_id":"run", "workflow_id":"workflow", "revision_id":"revision"});
     let command: Command = decode_json(&serde_json::to_vec(&old_shape)?)?;
     assert_eq!(serde_json::to_value(command)?, old_shape);
-    let mut with_inputs = old_shape.clone();
-    with_inputs["inputs"] = serde_json::json!([{"name":"brief", "artifact_id":"input:one"}]);
+    let mut with_inputs = old_shape;
+    with_inputs
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert(
+            "inputs".to_owned(),
+            serde_json::json!([{"name":"brief", "artifact_id":"input:one"}]),
+        );
     let command: Command = decode_json(&serde_json::to_vec(&with_inputs)?)?;
     assert_eq!(serde_json::to_value(command)?, with_inputs);
     for inputs in [
@@ -15,7 +21,10 @@ fn start_inputs_use_named_artifacts_and_preserve_empty_request_encoding()
         serde_json::json!([{"name":"brief", "artifact_id":42}]),
         serde_json::json!({"brief":"input:one"}),
     ] {
-        with_inputs["inputs"] = inputs;
+        with_inputs
+            .as_object_mut()
+            .ok_or("fixture must be an object")?
+            .insert("inputs".to_owned(), inputs);
         assert!(decode_json::<Command>(&serde_json::to_vec(&with_inputs)?).is_err());
     }
     Ok(())
@@ -32,9 +41,28 @@ fn authoring_wire_uses_explicit_sources_and_rejects_unknown_fields()
         request
     );
     let mut value: Value = serde_json::from_slice(bytes)?;
-    value["command"]["edit"]["source"]["conversation"] = Value::Bool(true);
+    value
+        .get_mut("command")
+        .ok_or("fixture field command missing")?
+        .get_mut("edit")
+        .ok_or("fixture field edit missing")?
+        .get_mut("source")
+        .ok_or("fixture field source missing")?
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("conversation".to_owned(), Value::Bool(true));
     assert!(decode_json::<CommandRequest>(&serde_json::to_vec(&value)?).is_err());
-    value["command"]["edit"]["source"] = serde_json::json!({"type":"all_history"});
+    value
+        .get_mut("command")
+        .ok_or("fixture field command missing")?
+        .get_mut("edit")
+        .ok_or("fixture field edit missing")?
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert(
+            "source".to_owned(),
+            serde_json::json!({"type":"all_history"}),
+        );
     assert!(decode_json::<CommandRequest>(&serde_json::to_vec(&value)?).is_err());
     Ok(())
 }
@@ -46,7 +74,13 @@ fn run_accounting_distinguishes_legacy_unavailable_from_explicit_inactive()
         "workflow_id":"workflow", "revision_id":null, "semantic_digest":null, "nodes":[], "governing_agreement": null, "agreement_adoptions": 0, "uncertainty_count":0});
     let legacy: RunRead = decode_json(&serde_json::to_vec(&document)?)?;
     assert!(legacy.controller_accounting.is_null());
-    document["controller_accounting"] = serde_json::json!({"state":"inactive"});
+    document
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert(
+            "controller_accounting".to_owned(),
+            serde_json::json!({"state":"inactive"}),
+        );
     let current: RunRead = decode_json(&serde_json::to_vec(&document)?)?;
     assert_eq!(
         current.controller_accounting,
@@ -170,7 +204,7 @@ fn layout_digest_is_independent_and_tamper_evident() -> Result<(), Box<dyn std::
     }
     .seal()?;
     layout.validate()?;
-    let mut tampered = layout.clone();
+    let mut tampered = layout;
     tampered.nodes.get_mut("node-a").ok_or("missing node")?.x = 9.0;
     assert!(tampered.validate().is_err());
     Ok(())

@@ -26,6 +26,10 @@ pub struct InputUploadRequest {
 
 impl InputUploadRequest {
     /// Verifies the complete size and digest before any publication is opened.
+    ///
+    /// # Errors
+    /// Rejects overlarge encoded or decoded content, malformed/noncanonical base64, and a mismatched
+    /// content digest. Other upload fields and authority still require daemon validation.
     pub fn content(&self) -> Result<Vec<u8>, ProtocolError> {
         if self.content_base64.len() > MAX_INPUT_UPLOAD_BYTES.div_ceil(3) * 4 {
             return Err(ProtocolError::Bounds(
@@ -47,6 +51,10 @@ impl InputUploadRequest {
     }
 
     /// Encodes bounded complete content. The server still establishes producer and authority.
+    ///
+    /// # Errors
+    /// Rejects content above `MAX_INPUT_UPLOAD_BYTES`. Host, media type, sensitivity, and upload identity
+    /// are carried unchanged for the daemon to validate.
     pub fn from_content(
         host: String,
         upload_id: String,

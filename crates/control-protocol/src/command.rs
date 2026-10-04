@@ -39,6 +39,11 @@ pub struct CommandRequest {
 
 impl CommandRequest {
     /// Validates common envelope bounds and version support.
+    ///
+    /// # Errors
+    /// Rejects unsupported protocol versions, invalid command/evidence identities, empty or oversized
+    /// reasons, excessive evidence, and repeated evidence identities. Command semantics and authority
+    /// remain the daemon's responsibility.
     pub fn validate(&self) -> Result<(), ProtocolError> {
         self.protocol.negotiate()?;
         validate_identifier("command_id", &self.command_id, 192)?;
@@ -69,36 +74,49 @@ impl CommandRequest {
 /// Operations carried by the current external command envelope.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
-#[allow(missing_docs)] // Variant prose documents each compact operation payload.
 pub enum Command {
     /// Apply an optional ordinary edit and return the pending mutations. With `save`, validate
     /// the complete definition and store it. The envelope revision guard must match the base.
     AuthorBlueprint {
+        /// Unsubmitted ordered mutations and their exact base revision.
         draft: crate::BlueprintDraft,
+        /// Optional editor operation applied to the supplied draft.
         edit: Option<crate::BlueprintEdit>,
+        /// Whether to validate and persist the complete resulting definition.
         save: bool,
     },
     /// Construct a canonical definition from existing mutations using server-owned identities.
     ConstructBlueprint {
+        /// Unsubmitted ordered mutations and their exact base revision.
         draft: crate::BlueprintDraft,
+        /// Whether to persist the constructed definition after validation.
         store: bool,
     },
     /// Save an independent definition from an exact authorized source. Identity-bound governing
     /// agreements refuse copying; neither run state nor authority is transferred.
     CopyBlueprint {
+        /// Exact authorized immutable revision to copy.
         source_revision: String,
+        /// New independent workflow identity.
         workflow_id: String,
+        /// Display name for the new independent definition.
         name: String,
     },
     /// Build a normal approval-required proposal at the exact paused review hold. This
     /// prepares a document only; ordinary submit/approve/apply commands perform the change.
     PrepareModelRepair {
+        /// Exact target run identity.
         run_id: String,
+        /// New proposal identity for the prepared repair.
         proposal_id: String,
+        /// Fresh repair step and explicit model selection.
         repair: crate::ModelRepair,
     },
     /// Select evidence, declare and compare a study, or promote through ordinary authority.
-    Learning { document: Value },
+    Learning {
+        /// Strict learning request for evidence selection, declaration, comparison, or promotion.
+        document: Value,
+    },
     /// Resolve reviewed choices into a publication document without publishing it.
     PrepareMethod {
         /// Reviewed publication choices; the owner derives agreement and service grant facts.
@@ -106,93 +124,163 @@ pub enum Command {
     },
     /// Publish an exact reviewed method as a separate operation after preparation.
     PublishMethod {
+        /// Reviewed publication definition produced by the method preparation owner.
         document: Value,
+        /// Expected previous publication record version, or `None` for its first write.
         expected_previous_version: Option<u64>,
     },
     /// Inspect protected publication implementation details with administration authority.
-    InspectMethod { capability: String, generation: u64 },
+    InspectMethod {
+        /// Exact published capability identity.
+        capability: String,
+        /// Exact immutable descriptor generation.
+        generation: u64,
+    },
     /// Page retained publication definitions; public discovery uses the capability catalog.
     ListMethods {
+        /// Last capability returned by the previous page, paired with its generation.
         after_capability: Option<String>,
+        /// Last generation returned for `after_capability`.
         after_generation: Option<u64>,
+        /// Maximum number of retained definitions to return.
         limit: u32,
     },
     /// Retire new selection while preserving accepted calls and their exact implementation.
     RetireMethod {
+        /// Exact published capability identity.
         capability: String,
+        /// Exact immutable descriptor generation.
         generation: u64,
+        /// Expected current publication record version for this retirement.
         expected_version: u64,
     },
     /// Store a validated immutable blueprint document.
-    ImportBlueprint { document: Value },
+    ImportBlueprint {
+        /// Immutable blueprint revision document, including its content-derived identity.
+        document: Value,
+    },
     /// Validate an immutable blueprint document without storing it.
-    ValidateBlueprint { document: Value },
+    ValidateBlueprint {
+        /// Immutable blueprint revision document whose identity and semantics must validate.
+        document: Value,
+    },
     /// Compile, validate, and store a bounded prompt-sequence as an ordinary blueprint revision.
-    ImportPromptSequence { document: Value },
+    ImportPromptSequence {
+        /// Versioned prompt-sequence definition to compile and store.
+        document: Value,
+    },
     /// Compile and validate a bounded prompt-sequence without storing its generated revision.
-    ValidatePromptSequence { document: Value },
+    ValidatePromptSequence {
+        /// Versioned prompt-sequence definition to compile without persisting it.
+        document: Value,
+    },
     /// Create and start a run at one exact revision.
     StartRun {
+        /// Exact target run identity.
         run_id: String,
+        /// Workflow identity that must match the pinned revision.
         workflow_id: String,
+        /// Exact immutable revision to pin when creating the run.
         revision_id: String,
+        /// Named committed artifacts supplied to the workflow interface.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         inputs: Vec<RunInput>,
     },
     /// Pause new work for a run.
-    PauseRun { run_id: String },
+    PauseRun {
+        /// Exact target run identity.
+        run_id: String,
+    },
     /// Resume a paused run.
-    ResumeRun { run_id: String },
+    ResumeRun {
+        /// Exact target run identity.
+        run_id: String,
+    },
     /// Request durable cancellation.
-    CancelRun { run_id: String },
+    CancelRun {
+        /// Exact target run identity.
+        run_id: String,
+    },
     /// Deliver a typed signal with a bounded JSON payload.
     SignalRun {
+        /// Exact target run identity.
         run_id: String,
+        /// Stable signal identity used for durable deduplication.
         signal_id: String,
+        /// Declared signal type to deliver.
         signal_type: String,
+        /// Optional exact correlation key for matching waits.
         correlation: Option<String>,
+        /// Whether the signal may satisfy all matching waits instead of one.
         broadcast: bool,
+        /// Bounded JSON value interpreted by the declared signal contract.
         payload: Value,
     },
     /// Resolve retained/uncertain external work.
     ResolveWork {
+        /// Exact target run identity.
         run_id: String,
+        /// Exact retained attempt whose external outcome is being reconciled.
         attempt_id: String,
+        /// Stable identity of the authorized durable decision.
         decision_id: String,
+        /// Prospective resolution choice; runtime policy determines whether it is permitted.
         action: ResolveAction,
+        /// Optional existing node selected for authorized compensation or remediation.
         remediation_node: Option<String>,
     },
     /// Inspect one exact durable controller occurrence through the shared control path.
     InspectController {
+        /// Exact target run identity.
         run_id: String,
+        /// Exact logical controller occurrence within the run.
         controller_execution: String,
     },
     /// Continue one exact durable controller checkpoint with ordinary approval authority.
     ContinueController {
+        /// Exact target run identity.
         run_id: String,
+        /// Exact logical controller occurrence within the run.
         controller_execution: String,
+        /// Stable identity of the authorized durable decision.
         decision_id: String,
     },
     /// Submit a versioned workflow proposal document.
-    SubmitProposal { document: Value },
+    SubmitProposal {
+        /// Versioned proposal binding its base, mutation, provenance, evidence, and digest.
+        document: Value,
+    },
     /// Decide an exact proposal/reconciliation plan.
     DecideProposal {
+        /// Exact target run identity.
         run_id: String,
+        /// Exact retained proposal identity.
         proposal_id: String,
+        /// Canonical digest binding the exact immutable proposal.
         proposal_digest: String,
+        /// Exact candidate revision produced from that proposal.
         proposed_revision: String,
+        /// Stable identity of the authorized durable decision.
         decision_id: String,
+        /// Approval or rejection to retain over the exact plan.
         decision: ProposalDecision,
     },
     /// Apply an approved exact proposal.
     ApplyProposal {
+        /// Exact target run identity.
         run_id: String,
+        /// Exact retained proposal identity.
         proposal_id: String,
+        /// Canonical digest binding the exact immutable proposal.
         proposal_digest: String,
+        /// Exact candidate revision produced from that proposal.
         proposed_revision: String,
     },
     /// Optimistically replace presentation-only layout state.
-    PutLayout { layout: LayoutDocument },
+    PutLayout {
+        /// Sealed presentation document with its optimistic generation and revision association.
+        layout: LayoutDocument,
+    },
 }
 
 /// One named immutable artifact supplied to the pinned workflow interface.

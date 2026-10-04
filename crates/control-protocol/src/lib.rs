@@ -139,6 +139,9 @@ impl ProtocolVersion {
     };
 
     /// Requires the current version on both sides of a coordinated deployment.
+    ///
+    /// # Errors
+    /// Rejects any major or minor version different from this coordinated build's current version.
     pub fn negotiate(self) -> Result<Self, ProtocolError> {
         if self.major != PROTOCOL_MAJOR {
             return Err(ProtocolError::UnsupportedMajor {
@@ -321,6 +324,10 @@ enum CursorPosition {
 
 impl Cursor {
     /// Creates an authenticated sequence continuation bound to one actor, exact grant, and scope.
+    ///
+    /// # Errors
+    /// Rejects invalid feed or authority-binding fields and noncanonical decision/grant/scope digests;
+    /// returns cursor serialization errors.
     pub fn new_bound(
         feed: &str,
         position: u64,
@@ -338,6 +345,10 @@ impl Cursor {
     }
 
     /// Creates an authenticated key continuation bound to one actor, exact grant, and scope.
+    ///
+    /// # Errors
+    /// Rejects invalid or overlarge position keys, feed/binding fields, and noncanonical digests;
+    /// returns cursor serialization errors.
     pub fn new_bound_key(
         feed: &str,
         position: &str,
@@ -379,6 +390,10 @@ impl Cursor {
     }
 
     /// Verifies an authenticated sequence continuation against the current request boundary.
+    ///
+    /// # Errors
+    /// Rejects malformed or oversized cursors, invalid binding fields/digests, a wrong version/feed/
+    /// authority binding, failed MAC verification, or a key cursor used as a sequence cursor.
     pub fn position_for_bound(
         &self,
         expected_feed: &str,
@@ -394,6 +409,10 @@ impl Cursor {
     }
 
     /// Verifies an authenticated key continuation against the current request boundary.
+    ///
+    /// # Errors
+    /// Rejects malformed or oversized cursors, invalid binding fields/digests, a wrong version/feed/
+    /// authority binding, failed MAC verification, or a sequence cursor used as a key cursor.
     pub fn key_for_bound(
         &self,
         expected_feed: &str,
@@ -449,6 +468,9 @@ impl Cursor {
     }
 
     /// Creates an unauthenticated feed/position cursor for local use, not daemon requests.
+    ///
+    /// # Errors
+    /// Rejects an invalid or overlarge feed identifier and returns cursor serialization errors.
     pub fn new(feed: &str, position: u64) -> Result<Self, ProtocolError> {
         validate_identifier("feed", feed, 256)?;
         let bytes = serde_json::to_vec(&CursorWire {
@@ -461,6 +483,10 @@ impl Cursor {
     }
 
     /// Inspects a sequence position for `expected_feed` without verifying authority or the MAC.
+    ///
+    /// # Errors
+    /// Rejects malformed, oversized, unsupported-version, wrong-feed, or non-sequence cursors.
+    /// A successful inspection does not authenticate a bound cursor.
     pub fn position_for(&self, expected_feed: &str) -> Result<u64, ProtocolError> {
         let bytes = URL_SAFE_NO_PAD
             .decode(&self.0)
@@ -508,6 +534,9 @@ impl Cursor {
     }
 
     /// Creates an unauthenticated identity continuation for local use, not daemon requests.
+    ///
+    /// # Errors
+    /// Rejects invalid or overlarge feed/key identifiers and returns cursor serialization errors.
     pub fn new_key(feed: &str, key: &str) -> Result<Self, ProtocolError> {
         validate_identifier("feed", feed, 256)?;
         validate_identifier("cursor.key", key, 256)?;
@@ -521,6 +550,10 @@ impl Cursor {
     }
 
     /// Inspects an identity key for the selected feed without verifying authority or the MAC.
+    ///
+    /// # Errors
+    /// Rejects malformed, oversized, unsupported-version, wrong-feed, or non-key cursors.
+    /// A successful inspection does not authenticate a bound cursor.
     pub fn key_for(&self, expected_feed: &str) -> Result<String, ProtocolError> {
         let bytes = URL_SAFE_NO_PAD
             .decode(&self.0)
@@ -626,6 +659,9 @@ pub struct PageRequest {
 
 impl PageRequest {
     /// Validates the nonzero global page bound.
+    ///
+    /// # Errors
+    /// Rejects a zero limit or one above `MAX_PAGE_ITEMS`; the cursor is validated by its feed owner.
     pub fn validate(&self) -> Result<(), ProtocolError> {
         if self.limit == 0 || self.limit > MAX_PAGE_ITEMS {
             return Err(ProtocolError::Bounds(format!(
@@ -655,6 +691,10 @@ pub struct Page<T> {
 ///
 /// Call the decoded type's validation method where provided. This generic reader does not
 /// call [`CommandRequest::validate`] or [`LayoutDocument::validate`] for the caller.
+///
+/// # Errors
+/// Rejects byte/structure bounds, malformed JSON, duplicate fields, and typed decoding failures.
+/// Callers must separately run any semantic validation required by the decoded type.
 pub fn decode_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ProtocolError> {
     if bytes.len() > MAX_DOCUMENT_BYTES {
         return Err(ProtocolError::Bounds(format!(
@@ -671,6 +711,10 @@ pub fn decode_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ProtocolError
 }
 
 /// Encodes one protocol JSON document within the global byte bound.
+///
+/// # Errors
+/// Returns serialization errors or rejects an encoded document above `MAX_DOCUMENT_BYTES`.
+/// This helper does not validate the value's semantic contract.
 pub fn encode_json<T: Serialize>(value: &T) -> Result<Vec<u8>, ProtocolError> {
     let bytes =
         serde_json::to_vec(value).map_err(|error| ProtocolError::InvalidJson(error.to_string()))?;

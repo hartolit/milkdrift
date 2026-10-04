@@ -54,46 +54,75 @@ pub enum ModelInputSource {
 /// round-trip exactly through that editor or the daemon refuses the edit before saving.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-#[allow(missing_docs)]
 pub enum BlueprintEdit {
+    /// Change the workflow's display name.
     Rename {
+        /// New display name; the workflow identity stays the same.
         name: String,
     },
+    /// Append a model step with an explicit capability and output allowance.
     AddModel {
+        /// New distinct step identity.
         step: String,
+        /// Exact permitted model capability.
         capability: String,
+        /// Fresh instruction for this step.
         prompt: String,
+        /// Finite output-unit allowance for each invocation.
         maximum_output_units: u64,
     },
+    /// Replace one step's instruction while retaining its output allowance.
     Prompt {
+        /// Existing model step identity.
         step: String,
+        /// Replacement instruction.
         prompt: String,
     },
+    /// Select an exact permitted model capability for one existing step.
     Model {
+        /// Existing model step identity.
         step: String,
+        /// Replacement model capability identity.
         capability: String,
     },
+    /// Declare a required per-run input before connecting it to a step.
     Input {
+        /// New workflow interface field name.
         name: String,
     },
+    /// Bind a named step input to one explicit source.
     Connect {
+        /// Receiving model step identity.
         step: String,
+        /// Nonreserved input port name on the receiving step.
         input: String,
+        /// Declared run input or earlier step whose content is selected.
         source: ModelInputSource,
     },
+    /// Remove one existing named input connection.
     Disconnect {
+        /// Receiving model step identity.
         step: String,
+        /// Existing input port whose source binding is removed.
         input: String,
     },
+    /// Select one step's final text as the workflow output.
     Output {
+        /// Existing model step whose final text is returned.
         step: String,
+        /// Workflow output interface field name.
         name: String,
     },
+    /// Remove an unused step after disconnecting its consumers and output selection.
     Remove {
+        /// Existing step identity to remove.
         step: String,
     },
+    /// Reorder a step while retaining its explicit data connections.
     Move {
+        /// Existing step identity to move.
         step: String,
+        /// Existing step to precede, or `None` to move to the end.
         before: Option<String>,
     },
 }
