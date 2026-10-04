@@ -137,7 +137,7 @@ pub fn local_process_stream_drain() -> EvidenceResult<ScenarioMeasurement> {
     let operation = profile.operation().clone();
     let adapter = Arc::new(LocalProcessAdapter::new(
         profile.clone(),
-        Arc::clone(&data) as Arc<dyn InvocationDataAccess>,
+        data.clone(),
         Arc::new(InMemorySecretResolver::new()),
     )?);
     let descriptor = adapter.descriptor().clone();
