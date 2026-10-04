@@ -120,7 +120,11 @@ fn verify_model(
         if total > size {
             return Err(rejected("model changed during bounded verification"));
         }
-        hasher.update(&chunk[..n]);
+        hasher.update(
+            chunk
+                .get(..n)
+                .ok_or_else(|| rejected("model read exceeded its buffer"))?,
+        );
     }
     if format!("b3_{}", hasher.finalize()) != expected {
         return Err(rejected("model bytes differ from approved digest"));

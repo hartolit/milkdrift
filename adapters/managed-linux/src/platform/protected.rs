@@ -74,6 +74,10 @@ pub struct ProtectedServiceRecipe {
 }
 impl ProtectedServiceRecipe {
     /// Strict bounded operator reader; accepts no raw engine arguments or writable served mounts.
+    ///
+    /// # Errors
+    /// Rejects oversized or malformed JSON, unknown fields, and recipes whose policy,
+    /// pinned inputs, service limits or verifier identity fail validation.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ManagedError> {
         if bytes.len() > 65_536 {
             return Err(rejected("protected recipe exceeds 64 KiB"));
@@ -111,6 +115,9 @@ impl ProtectedServiceRecipe {
         Ok(())
     }
     /// Exact approved reference. The verifier executable is separately checked at every entry.
+    ///
+    /// # Errors
+    /// Rejects invalid recipe fields or a recipe that exceeds canonical document bounds.
     pub fn reference(&self) -> Result<RecipeReference, ManagedError> {
         self.validate()?;
         let bytes = milkdrift_contracts::canonical_json_bytes(

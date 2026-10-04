@@ -123,6 +123,10 @@ pub struct LinuxRecipe {
 
 impl LinuxRecipe {
     /// Decode strict bounded JSON through the production reader.
+    ///
+    /// # Errors
+    /// Rejects oversized or malformed JSON, unsupported schemas, unknown fields and
+    /// recipes with invalid image identities, workload limits, or model configuration.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ManagedError> {
         if bytes.len() > MAX_RECIPE_BYTES {
             return Err(rejected("recipe exceeds 64 KiB"));
@@ -140,6 +144,9 @@ impl LinuxRecipe {
         Ok(recipe)
     }
     /// Exact reference used by prepare/apply/update; source formatting is immaterial.
+    ///
+    /// # Errors
+    /// Rejects invalid recipe fields or values exceeding the canonical document bounds.
     pub fn reference(&self) -> Result<RecipeReference, ManagedError> {
         self.validate()?;
         let bytes = milkdrift_contracts::canonical_json_bytes(
@@ -200,8 +207,10 @@ impl LinuxRecipe {
             timeouts.validate()?;
             // --alias accepts a comma-separated list. This contract publishes exactly one name,
             // with no shell/systemd interpolation or argument syntax.
-            if model_alias.is_empty()
-                || !model_alias.as_bytes()[0].is_ascii_alphanumeric()
+            if !model_alias
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
                 || !model_alias.bytes().all(|b| {
                     b.is_ascii_alphanumeric() || matches!(b, b'/' | b':' | b'.' | b'_' | b'-')
                 })
@@ -296,6 +305,9 @@ pub struct LinuxManagerConfig {
 }
 impl LinuxManagerConfig {
     /// Validate lexical paths without creating accounts, changing privileges or installing software.
+    ///
+    /// # Errors
+    /// Rejects unsafe or relative paths and empty, duplicated or excessive recipe path lists.
     pub fn validate(&self) -> Result<(), ManagedError> {
         if !safe_absolute(&self.state_root)
             || !safe_absolute(&self.quadlet_directory)

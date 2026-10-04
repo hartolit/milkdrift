@@ -127,8 +127,14 @@ pub(crate) fn descriptor(
             mutation: false,
         }],
     };
-    document["extensions"][MANAGED_BINDING_EXTENSION] =
-        serde_json::to_value(binding).map_err(rejected)?;
+    document
+        .get_mut("extensions")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| rejected("model descriptor extensions are absent"))?
+        .insert(
+            MANAGED_BINDING_EXTENSION.to_owned(),
+            serde_json::to_value(binding).map_err(rejected)?,
+        );
     serde_json::from_value(document).map(Some).map_err(rejected)
 }
 
@@ -142,6 +148,10 @@ pub struct ManagedModelAdapter {
 }
 impl ManagedModelAdapter {
     /// Construct the exact model descriptor already committed by installation verification.
+    ///
+    /// # Errors
+    /// Rejects a foreign setup, a disabled or invalid model service, or an endpoint profile
+    /// that the normal model adapter cannot construct.
     pub fn new(
         platform: Arc<LinuxManagedPlatform>,
         store: Arc<dyn ManagedResourceStore>,

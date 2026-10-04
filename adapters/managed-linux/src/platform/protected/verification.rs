@@ -176,7 +176,8 @@ mod tests {
     use super::{container_name, owned_container};
 
     #[test]
-    fn verifier_cleanup_requires_the_exact_platform_evaluation_and_container() {
+    fn verifier_cleanup_requires_the_exact_platform_evaluation_and_container()
+    -> Result<(), Box<dyn std::error::Error>> {
         let owner = "test-platform";
         let evaluation = format!("b3_{}", "a".repeat(64));
         let id = "b".repeat(64);
@@ -190,12 +191,14 @@ mod tests {
         assert!(owned_container(&value, owner, &format!("b3_{}", "c".repeat(64))).is_err());
         for field in ["Id", "Name", "Config"] {
             let mut changed = value.clone();
-            changed[field] = serde_json::json!("foreign");
+            *changed.get_mut(field).ok_or("inspection field absent")? =
+                serde_json::json!("foreign");
             assert!(owned_container(&changed, owner, &evaluation).is_err());
         }
         assert_ne!(
             container_name(owner, &evaluation),
             container_name("foreign-platform", &evaluation)
         );
+        Ok(())
     }
 }

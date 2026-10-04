@@ -49,7 +49,10 @@ fn service_name_collision_cannot_reach_the_supervisor() -> Result {
         "org.milkdrift.recipe",
     ] {
         let mut foreign = owned.clone();
-        foreign["Config"]["Labels"][field] = serde_json::json!("foreign");
+        *foreign
+            .pointer_mut("/Config/Labels")
+            .and_then(|v| v.get_mut(field))
+            .ok_or("ownership label absent")? = serde_json::json!("foreign");
         assert!(
             start_owned(&setup, Some(&foreign), || {
                 starts.set(starts.get() + 1);
@@ -200,7 +203,10 @@ fn real_quadlet_failed_start_preserves_a_foreign_container() -> Result {
     super::LinuxManagedPlatform::systemctl(&["stop".to_owned(), format!("{}.service", d.unit)])?;
     let observed = super::LinuxManagedPlatform::inspect("container", &d.unit)?
         .ok_or("failed start deleted the foreign container")?;
-    assert_eq!(observed["Id"].as_str(), Some(id.as_str()));
+    assert_eq!(
+        observed.get("Id").and_then(|v| v.as_str()),
+        Some(id.as_str())
+    );
     assert_eq!(
         observed.pointer("/State/Running").and_then(|v| v.as_bool()),
         Some(true)
@@ -224,8 +230,21 @@ fn generated_service_uses_the_owned_policy_and_model_identity() -> Result {
         crate::model::profile_for_service(&d.recipe.model_service, &d.installation, d.generation)?
             .ok_or("profile absent")?;
     let profile = serde_json::to_value(profile)?;
-    assert_eq!(profile["model"], "research/model-v2");
-    assert_eq!(profile["limits"]["request_timeout_ms"], 600000);
-    assert_eq!(profile["limits"]["max_response_bytes"], 65536);
+    assert_eq!(
+        profile.get("model").ok_or("model absent")?,
+        "research/model-v2"
+    );
+    assert_eq!(
+        *profile
+            .pointer("/limits/request_timeout_ms")
+            .ok_or("timeout absent")?,
+        600000
+    );
+    assert_eq!(
+        *profile
+            .pointer("/limits/max_response_bytes")
+            .ok_or("response bound absent")?,
+        65536
+    );
     Ok(())
 }

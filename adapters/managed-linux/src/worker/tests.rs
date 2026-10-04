@@ -118,25 +118,33 @@ fn inspected_limits() -> (crate::ContainerLimits, serde_json::Value) {
 }
 
 #[test]
-fn observed_cpu_limits_require_a_positive_exact_ratio() {
+fn observed_cpu_limits_require_a_positive_exact_ratio() -> Result<(), Box<dyn std::error::Error>> {
     let (limits, value) = inspected_limits();
     assert!(super::verify_limits(&value, &limits).is_ok());
     for (quota, period) in [(0, 0), (0, 100_000), (100_000, 0), (u64::MAX, u64::MAX / 2)] {
         let mut changed = value.clone();
-        changed["HostConfig"]["CpuQuota"] = quota.into();
-        changed["HostConfig"]["CpuPeriod"] = period.into();
+        *changed
+            .pointer_mut("/HostConfig/CpuQuota")
+            .ok_or("quota absent")? = quota.into();
+        *changed
+            .pointer_mut("/HostConfig/CpuPeriod")
+            .ok_or("period absent")? = period.into();
         assert!(
             super::verify_limits(&changed, &limits).is_err(),
             "unverified CPU enforcement: quota={quota}, period={period}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn observed_privilege_restriction_must_be_explicitly_enabled() {
+fn observed_privilege_restriction_must_be_explicitly_enabled()
+-> Result<(), Box<dyn std::error::Error>> {
     let (limits, mut value) = inspected_limits();
     for enabled in ["no-new-privileges", "no-new-privileges=true"] {
-        value["HostConfig"]["SecurityOpt"] = serde_json::json!([enabled]);
+        *value
+            .pointer_mut("/HostConfig/SecurityOpt")
+            .ok_or("security options absent")? = serde_json::json!([enabled]);
         assert!(super::verify_limits(&value, &limits).is_ok());
     }
     for options in [
@@ -145,9 +153,12 @@ fn observed_privilege_restriction_must_be_explicitly_enabled() {
         serde_json::json!(["no-new-privileges-unknown"]),
         serde_json::json!(["no-new-privileges", "no-new-privileges=false"]),
     ] {
-        value["HostConfig"]["SecurityOpt"] = options;
+        *value
+            .pointer_mut("/HostConfig/SecurityOpt")
+            .ok_or("security options absent")? = options;
         assert!(super::verify_limits(&value, &limits).is_err());
     }
+    Ok(())
 }
 
 #[test]
@@ -179,7 +190,7 @@ fn task_commands_require_the_inspected_identity_and_owned_generation()
     assert!(super::task_identity(&value, &setup, "mdtask-other").is_err());
     for invalid in ["", "--all", "short-id", &"z".repeat(64)] {
         let mut changed = value.clone();
-        changed["Id"] = invalid.into();
+        *changed.get_mut("Id").ok_or("id absent")? = invalid.into();
         assert!(super::task_identity(&changed, &setup, name).is_err());
     }
     for key in [
@@ -188,14 +199,17 @@ fn task_commands_require_the_inspected_identity_and_owned_generation()
         "org.milkdrift.recipe",
     ] {
         let mut changed = value.clone();
-        changed["Config"]["Labels"][key] = "foreign".into();
+        *changed
+            .pointer_mut("/Config/Labels")
+            .and_then(|v| v.get_mut(key))
+            .ok_or("label absent")? = "foreign".into();
         assert!(super::task_identity(&changed, &setup, name).is_err());
     }
     Ok(())
 }
 
 #[test]
-fn realized_user_maps_exclude_the_manager_identity() {
+fn realized_user_maps_exclude_the_manager_identity() -> Result<(), Box<dyn std::error::Error>> {
     for offset in [1, 65537] {
         assert!(private_id_mappings(Some(&serde_json::json!({
             "UidMap":[format!("0:{offset}:65536")], "GidMap":[format!("0:{offset}:65536")]
@@ -211,12 +225,13 @@ fn realized_user_maps_exclude_the_manager_identity() {
     ] {
         for key in ["UidMap", "GidMap"] {
             let mut maps = serde_json::json!({"UidMap":["0:1:65536"],"GidMap":["0:1:65536"]});
-            maps[key] = serde_json::json!([invalid]);
+            *maps.get_mut(key).ok_or("user map absent")? = serde_json::json!([invalid]);
             assert!(!private_id_mappings(Some(&maps)), "{key}: {invalid}");
         }
     }
     assert!(!private_id_mappings(None));
     assert!(!private_id_mappings(Some(&serde_json::json!({}))));
+    Ok(())
 }
 
 #[test]

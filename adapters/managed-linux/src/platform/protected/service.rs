@@ -239,7 +239,7 @@ pub(super) fn reconcile(
                     "create".to_owned(),
                     format!("--label=org.milkdrift.owner={}", setup.ownership),
                     format!("--label=org.milkdrift.platform={}", setup.platform_owner),
-                    d.data_volume.clone(),
+                    d.data_volume,
                 ])?;
             }
         }
@@ -261,7 +261,6 @@ pub(super) fn reconcile(
             immutable(&unit_path(&d), unit_text(setup, &d)?.as_bytes())?;
             systemctl(&["daemon-reload".to_owned()])?;
         }
-        ManagedStep::Configure => {}
         ManagedStep::StartService if change.running => {
             super::active_policy(platform, setup)?;
             verify_candidate(setup, &d)?;
@@ -283,7 +282,7 @@ pub(super) fn reconcile(
                 std::thread::sleep(Duration::from_millis(25));
             }
         }
-        ManagedStep::StartService => {}
+        ManagedStep::Configure | ManagedStep::StartService => {}
         ManagedStep::StopService => stop(platform, record.current.as_ref().unwrap_or(setup))?,
         ManagedStep::RemoveConfiguration => {
             let old = record.current.as_ref().unwrap_or(setup);

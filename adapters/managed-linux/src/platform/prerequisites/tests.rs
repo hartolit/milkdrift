@@ -79,12 +79,19 @@ fn owned_model_leaves_a_private_user_namespace_for_the_worker() -> Result {
     }}});
     verify_subordinate_ids(&info, 1)?;
     assert!(verify_subordinate_ids(&info, 2).is_err());
-    info["host"]["idMappings"]["uidmap"][0]["size"] = serde_json::json!(131072);
+    *info
+        .pointer_mut("/host/idMappings/uidmap/0/size")
+        .ok_or("uidmap size absent")? = serde_json::json!(131072);
     assert!(verify_subordinate_ids(&info, 2).is_err());
-    info["host"]["idMappings"]["gidmap"][0]["size"] = serde_json::json!(131072);
+    *info
+        .pointer_mut("/host/idMappings/gidmap/0/size")
+        .ok_or("gidmap size absent")? = serde_json::json!(131072);
     verify_subordinate_ids(&info, 2)?;
     for key in ["uidmap", "gidmap"] {
-        info["host"]["idMappings"][key] = serde_json::json!([
+        *info
+            .pointer_mut("/host/idMappings")
+            .and_then(|v| v.get_mut(key))
+            .ok_or("id mapping absent")? = serde_json::json!([
             {"container_id":0,"host_id":1000,"size":1},
             {"container_id":1,"host_id":100000,"size":65536},
             {"container_id":65537,"host_id":165536,"size":65536}

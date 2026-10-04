@@ -48,6 +48,10 @@ pub struct LinuxManagedPlatform {
 }
 impl LinuxManagedPlatform {
     /// Freeze approved recipes and the manager's exact machine/account/data-root identity.
+    ///
+    /// # Errors
+    /// Rejects unsupported hosts, unsafe or inaccessible directories and recipe files,
+    /// competing manager ownership, invalid recipes, or overlapping recipe names.
     pub fn new(config: LinuxManagerConfig) -> Result<Self, ManagedError> {
         config.validate()?;
         if !cfg!(target_os = "linux") {
@@ -588,7 +592,7 @@ impl ManagedPlatform for LinuxManagedPlatform {
             installation: installation.clone(),
             generation,
             unit: format!("{prefix}g{generation}"),
-            volume_prefix: prefix.clone(),
+            volume_prefix: prefix,
             manager_root: self.config.state_root.clone(),
             quadlet_directory: self.config.quadlet_directory.clone(),
             systemd_directory: self.config.systemd_directory.clone(),

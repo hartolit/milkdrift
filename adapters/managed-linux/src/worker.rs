@@ -43,6 +43,9 @@ pub struct ManagedWorkerAdapter {
 }
 impl ManagedWorkerAdapter {
     /// Construct only from a verified resource inventory in the daemon composition.
+    ///
+    /// # Errors
+    /// Rejects a setup that does not belong to this manager and exact approved deployment.
     pub fn new(
         platform: Arc<LinuxManagedPlatform>,
         store: Arc<dyn ManagedResourceStore>,
@@ -128,9 +131,8 @@ fn parse(invocation: &AdapterInvocation<'_>) -> Result<WorkerRequest, AdapterErr
     };
     let request: WorkerRequest =
         serde_json::from_value(value.value().clone()).map_err(adapter_failure)?;
-    if request.argv.is_empty()
-        || request.argv.iter().any(|a| a.contains('\0'))
-        || !request.argv[0].starts_with('/')
+    if request.argv.iter().any(|a| a.contains('\0'))
+        || !request.argv.first().is_some_and(|a| a.starts_with('/'))
     {
         return Err(AdapterError::rejected(
             "worker command needs an absolute container executable and NUL-free arguments",
@@ -535,6 +537,9 @@ fn task_arguments(
     name: &str,
     argv: &[String],
 ) -> Result<Vec<String>, ManagedError> {
+    let (executable, arguments) = argv
+        .split_first()
+        .ok_or_else(|| rejected("empty command"))?;
     let d = units::deployment(setup)?;
     let volume = setup
         .resources
@@ -573,12 +578,10 @@ fn task_arguments(
         "--env=HOME=/workspace/home".to_owned(),
         format!("--tmpfs={}", d.recipe.worker_limits.temporary_mount()),
         "--entrypoint".to_owned(),
-        argv.first()
-            .cloned()
-            .ok_or_else(|| rejected("empty command"))?,
-        d.recipe.worker_image.clone(),
+        executable.clone(),
+        d.recipe.worker_image,
     ];
-    args.extend_from_slice(&argv[1..]);
+    args.extend_from_slice(arguments);
     Ok(args)
 }
 fn run_task(
@@ -762,10 +765,10 @@ pub(crate) fn verify_container(
         _ => None,
     };
     if let Some(expected) = expected_device {
-        if devices.is_none_or(|devices| {
-            devices.len() != 1
-                || devices[0].get("PathOnHost").and_then(|v| v.as_str()) != Some(expected)
-                || devices[0].get("PathInContainer").and_then(|v| v.as_str()) != Some(expected)
+        if !devices.is_some_and(|devices| {
+            matches!(devices.as_slice(), [device]
+            if device.get("PathOnHost").and_then(|v| v.as_str()) == Some(expected)
+                && device.get("PathInContainer").and_then(|v| v.as_str()) == Some(expected))
         }) {
             return Err(platform_error(
                 "service does not have exactly its approved render device",
