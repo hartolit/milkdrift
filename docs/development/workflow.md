@@ -218,6 +218,43 @@ value afterward. Use `cargo fmt --all` to apply formatting. Dependency changes r
 deny/machete/duplicate-tree audit; pinned CI tool versions are in
 [quality.yml](../../.github/workflows/quality.yml).
 
+## Strict static gate
+
+Run `cargo strict-checks --output target/strict-local` from the repository root with a new output
+directory. It runs formatting, compiler and warning-denying Clippy checks for product-only defaults
+and workspace default/all-feature targets; separately checks default helper-feature libraries;
+runs warning-denying documentation and repository contracts; and retains deny, machete and duplicate
+dependency checks. It then checks workflow syntax/expressions, workflow security and changed content
+for suspected secrets. Every required failure, missing tool or unavailable change base fails the
+command. JSON diagnostics record source, commands, timings and coverage; an early dependency failure
+means downstream compilation coverage is incomplete. The command does not run product runtime tests.
+
+Install the exact versions pinned in [quality CI](../../.github/workflows/quality.yml): cargo-deny,
+cargo-machete, [actionlint 1.7.12](https://github.com/rhysd/actionlint/releases/tag/v1.7.12),
+[zizmor 1.30.1](https://github.com/zizmorcore/zizmor/releases/tag/v1.30.1), and
+[Gitleaks 8.30.1](https://github.com/gitleaks/gitleaks/releases/tag/v8.30.1). Official release binaries
+are sufficient; CI verifies download checksums and uses the existing pinned installer for Rust
+tools. The runner checks the scanner versions. Prove their installation with
+`cargo strict-checks --probe-tools --output target/strict-probes`: valid fixtures must pass and
+deliberate workflow-expression, injection and synthetic-secret specimens must fail.
+Actionlint's optional ShellCheck/Pyflakes integrations are explicitly disabled: this lane covers
+workflow syntax and expressions, not general shell or Python analysis. Zizmor runs offline and
+does not upload repository content or perform online advisory checks; cargo-deny owns Rust advisories.
+
+Routine secret scanning copies only changed existing files relative to `HEAD^`, plus untracked
+nonignored files, into a private temporary directory. Use `--secret-base COMMIT` for a review range;
+CI fetches just the event base. It scans no unlimited history, follows no symlinks, and always
+redacts suspected values. `--all-tracked` is the explicit initial/current-content audit, also used
+for a first push without a change base. A separate historical audit needs a finite Git range.
+Source annotations, ambient Gitleaks configuration and ignore files cannot silently exempt files;
+a necessary public-fixture exception requires a reviewed exact policy and a negative specimen.
+Do not print a suspected credential or claim that scanning revoked it.
+
+The strict gate adds no hosted matrix. Quality runs on Linux; the existing manually selected
+platform workflow owns Windows/macOS compilation and platform contracts. All targets on Linux do
+not compile other OS branches. Native trusted execution, lifetime/stop evidence and actual-client
+tests still belong to their existing runtime lanes.
+
 ## Focused suites
 
 Select the owning boundary while iterating. A focused pass does not replace the full gate for

@@ -2,3 +2,4 @@
 external-evidence = "run --package milkdrift-evidence --bin milkdrift-external-evidence --"
 local-model-evidence = "run --package milkdrift-evidence --bin local-model-evidence --"
 mutation-evidence = "run --package milkdrift-evidence --bin mutation-evidence --"
+strict-checks = "run --locked --package milkdrift-evidence --bin strict-checks --"

@@ -18,21 +18,46 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # pinned commit
         with:
           toolchain: 1.95.0
           components: clippy,rustfmt,rust-docs
       - uses: taiki-e/install-action@b6b84cf49ebfe0176417bdce007c624f0db37f20 # v2.86.2
         with:
-          tool: cargo-deny@0.20.2,cargo-machete@0.9.2
-      - run: cargo fmt --all -- --check
-      - run: cargo check --workspace --all-targets --all-features
+          tool: cargo-deny@0.20.2,cargo-machete@0.9.2,zizmor@1.30.1
+      - name: Install pinned workflow and secret scanners
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir -p strict-tools
+          curl --fail --silent --show-error --location https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz --output actionlint.tar.gz
+          curl --fail --silent --show-error --location https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz --output gitleaks.tar.gz
+          sha256sum --check <<'CHECKSUMS'
+          8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz
+          551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz
+          CHECKSUMS
+          tar -xzf actionlint.tar.gz -C strict-tools actionlint
+          tar -xzf gitleaks.tar.gz -C strict-tools gitleaks
+          echo "$RUNNER_TEMP/strict-tools" >> "$GITHUB_PATH"
+      - name: Fetch only the change base for secret scanning
+        env:
+          CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ "$CHANGE_BASE" =~ ^[0-9a-f]{40}$ && "$CHANGE_BASE" != 0000000000000000000000000000000000000000 ]]; then
+            git fetch --no-tags --depth=1 origin "$CHANGE_BASE"
+          fi
+      - name: Validate installed scanners and run the complete static gate
+        env:
+          CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          cargo strict-checks --probe-tools --output target/strict-tools-proof
+          if [[ "$CHANGE_BASE" =~ ^[0-9a-f]{40}$ && "$CHANGE_BASE" != 0000000000000000000000000000000000000000 ]]; then
+            cargo strict-checks --secret-base "$CHANGE_BASE" --output target/strict-gate
+          else
+            cargo strict-checks --all-tracked --output target/strict-gate
+          fi
       - run: cargo test --workspace --all-features --no-fail-fast
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - run: RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps
-      - run: cargo deny check
-      - run: cargo machete
-      - run: cargo tree --workspace --duplicates
       - run: cargo test --workspace --all-features -- --list
       - name: Build real headless applications
         id: applications
@@ -46,3 +71,13 @@ jobs:
       - name: Installed controller qualification and refusal evidence
         if: ${{ !cancelled() && steps.applications.outcome == 'success' }}
         run: target/debug/headless-cli-evidence --daemon target/debug/milkdrift-daemon --cli target/debug/milkdrift --controller-qualification
+      - name: Retain strict diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: strict-static-${{ runner.os }}
+          path: |
+            target/strict-tools-proof
+            target/strict-gate
+          if-no-files-found: error
+          retention-days: 14
