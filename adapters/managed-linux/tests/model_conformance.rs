@@ -1,4 +1,5 @@
 //! Attached-model contract evidence through the real serving ledger; no container/isolation claim.
+#[path = "support/serving.rs"]
 mod support;
 use milkdrift_capability::{managed::*, *};
 use milkdrift_capability_host::{conformance::*, managed::*, *};

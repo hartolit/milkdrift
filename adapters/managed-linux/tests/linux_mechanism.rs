@@ -1,4 +1,5 @@
 //! Opt-in physical lane. This invokes real Podman/systemd and never substitutes fake isolation.
+#[path = "support/serving.rs"]
 mod support;
 use milkdrift_authority::*;
 use milkdrift_capability::managed::*;

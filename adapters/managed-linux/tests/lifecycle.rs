@@ -654,6 +654,7 @@ fn recovery_authorizes_pending_replacement_instead_of_old_approved_resources() -
     Ok(())
 }
 
+#[path = "support/serving.rs"]
 mod support;
 #[test]
 fn preparation_reports_failure_without_effects_and_uses_the_saved_generation() -> Result {
