@@ -529,16 +529,15 @@ impl StoreInvocationDataAccess {
         let start = usize::try_from(offset).map_err(|_error| {
             InvocationDataError::Publication("publication offset cannot fit usize".to_owned())
         })?;
-        if start > bytes.len() {
-            let _ = self.store.abort_publication(&publication);
-            return Err(InvocationDataError::Publication(
-                "resumed publication offset exceeds exact output size".to_owned(),
-            ));
-        }
-        for chunk in bytes[start..].chunks(MAX_ARTIFACT_CHUNK_BYTES) {
+        let remaining = bytes.get(start..).ok_or_else(|| {
+            self.abort_failed_publication(
+                &publication,
+                "resumed publication offset exceeds exact output size",
+            )
+        })?;
+        for chunk in remaining.chunks(MAX_ARTIFACT_CHUNK_BYTES) {
             if let Err(error) = self.store.write_chunk(&publication, offset, chunk) {
-                let _ = self.store.abort_publication(&publication);
-                return Err(InvocationDataError::Publication(error.to_string()));
+                return Err(self.abort_failed_publication(&publication, &error.to_string()));
             }
             offset = offset
                 .checked_add(u64::try_from(chunk.len()).map_err(|_error| {
@@ -551,11 +550,23 @@ impl StoreInvocationDataAccess {
         let committed = match self.store.commit_publication(&publication) {
             Ok(committed) => committed,
             Err(error) => {
-                let _ = self.store.abort_publication(&publication);
-                return Err(InvocationDataError::Publication(error.to_string()));
+                return Err(self.abort_failed_publication(&publication, &error.to_string()));
             }
         };
         capability_artifact_reference(committed.metadata().reference())
+    }
+
+    fn abort_failed_publication(
+        &self,
+        publication: &ArtifactPublicationId,
+        failure: &str,
+    ) -> InvocationDataError {
+        InvocationDataError::Publication(match self.store.abort_publication(publication) {
+            Ok(()) => failure.to_owned(),
+            Err(cleanup) => format!(
+                "{failure}; publication cleanup also failed and the session may remain: {cleanup}"
+            ),
+        })
     }
 }
 

@@ -394,7 +394,10 @@ fn seed_invocation(
             Vec::new(),
         ),
     )?;
-    let _ = store.commit_command(&commit)?;
+    assert!(matches!(
+        store.commit_command(&commit)?,
+        milkdrift_persistence::AtomicRunCommitOutcome::Committed(_)
+    ));
     Ok(())
 }
 
@@ -721,6 +724,75 @@ fn traversal_symlink_special_file_and_budget_escapes_are_rejected() -> TestResul
             .materialize(&context, &two_inputs, &specifications, aggregate)
             .is_err()
     );
+    Ok(())
+}
+
+#[test]
+fn publication_failure_reports_abort_failure_and_remains_recoverable() -> TestResult {
+    struct FailWriteAndAbort {
+        write: FailOnce,
+        abort: FailOnce,
+    }
+    impl FaultInjector for FailWriteAndAbort {
+        fn check(&self, point: FaultPoint) -> Result<(), PersistenceError> {
+            self.write.check(point)?;
+            self.abort.check(point)
+        }
+    }
+    let store_owner = tempfile::tempdir()?;
+    let execution_owner = tempfile::tempdir()?;
+    let store = Arc::new(RedbStore::open_with_config(
+        RedbStoreConfig::new(store_owner.path()).with_fault_injector(Arc::new(FailWriteAndAbort {
+            write: FailOnce::new(FaultPoint::BeforeArtifactChunkWrite),
+            abort: FailOnce::new(FaultPoint::BeforeArtifactAbortCommit),
+        })),
+    )?);
+    let access = StoreInvocationDataAccess::new(
+        store.clone(),
+        execution_owner.path(),
+        ArtifactReadAuthority::PublicOnly,
+    )?;
+    let context = context()?;
+    let request = request()?;
+    seed_invocation(
+        store.as_ref(),
+        &context,
+        &request,
+        WorkspaceBudget::new(16, 1024, 4096, 16, 1024, 4096)?,
+    )?;
+    let bytes = b"retained failed output";
+    let expected = expected_process_artifact(
+        &context,
+        &request,
+        "cleanup-faulted-output",
+        "text/plain",
+        bytes,
+    )?;
+    let result = access.publish_bytes(
+        &context,
+        &request,
+        "cleanup-faulted-output",
+        "text/plain",
+        bytes,
+        limits(),
+    );
+    let error = result.err().ok_or("publication unexpectedly succeeded")?;
+    assert!(
+        error
+            .to_string()
+            .contains("publication cleanup also failed and the session may remain")
+    );
+    assert!(!store.is_committed(&expected)?);
+    let recovered = access.publish_bytes(
+        &context,
+        &request,
+        "cleanup-faulted-output",
+        "text/plain",
+        bytes,
+        limits(),
+    )?;
+    assert_eq!(recovered.identity(), expected.artifact().as_str());
+    assert!(store.is_committed(&expected)?);
     Ok(())
 }
 
