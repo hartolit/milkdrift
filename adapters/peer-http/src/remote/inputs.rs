@@ -183,7 +183,15 @@ impl RemoteCapabilityAdapter {
                     let chunk = ArtifactChunk {
                         transfer: transfer.clone(),
                         offset,
-                        bytes: input.bytes[start..end].to_vec(),
+                        bytes: input
+                            .bytes
+                            .get(start..end)
+                            .ok_or_else(|| {
+                                AdapterError::external_failure(
+                                    "remote input chunk exceeds prepared bytes",
+                                )
+                            })?
+                            .to_vec(),
                         final_chunk: end == input.bytes.len(),
                     };
                     let decision = self

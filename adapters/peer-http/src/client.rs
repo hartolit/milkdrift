@@ -47,12 +47,20 @@ impl std::fmt::Debug for PeerHttpClient {
 impl PeerHttpClient {
     /// Builds a client using the already resolved credential in `config`.
     /// Use [`Self::new_with_credential_source`] when future requests must see credential rotation.
+    ///
+    /// # Errors
+    /// Rejects invalid endpoint, credential, protocol or deadline configuration, or an HTTP
+    /// client that cannot be constructed.
     pub fn new(config: PeerClientConfig) -> Result<Arc<Self>, PeerHttpError> {
         let credential = Arc::new(StaticPeerCredential::new(config.bearer_credential.clone()));
         Self::new_with_credential_source(config, credential)
     }
 
     /// Builds a client that resolves its credential at every request for safe rotation.
+    ///
+    /// # Errors
+    /// Rejects invalid configuration, an unavailable startup credential, or an HTTP client
+    /// that cannot be constructed. Request-time credential errors remain possible afterward.
     pub fn new_with_credential_source(
         config: PeerClientConfig,
         credential: Arc<dyn PeerCredentialSource>,
@@ -107,6 +115,10 @@ impl PeerHttpClient {
     }
 
     /// Performs identity cross-checking and version/hard-limit negotiation.
+    ///
+    /// # Errors
+    /// Returns credential, transport, decoding or cache failures, and rejects a remote identity
+    /// or selected version that differs from the configured relationship.
     pub fn handshake(&self) -> Result<HandshakeResponse, PeerHttpError> {
         let request = HandshakeRequest {
             claimed_peer: self.config.local_peer.clone(),
@@ -144,6 +156,10 @@ impl PeerHttpClient {
     }
 
     /// Reads one complete authenticated expiring catalog snapshot.
+    ///
+    /// # Errors
+    /// Returns handshake, credential, transport or decoding failures, and rejects an invalid
+    /// catalog snapshot.
     pub fn catalog(&self) -> Result<CatalogSnapshot, PeerHttpError> {
         self.ensure_handshake()?;
         let snapshot: CatalogSnapshot = self.get(&["peer", "v1", "catalog"], &[])?;
@@ -156,6 +172,10 @@ impl PeerHttpClient {
     /// Submits under exact idempotency. Transport ambiguity retries the same request, then
     /// queries the key before reporting uncertainty to the adapter.
     /// An error may follow remote acceptance; it is not permission to submit replacement work.
+    ///
+    /// # Errors
+    /// Returns refusal, protocol or exhausted transport/recovery failures. An error after an
+    /// ambiguous response does not prove that the remote execution was never accepted.
     pub fn submit(
         &self,
         request: &ServingInvocationRequest,
@@ -224,6 +244,10 @@ impl PeerHttpClient {
     }
 
     /// Queries durable acceptance by idempotency key.
+    ///
+    /// # Errors
+    /// Returns credential, transport or protocol failures, including a response bound to a
+    /// different request key.
     pub fn lookup(&self, request: &PeerRequestId) -> Result<InvocationLookup, PeerHttpError> {
         let lookup: InvocationLookup =
             self.get(&["peer", "v1", "requests", request.as_str()], &[])?;
@@ -234,6 +258,10 @@ impl PeerHttpClient {
     }
 
     /// Reads one contiguous resumable observation page.
+    ///
+    /// # Errors
+    /// Returns credential, transport or protocol failures, including invalid page bounds,
+    /// sequence continuity, execution identity or resume cursor.
     pub fn observations(
         &self,
         execution: &PeerExecutionId,
@@ -265,6 +293,10 @@ impl PeerHttpClient {
     }
 
     /// Requests cancellation independently from connection closure.
+    ///
+    /// # Errors
+    /// Returns credential, transport or protocol failures. A failed response does not establish
+    /// whether cancellation was accepted, and an acknowledgement is not terminal evidence.
     pub fn cancel(
         &self,
         request: &PeerCancellationRequest,
@@ -286,6 +318,10 @@ impl PeerHttpClient {
     }
 
     /// Reads an authorized exact output's metadata before negotiating its bytes.
+    ///
+    /// # Errors
+    /// Returns credential, transport, metadata-validation or binding failures when the offer
+    /// does not identify this remote execution and download direction.
     pub fn output_artifact_offer(
         &self,
         execution: &PeerExecutionId,
@@ -318,6 +354,10 @@ impl PeerHttpClient {
     }
 
     /// Negotiates metadata, authority, quota, deduplication, and resume offset before bytes.
+    ///
+    /// # Errors
+    /// Returns credential, transport or protocol failures and remote authority/quota refusals.
+    /// A lost response may leave resumable staging under the same transfer identity.
     pub fn negotiate_artifact(
         &self,
         offer: &ArtifactMetadataOffer,
@@ -326,6 +366,10 @@ impl PeerHttpClient {
     }
 
     /// Uploads one raw bounded sequential chunk outside JSON control envelopes.
+    ///
+    /// # Errors
+    /// Returns credential, transport, protocol or remote chunk-refusal failures. Retry must
+    /// preserve the exact transfer, offset and bytes when acceptance is uncertain.
     pub fn write_artifact_chunk(
         &self,
         chunk: &ArtifactChunk,
@@ -358,6 +402,10 @@ impl PeerHttpClient {
     }
 
     /// Downloads one raw bounded verified range after metadata negotiation.
+    ///
+    /// # Errors
+    /// Returns credential, transport or remote refusal failures, missing range headers, and
+    /// responses exceeding the requested bounded range.
     pub fn read_artifact_chunk(
         &self,
         transfer: &TransferId,
@@ -415,6 +463,10 @@ impl PeerHttpClient {
     }
 
     /// Aborts one incomplete transfer and its temporary bytes.
+    ///
+    /// # Errors
+    /// Returns credential, transport or remote refusal failures. Failure leaves cleanup
+    /// unconfirmed and must not be treated as proof that staging was removed.
     pub fn abort_artifact(&self, transfer: &TransferId) -> Result<(), PeerHttpError> {
         let url = endpoint(
             &self.config.endpoint,

@@ -296,8 +296,10 @@ fn different_callers_cannot_collide_in_the_adapter_invocation_namespace() -> Tes
             .identities
             .lock()
             .map_err(|_| "test identities poisoned")?;
-        assert_eq!(identities.len(), 2);
-        assert_ne!(identities[0], identities[1]);
+        let [first, second] = identities.as_slice() else {
+            return Err("expected two prepared identities".into());
+        };
+        assert_ne!(first, second);
         assert!(identities.iter().all(|id| id.as_str() != "same-invocation"));
     }
     for _ in &peers {

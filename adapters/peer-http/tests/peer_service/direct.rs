@@ -93,7 +93,7 @@ fn client_realms_replay_archive_and_reopen_without_workflow_provenance() -> Test
     service.recover(32)?;
     let catalog = service.client_catalog(&actors[0])?;
     let submission = DirectInvocationRequest {
-        host: target.clone(),
+        host: target,
         request_id: PeerRequestId::new("same-request")?,
         catalog_generation: catalog.generation,
         catalog_digest: catalog.digest,
@@ -225,7 +225,7 @@ fn client_realms_replay_archive_and_reopen_without_workflow_provenance() -> Test
     let service = PeerService::with_clients(
         config,
         host.clone(),
-        store.clone(),
+        store,
         milkdrift_capability_host::conformance::disabled_artifact_store(),
         None,
         Some(policy),

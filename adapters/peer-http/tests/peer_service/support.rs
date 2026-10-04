@@ -606,7 +606,10 @@ pub(super) fn request(
     )
 }
 
-#[allow(clippy::too_many_arguments)] // Tests vary catalog identity, invocation identity, and artifact bytes independently at peer admission.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Admission fixtures vary exact catalog identity, invocation identity and artifact bytes independently"
+)]
 pub(super) fn request_with_input_artifact(
     issuer: &PeerId,
     target: &PeerId,
@@ -629,7 +632,10 @@ pub(super) fn request_with_input_artifact(
     )
 }
 
-#[allow(clippy::too_many_arguments)] // Tests vary catalog identity, invocation identity, and artifact presence independently at peer admission.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Admission fixtures vary exact catalog identity, invocation identity and artifact presence independently"
+)]
 pub(super) fn request_with_optional_input_artifact(
     issuer: &PeerId,
     target: &PeerId,

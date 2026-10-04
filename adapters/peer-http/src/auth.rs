@@ -7,6 +7,10 @@ use crate::PeerHttpError;
 /// Request-time secret source supporting operator-owned credential rotation.
 pub trait PeerCredentialSource: Send + Sync {
     /// Resolves the current secret value for exactly one outbound HTTP request.
+    ///
+    /// # Errors
+    /// Returns an authentication or availability error when the current credential cannot
+    /// be read. Implementations must keep secret values out of the error.
     fn resolve(&self) -> Result<SensitiveSecret, PeerHttpError>;
 }
 

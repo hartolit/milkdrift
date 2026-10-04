@@ -15,9 +15,12 @@ fn catalog_preserves_the_actual_health_observation_time() -> TestResult {
         calls: Arc::new(AtomicUsize::new(0)),
         requirements: CapabilityExecutionRequirements::default(),
     }))?;
-    let observed = host.catalog_generations(
-        &milkdrift_authority::CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
-    )?[0]
+    let observed = host
+        .catalog_generations(&milkdrift_authority::CapabilityAuthorityScope::allow_any(
+            SideEffectClass::Unknown,
+        ))?
+        .first()
+        .ok_or("catalog generation absent")?
         .observation
         .as_ref()
         .ok_or("health observation absent")?
@@ -34,7 +37,12 @@ fn catalog_preserves_the_actual_health_observation_time() -> TestResult {
     let catalog = service.catalog(&peer)?;
     assert_eq!(catalog.entries.len(), 1);
     assert_eq!(
-        catalog.entries[0].observation.observed_at_unix_ms(),
+        catalog
+            .entries
+            .first()
+            .ok_or("catalog entry absent")?
+            .observation
+            .observed_at_unix_ms(),
         observed
     );
     assert!(service.shutdown_workers(Duration::from_secs(2)).clean);
@@ -59,7 +67,11 @@ fn peer_clock_failure_and_backward_movement_fail_closed_at_expiry() -> TestResul
         CapabilitySelectionPolicy::priorities(BTreeMap::new()),
     )?;
     let mut config = server_config(peer.clone(), target, 1, 4)?;
-    config.relationships[0].expires_at_unix_ms = expiry;
+    config
+        .relationships
+        .first_mut()
+        .ok_or("relationship absent")?
+        .expires_at_unix_ms = expiry;
     let service = PeerService::new(config, host, store, clock.clone())?;
 
     assert_eq!(service.authenticate_bearer(b"peer-secret")?, peer);
@@ -475,10 +487,11 @@ fn recovery_reports_a_remaining_claim_frontier_after_a_bounded_page() -> TestRes
         )?;
         let execution = PeerExecutionId::new(format!("execution-recovery-page-{ordinal}"))?;
         admit(&store, &peer, &request, &execution, 2)?;
-        let _ = claim(
+        let claimed = claim(
             &store,
             &WorkerId::new(format!("worker-recovery-page-{ordinal}"))?,
         )?;
+        assert_eq!(claimed.execution, execution);
     }
     let first = store.recover_peer_claims(now(), PageSize::new(1)?)?;
     assert_eq!(first.requeued, 1);
@@ -627,7 +640,7 @@ fn fixed_worker_owner_bounds_execution_and_shutdown_joins() -> TestResult {
     let (host, descriptor) = host_with_adapter(Arc::new(TerminalAdapter {
         capability: CapabilityId::new("test-capability")?,
         delay: Duration::from_millis(20),
-        active: active.clone(),
+        active,
         maximum: maximum.clone(),
         calls,
         requirements: CapabilityExecutionRequirements::default(),
@@ -810,8 +823,12 @@ fn service_archived_replay_returns_summary_without_second_adapter_entry() -> Tes
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert!(service.shutdown_workers(Duration::from_secs(2)).clean);
     drop(service);
-    config.relationships[0].capability_allow.clear();
-    config.relationships[0].revocation_generation += 1;
+    let relationship = config
+        .relationships
+        .first_mut()
+        .ok_or("relationship absent")?;
+    relationship.capability_allow.clear();
+    relationship.revocation_generation += 1;
     let restricted = PeerService::new(config, host, store, system_peer_clock())?;
     assert!(
         restricted

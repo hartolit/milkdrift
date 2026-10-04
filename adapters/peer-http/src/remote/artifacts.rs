@@ -10,7 +10,10 @@ use milkdrift_peer_protocol::{
 use super::{Lifecycle, Ordering, RemoteCapabilityAdapter};
 
 impl RemoteCapabilityAdapter {
-    #[allow(clippy::too_many_arguments)] // Exact transfer facts and bounded per-execution accounting stay explicit.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Exact transfer facts, controller ownership and bounded per-execution accounting remain explicit at the output owner"
+    )]
     pub(super) fn import_output(
         &self,
         execution: &PeerExecutionId,
@@ -210,7 +213,10 @@ pub(super) fn finish_transfer(
 impl RemoteCapabilityAdapter {
     // Remote sequence addresses retained output facts; local sequence is contiguous even when
     // progress between those outputs has already been compacted by the serving owner.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Archived recovery requires the exact retained execution, local report sequence, effect contract and shared transfer accounting"
+    )]
     pub(super) fn recover_archived_outputs(
         &self,
         execution: &PeerExecutionId,

@@ -250,7 +250,7 @@ fn atomic_final_slot_and_idempotency_survive_reopen() -> TestResult {
     let barrier = Arc::new(Barrier::new(3));
     let mut handles = Vec::new();
     for (request, execution) in [
-        (request_a.clone(), PeerExecutionId::new("execution-a")?),
+        (request_a, PeerExecutionId::new("execution-a")?),
         (request_b, PeerExecutionId::new("execution-b")?),
     ] {
         let store = store.clone();
@@ -523,7 +523,7 @@ fn commit_boundary_faults_preserve_acceptance_claim_and_observation_truth() -> T
         &target,
         &descriptor,
         1,
-        admission_request.catalog_digest.clone(),
+        admission_request.catalog_digest,
         "request-claim-fault",
         "invocation-claim-fault",
     )?;

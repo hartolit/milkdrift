@@ -28,7 +28,7 @@ fn request_bound_input_staging_precedes_acceptance_and_preserves_foreign_causes(
         server_config(peer.clone(), target.clone(), 1, 4)?,
         host,
         core.clone(),
-        artifacts.clone(),
+        artifacts,
         clock,
     )?;
     service.recover(1024)?;
@@ -48,7 +48,9 @@ fn request_bound_input_staging_precedes_acceptance_and_preserves_foreign_causes(
         milkdrift_peer_protocol::ArtifactTransferBinding::Input { request } => {
             request.as_ref().clone()
         }
-        _ => return Err("input binding missing".into()),
+        milkdrift_peer_protocol::ArtifactTransferBinding::Execution { .. } => {
+            return Err("input binding missing".into());
+        }
     };
     assert!(
         core.peer_execution_by_request(
@@ -91,7 +93,7 @@ fn request_bound_input_staging_precedes_acceptance_and_preserves_foreign_causes(
         }
     );
     assert!(
-        matches!(&metadata.provenance().causes()[0], CausalReference::PeerClaim { reference, .. } if matches!(reference.as_ref(), CausalReference::RunInput { .. }))
+        matches!(metadata.provenance().causes().first().ok_or("provenance cause absent")?, CausalReference::PeerClaim { reference, .. } if matches!(reference.as_ref(), CausalReference::RunInput { .. }))
     );
     // Exact replay remains available even when this peer has consumed its entire byte quota.
     assert_eq!(
@@ -304,7 +306,7 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
         &ArtifactChunk {
             transfer: offer.transfer.clone(),
             offset: 0,
-            bytes: bytes[..8].to_vec(),
+            bytes: bytes.get(..8).ok_or("artifact prefix absent")?.to_vec(),
             final_chunk: false,
         },
         1_048_576,
@@ -326,7 +328,7 @@ fn core_artifact_transfer_preserves_metadata_provenance_resumes_and_reads_outbou
             &ArtifactChunk {
                 transfer: offer.transfer.clone(),
                 offset: 8,
-                bytes: bytes[8..].to_vec(),
+                bytes: bytes.get(8..).ok_or("artifact suffix absent")?.to_vec(),
                 final_chunk: true,
             },
             1_048_576,
@@ -488,8 +490,18 @@ fn entered_peer_execution_owns_output_budget_and_metadata_requires_live_download
         caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
         generation: 1,
         enabled: true,
-        expires_at_unix_ms: config.relationships[0].expires_at_unix_ms,
-        maximum_active: u32::from(config.relationships[0].maximum_concurrent),
+        expires_at_unix_ms: config
+            .relationships
+            .first()
+            .ok_or("relationship absent")?
+            .expires_at_unix_ms,
+        maximum_active: u32::from(
+            config
+                .relationships
+                .first()
+                .ok_or("relationship absent")?
+                .maximum_concurrent,
+        ),
     })?;
     core.publish_peer_catalog(&ServingCatalogState {
         caller: milkdrift_peer_protocol::ServingCaller::peer(&target, &peer),
@@ -698,11 +710,15 @@ fn entered_peer_execution_owns_output_budget_and_metadata_requires_live_download
             .is_err()
     );
     assert!(service.shutdown_workers(Duration::from_secs(1)).clean);
-    config.relationships[0]
+    let relationship = config
+        .relationships
+        .first_mut()
+        .ok_or("relationship absent")?;
+    relationship
         .authority
         .actions
         .remove(&PeerAction::ArtifactDownload);
-    config.relationships[0].revocation_generation = 2;
+    relationship.revocation_generation = 2;
     let denied =
         PeerService::new_with_artifacts(config, host, core, artifacts, system_peer_clock())?;
     assert!(denied.output_artifact_offer(&peer, &execution, 1).is_err());

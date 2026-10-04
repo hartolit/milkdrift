@@ -90,12 +90,17 @@ fn read_request_body(stream: &mut TcpStream) -> Result<Vec<u8>, String> {
         if read == 0 {
             return Err("peer conformance request ended before its body".to_owned());
         }
-        bytes.extend_from_slice(&buffer[..read]);
+        bytes.extend_from_slice(
+            buffer
+                .get(..read)
+                .ok_or("request read exceeded its buffer")?,
+        );
         let Some(header_end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") else {
             continue;
         };
         let headers =
-            std::str::from_utf8(&bytes[..header_end + 4]).map_err(|error| error.to_string())?;
+            std::str::from_utf8(bytes.get(..header_end + 4).ok_or("header prefix absent")?)
+                .map_err(|error| error.to_string())?;
         let content_length = headers
             .lines()
             .find_map(|line| {
@@ -106,7 +111,10 @@ fn read_request_body(stream: &mut TcpStream) -> Result<Vec<u8>, String> {
             .unwrap_or(0);
         let body_start = header_end + 4;
         if bytes.len() >= body_start.saturating_add(content_length) {
-            return Ok(bytes[body_start..body_start + content_length].to_vec());
+            return Ok(bytes
+                .get(body_start..body_start + content_length)
+                .ok_or("request body absent")?
+                .to_vec());
         }
     }
 }
@@ -274,7 +282,7 @@ fn remote_case(scenario: ConformanceScenario) -> Result<RemoteCase, Box<dyn std:
         remote_descriptor.admission().clone(),
         Locality::Peer,
     )
-    .peer(Some(remote.clone()))
+    .peer(Some(remote))
     .provider_profile(remote_descriptor.provider_profile().cloned())
     .operations(remote_descriptor.operations().clone())
     .trust_zones(trust_zones)
@@ -499,10 +507,10 @@ fn remote_resolution_requires_transport_scope_and_each_resource_ceiling()
         (BTreeSet::from([peer_profile.clone()]), BTreeSet::new()),
         (
             BTreeSet::from([NetworkProfileRef::new("peer:another-peer")?]),
-            BTreeSet::from([endpoint.clone()]),
+            BTreeSet::from([endpoint]),
         ),
         (
-            BTreeSet::from([peer_profile.clone()]),
+            BTreeSet::from([peer_profile]),
             BTreeSet::from(["127.0.0.1:2".to_owned()]),
         ),
     ] {
@@ -775,14 +783,20 @@ fn remote_catalog_registration_fails_closed_and_recovers_with_the_clock()
         let replacement = CatalogSnapshot::new(generation, now, now + 10, vec![entry.clone()])?;
         let facts = registry.apply_catalog(replacement.clone())?;
         assert_eq!(facts.len(), 1);
-        assert_eq!(facts[0].catalog_generation, generation);
+        assert_eq!(
+            facts
+                .first()
+                .ok_or("catalog fact absent")?
+                .catalog_generation,
+            generation
+        );
         assert!(registry.apply_catalog(replacement)?.is_empty());
         assert_eq!(registry.registration_count(), 1);
         let registered = host.catalog_generations(
             &milkdrift_authority::CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
         )?;
         assert_eq!(registered.len(), 1);
-        let current = &registered[0];
+        let current = registered.first().ok_or("registration absent")?;
         host.refresh_health(
             current.descriptor.identity(),
             current.descriptor.descriptor_revision(),
@@ -791,10 +805,12 @@ fn remote_catalog_registration_fails_closed_and_recovers_with_the_clock()
         assert!(
             host.catalog_generations(&milkdrift_authority::CapabilityAuthorityScope::allow_any(
                 SideEffectClass::Unknown
-            ))?[0]
-                .observation
-                .as_ref()
-                .is_some_and(CapabilityObservation::available)
+            ))?
+            .first()
+            .ok_or("refreshed registration absent")?
+            .observation
+            .as_ref()
+            .is_some_and(CapabilityObservation::available)
         );
     }
 

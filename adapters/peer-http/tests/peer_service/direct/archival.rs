@@ -233,26 +233,29 @@ impl OutputFixture {
         }))?;
         let mut config = server_config(peer.clone(), target.clone(), 1, 2)?;
         if !read_output {
-            config.relationships[0]
+            let relationship = config
+                .relationships
+                .first_mut()
+                .ok_or("relationship absent")?;
+            relationship
                 .authority
                 .actions
                 .remove(&PeerAction::ArtifactDownload);
-            config.relationships[0]
+            relationship
                 .authority
                 .actions
                 .remove(&PeerAction::ArtifactUpload);
         }
         let mut policy = client_policy(std::slice::from_ref(&actor))?;
         if read_output {
-            let previous = &policy.grants[0];
+            let previous = policy.grants.first_mut().ok_or("policy grant absent")?;
             let mut operations = previous.operations().clone();
             operations.insert(AuthorityOperation::ReadCapabilityOutput);
-            policy.grants[0] =
-                AuthorityGrantBuilder::new(previous.identity().clone(), 1, actor.clone())
-                    .operations(operations)
-                    .resources(previous.resources().clone())
-                    .budget(previous.budget())
-                    .build()?;
+            *previous = AuthorityGrantBuilder::new(previous.identity().clone(), 1, actor.clone())
+                .operations(operations)
+                .resources(previous.resources().clone())
+                .budget(previous.budget())
+                .build()?;
         }
         let artifacts = Arc::new(CorePeerArtifactStore::new(
             store.clone(),

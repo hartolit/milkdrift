@@ -238,7 +238,7 @@ fn transfer_case(
                 }
                 write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nx-milkdrift-artifact-offset: {offset}\r\nx-milkdrift-artifact-final: {}\r\nConnection: close\r\n\r\n", next == content.len()).map_err(|error| error.to_string())?;
                 stream
-                    .write_all(&content[offset..next])
+                    .write_all(content.get(offset..next).ok_or("output chunk absent")?)
                     .map_err(|error| error.to_string())?;
                 offset = next;
             }

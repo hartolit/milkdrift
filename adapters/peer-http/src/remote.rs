@@ -138,6 +138,9 @@ impl std::fmt::Debug for PeerRegistry {
 
 impl PeerRegistry {
     /// Creates a disconnected registry manager.
+    ///
+    /// # Errors
+    /// Rejects invalid relationship bounds or a relationship naming a different remote peer.
     pub fn new(
         host: CapabilityHost,
         client: Arc<PeerHttpClient>,
@@ -182,6 +185,10 @@ impl PeerRegistry {
     }
 
     /// Authenticates, fetches, validates, and generation-safely replaces the remote catalog.
+    ///
+    /// # Errors
+    /// Returns clock, expiry, authentication, transport, catalog-validation or host-registration
+    /// failures. Failed connection also drains registrations and can report a drain failure.
     pub fn connect(&self) -> Result<Vec<RemoteCapabilityProvenance>, PeerHttpError> {
         let result = self
             .now()
@@ -361,11 +368,15 @@ impl PeerRegistry {
     }
 
     /// Drains all registrations immediately on explicit disconnect or authentication loss.
+    ///
+    /// # Errors
+    /// Returns unavailable registry state or host drain/shutdown failures. Held execution
+    /// permits can keep retired generations alive after successful disconnection.
     pub fn disconnect(&self) -> Result<(), PeerHttpError> {
         let mut registrations = self.registrations.lock().map_err(|_| {
             PeerHttpError::Unavailable("peer registry state unavailable".to_owned())
         })?;
-        for key in registrations.active.keys().cloned().collect::<Vec<_>>() {
+        while let Some(key) = registrations.active.keys().next().cloned() {
             registrations.retire(&key, &self.host)?;
         }
         registrations.reap(&self.host)?;

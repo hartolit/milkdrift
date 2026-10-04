@@ -42,6 +42,10 @@ pub struct PeerClientConfig {
 
 impl PeerClientConfig {
     /// Refuses credentials in URLs, fragments, non-HTTP schemes, and plaintext non-loopback.
+    ///
+    /// # Errors
+    /// Rejects unsupported protocol ranges, empty credentials, zero request/poll durations,
+    /// and endpoints that violate the transport policy.
     pub fn validate(&self) -> Result<(), PeerHttpError> {
         validate_current_protocol_range(self.versions)?;
         if !self.endpoint.username().is_empty()

@@ -291,7 +291,7 @@ fn archived_tombstones_reclaim_hot_capacity_and_preserve_replay_conflict_and_his
             .clone(),
         source_peer: target.clone(),
         binding: milkdrift_peer_protocol::ArtifactTransferBinding::Execution {
-            execution: first_execution.clone(),
+            execution: first_execution,
         },
         expires_at_unix_ms: now().saturating_add(60_000),
     };
@@ -718,7 +718,7 @@ fn checksum_valid_peer_primary_and_tombstone_fact_corruption_is_rejected() -> Te
     let tombstone = {
         let store = RedbStore::open(root.path())?;
         let worker = WorkerId::new("fact-corruption-worker")?;
-        let _ = claim(&store, &worker)?;
+        assert_eq!(claim(&store, &worker)?.execution, execution);
         let boundary = now().saturating_add(100);
         let mut terminal = terminal_observation(&request, &execution, 1, TerminalStatus::Success)?;
         terminal.observed_at_unix_ms = boundary;
@@ -777,7 +777,7 @@ fn checksum_valid_peer_primary_and_tombstone_fact_corruption_is_rejected() -> Te
     store.verify_peer_execution_integrity()?;
     drop(store);
 
-    let mut exact_cancellation = tombstone.clone();
+    let mut exact_cancellation = tombstone;
     exact_cancellation.cancellation = Some(valid_cancellation(&execution)?);
     overwrite_peer_document(
         root.path(),

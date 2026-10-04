@@ -202,7 +202,7 @@ fn post_entry_and_post_terminal_cancellation_and_revocation_preserve_truth() -> 
     )?;
     let entered_cancellation = PeerCancellationRequest {
         request_id: PeerRequestId::new("cancel-entered")?,
-        execution: entered_execution.clone(),
+        execution: entered_execution,
         sequence: 1,
         reason: "disconnect after request".to_owned(),
     };
@@ -253,7 +253,7 @@ fn post_entry_and_post_terminal_cancellation_and_revocation_preserve_truth() -> 
     )?;
     let terminal_cancellation = PeerCancellationRequest {
         request_id: PeerRequestId::new("cancel-terminal")?,
-        execution: terminal_execution.clone(),
+        execution: terminal_execution,
         sequence: 1,
         reason: "too late cancellation".to_owned(),
     };
