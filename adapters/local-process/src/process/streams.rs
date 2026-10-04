@@ -145,7 +145,13 @@ pub(super) fn spawn_reader<R: Read + Send + 'static>(
                 if take != 0 {
                     if !send(
                         &sender,
-                        StreamMessage::Data(stream, buffer[..take].to_vec()),
+                        StreamMessage::Data(
+                            stream,
+                            buffer
+                                .get(..take)
+                                .ok_or("stream read exceeded its buffer")?
+                                .to_vec(),
+                        ),
                         &stop,
                     ) {
                         return Ok(IoCompletion::Interrupted);
@@ -175,19 +181,27 @@ pub(super) fn spawn_stdin_writer<W: Write + Send + 'static>(
         .map(|(mut stdin, bytes)| {
             thread::Builder::new()
                 .spawn(move || {
-                    let mut remaining = bytes.as_slice();
-                    while !remaining.is_empty() {
-                        if stop.load(Ordering::Acquire) {
-                            return Ok(IoCompletion::Interrupted);
-                        }
-                        match stdin.write(&remaining[..remaining.len().min(STREAM_READ_BYTES)]) {
-                            // A full nonblocking Windows byte pipe can accept zero bytes.
-                            Ok(0) => thread::sleep(IO_POLL_INTERVAL),
-                            Ok(count) => remaining = &remaining[count..],
-                            Err(error) if would_block(&error) => thread::sleep(IO_POLL_INTERVAL),
-                            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                            Err(error) => {
-                                return Err(format!("stdin write failed: {:?}", error.kind()));
+                    for chunk in bytes.chunks(STREAM_READ_BYTES) {
+                        let mut remaining = chunk;
+                        while !remaining.is_empty() {
+                            if stop.load(Ordering::Acquire) {
+                                return Ok(IoCompletion::Interrupted);
+                            }
+                            match stdin.write(remaining) {
+                                // A full nonblocking Windows byte pipe can accept zero bytes.
+                                Ok(0) => thread::sleep(IO_POLL_INTERVAL),
+                                Ok(count) => {
+                                    remaining = remaining
+                                        .get(count..)
+                                        .ok_or("stdin write exceeded its buffer")?
+                                }
+                                Err(error) if would_block(&error) => {
+                                    thread::sleep(IO_POLL_INTERVAL)
+                                }
+                                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                                Err(error) => {
+                                    return Err(format!("stdin write failed: {:?}", error.kind()));
+                                }
                             }
                         }
                     }
@@ -230,14 +244,14 @@ fn replace_all(target: &mut Vec<u8>, needle: &[u8], replacement: &[u8]) {
         return;
     }
     let mut output = Vec::with_capacity(target.len());
-    let mut offset = 0_usize;
-    while offset < target.len() {
-        if target[offset..].starts_with(needle) {
+    let mut remaining = target.as_slice();
+    while let Some((&first, rest)) = remaining.split_first() {
+        if let Some(rest) = remaining.strip_prefix(needle) {
             output.extend_from_slice(replacement);
-            offset = offset.saturating_add(needle.len());
+            remaining = rest;
         } else {
-            output.push(target[offset]);
-            offset = offset.saturating_add(1);
+            output.push(first);
+            remaining = rest;
         }
     }
     *target = output;

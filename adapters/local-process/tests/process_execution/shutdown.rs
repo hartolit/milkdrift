@@ -78,7 +78,9 @@ fn cancellation_and_shutdown_signal_only_through_the_monitor() -> TestResult {
                 &AdapterInvocation::with_context(&snapshot, &worker_request, &context),
                 worker_reporter.as_ref(),
             );
-            let _ = finished.send(result);
+            finished
+                .send(result)
+                .map_err(|_| "execution result receiver disappeared")
         });
         entry.recv_timeout(Duration::from_secs(5))?;
         if shutdown {
@@ -110,10 +112,7 @@ fn cancellation_and_shutdown_signal_only_through_the_monitor() -> TestResult {
             .map(|pid| cleanup::process_alive(*pid))
             .collect::<TestResult<Vec<_>>>();
         drop(cleanup);
-        if worker.is_finished() {
-            worker.join().map_err(|_| "shutdown worker panicked")?;
-        }
-        result??;
+        super::reporting_cleanup::finish_worker(result, &completion, worker)??;
         assert!(
             still_running,
             "shutdown={shutdown} signalled outside the monitor"

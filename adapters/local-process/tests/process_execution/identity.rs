@@ -41,17 +41,27 @@ fn registration_binds_bytes_profile_policy_trust_and_attempt_provenance() -> Tes
     );
     let extension = process_extension(&adapter)?;
     assert_eq!(
-        extension["implementation"]["content_digest"],
+        *extension
+            .pointer("/implementation/content_digest")
+            .ok_or("descriptor field absent")?,
         json!(profile.implementation().content_digest())
     );
     assert_eq!(
-        extension["implementation"]["size_bytes"],
+        *extension
+            .pointer("/implementation/size_bytes")
+            .ok_or("descriptor field absent")?,
         json!(profile.implementation().size_bytes())
     );
     for digest in [
-        &extension["implementation"]["identity_digest"],
-        &extension["profile_digest"],
-        &extension["execution_policy_digest"],
+        extension
+            .pointer("/implementation/identity_digest")
+            .ok_or("descriptor field absent")?,
+        extension
+            .pointer("/profile_digest")
+            .ok_or("descriptor field absent")?,
+        extension
+            .pointer("/execution_policy_digest")
+            .ok_or("descriptor field absent")?,
     ] {
         assert!(
             digest
@@ -108,9 +118,21 @@ fn profile_semantics_change_policy_and_descriptor_identity() -> TestResult {
         Arc::new(InMemorySecretResolver::new()),
     )?;
     let mut second_value = first_value;
-    second_value["profile"]["revision"] = json!(2);
-    second_value["profile"]["descriptor_revision"] = json!(2);
-    second_value["profile"]["arguments"] = json!(["exit", "7"]);
+    second_value
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert("revision".to_owned(), json!(2));
+    second_value
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert("descriptor_revision".to_owned(), json!(2));
+    second_value
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert("arguments".to_owned(), json!(["exit", "7"]));
     let second = LocalProcessAdapter::new(
         parse_profile(&second_value)?,
         data,
@@ -119,16 +141,28 @@ fn profile_semantics_change_policy_and_descriptor_identity() -> TestResult {
     let first_extension = process_extension(&first)?;
     let second_extension = process_extension(&second)?;
     assert_ne!(
-        first_extension["profile_digest"],
-        second_extension["profile_digest"]
+        *first_extension
+            .pointer("/profile_digest")
+            .ok_or("descriptor field absent")?,
+        *second_extension
+            .pointer("/profile_digest")
+            .ok_or("descriptor field absent")?
     );
     assert_ne!(
-        first_extension["execution_policy_digest"],
-        second_extension["execution_policy_digest"]
+        *first_extension
+            .pointer("/execution_policy_digest")
+            .ok_or("descriptor field absent")?,
+        *second_extension
+            .pointer("/execution_policy_digest")
+            .ok_or("descriptor field absent")?
     );
     assert_eq!(
-        first_extension["implementation"]["identity_digest"],
-        second_extension["implementation"]["identity_digest"]
+        *first_extension
+            .pointer("/implementation/identity_digest")
+            .ok_or("descriptor field absent")?,
+        *second_extension
+            .pointer("/implementation/identity_digest")
+            .ok_or("descriptor field absent")?
     );
     assert_ne!(first.descriptor(), second.descriptor());
     Ok(())
@@ -144,8 +178,14 @@ fn documentation_changes_metadata_but_not_execution_identity_or_policy() -> Test
         Arc::new(InMemorySecretResolver::new()),
     )?;
     let mut second_value = first_value;
-    second_value["profile"]["implementation"]["documentation_reference"] =
-        json!("urn:milkdrift:test-helper:updated-docs");
+    second_value
+        .pointer_mut("/profile/implementation")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert(
+            "documentation_reference".to_owned(),
+            json!("urn:milkdrift:test-helper:updated-docs"),
+        );
     let second = LocalProcessAdapter::new(
         parse_profile(&second_value)?,
         data,
@@ -154,16 +194,28 @@ fn documentation_changes_metadata_but_not_execution_identity_or_policy() -> Test
     let first_extension = process_extension(&first)?;
     let second_extension = process_extension(&second)?;
     assert_eq!(
-        first_extension["implementation"]["identity_digest"],
-        second_extension["implementation"]["identity_digest"]
+        *first_extension
+            .pointer("/implementation/identity_digest")
+            .ok_or("descriptor field absent")?,
+        *second_extension
+            .pointer("/implementation/identity_digest")
+            .ok_or("descriptor field absent")?
     );
     assert_eq!(
-        first_extension["execution_policy_digest"],
-        second_extension["execution_policy_digest"]
+        *first_extension
+            .pointer("/execution_policy_digest")
+            .ok_or("descriptor field absent")?,
+        *second_extension
+            .pointer("/execution_policy_digest")
+            .ok_or("descriptor field absent")?
     );
     assert_ne!(
-        first_extension["profile_digest"],
-        second_extension["profile_digest"]
+        *first_extension
+            .pointer("/profile_digest")
+            .ok_or("descriptor field absent")?,
+        *second_extension
+            .pointer("/profile_digest")
+            .ok_or("descriptor field absent")?
     );
     assert_ne!(first.descriptor(), second.descriptor());
     Ok(())
@@ -260,8 +312,16 @@ fn pre_spawn_replacement_is_rejected_before_child_entry_and_remains_invalidated(
     assert!(second_events.is_empty());
     assert!(!marker.exists());
 
-    value["profile"]["revision"] = json!(2);
-    value["profile"]["descriptor_revision"] = json!(2);
+    value
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert("revision".to_owned(), json!(2));
+    value
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert("descriptor_revision".to_owned(), json!(2));
     let replacement_profile = parse_profile(&value)?;
     let replacement_adapter = Arc::new(LocalProcessAdapter::new(
         replacement_profile,
@@ -315,8 +375,14 @@ fn symlink_target_replacement_and_root_escape_are_rejected() -> TestResult {
 fn wrong_digest_revision_bounds_and_future_schema_are_refused() -> TestResult {
     let data = Arc::new(TestDataAccess::new()?);
     let mut wrong_digest = profile_value(&data.root, vec![json!("exit"), json!("0")])?;
-    wrong_digest["profile"]["implementation"]["content_digest"] =
-        json!(format!("b3_{}", "0".repeat(64)));
+    wrong_digest
+        .pointer_mut("/profile/implementation")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert(
+            "content_digest".to_owned(),
+            json!(format!("b3_{}", "0".repeat(64))),
+        );
     let profile = parse_profile(&wrong_digest)?;
     let error = LocalProcessAdapter::new(
         profile,
@@ -328,15 +394,29 @@ fn wrong_digest_revision_bounds_and_future_schema_are_refused() -> TestResult {
     assert!(error.to_string().contains("tool_content_digest_mismatch"));
 
     let mut revision = profile_value(&data.root, vec![json!("exit"), json!("0")])?;
-    revision["profile"]["descriptor_revision"] = json!(2);
+    revision
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert("descriptor_revision".to_owned(), json!(2));
     assert!(parse_profile(&revision).is_err());
 
     let mut oversized = profile_value(&data.root, vec![json!("exit"), json!("0")])?;
-    oversized["profile"]["implementation"]["documentation_reference"] = json!("x".repeat(1025));
+    oversized
+        .pointer_mut("/profile/implementation")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert(
+            "documentation_reference".to_owned(),
+            json!("x".repeat(1025)),
+        );
     assert!(parse_profile(&oversized).is_err());
 
     let mut future = profile_value(&data.root, vec![json!("exit"), json!("0")])?;
-    future["schema_version"] = json!(3);
+    future
+        .as_object_mut()
+        .ok_or("fixture object absent")?
+        .insert("schema_version".to_owned(), json!(3));
     assert!(ProcessProfileDocument::from_json(&serde_json::to_vec(&future)?).is_err());
     Ok(())
 }

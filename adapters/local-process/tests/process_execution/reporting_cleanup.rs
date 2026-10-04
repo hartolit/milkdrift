@@ -5,6 +5,30 @@ use std::sync::mpsc;
 
 use super::process_cleanup::{ProbeCleanup, process_alive, read_pids};
 
+pub(super) fn finish_worker<T>(
+    result: Result<T, mpsc::RecvTimeoutError>,
+    receiver: &mpsc::Receiver<T>,
+    worker: thread::JoinHandle<Result<(), &'static str>>,
+) -> TestResult<T> {
+    match result {
+        Ok(result) => {
+            worker.join().map_err(|_| "execution worker panicked")??;
+            Ok(result)
+        }
+        Err(error) => {
+            // Fixture processes have already been released/killed. Join a late result,
+            // but never turn missing timely completion into a passing assertion.
+            let completed = receiver.recv_timeout(Duration::from_secs(3)).is_ok();
+            if completed || worker.is_finished() {
+                worker
+                    .join()
+                    .map_err(|_| "execution worker panicked during fallback cleanup")??;
+            }
+            Err(format!("execution did not complete in time: {error}; completion after fixture cleanup observed={completed}").into())
+        }
+    }
+}
+
 #[test]
 fn inherited_idle_pipes_cannot_hold_invocation_cleanup() -> TestResult {
     for mode in ["exit", "cancel", "timeout", "shutdown"] {
@@ -22,11 +46,30 @@ fn inherited_idle_pipes_cannot_hold_invocation_cleanup() -> TestResult {
                 json!(if mode == "exit" { "exit" } else { "wait" }),
             ],
         )?;
-        value["profile"]["inputs"] = json!([{ "input": "prompt", "relative_path": "prompt.txt" }]);
-        value["profile"]["stdin"] =
-            json!({ "type": "input", "input": "prompt", "max_bytes": 65536 });
-        value["profile"]["limits"]["wall_timeout_ms"] =
-            json!(if mode == "timeout" { 800 } else { 30000 });
+        value
+            .pointer_mut("/profile")
+            .and_then(Value::as_object_mut)
+            .ok_or("fixture object absent")?
+            .insert(
+                "inputs".to_owned(),
+                json!([{ "input": "prompt", "relative_path": "prompt.txt" }]),
+            );
+        value
+            .pointer_mut("/profile")
+            .and_then(Value::as_object_mut)
+            .ok_or("fixture object absent")?
+            .insert(
+                "stdin".to_owned(),
+                json!({ "type": "input", "input": "prompt", "max_bytes": 65536 }),
+            );
+        value
+            .pointer_mut("/profile/limits")
+            .and_then(Value::as_object_mut)
+            .ok_or("fixture object absent")?
+            .insert(
+                "wall_timeout_ms".to_owned(),
+                json!(if mode == "timeout" { 800 } else { 30000 }),
+            );
         let profile = parse_profile(&value)?;
         let request = request(
             &profile,
@@ -54,7 +97,9 @@ fn inherited_idle_pipes_cannot_hold_invocation_cleanup() -> TestResult {
                 &context,
                 worker_reporter.as_ref(),
             );
-            let _ = sender.send(result);
+            sender
+                .send(result)
+                .map_err(|_| "execution result receiver disappeared")
         });
         let ready_deadline = Instant::now() + Duration::from_secs(3);
         while read_pids(&pids).len() < 2 && Instant::now() < ready_deadline {
@@ -79,14 +124,9 @@ fn inherited_idle_pipes_cannot_hold_invocation_cleanup() -> TestResult {
         let holder_alive = entered.get(1).map(|pid| process_alive(*pid)).transpose();
         fs::write(&release, b"release")?;
         drop(cleanup);
-        if result.is_err() {
-            let _ = receiver.recv_timeout(Duration::from_secs(3));
-        }
-        if worker.is_finished() {
-            worker.join().map_err(|_| "execution worker panicked")?;
-        }
+        let result = finish_worker(result, &receiver, worker)?;
         assert_eq!(entered.len(), 2, "fixture did not enter: {mode}");
-        result??;
+        result?;
         assert_eq!(
             holder_alive?,
             Some(true),
@@ -110,13 +150,41 @@ fn inherited_idle_pipes_cannot_hold_invocation_cleanup() -> TestResult {
             })
             .ok_or("missing terminal")?;
         let evidence = serde_json::to_value(terminal)?;
-        let cleanup = &evidence["usage"]["extensions"]["org.milkdrift/process-cleanup"];
-        assert_eq!(cleanup["local_io_joined"], true);
-        assert_eq!(cleanup["parent_exit_observed"], true);
-        assert_eq!(cleanup["stdout"]["eof"], false);
-        assert_eq!(cleanup["stderr"]["eof"], false);
-        assert_eq!(evidence["failure"]["retryable"], false);
-        assert!(evidence["usage"]["cost_micros"].is_null());
+        let cleanup = evidence
+            .pointer("/usage/extensions/org.milkdrift~1process-cleanup")
+            .ok_or("cleanup evidence absent")?;
+        assert_eq!(
+            cleanup
+                .get("local_io_joined")
+                .ok_or("cleanup local_io_joined absent")?,
+            true
+        );
+        assert_eq!(
+            cleanup
+                .get("parent_exit_observed")
+                .ok_or("cleanup parent_exit_observed absent")?,
+            true
+        );
+        assert_eq!(
+            cleanup.pointer("/stdout/eof").ok_or("cleanup EOF absent")?,
+            false
+        );
+        assert_eq!(
+            cleanup.pointer("/stderr/eof").ok_or("cleanup EOF absent")?,
+            false
+        );
+        assert_eq!(
+            evidence
+                .pointer("/failure/retryable")
+                .ok_or("retry refusal absent")?,
+            false
+        );
+        assert!(
+            evidence
+                .pointer("/usage/cost_micros")
+                .ok_or("cost absent")?
+                .is_null()
+        );
         assert!(data.output("stdout")?.is_none());
         assert!(matches!(
             TaskExecutor::cancel(
@@ -217,10 +285,32 @@ fn reporting_rejection_with_inheritance(
         vec![json!("reporting-probe"), json!(pid_path)]
     };
     let mut value = profile_value(&data.root, arguments)?;
-    value["profile"]["limits"]["wall_timeout_ms"] = json!(30000);
-    value["profile"]["limits"]["heartbeat_interval_ms"] = json!(100);
-    value["profile"]["inputs"] = json!([{ "input": "prompt", "relative_path": "prompt.txt" }]);
-    value["profile"]["stdin"] = json!({ "type": "input", "input": "prompt", "max_bytes": 65536 });
+    value
+        .pointer_mut("/profile/limits")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert("wall_timeout_ms".to_owned(), json!(30000));
+    value
+        .pointer_mut("/profile/limits")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert("heartbeat_interval_ms".to_owned(), json!(100));
+    value
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert(
+            "inputs".to_owned(),
+            json!([{ "input": "prompt", "relative_path": "prompt.txt" }]),
+        );
+    value
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert(
+            "stdin".to_owned(),
+            json!({ "type": "input", "input": "prompt", "max_bytes": 65536 }),
+        );
     let profile = parse_profile(&value)?;
     let request = request(
         &profile,
@@ -256,7 +346,9 @@ fn reporting_rejection_with_inheritance(
             &context,
             worker_reporter.as_ref(),
         );
-        let _ = sender.send(result);
+        sender
+            .send(result)
+            .map_err(|_| "execution result receiver disappeared")
     });
     let result = receiver.recv_timeout(Duration::from_secs(5));
     let pids = read_pids(&pid_path);
@@ -268,12 +360,7 @@ fn reporting_rejection_with_inheritance(
     // Kill fixture processes even when the adapter returns early or hangs. A second
     // bounded receive avoids hiding a regression behind an unbounded test join.
     drop(cleanup);
-    if result.is_err() {
-        let _ = receiver.recv_timeout(Duration::from_secs(3));
-    }
-    if worker.is_finished() {
-        worker.join().map_err(|_| "execution thread panicked")?;
-    }
+    let result = finish_worker(result, &receiver, worker)?;
     assert_eq!(
         pids.len(),
         if escaped {
@@ -288,7 +375,10 @@ fn reporting_rejection_with_inheritance(
     let survivors: Vec<_> = survivors?.into_iter().filter(|(_, alive)| *alive).collect();
     if escaped {
         assert_eq!(survivors.len(), 1, "only the external pipe holder remains");
-        assert_eq!(survivors[0].0, pids[1]);
+        assert_eq!(
+            survivors.first().ok_or("missing surviving holder")?.0,
+            *pids.get(1).ok_or("missing holder PID")?
+        );
     } else {
         assert!(
             survivors.is_empty(),
@@ -297,11 +387,11 @@ fn reporting_rejection_with_inheritance(
     }
     match target {
         Rejection::Panic => assert!(matches!(
-            result?,
+            result,
             Err(ExecutorError::AdapterPanicked { after_entry: true })
         )),
         _ => assert!(
-            matches!(result?, Err(ExecutorError::BoundaryAfterEntry(message)) if message.contains("injected reporting failure"))
+            matches!(result, Err(ExecutorError::BoundaryAfterEntry(message)) if message.contains("injected reporting failure"))
         ),
     }
     assert_eq!(reporter.rejected.load(Ordering::SeqCst), 1);
@@ -363,11 +453,23 @@ fn termination_paths_settle_the_child_and_keep_terminal_meaning() -> TestResult 
         let cleanup = ProbeCleanup(pid_path.clone());
         let mut value = profile_value(&data.root, vec![json!("reporting-probe"), json!(pid_path)])?;
         if mode == "timeout" {
-            value["profile"]["limits"]["wall_timeout_ms"] = json!(1000);
+            value
+                .pointer_mut("/profile/limits")
+                .and_then(Value::as_object_mut)
+                .ok_or("fixture object absent")?
+                .insert("wall_timeout_ms".to_owned(), json!(1000));
         }
         if mode == "overflow" {
-            value["profile"]["stdout"]["max_capture_bytes"] = json!(4);
-            value["profile"]["stdout"]["overflow_action"] = json!("terminate");
+            value
+                .pointer_mut("/profile/stdout")
+                .and_then(Value::as_object_mut)
+                .ok_or("fixture object absent")?
+                .insert("max_capture_bytes".to_owned(), json!(4));
+            value
+                .pointer_mut("/profile/stdout")
+                .and_then(Value::as_object_mut)
+                .ok_or("fixture object absent")?
+                .insert("overflow_action".to_owned(), json!("terminate"));
         }
         let profile = parse_profile(&value)?;
         let request = request(&profile, "termination-cleanup", Vec::new())?;
@@ -390,7 +492,9 @@ fn termination_paths_settle_the_child_and_keep_terminal_meaning() -> TestResult 
                 &AdapterInvocation::with_context(&snapshot, &worker_request, &context),
                 worker_reporter.as_ref(),
             );
-            let _ = sender.send(result);
+            sender
+                .send(result)
+                .map_err(|_| "execution result receiver disappeared")
         });
         let deadline = Instant::now() + Duration::from_secs(3);
         while read_pids(&pid_path).is_empty() && Instant::now() < deadline {
@@ -399,8 +503,10 @@ fn termination_paths_settle_the_child_and_keep_terminal_meaning() -> TestResult 
         #[cfg(unix)]
         if mode == "stopped" {
             use rustix::process::{Pid, Signal, WaitOptions, kill_process, waitpid};
-            let pid = Pid::from_raw(*read_pids(&pid_path).first().ok_or("missing child")? as i32)
-                .ok_or("invalid pid")?;
+            let pid = Pid::from_raw(i32::try_from(
+                *read_pids(&pid_path).first().ok_or("missing child")?,
+            )?)
+            .ok_or("invalid pid")?;
             kill_process(pid, Signal::STOP)?;
             // Observe the stop, then cancel: a stopped process cannot service TERM.
             // waitpid consumes only the stop notification; the adapter reaps exit.
@@ -431,13 +537,8 @@ fn termination_paths_settle_the_child_and_keep_terminal_meaning() -> TestResult 
             .map(|pid| process_alive(*pid))
             .collect::<TestResult<Vec<_>>>();
         drop(cleanup);
-        if result.is_err() {
-            let _ = receiver.recv_timeout(Duration::from_secs(3));
-        }
-        if worker.is_finished() {
-            worker.join().map_err(|_| "termination worker panicked")?;
-        }
-        result??;
+        let result = finish_worker(result, &receiver, worker)?;
+        result?;
         assert_eq!(pids.len(), 1, "{mode} fixture did not enter");
         assert_eq!(alive?, vec![false], "{mode} left a live child");
         let events = reporter.events()?;

@@ -34,8 +34,16 @@ fn nonzero_exit_signal_and_timeout_are_typed_failures() -> TestResult {
     ] {
         let data = Arc::new(TestDataAccess::new()?);
         let mut value = profile_value(&data.root, arguments)?;
-        value["profile"]["limits"]["wall_timeout_ms"] = json!(timeout);
-        value["profile"]["limits"]["heartbeat_interval_ms"] = json!(25);
+        value
+            .pointer_mut("/profile/limits")
+            .and_then(Value::as_object_mut)
+            .ok_or("fixture object absent")?
+            .insert("wall_timeout_ms".to_owned(), json!(timeout));
+        value
+            .pointer_mut("/profile/limits")
+            .and_then(Value::as_object_mut)
+            .ok_or("fixture object absent")?
+            .insert("heartbeat_interval_ms".to_owned(), json!(25));
         let profile = parse_profile(&value)?;
         let request = request(&profile, &format!("invocation-{suffix}"), Vec::new())?;
         let (host, snapshot) = setup(profile, data, Arc::new(InMemorySecretResolver::new()))?;

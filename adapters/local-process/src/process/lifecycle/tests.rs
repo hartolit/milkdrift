@@ -97,11 +97,11 @@ struct Completion {
 
 impl Drop for Completion {
     fn drop(&mut self) {
-        let _ = self.waiting.send(self.index);
         // The test owns the sender, so both explicit release and failure unwinding
-        // unblock this worker without expiring the gate during child observation.
-        let _ = self.release.recv();
-        self.completed.fetch_add(1, Ordering::SeqCst);
+        // unblock this worker. Only an observed explicit release counts as evidence.
+        if self.waiting.send(self.index).is_ok() && self.release.recv().is_ok() {
+            self.completed.fetch_add(1, Ordering::SeqCst);
+        }
     }
 }
 
@@ -215,7 +215,7 @@ fn cleanup_workers(worker_count: usize, unwind: bool) -> TestResult {
                 std::panic::resume_unwind(Box::new("cleanup probe"));
             }
         }));
-        let _ = finished_sender.send(result.is_err());
+        finished_sender.send(result.is_err())
     });
     let evidence = (|| -> TestResult {
         for _ in 0..worker_count {
@@ -242,15 +242,17 @@ fn cleanup_workers(worker_count: usize, unwind: bool) -> TestResult {
         );
         Ok(())
     })();
+    let mut released = true;
     for release in releases {
-        let _ = release.send(());
+        released &= release.send(()).is_ok();
     }
     drop(fallback);
     let result = finished.recv_timeout(DEADLINE);
     if result.is_ok() {
-        worker.join().map_err(|_| "cleanup worker panicked")?;
+        worker.join().map_err(|_| "cleanup worker panicked")??;
     }
     evidence?;
+    assert!(released, "a cleanup completion gate disappeared");
     assert_eq!(result?, unwind);
     assert_eq!(completed.load(Ordering::SeqCst), worker_count);
     assert!(

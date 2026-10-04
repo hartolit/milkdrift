@@ -324,16 +324,37 @@ fn profile_value(root: &Path, arguments: Vec<Value>) -> TestResult<Value> {
 
 fn retarget_profile(value: &mut Value, executable: &Path) -> TestResult {
     let bytes = fs::read(executable)?;
-    value["profile"]["executable"] = json!(executable.to_string_lossy());
-    value["profile"]["filesystem_roots"][0]["path"] = json!(
-        executable
-            .parent()
-            .ok_or("executable has no parent")?
-            .to_string_lossy()
-    );
-    value["profile"]["implementation"]["content_digest"] =
-        json!(format!("b3_{}", blake3::hash(&bytes)));
-    value["profile"]["implementation"]["size_bytes"] = json!(bytes.len());
+    value
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert("executable".to_owned(), json!(executable.to_string_lossy()));
+    value
+        .pointer_mut("/profile/filesystem_roots/0")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert(
+            "path".to_owned(),
+            json!(
+                executable
+                    .parent()
+                    .ok_or("executable has no parent")?
+                    .to_string_lossy()
+            ),
+        );
+    value
+        .pointer_mut("/profile/implementation")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert(
+            "content_digest".to_owned(),
+            json!(format!("b3_{}", blake3::hash(&bytes))),
+        );
+    value
+        .pointer_mut("/profile/implementation")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert("size_bytes".to_owned(), json!(bytes.len()));
     Ok(())
 }
 
@@ -473,18 +494,30 @@ fn authorized_host_working_directory_persists_across_fresh_process_invocations()
         &data.root,
         vec![json!("mark"), json!("persistent-progress.txt")],
     )?;
-    value["profile"]["working_directory"] = json!({
-        "type": "authorized_host_path",
-        "path": repository.path()
-    });
-    value["profile"]["filesystem_roots"]
-        .as_array_mut()
+    value
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert(
+            "working_directory".to_owned(),
+            json!({
+                "type": "authorized_host_path",
+                "path": repository.path()
+            }),
+        );
+    value
+        .pointer_mut("/profile/filesystem_roots")
+        .and_then(Value::as_array_mut)
         .ok_or("filesystem roots must be an array")?
         .push(json!({
             "path": repository.path(),
             "access": "read_write"
         }));
-    value["profile"]["max_concurrent"] = json!(1);
+    value
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert("max_concurrent".to_owned(), json!(1));
     let profile = parse_profile(&value)?;
     let (host, snapshot) = setup(
         profile.clone(),
@@ -518,10 +551,17 @@ fn authorized_host_working_directory_must_be_inside_a_read_write_root() -> TestR
     let repository = tempfile::tempdir()?;
     let data = Arc::new(TestDataAccess::new()?);
     let mut value = profile_value(&data.root, vec![json!("exit"), json!("0")])?;
-    value["profile"]["working_directory"] = json!({
-        "type": "authorized_host_path",
-        "path": repository.path()
-    });
+    value
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert(
+            "working_directory".to_owned(),
+            json!({
+                "type": "authorized_host_path",
+                "path": repository.path()
+            }),
+        );
     let profile = parse_profile(&value)?;
     let result = LocalProcessAdapter::new(profile, data, Arc::new(InMemorySecretResolver::new()));
     assert!(matches!(result, Err(ProcessProfileError::Invalid(_))));
@@ -540,7 +580,10 @@ fn argv_metacharacters_stdin_environment_and_outputs_are_bounded_and_literal() -
             json!("{{literal}}"),
         ],
     )?;
-    let profile = value["profile"].as_object_mut().ok_or("missing profile")?;
+    let profile = value
+        .get_mut("profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("missing profile")?;
     profile.insert(
         "substitutions".to_owned(),
         json!({ "literal": { "type": "input_text", "input": "literal" } }),
@@ -611,7 +654,12 @@ fn argv_metacharacters_stdin_environment_and_outputs_are_bounded_and_literal() -
     let expected_identity = snapshot
         .descriptor_extensions()
         .get(&process_key)
-        .and_then(|extension| extension.value()["implementation"]["identity_digest"].as_str())
+        .and_then(|extension| {
+            extension
+                .value()
+                .pointer("/implementation/identity_digest")
+                .and_then(Value::as_str)
+        })
         .ok_or("snapshot omitted exact executable identity")?;
     let expected_progress =
         format!("local process started; pre-entry identity {expected_identity} verified");
@@ -624,13 +672,31 @@ fn argv_metacharacters_stdin_environment_and_outputs_are_bounded_and_literal() -
     let output = data.output("result")?.ok_or("missing result output")?;
     let result: Value = serde_json::from_slice(&output)?;
     assert_eq!(
-        result["literal"],
+        *result.get("literal").ok_or("result literal absent")?,
         json!("; touch /tmp/never-created && $(false)")
     );
-    assert_eq!(result["stdin"], json!("\"hello from stdin\""));
-    assert_eq!(result["selected_environment"], json!("top-secret"));
-    assert_eq!(result["ambient_home"], Value::Null);
-    assert_eq!(result["ambient_path"], Value::Null);
+    assert_eq!(
+        *result.get("stdin").ok_or("result stdin absent")?,
+        json!("\"hello from stdin\"")
+    );
+    assert_eq!(
+        *result
+            .get("selected_environment")
+            .ok_or("result selected_environment absent")?,
+        json!("top-secret")
+    );
+    assert_eq!(
+        *result
+            .get("ambient_home")
+            .ok_or("result ambient_home absent")?,
+        Value::Null
+    );
+    assert_eq!(
+        *result
+            .get("ambient_path")
+            .ok_or("result ambient_path absent")?,
+        Value::Null
+    );
     let serialized_events = serde_json::to_vec(&events)?;
     assert!(
         !serialized_events
@@ -645,8 +711,10 @@ fn simultaneous_large_streams_do_not_deadlock_and_are_truncated() -> TestResult 
     let data = Arc::new(TestDataAccess::new()?);
     let mut value = profile_value(&data.root, vec![json!("emit"), json!("2097152")])?;
     for name in ["stdout", "stderr"] {
-        let capture = value["profile"][name]
-            .as_object_mut()
+        let capture = value
+            .get_mut("profile")
+            .and_then(|profile| profile.get_mut(name))
+            .and_then(Value::as_object_mut)
             .ok_or("missing capture")?;
         capture.insert("max_capture_bytes".to_owned(), json!(65536));
         capture.insert("max_progress_events".to_owned(), json!(2));
@@ -673,14 +741,26 @@ fn simultaneous_large_streams_do_not_deadlock_and_are_truncated() -> TestResult 
 fn secret_echo_is_redacted_from_capture_artifacts_and_events() -> TestResult {
     let data = Arc::new(TestDataAccess::new()?);
     let mut value = profile_value(&data.root, vec![json!("echo-env"), json!("TOKEN")])?;
-    value["profile"]["environment"] = json!({
-        "allowed_non_secret": [],
-        "secrets": { "TOKEN": "secret:echo-token" },
-        "max_value_bytes": 4096
-    });
+    value
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert(
+            "environment".to_owned(),
+            json!({
+                "allowed_non_secret": [],
+                "secrets": { "TOKEN": "secret:echo-token" },
+                "max_value_bytes": 4096
+            }),
+        );
     for name in ["stdout", "stderr"] {
-        value["profile"][name]["stream_progress"] = json!(false);
-        value["profile"][name]["max_progress_events"] = json!(0);
+        let capture = value
+            .get_mut("profile")
+            .and_then(|profile| profile.get_mut(name))
+            .and_then(Value::as_object_mut)
+            .ok_or("capture policy absent")?;
+        capture.insert("stream_progress".to_owned(), json!(false));
+        capture.insert("max_progress_events".to_owned(), json!(0));
     }
     let profile = parse_profile(&value)?;
     let request = request(&profile, "invocation-secret-echo", Vec::new())?;
@@ -716,23 +796,48 @@ fn configuration_rejects_unknown_placeholders_traversal_and_missing_secrets() ->
     let data = Arc::new(TestDataAccess::new()?);
     let mut unknown = profile_value(&data.root, vec![json!("{{unknown}}")])?;
     assert!(parse_profile(&unknown).is_err());
-    unknown["profile"]["arguments"] = json!(["inspect"]);
-    unknown["profile"]["inputs"] = json!([{
-        "input": "bad",
-        "relative_path": "../escape"
-    }]);
+    unknown
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert("arguments".to_owned(), json!(["inspect"]));
+    unknown
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert(
+            "inputs".to_owned(),
+            json!([{
+                "input": "bad",
+                "relative_path": "../escape"
+            }]),
+        );
     assert!(parse_profile(&unknown).is_err());
 
-    unknown["profile"]["inputs"] = json!([]);
-    unknown["profile"]["working_directory"] = json!({
-        "type": "isolated_subdirectory",
-        "relative_path": "../escape"
-    });
+    unknown
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert("inputs".to_owned(), json!([]));
+    unknown
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert(
+            "working_directory".to_owned(),
+            json!({
+                "type": "isolated_subdirectory",
+                "relative_path": "../escape"
+            }),
+        );
     assert!(parse_profile(&unknown).is_err());
 
     let mut denied_executable = profile_value(&data.root, vec![json!("exit"), json!("0")])?;
-    denied_executable["profile"]["filesystem_roots"][0]["path"] =
-        json!(data.root.to_string_lossy());
+    denied_executable
+        .pointer_mut("/profile/filesystem_roots/0")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert("path".to_owned(), json!(data.root.to_string_lossy()));
     let denied_executable = parse_profile(&denied_executable)?;
     assert!(
         LocalProcessAdapter::new(
@@ -745,8 +850,14 @@ fn configuration_rejects_unknown_placeholders_traversal_and_missing_secrets() ->
 
     let denied_root_owner = tempfile::tempdir()?;
     let mut denied_root = profile_value(&data.root, vec![json!("exit"), json!("0")])?;
-    denied_root["profile"]["filesystem_roots"][1]["path"] =
-        json!(denied_root_owner.path().canonicalize()?.to_string_lossy());
+    denied_root
+        .pointer_mut("/profile/filesystem_roots/1")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert(
+            "path".to_owned(),
+            json!(denied_root_owner.path().canonicalize()?.to_string_lossy()),
+        );
     let denied_root = parse_profile(&denied_root)?;
     let denied_request = request(&denied_root, "invocation-working-root-denied", Vec::new())?;
     let (denied_host, denied_snapshot) = setup(
@@ -775,14 +886,26 @@ fn configuration_rejects_unknown_placeholders_traversal_and_missing_secrets() ->
             json!("literal"),
         ],
     )?;
-    missing["profile"]["environment"] = json!({
-        "allowed_non_secret": [],
-        "secrets": { "MISSING": "secret:not-configured" },
-        "max_value_bytes": 4096
-    });
+    missing
+        .pointer_mut("/profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("fixture object absent")?
+        .insert(
+            "environment".to_owned(),
+            json!({
+                "allowed_non_secret": [],
+                "secrets": { "MISSING": "secret:not-configured" },
+                "max_value_bytes": 4096
+            }),
+        );
     for name in ["stdout", "stderr"] {
-        missing["profile"][name]["stream_progress"] = json!(false);
-        missing["profile"][name]["max_progress_events"] = json!(0);
+        let capture = missing
+            .get_mut("profile")
+            .and_then(|profile| profile.get_mut(name))
+            .and_then(Value::as_object_mut)
+            .ok_or("capture policy absent")?;
+        capture.insert("stream_progress".to_owned(), json!(false));
+        capture.insert("max_progress_events".to_owned(), json!(0));
     }
     let profile = parse_profile(&missing)?;
     let request = request(&profile, "invocation-secret-missing", Vec::new())?;
@@ -809,7 +932,12 @@ fn undeclared_process_files_are_not_published() -> TestResult {
         ],
     )?;
     for stream in ["stdout", "stderr"] {
-        value["profile"][stream]["artifact_name"] = Value::Null;
+        let capture = value
+            .get_mut("profile")
+            .and_then(|profile| profile.get_mut(stream))
+            .and_then(Value::as_object_mut)
+            .ok_or("capture policy absent")?;
+        capture.insert("artifact_name".to_owned(), Value::Null);
     }
     let profile = parse_profile(&value)?;
     let request = request(&profile, "invocation-undeclared-output", Vec::new())?;

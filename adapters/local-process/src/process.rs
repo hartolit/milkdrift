@@ -75,6 +75,10 @@ impl LocalProcessAdapter {
     /// Canonicalizes configured host paths and creates one adapter generation.
     /// Reads and hashes the executable, refusing a mismatch with the profile's byte identity.
     /// This binds configuration without spawning the child; execution follows host registration.
+    ///
+    /// # Errors
+    /// Refuses an unavailable or mismatched executable, invalid canonical filesystem roots
+    /// or host working directory, overflowing artifact ceilings, and invalid descriptor facts.
     pub fn new(
         profile: ProcessProfile,
         data: Arc<dyn InvocationDataAccess>,

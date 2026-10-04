@@ -149,7 +149,7 @@ fn observe(
         if total > MAX_EXECUTABLE_BYTES {
             return Err(IdentityFailure::ExecutableTooLarge);
         }
-        hasher.update(&buffer[..count]);
+        hasher.update(buffer.get(..count).ok_or(IdentityFailure::ReadFailed)?);
     }
     if total != before.len() || total != declaration.size_bytes {
         return Err(IdentityFailure::SizeMismatch);

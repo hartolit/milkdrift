@@ -93,6 +93,10 @@ impl<'de> Deserialize<'de> for ProcessProfileDocument {
 
 impl ProcessProfileDocument {
     /// Parses a duplicate-safe, size-bounded exact-v2 profile document.
+    ///
+    /// # Errors
+    /// Refuses oversized or malformed JSON, duplicate keys, unsupported schemas, and
+    /// invalid executable, filesystem, input/output, environment, or process-limit declarations.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ProcessProfileError> {
         if bytes.len() > MAX_PROCESS_PROFILE_BYTES {
             return Err(ProcessProfileError::Invalid(
@@ -115,6 +119,9 @@ impl ProcessProfileDocument {
     }
 
     /// Recursively key-sorted compact JSON for compatibility fixtures and digesting.
+    ///
+    /// # Errors
+    /// Reports serialization failure or JSON exceeding depth, string, key, or container bounds.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, ProcessProfileError> {
         canonical_json_bytes(
             self,
@@ -894,7 +901,6 @@ impl ProcessProfile {
             ));
         }
         match &self.working_directory {
-            WorkingDirectoryMode::IsolatedRoot => {}
             WorkingDirectoryMode::IsolatedSubdirectory { relative_path } => {
                 validate_relative_path(relative_path, &self.limits)?;
             }
@@ -906,7 +912,8 @@ impl ProcessProfile {
                         .to_owned(),
                 ));
             }
-            WorkingDirectoryMode::AuthorizedHostPath { .. } => {}
+            WorkingDirectoryMode::IsolatedRoot
+            | WorkingDirectoryMode::AuthorizedHostPath { .. } => {}
         }
         Ok(())
     }
@@ -1080,7 +1087,10 @@ fn validate_safe_name(kind: &str, value: &str) -> Result<(), ProcessProfileError
     if value.is_empty()
         || value.len() > 128
         || !value.is_ascii()
-        || !value.as_bytes()[0].is_ascii_alphanumeric()
+        || !value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))

@@ -13,7 +13,9 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
-            let _ = writeln!(std::io::stderr(), "fixture error: {error}");
+            if writeln!(std::io::stderr(), "fixture error: {error}").is_err() {
+                return ExitCode::from(112);
+            }
             ExitCode::from(111)
         }
     }
@@ -207,7 +209,7 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
                 .arg(&millis)
                 .spawn()?;
             thread::sleep(Duration::from_millis(millis.parse()?));
-            let _ = child.wait();
+            child.wait()?;
             Ok(0)
         }
         "tree-child" => {
@@ -221,7 +223,7 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
                 .arg(&millis)
                 .spawn()?;
             thread::sleep(Duration::from_millis(millis.parse()?));
-            let _ = child.wait();
+            child.wait()?;
             Ok(0)
         }
         "tree-grandchild" => {
@@ -270,7 +272,11 @@ fn write_repeated(mut writer: impl Write, byte: u8, bytes: usize) -> Result<(), 
     let mut remaining = bytes;
     while remaining != 0 {
         let take = remaining.min(chunk.len());
-        writer.write_all(&chunk[..take])?;
+        writer.write_all(
+            chunk
+                .get(..take)
+                .ok_or_else(|| std::io::Error::other("fixture chunk bound exceeded"))?,
+        )?;
         remaining -= take;
     }
     writer.flush()

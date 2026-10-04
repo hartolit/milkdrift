@@ -19,25 +19,55 @@ impl Drop for ProbeCleanup {
     fn drop(&mut self) {
         for pid in read_pids(&self.0) {
             // An inspection failure must not suppress the fallback kill attempt.
-            if process_alive(pid).unwrap_or(true) {
-                #[cfg(unix)]
-                if let Some(pid) = rustix::process::Pid::from_raw(pid as i32) {
-                    let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
-                    let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+            if process_alive(pid).unwrap_or(true)
+                && let Err(error) = terminate(pid)
+            {
+                #[expect(
+                    clippy::print_stderr,
+                    reason = "The fixture unwind guard must expose failed fallback cleanup without a second panic"
+                )]
+                {
+                    eprintln!("fixture process {pid} cleanup failed: {error}");
                 }
-                #[cfg(windows)]
-                let _ = Command::new("taskkill")
-                    .args(["/F", "/PID", &pid.to_string()])
-                    .output();
             }
         }
+    }
+}
+
+fn terminate(pid: u32) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(unix)]
+    {
+        let pid = rustix::process::Pid::from_raw(i32::try_from(pid)?).ok_or("invalid child PID")?;
+        // Attempt both routes before examining errors; a missing group must not hide
+        // a surviving immediate child, and ESRCH is already evidence of absence.
+        for result in [
+            rustix::process::kill_process_group(pid, rustix::process::Signal::KILL),
+            rustix::process::kill_process(pid, rustix::process::Signal::KILL),
+        ] {
+            if let Err(error) = result
+                && error != rustix::io::Errno::SRCH
+            {
+                return Err(error.into());
+            }
+        }
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        let output = Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .output()?;
+        if !output.status.success() {
+            return Err("taskkill did not confirm fixture termination".into());
+        }
+        Ok(())
     }
 }
 
 pub(crate) fn process_alive(pid: u32) -> Result<bool, Box<dyn std::error::Error>> {
     #[cfg(unix)]
     {
-        let pid = rustix::process::Pid::from_raw(pid as i32).ok_or("invalid child PID")?;
+        let pid = rustix::process::Pid::from_raw(i32::try_from(pid)?).ok_or("invalid child PID")?;
         match rustix::process::test_kill_process(pid) {
             Ok(()) => Ok(true),
             Err(rustix::io::Errno::SRCH) => Ok(false),
