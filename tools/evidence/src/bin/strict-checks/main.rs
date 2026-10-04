@@ -49,6 +49,7 @@ struct Check {
 struct Gate {
     root: PathBuf,
     output: PathBuf,
+    toolchain: String,
     checks: Vec<Check>,
 }
 
@@ -70,6 +71,9 @@ impl Gate {
             .current_dir(&self.root)
             .args(arguments)
             .env("CARGO_TERM_COLOR", "never")
+            // Directly launched evidence binaries do not inherit rustup's selection. Without
+            // this, dependency working directories can select the user's unrelated default.
+            .env("RUSTUP_TOOLCHAIN", &self.toolchain)
             .env_remove("RUSTFLAGS")
             .env_remove("CARGO_ENCODED_RUSTFLAGS")
             .env_remove("CLIPPY_CONF_DIR")
@@ -119,7 +123,7 @@ impl Gate {
     }
 
     fn cargo(&mut self, name: &str, arguments: &[&str]) -> CheckResult {
-        self.run(name, env!("CARGO"), arguments)?;
+        self.run(name, "cargo", arguments)?;
         Ok(())
     }
 }
@@ -329,6 +333,17 @@ fn fingerprint_diff(root: &Path, output: &Path) -> CheckResult {
     Ok(())
 }
 
+fn selected_toolchain(root: &Path) -> CheckResult<String> {
+    let configuration: toml::Value =
+        toml::from_str(&fs::read_to_string(root.join("rust-toolchain.toml"))?)?;
+    Ok(configuration
+        .get("toolchain")
+        .and_then(|value| value.get("channel"))
+        .and_then(toml::Value::as_str)
+        .ok_or("pinned toolchain channel is missing")?
+        .to_owned())
+}
+
 fn execute(arguments: Arguments) -> CheckResult<bool> {
     let root = std::env::current_dir()?;
     if !root.join("rust-toolchain.toml").is_file() {
@@ -339,9 +354,11 @@ fn execute(arguments: Arguments) -> CheckResult<bool> {
     }
     fs::create_dir_all(&arguments.output)?;
     let output = fs::canonicalize(&arguments.output)?;
+    let toolchain = selected_toolchain(&root)?;
     let mut gate = Gate {
         root,
         output,
+        toolchain,
         checks: Vec::new(),
     };
     gate.run("source-head", "git", &["rev-parse", "HEAD"])?;
@@ -390,6 +407,9 @@ mod tests {
         let mut gate = Gate {
             root: std::env::current_dir()?,
             output: output.path().to_owned(),
+            toolchain: super::selected_toolchain(
+                &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+            )?,
             checks: Vec::new(),
         };
         assert!(!gate.run("missing", "milkdrift-deliberately-missing-checker", &[])?);
