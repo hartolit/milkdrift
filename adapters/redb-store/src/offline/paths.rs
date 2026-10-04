@@ -79,13 +79,14 @@ pub(super) fn new_file(path: &Path) -> Result<File, PersistenceError> {
 }
 
 pub(super) fn create_directory(path: &Path) -> Result<(), PersistenceError> {
-    #[cfg_attr(not(unix), allow(unused_mut))]
-    let mut builder = fs::DirBuilder::new();
+    let builder = fs::DirBuilder::new();
     #[cfg(unix)]
-    {
+    let builder = {
         use std::os::unix::fs::DirBuilderExt as _;
+        let mut builder = builder;
         builder.mode(0o700);
-    }
+        builder
+    };
     builder.create(path).map_err(error::io)
 }
 
