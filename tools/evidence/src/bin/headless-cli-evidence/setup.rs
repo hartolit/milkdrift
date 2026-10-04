@@ -3,19 +3,18 @@ use milkdrift_authority::{AccessMode, FilesystemScope};
 use milkdrift_evidence::{
     EvidenceResult,
     application::{ensure, run_command, write_private},
-    http_fixture::read_request,
+    http_fixture::{LoopbackServer, read_request},
 };
 use serde_json::{Value, json};
 use std::{
     fs,
     io::Write as _,
-    net::{SocketAddr, TcpListener},
+    net::SocketAddr,
     path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    thread,
     time::Duration,
 };
 
@@ -24,8 +23,7 @@ pub(super) struct MockModel {
     pub(super) invocations: Arc<AtomicUsize>,
     pub(super) direct_invocations: Arc<AtomicUsize>,
     pub(super) disconnect_next: Arc<AtomicBool>,
-    stop: Arc<AtomicBool>,
-    worker: Option<thread::JoinHandle<std::io::Result<()>>>,
+    server: LoopbackServer,
 }
 
 impl MockModel {
@@ -41,71 +39,45 @@ impl MockModel {
         text: String,
         before_response: impl Fn() -> std::io::Result<()> + Send + 'static,
     ) -> EvidenceResult<Self> {
-        let listener = TcpListener::bind("127.0.0.1:0")?;
-        let address = listener.local_addr()?;
-        listener.set_nonblocking(true)?;
-        let stop = Arc::new(AtomicBool::new(false));
         let invocations = Arc::new(AtomicUsize::new(0));
         let direct_invocations = Arc::new(AtomicUsize::new(0));
         let disconnect_next = Arc::new(AtomicBool::new(false));
         let disconnect = disconnect_next.clone();
         let direct_entered = direct_invocations.clone();
-        let stopped = stop.clone();
         let entered = invocations.clone();
-        let worker = thread::spawn(move || {
-            while !stopped.load(Ordering::SeqCst) {
-                let (mut stream, _) = match listener.accept() {
-                    Ok(connection) => connection,
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(10));
-                        continue;
-                    }
-                    Err(error) => return Err(error),
-                };
-                let request = read_request(&mut stream)?;
-                if request.contains("explicit_inputs_only") {
-                    direct_entered.fetch_add(1, Ordering::SeqCst);
-                }
-                entered.fetch_add(1, Ordering::SeqCst);
-                if disconnect.swap(false, Ordering::SeqCst) {
-                    continue;
-                }
-                before_response()?;
-                let body = format!(
-                    "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
-                    json!({"id":"operator-response-1","model":"operator-model","choices":[{"index":0,"delta":{"role":"assistant","content":text},"finish_reason":null}]}),
-                    json!({"id":"operator-response-1","model":"operator-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}})
-                );
-                write!(
-                    stream,
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                )?;
+        let server = LoopbackServer::start(move |stream| {
+            let request = read_request(stream)?;
+            if request.contains("explicit_inputs_only") {
+                direct_entered.fetch_add(1, Ordering::SeqCst);
             }
+            entered.fetch_add(1, Ordering::SeqCst);
+            if disconnect.swap(false, Ordering::SeqCst) {
+                return Ok(());
+            }
+            before_response()?;
+            let body = format!(
+                "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+                json!({"id":"operator-response-1","model":"operator-model","choices":[{"index":0,"delta":{"role":"assistant","content":text},"finish_reason":null}]}),
+                json!({"id":"operator-response-1","model":"operator-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}})
+            );
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )?;
             Ok(())
-        });
+        })?;
         Ok(Self {
-            address,
+            address: server.address(),
             invocations,
             direct_invocations,
             disconnect_next,
-            stop,
-            worker: Some(worker),
+            server,
         })
     }
 
     pub(super) fn finish(&mut self) -> EvidenceResult {
-        self.stop.store(true, Ordering::SeqCst);
-        if let Some(worker) = self.worker.take() {
-            worker.join().map_err(|_| "mock endpoint panicked")??;
-        }
-        Ok(())
-    }
-}
-
-impl Drop for MockModel {
-    fn drop(&mut self) {
-        let _ = self.finish();
+        self.server.finish().map_err(Into::into)
     }
 }
 
@@ -385,7 +357,7 @@ mod tests {
     use milkdrift_evidence::application::{
         CliRunner, application_binary, reserve_endpoint, start_daemon, wait_for_readiness,
     };
-    use std::sync::mpsc;
+    use std::{sync::mpsc, thread};
 
     #[test]
     fn operator_model_accepts_bounded_slow_success_through_actual_applications() -> EvidenceResult {
@@ -427,15 +399,17 @@ mod tests {
             let runner = &runner;
             let examples = &examples;
             let directory = directory.path();
-            scope.spawn(move || {
-                let _ = finished.send(exercise_model(runner, examples, directory));
+            let worker = scope.spawn(move || {
+                finished
+                    .send(exercise_model(runner, examples, directory))
+                    .map_err(|_| "slow-model completion receiver disappeared")
             });
             request.recv_timeout(Duration::from_secs(10))?;
             // Hold a real request beyond both old bounds (5s CLI / 10s child). Completion
             // is released explicitly; a slow-success test must never pass by retrying.
             let early = completion.recv_timeout(Duration::from_secs(11));
             release.send(())?;
-            match early {
+            let outcome = match early {
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     completion.recv_timeout(Duration::from_secs(20))?
                 }
@@ -444,7 +418,11 @@ mod tests {
                     Err("model completed before the fixture released its response".into())
                 }
                 Err(error) => Err(error.into()),
-            }
+            };
+            worker
+                .join()
+                .map_err(|_| "slow-model observer panicked")??;
+            outcome
         });
         child.terminate()?;
         ensure(

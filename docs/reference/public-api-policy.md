@@ -26,6 +26,12 @@ Every exported item must have at least one of these owners:
 5. **Test-only exposure** — fault, inspection, or fixture support; gate it behind an explicit test
    feature or keep it in tests.
 
+The unpublished evidence library's `http_fixture::LoopbackServer` is a development harness
+contract consumed by its separate headless, local-model, and external-runner binary crates.
+It owns their shared listener/worker lifecycle and retains failed shutdown evidence; it is not a
+product server port. Its handler construction, bounded finish, and failure/turnover tests belong
+with the existing HTTP fixture owner, and no product package imports it.
+
 Workspace use can justify visibility without making a type a stable third-party API. Root
 re-exports exist only when the root is the semantic owner or the re-export is the intentional
 package entry point. Consumers otherwise import the canonical owner directly.

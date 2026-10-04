@@ -43,7 +43,15 @@ explains those budgets, diagnostics and cleanup limits.
 The context, persistence, adapter, peer, and daemon modules exercise their corresponding product
 owners. `ScenarioMeasurement` keeps result bytes observable through a checksum; report fields
 state which counts, bytes, and timings were measured. `http_fixture` supplies controlled loopback
-framing, not provider behavior. The external runner's profile, workflow, scenario, and report
+framing, not provider behavior.
+`http_fixture::LoopbackServer` owns controlled endpoint shutdown for the headless, local-model,
+and external runners. Handlers use bounded I/O; a handler error, panic, or failed join prevents
+successful fixture completion, and repeated finish calls retain that failure. The local-model
+endpoint captures exactly one request through a bounded channel, without sending a synthetic
+shutdown request that could be mistaken for model entry. Timeline followers separately reap their
+CLI child and bound the reader join before accepting page/update observations.
+
+The external runner's profile, workflow, scenario, and report
 modules keep operator inputs separate from generated work and qualification checks.
 
 `repository_contracts` checks repository boundaries, maintained links, version cells, and example

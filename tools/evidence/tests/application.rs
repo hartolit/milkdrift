@@ -106,14 +106,16 @@ fn diagnostic_failures_preserve_primary_error_and_have_one_finite_budget() -> Ev
     let started = Instant::now();
     thread::scope(|scope| -> EvidenceResult {
         let (finished, completion) = mpsc::sync_channel(1);
-        scope.spawn(move || {
+        let worker = scope.spawn(move || {
             let result = wait_for_run(
                 &runner,
                 "private-input-must-not-appear",
                 Duration::from_secs(2),
                 |_| false,
             );
-            let _ = finished.send(result);
+            finished
+                .send(result)
+                .map_err(|_| "diagnostic completion receiver disappeared")
         });
         // The primary child and three diagnostic children all stall. Every one must be
         // reaped before the next is started, even though no diagnostic succeeds.
@@ -143,6 +145,9 @@ fn diagnostic_failures_preserve_primary_error_and_have_one_finite_budget() -> Ev
         }
         assert!(!failure.contains("must-not-appear"));
         assert!(failure.len() < 4096);
+        worker
+            .join()
+            .map_err(|_| "diagnostic observer panicked")??;
         Ok(())
     })?;
     assert!(

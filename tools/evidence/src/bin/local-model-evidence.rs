@@ -8,13 +8,12 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     io::Write,
-    net::{SocketAddr, TcpListener, TcpStream},
+    net::{SocketAddr, TcpStream},
     path::{Component, Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    thread,
     time::Duration,
 };
 
@@ -110,7 +109,8 @@ struct ModelFacts {
 struct ControlledEndpoint {
     address: SocketAddr,
     requests: Arc<AtomicUsize>,
-    task: Option<thread::JoinHandle<std::io::Result<String>>>,
+    server: milkdrift_evidence::http_fixture::LoopbackServer,
+    captured: std::sync::mpsc::Receiver<String>,
 }
 
 impl ControlledEndpoint {
@@ -127,16 +127,18 @@ impl ControlledEndpoint {
     }
 
     fn start(response: Option<(String, String)>) -> EvidenceResult<Self> {
-        let listener = TcpListener::bind("127.0.0.1:0")?;
-        let address = listener.local_addr()?;
         let requests = Arc::new(AtomicUsize::new(0));
         let observed = requests.clone();
-        let task = thread::spawn(move || {
-            let (mut stream, _) = listener.accept()?;
-            stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-            let request = read_request(&mut stream)?;
+        let (capture, captured) = std::sync::mpsc::sync_channel(1);
+        let server = milkdrift_evidence::http_fixture::LoopbackServer::start(move |stream| {
+            if observed.load(Ordering::SeqCst) != 0 {
+                return Err(std::io::Error::other(
+                    "single-request endpoint entered again",
+                ));
+            }
+            let request = read_request(stream)?;
             observed.fetch_add(1, Ordering::SeqCst);
-            if let Some((text, finish)) = response {
+            if let Some((text, finish)) = &response {
                 let body = [
                     format!(
                         "data: {}\n\n",
@@ -147,46 +149,26 @@ impl ControlledEndpoint {
                         json!({"id":"fixture-response-1","model":"fixture-local-model","choices":[{"delta":{},"finish_reason":finish}],"usage":{"prompt_tokens":19,"completion_tokens":4}})
                     ),
                     "data: [DONE]\n\n".to_owned(),
-                ]
-                .concat();
-                write_response(&mut stream, "text/event-stream", &body)?;
+                ].concat();
+                write_response(stream, "text/event-stream", &body)?;
             }
-            Ok(request)
-        });
+            capture.try_send(request).map_err(std::io::Error::other)
+        })?;
         Ok(Self {
-            address,
+            address: server.address(),
             requests,
-            task: Some(task),
+            server,
+            captured,
         })
     }
 
     fn join(&mut self) -> EvidenceResult<String> {
+        self.server.finish()?;
         ensure(
             self.requests.load(Ordering::SeqCst) == 1,
             "controlled endpoint was never entered",
         )?;
-        self.task
-            .take()
-            .ok_or("controlled endpoint already joined")?
-            .join()
-            .map_err(|_| "controlled endpoint panicked")?
-            .map_err(Into::into)
-    }
-}
-
-impl Drop for ControlledEndpoint {
-    fn drop(&mut self) {
-        if self.task.is_none() {
-            return;
-        }
-        if let Ok(mut stream) = TcpStream::connect_timeout(&self.address, Duration::from_secs(1)) {
-            let _ = stream.write_all(
-                b"GET /shutdown HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-            );
-        }
-        if let Some(task) = self.task.take() {
-            let _ = task.join();
-        }
+        self.captured.try_recv().map_err(Into::into)
     }
 }
 
@@ -1082,3 +1064,46 @@ use profiles::{
 mod timeline;
 
 use timeline::TimelineFollower;
+
+#[cfg(test)]
+mod endpoint_tests {
+    use super::*;
+    use std::io::Read as _;
+
+    #[test]
+    fn unused_endpoint_stops_without_fabricating_a_model_request() -> EvidenceResult {
+        let mut endpoint = ControlledEndpoint::success()?;
+        endpoint.server.finish()?;
+        assert_eq!(endpoint.requests.load(Ordering::SeqCst), 0);
+        assert!(endpoint.join().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn controlled_response_and_disconnect_retain_the_exact_request() -> EvidenceResult {
+        for respond in [true, false] {
+            let mut endpoint = if respond {
+                ControlledEndpoint::success()?
+            } else {
+                ControlledEndpoint::close_after_request()?
+            };
+            let mut client = TcpStream::connect(endpoint.address)?;
+            client.set_read_timeout(Some(Duration::from_secs(2)))?;
+            client.write_all(b"POST /model HTTP/1.1\r\nContent-Length: 4\r\n\r\nbody")?;
+            let mut response = String::new();
+            client.read_to_string(&mut response)?;
+            let request = endpoint.join()?;
+            assert_eq!(
+                request,
+                "POST /model HTTP/1.1\r\nContent-Length: 4\r\n\r\nbody"
+            );
+            assert_eq!(endpoint.requests.load(Ordering::SeqCst), 1);
+            if respond {
+                assert!(response.contains("data: [DONE]"));
+            } else {
+                assert!(response.is_empty());
+            }
+        }
+        Ok(())
+    }
+}

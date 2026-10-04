@@ -19,7 +19,7 @@ use std::{
     process::ExitCode,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -119,20 +119,9 @@ enum FixtureFailure {
 }
 
 struct MockEndpoint {
-    address: SocketAddr,
     requests: Arc<AtomicUsize>,
     request_lines: Arc<Mutex<Vec<String>>>,
-    stop: Arc<AtomicBool>,
-    task: Option<std::thread::JoinHandle<()>>,
-}
-
-impl Drop for MockEndpoint {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        if let Some(task) = self.task.take() {
-            let _ = task.join();
-        }
-    }
+    server: milkdrift_evidence::http_fixture::LoopbackServer,
 }
 
 #[tokio::main]
@@ -253,7 +242,7 @@ async fn run_scenarios(
         None
     };
     let model_profile_path = if let Some(mock) = &mock {
-        write_fixture_model_profile(session_root, mock.address)?
+        write_fixture_model_profile(session_root, mock.server.address())?
     } else {
         arguments
             .model_profile
@@ -333,17 +322,8 @@ async fn run_scenarios(
         report.model = ScenarioEvidence::failed(reason.clone());
         return Err(reason);
     }
-    if let Some(mock) = &mock {
-        let stream = tokio::net::TcpStream::connect(mock.address)
-            .await
-            .map_err(|error| {
-                format!(
-                    "fixture model endpoint stopped before model scenario (task_finished={}): {error}",
-                    mock.task.as_ref().is_none_or(std::thread::JoinHandle::is_finished)
-                )
-            })?;
-        drop(stream);
-    }
+    // The bound fixture listener and the actual model request establish readiness. A probe
+    // that connects then sends no HTTP request would itself be a malformed fixture request.
     report.model = match run_model_scenario(
         &config,
         &model_token,
@@ -364,11 +344,7 @@ async fn run_scenarios(
         }
     };
     if let Some(mut mock) = mock {
-        mock.stop.store(true, Ordering::SeqCst);
-        if let Some(task) = mock.task.take() {
-            task.join()
-                .map_err(|_| "fixture model endpoint thread panicked".to_owned())?;
-        }
+        mock.server.finish().map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -709,41 +685,22 @@ async fn start_mock_endpoint(
 ) -> HarnessResult<MockEndpoint> {
     let requests = Arc::new(AtomicUsize::new(0));
     let request_lines = Arc::new(Mutex::new(Vec::new()));
-    let listener =
-        std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).map_err(|error| error.to_string())?;
-    let address = listener.local_addr().map_err(|error| error.to_string())?;
-    listener
-        .set_nonblocking(true)
-        .map_err(|error| error.to_string())?;
-    let stop = Arc::new(AtomicBool::new(false));
-    let thread_stop = stop.clone();
     let thread_requests = requests.clone();
     let thread_request_lines = request_lines.clone();
-    let task = std::thread::spawn(move || {
-        while !thread_stop.load(Ordering::SeqCst) {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let _ = serve_mock_connection(
-                        &mut stream,
-                        &thread_requests,
-                        &thread_request_lines,
-                        max_output_units,
-                        truncated,
-                    );
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                Err(_) => break,
-            }
-        }
-    });
+    let server = milkdrift_evidence::http_fixture::LoopbackServer::start(move |stream| {
+        serve_mock_connection(
+            stream,
+            &thread_requests,
+            &thread_request_lines,
+            max_output_units,
+            truncated,
+        )
+    })
+    .map_err(|error| error.to_string())?;
     Ok(MockEndpoint {
-        address,
         requests,
         request_lines,
-        stop,
-        task: Some(task),
+        server,
     })
 }
 
