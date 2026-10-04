@@ -53,24 +53,81 @@ pub struct LatencySummary {
 
 impl LatencySummary {
     /// Summarizes one non-empty sample using nearest-rank indices.
+    ///
+    /// # Errors
+    /// Refuses an empty sample or durations that cannot be expressed in unsigned microseconds.
+    /// An unrepresentable count or percentile index also fails instead of truncating the report.
     pub fn from_durations(mut samples: Vec<Duration>) -> EvidenceResult<Self> {
         if samples.is_empty() {
             return Err(std::io::Error::other("latency sample must not be empty").into());
         }
         samples.sort_unstable();
         let micros = |index: usize| -> EvidenceResult<u64> {
-            u64::try_from(samples[index].as_micros())
-                .map_err(|_| std::io::Error::other("latency exceeds u64 microseconds").into())
+            u64::try_from(
+                samples
+                    .get(index)
+                    .ok_or("percentile exceeds sample")?
+                    .as_micros(),
+            )
+            .map_err(|_| std::io::Error::other("latency exceeds u64 microseconds").into())
         };
         let last = samples.len() - 1;
-        let percentile = |numerator: usize| last.saturating_mul(numerator).div_ceil(100);
+        let percentile = |numerator: usize| -> EvidenceResult<usize> {
+            Ok(samples
+                .len()
+                .checked_mul(numerator)
+                .ok_or("percentile index overflow")?
+                .div_ceil(100)
+                .checked_sub(1)
+                .ok_or("percentile rank is empty")?)
+        };
         Ok(Self {
             count: u64::try_from(samples.len())?,
             minimum_us: micros(0)?,
-            p50_us: micros(percentile(50))?,
-            p95_us: micros(percentile(95))?,
-            p99_us: micros(percentile(99))?,
+            p50_us: micros(percentile(50)?)?,
+            p95_us: micros(percentile(95)?)?,
+            p99_us: micros(percentile(99)?)?,
             maximum_us: micros(last)?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nearest_rank_uses_sample_count_and_refuses_unrepresentable_measurements() -> EvidenceResult {
+        let summary = LatencySummary::from_durations(
+            [4, 1, 3, 2]
+                .into_iter()
+                .map(Duration::from_micros)
+                .collect(),
+        )?;
+        assert_eq!(
+            (
+                summary.count,
+                summary.minimum_us,
+                summary.p50_us,
+                summary.p95_us,
+                summary.p99_us,
+                summary.maximum_us
+            ),
+            (4, 1, 2, 4, 4, 4)
+        );
+        let one = LatencySummary::from_durations(vec![Duration::from_micros(7)])?;
+        assert_eq!(
+            (
+                one.minimum_us,
+                one.p50_us,
+                one.p95_us,
+                one.p99_us,
+                one.maximum_us
+            ),
+            (7, 7, 7, 7, 7)
+        );
+        assert!(LatencySummary::from_durations(vec![]).is_err());
+        assert!(LatencySummary::from_durations(vec![Duration::MAX]).is_err());
+        Ok(())
     }
 }
