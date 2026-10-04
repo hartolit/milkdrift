@@ -209,7 +209,11 @@ fn successful_capture_reaps_child_after_explicit_release() -> EvidenceResult {
         let mut control = accept(&listener)?;
         control.read_exact(&mut [0; 4])?;
         control.write_all(&[1])?;
-        command.join().map_err(|_| "harness thread panicked")??;
+        let result = command.join().map_err(|_| "harness thread panicked")??;
+        assert_eq!(
+            result.get("type").and_then(serde_json::Value::as_str),
+            Some("run.show")
+        );
         assert_eq!(control.read(&mut [0])?, 0);
         Ok(())
     })

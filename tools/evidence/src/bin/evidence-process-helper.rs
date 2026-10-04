@@ -48,7 +48,7 @@ fn stalled_cli() -> std::io::Result<()> {
     control.read_exact(&mut release)?;
     writeln!(
         std::io::stdout().lock(),
-        "{{\"status\":\"success\",\"value\":null}}"
+        "{{\"schema_version\":2,\"command_id\":\"fixture\",\"type\":\"run.show\",\"status\":\"success\",\"final\":true,\"value\":null,\"error\":null}}"
     )?;
     Ok(())
 }
