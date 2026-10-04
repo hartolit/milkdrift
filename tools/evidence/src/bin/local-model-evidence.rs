@@ -399,7 +399,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
         &runner,
         SUCCESS_RUN,
         Duration::from_secs(arguments.timeout_secs),
-        |run| run["value"]["terminal"] == "succeeded",
+        |run| run.pointer("/value/terminal").and_then(Value::as_str) == Some("succeeded"),
     )?;
     follower.finish()?;
     let model_node = node(&completed, "model").ok_or("model execution is absent")?;
@@ -412,10 +412,16 @@ fn run(arguments: Arguments) -> EvidenceResult {
     let omitted_attempt_id = required_text(omitted_node, &["latest_attempt_id"])?;
     let omitted_attempt =
         runner.success(&["attempt", "inspect", SUCCESS_RUN, &omitted_attempt_id])?;
-    let omitted_artifact_id = omitted_attempt["value"]["outputs"]
+    let omitted_artifact_id = omitted_attempt
+        .pointer("/value/outputs")
+        .ok_or("missing /value/outputs")?
         .as_array()
         .and_then(|outputs| outputs.iter().find(|output| output["name"] == "evidence"))
-        .and_then(|output| output["artifact"]["artifact_id"].as_str())
+        .and_then(|output| {
+            output
+                .pointer("/artifact/artifact_id")
+                .and_then(Value::as_str)
+        })
         .ok_or("omitted evidence attempt did not publish its artifact")?
         .to_owned();
     let attempt_id = required_text(model_node, &["latest_attempt_id"])?;
@@ -463,7 +469,12 @@ fn run(arguments: Arguments) -> EvidenceResult {
     )?;
     let reopened_attempt = runner.success(&["attempt", "inspect", SUCCESS_RUN, &attempt_id])?;
     ensure(
-        reopened_attempt["value"]["outputs"] == attempt["value"]["outputs"],
+        reopened_attempt
+            .pointer("/value/outputs")
+            .ok_or("missing /value/outputs")?
+            == attempt
+                .pointer("/value/outputs")
+                .ok_or("missing /value/outputs")?,
         "restart changed successful model artifact publications",
     )?;
 
@@ -488,7 +499,10 @@ fn run(arguments: Arguments) -> EvidenceResult {
     wait_for_readiness(&runner, &mut daemon)?;
     let retained = runner.success(&["attempt", "inspect", FAILURE_RUN, &uncertainty.attempt_id])?;
     ensure(
-        retained["value"]["uncertain"] == true,
+        retained
+            .pointer("/value/uncertain")
+            .ok_or("missing /value/uncertain")?
+            == true,
         "retained uncertainty disappeared after restart",
     )?;
     daemon.terminate()?;
@@ -789,7 +803,9 @@ fn edge(identity: &str, source: &str, target: &str) -> EvidenceResult<Mutation> 
 
 fn assert_capability(runner: &CliRunner, capability: &str, facts: &ModelFacts) -> EvidenceResult {
     let response = runner.success(&["capability", "show", capability])?;
-    let generation = response["value"]
+    let generation = response
+        .pointer("/value")
+        .ok_or("missing /value")?
         .as_array()
         .and_then(|values| values.first())
         .ok_or("capability show omitted its generation")?;
@@ -856,8 +872,16 @@ fn assert_success_attempt(
         attempt["context_access"] == "authorized",
         "controller could not inspect the frozen context manifest",
     )?;
-    let entries = serde_json::to_string(&attempt["context"]["entries"])?;
-    let omissions = serde_json::to_string(&attempt["context"]["omissions"])?;
+    let entries = serde_json::to_string(
+        attempt
+            .pointer("/context/entries")
+            .ok_or("missing /context/entries")?,
+    )?;
+    let omissions = serde_json::to_string(
+        attempt
+            .pointer("/context/omissions")
+            .ok_or("missing /context/omissions")?,
+    )?;
     ensure(
         entries.contains("selected-evidence")
             && !entries.contains(omitted_artifact_id)
@@ -966,8 +990,8 @@ fn run_uncertainty_scenario(
         blueprint.id().as_str(),
     ])?;
     let uncertain = wait_for_run(runner, FAILURE_RUN, timeout, |run| {
-        run["value"]["uncertainty_count"]
-            .as_u64()
+        run.pointer("/value/uncertainty_count")
+            .and_then(Value::as_u64)
             .is_some_and(|count| count == 1)
     })?;
     let model = node(&uncertain, "model").ok_or("uncertain model execution is absent")?;
@@ -978,10 +1002,22 @@ fn run_uncertainty_scenario(
     let attempt_id = required_text(model, &["latest_attempt_id"])?;
     let attempt = runner.success(&["attempt", "inspect", FAILURE_RUN, &attempt_id])?;
     ensure(
-        attempt["value"]["uncertain"] == true
-            && attempt["value"]["operation_contract"]["side_effect"] == "unknown"
-            && attempt["value"]["operation_contract"]["idempotency"] == "unsupported"
-            && attempt["value"]["idempotency_key_present"] == false,
+        attempt
+            .pointer("/value/uncertain")
+            .ok_or("missing /value/uncertain")?
+            == true
+            && attempt
+                .pointer("/value/operation_contract/side_effect")
+                .ok_or("missing /value/operation_contract/side_effect")?
+                == "unknown"
+            && attempt
+                .pointer("/value/operation_contract/idempotency")
+                .ok_or("missing /value/operation_contract/idempotency")?
+                == "unsupported"
+            && attempt
+                .pointer("/value/idempotency_key_present")
+                .ok_or("missing /value/idempotency_key_present")?
+                == false,
         "post-entry close did not retain the exact unsupported-idempotency obligation",
     )?;
     let sequence = required_u64(&uncertain, &["value", "sequence"])?;
@@ -1029,14 +1065,17 @@ fn run_uncertainty_scenario(
     ])?;
     let retained = runner.success(&["attempt", "inspect", FAILURE_RUN, &attempt_id])?;
     ensure(
-        retained["value"]["uncertain"] == true,
+        retained
+            .pointer("/value/uncertain")
+            .ok_or("missing /value/uncertain")?
+            == true,
         "retain resolution hid the unresolved provider outcome",
     )?;
     Ok(UncertaintyObservation { attempt_id })
 }
 
 fn node<'a>(run: &'a Value, identity: &str) -> Option<&'a Value> {
-    run["value"]["nodes"]
+    run.pointer("/value/nodes")?
         .as_array()?
         .iter()
         .find(|node| node["node_id"] == identity)

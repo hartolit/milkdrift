@@ -125,29 +125,38 @@ fn observe(input: impl Read, ready: mpsc::SyncSender<()>) -> io::Result<Observat
             return Err(io::Error::other("timeline line exceeds bound"));
         }
         let value: Value = serde_json::from_str(&line).map_err(io::Error::other)?;
-        if value["type"] == "run.timeline"
-            && value["status"] == "reconnecting"
-            && value["final"] == false
-            && value["error"]["retryable"] == true
+        if value.get("type").and_then(Value::as_str) == Some("run.timeline")
+            && value.get("status").and_then(Value::as_str) == Some("reconnecting")
+            && value.get("final").and_then(Value::as_bool) == Some(false)
+            && value.pointer("/error/retryable").and_then(Value::as_bool) == Some(true)
         {
             observed.update = false;
             continue;
         }
-        if value["status"] != "success" || !value["error"].is_null() {
+        if value.get("status").and_then(Value::as_str) != Some("success")
+            || value.get("error").is_some_and(|error| !error.is_null())
+        {
             return Err(io::Error::other(format!(
                 "timeline CLI reported {}: {}",
-                value["status"].as_str().unwrap_or("missing status"),
-                value["error"]["classification"]
-                    .as_str()
+                value
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("missing status"),
+                value
+                    .pointer("/error/classification")
+                    .and_then(Value::as_str)
                     .unwrap_or("missing classification"),
             )));
         }
-        match value["type"].as_str() {
+        match value.get("type").and_then(Value::as_str) {
             Some("run.timeline") if !observed.page => {
                 observed.page = true;
                 ready.send(()).map_err(io::Error::other)?;
             }
-            Some("run.observation") => match value["value"]["observation"]["type"].as_str() {
+            Some("run.observation") => match value
+                .pointer("/value/observation/type")
+                .and_then(Value::as_str)
+            {
                 Some("timeline" | "run_status") => observed.update = true,
                 _ => {
                     return Err(io::Error::other(
@@ -207,6 +216,20 @@ mod tests {
     fn oversized_line_is_refused() {
         let (send, _ready) = mpsc::sync_channel(1);
         assert!(observe("x".repeat(131_073).as_bytes(), send).is_err());
+    }
+
+    #[test]
+    fn incomplete_observations_do_not_establish_progress() {
+        for line in [
+            "{}",
+            r#"{"type":"run.timeline"}"#,
+            r#"{"status":"success"}"#,
+            r#"{"status":"success","type":"run.observation","value":{}}"#,
+            r#"{"status":"reconnecting","type":"run.timeline","final":false,"error":{}}"#,
+        ] {
+            let (send, _ready) = mpsc::sync_channel(1);
+            assert!(observe(line.as_bytes(), send).is_err(), "accepted {line}");
+        }
     }
 
     #[test]

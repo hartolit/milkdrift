@@ -95,7 +95,7 @@ fn run_case(
         Mutation::AddNode {
             node: model(
                 "first",
-                &facts[0],
+                facts.first().ok_or("first profile absent")?,
                 "ORIGINAL_QUESTION",
                 SessionSelection::Fresh,
                 false,
@@ -114,7 +114,7 @@ fn run_case(
         Mutation::AddNode {
             node: model(
                 "continued",
-                &facts[1],
+                facts.get(1).ok_or("continued profile absent")?,
                 "placeholder",
                 SessionSelection::Fresh,
                 true,
@@ -123,7 +123,7 @@ fn run_case(
         Mutation::AddNode {
             node: model(
                 "fresh",
-                &facts[2],
+                facts.get(2).ok_or("independent profile absent")?,
                 "FRESH_QUESTION",
                 SessionSelection::Fresh,
                 true,
@@ -227,8 +227,14 @@ fn run_case(
         &["latest_attempt_id"],
     )?;
     let inspected = runner.success(&["attempt", "inspect", RUN, &id])?;
-    let manifest = reference(&inspected["value"]["context_manifest"])?;
-    let response = inspected["value"]["outputs"]
+    let manifest = reference(
+        inspected
+            .pointer("/value/context_manifest")
+            .ok_or("missing /value/context_manifest")?,
+    )?;
+    let response = inspected
+        .pointer("/value/outputs")
+        .ok_or("missing /value/outputs")?
         .as_array()
         .and_then(|outputs| {
             outputs
@@ -239,7 +245,7 @@ fn run_case(
     let response = reference(&response["artifact"])?;
     let replacement = model(
         "continued",
-        &facts[1],
+        facts.get(1).ok_or("continued profile absent")?,
         "NEW_QUESTION",
         SessionSelection::ExplicitContinuation {
             manifest: manifest.clone(),
@@ -333,7 +339,9 @@ fn run_case(
     ])?;
     if rejected {
         let stopped = wait_for_run(&runner, RUN, timeout, |run| {
-            run["value"]["terminal"] == "failed"
+            run.pointer("/value/terminal")
+                .and_then(serde_json::Value::as_str)
+                == Some("failed")
         })?;
         ensure(
             node(&stopped, "continued").is_some_and(|node| node["attempt_count"] == 0),
@@ -346,7 +354,10 @@ fn run_case(
         )?;
         let acceptance = runner.success(&["attempt", "inspect", RUN, &acceptance_id])?;
         ensure(
-            acceptance["value"]["result_acceptance"]["accepted"] == false,
+            acceptance
+                .pointer("/value/result_acceptance/accepted")
+                .ok_or("missing /value/result_acceptance/accepted")?
+                == false,
             "fixture did not reject its complete prior answer",
         )?;
         ensure(
@@ -363,14 +374,18 @@ fn run_case(
         return Ok(json!({"requests":1,"rejected_prior_refused":true,"restart_boundaries":1}));
     }
     let completed = wait_for_run(&runner, RUN, timeout, |run| {
-        run["value"]["terminal"] == "succeeded"
+        run.pointer("/value/terminal")
+            .and_then(serde_json::Value::as_str)
+            == Some("succeeded")
     })?;
     let id = required_text(
         node(&completed, "continued").ok_or("continued invocation missing")?,
         &["latest_attempt_id"],
     )?;
     let consumed = runner.success(&["attempt", "inspect", RUN, &id])?;
-    let selection = consumed["value"]["context"]["entries"]
+    let selection = consumed
+        .pointer("/value/context/entries")
+        .ok_or("missing /value/context/entries")?
         .as_array()
         .and_then(|entries| {
             entries
@@ -378,7 +393,9 @@ fn run_case(
                 .find(|entry| entry["reason"] == "continuation")
         })
         .ok_or("inspector omitted continuation selection")?;
-    let artifact = &selection["source"]["reference"];
+    let artifact = selection
+        .pointer("/source/reference")
+        .ok_or("missing /source/reference")?;
     let history_id = artifact["artifact"]
         .as_str()
         .ok_or("continuation artifact identity missing")?;
@@ -393,9 +410,7 @@ fn run_case(
     let history =
         milkdrift_model::ContinuationHistoryDocument::from_json(&fs::read(&history_file)?)?;
     ensure(
-        history.body().turns().len() == 1
-            && history.body().turns()[0].manifest == manifest
-            && history.body().turns()[0].response == response,
+        matches!(history.body().turns(), [turn] if turn.manifest == manifest && turn.response == response),
         "inspected history changed the selected predecessor",
     )?;
     first.join()?;
@@ -406,7 +421,9 @@ fn run_case(
             .nth(1)
             .ok_or("continued request body absent")?,
     )?;
-    let messages = wire["messages"]
+    let messages = wire
+        .pointer("/messages")
+        .ok_or("missing /messages")?
         .as_array()
         .ok_or("continued messages absent")?;
     ensure(
@@ -432,7 +449,8 @@ fn run_case(
     wait_for_readiness(&runner, &mut daemon)?;
     let retained = runner.success(&["attempt", "inspect", RUN, &id])?;
     ensure(
-        retained["value"] == consumed["value"],
+        retained.pointer("/value").ok_or("missing /value")?
+            == consumed.pointer("/value").ok_or("missing /value")?,
         "restart changed exact continuation inspection",
     )?;
     daemon.terminate()?;
@@ -462,12 +480,17 @@ fn model(
         return Err("model template is not a task".into());
     };
     let mut policy = serde_json::to_value(TaskContextPolicy::default())?;
-    policy["session"] = json!(if matches!(session, SessionSelection::Fresh) {
-        "fresh"
-    } else {
-        "explicit_continuation"
-    });
-    policy["exclude_categories"] = json!([]);
+    *policy
+        .get_mut("session")
+        .ok_or("context session policy absent")? =
+        json!(if matches!(session, SessionSelection::Fresh) {
+            "fresh"
+        } else {
+            "explicit_continuation"
+        });
+    *policy
+        .get_mut("exclude_categories")
+        .ok_or("excluded context categories absent")? = json!([]);
     let mut node = Node::new(
         NodeId::new(id)?,
         NodeKind::Task {

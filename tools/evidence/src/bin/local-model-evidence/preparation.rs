@@ -19,7 +19,9 @@ pub(super) fn scenario(arguments: &Arguments, output: &Path) -> EvidenceResult<V
         "controlled-preparation",
     )?;
     let mut value: Value = serde_json::from_slice(&fs::read(&profile)?)?;
-    value["limits"]["max_request_bytes"] = json!(1);
+    *value
+        .pointer_mut("/limits/max_request_bytes")
+        .ok_or("request byte limit absent")? = json!(1);
     let bytes = serde_json::to_vec(&value)?;
     EndpointProfile::from_json(&bytes)?;
     fs::write(&profile, bytes)?;
@@ -81,17 +83,32 @@ pub(super) fn scenario(arguments: &Arguments, output: &Path) -> EvidenceResult<V
         &runner,
         "run-local-refusal",
         Duration::from_secs(arguments.timeout_secs),
-        |run| run["value"]["lifecycle"] == "terminal" && node(run, "model").is_some(),
+        |run| {
+            run.pointer("/value/lifecycle").and_then(Value::as_str) == Some("terminal")
+                && node(run, "model").is_some()
+        },
     )?;
     let model = node(&state, "model").ok_or("refused model absent")?;
     let attempt = required_text(model, &["latest_attempt_id"])?;
     let before = runner.success(&["attempt", "inspect", "run-local-refusal", &attempt])?;
     ensure(
         model["attempt_count"] == 1
-            && state["value"]["uncertainty_count"] == 0
-            && before["value"]["terminal"] == "rejected"
-            && before["value"]["uncertain"] == false
-            && before["value"]["entry_authorization"].is_null()
+            && state
+                .pointer("/value/uncertainty_count")
+                .ok_or("missing /value/uncertainty_count")?
+                == 0
+            && before
+                .pointer("/value/terminal")
+                .ok_or("missing /value/terminal")?
+                == "rejected"
+            && before
+                .pointer("/value/uncertain")
+                .ok_or("missing /value/uncertain")?
+                == false
+            && before
+                .pointer("/value/entry_authorization")
+                .ok_or("missing /value/entry_authorization")?
+                .is_null()
             && matches!(endpoint.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
         "local preparation refusal was retried, submitted, or classified as uncertain",
     )?;
@@ -104,7 +121,8 @@ pub(super) fn scenario(arguments: &Arguments, output: &Path) -> EvidenceResult<V
     wait_for_readiness(&runner, &mut daemon)?;
     let after = runner.success(&["attempt", "inspect", "run-local-refusal", &attempt])?;
     ensure(
-        before["value"] == after["value"]
+        before.pointer("/value").ok_or("missing /value")?
+            == after.pointer("/value").ok_or("missing /value")?
             && matches!(endpoint.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
         "restart changed the refused attempt or submitted its request",
     )?;

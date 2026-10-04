@@ -137,17 +137,23 @@ pub(super) fn inspect_profile(path: &Path) -> EvidenceResult<ModelFacts> {
         .port()
         .map(|value| format!(":{value}"))
         .unwrap_or_default();
-    let features = value["features"]
+    let features = value
+        .pointer("/features")
+        .ok_or("missing /features")?
         .as_array()
         .ok_or("model profile features are absent")?;
-    let secret_refs = value["auth"]
+    let secret_refs = value
+        .pointer("/auth")
+        .ok_or("missing /auth")?
         .get("secret")
         .and_then(Value::as_str)
         .map(|reference| BTreeSet::from([reference.to_owned()]))
         .unwrap_or_default();
     Ok(ModelFacts {
         profile_id: profile.identity().as_str().to_owned(),
-        revision: value["revision"]
+        revision: value
+            .pointer("/revision")
+            .ok_or("missing /revision")?
             .as_u64()
             .ok_or("model profile revision is absent")?,
         protocol: required_text(&value, &["protocol", "type"])?,
@@ -178,9 +184,12 @@ pub(super) fn validate_real_profile(mode: Mode, path: &Path, facts: &ModelFacts)
     ensure(
         url.scheme() == "http"
             && loopback
-            && value["local_development"] == true
-            && value["redirect"] == "deny"
-            && value["proxy"] == "disabled",
+            && value
+                .pointer("/local_development")
+                .ok_or("missing /local_development")?
+                == true
+            && value.pointer("/redirect").ok_or("missing /redirect")? == "deny"
+            && value.pointer("/proxy").ok_or("missing /proxy")? == "disabled",
         "real local-model profile must use explicit loopback HTTP development policy with redirects and ambient proxies disabled",
     )
 }

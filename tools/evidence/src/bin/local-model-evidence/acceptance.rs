@@ -110,13 +110,33 @@ pub(super) fn scenario(
         Ok(Mutation::AddNode { node })
     };
     let mut operations = vec![
-        model("model", "empty-review", &facts[0], false)?,
+        model(
+            "model",
+            "empty-review",
+            facts.first().ok_or("empty-review profile absent")?,
+            false,
+        )?,
         wait("before-acceptance", "acceptance.evaluate")?,
         wait("remediation", "acceptance.remediate")?,
-        model("repair", "remedied-review", &facts[1], true)?,
+        model(
+            "repair",
+            "remedied-review",
+            facts.get(1).ok_or("remedied-review profile absent")?,
+            true,
+        )?,
         wait("before-continuation", "acceptance.continue")?,
-        model("dependent", "dependent", &facts[2], true)?,
-        model("forbidden-dependent", "dependent", &facts[2], true)?,
+        model(
+            "dependent",
+            "dependent",
+            facts.get(2).ok_or("dependent profile absent")?,
+            true,
+        )?,
+        model(
+            "forbidden-dependent",
+            "dependent",
+            facts.get(2).ok_or("dependent profile absent")?,
+            true,
+        )?,
         terminal("done", TerminalOutcome::Success)?,
         terminal("unexpected", TerminalOutcome::Success)?,
         terminal("failed", TerminalOutcome::Failure)?,
@@ -190,8 +210,14 @@ pub(super) fn scenario(
         )?;
         let source = runner.success(&["attempt", "inspect", "acceptance-run", &source_attempt])?;
         ensure(
-            source["value"]["terminal"] == "succeeded"
-                && source["value"]["model_generation"]["finish_reason"] == "length",
+            source
+                .pointer("/value/terminal")
+                .ok_or("missing /value/terminal")?
+                == "succeeded"
+                && source
+                    .pointer("/value/model_generation/finish_reason")
+                    .ok_or("missing /value/model_generation/finish_reason")?
+                    == "length",
             "acceptance changed or lost the successful exhausted invocation",
         )?;
         let mut decision_before_restart = None;
@@ -211,15 +237,23 @@ pub(super) fn scenario(
                     == 1,
                 "acceptance evaluation repeated",
             )?;
-            decision_before_restart = Some((attempt, inspected["value"].clone()));
-            let result = inspected["value"]["result_acceptance"].clone();
+            decision_before_restart = Some((
+                attempt,
+                inspected.pointer("/value").ok_or("missing /value")?.clone(),
+            ));
+            let result = inspected
+                .pointer("/value/result_acceptance")
+                .ok_or("missing /value/result_acceptance")?
+                .clone();
             ensure(
-                result["accepted"] == (boundary == "before-continuation"),
+                result.pointer("/accepted").ok_or("missing /accepted")?
+                    == (boundary == "before-continuation"),
                 "acceptance result contradicted its workflow route",
             )?;
             if boundary == "remediation" {
                 ensure(
-                    result["reason"] == "output_allowance_exhausted",
+                    result.pointer("/reason").ok_or("missing /reason")?
+                        == "output_allowance_exhausted",
                     "empty exhausted review lost its rejection reason",
                 )?;
                 rejected = Some(result);
@@ -238,7 +272,7 @@ pub(super) fn scenario(
         if let Some((attempt, before)) = decision_before_restart {
             let after = runner.success(&["attempt", "inspect", "acceptance-run", &attempt])?;
             ensure(
-                before == after["value"],
+                &before == after.pointer("/value").ok_or("missing /value")?,
                 "restart altered the retained acceptance decision",
             )?;
         }
@@ -262,17 +296,27 @@ pub(super) fn scenario(
         let mut first = runner.success(&args)?;
         let replay = runner.success(&args)?;
         ensure(
-            replay["value"]["replayed"] == true,
+            replay
+                .pointer("/value/replayed")
+                .ok_or("missing /value/replayed")?
+                == true,
             "release did not return its retained receipt",
         )?;
-        first["value"]["replayed"] = serde_json::Value::Bool(true);
+        *first
+            .pointer_mut("/value/replayed")
+            .ok_or("replay flag absent")? = serde_json::Value::Bool(true);
         ensure(
-            first["value"] == replay["value"] && first["ok"] == replay["ok"],
+            first.pointer("/value").ok_or("missing /value")?
+                == replay.pointer("/value").ok_or("missing /value")?
+                && first.pointer("/ok").ok_or("missing /ok")?
+                    == replay.pointer("/ok").ok_or("missing /ok")?,
             "exact authorized release replay changed its durable result",
         )?;
     }
     let completed = wait_for_run(&runner, "acceptance-run", timeout, |run| {
-        run["value"]["terminal"] == "succeeded"
+        run.pointer("/value/terminal")
+            .and_then(serde_json::Value::as_str)
+            == Some("succeeded")
     })?;
     ensure(
         node(&completed, "forbidden-dependent").is_none(),
