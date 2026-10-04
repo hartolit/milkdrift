@@ -75,10 +75,12 @@ pub(super) fn run(
                 json!({"classification": "corrupt_record", "detail": "missing governing execution/revision"})
             }
         };
+        let classification = context
+            .get("classification")
+            .and_then(Value::as_str)
+            .ok_or("context inspection has no classification")?;
         let blocks_context_recovery = attempt.state() == &milkdrift_runtime::AttemptState::Leased
-            && context["classification"].as_str().is_some_and(|s| {
-                !["context_reuse_check_passed", "no_frozen_manifest"].contains(&s)
-            });
+            && !["context_reuse_check_passed", "no_frozen_manifest"].contains(&classification);
         let leases: Vec<_> = attempt
             .leases()
             .iter()

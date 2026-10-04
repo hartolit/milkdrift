@@ -1,6 +1,6 @@
 //! Milkdrift local durable daemon executable.
 
-use std::path::PathBuf;
+use std::{io::Write, path::PathBuf};
 
 use clap::Parser;
 use milkdrift_daemon::{DaemonConfig, DaemonHost, serve};
@@ -46,7 +46,13 @@ async fn main() {
     let exit = match run().await {
         Ok(()) => 0,
         Err(error) => {
-            eprintln!("milkdrift-daemon: {error}");
+            #[expect(
+                clippy::print_stderr,
+                reason = "The executable reports its final failure before returning a nonzero exit status."
+            )]
+            {
+                eprintln!("milkdrift-daemon: {error}");
+            }
             1
         }
     };
@@ -64,7 +70,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let config = DaemonConfig::load(arguments.config.as_ref().ok_or("--config is required")?)?;
     if arguments.print_effective_config {
-        print!("{}", config.redacted_toml());
+        std::io::stdout()
+            .lock()
+            .write_all(config.redacted_toml().as_bytes())?;
         return Ok(());
     }
     if arguments.check_config {

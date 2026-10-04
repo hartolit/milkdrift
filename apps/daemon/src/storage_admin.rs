@@ -183,8 +183,9 @@ pub(super) fn run(arguments: Arguments) -> Result<()> {
     if bytes.len() > 8 * 1024 * 1024 {
         return Err("diagnostic report exceeds 8 MiB; select a smaller page".into());
     }
-    std::io::stdout().lock().write_all(&bytes)?;
-    println!();
+    let mut output = std::io::stdout().lock();
+    output.write_all(&bytes)?;
+    writeln!(output)?;
     Ok(())
 }
 
@@ -206,7 +207,11 @@ fn producer() -> Result<BackupProducer> {
         if count == 0 {
             break;
         }
-        digest.update(&buffer[..count]);
+        digest.update(
+            buffer
+                .get(..count)
+                .ok_or("binary read exceeded its buffer")?,
+        );
     }
     Ok(BackupProducer {
         version: env!("CARGO_PKG_VERSION").into(),

@@ -85,19 +85,35 @@ pub(super) fn run(args: Arguments) -> Result<(), Box<dyn std::error::Error>> {
     let mut config: serde_json::Value = serde_json::to_value(toml::from_str::<toml::Table>(
         include_str!("../../../examples/operator/execution-only.toml"),
     )?)?;
-    config["data_root"] = json!(args.root.join("data"));
-    config["host_id"] = json!(format!("host:{installation}"));
-    config["secret_sources"]["credential:operator"] =
+    *config
+        .pointer_mut("/data_root")
+        .ok_or("bootstrap template field absent")? = json!(args.root.join("data"));
+    *config
+        .pointer_mut("/host_id")
+        .ok_or("bootstrap template field absent")? = json!(format!("host:{installation}"));
+    *config
+        .pointer_mut("/secret_sources/credential:operator")
+        .ok_or("bootstrap template field absent")? =
         json!({"type":"file","path":args.root.join("operator.token")});
-    config["adapters"]["managed_linux"] = serde_json::to_value(&manager)?;
-    let scope = &mut config["actors"][0]["authority"]["resources"];
-    scope["capability"]["identities"]["values"] = json!([
+    config
+        .get_mut("adapters")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("bootstrap adapters absent")?
+        .insert("managed_linux".into(), serde_json::to_value(&manager)?);
+    let scope = config
+        .pointer_mut("/actors/0/authority/resources")
+        .ok_or("bootstrap template field absent")?;
+    *scope
+        .pointer_mut("/capability/identities/values")
+        .ok_or("bootstrap authority field absent")? = json!([
         "milkdrift.resources",
         format!("managed.{installation}"),
         format!("managed.{installation}.worker"),
         format!("managed.{installation}.model")
     ]);
-    scope["capability"]["operations"]["values"] = json!([
+    *scope
+        .pointer_mut("/capability/operations/values")
+        .ok_or("bootstrap authority field absent")? = json!([
         "resource.manage",
         "resource.evaluate",
         "resource.evidence",
@@ -119,7 +135,9 @@ pub(super) fn run(args: Arguments) -> Result<(), Box<dyn std::error::Error>> {
         "workspace.execute",
         "model.generate"
     ]);
-    scope["capability"]["trust_zones"] = json!({"type":"any"});
+    *scope
+        .pointer_mut("/capability/trust_zones")
+        .ok_or("bootstrap authority field absent")? = json!({"type":"any"});
     let mut filesystem = vec![
         FilesystemScope::from_canonical_host_path(
             &manager.state_root,
@@ -165,16 +183,22 @@ pub(super) fn run(args: Arguments) -> Result<(), Box<dyn std::error::Error>> {
                 .ok_or("endpoint port missing")?
         ));
     }
-    scope["filesystem"] = serde_json::to_value(filesystem)?;
-    scope["network"] = json!({"profiles":profiles,"destinations":destinations});
+    *scope
+        .pointer_mut("/filesystem")
+        .ok_or("bootstrap authority field absent")? = serde_json::to_value(filesystem)?;
+    *scope
+        .pointer_mut("/network")
+        .ok_or("bootstrap authority field absent")? =
+        json!({"profiles":profiles,"destinations":destinations});
     let config_text = toml::to_string_pretty(&config)?;
     if args.preview {
-        println!(
+        writeln!(
+            std::io::stdout().lock(),
             "{}",
             serde_json::to_string_pretty(
                 &json!({"recipe":reference,"configuration":config,"required_operator_prerequisites":["rootless Podman 5.4..6.x and preloaded exact images","user systemd session with lingering and cgroup v2 delegation","subordinate UID/GID mappings and private manager directories"],"platform_effects":"none; prepare/apply use the authenticated resource API"})
             )?
-        );
+        )?;
         return Ok(());
     }
     private_directory(&args.root)?;
@@ -200,12 +224,13 @@ pub(super) fn run(args: Arguments) -> Result<(), Box<dyn std::error::Error>> {
     }
     write_exact(&args.root.join("daemon.toml"), config_text.as_bytes())?;
     milkdrift_daemon::DaemonConfig::load(&args.root.join("daemon.toml"))?;
-    println!(
+    writeln!(
+        std::io::stdout().lock(),
         "{}",
         serde_json::to_string_pretty(
             &json!({"recipe":reference,"installation":installation,"config":args.root.join("daemon.toml"),"credential_file":token_path,"platform_effects":"none; start this configuration, then use resource prepare/apply"})
         )?
-    );
+    )?;
     Ok(())
 }
 
@@ -292,7 +317,9 @@ mod tests {
         assert_eq!(fs::read(root.join("operator.token"))?, token);
         assert_eq!(fs::read(root.join("daemon.toml"))?, config);
         let mut changed: serde_json::Value = serde_json::from_slice(&fs::read(&recipe)?)?;
-        changed["worker_network"] = json!("outbound");
+        *changed
+            .get_mut("worker_network")
+            .ok_or("worker network absent")? = json!("outbound");
         fs::write(&recipe, serde_json::to_vec(&changed)?)?;
         assert!(run(args(false)).is_err());
         assert_eq!(fs::read(root.join("daemon.toml"))?, config);
