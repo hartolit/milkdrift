@@ -16,10 +16,53 @@ use std::{
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 struct ChildOwner(Child);
+impl ChildOwner {
+    fn wait_until(&mut self, maximum: Duration) -> std::io::Result<std::process::ExitStatus> {
+        let started = Instant::now();
+        loop {
+            if let Some(status) = self.0.try_wait()? {
+                return Ok(status);
+            }
+            if started.elapsed() >= maximum {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "CLI exceeded the independent hard deadline",
+                ));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn finish(&mut self) -> std::io::Result<()> {
+        if self.0.try_wait()?.is_none() {
+            self.0.kill()?;
+        }
+        self.wait_until(Duration::from_secs(5))?;
+        Ok(())
+    }
+}
+
 impl Drop for ChildOwner {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        if let Err(error) = self.finish() {
+            if thread::panicking() {
+                #[expect(
+                    clippy::print_stderr,
+                    reason = "An unwinding fixture cannot return child cleanup failure or panic again."
+                )]
+                {
+                    eprintln!("CLI fixture child cleanup unconfirmed: {error}");
+                }
+            } else {
+                #[expect(
+                    clippy::panic,
+                    reason = "A test must fail when its owned child cannot be reaped; ordinary paths call finish explicitly."
+                )]
+                {
+                    panic!("CLI fixture child cleanup unconfirmed: {error}");
+                }
+            }
+        }
     }
 }
 
@@ -45,7 +88,7 @@ impl Server {
                         thread::sleep(Duration::from_millis(5));
                         continue;
                     }
-                    Err(_) => break,
+                    Err(error) => return Err(error),
                 };
                 stream.set_nonblocking(false)?;
                 stream.set_read_timeout(Some(Duration::from_secs(1)))?;
@@ -60,9 +103,17 @@ impl Server {
                     if request.len() + count > 8192 {
                         return Err(std::io::Error::other("incomplete fixture request"));
                     }
-                    request.extend_from_slice(&chunk[..count]);
+                    request.extend_from_slice(
+                        chunk
+                            .get(..count)
+                            .ok_or_else(|| std::io::Error::other("read exceeds buffer"))?,
+                    );
                     if let Some(end) = request.windows(4).position(|part| part == b"\r\n\r\n") {
-                        let headers = String::from_utf8_lossy(&request[..end]);
+                        let headers = String::from_utf8_lossy(
+                            request
+                                .get(..end)
+                                .ok_or_else(|| std::io::Error::other("header exceeds request"))?,
+                        );
                         let length = headers
                             .lines()
                             .find_map(|line| {
@@ -77,7 +128,7 @@ impl Server {
                     }
                 }
                 if let Some(response) = responses.next() {
-                    let _ = stream.write_all(response.as_bytes());
+                    stream.write_all(response.as_bytes())?;
                 } else {
                     // A deliberately stalled connection proves the caller's overall bound.
                     while !stopped.load(Ordering::SeqCst) {
@@ -93,13 +144,66 @@ impl Server {
             worker: Some(worker),
         })
     }
+
+    fn finish(&mut self) -> std::io::Result<()> {
+        self.stop.store(true, Ordering::SeqCst);
+        let started = Instant::now();
+        while self
+            .worker
+            .as_ref()
+            .is_some_and(|worker| !worker.is_finished())
+        {
+            if started.elapsed() >= Duration::from_secs(3) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "CLI fixture server cleanup unconfirmed",
+                ));
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        if let Some(worker) = self.worker.take() {
+            worker
+                .join()
+                .map_err(|_| std::io::Error::other("CLI fixture server panicked"))??;
+        }
+        Ok(())
+    }
+
+    fn invoke(
+        mut self,
+        arguments: &[&str],
+        keep_stdin_open: bool,
+    ) -> TestResult<(i32, Vec<Value>, String)> {
+        let outcome = invoke(&self.endpoint, arguments, keep_stdin_open);
+        match (outcome, self.finish()) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), Ok(())) => Err(error),
+            (Ok(_), Err(cleanup)) => Err(cleanup.into()),
+            (Err(error), Err(cleanup)) => Err(format!("{error}; server cleanup: {cleanup}").into()),
+        }
+    }
 }
 
 impl Drop for Server {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+        if let Err(error) = self.finish() {
+            if thread::panicking() {
+                #[expect(
+                    clippy::print_stderr,
+                    reason = "An unwinding fixture cannot return server cleanup failure or panic again."
+                )]
+                {
+                    eprintln!("CLI fixture server cleanup unconfirmed: {error}");
+                }
+            } else {
+                #[expect(
+                    clippy::panic,
+                    reason = "A test must fail when its owned server fails cleanup; invoke finishes normal paths explicitly."
+                )]
+                {
+                    panic!("CLI fixture server cleanup unconfirmed: {error}");
+                }
+            }
         }
     }
 }
@@ -169,16 +273,13 @@ fn invoke(
             .stderr(File::create(&stderr)?)
             .spawn()?,
     );
-    let deadline = Instant::now() + Duration::from_secs(8);
-    let status = loop {
-        if let Some(status) = child.0.try_wait()? {
-            break status;
+    let status = match (child.wait_until(Duration::from_secs(8)), child.finish()) {
+        (Ok(status), Ok(())) => status,
+        (Err(error), Ok(())) => return Err(error.into()),
+        (Ok(_), Err(cleanup)) => return Err(cleanup.into()),
+        (Err(error), Err(cleanup)) => {
+            return Err(format!("{error}; child cleanup: {cleanup}").into());
         }
-        assert!(
-            Instant::now() < deadline,
-            "CLI exceeded the independent hard deadline"
-        );
-        thread::sleep(Duration::from_millis(10));
     };
     let output = std::fs::read_to_string(stdout)?;
     let errors = std::fs::read_to_string(stderr)?;
@@ -193,6 +294,57 @@ fn invoke(
         })
         .collect::<TestResult<Vec<_>>>()?;
     Ok((status.code().ok_or("exit code absent")?, records, errors))
+}
+
+#[test]
+fn server_finish_returns_worker_failure() -> TestResult {
+    let mut server = Server {
+        endpoint: "unused".into(),
+        stop: Arc::new(AtomicBool::new(false)),
+        worker: Some(thread::spawn(|| {
+            Err(std::io::Error::other("injected response failure"))
+        })),
+    };
+    let failure = server
+        .finish()
+        .err()
+        .ok_or("worker failure was discarded")?;
+    assert!(failure.to_string().contains("injected response failure"));
+    assert!(server.worker.is_none());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn child_finish_stops_and_reaps_a_running_process() -> TestResult {
+    let mut child = ChildOwner(Command::new("/bin/sleep").arg("30").spawn()?);
+    assert!(child.0.try_wait()?.is_none());
+    child.finish()?;
+    assert!(child.0.try_wait()?.is_some());
+    child.finish()?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn closed_stdout_returns_internal_exit_for_success_and_failure_documents() -> TestResult {
+    use std::os::{fd::OwnedFd, unix::net::UnixStream};
+    for arguments in [["--json", "--help"], ["--json", "not-a-command"]] {
+        let (writer, reader) = UnixStream::pair()?;
+        drop(reader);
+        let mut child = ChildOwner(
+            Command::new(env!("CARGO_BIN_EXE_milkdrift"))
+                .args(arguments)
+                .stdin(Stdio::null())
+                .stdout(Stdio::from(OwnedFd::from(writer)))
+                .stderr(Stdio::null())
+                .spawn()?,
+        );
+        let status = child.wait_until(Duration::from_secs(8))?;
+        child.finish()?;
+        assert_eq!(status.code(), Some(9));
+    }
+    Ok(())
 }
 
 #[test]
@@ -246,8 +398,7 @@ fn wait_has_typed_terminal_results_and_bounded_polling() -> TestResult {
             response(run_state(None)),
             response(run_state(Some(terminal))),
         ])?;
-        let (actual, records, stderr) = invoke(
-            &server.endpoint,
+        let (actual, records, stderr) = server.invoke(
             &[
                 "--timeout-secs",
                 "3",
@@ -267,8 +418,7 @@ fn wait_has_typed_terminal_results_and_bounded_polling() -> TestResult {
         assert_eq!(records[0]["command_id"], "command-fixture");
     }
     let server = Server::new(vec![negotiation(), response(run_state(None))])?;
-    let (exit, records, _) = invoke(
-        &server.endpoint,
+    let (exit, records, _) = server.invoke(
         &[
             "--timeout-secs",
             "3",
@@ -288,11 +438,8 @@ fn wait_has_typed_terminal_results_and_bounded_polling() -> TestResult {
 #[test]
 fn deadline_includes_negotiation_and_blocked_document_input() -> TestResult {
     let server = Server::new(vec![])?;
-    let (exit, records, _) = invoke(
-        &server.endpoint,
-        &["--timeout-secs", "1", "run", "show", "run-one"],
-        false,
-    )?;
+    let (exit, records, _) =
+        server.invoke(&["--timeout-secs", "1", "run", "show", "run-one"], false)?;
     assert_eq!(exit, 10);
     assert_eq!(records[0]["error"]["code"], "timeout");
     let root = tempfile::tempdir()?;
@@ -326,8 +473,7 @@ fn authorization_loss_ends_json_lines_with_one_redacted_final_record() -> TestRe
         response(json!([])),
         http(403, refusal.to_string()),
     ])?;
-    let (exit, records, stderr) = invoke(
-        &server.endpoint,
+    let (exit, records, stderr) = server.invoke(
         &["--timeout-secs", "3", "capability", "list", "--follow"],
         false,
     )?;
@@ -343,8 +489,7 @@ fn authorization_loss_ends_json_lines_with_one_redacted_final_record() -> TestRe
 #[test]
 fn lost_stream_and_malformed_protocol_are_finite() -> TestResult {
     let server = Server::new(vec![negotiation(),response(json!([])),"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()])?;
-    let (exit, records, _) = invoke(
-        &server.endpoint,
+    let (exit, records, _) = server.invoke(
         &[
             "--timeout-secs",
             "3",
@@ -362,7 +507,7 @@ fn lost_stream_and_malformed_protocol_are_finite() -> TestResult {
         negotiation(),
         http(200, "not-json-secret-fixture".to_owned()),
     ])?;
-    let (exit, records, _) = invoke(&server.endpoint, &["run", "show", "run-one"], false)?;
+    let (exit, records, _) = server.invoke(&["run", "show", "run-one"], false)?;
     assert_eq!(exit, 9);
     assert!(!records[0].to_string().contains("not-json-secret-fixture"));
     Ok(())
@@ -389,8 +534,7 @@ fn artifact_download_verifies_ranges_digest_and_preserves_existing_files() -> Te
             response(metadata.clone()),
             range_response,
         ])?;
-        let (exit, _, _) = invoke(
-            &server.endpoint,
+        let (exit, _, _) = server.invoke(
             &[
                 "artifact",
                 "get",
@@ -418,8 +562,7 @@ fn artifact_download_verifies_ranges_digest_and_preserves_existing_files() -> Te
     }
     std::fs::write(&path, "keep")?;
     let server = Server::new(vec![negotiation(), response(metadata)])?;
-    let (exit, _, _) = invoke(
-        &server.endpoint,
+    let (exit, _, _) = server.invoke(
         &[
             "artifact",
             "get",
@@ -449,8 +592,7 @@ fn result_download_reports_one_final_outcome_after_verification() -> TestResult 
                 "HTTP/1.1 206 Partial Content\r\nContent-Type: text/plain\r\nContent-Range: bytes 0-4/5\r\nContent-Length: 5\r\nConnection: close\r\n\r\n{body}"
             ),
         ])?;
-        let (exit, records, _) = invoke(
-            &server.endpoint,
+        let (exit, records, _) = server.invoke(
             &[
                 "run",
                 "result",
@@ -522,8 +664,7 @@ fn stream_duplicates_and_expired_cursors_use_a_fresh_authorized_view() -> TestRe
         response(fresh),
         sse(next),
     ])?;
-    let (exit, records, _) = invoke(
-        &server.endpoint,
+    let (exit, records, _) = server.invoke(
         &[
             "--timeout-secs",
             "5",
@@ -574,7 +715,7 @@ fn cli_refuses_mismatched_negotiation_success_and_error_versions() -> TestResult
             vec![negotiation(), http(403, json!({"protocol": protocol, "request_id":null, "code":"unauthorized", "message":"unsupported-error-fixture", "retryable":false, "details":{}}).to_string())],
         ] {
             let server = Server::new(replies)?;
-            let (exit, records, stderr) = invoke(&server.endpoint, &["run", "show", "run-one"], false)?;
+            let (exit, records, stderr) = server.invoke(&["run", "show", "run-one"], false)?;
             assert_eq!(exit, 9);
             assert!(stderr.is_empty());
             assert_eq!(records.len(), 1);
@@ -677,8 +818,7 @@ fn prepared_direct_requests_preserve_the_servers_exact_document() -> TestResult 
         let inputs = directory.path().join("inputs.json");
         let output = directory.path().join("request.json");
         std::fs::write(&inputs, b"[]")?;
-        let (exit, records, errors) = invoke(
-            &server.endpoint,
+        let (exit, records, errors) = server.invoke(
             &[
                 "invocation",
                 "prepare",
