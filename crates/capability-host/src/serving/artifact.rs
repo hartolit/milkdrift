@@ -239,30 +239,42 @@ impl CorePeerArtifactStore {
     }
 
     fn reap_expired(&self, now: u64) -> Result<(), PeerArtifactError> {
-        let publications = {
-            let mut transfers = self
-                .transfers
-                .lock()
-                .map_err(|_| PeerArtifactError::Unavailable)?;
-            let expired = transfers
-                .iter()
-                .filter(|(_, state)| now > state.offer.expires_at_unix_ms)
-                .map(|(transfer, _)| transfer.clone())
-                .collect::<Vec<_>>();
-            expired
-                .into_iter()
-                .filter_map(|transfer| {
-                    transfers
-                        .remove(&transfer)
-                        .and_then(|state| state.publication)
-                })
-                .collect::<Vec<_>>()
+        let mut transfers = self
+            .transfers
+            .lock()
+            .map_err(|_| PeerArtifactError::Unavailable)?;
+        let expired = transfers
+            .iter()
+            .filter(|(_, state)| now > state.offer.expires_at_unix_ms)
+            .map(|(transfer, _)| transfer.clone())
+            .collect::<Vec<_>>();
+        for transfer in expired {
+            self.abort_transfer(&mut transfers, &transfer)?;
+        }
+        Ok(())
+    }
+
+    fn abort_transfer(
+        &self,
+        transfers: &mut BTreeMap<(PeerId, TransferId), TransferState>,
+        key: &(PeerId, TransferId),
+    ) -> Result<(), PeerArtifactError> {
+        let Some(state) = transfers.get(key) else {
+            return Ok(());
         };
-        for publication in publications {
+        if state.caller != key.0 {
+            return Err(PeerArtifactError::Rejected(
+                "artifact transfer owner mismatch".to_owned(),
+            ));
+        }
+        // Serialize core cleanup with negotiation and writes for this transfer, just as those
+        // paths serialize their core commits. A failure retains the bounded entry for retry.
+        if let Some(publication) = &state.publication {
             self.core
-                .abort_publication(&publication)
+                .abort_publication(publication)
                 .map_err(map_persistence)?;
         }
+        transfers.remove(key);
         Ok(())
     }
 }
@@ -535,13 +547,7 @@ impl PeerArtifactStore for CorePeerArtifactStore {
             ));
         }
         if self.now()? > state.offer.expires_at_unix_ms {
-            let expired = transfers.remove(&(caller.clone(), chunk.transfer.clone()));
-            drop(transfers);
-            if let Some(publication) = expired.and_then(|state| state.publication) {
-                self.core
-                    .abort_publication(&publication)
-                    .map_err(map_persistence)?;
-            }
+            self.abort_transfer(&mut transfers, &(caller.clone(), chunk.transfer.clone()))?;
             return Err(PeerArtifactError::Rejected(
                 "artifact transfer authority expired".to_owned(),
             ));
@@ -657,26 +663,7 @@ impl PeerArtifactStore for CorePeerArtifactStore {
             .transfers
             .lock()
             .map_err(|_| PeerArtifactError::Unavailable)?;
-        let Some(state) = transfers.get(&(caller.clone(), transfer.clone())) else {
-            return Ok(());
-        };
-        if state.caller != *caller {
-            return Err(PeerArtifactError::Rejected(
-                "artifact transfer owner mismatch".to_owned(),
-            ));
-        }
-        let state = transfers
-            .remove(&(caller.clone(), transfer.clone()))
-            .ok_or_else(|| {
-                PeerArtifactError::Conflict("artifact transfer disappeared during abort".to_owned())
-            })?;
-        drop(transfers);
-        if let Some(publication) = state.publication {
-            self.core
-                .abort_publication(&publication)
-                .map_err(map_persistence)?;
-        }
-        Ok(())
+        self.abort_transfer(&mut transfers, &(caller.clone(), transfer.clone()))
     }
 }
 
