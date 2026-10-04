@@ -1,23 +1,88 @@
 //! Own a real daemon process for independent HTTP and CLI clients.
 use super::{inputs::ModelFixture, support::*};
-use std::{path::Path, process::Child};
+use std::{io, path::Path, process::Child, time::Instant};
 
 pub(super) struct ChildOwner(pub(super) Option<Child>);
+impl ChildOwner {
+    pub(super) fn finish(&mut self) -> io::Result<()> {
+        let Some(child) = self.0.as_mut() else {
+            return Ok(());
+        };
+        if child.try_wait()?.is_some() {
+            self.0 = None;
+            return Ok(());
+        }
+        // Always attempt to reap, including when kill reports an error racing with exit.
+        let killed = child.kill();
+        let started = Instant::now();
+        loop {
+            if child.try_wait()?.is_some() {
+                self.0 = None;
+                return Ok(());
+            }
+            if started.elapsed() >= Duration::from_secs(5) {
+                return Err(io::Error::other(format!(
+                    "fixture child exit unconfirmed; kill: {killed:?}"
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
 impl Drop for ChildOwner {
     fn drop(&mut self) {
-        if let Some(child) = &mut self.0 {
-            let _ = child.kill();
-            let _ = child.wait();
+        if let Err(error) = self.finish() {
+            if std::thread::panicking() {
+                #[expect(
+                    clippy::print_stderr,
+                    reason = "Report unconfirmed fixture cleanup without a second panic during test unwinding."
+                )]
+                {
+                    eprintln!("fixture child cleanup: {error}");
+                }
+            } else {
+                #[expect(
+                    clippy::panic,
+                    reason = "A fixture destructor must fail the test if ordinary cleanup did not prove the child exited; unwinding uses diagnostics instead."
+                )]
+                {
+                    panic!("fixture child cleanup: {error}");
+                }
+            }
         }
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn child_cleanup_reaps_a_running_child_and_can_be_repeated() -> TestResult {
+    let mut owner = ChildOwner(Some(
+        std::process::Command::new("/bin/sleep").arg("60").spawn()?,
+    ));
+    assert!(
+        owner
+            .0
+            .as_mut()
+            .ok_or("child absent")?
+            .try_wait()?
+            .is_none()
+    );
+    owner.finish()?;
+    assert!(owner.0.is_none());
+    owner.finish()?;
+    Ok(())
+}
+
 pub(super) struct BinaryDaemon {
-    _child: ChildOwner,
+    child: ChildOwner,
     pub(super) endpoint: Url,
     pub(super) client: ControlClient,
 }
 impl BinaryDaemon {
+    pub(super) fn stop(mut self) -> TestResult {
+        self.child.finish()?;
+        Ok(())
+    }
     pub(super) async fn configured(
         directory: &TempDir,
         model: &ModelFixture,
@@ -52,7 +117,7 @@ impl BinaryDaemon {
             }
             if client.readiness().await.is_ok() {
                 return Ok(Self {
-                    _child: owner,
+                    child: owner,
                     endpoint,
                     client,
                 });

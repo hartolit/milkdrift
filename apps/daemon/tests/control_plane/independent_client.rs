@@ -216,7 +216,7 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
     assert_eq!(model.requests.lock().map_err(|_| "fixture lock")?.len(), 2);
 
     drop(client);
-    drop(daemon);
+    daemon.stop()?;
     let restarted = BinaryDaemon::start(&config, endpoint.clone(), directory.path()).await?;
     let client = JsonClient::new(endpoint)?;
     let retained: Value = serde_json::from_slice(&fs::read(&file)?)?;
@@ -252,6 +252,6 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
         read
     );
     assert_eq!(model.requests.lock().map_err(|_| "fixture lock")?.len(), 2);
-    drop(restarted);
+    restarted.stop()?;
     Ok(())
 }

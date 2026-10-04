@@ -56,8 +56,9 @@ struct RunningDaemon {
 
 impl RunningDaemon {
     async fn stop(self) -> TestResult {
-        let _ = self.stop.send(());
+        let signal = self.stop.send(());
         tokio::time::timeout(Duration::from_secs(10), self.task).await???;
+        signal.map_err(|()| "daemon shutdown receiver disappeared")?;
         Ok(())
     }
 }
@@ -428,7 +429,10 @@ async fn start_plan(
     let endpoint = Url::parse(&format!("http://{}/", listener.local_addr()?))?;
     let (stop, stopped) = oneshot::channel();
     let task = tokio::spawn(serve(listener, host, async move {
-        let _ = stopped.await;
+        // Sender loss also requests shutdown when a test exits early.
+        if stopped.await.is_err() {
+            tracing::debug!("fixture caller exited; shutting down daemon");
+        }
     }));
     let client = ControlClient::new(
         ClientConfig::new(endpoint),

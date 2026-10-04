@@ -119,11 +119,12 @@ pub(super) fn cli_ok(
 impl RunningDaemon {
     pub(super) async fn stop(self) -> TestResult {
         let Self { stop, task, .. } = self;
-        let _ = stop.send(());
+        let signal = stop.send(());
         // Allow the longest configured ten-second shutdown to settle its durable result.
         tokio::time::timeout(Duration::from_secs(15), task)
             .await
             .map_err(|_| "timed out waiting for the daemon to shut down")???;
+        signal.map_err(|()| "daemon shutdown receiver disappeared")?;
         Ok(())
     }
 }
@@ -135,7 +136,10 @@ pub(super) async fn start(config: DaemonPlan, token: &str) -> TestResult<Running
     let endpoint = Url::parse(&format!("http://{address}/"))?;
     let (stop, stopped) = oneshot::channel();
     let task = tokio::spawn(serve(listener, host, async move {
-        let _ = stopped.await;
+        // Sender loss also requests shutdown when a test exits early.
+        if stopped.await.is_err() {
+            tracing::debug!("fixture caller exited; shutting down daemon");
+        }
     }));
     let client = client(&endpoint, token)?;
     let mut health = client.readiness().await;

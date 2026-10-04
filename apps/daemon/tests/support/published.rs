@@ -9,7 +9,7 @@ use milkdrift_capability::{
 };
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-pub fn definition() -> TestResult<(BlueprintRevision, BlueprintRevision)> {
+pub(crate) fn definition() -> TestResult<(BlueprintRevision, BlueprintRevision)> {
     let schema = SchemaRef::new(SchemaId::new("milkdrift.artifact-reference")?, 1)?;
     let requirement = CapabilityRequirement::new(OperationId::new("process.execute")?)
         .exact(CapabilityId::new("golden-local-process")?)

@@ -47,25 +47,36 @@ async fn cli(
                 .spawn()
                 .map_err(|error| error.to_string())?,
         ));
-        for _ in 0..(seconds + 5) * 20 {
-            if child
-                .0
-                .as_mut()
-                .ok_or("child absent")?
-                .try_wait()
-                .map_err(|error| error.to_string())?
-                .is_some()
-            {
-                return child
+        let outcome = (|| {
+            let deadline = Duration::from_secs(seconds)
+                .checked_add(Duration::from_secs(5))
+                .ok_or("CLI watchdog duration overflow")?;
+            let started = std::time::Instant::now();
+            while started.elapsed() < deadline {
+                if child
                     .0
-                    .take()
+                    .as_mut()
                     .ok_or("child absent")?
-                    .wait_with_output()
-                    .map_err(|error| error.to_string());
+                    .try_wait()
+                    .map_err(|error| error.to_string())?
+                    .is_some()
+                {
+                    return child
+                        .0
+                        .take()
+                        .ok_or("child absent")?
+                        .wait_with_output()
+                        .map_err(|error| error.to_string());
+                }
+                std::thread::sleep(Duration::from_millis(50));
             }
-            std::thread::sleep(Duration::from_millis(50));
+            Err("CLI watchdog expired".into())
+        })();
+        let cleanup = child.finish();
+        match (outcome, cleanup) {
+            (outcome, Ok(())) => outcome,
+            (outcome, Err(cleanup)) => Err(format!("CLI outcome: {outcome:?}; cleanup: {cleanup}")),
         }
-        Err("CLI watchdog expired".into())
     })
     .await?;
     result.map_err(Into::into)
@@ -164,7 +175,7 @@ async fn actual_cli_retains_inputs_and_reconnects_after_client_and_daemon_exit()
             assert!(!body.to_string().contains("CHANGED AFTER PREPARATION"));
         }
     }
-    drop(daemon);
+    daemon.stop()?;
     let restarted = BinaryDaemon::start(&path, endpoint, directory.path()).await?;
     assert_eq!(
         success(
@@ -192,6 +203,7 @@ async fn actual_cli_retains_inputs_and_reconnects_after_client_and_daemon_exit()
     .await?;
     assert_eq!(conflict.status.code(), Some(4));
     assert_eq!(model.requests.lock().map_err(|_| "fixture lock")?.len(), 2);
+    restarted.stop()?;
     Ok(())
 }
 
@@ -206,6 +218,14 @@ impl Drop for LostReplyProxy {
     }
 }
 impl LostReplyProxy {
+    async fn stop(mut self) -> TestResult {
+        self.task.abort();
+        match tokio::time::timeout(Duration::from_secs(5), &mut self.task).await? {
+            Err(error) if error.is_cancelled() => Ok(()),
+            Err(error) => Err(error.into()),
+            Ok(result) => Ok(result?),
+        }
+    }
     async fn start(endpoint: Url) -> TestResult<Self> {
         use std::sync::atomic::{AtomicBool, Ordering};
         let accepted = Arc::new(AtomicBool::new(false));
@@ -365,5 +385,7 @@ async fn actual_cli_lost_start_reply_and_wait_deadline_recover_without_reexecuti
     )?;
     assert_eq!(replay["replayed"], true);
     assert_eq!(model.requests.lock().map_err(|_| "fixture lock")?.len(), 2);
+    proxy.stop().await?;
+    daemon.stop()?;
     Ok(())
 }
