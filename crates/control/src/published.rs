@@ -91,6 +91,11 @@ impl PublishedWorkflowService {
     }
 
     /// Validate and publish an immutable method, then advertise its invocable implementation.
+    ///
+    /// # Errors
+    /// Rejects invalid methods, denied current authority, stale versions, conflicting replay, or host
+    /// registration failures; storage and clock errors propagate. A post-commit error does not undo
+    /// durable publication, so retry with the same canonical request.
     pub fn publish(
         self: &Arc<Self>,
         method: PublishedMethod,
@@ -165,6 +170,10 @@ impl PublishedWorkflowService {
     }
 
     /// Close new selection while retaining exact accepted invocations and immutable definitions.
+    ///
+    /// # Errors
+    /// Returns authority, version/replay, storage, clock, or host-drain errors. Retirement may already
+    /// be durable when later cleanup fails; preserve the exact request for retry.
     pub fn retire(
         &self,
         capability: &milkdrift_capability::CapabilityId,
@@ -193,6 +202,10 @@ impl PublishedWorkflowService {
     }
 
     /// Restore invocable generations and exact pending calls before reopening admission.
+    ///
+    /// # Errors
+    /// Returns storage, definition-validation, registration, or pending-call retention failures.
+    /// Admission must stay closed until all required generations and calls have been restored.
     pub fn restore(self: &Arc<Self>) -> Result<(), ExecutorError> {
         let host = &self.host;
         let mut after = None;

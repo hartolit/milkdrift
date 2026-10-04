@@ -12,6 +12,10 @@ impl PublishedWorkflowService {
     /// Inspect the bounded registry and hot serving queue, not lifetime publication history.
     /// Durable retirement closes new serving acceptance before the queue check; the registry's
     /// final check also preserves entry permits and pending workflow pins during concurrent work.
+    ///
+    /// # Errors
+    /// Returns clock, storage, or host-drain failures. Generations with serving obligations or live
+    /// permits remain retained; a failed call does not prove that a generation was removed.
     pub fn maintain_retirement(&self) -> Result<(), ExecutorError> {
         let now = self.clock.now().map_err(failure)?.get();
         for generation in self

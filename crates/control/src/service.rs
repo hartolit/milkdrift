@@ -66,6 +66,11 @@ impl ControlService {
 
     /// Checks trusted actor context and exact guards before reads or mutations.
     /// Proposal claims grant no authority; storing a revision does not apply its live plan.
+    ///
+    /// # Errors
+    /// Rejects denied authority, stale guards, conflicting replay, unavailable revisions/runs, invalid
+    /// proposal state, or exceeded bounds. Storage and runtime failures propagate; an error after a
+    /// durable transition requires exact replay, not a new command identity.
     pub fn execute(
         &self,
         document: &ControlCommandDocument,
@@ -540,7 +545,10 @@ impl ControlService {
         })
     }
 
-    #[allow(clippy::too_many_arguments)] // Acceptance binds the guarded proposal and proposed revision to one run, reconciliation decision, and authority outcome.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Acceptance binds the guarded proposal and proposed revision to one run, reconciliation decision, and authority outcome."
+    )]
     fn decide_proposal(
         &self,
         document: &ControlCommandDocument,
@@ -739,7 +747,10 @@ impl ControlService {
         ensure_accepted(&execution)
     }
 
-    #[allow(clippy::too_many_arguments)] // Translation preserves the control identity, expected run sequence, phase, and reason/evidence in one runtime command.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Translation preserves the control identity, expected run sequence, phase, and reason/evidence in one runtime command."
+    )]
     fn runtime_command(
         &self,
         document: &ControlCommandDocument,

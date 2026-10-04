@@ -138,6 +138,10 @@ fn digest(value: &str) -> bool {
 }
 impl LearningDeclaration {
     /// Validate finite bounds, exact identities, and independent writable state.
+    ///
+    /// # Errors
+    /// Rejects unsupported versions, invalid digests or finite bounds, duplicate/unsafe check names,
+    /// repeated input identities or content, and evaluation slots sharing invocation or writable state.
     pub fn validate(&self) -> Result<(), ControlError> {
         if self.schema_version != LEARNING_SCHEMA_VERSION
             || ![&self.agreement, &self.policy, &self.verifier]
@@ -207,6 +211,10 @@ impl LearningDeclaration {
     }
 
     /// Canonical commitment retained before the model sees any source evidence.
+    ///
+    /// # Errors
+    /// Returns declaration validation or canonical serialization errors; invalid declarations have
+    /// no commitment.
     pub fn digest(&self) -> Result<String, ControlError> {
         self.validate()?;
         let bytes = serde_json::to_vec(&serde_json::to_value(self)?)?;
@@ -412,6 +420,11 @@ fn measure(
 /// authorized journal reads; deserializing an uploaded `MethodEvaluation` does not authenticate it.
 /// An unaccepted reserved invocation is `None`, which preserves missing work as inconclusive.
 /// No result can promote a method or edit the declaration, verifier, account or earlier run.
+///
+/// # Errors
+/// Rejects invalid declarations, incomplete pair lists, a candidate equal to the baseline,
+/// reused runs, and observations inconsistent with the declared identities or independent state.
+/// Missing or incomplete evidence instead yields an inconclusive comparison.
 pub fn compare_methods(
     declaration: &LearningDeclaration,
     candidate: &RevisionId,

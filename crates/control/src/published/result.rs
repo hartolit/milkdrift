@@ -50,7 +50,7 @@ impl PublishedWorkflowService {
             .ok_or_else(|| rejected("public result requires internal terminal evidence"))?;
         let create =
             RunCommandDocument::from_json(plan.create_command.as_bytes()).map_err(failure)?;
-        let service = self.service_command_request(plan, &create)?;
+        let service = Self::service_command_request(plan, &create)?;
         let mut results = Vec::new();
         for (index, (name, output)) in method.outputs.iter().enumerate() {
             let reference = terminal

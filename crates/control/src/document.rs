@@ -193,7 +193,14 @@ struct ProposalDigestInput<'a> {
 
 impl WorkflowProposal {
     /// Constructs a bounded proposal and derives its deterministic digest.
-    #[allow(clippy::too_many_arguments)] // A proposal binds its exact base and mutation to proposer provenance, evidence, and application policy.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "A proposal binds its exact base and mutation to proposer provenance, evidence, and application policy."
+    )]
+    ///
+    /// # Errors
+    /// Rejects mismatched run/sequence facts, run actions without a run, unbounded or empty rationale,
+    /// invalid notes/reference lists, repeated evidence identities, and canonical digest failures.
     pub fn new(
         identity: ProposalId,
         proposer: ActorRef,
@@ -474,6 +481,10 @@ impl WorkflowProposalDocument {
     }
 
     /// Encodes deterministic compact key-sorted JSON.
+    ///
+    /// # Errors
+    /// Returns canonical encoding or structural-bound errors and rejects output above the document
+    /// byte ceiling.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, ControlError> {
         let bytes = canonical_json_bytes(self, PROPOSAL_JSON_LIMITS).map_err(map_canonical)?;
         if bytes.len() > MAX_PROPOSAL_DOCUMENT_BYTES {
@@ -488,6 +499,10 @@ impl WorkflowProposalDocument {
     /// Performs lexical preflight, duplicate-safe decode, version validation, and digest checks.
     /// A strict `draft` authoring form supplies ordered mutations; this owner derives canonical
     /// identities before the same authority/classification path. Canonical output always uses `proposal`.
+    ///
+    /// # Errors
+    /// Rejects oversized, malformed, duplicate-field, unsupported-version, or unknown-field input;
+    /// invalid proposal facts, draft mutations, and mismatched canonical digests also fail.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ControlError> {
         if bytes.len() > MAX_PROPOSAL_DOCUMENT_BYTES {
             return Err(ControlError::Bounds {
@@ -531,6 +546,10 @@ impl WorkflowProposalDocument {
     /// Reads only the strict structured result from a model response.
     ///
     /// Returned prose and tool calls remain ordinary model data and are never executed.
+    ///
+    /// # Errors
+    /// Rejects absent or malformed structured output, extra fields, and a missing proposal JSON string;
+    /// the embedded document must also pass the normal bounded proposal reader.
     pub fn from_model_response(response: &ModelResponse) -> Result<Self, ControlError> {
         let structured = response.structured().ok_or_else(|| {
             ControlError::InvalidContract(
@@ -578,6 +597,10 @@ impl<'de> Deserialize<'de> for WorkflowProposalDocument {
 }
 
 /// Builds the strict model structured-output declaration used for proposal generation tasks.
+///
+/// # Errors
+/// Returns bounded-JSON or structured-output contract errors if the built-in proposal schema
+/// cannot be represented. The declaration does not validate a model's response.
 pub fn workflow_proposal_structured_output() -> Result<StructuredOutput, ControlError> {
     Ok(StructuredOutput::new(
         "milkdrift_workflow_proposal_v1",

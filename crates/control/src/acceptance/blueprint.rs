@@ -17,6 +17,10 @@ use crate::{
 /// Connect `in`/`out` control edges, the upstream `result` artifact, and the contract's named
 /// evidence inputs. Inputs are optional so missing output becomes a recorded rejection. Route
 /// an ordinary branch using `accepted_result`; the task's own success means evaluation finished.
+///
+/// # Errors
+/// Returns contract serialization or blueprint validation errors while binding the task's
+/// named evidence inputs, artifact ports, and exact control capability.
 pub fn result_acceptance_task(
     identity: NodeId,
     contract: ResultAcceptanceContract,
@@ -66,6 +70,10 @@ pub fn result_acceptance_task(
 /// Builds the ordinary `pass`/`fail` branch following an acceptance task.
 /// Connect `in` from that task and its `accepted_result` data edge. Only `pass` may lead
 /// to dependent work; `fail` must lead to an explicit failure or a separate durable hold.
+///
+/// # Errors
+/// Returns blueprint validation errors for the acceptance output binding and pass/fail ports.
+/// The caller must still connect both control paths to the surrounding workflow.
 pub fn result_acceptance_gate(
     identity: NodeId,
     acceptance: NodeId,

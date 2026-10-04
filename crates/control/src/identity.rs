@@ -14,7 +14,10 @@ fn validate_identity(value: &str, kind: &'static str) -> Result<(), ControlError
         });
     }
     if !value.is_ascii()
-        || !value.as_bytes()[0].is_ascii_alphanumeric()
+        || !value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
         || !value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
         })
@@ -38,6 +41,10 @@ macro_rules! identity_type {
 
         impl $name {
             /// Constructs a bounded safe identity.
+            ///
+            /// # Errors
+            /// Rejects empty or over-128-byte text, non-ASCII or unsafe characters, and an initial
+            /// character that is not alphanumeric.
             pub fn new(value: impl Into<String>) -> Result<Self, ControlError> {
                 let value = value.into();
                 validate_identity(&value, stringify!($name))?;

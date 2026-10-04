@@ -215,6 +215,10 @@ impl GrantTemplate {
     }
 
     /// Publishes the template as a normal immutable authority grant.
+    ///
+    /// # Errors
+    /// Returns authority validation errors for the chosen grant revision, operations, resource scopes,
+    /// budget, validity interval, or revocation facts. The template itself grants no authority.
     pub fn build(self) -> Result<AuthorityGrant, ControlError> {
         let resources = match self.resources {
             Some(resources) => resources,

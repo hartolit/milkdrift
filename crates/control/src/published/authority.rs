@@ -92,7 +92,6 @@ impl PublishedWorkflowService {
     }
 
     pub(super) fn service_command_request(
-        &self,
         plan: &PublishedInvocationPlan,
         command: &RunCommandDocument,
     ) -> Result<AuthorityRequest, ExecutorError> {
@@ -125,7 +124,7 @@ impl PublishedWorkflowService {
                 .map_err(failure)?
                 .is_none()
             {
-                self.current_decision(self.service_command_request(plan, &command)?)?;
+                self.current_decision(Self::service_command_request(plan, &command)?)?;
             }
         }
         Ok(())

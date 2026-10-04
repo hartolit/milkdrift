@@ -41,12 +41,20 @@ pub const MAX_CONTROL_RESULT_BYTES: u64 = 1_310_720;
 pub trait ControlArtifactAccess: Send + Sync {
     /// Reads an exact artifact after authorizing its content under the invocation's frozen
     /// actor basis and fresh entry time. Errors must not disclose artifact facts.
+    ///
+    /// # Errors
+    /// Rejects unauthorized, missing, mismatched, or over-budget input artifacts and returns storage
+    /// read failures. Implementations must redact errors that would disclose protected artifacts.
     fn read(
         &self,
         invocation: &AdapterInvocation<'_>,
         input: &milkdrift_capability::InputReference,
     ) -> Result<(ArtifactReference, Vec<u8>), ControlError>;
     /// Publishes exact canonical result bytes and returns their immutable reference.
+    ///
+    /// # Errors
+    /// Returns output-bound, authority, or publication errors. Return a reference only after the
+    /// exact output is committed; failed cleanup must remain visible to the caller.
     fn publish(
         &self,
         invocation: &AdapterInvocation<'_>,
@@ -279,6 +287,10 @@ impl CapabilityAdapter for WorkflowControlAdapter {
 }
 
 /// Builds the immutable descriptor for the in-process workflow-control adapter.
+///
+/// # Errors
+/// Returns identity, schema, operation-contract, or descriptor validation errors if the built-in
+/// control capability cannot be represented by the shared capability contracts.
 pub fn workflow_control_descriptor() -> Result<CapabilityDescriptor, ControlError> {
     let input_schema = SchemaContract::new(
         SchemaId::new("workflow.control_request")?,

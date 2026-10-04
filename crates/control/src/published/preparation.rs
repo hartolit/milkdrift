@@ -45,6 +45,10 @@ pub struct PublicationDraft {
 impl PublishedWorkflowService {
     /// Prepare the ordinary publication document without publishing or granting authority.
     /// The application must authorize access to the revision and method administration first.
+    ///
+    /// # Errors
+    /// Rejects a service grant outside the configured relationship, an absent or ungoverned revision,
+    /// and invalid method contracts or bounds. Storage reads and host validation failures propagate.
     pub fn prepare_publication(
         &self,
         draft: PublicationDraft,

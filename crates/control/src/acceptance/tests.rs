@@ -13,16 +13,28 @@ fn acceptance_contract_fixture_roundtrips_and_refuses_extra_fields() -> TestResu
     let contract: ResultAcceptanceContract = serde_json::from_slice(bytes)?;
     assert_eq!(serde_json::to_vec(&contract)?, bytes.trim_ascii());
     let mut value = serde_json::to_value(contract)?;
-    value["thinking_disabled"] = true.into();
+    value
+        .as_object_mut()
+        .ok_or("acceptance fixture must be an object")?
+        .insert("thinking_disabled".to_owned(), true.into());
     assert!(serde_json::from_value::<ResultAcceptanceContract>(value).is_err());
     let bytes = include_bytes!("../../tests/fixtures/acceptance-rejected-v1.json");
     let report: super::ResultAcceptance = serde_json::from_slice(bytes)?;
     assert_eq!(serde_json::to_vec(&report)?, bytes.trim_ascii());
     let mut value = serde_json::to_value(report)?;
-    value["schema_version"] = 2.into();
+    value
+        .as_object_mut()
+        .ok_or("acceptance fixture must be an object")?
+        .insert("schema_version".to_owned(), 2.into());
     assert!(serde_json::from_value::<super::ResultAcceptance>(value.clone()).is_err());
-    value["schema_version"] = 1.into();
-    value["accepted"] = true.into();
+    value
+        .as_object_mut()
+        .ok_or("acceptance fixture must be an object")?
+        .insert("schema_version".to_owned(), 1.into());
+    value
+        .as_object_mut()
+        .ok_or("acceptance fixture must be an object")?
+        .insert("accepted".to_owned(), true.into());
     assert!(serde_json::from_value::<super::ResultAcceptance>(value).is_err());
     Ok(())
 }
@@ -272,7 +284,10 @@ fn acceptance_contract_refuses_unknown_versions_and_unbounded_requirements() -> 
     );
     let contract = ResultAcceptanceContract::new(ResultRequirement::ModelProse, BTreeSet::new())?;
     let mut value = serde_json::to_value(&contract)?;
-    value["schema_version"] = 2.into();
+    value
+        .as_object_mut()
+        .ok_or("acceptance fixture must be an object")?
+        .insert("schema_version".to_owned(), 2.into());
     assert!(serde_json::from_value::<ResultAcceptanceContract>(value).is_err());
     assert_eq!(
         contract.evaluate(b"not JSON", &[]).reason,

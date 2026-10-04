@@ -75,6 +75,10 @@ impl ControllerLifecycleOwner {
     }
 
     /// Derives current progress from the durable account plus lifecycle-owned projection facts.
+    ///
+    /// # Errors
+    /// Rejects missing execution/assessment anchors, overflowing counters, malformed prior progress,
+    /// missing body revisions, and an overlarge body graph; account and storage errors propagate.
     pub fn progress(
         &self,
         document: &ControllerPolicyDocument,
@@ -146,6 +150,10 @@ impl ControllerLifecycleOwner {
     }
 
     /// Builds the bounded controller read model for one exact logical occurrence.
+    ///
+    /// # Errors
+    /// Rejects missing controller execution or policy bindings and invalid retained progress;
+    /// propagates revision reads, account accounting, and body-graph validation failures.
     pub fn status(
         &self,
         run: &milkdrift_workspace::RunId,
@@ -252,6 +260,10 @@ impl ControllerLifecycleOwner {
     }
 
     /// Assesses exact decoded proposal size before the candidate revision is persisted.
+    ///
+    /// # Errors
+    /// Rejects a mismatched run, ambiguous active controllers, missing policy/history, exceeded
+    /// cumulative limits, or a required human checkpoint. Storage and accounting failures propagate.
     pub fn assess_proposal(
         &self,
         run: &milkdrift_workspace::RunId,
@@ -336,6 +348,10 @@ impl ControllerLifecycleOwner {
     /// controller-authored prospective revision. The proposal's immutable revision
     /// reason binds its proposer, so no model-supplied counter or authority claim is
     /// consumed here.
+    ///
+    /// # Errors
+    /// Rejects a boundary other than approval/application, ambiguous controller ownership, missing
+    /// policy/history, a pending checkpoint, or exhausted limits; storage/accounting errors propagate.
     pub fn assess_proposal_transition(
         &self,
         run: &milkdrift_workspace::RunId,
@@ -396,7 +412,7 @@ impl ControllerLifecycleOwner {
                 ControlError::InvalidContract("controller policy disappeared".to_owned())
             })?;
         let progress = self.progress(&document, projection, execution, account, observed_at_ms)?;
-        match self.outcome(&document, &progress, boundary, run, execution)? {
+        match Self::outcome(&document, &progress, boundary, run, execution)? {
             ControllerAssessmentOutcome::Continue => Ok(()),
             ControllerAssessmentOutcome::HumanCheckpoint { .. } => {
                 Err(ControlError::ProposalState(
@@ -433,7 +449,6 @@ impl ControllerLifecycleOwner {
                 .ok_or(ControlError::BaseRevisionNotFound)?;
             for node in revision.semantic().nodes().values() {
                 match node.kind() {
-                    NodeKind::Task { .. } => {}
                     NodeKind::Repeat { config } => {
                         let next = repeats.checked_add(1).ok_or_else(|| {
                             ControlError::InvalidContract(
@@ -452,7 +467,8 @@ impl ControllerLifecycleOwner {
                         child_depth = child_depth.max(next);
                         pending.push_back((reference.revision().clone(), repeats, next));
                     }
-                    NodeKind::Reducer { .. }
+                    NodeKind::Task { .. }
+                    | NodeKind::Reducer { .. }
                     | NodeKind::Branch { .. }
                     | NodeKind::Fork { .. }
                     | NodeKind::Join { .. }
@@ -466,7 +482,6 @@ impl ControllerLifecycleOwner {
     }
 
     fn outcome(
-        &self,
         document: &ControllerPolicyDocument,
         progress: &ControllerProgress,
         boundary: ControllerAssessmentBoundary,
@@ -554,15 +569,14 @@ impl ControllerLifecycle for ControllerLifecycleOwner {
         if context.boundary == ControllerAssessmentBoundary::CheckpointContinuation {
             progress.checkpoint_approved_invocations = progress.invocations;
         }
-        let outcome = self
-            .outcome(
-                &document,
-                &progress,
-                context.boundary,
-                context.run,
-                context.execution,
-            )
-            .map_err(|error| RuntimeError::InvalidHistory(error.to_string()))?;
+        let outcome = Self::outcome(
+            &document,
+            &progress,
+            context.boundary,
+            context.run,
+            context.execution,
+        )
+        .map_err(|error| RuntimeError::InvalidHistory(error.to_string()))?;
         let assessment_id = stable_controller_assessment_identity(
             document.digest().as_str(),
             context.run.as_str(),

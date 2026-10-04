@@ -101,7 +101,14 @@ pub struct ControllerLimits {
 
 impl ControllerLimits {
     /// Constructs nonzero hard limits for every controller dimension.
-    #[allow(clippy::too_many_arguments)] // Independent cumulative ceilings and checkpoint cadence must all be explicit when validating a controller budget.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Independent cumulative ceilings and checkpoint cadence must all be explicit when validating a controller budget."
+    )]
+    ///
+    /// # Errors
+    /// Rejects zero structural/usage ceilings or checkpoint intervals, 10,000 or more invocations,
+    /// and checkpoint intervals above the invocation ceiling. Monetary cost may be zero.
     pub fn new(
         max_invocations: u32,
         max_revisions: u32,
@@ -702,6 +709,10 @@ impl ControllerPolicyDocument {
     }
 
     /// Parses and validates the one policy bound to an exact containing revision/node.
+    ///
+    /// # Errors
+    /// Rejects malformed, unsupported, or digest-inconsistent policy and mismatched wrapper/repeat
+    /// bindings. An unmarked revision returns `None`.
     pub fn from_revision(
         revision: &BlueprintRevision,
         controller_node: &NodeId,
@@ -747,6 +758,10 @@ impl ControllerPolicyDocument {
     }
 
     /// Reads the exact controller node named by a marked revision and validates the binding.
+    ///
+    /// # Errors
+    /// Rejects malformed policy metadata and any invalid exact wrapper/repeat binding. An unmarked
+    /// revision returns `None`; the named controller node must exist in a marked revision.
     pub fn from_controller_revision(
         revision: &BlueprintRevision,
     ) -> Result<Option<(NodeId, Self)>, ControlError> {
@@ -755,7 +770,7 @@ impl ControllerPolicyDocument {
             return Ok(None);
         };
         let wire: ControllerPolicyDocumentWire = serde_json::from_value(value.value().clone())?;
-        let node = wire.policy.wrapper.node.clone();
+        let node = wire.policy.wrapper.node;
         Self::from_revision(revision, &node).map(|document| document.map(|value| (node, value)))
     }
 
@@ -856,6 +871,10 @@ pub struct ControllerBlueprintSpec {
 /// # let _wrapper = build()?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+///
+/// # Errors
+/// Rejects invalid derived controller identities, inconsistent policy or currency, oversized
+/// metadata, and invalid repeat/blueprint contracts. No runtime controller is activated here.
 pub fn build_controller_blueprint(
     spec: ControllerBlueprintSpec,
 ) -> Result<BlueprintRevision, ControlError> {

@@ -69,7 +69,10 @@ pub struct OptimisticGuard {
 /// Closed application-layer requests shared by human, service, and AI callers.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
-#[allow(clippy::large_enum_variant)] // Closed typed proposal data remains directly auditable.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "The public closed command contract owns one bounded immutable proposal by value; preserve that ownership without imposing indirection on every command."
+)]
 pub enum ControlCommand {
     /// Inspect current bounded operational state.
     InspectRun {
@@ -251,6 +254,10 @@ struct ControlCommandWire {
 
 impl ControlCommandDocument {
     /// Constructs a complete schema-v1 command envelope.
+    ///
+    /// # Errors
+    /// Rejects more than 32 evidence references or repeated evidence identities. Constructing the
+    /// envelope does not authorize any operation.
     pub fn new(
         control_id: ControlId,
         context: ActorAuthorityContext,
@@ -348,6 +355,9 @@ impl ControlCommandDocument {
     }
 
     /// Encodes deterministic canonical JSON.
+    ///
+    /// # Errors
+    /// Returns canonical-encoding errors or refuses a document exceeding structural or byte bounds.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, ControlError> {
         let bytes = canonical_json_bytes(self, CONTROL_JSON_LIMITS).map_err(map_canonical)?;
         if bytes.len() > MAX_CONTROL_DOCUMENT_BYTES {
@@ -360,6 +370,10 @@ impl ControlCommandDocument {
     }
 
     /// Strictly bounds, duplicate-checks, version-checks, and decodes a command.
+    ///
+    /// # Errors
+    /// Rejects malformed or duplicate-field JSON, unknown fields, unsupported versions, excessive
+    /// structure or bytes, invalid identities, and invalid evidence lists.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ControlError> {
         if bytes.len() > MAX_CONTROL_DOCUMENT_BYTES {
             return Err(ControlError::Bounds {

@@ -59,6 +59,10 @@ milkdrift_contracts::deserialize_via!(ResultAcceptanceContract, ContractWire, |w
 
 impl ResultAcceptanceContract {
     /// Constructs a bounded requirement. Evidence input names must be distinct from reserved inputs.
+    ///
+    /// # Errors
+    /// Rejects excessive, unsafe, or reserved evidence names; empty or excessive tool/check sets;
+    /// and decision requirements without declared evidence.
     pub fn new(
         requirement: ResultRequirement,
         evidence_inputs: BTreeSet<String>,
