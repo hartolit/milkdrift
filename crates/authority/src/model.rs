@@ -14,6 +14,6 @@ pub use grant::{AuthorityGrant, AuthorityGrantBuilder};
 pub use resource::{
     AccessMode, ArtifactAuthorityScope, AuthorityBudget, AuthorityOperation, BoundaryTimeMillis,
     CapabilityExecutionRequirements, DaemonAuthorityScope, FilesystemScope, LayoutAuthorityScope,
-    LayoutOwner, NetworkScope, PeerAuthorityScope, ResourceScope, WorkflowRunScope,
+    LayoutOwner, NetworkScope, PeerAuthorityScope, ResourceScope, WorkflowRunScope, WorkflowSet,
     WorkspaceAuthorityScope,
 };

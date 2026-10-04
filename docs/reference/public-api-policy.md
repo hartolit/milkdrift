@@ -42,6 +42,11 @@ package entry point. Consumers otherwise import the canonical owner directly.
 
 ## Surface ownership
 
+`WorkflowRunScope::Workflows` and `WorkflowSet` are durable authority schema contracts consumed
+by daemon configuration and protected run/revision reads. The validated set exposes construction
+and read-only identities; the shared bounded decoder remains private. Workflow matching stays
+with the existing authority evaluator, and frozen execution retains exact grant references.
+
 Runtime's `CurrentNodeExecution` and `SettledNodeExecutionProjection` are workspace projection
 contracts returned by `RunProjection` and consumed by control, daemon inspection and evidence.
 `SubworkflowUsageSummary` names the durable compact child-usage shape exposed by the existing

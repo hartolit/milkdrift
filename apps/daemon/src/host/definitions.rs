@@ -74,6 +74,15 @@ impl Owner {
             .map_err(|error| invalid(&error.to_string()))?;
         let workflow_id = match &session.grant.resources().workflow_run {
             WorkflowRunScope::Any => requested_workflow,
+            WorkflowRunScope::Workflows { workflows } => {
+                let requested = requested_workflow.ok_or_else(|| {
+                    invalid("a named-workflow grant requires an explicit workflow filter")
+                })?;
+                if !workflows.values().contains(&requested) {
+                    return Err(unauthorized());
+                }
+                Some(requested)
+            }
             WorkflowRunScope::Workflow { workflow: allowed } => {
                 if requested_workflow
                     .as_ref()

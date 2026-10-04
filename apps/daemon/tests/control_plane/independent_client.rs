@@ -289,7 +289,7 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
     drop(client);
     daemon.stop()?;
     let restarted = BinaryDaemon::start(&config, endpoint.clone(), directory.path()).await?;
-    let client = JsonClient::new(endpoint)?;
+    let client = JsonClient::new(endpoint.clone())?;
     let retained: Value = serde_json::from_slice(&fs::read(&file)?)?;
     assert_eq!(
         &client.get("v1/authority").await?,
@@ -338,8 +338,25 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
         "conflict"
     );
 
-    let copied = client.command("json-copy", &revision,
-        json!({"type":"copy_blueprint","source_revision":revision,"workflow_id":"independent-notes","name":"Independent notes"})).await?;
+    let copy_command = json!({"type":"copy_blueprint","source_revision":revision,"workflow_id":"independent-notes","name":"Independent notes"});
+    let copied = client
+        .command("json-copy", &revision, copy_command.clone())
+        .await?;
+    let replay = client
+        .command("json-copy", &revision, copy_command.clone())
+        .await?;
+    assert_eq!(replay.get("replayed"), Some(&json!(true)));
+    assert_eq!(replay.get("value"), copied.get("value"));
+    let mut changed_copy = copy_command.clone();
+    *changed_copy.get_mut("name").ok_or("copy name absent")? = json!("Changed request");
+    let (status, refusal) = client
+        .response(
+            Method::POST,
+            "v1/commands",
+            Some(&envelope("json-copy", &revision, changed_copy)),
+        )
+        .await?;
+    assert_eq!(status, reqwest::StatusCode::CONFLICT, "{refusal}");
     let copy = copied
         .pointer("/value/revision_id")
         .ok_or("fixture field /value/revision_id absent")?
@@ -373,5 +390,15 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
     );
     assert_eq!(model.requests.lock().map_err(|_| "fixture lock")?.len(), 2);
     restarted.stop()?;
+    let reopened = BinaryDaemon::start(&config, endpoint, directory.path()).await?;
+    let replay = client.command("json-copy", &revision, copy_command).await?;
+    assert_eq!(replay.get("replayed"), Some(&json!(true)));
+    assert_eq!(replay.get("value"), copied.get("value"));
+    assert_eq!(
+        client.get(&format!("v1/revisions/{copy}")).await?,
+        copy_read
+    );
+    assert_eq!(model.requests.lock().map_err(|_| "fixture lock")?.len(), 2);
+    reopened.stop()?;
     Ok(())
 }

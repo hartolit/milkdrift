@@ -20,6 +20,11 @@ impl Owner {
         resources.run = Some(run.clone());
         match &session.grant.resources().workflow_run {
             WorkflowRunScope::Any => {}
+            WorkflowRunScope::Workflows { workflows } => {
+                // Check the operation before looking up a run; then authorize its actual
+                // workflow below. The nonempty set supplies no authority outside itself.
+                resources.workflow = workflows.values().first().cloned();
+            }
             WorkflowRunScope::Workflow { workflow } => {
                 resources.workflow = Some(workflow.clone());
             }
@@ -39,13 +44,21 @@ impl Owner {
             .run_summary(&run)
             .map_err(public_persistence)?
             .ok_or_else(not_found)?;
-        if resources
-            .workflow
-            .as_ref()
-            .is_some_and(|workflow| workflow != &summary.workflow)
-        {
-            return Err(not_found());
+        if let WorkflowRunScope::Workflows { workflows } = &session.grant.resources().workflow_run {
+            if !workflows.values().contains(&summary.workflow) {
+                return Err(not_found());
+            }
+            resources.workflow = Some(summary.workflow);
+            self.authorize(session, operation, resources, boundary)
+        } else {
+            if resources
+                .workflow
+                .as_ref()
+                .is_some_and(|workflow| workflow != &summary.workflow)
+            {
+                return Err(not_found());
+            }
+            Ok(decision)
         }
-        Ok(decision)
     }
 }

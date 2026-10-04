@@ -5,7 +5,7 @@ The credential selects an actor; its grant must cover both the command and later
 For example, permission to start a workflow does not by itself permit its process to execute or
 let the caller download restricted output.
 
-Daemon configuration schema 12 requires every actor binding to contain an explicit `authority`
+Daemon configuration schema 13 requires every actor binding to contain an explicit `authority`
 table. Preset names deterministically expand to typed operation sets; they do not imply resource
 access and are not retained as executable session policy. The resource scope, numeric ceilings,
 validity interval, grant identity/revision, and revocation generation are independent inputs to the
@@ -22,6 +22,35 @@ Capability authority is either `{ "type": "deny_all" }` or an explicit conjuncti
 Every allow dimension is `{ "type": "any" }` or `{ "type": "only", "values": [...] }`.
 `Only` requires 1..=128 ordered unique values; an empty array is invalid and never means wildcard.
 The side-effect ceiling applies in addition to every selector.
+
+Workflow scope can name one workflow (`type = "workflow"`), one run (`type = "run"`), or
+a finite set. For a copy from `release-notes` to `independent-notes`, configure the same actor's
+existing authority table with:
+
+```toml
+[actors.authority.resources.workflow_run]
+type = "workflows"
+workflows = ["release-notes", "independent-notes"]
+```
+
+The set limits the grant's existing actions equally to every named workflow. It does not give
+different actions to different workflows, add capability permissions, or combine separate grants.
+Copy still needs source revision inspection and destination import authority in that one grant.
+It cannot read or create unrelated workflows. Run and revision listings require an explicit
+`--workflow` filter with this scope, so pagination never exposes unrelated identifiers.
+
+The authority owner accepts 1..=128 unique workflow identities, each subject to the existing
+128-byte identity grammar. Writers sort them lexically; empty, duplicate, oversized, invalid and
+ambiguous forms are refused. This reuses the authority selector limit and consumes under 17 KiB
+of the existing 256 KiB grant-document allowance; the complete document bound still applies.
+`type = "any"` remains an explicit broad operator choice and cannot include a workflow list.
+Changing the set changes the immutable grant digest and requires a new grant revision.
+
+The set is an additive shape in grant schema 4 and configuration schema 13. Previously supported
+scope encodings, their digests, decisions, and frozen execution references retain their meaning.
+Older binaries refuse the new variant; upgrade daemon and clients together. There is no migration
+or replacement of accepted work. Frozen execution still names its exact accepted workflow/run and
+grant digest, with current revocation checked at later boundaries.
 
 ### Filesystem, network, and secrets
 

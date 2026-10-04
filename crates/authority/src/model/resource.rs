@@ -149,7 +149,7 @@ pub enum AuthorityOperation {
 }
 
 /// Workflow/run portion of an immutable grant.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum WorkflowRunScope {
     /// Explicit wildcard across workflows and runs.
@@ -158,6 +158,11 @@ pub enum WorkflowRunScope {
     Workflow {
         /// Exact workflow lineage.
         workflow: WorkflowId,
+    },
+    /// Every run in an explicit, bounded set of workflow lineages.
+    Workflows {
+        /// Exact identities; the grant's operations apply equally to each workflow.
+        workflows: WorkflowSet,
     },
     /// One exact run, optionally bound to its workflow lineage.
     Run {
@@ -168,11 +173,43 @@ pub enum WorkflowRunScope {
     },
 }
 
+impl<'de> Deserialize<'de> for WorkflowRunScope {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // A serde internally tagged unit variant ignores leftover fields even with
+        // deny_unknown_fields. An empty struct refuses an ambiguous wildcard document.
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+        enum Wire {
+            Any {},
+            Workflow {
+                workflow: WorkflowId,
+            },
+            Workflows {
+                workflows: WorkflowSet,
+            },
+            Run {
+                run: RunId,
+                workflow: Option<WorkflowId>,
+            },
+        }
+        Ok(match Wire::deserialize(deserializer)? {
+            Wire::Any {} => Self::Any,
+            Wire::Workflow { workflow } => Self::Workflow { workflow },
+            Wire::Workflows { workflows } => Self::Workflows { workflows },
+            Wire::Run { run, workflow } => Self::Run { run, workflow },
+        })
+    }
+}
+
 impl WorkflowRunScope {
     pub(crate) fn matches(&self, facts: &RequestedResourceFacts) -> bool {
         match self {
             Self::Any => true,
             Self::Workflow { workflow } => facts.workflow.as_ref() == Some(workflow),
+            Self::Workflows { workflows } => facts
+                .workflow
+                .as_ref()
+                .is_some_and(|workflow| workflows.values().contains(workflow)),
             Self::Run { run, workflow } => {
                 facts.run.as_ref() == Some(run)
                     && workflow
@@ -180,6 +217,47 @@ impl WorkflowRunScope {
                         .is_none_or(|expected| facts.workflow.as_ref() == Some(expected))
             }
         }
+    }
+}
+
+/// Nonempty exact workflow identities, serialized as a sorted array.
+///
+/// Shares the authority selector bound ([`crate::MAX_SELECTION_ITEMS`]); duplicates,
+/// empty input and oversized input are refused, never interpreted as wildcard access.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct WorkflowSet(BTreeSet<WorkflowId>);
+
+impl WorkflowSet {
+    /// Constructs an explicit set while bounding input consumption.
+    ///
+    /// # Errors
+    /// Rejects duplicates, an empty iterator, or more than the authority selector limit.
+    pub fn new(workflows: impl IntoIterator<Item = WorkflowId>) -> Result<Self, AuthorityError> {
+        let mut values = BTreeSet::new();
+        for workflow in workflows {
+            crate::selection::validate_count(values.len() + 1)?;
+            if !values.insert(workflow) {
+                return Err(AuthorityError::InvalidContract(
+                    "workflow identities must be unique".into(),
+                ));
+            }
+        }
+        crate::selection::validate_count(values.len())?;
+        Ok(Self(values))
+    }
+
+    /// Exact identities in canonical order.
+    #[must_use]
+    pub const fn values(&self) -> &BTreeSet<WorkflowId> {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for WorkflowSet {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::selection::BoundedValues::<WorkflowId>::deserialize(deserializer)
+            .map(|values| Self(values.0))
     }
 }
 

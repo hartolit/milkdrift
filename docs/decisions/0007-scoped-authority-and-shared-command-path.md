@@ -43,6 +43,14 @@ grant material without changing pure evaluation semantics.
 
 ## Reconsideration triggers
 
+The current schema-4 grant additionally permits a bounded exact workflow set through the same
+workflow/run scope. Copy evaluates source inspection and destination import against that one
+configured grant. This does not introduce grant unions or per-workflow action maps. Existing
+scope bytes and digests remain unchanged, and older readers refuse the new enum variant. The
+strict reader also refuses extra fields on the wildcard shape instead of discarding them.
+Accepted execution continues to retain exact grant references; no durable work is rewritten.
+The [authority guide](../operations/authority.md) owns configuration, bounds and listing behavior.
+
 Add a new core operation only when it has stable cross-adapter meaning. Add namespaced bounded
 extensions for domain-specific facts, not to bypass the closed core. Change the command wrapper
 or result schema only with reviewed fixtures and an explicit compatibility decision.

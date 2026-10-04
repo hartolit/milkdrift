@@ -31,6 +31,14 @@ original cases then pass in 6.62/10.91 seconds, with unchanged deadlines, capaci
 Eight owner tests, all-target daemon Clippy, fresh binaries and the ordinary 43-test suite pass
 (51.15 seconds). Evidence: `maintenance-*` and `reuse-debugger.log` in the evidence root.
 
-Next: commit the demonstrated maintenance fix, implement scoped copy, and run final integrated verification.
+Maintenance fix is committed at `d4ecdf4`. Named-workflow implementation is ready for its checkpoint:
+bounded authority-owned sets, strict wildcard decoding, normal matching and configured public copy,
+explicit workflow filters on collection reads, protected individual reads and unchanged old grant
+bytes. Authority/refusal/frozen-basis tests, scoped CLI copy, independent actual-daemon JSON
+replay/reopen, all-target Clippy and eight documentation contracts pass. New public surface is
+limited to the durable scope variant and validated set; inventories live under
+`target/public-api/client-workflow-corrections/`.
+
+Next: commit scoped copy, then run final strict/workspace/discovery gates and fresh binary scenarios.
 Historical live/native evidence remains historical unless an affected owner requires a new
 finite qualification.

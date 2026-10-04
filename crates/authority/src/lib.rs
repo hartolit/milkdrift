@@ -28,7 +28,7 @@ pub use model::{
     CapabilityAuthorityScopeBuilder, CapabilityExecutionRequirements, DaemonAuthorityScope,
     DecisionOutcome, DecisionReasonCode, ExecutionAuthorityBasis, FilesystemScope,
     LayoutAuthorityScope, LayoutOwner, NetworkScope, PeerAuthorityScope, RequestedResourceFacts,
-    ResourceScope, WorkflowRunScope, WorkspaceAuthorityScope,
+    ResourceScope, WorkflowRunScope, WorkflowSet, WorkspaceAuthorityScope,
 };
 pub use secret::SensitiveSecret;
 pub use selection::{MAX_SELECTION_ITEMS, Selection};

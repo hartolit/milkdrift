@@ -230,7 +230,7 @@ impl<'de> Deserialize<'de> for Field {
     }
 }
 
-struct BoundedValues<T>(BTreeSet<T>);
+pub(crate) struct BoundedValues<T>(pub(crate) BTreeSet<T>);
 
 impl<'de, T> Deserialize<'de> for BoundedValues<T>
 where
@@ -290,7 +290,7 @@ where
     }
 }
 
-fn validate_count(count: usize) -> Result<(), AuthorityError> {
+pub(crate) fn validate_count(count: usize) -> Result<(), AuthorityError> {
     if (1..=MAX_SELECTION_ITEMS).contains(&count) {
         Ok(())
     } else {

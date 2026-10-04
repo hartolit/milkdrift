@@ -232,8 +232,10 @@ Use a running workflow-enabled daemon and a model profile configured as above. T
 blueprint validation/import and inspection, catalogue/profile reads, and permission to select the
 model and the control acceptance capability. Use a credential scoped to `release-notes`, then
 switch to one scoped to `meeting-summary` for the separately authored workflow. The optional
-cross-workflow copy requires one reviewed credential with `workflow_run` type `any`: a
-single-workflow grant cannot inspect the source and import the independent destination.
+cross-workflow copy uses one reviewed credential with `workflow_run` type `workflows` and
+`workflows = ["release-notes", "independent-notes"]`. Its existing inspection and import actions
+apply to both named workflows, without granting access to every workflow. A single-workflow grant
+cannot inspect the source and import the independent destination.
 The starter configuration's `operator-starter` scope does not cover these identities. Configure
 the scopes through the existing [authority configuration](../../docs/operations/authority.md).
 Running the saved definition also needs `model.generate`, `workflow.accept_result`, artifact

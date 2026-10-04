@@ -106,6 +106,18 @@ impl BinaryDaemon {
         model: &ModelFixture,
     ) -> TestResult<(Self, std::path::PathBuf)> {
         let mut config = super::authoring::model_configuration_document(directory, model.address)?;
+        config
+            .actors
+            .first_mut()
+            .ok_or("controller absent")?
+            .authority
+            .resources
+            .workflow_run = milkdrift_authority::WorkflowRunScope::Workflows {
+            workflows: milkdrift_authority::WorkflowSet::new([
+                WorkflowId::new("release-notes")?,
+                WorkflowId::new("independent-notes")?,
+            ])?,
+        };
         let socket = std::net::TcpListener::bind("127.0.0.1:0")?;
         config.bind = socket.local_addr()?;
         drop(socket);
