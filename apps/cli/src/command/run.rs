@@ -12,7 +12,7 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
             saved::execute(session, command).await
         }
         RunCommand::List(page) => {
-            let request = session.page_request(page.limit, page.cursor.as_deref())?;
+            let request = CliSession::page_request(page.limit, page.cursor.as_deref())?;
             session.output(
                 "run.list",
                 &session
@@ -130,7 +130,7 @@ async fn timeline(
     cursor: Option<&str>,
     should_follow: bool,
 ) -> Result<(), CliError> {
-    let request = session.page_request(limit, cursor)?;
+    let request = CliSession::page_request(limit, cursor)?;
     let page = session.client().timeline(run, &request).await?;
     session.output("run.timeline", &page)?;
     if should_follow {

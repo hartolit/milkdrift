@@ -20,7 +20,7 @@ pub(super) async fn execute(
             session.output("proposal.submit", &session.client().submit(&request).await?)
         }
         ProposalCommand::List { run, limit, cursor } => {
-            let page = session.page_request(*limit, cursor.as_deref())?;
+            let page = CliSession::page_request(*limit, cursor.as_deref())?;
             session.output(
                 "proposal.list",
                 &session.client().proposals(run, &page).await?,
@@ -136,7 +136,7 @@ async fn prepare_repair(session: &CliSession, args: &crate::RepairArgs) -> Resul
     let bytes = milkdrift_control_protocol::encode_json(document)
         .map_err(|error| CliError::Invalid(error.to_string()))?;
     crate::output::PendingFile::create(&args.file)?.write_complete(&bytes)?;
-    session.output("proposal.repair", &serde_json::json!({"file":args.file,"proposal_id":args.proposal,"base_revision":revision,"sequence":state.sequence,"summary":prepared.value["summary"]}))
+    session.output("proposal.repair", &serde_json::json!({"file":args.file,"proposal_id":args.proposal,"base_revision":revision,"sequence":state.sequence,"summary":prepared.value.get("summary").ok_or_else(|| CliError::Internal("response has no summary".into()))?}))
 }
 
 async fn impact(

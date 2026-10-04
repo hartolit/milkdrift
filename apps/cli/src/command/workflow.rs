@@ -22,7 +22,7 @@ pub(super) async fn execute(session: &CliSession, args: &WorkflowArgs) -> Result
             limit,
             cursor,
         } => {
-            let page = session.page_request(*limit, cursor.as_deref())?;
+            let page = CliSession::page_request(*limit, cursor.as_deref())?;
             return session.output(
                 "workflow.list",
                 &session
@@ -52,8 +52,14 @@ pub(super) async fn execute(session: &CliSession, args: &WorkflowArgs) -> Result
                 revision,
             )?;
             let copied = session.client().submit(&request).await?;
-            let draft: BlueprintDraft = serde_json::from_value(copied.value["draft"].clone())
-                .map_err(|error| CliError::Internal(error.to_string()))?;
+            let draft: BlueprintDraft = serde_json::from_value(
+                copied
+                    .value
+                    .get("draft")
+                    .ok_or_else(|| CliError::Internal("response has no draft".into()))?
+                    .clone(),
+            )
+            .map_err(|error| CliError::Internal(error.to_string()))?;
             let token = destination.replace(&draft)?;
             return session.output("workflow.copy", &json!({"file":file,"edit_token":token,"copied_from":revision,"workflow_id":workflow,"revision_id":draft.base_revision}));
         }
@@ -107,14 +113,20 @@ pub(super) async fn execute(session: &CliSession, args: &WorkflowArgs) -> Result
         None => session.command_request(operation)?,
     };
     let accepted = session.client().submit(&request).await?;
-    let returned: BlueprintDraft = serde_json::from_value(accepted.value["draft"].clone())
-        .map_err(|error| CliError::Internal(error.to_string()))?;
+    let returned: BlueprintDraft = serde_json::from_value(
+        accepted
+            .value
+            .get("draft")
+            .ok_or_else(|| CliError::Internal("response has no draft".into()))?
+            .clone(),
+    )
+    .map_err(|error| CliError::Internal(error.to_string()))?;
     let token = if matches!(command, WorkflowCommand::Inspect { .. }) {
         file.token()
     } else {
         file.replace(&returned)?
     };
-    session.output("workflow.author", &json!({"file":path,"edit_token":token,"base_revision":returned.base_revision,"pending_mutations":returned.mutations.len(),"revision_id":accepted.value["revision_id"],"saved":save,"workflow":accepted.value["workflow"]}))
+    session.output("workflow.author", &json!({"file":path,"edit_token":token,"base_revision":returned.base_revision,"pending_mutations":returned.mutations.len(),"revision_id":accepted.value.get("revision_id").ok_or_else(|| CliError::Internal("response has no revision_id".into()))?,"saved":save,"workflow":accepted.value.get("workflow").ok_or_else(|| CliError::Internal("response has no workflow".into()))?}))
 }
 
 fn path(command: &WorkflowCommand) -> Result<&Path, CliError> {

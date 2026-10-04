@@ -289,7 +289,12 @@ fn invoke(
         .map(|line| {
             assert!(!line.chars().any(char::is_control));
             let value: Value = serde_json::from_str(line)?;
-            assert_eq!(value["schema_version"], 2);
+            assert_eq!(
+                value
+                    .pointer("/schema_version")
+                    .ok_or("missing fixture field")?,
+                2
+            );
             Ok(value)
         })
         .collect::<TestResult<Vec<_>>>()?;
@@ -370,9 +375,30 @@ fn malformed_arguments_and_missing_bounds_use_stdout_only() -> TestResult {
         assert_eq!(exit, 2);
         assert!(stderr.is_empty());
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0]["status"], "failure");
-        assert_eq!(records[0]["error"]["code"], "invalid_input");
-        assert_eq!(records[0]["final"], true);
+        assert_eq!(
+            records
+                .first()
+                .ok_or("missing fixture record")?
+                .pointer("/status")
+                .ok_or("missing fixture field")?,
+            "failure"
+        );
+        assert_eq!(
+            records
+                .first()
+                .ok_or("missing fixture record")?
+                .pointer("/error/code")
+                .ok_or("missing fixture field")?,
+            "invalid_input"
+        );
+        assert_eq!(
+            records
+                .first()
+                .ok_or("missing fixture record")?
+                .pointer("/final")
+                .ok_or("missing fixture field")?,
+            true
+        );
     }
     Ok(())
 }
@@ -384,8 +410,22 @@ fn help_and_version_are_json_without_a_session() -> TestResult {
         assert_eq!(exit, 0);
         assert!(stderr.is_empty());
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0]["type"], kind);
-        assert_eq!(records[0]["final"], true);
+        assert_eq!(
+            records
+                .first()
+                .ok_or("missing fixture record")?
+                .pointer("/type")
+                .ok_or("missing fixture field")?,
+            kind
+        );
+        assert_eq!(
+            records
+                .first()
+                .ok_or("missing fixture record")?
+                .pointer("/final")
+                .ok_or("missing fixture field")?,
+            true
+        );
     }
     Ok(())
 }
@@ -413,9 +453,30 @@ fn wait_has_typed_terminal_results_and_bounded_polling() -> TestResult {
         assert_eq!(actual, exit);
         assert!(stderr.is_empty());
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0]["type"], "run.wait");
-        assert_eq!(records[0]["value"]["terminal"], terminal);
-        assert_eq!(records[0]["command_id"], "command-fixture");
+        assert_eq!(
+            records
+                .first()
+                .ok_or("missing fixture record")?
+                .pointer("/type")
+                .ok_or("missing fixture field")?,
+            "run.wait"
+        );
+        assert_eq!(
+            records
+                .first()
+                .ok_or("missing fixture record")?
+                .pointer("/value/terminal")
+                .ok_or("missing fixture field")?,
+            terminal
+        );
+        assert_eq!(
+            records
+                .first()
+                .ok_or("missing fixture record")?
+                .pointer("/command_id")
+                .ok_or("missing fixture field")?,
+            "command-fixture"
+        );
     }
     let server = Server::new(vec![negotiation(), response(run_state(None))])?;
     let (exit, records, _) = server.invoke(
@@ -431,7 +492,14 @@ fn wait_has_typed_terminal_results_and_bounded_polling() -> TestResult {
         false,
     )?;
     assert_eq!(exit, 10);
-    assert_eq!(records[0]["error"]["retryable"], Value::Null);
+    assert_eq!(
+        records
+            .first()
+            .ok_or("missing fixture record")?
+            .pointer("/error/retryable")
+            .ok_or("missing fixture field")?,
+        &Value::Null
+    );
     Ok(())
 }
 
@@ -441,7 +509,14 @@ fn deadline_includes_negotiation_and_blocked_document_input() -> TestResult {
     let (exit, records, _) =
         server.invoke(&["--timeout-secs", "1", "run", "show", "run-one"], false)?;
     assert_eq!(exit, 10);
-    assert_eq!(records[0]["error"]["code"], "timeout");
+    assert_eq!(
+        records
+            .first()
+            .ok_or("missing fixture record")?
+            .pointer("/error/code")
+            .ok_or("missing fixture field")?,
+        "timeout"
+    );
     let root = tempfile::tempdir()?;
     let output = root.path().join("blueprint.json");
     let (exit, records, _) = invoke(
@@ -480,9 +555,30 @@ fn authorization_loss_ends_json_lines_with_one_redacted_final_record() -> TestRe
     assert_eq!(exit, 3);
     assert!(stderr.is_empty());
     assert_eq!(records.len(), 2);
-    assert_eq!(records[0]["final"], false);
-    assert_eq!(records[1]["final"], true);
-    assert_eq!(records[1]["error"]["code"], "unauthorized");
+    assert_eq!(
+        records
+            .first()
+            .ok_or("missing fixture record")?
+            .pointer("/final")
+            .ok_or("missing fixture field")?,
+        false
+    );
+    assert_eq!(
+        records
+            .get(1)
+            .ok_or("missing fixture record")?
+            .pointer("/final")
+            .ok_or("missing fixture field")?,
+        true
+    );
+    assert_eq!(
+        records
+            .get(1)
+            .ok_or("missing fixture record")?
+            .pointer("/error/code")
+            .ok_or("missing fixture field")?,
+        "unauthorized"
+    );
     Ok(())
 }
 
@@ -502,14 +598,27 @@ fn lost_stream_and_malformed_protocol_are_finite() -> TestResult {
         false,
     )?;
     assert_eq!(exit, 10);
-    assert_eq!(records.last().ok_or("final record absent")?["final"], true);
+    assert_eq!(
+        records
+            .last()
+            .ok_or("final record absent")?
+            .get("final")
+            .ok_or("final flag absent")?,
+        true
+    );
     let server = Server::new(vec![
         negotiation(),
         http(200, "not-json-secret-fixture".to_owned()),
     ])?;
     let (exit, records, _) = server.invoke(&["run", "show", "run-one"], false)?;
     assert_eq!(exit, 9);
-    assert!(!records[0].to_string().contains("not-json-secret-fixture"));
+    assert!(
+        !records
+            .first()
+            .ok_or("missing fixture record")?
+            .to_string()
+            .contains("not-json-secret-fixture")
+    );
     Ok(())
 }
 
@@ -606,13 +715,31 @@ fn result_download_reports_one_final_outcome_after_verification() -> TestResult 
         )?;
         assert_eq!(exit == 0, succeeds, "{records:?}");
         assert_eq!(records.len(), 1, "{records:?}");
-        assert_eq!(records[0]["final"], true);
-        assert_eq!(records[0]["type"], "run.result");
+        assert_eq!(
+            records
+                .first()
+                .ok_or("missing fixture record")?
+                .pointer("/final")
+                .ok_or("missing fixture field")?,
+            true
+        );
+        assert_eq!(
+            records
+                .first()
+                .ok_or("missing fixture record")?
+                .pointer("/type")
+                .ok_or("missing fixture field")?,
+            "run.result"
+        );
         assert_eq!(path.exists(), succeeds);
         if succeeds {
             assert_eq!(
-                records[0]["value"]["download"]["digest"],
-                metadata["digest"]
+                records
+                    .first()
+                    .ok_or("missing fixture record")?
+                    .pointer("/value/download/digest")
+                    .ok_or("missing fixture field")?,
+                metadata.pointer("/digest").ok_or("missing fixture field")?
             );
             assert_eq!(std::fs::read_to_string(&path)?, body);
             std::fs::remove_file(&path)?;
@@ -678,22 +805,30 @@ fn stream_duplicates_and_expired_cursors_use_a_fresh_authorized_view() -> TestRe
     assert_ne!(exit, 0);
     let observations = records
         .iter()
-        .filter(|r| r["type"] == "run.observation")
+        .filter(|r| r.get("type").and_then(Value::as_str) == Some("run.observation"))
         .collect::<Vec<_>>();
     assert_eq!(observations.len(), 5, "{records:?}");
     assert_eq!(
         records
             .iter()
-            .filter(|r| r["type"] == "run.result.fresh")
+            .filter(|r| r.get("type").and_then(Value::as_str) == Some("run.result.fresh"))
             .count(),
         1
     );
     assert_eq!(
-        observations[2]["value"]["observation"]["type"],
+        observations
+            .get(2)
+            .ok_or("missing fixture record")?
+            .pointer("/value/observation/type")
+            .ok_or("missing fixture field")?,
         "resync_required"
     );
     assert_eq!(
-        observations[4]["value"]["observation"]["type"],
+        observations
+            .get(4)
+            .ok_or("missing fixture record")?
+            .pointer("/value/observation/type")
+            .ok_or("missing fixture field")?,
         "stream_closing"
     );
     Ok(())
@@ -719,8 +854,8 @@ fn cli_refuses_mismatched_negotiation_success_and_error_versions() -> TestResult
             assert_eq!(exit, 9);
             assert!(stderr.is_empty());
             assert_eq!(records.len(), 1);
-            assert_eq!(records[0]["final"], true);
-            assert!(!records[0].to_string().contains("unsupported-error-fixture"));
+            assert_eq!(records.first().ok_or("missing fixture record")?.pointer("/final").ok_or("missing fixture field")?, true);
+            assert!(!records.first().ok_or("missing fixture record")?.to_string().contains("unsupported-error-fixture"));
         }
     }
     Ok(())

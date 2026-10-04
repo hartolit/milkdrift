@@ -87,14 +87,28 @@ pub(super) async fn execute(session: &CliSession, args: &LearningArgs) -> Result
             ));
         }
     };
-    let inspected = (document["type"] == "inspect").then(|| document["receipt"].clone());
+    let inspected = if document.get("type").and_then(Value::as_str) == Some("inspect") {
+        Some(
+            document
+                .get("receipt")
+                .ok_or_else(|| CliError::Invalid("inspection requires a receipt".into()))?
+                .clone(),
+        )
+    } else {
+        None
+    };
     let request = session.command_request(Command::Learning { document })?;
     let actor = session.client().authority().await?.actor;
     let accepted = session.client().submit(&request).await?;
     let kind = accepted.result_type.clone();
     let mut value =
         serde_json::to_value(accepted).map_err(|error| CliError::Internal(error.to_string()))?;
-    value["receipt"] =
-        inspected.unwrap_or_else(|| json!({"actor":actor,"command":request.command_id}));
+    value
+        .as_object_mut()
+        .ok_or_else(|| CliError::Internal("learning response is not an object".into()))?
+        .insert(
+            "receipt".into(),
+            inspected.unwrap_or_else(|| json!({"actor":actor,"command":request.command_id})),
+        );
     session.output(&kind, &value)
 }

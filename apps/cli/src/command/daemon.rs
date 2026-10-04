@@ -5,7 +5,7 @@ pub(super) async fn execute(session: &CliSession, command: &DaemonCommand) -> Re
         DaemonCommand::Health(arguments) => {
             session.output("daemon.health", &session.client().health().await?)?;
             if arguments.follow {
-                let cursor = session.cursor(arguments.cursor.as_deref())?;
+                let cursor = CliSession::cursor(arguments.cursor.as_deref())?;
                 super::stream::follow(
                     session,
                     "v1/stream/health".to_owned(),

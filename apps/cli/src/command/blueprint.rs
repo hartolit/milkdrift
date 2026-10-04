@@ -52,7 +52,7 @@ pub(super) async fn execute(
             show(session, revision, false, Some(output)).await
         }
         BlueprintCommand::List(page) => {
-            let request = session.page_request(page.limit, page.cursor.as_deref())?;
+            let request = CliSession::page_request(page.limit, page.cursor.as_deref())?;
             session.output(
                 "blueprint.list",
                 &session
@@ -80,7 +80,7 @@ async fn show(
         return session.output("blueprint.show", &read);
     }
     let bytes = canonical_document(&read)?;
-    session.write_exact_document(output, &bytes)?;
+    CliSession::write_exact_document(output, &bytes)?;
     if let Some(destination) = output {
         session.output(
             "blueprint.document",

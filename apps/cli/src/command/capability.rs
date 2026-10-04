@@ -36,7 +36,7 @@ pub(super) async fn execute(
         CapabilityCommand::List(arguments) => {
             session.output("capability.list", &capabilities)?;
             if arguments.follow {
-                let cursor = session.cursor(arguments.cursor.as_deref())?;
+                let cursor = CliSession::cursor(arguments.cursor.as_deref())?;
                 super::stream::follow(
                     session,
                     "v1/stream/capabilities".to_owned(),

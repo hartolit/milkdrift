@@ -70,19 +70,15 @@ impl CliSession {
         command_request(&self.cli, command, Some(required_revision))
     }
 
-    pub(crate) fn page_request(
-        &self,
-        limit: u32,
-        cursor: Option<&str>,
-    ) -> Result<PageRequest, CliError> {
-        let cursor = self.cursor(cursor)?;
+    pub(crate) fn page_request(limit: u32, cursor: Option<&str>) -> Result<PageRequest, CliError> {
+        let cursor = Self::cursor(cursor)?;
         let page = PageRequest { cursor, limit };
         page.validate()
             .map_err(|error| CliError::Invalid(error.to_string()))?;
         Ok(page)
     }
 
-    pub(crate) fn cursor(&self, value: Option<&str>) -> Result<Option<Cursor>, CliError> {
+    pub(crate) fn cursor(value: Option<&str>) -> Result<Option<Cursor>, CliError> {
         value
             .map(|value| serde_json::from_value(Value::String(value.to_owned())))
             .transpose()
@@ -144,7 +140,6 @@ impl CliSession {
     }
 
     pub(crate) fn write_exact_document(
-        &self,
         destination: Option<&Path>,
         bytes: &[u8],
     ) -> Result<(), CliError> {
@@ -409,8 +404,14 @@ mod tests {
             None,
         )?;
         assert_eq!(request.expected_revision.as_deref(), Some("revision-one"));
-        assert_eq!(request.evidence[0].kind, "artifact");
-        assert_eq!(request.evidence[0].id, "artifact-one");
+        assert_eq!(
+            request.evidence.first().ok_or("evidence absent")?.kind,
+            "artifact"
+        );
+        assert_eq!(
+            request.evidence.first().ok_or("evidence absent")?.id,
+            "artifact-one"
+        );
         Ok(())
     }
 

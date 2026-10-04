@@ -54,16 +54,18 @@ fn arguments(command: &str) -> TestResult<Vec<String>> {
     if !token.is_empty() {
         result.push(token);
     }
-    for index in 1..result.len() {
+    let mut after_sequence = false;
+    for argument in &mut result {
         // Only observed numeric sequence placeholders are replaced; unknown flags and values
         // still reach the real parser and fail. Identity/path placeholders remain ordinary strings.
-        if result[index - 1] == "--expected-sequence"
-            && result[index]
+        if after_sequence
+            && argument
                 .chars()
                 .all(|ch| ch.is_ascii_uppercase() || ch == '_')
         {
-            result[index] = "1".to_owned();
+            *argument = "1".to_owned();
         }
+        after_sequence = argument == "--expected-sequence";
     }
     Ok(result)
 }
@@ -142,10 +144,12 @@ fn maintained_cli_command_examples_parse_and_bound_waits() -> TestResult {
 fn documentation_parser_preserves_quoted_values_and_detects_obsolete_flags() -> TestResult {
     let docs = "```sh\nmilkdrift --reason 'two words' \\\n run show RUN_ID | consumer\nmilkdrift run show RUN_ID --obsolete-option\n```\n";
     let examples = commands(docs)?;
-    assert_eq!(examples.len(), 2);
-    let cli = Cli::try_parse_from(&examples[0])?;
+    let [valid, obsolete] = examples.as_slice() else {
+        return Err("expected exactly two command examples".into());
+    };
+    let cli = Cli::try_parse_from(valid)?;
     assert_eq!(cli.reason, "two words");
-    assert!(Cli::try_parse_from(&examples[1]).is_err());
+    assert!(Cli::try_parse_from(obsolete).is_err());
     assert!(arguments("--reason 'unterminated").is_err());
     Ok(())
 }

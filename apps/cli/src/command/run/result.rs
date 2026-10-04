@@ -26,7 +26,10 @@ pub(super) async fn execute(
         let mut result =
             serde_json::to_value(&value).map_err(|error| CliError::Internal(error.to_string()))?;
         if let Some(download) = download {
-            result["download"] = download;
+            result
+                .as_object_mut()
+                .ok_or_else(|| CliError::Internal("run result is not an object".into()))?
+                .insert("download".into(), download);
         }
         session.output("run.result", &result)?;
     } else {

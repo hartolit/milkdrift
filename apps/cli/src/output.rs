@@ -390,9 +390,17 @@ mod tests {
         )?;
         assert!(!encoded.chars().any(char::is_control));
         let value: Value = serde_json::from_str(&encoded)?;
-        assert_eq!(value["schema_version"], 2);
-        assert_eq!(value["command_id"], "command-1");
-        assert_eq!(value["final"], true);
+        assert_eq!(
+            value
+                .get("schema_version")
+                .ok_or("missing schema_version")?,
+            2
+        );
+        assert_eq!(
+            value.get("command_id").ok_or("missing command_id")?,
+            "command-1"
+        );
+        assert_eq!(value.get("final").ok_or("missing final")?, true);
         assert!(
             encode(
                 "fixture",

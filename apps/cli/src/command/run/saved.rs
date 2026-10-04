@@ -103,7 +103,10 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
     let accepted = session.client().submit_saved_run(&saved).await?;
     let mut value =
         serde_json::to_value(accepted).map_err(|error| CliError::Internal(error.to_string()))?;
-    value["recovery"] = identity(&saved, path);
+    value
+        .as_object_mut()
+        .ok_or_else(|| CliError::Internal("run acceptance is not an object".into()))?
+        .insert("recovery".into(), identity(&saved, path));
     if wait {
         let Command::StartRun { run_id, .. } = &saved.request.command else {
             return Err(CliError::Internal("saved start missing".into()));
