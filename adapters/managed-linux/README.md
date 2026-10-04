@@ -14,6 +14,11 @@ stdout artifacts when `stdout_artifact` is true. `ManagedWorkerAdapter` owns tem
 service dependency. Systemd owns persistent servers. The adapter never mounts manager state or
 engine sockets into the worker and never removes shared inputs or external attachments.
 
+Failed helper observation has a bounded force/reap allowance and returns unconfirmed cleanup to
+the caller. Worker execution attempts container removal after both ordinary errors and observation
+panics. A failed removal retains the durable resource use for recovery; releasing the creator's
+registration only permits the recovery fence to inspect the container, and does not prove it absent.
+
 Start with [managed operations](../../docs/operations/managed-linux.md) and the
 [maintained inputs](../../examples/managed-linux/README.md). Unit/contract tests exercise strict
 readers and the semantic/persistence boundary; `linux_mechanism` is an explicitly gated real-host

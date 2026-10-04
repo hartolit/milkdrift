@@ -1,5 +1,96 @@
 use super::private_id_mappings;
 
+#[test]
+fn failed_creator_registration_leaves_both_ownership_views_unchanged()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::{Arc, Mutex, atomic::AtomicBool};
+    let platform = Mutex::new(std::collections::BTreeMap::new());
+    let adapter = Mutex::new(std::collections::BTreeSet::new());
+    let poisoned = std::panic::catch_unwind(|| {
+        let _guard = adapter.lock();
+        #[expect(
+            clippy::panic,
+            reason = "Inject lock poisoning before creator registration to prove no partial publication"
+        )]
+        {
+            panic!("injected adapter lock failure");
+        }
+    });
+    assert!(poisoned.is_err());
+    assert!(
+        super::register_creator(
+            &platform,
+            &adapter,
+            "owned",
+            Arc::new(AtomicBool::new(false))
+        )
+        .is_err()
+    );
+    assert!(
+        platform
+            .lock()
+            .map_err(|_| "platform lock poisoned")?
+            .is_empty()
+    );
+    assert!(adapter.lock().unwrap_or_else(|e| e.into_inner()).is_empty());
+    Ok(())
+}
+
+#[test]
+fn task_cleanup_runs_once_after_failure_or_panic_and_requires_absence()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::cell::Cell;
+    for panic in [false, true] {
+        for removed in [false, true] {
+            let removals = Cell::new(0);
+            let result = super::run_and_remove_task(
+                || {
+                    if panic {
+                        #[expect(
+                            clippy::panic,
+                            reason = "Inject observation unwinding at the task owner to verify cleanup still runs"
+                        )]
+                        {
+                            panic!("injected task observation failure");
+                        }
+                    }
+                    Err(crate::platform_error("injected task failure"))
+                },
+                || {
+                    removals.set(removals.get() + 1);
+                    if removed {
+                        Ok(())
+                    } else {
+                        Err(crate::platform_error("injected removal failure"))
+                    }
+                },
+            );
+            assert_eq!(removals.get(), 1);
+            let original = if panic {
+                "worker observation panicked"
+            } else {
+                "injected task failure"
+            };
+            match result {
+                Ok(stopped) => {
+                    assert!(removed);
+                    assert!(
+                        stopped
+                            .output
+                            .is_err_and(|error| error.to_string().contains(original))
+                    );
+                }
+                Err(error) => {
+                    assert!(!removed);
+                    assert!(error.to_string().contains("injected removal failure"));
+                    assert!(error.to_string().contains(original));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn inspected_limits() -> (crate::ContainerLimits, serde_json::Value) {
     let limits = crate::ContainerLimits {
         memory_bytes: 268_435_456,

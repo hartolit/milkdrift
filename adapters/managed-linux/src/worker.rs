@@ -222,30 +222,11 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
         // Register the creator before recording physical intent. A resolver first cancels and
         // joins this ownership scope; it cannot release an absence check ahead of late creation.
         let cancel = Arc::new(AtomicBool::new(false));
-        {
-            let mut active = self
-                .platform
-                .active
-                .lock()
-                .map_err(|_| AdapterError::unavailable("worker ownership unavailable"))?;
-            if active.len() >= milkdrift_capability::managed::MAX_MANAGED_USES
-                || active.contains_key(&id)
-            {
-                return Err(AdapterError::rejected("duplicate or excess active worker"));
-            }
-            active.insert(id.clone(), cancel.clone());
-            self.active
-                .lock()
-                .map_err(|_| AdapterError::unavailable("worker ownership unavailable"))?
-                .insert(id.clone());
-        }
-        let mut task = OwnedTask {
+        register_creator(&self.platform.active, &self.active, &id, cancel.clone())?;
+        let task = OwnedTask {
             platform: self.platform.clone(),
-            setup: self.setup.clone(),
             id: id.clone(),
             name: format!("mdtask-{id}"),
-            completed_cleanup: false,
-            entered: false,
             active: self.active.clone(),
         };
         let usage = self
@@ -256,25 +237,27 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
         self.store
             .enter_managed_use(&id, usage.claim, &task.name)
             .map_err(adapter_failure)?;
-        task.entered = true;
         if cancel.load(Ordering::Acquire) {
             return Err(AdapterError::external_failure(
                 "worker cancelled before platform creation; resource use remains retained",
             ));
         }
-        let output = run_task(
-            &self.setup,
-            &task.name,
-            &request.argv,
-            Some(&cancel),
-            Duration::from_millis(d.recipe.task_timeout_ms),
-            d.recipe.output_bytes as usize,
-        );
-        let cleanup = cleanup_task(&self.setup, &task.name);
-        if let Err(error) = cleanup {
-            return Err(AdapterError::external_failure(error.to_string()));
-        }
-        task.completed_cleanup = true;
+        let output_limit = usize::try_from(d.recipe.output_bytes)
+            .map_err(|_| AdapterError::rejected("worker output bound exceeds this platform"))?;
+        let stopped = run_and_remove_task(
+            || {
+                run_task(
+                    &self.setup,
+                    &task.name,
+                    &request.argv,
+                    Some(&cancel),
+                    Duration::from_millis(d.recipe.task_timeout_ms),
+                    output_limit,
+                )
+            },
+            || cleanup_task(&self.setup, &task.name),
+        )
+        .map_err(|error| AdapterError::external_failure(error.to_string()))?;
         self.store
             .quiesce_managed_use(
                 &id,
@@ -293,7 +276,7 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
             AdapterError::external_failure("durable publication context is absent")
         })?;
         let mut sequence = 1;
-        let (status, failure) = match output {
+        let (status, failure) = match stopped.output {
             Ok(output) => {
                 let bytes = serde_json::to_vec(&result_document(
                     &String::from_utf8_lossy(&output.stdout),
@@ -478,26 +461,73 @@ impl CapabilityAdapter for ManagedWorkerAdapter {
 
 struct OwnedTask {
     platform: Arc<LinuxManagedPlatform>,
-    setup: ApprovedSetup,
     id: String,
     name: String,
-    completed_cleanup: bool,
-    entered: bool,
     active: Arc<Mutex<BTreeSet<String>>>,
 }
 impl Drop for OwnedTask {
     fn drop(&mut self) {
-        if self.entered && !self.completed_cleanup {
-            let _ = cleanup_task(&self.setup, &self.name);
-        }
-        if let Ok(mut active) = self.platform.active.lock() {
-            active.remove(&self.id);
-            if let Ok(mut mine) = self.active.lock() {
-                mine.remove(&self.id);
-            }
-            self.platform.quiescent.notify_all();
-        }
+        // This guard proves only that the creator has returned. Durable use remains held
+        // until explicit cleanup or the recovery fence proves physical absence. Recover
+        // poisoned locks solely to remove this creator, so recovery cannot wait forever.
+        let mut active = self
+            .platform
+            .active
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut mine = self.active.lock().unwrap_or_else(|e| e.into_inner());
+        active.remove(&self.id);
+        mine.remove(&self.id);
+        self.platform.quiescent.notify_all();
     }
+}
+
+fn register_creator(
+    platform: &Mutex<BTreeMap<String, Arc<AtomicBool>>>,
+    adapter: &Mutex<BTreeSet<String>>,
+    id: &str,
+    cancel: Arc<AtomicBool>,
+) -> Result<(), AdapterError> {
+    let mut active = platform
+        .lock()
+        .map_err(|_| AdapterError::unavailable("worker ownership unavailable"))?;
+    let mut mine = adapter
+        .lock()
+        .map_err(|_| AdapterError::unavailable("worker ownership unavailable"))?;
+    if active.len() >= milkdrift_capability::managed::MAX_MANAGED_USES
+        || active.contains_key(id)
+        || mine.contains(id)
+    {
+        return Err(AdapterError::rejected("duplicate or excess active worker"));
+    }
+    // Acquire both fallible locks before publishing either view of creator ownership.
+    active.insert(id.to_owned(), cancel);
+    mine.insert(id.to_owned());
+    Ok(())
+}
+
+struct StoppedTask {
+    output: Result<command::CommandOutput, ManagedError>,
+}
+
+fn run_and_remove_task(
+    run: impl FnOnce() -> Result<command::CommandOutput, ManagedError>,
+    remove: impl FnOnce() -> Result<(), ManagedError>,
+) -> Result<StoppedTask, ManagedError> {
+    let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run))
+        .unwrap_or_else(|_| Err(platform_error("worker observation panicked")));
+    if let Err(error) = remove() {
+        let original = output
+            .as_ref()
+            .err()
+            .map_or_else(|| "worker completed".to_owned(), ToString::to_string);
+        return Err(platform_error(format!(
+            "worker cleanup unconfirmed: {}; original: {}",
+            milkdrift_contracts::truncate_utf8(&error.to_string(), 220),
+            milkdrift_contracts::truncate_utf8(&original, 220),
+        )));
+    }
+    Ok(StoppedTask { output })
 }
 
 fn task_arguments(
