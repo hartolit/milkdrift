@@ -221,7 +221,10 @@ fn service(
     )?)
 }
 
-#[allow(clippy::too_many_arguments)] // Denial tests vary actor, workflow, operations, and capability scope independently with the same store and clock.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Denial tests vary actor, workflow, operations, and capability scope independently with the same store and clock."
+)]
 fn exact_grant_service(
     store: Arc<RedbStore>,
     clock: Arc<ManualClock>,

@@ -410,10 +410,14 @@ fn collect_and_first_reducers_publish_deterministic_workspace_outputs() -> TestR
             .ok_or("reducer execution was not created")?;
         assert_eq!(execution.scope(), root_scope);
         assert_eq!(execution.outputs().len(), 1);
-        assert_eq!(execution.outputs()[0].value().scope(), root_scope);
+        let output = execution
+            .outputs()
+            .first()
+            .ok_or("execution output missing")?;
+        assert_eq!(output.value().scope(), root_scope);
         let output = harness
             .store
-            .value(execution.outputs()[0].value())?
+            .value(output.value())?
             .ok_or("reducer output is absent from workspace storage")?;
         let mut branches: Vec<_> = history
             .iter()

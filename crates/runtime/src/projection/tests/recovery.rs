@@ -255,7 +255,7 @@ fn explicit_external_resolution_releases_the_execution_after_successor_closure()
         10,
         &fixture.run,
         RunEventKind::RecoveryDecisionRecorded {
-            attempt: attempt.clone(),
+            attempt,
             decision: ReconciliationDecisionId::new("decision-resolved")?,
             actor: ActorRef::new("operator")?,
             outcome: AuthorityDecision::ResolveSucceeded,
@@ -400,7 +400,11 @@ fn recovery_query_preserves_obligation_and_remediation_creates_real_work() -> Te
     assert!(obligation.retained().is_none());
     assert_eq!(obligation.decisions().len(), 1);
     assert_eq!(
-        obligation.decisions()[0].outcome(),
+        obligation
+            .decisions()
+            .first()
+            .ok_or("recovery decision missing")?
+            .outcome(),
         AuthorityDecision::Query
     );
 
@@ -785,7 +789,7 @@ fn reconciliation_cancellation_is_execution_cancellation_authority() -> TestResu
                 plan: plan.clone(),
                 execution: execution.clone(),
                 attempt: attempt.clone(),
-                reason: reason.clone(),
+                reason,
             },
         )?,
     ];

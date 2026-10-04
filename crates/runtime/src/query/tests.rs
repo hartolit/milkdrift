@@ -392,7 +392,7 @@ fn assert_projection_payload_falls_back(
 ) -> Result<(), Box<dyn Error>> {
     let (run, events) = snapshot_history_fixture(name)?;
     let mut prefix = RunProjection::new();
-    prefix.apply_replayed(&events[0])?;
+    prefix.apply_replayed(events.first().ok_or("first event missing")?)?;
     let mut value: serde_json::Value =
         serde_json::from_slice(&encode_projection_snapshot(&prefix)?)?;
     mutate(&mut value)?;
@@ -406,7 +406,7 @@ fn assert_projection_payload_falls_back(
         SnapshotId::new(format!("snapshot-{name}"))?,
         run.clone(),
         RunSequence::FIRST,
-        history_digest(&events[..1])?,
+        history_digest(events.get(..1).ok_or("first event prefix missing")?)?,
         RUN_PROJECTION_SNAPSHOT_SCHEMA_V6,
         payload,
     )?;
@@ -439,7 +439,7 @@ fn assert_projection_payload_falls_back(
 fn compacted_projection_snapshot_golden()
 -> Result<(SnapshotDocument, RunProjection), Box<dyn Error>> {
     let (run, mut events) = snapshot_history_fixture("snapshot-golden")?;
-    let scope = match events[0].kind() {
+    let scope = match events.first().ok_or("first event missing")?.kind() {
         RunEventKind::RunCreated { root_scope, .. } => root_scope.reference().clone(),
         _ => return Err("snapshot golden fixture does not begin with run creation".into()),
     };
@@ -559,12 +559,12 @@ fn exact_snapshot_envelope_and_compacted_projection_v6_match_reviewed_golden()
 fn compatible_snapshot_replays_only_the_authoritative_tail() -> Result<(), Box<dyn Error>> {
     let (run, events) = snapshot_history_fixture("snapshot-tail")?;
     let mut prefix = RunProjection::new();
-    prefix.apply_replayed(&events[0])?;
+    prefix.apply_replayed(events.first().ok_or("first event missing")?)?;
     let snapshot = SnapshotDocument::new(
         SnapshotId::new("snapshot-query-tail")?,
         run.clone(),
         RunSequence::FIRST,
-        history_digest(&events[..1])?,
+        history_digest(events.get(..1).ok_or("first event prefix missing")?)?,
         RUN_PROJECTION_SNAPSHOT_SCHEMA_V6,
         encode_projection_snapshot(&prefix)?,
     )?;
@@ -596,7 +596,7 @@ fn compatible_snapshot_replays_only_the_authoritative_tail() -> Result<(), Box<d
 #[test]
 fn compacted_execution_snapshot_plus_tail_equals_full_replay() -> Result<(), Box<dyn Error>> {
     let (run, mut events) = snapshot_history_fixture("snapshot-compacted-execution")?;
-    let scope = match events[0].kind() {
+    let scope = match events.first().ok_or("first event missing")?.kind() {
         RunEventKind::RunCreated { root_scope, .. } => root_scope.reference().clone(),
         _ => return Err("snapshot fixture does not begin with run creation".into()),
     };
@@ -631,9 +631,7 @@ fn compacted_execution_snapshot_plus_tail_equals_full_replay() -> Result<(), Box
             run.clone(),
             RunSequence::new(5),
             TimestampMillis::new(5),
-            RunEventKind::StructuredSuccessorScanCompleted {
-                execution: execution.clone(),
-            },
+            RunEventKind::StructuredSuccessorScanCompleted { execution },
         )?,
         RunEventEnvelope::new(
             EventId::new("event-snapshot-settled-tail-pause")?,
@@ -646,14 +644,14 @@ fn compacted_execution_snapshot_plus_tail_equals_full_replay() -> Result<(), Box
             },
         )?,
     ]);
-    let prefix = RunProjection::replay(&events[..5])?;
+    let prefix = RunProjection::replay(events.get(..5).ok_or("snapshot event prefix missing")?)?;
     assert!(prefix.node_executions().is_empty());
     assert_eq!(prefix.settled_node_executions().len(), 1);
     let snapshot = SnapshotDocument::new(
         SnapshotId::new("snapshot-query-compacted-execution")?,
         run.clone(),
         RunSequence::new(5),
-        history_digest(&events[..5])?,
+        history_digest(events.get(..5).ok_or("snapshot event prefix missing")?)?,
         RUN_PROJECTION_SNAPSHOT_SCHEMA_V6,
         encode_projection_snapshot(&prefix)?,
     )?;
@@ -733,7 +731,10 @@ fn payload_schema_mismatch_discards_snapshot_and_replays_from_start() -> Result<
     assert_projection_payload_falls_back(
         "snapshot-payload-schema-mismatch",
         |value| {
-            value["schema_version"] = serde_json::json!(2);
+            value
+                .as_object_mut()
+                .ok_or("fixture must be an object")?
+                .insert("schema_version".to_owned(), serde_json::json!(2));
             Ok(())
         },
         true,
@@ -745,8 +746,15 @@ fn payload_run_mismatch_discards_snapshot_and_replays_from_start() -> Result<(),
     assert_projection_payload_falls_back(
         "snapshot-payload-run-mismatch",
         |value| {
-            value["projection"]["run_id"] =
-                serde_json::to_value(RunId::new("run-another-snapshot")?)?;
+            value
+                .get_mut("projection")
+                .ok_or("fixture field projection missing")?
+                .as_object_mut()
+                .ok_or("fixture must be an object")?
+                .insert(
+                    "run_id".to_owned(),
+                    serde_json::to_value(RunId::new("run-another-snapshot")?)?,
+                );
             Ok(())
         },
         true,
@@ -759,7 +767,12 @@ fn payload_sequence_mismatch_discards_snapshot_and_replays_from_start() -> Resul
     assert_projection_payload_falls_back(
         "snapshot-payload-sequence-mismatch",
         |value| {
-            value["projection"]["sequence"] = serde_json::json!(2);
+            value
+                .get_mut("projection")
+                .ok_or("fixture field projection missing")?
+                .as_object_mut()
+                .ok_or("fixture must be an object")?
+                .insert("sequence".to_owned(), serde_json::json!(2));
             Ok(())
         },
         true,
@@ -772,7 +785,12 @@ fn payload_compaction_mismatch_discards_snapshot_and_replays_from_start()
     assert_projection_payload_falls_back(
         "snapshot-payload-compaction-mismatch",
         |value| {
-            value["projection"]["history_compacted_through"] = serde_json::json!(0);
+            value
+                .get_mut("projection")
+                .ok_or("fixture field projection missing")?
+                .as_object_mut()
+                .ok_or("fixture must be an object")?
+                .insert("history_compacted_through".to_owned(), serde_json::json!(0));
             Ok(())
         },
         true,
@@ -785,7 +803,15 @@ fn nested_unknown_projection_field_discards_snapshot_and_replays_from_start()
     assert_projection_payload_falls_back(
         "snapshot-nested-unknown-field",
         |value| {
-            value["projection"]["future_projection_field"] = serde_json::json!(true);
+            value
+                .get_mut("projection")
+                .ok_or("fixture field projection missing")?
+                .as_object_mut()
+                .ok_or("fixture must be an object")?
+                .insert(
+                    "future_projection_field".to_owned(),
+                    serde_json::json!(true),
+                );
             Ok(())
         },
         false,
@@ -797,12 +823,12 @@ fn unsupported_v3_snapshot_never_blocks_authoritative_replay_when_cleanup_fails(
 -> Result<(), Box<dyn Error>> {
     let (run, events) = snapshot_history_fixture("snapshot-fallback")?;
     let mut prefix = RunProjection::new();
-    prefix.apply_replayed(&events[0])?;
+    prefix.apply_replayed(events.first().ok_or("first event missing")?)?;
     let snapshot = SnapshotDocument::new(
         SnapshotId::new("snapshot-query-fallback")?,
         run.clone(),
         RunSequence::FIRST,
-        history_digest(&events[..1])?,
+        history_digest(events.get(..1).ok_or("first event prefix missing")?)?,
         3,
         encode_projection_snapshot(&prefix)?,
     )?;

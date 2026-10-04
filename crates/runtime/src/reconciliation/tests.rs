@@ -341,9 +341,15 @@ fn planner_keeps_every_scoped_occurrence_in_deterministic_execution_order() -> T
             ReconciliationClassification::CompletedOrUncertainSideEffects,
         ]
     );
-    assert_eq!(work_items[1].action, ReconciliationAction::CancelAndRestart);
     assert_eq!(
-        work_items[3].action,
+        work_items.get(1).ok_or("active work item missing")?.action,
+        ReconciliationAction::CancelAndRestart
+    );
+    assert_eq!(
+        work_items
+            .get(3)
+            .ok_or("completed-effect work item missing")?
+            .action,
         ReconciliationAction::RejectRetrospectiveRewrite
     );
     assert!(planned.is_rejected());
@@ -649,7 +655,7 @@ fn stale_plans_and_impossible_history_are_rejected() -> TestResult {
     let (reconciliation, plan_id) = plan_ids()?;
     let plan = plan_reconciliation(
         reconciliation.clone(),
-        plan_id.clone(),
+        plan_id,
         &old,
         &new,
         RunSequence::new(2),
@@ -660,7 +666,7 @@ fn stale_plans_and_impossible_history_are_rejected() -> TestResult {
         envelope(
             3,
             RunEventKind::RevisionAdoptionRequested {
-                reconciliation: reconciliation.clone(),
+                reconciliation,
                 requested_by: Some(milkdrift_authority::ActorRef::new(
                     "human:test-reconciliation",
                 )?),

@@ -142,29 +142,19 @@ fn idempotent_boundary_error_retries_exact_request_and_keeps_first_attempt_truth
     )));
 
     let dispatches = executor.dispatches()?;
-    assert_eq!(dispatches.len(), 2);
+    let [first, retry] = dispatches.as_slice() else {
+        return Err("expected original and retry dispatches".into());
+    };
     assert_eq!(
-        dispatches[0].request().idempotency_key(),
-        dispatches[1].request().idempotency_key()
+        first.request().idempotency_key(),
+        retry.request().idempotency_key()
     );
-    assert!(dispatches[0].request().idempotency_key().is_some());
-    assert_eq!(dispatches[0].resolution(), dispatches[1].resolution());
-    assert_eq!(
-        dispatches[0].request().capability(),
-        dispatches[1].request().capability()
-    );
-    assert_eq!(
-        dispatches[0].request().operation(),
-        dispatches[1].request().operation()
-    );
-    assert_eq!(
-        dispatches[0].request().inputs(),
-        dispatches[1].request().inputs()
-    );
-    assert_eq!(
-        dispatches[0].request().extensions(),
-        dispatches[1].request().extensions()
-    );
+    assert!(first.request().idempotency_key().is_some());
+    assert_eq!(first.resolution(), retry.resolution());
+    assert_eq!(first.request().capability(), retry.request().capability());
+    assert_eq!(first.request().operation(), retry.request().operation());
+    assert_eq!(first.request().inputs(), retry.request().inputs());
+    assert_eq!(first.request().extensions(), retry.request().extensions());
     Ok(())
 }
 

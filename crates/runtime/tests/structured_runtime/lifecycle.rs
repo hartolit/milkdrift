@@ -866,11 +866,17 @@ fn historical_execution_frontier_stays_bounded_across_index_limit() -> TestResul
     assert_eq!(eligible, historical_count);
     assert_eq!(terminal, historical_count);
     assert_eq!(scanned, historical_count);
-    eprintln!(
-        "historical_occurrences={historical_count} active_executions={} settled_summaries={} pause_events=1 eligible_events={eligible} terminal_events={terminal} successor_scan_events={scanned}",
-        projection.node_executions().len(),
-        projection.settled_node_executions().len(),
-    );
+    #[expect(
+        clippy::print_stderr,
+        reason = "This retained-state regression prints measured counts for its explicit nocapture evidence run; assertions remain the acceptance criteria."
+    )]
+    {
+        eprintln!(
+            "historical_occurrences={historical_count} active_executions={} settled_summaries={} pause_events=1 eligible_events={eligible} terminal_events={terminal} successor_scan_events={scanned}",
+            projection.node_executions().len(),
+            projection.settled_node_executions().len(),
+        );
+    }
     Ok(())
 }
 

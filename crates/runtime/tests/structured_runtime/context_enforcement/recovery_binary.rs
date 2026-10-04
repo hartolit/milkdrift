@@ -32,7 +32,9 @@ impl Drop for ProcessGuard {
                 clippy::print_stderr,
                 reason = "The test guard reports cleanup uncertainty during unwinding without panicking again; the ordinary path propagates stop errors."
             )]
-            eprintln!("recovery daemon cleanup failed; process may remain alive: {error}");
+            {
+                eprintln!("recovery daemon cleanup failed; process may remain alive: {error}");
+            }
         }
     }
 }
@@ -124,7 +126,11 @@ async fn recovery_binary_authorizes_reviews_replays_and_applies_repair_without_e
             "type = \"any\"",
         );
     let configuration: toml::Value = toml::from_str(&text)?;
-    let configured = &configuration["actors"][0]["authority"];
+    let configured = configuration
+        .get("actors")
+        .and_then(|actors| actors.get(0))
+        .and_then(|actor| actor.get("authority"))
+        .ok_or("configured authority missing")?;
     let resources: milkdrift_authority::ResourceScope =
         configured["resources"].clone().try_into()?;
     let budget: AuthorityBudget = configured["budget"].clone().try_into()?;
@@ -162,7 +168,12 @@ async fn recovery_binary_authorizes_reviews_replays_and_applies_repair_without_e
     let attempt = manifest(&harness.store, &invocation)?.attempt().to_string();
     let sequence = harness.store.head(&run)?;
     let mut new_policy = serde_json::to_value(policy("fresh", false, true)?)?;
-    new_policy["budget"]["max_bytes"] = json!(100_000);
+    new_policy
+        .get_mut("budget")
+        .ok_or("fixture field budget missing")?
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("max_bytes".to_owned(), json!(100_000));
     let proposal = WorkflowProposalDocument::new(WorkflowProposal::new(
         ProposalId::new("recovery-context-proposal")?,
         ActorRef::new("human:structured-runtime-test")?,
@@ -221,7 +232,10 @@ async fn recovery_binary_authorizes_reviews_replays_and_applies_repair_without_e
         },
     );
     let submitted = client.submit(&submit).await?;
-    let proposed = submitted.value["proposed_revision"]
+    let proposed = submitted
+        .value
+        .get("proposed_revision")
+        .ok_or("submitted revision missing")?
         .as_str()
         .ok_or("proposed revision")?
         .to_owned();
@@ -305,7 +319,10 @@ async fn recovery_binary_authorizes_reviews_replays_and_applies_repair_without_e
     assert!(runtime.projection(&run)?.is_completed());
     assert_eq!(executor.entry_count(), 1);
     assert_eq!(
-        &runtime.history(&run)?[..original_history.len()],
+        runtime
+            .history(&run)?
+            .get(..original_history.len())
+            .ok_or("original history prefix missing")?,
         original_history
     );
     assert_eq!(

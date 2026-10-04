@@ -107,7 +107,9 @@ fn remediation_survives_reopen_and_dispatches_only_the_target_revision_operation
         .ok_or("reopened remediation action is absent")?;
     let dispatch = match &action {
         EffectAction::Execute(dispatch) => dispatch,
-        _ => return Err("reopened remediation did not yield exactly one execution".into()),
+        EffectAction::Cancel(_) => {
+            return Err("reopened remediation did not yield exactly one execution".into());
+        }
     };
     assert_eq!(dispatch.revision(), new.id());
     assert_eq!(

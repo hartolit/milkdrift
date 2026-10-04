@@ -307,7 +307,11 @@ fn selection_is_deterministic_across_candidate_page_order() -> TestResult {
     assert_eq!(first, second);
     assert_eq!(first.entries().len(), 2);
     assert_eq!(
-        first.entries()[0].reason(),
+        first
+            .entries()
+            .first()
+            .ok_or("first selected entry missing")?
+            .reason(),
         ContextInclusionReason::CausalAncestor
     );
     Ok(())
@@ -320,7 +324,10 @@ fn stopped_selection_still_refuses_every_eligible_required_loss() -> TestResult 
             ContextBudget::new(8, 10, 100, None)?,
             fail_closed,
         )?)?;
-        policy_json["truncation"] = json!("stop_at_first_overflow");
+        policy_json
+            .as_object_mut()
+            .ok_or("fixture must be an object")?
+            .insert("truncation".to_owned(), json!("stop_at_first_overflow"));
         let policy: TaskContextPolicy = serde_json::from_value(policy_json)?;
         let revision = revision(policy.clone())?;
         for availability in [
@@ -354,7 +361,11 @@ fn stopped_selection_still_refuses_every_eligible_required_loss() -> TestResult 
                     let manifest = result?;
                     assert!(manifest.entries().is_empty());
                     assert_eq!(
-                        manifest.omissions()[1].reason,
+                        manifest
+                            .omissions()
+                            .get(1)
+                            .ok_or("stopped omission missing")?
+                            .reason,
                         ContextOmissionReason::SelectionStopped
                     );
                 }
@@ -370,10 +381,22 @@ fn omission_disclosure_does_not_depend_on_stopping_or_exclusion_reason() -> Test
         for hidden_scope in [true, false] {
             let mut policy_json =
                 serde_json::to_value(policy(ContextBudget::new(8, 10, 100, None)?)?)?;
-            policy_json["truncation"] = json!("stop_at_first_overflow");
+            policy_json
+                .as_object_mut()
+                .ok_or("fixture must be an object")?
+                .insert("truncation".to_owned(), json!("stop_at_first_overflow"));
             if !stopped {
-                policy_json["exclude_categories"] = json!(["direct_input"]);
-                policy_json["include_categories"] = json!(["successful_output"]);
+                policy_json
+                    .as_object_mut()
+                    .ok_or("fixture must be an object")?
+                    .insert("exclude_categories".to_owned(), json!(["direct_input"]));
+                policy_json
+                    .as_object_mut()
+                    .ok_or("fixture must be an object")?
+                    .insert(
+                        "include_categories".to_owned(),
+                        json!(["successful_output"]),
+                    );
             }
             let policy: TaskContextPolicy = serde_json::from_value(policy_json)?;
             let revision = revision(policy.clone())?;
@@ -453,7 +476,11 @@ fn branch_siblings_are_omitted_until_explicitly_exposed() -> TestResult {
     })?;
     assert!(manifest.entries().is_empty());
     assert_eq!(
-        manifest.omissions()[0].reason,
+        manifest
+            .omissions()
+            .first()
+            .ok_or("omission missing")?
+            .reason,
         ContextOmissionReason::BranchIsolated
     );
 
@@ -568,9 +595,19 @@ fn exact_budget_boundary_and_required_fail_closed_are_stable() -> TestResult {
         candidates: vec![second, first],
     })?;
     assert_eq!(zero_manifest.totals().artifacts, 1);
-    assert!(zero_manifest.entries()[0].selected_artifact());
+    assert!(
+        zero_manifest
+            .entries()
+            .first()
+            .ok_or("zero-byte entry missing")?
+            .selected_artifact()
+    );
     assert_eq!(
-        zero_manifest.omissions()[0].reason,
+        zero_manifest
+            .omissions()
+            .first()
+            .ok_or("zero-byte omission missing")?
+            .reason,
         ContextOmissionReason::ArtifactItemBudget
     );
     Ok(())
@@ -745,7 +782,14 @@ fn per_item_manifest_and_truncation_boundaries_are_exact() -> TestResult {
         ],
     })?;
     assert_eq!(oversized.entries().len(), 1);
-    assert_eq!(oversized.entries()[0].selected_bytes(), 1);
+    assert_eq!(
+        oversized
+            .entries()
+            .first()
+            .ok_or("oversized entry missing")?
+            .selected_bytes(),
+        1
+    );
 
     let stop_policy = TaskContextPolicy::new(
         true,

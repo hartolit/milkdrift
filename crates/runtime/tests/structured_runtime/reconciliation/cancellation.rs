@@ -327,7 +327,10 @@ fn cancel_and_restart_adoption_creates_one_replacement_after_confirmed_cancellat
     let executions: Vec<_> = projection.executions_for_node(&work).collect();
     assert_eq!(executions.len(), 1);
     assert_eq!(
-        executions[0].state(),
+        executions
+            .first()
+            .ok_or("cancelled execution missing")?
+            .state(),
         &NodeExecutionState::Terminal(milkdrift_persistence::NodeOutcome::Succeeded)
     );
     let history = runtime.history(&run)?;

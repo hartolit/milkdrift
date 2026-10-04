@@ -19,7 +19,6 @@ struct ContextProofExecutor {
 
 impl ContextProofExecutor {
     fn report_events(
-        &self,
         dispatch: &ExecutionDispatch,
         reporter: &dyn ExecutionReporter,
         output: Option<(&str, InvocationArtifactReference)>,
@@ -134,7 +133,7 @@ impl TaskExecutor for ContextProofExecutor {
                     })?
                     .push((dispatch.attempt().clone(), dispatch.request().clone()));
                 if self.verification_calls.fetch_add(1, Ordering::SeqCst) == 0 {
-                    return self.report_events(dispatch, reporter, None, retryable_failure()?);
+                    return Self::report_events(dispatch, reporter, None, retryable_failure()?);
                 }
             }
             if node == "review" {
@@ -144,7 +143,7 @@ impl TaskExecutor for ContextProofExecutor {
                     .lock()
                     .map_err(|_| ExecutorError::Boundary("review capture poisoned".to_owned()))? =
                     Some(dispatch.request().clone());
-                return self.report_events(
+                return Self::report_events(
                     dispatch,
                     reporter,
                     Some(("review", reference)),
@@ -156,7 +155,7 @@ impl TaskExecutor for ContextProofExecutor {
                 .get(node)
                 .cloned()
                 .map(|reference| ("evidence", reference));
-            self.report_events(dispatch, reporter, output, successful_executor_terminal()?)
+            Self::report_events(dispatch, reporter, output, successful_executor_terminal()?)
         }))
     }
 
@@ -286,26 +285,14 @@ fn reviewer_receives_frozen_causal_evidence_without_private_sibling_transcript()
             .map_err(Into::into)
         })
         .collect::<TestResult<Vec<_>>>()?;
-    assert_ne!(
-        verification_manifests[0].attempt(),
-        verification_manifests[1].attempt()
-    );
-    assert_eq!(
-        verification_manifests[0].entries(),
-        verification_manifests[1].entries()
-    );
-    assert_eq!(
-        verification_manifests[0].omissions(),
-        verification_manifests[1].omissions()
-    );
-    assert_eq!(
-        verification_manifests[0].totals(),
-        verification_manifests[1].totals()
-    );
-    assert_eq!(
-        verification_manifests[0].budget(),
-        verification_manifests[1].budget()
-    );
+    let [first, retry] = verification_manifests.as_slice() else {
+        return Err("expected exactly two verification manifests".into());
+    };
+    assert_ne!(first.attempt(), retry.attempt());
+    assert_eq!(first.entries(), retry.entries());
+    assert_eq!(first.omissions(), retry.omissions());
+    assert_eq!(first.totals(), retry.totals());
+    assert_eq!(first.budget(), retry.budget());
     let request = executor
         .reviewer_request
         .lock()

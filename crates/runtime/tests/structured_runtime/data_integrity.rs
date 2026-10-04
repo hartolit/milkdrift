@@ -260,10 +260,12 @@ fn direct_artifact_input_is_owned_accounted_and_optional_absence_is_omitted() ->
             _ => None,
         })
         .ok_or("scheduled invocation request was not persisted")?;
-    assert_eq!(request.inputs().len(), 1);
-    assert_eq!(request.inputs()[0].name(), "artifact");
+    let [input] = request.inputs() else {
+        return Err("expected exactly one artifact input".into());
+    };
+    assert_eq!(input.name(), "artifact");
     assert!(matches!(
-        request.inputs()[0].value(),
+        input.value(),
         InvocationValueReference::Artifact { reference }
             if reference.identity() == artifact.artifact().as_str()
     ));
@@ -381,9 +383,11 @@ fn unresolved_optional_edge_does_not_block_selected_target() -> TestResult {
             _ => None,
         })
         .collect();
-    assert_eq!(scheduled.len(), 1);
-    assert_eq!(scheduled[0].0, NodeId::new("consume")?);
-    assert!(scheduled[0].1.inputs().is_empty());
+    let [(node, request)] = scheduled.as_slice() else {
+        return Err("expected exactly one scheduled consumer".into());
+    };
+    assert_eq!(node, &NodeId::new("consume")?);
+    assert!(request.inputs().is_empty());
     Ok(())
 }
 
@@ -863,7 +867,7 @@ fn immutable_task_input_path_error_is_durably_failed_before_dispatch() -> TestRe
         },
     )?
     .with_control_output(PortId::new("out")?)?
-    .with_data_output(payload_port.clone(), DataPort::output(schema.clone()))?;
+    .with_data_output(payload_port, DataPort::output(schema.clone()))?;
     let consume = task("consume", "model.generate")?.with_data_input(
         PortId::new("input")?,
         DataPort::input(schema, true, Some(source))?,

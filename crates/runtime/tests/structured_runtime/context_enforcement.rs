@@ -12,11 +12,25 @@ mod recovery_controls;
 
 fn policy(session: &str, stopped: bool, fail_closed: bool) -> TestResult<TaskContextPolicy> {
     let mut value = serde_json::to_value(TaskContextPolicy::default())?;
-    value["session"] = json!(session);
-    value["fail_closed"] = json!(fail_closed);
+    value
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("session".to_owned(), json!(session));
+    value
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("fail_closed".to_owned(), json!(fail_closed));
     if stopped {
-        value["truncation"] = json!("stop_at_first_overflow");
-        value["budget"]["max_bytes"] = json!(100);
+        value
+            .as_object_mut()
+            .ok_or("fixture must be an object")?
+            .insert("truncation".to_owned(), json!("stop_at_first_overflow"));
+        value
+            .get_mut("budget")
+            .ok_or("fixture field budget missing")?
+            .as_object_mut()
+            .ok_or("fixture must be an object")?
+            .insert("max_bytes".to_owned(), json!(100));
     }
     Ok(serde_json::from_value(value)?)
 }
@@ -105,7 +119,13 @@ fn optional_overflow_cannot_dispatch_later_required_direct_input() -> TestResult
         if !fail_closed {
             let saved = manifest(&harness.store, &scheduled_request(&harness.runtime, &run)?)?;
             assert_eq!(saved.omissions().len(), 2);
-            assert!(saved.omissions()[1].required);
+            assert!(
+                saved
+                    .omissions()
+                    .get(1)
+                    .ok_or("required omission missing")?
+                    .required
+            );
         }
     }
     Ok(())
@@ -155,7 +175,10 @@ fn production_denied_artifact_omissions_are_redacted_when_stopped_or_excluded() 
         let durable = causal_context_production::durable_artifact(&artifact)?;
         let mut value = serde_json::to_value(policy("fresh", stopped, false)?)?;
         if !stopped {
-            value["exclude_categories"] = json!(["artifact"]);
+            value
+                .as_object_mut()
+                .ok_or("fixture must be an object")?
+                .insert("exclude_categories".to_owned(), json!(["artifact"]));
         }
         let policy: TaskContextPolicy = serde_json::from_value(value)?;
         let policy = policy.with_exact_sources(
@@ -257,8 +280,14 @@ fn omitted_model_request_still_requires_independent_artifact_read_authority() ->
         ArtifactSensitivity::Restricted,
     )?;
     let mut policy = serde_json::to_value(policy("fresh", false, false)?)?;
-    policy["include_categories"] = json!([]);
-    policy["exclude_categories"] = json!(["direct_input"]);
+    policy
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("include_categories".to_owned(), json!([]));
+    policy
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("exclude_categories".to_owned(), json!(["direct_input"]));
     let node = work(serde_json::from_value(policy)?)?.with_data_input(
         PortId::new(MODEL_TASK_INPUT_NAME)?,
         DataPort::input(
@@ -385,8 +414,15 @@ fn model_session_agreement_is_checked_for_inline_artifact_and_recovered_requests
 fn a_process_capability_cannot_claim_continuation_by_naming_its_operation_model_generate()
 -> TestResult {
     let mut value = serde_json::to_value(CapabilityDescriptorDocument::new(test_descriptor()?))?;
-    value["descriptor"]["category"] =
-        serde_json::to_value(milkdrift_capability::CapabilityCategory::Process)?;
+    value
+        .get_mut("descriptor")
+        .ok_or("fixture field descriptor missing")?
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert(
+            "category".to_owned(),
+            serde_json::to_value(milkdrift_capability::CapabilityCategory::Process)?,
+        );
     let descriptor = CapabilityDescriptorDocument::from_json(&serde_json::to_vec(&value)?)?
         .body()
         .clone();
@@ -454,7 +490,13 @@ fn hidden_workspace_omissions_remain_redacted_through_production_discovery() -> 
         )?;
         let mut value = serde_json::to_value(policy("fresh", stopped, false)?)?;
         if !stopped {
-            value["exclude_categories"] = json!(["successful_output"]);
+            value
+                .as_object_mut()
+                .ok_or("fixture must be an object")?
+                .insert(
+                    "exclude_categories".to_owned(),
+                    json!(["successful_output"]),
+                );
         }
         let policy: TaskContextPolicy = serde_json::from_value(value)?;
         let policy = policy.with_exact_sources(
@@ -828,11 +870,15 @@ fn offline_binary_inspects_blocked_legacy_context_without_disclosing_or_rewritin
         );
         let report: serde_json::Value = serde_json::from_slice(&inspected.stdout)?;
         assert_eq!(
-            report["report"]["data"]["attempts"][0]["context"]["classification"],
+            report
+                .pointer("/report/data/attempts/0/context/classification")
+                .ok_or("offline context classification missing")?,
             "unsafe_but_readable"
         );
         assert_eq!(
-            report["report"]["data"]["attempts"][0]["blocks_context_recovery"],
+            report
+                .pointer("/report/data/attempts/0/blocks_context_recovery")
+                .ok_or("offline recovery block missing")?,
             true
         );
         assert!(!String::from_utf8_lossy(&inspected.stdout).contains("hidden-execution"));
@@ -1024,7 +1070,7 @@ fn corrected_selection_and_model_session_survive_retry_after_store_reopen() -> T
         })
         .collect::<Vec<_>>();
     assert_eq!(requests.len(), 2);
-    let retry_manifest = manifest(&store, &requests[1])?;
+    let retry_manifest = manifest(&store, requests.get(1).ok_or("retry request missing")?)?;
     assert_ne!(prior_manifest.attempt(), retry_manifest.attempt());
     assert_eq!(prior_manifest.entries(), retry_manifest.entries());
     assert_eq!(prior_manifest.omissions(), retry_manifest.omissions());

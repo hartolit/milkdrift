@@ -108,7 +108,7 @@ fn projects_structured_scopes_waits_signals_and_subworkflows() -> TestResult {
                 execution: join,
                 rule: JoinRule::All,
                 branches: vec![BranchResultReference {
-                    branch: branch.clone(),
+                    branch,
                     scope: branch_scope.reference().clone(),
                     outcome: RunOutcome::Succeeded,
                     outputs: Vec::new(),
@@ -617,7 +617,7 @@ fn repeat_continuation_decisions_are_bounded_and_preserve_authority_history() ->
             },
         )?,
     ];
-    let pending = RunProjection::replay(&events[..6])?;
+    let pending = RunProjection::replay(events.get(..6).ok_or("pending event prefix missing")?)?;
     let pending_continuation = &pending.repeat_continuations()[&repeat];
     assert!(pending_continuation.is_pending_approval());
     assert_eq!(
@@ -964,7 +964,7 @@ fn repeat_continuation_request_cycles_are_hard_capped() -> TestResult {
         runtime_eligible(3, &fixture, "repeat", &repeat, fixture.root.reference())?,
     ];
     let mut sequence = 4_u64;
-    for number in 1..=MAX_REPEAT_CONTINUATION_CYCLES as u32 {
+    for number in 1..=u32::try_from(MAX_REPEAT_CONTINUATION_CYCLES)? {
         let iteration = IterationId::new(format!("iteration-{number}"))?;
         let scope = WorkspaceScope::iteration(
             ScopeId::new(format!("iteration-scope-{number}"))?,

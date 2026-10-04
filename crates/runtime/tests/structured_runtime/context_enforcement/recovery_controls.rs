@@ -19,7 +19,12 @@ fn recovery_controls_replace_unsafe_context_prospectively_and_resume_the_same_ru
             )?
             .ok_or("stored revision")?;
         let mut revised_policy = serde_json::to_value(policy("fresh", false, true)?)?;
-        revised_policy["budget"]["max_bytes"] = json!(100_000);
+        revised_policy
+            .get_mut("budget")
+            .ok_or("fixture field budget missing")?
+            .as_object_mut()
+            .ok_or("fixture must be an object")?
+            .insert("max_bytes".to_owned(), json!(100_000));
         let new = old.revise(
             old.id(),
             MutationBatch::new(vec![Mutation::ReplaceNode {
@@ -127,7 +132,12 @@ fn recovery_controls_replace_unsafe_context_prospectively_and_resume_the_same_ru
         assert!(replay.replayed());
         assert_eq!(replay.result(), accepted.result());
         let repaired = runtime.history(&run)?;
-        assert_eq!(&repaired[..history.len()], history);
+        assert_eq!(
+            repaired
+                .get(..history.len())
+                .ok_or("retained history prefix missing")?,
+            history
+        );
         assert!(repaired.iter().any(|event| matches!(
             event.kind(),
             RunEventKind::ReconciliationCancellationRequested { .. }
@@ -169,8 +179,11 @@ fn recovery_controls_replace_unsafe_context_prospectively_and_resume_the_same_ru
             })
             .collect();
         assert_eq!(requests.len(), 2);
-        assert_ne!(requests[0].invocation(), requests[1].invocation());
-        let fresh = manifest(&store, &requests[1])?;
+        let [original, retry] = requests.as_slice() else {
+            return Err("expected original and retry requests".into());
+        };
+        assert_ne!(original.invocation(), retry.invocation());
+        let fresh = manifest(&store, retry)?;
         assert_eq!(fresh.policy_version(), 2);
         assert_eq!(fresh.revision(), new.id());
     }

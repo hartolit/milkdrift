@@ -452,7 +452,7 @@ fn idempotent_retries_cannot_rotate_stable_keys_or_resolved_snapshots() -> TestR
             attempt: second_attempt.clone(),
             invocation: second_invocation.clone(),
             idempotency_key: Some(stable_key.clone()),
-            request: invocation_request(&second_invocation, Some(stable_key.clone()))?,
+            request: invocation_request(&second_invocation, Some(stable_key))?,
         },
     )?)?;
     let rotated_snapshot = envelope(

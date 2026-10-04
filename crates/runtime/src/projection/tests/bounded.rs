@@ -140,17 +140,23 @@ fn ten_thousand_closed_task_occurrences_keep_one_terminal_frontier() -> TestResu
     let final_size = encode_projection_snapshot(&projection)?.len();
     assert!(final_size < size_at_100.saturating_mul(2));
     assert!(final_size.abs_diff(size_at_100) < 1_024);
-    eprintln!(
-        "ordinary_occurrences=10000 active_executions={} settled_summaries={} attempts={} invocations={} leases={} scopes={} node_indexes={} descendant_indexes={} snapshot_at_100_bytes={size_at_100} snapshot_at_10000_bytes={final_size}",
-        projection.node_executions().len(),
-        projection.settled_node_executions().len(),
-        projection.attempts().len(),
-        projection.invocations.len(),
-        projection.leases().len(),
-        projection.scopes().len(),
-        projection.execution_ids_by_node.len(),
-        projection.latest_descendant_execution_by_scope_node.len(),
-    );
+    #[expect(
+        clippy::print_stderr,
+        reason = "This retained-state regression prints measured counts for its explicit nocapture evidence run; assertions remain the acceptance criteria."
+    )]
+    {
+        eprintln!(
+            "ordinary_occurrences=10000 active_executions={} settled_summaries={} attempts={} invocations={} leases={} scopes={} node_indexes={} descendant_indexes={} snapshot_at_100_bytes={size_at_100} snapshot_at_10000_bytes={final_size}",
+            projection.node_executions().len(),
+            projection.settled_node_executions().len(),
+            projection.attempts().len(),
+            projection.invocations.len(),
+            projection.leases().len(),
+            projection.scopes().len(),
+            projection.execution_ids_by_node.len(),
+            projection.latest_descendant_execution_by_scope_node.len(),
+        );
+    }
     Ok(())
 }
 
@@ -525,15 +531,21 @@ fn ten_thousand_closed_fork_join_cycles_retire_structured_ownership() -> TestRes
     assert!(final_size < size_at_100.saturating_mul(2));
     assert!(size_at_10_000 < size_at_100.saturating_mul(2));
     assert!(size_at_10_000.abs_diff(size_at_100) < 1_024);
-    eprintln!(
-        "fork_join_cycles=10000 branches={} joins={} routes={} owners={} child_sets={} branch_scopes={} snapshot_at_100_bytes={size_at_100} snapshot_at_10000_bytes={size_at_10_000} closed_snapshot_bytes={final_size}",
-        projection.branches().len(),
-        projection.joins().len(),
-        projection.branch_routes().len(),
-        projection.branch_owner.len(),
-        projection.active_structured_children_by_execution.len(),
-        projection.scopes().len().saturating_sub(1),
-    );
+    #[expect(
+        clippy::print_stderr,
+        reason = "This retained-state regression prints measured counts for its explicit nocapture evidence run; assertions remain the acceptance criteria."
+    )]
+    {
+        eprintln!(
+            "fork_join_cycles=10000 branches={} joins={} routes={} owners={} child_sets={} branch_scopes={} snapshot_at_100_bytes={size_at_100} snapshot_at_10000_bytes={size_at_10_000} closed_snapshot_bytes={final_size}",
+            projection.branches().len(),
+            projection.joins().len(),
+            projection.branch_routes().len(),
+            projection.branch_owner.len(),
+            projection.active_structured_children_by_execution.len(),
+            projection.scopes().len().saturating_sub(1),
+        );
+    }
     Ok(())
 }
 
@@ -665,14 +677,20 @@ fn ten_thousand_completed_repeat_children_keep_only_import_frontier() -> TestRes
     assert!(size_at_9_999 > 0);
     assert!(size_at_9_999 < size_at_100.saturating_mul(2));
     assert!(size_at_9_999.abs_diff(size_at_100) < 1_024);
-    eprintln!(
-        "completed_subworkflows=10000 children={} child_runs={} usage_summaries={} iterations={} child_scopes={} snapshot_at_100_bytes={size_at_100} snapshot_at_9999_bytes={size_at_9_999} closed_snapshot_bytes={final_size}",
-        projection.subworkflows().len(),
-        projection.child_runs.len(),
-        projection.subworkflow_usage_by_execution.len(),
-        projection.iterations().len(),
-        projection.scopes().len().saturating_sub(1),
-    );
+    #[expect(
+        clippy::print_stderr,
+        reason = "This retained-state regression prints measured counts for its explicit nocapture evidence run; assertions remain the acceptance criteria."
+    )]
+    {
+        eprintln!(
+            "completed_subworkflows=10000 children={} child_runs={} usage_summaries={} iterations={} child_scopes={} snapshot_at_100_bytes={size_at_100} snapshot_at_9999_bytes={size_at_9_999} closed_snapshot_bytes={final_size}",
+            projection.subworkflows().len(),
+            projection.child_runs.len(),
+            projection.subworkflow_usage_by_execution.len(),
+            projection.iterations().len(),
+            projection.scopes().len().saturating_sub(1),
+        );
+    }
     Ok(())
 }
 
@@ -731,7 +749,14 @@ fn settled_output_reference_and_provenance_anchor_survive_full_retirement() -> T
     assert_eq!(summary.revision(), &fixture.revision);
     assert_eq!(summary.created_sequence(), RunSequence::new(3));
     assert_eq!(summary.outputs().len(), 1);
-    assert_eq!(summary.outputs()[0].value(), &output);
+    assert_eq!(
+        summary
+            .outputs()
+            .first()
+            .ok_or("settled output missing")?
+            .value(),
+        &output
+    );
     assert!(projection.workspace_values().contains(&output));
     Ok(())
 }
@@ -1016,7 +1041,14 @@ fn settled_signals_timers_and_recovery_passes_do_not_accumulate() -> TestResult 
     assert!(projection.timers().is_empty());
     assert!(projection.signals().is_empty());
     assert_eq!(projection.recovery().len(), 1);
-    assert!(projection.recovery()[0].classifications().is_empty());
+    assert!(
+        projection
+            .recovery()
+            .first()
+            .ok_or("retained recovery missing")?
+            .classifications()
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -1043,7 +1075,11 @@ fn ten_thousand_unmatched_signals_cannot_exceed_the_pending_budget() -> TestResu
     assert!(RunProjection::replay(&events).is_err());
 
     let accepted = super::super::MAX_PENDING_SIGNAL_COUNT;
-    let projection = RunProjection::replay(&events[..accepted.saturating_add(2)])?;
+    let projection = RunProjection::replay(
+        events
+            .get(..accepted.checked_add(2).ok_or("accepted prefix overflow")?)
+            .ok_or("accepted history prefix missing")?,
+    )?;
     assert_eq!(projection.signals().len(), accepted);
     let payload_bytes = projection
         .signals()
@@ -1053,10 +1089,16 @@ fn ten_thousand_unmatched_signals_cannot_exceed_the_pending_budget() -> TestResu
         })?;
     assert!(payload_bytes <= super::super::MAX_PENDING_SIGNAL_PAYLOAD_BYTES);
     let snapshot_bytes = encode_projection_snapshot(&projection)?.len();
-    eprintln!(
-        "unmatched_signals_attempted=10000 retained={} retained_payload_bytes={payload_bytes} snapshot_bytes={snapshot_bytes}",
-        projection.signals().len(),
-    );
+    #[expect(
+        clippy::print_stderr,
+        reason = "This retained-state regression prints measured counts for its explicit nocapture evidence run; assertions remain the acceptance criteria."
+    )]
+    {
+        eprintln!(
+            "unmatched_signals_attempted=10000 retained={} retained_payload_bytes={payload_bytes} snapshot_bytes={snapshot_bytes}",
+            projection.signals().len(),
+        );
+    }
     Ok(())
 }
 
@@ -1196,7 +1238,7 @@ fn ten_thousand_pre_start_releases_retain_no_worker_history() -> TestResult {
                 RunEventKind::NodeStarted {
                     execution: execution.clone(),
                     attempt: attempt.clone(),
-                    invocation: invocation.clone(),
+                    invocation,
                 },
             )?)
             .is_err()
@@ -1256,12 +1298,18 @@ fn ten_thousand_pre_start_releases_retain_no_worker_history() -> TestResult {
     let final_size = encode_projection_snapshot(&projection)?.len();
     assert!(final_size < size_at_100.saturating_mul(2));
     assert!(final_size.abs_diff(size_at_100) < 1_024);
-    eprintln!(
-        "pre_start_releases=10000 retained_workers={} retained_attempt_leases={} retained_leases={} snapshot_at_100_bytes={size_at_100} snapshot_at_10000_bytes={final_size}",
-        projection.attempts()[&attempt].lease_workers().len(),
-        projection.attempts()[&attempt].leases().len(),
-        projection.leases().len(),
-    );
+    #[expect(
+        clippy::print_stderr,
+        reason = "This retained-state regression prints measured counts for its explicit nocapture evidence run; assertions remain the acceptance criteria."
+    )]
+    {
+        eprintln!(
+            "pre_start_releases=10000 retained_workers={} retained_attempt_leases={} retained_leases={} snapshot_at_100_bytes={size_at_100} snapshot_at_10000_bytes={final_size}",
+            projection.attempts()[&attempt].lease_workers().len(),
+            projection.attempts()[&attempt].leases().len(),
+            projection.leases().len(),
+        );
+    }
     Ok(())
 }
 
@@ -1374,12 +1422,18 @@ fn ten_thousand_revision_node_churn_drops_removed_root_summaries() -> TestResult
     let final_size = encode_projection_snapshot(&projection)?.len();
     assert!(final_size < size_at_100.saturating_mul(2));
     assert!(final_size.abs_diff(size_at_100) < 1_024);
-    eprintln!(
-        "revision_node_churn=10000 settled_summaries={} node_indexes={} scope_node_indexes={} descendant_indexes={} snapshot_at_100_bytes={size_at_100} snapshot_at_10000_bytes={final_size}",
-        projection.settled_node_executions().len(),
-        projection.execution_ids_by_node.len(),
-        projection.settled_execution_by_scope_node.len(),
-        projection.latest_descendant_execution_by_scope_node.len(),
-    );
+    #[expect(
+        clippy::print_stderr,
+        reason = "This retained-state regression prints measured counts for its explicit nocapture evidence run; assertions remain the acceptance criteria."
+    )]
+    {
+        eprintln!(
+            "revision_node_churn=10000 settled_summaries={} node_indexes={} scope_node_indexes={} descendant_indexes={} snapshot_at_100_bytes={size_at_100} snapshot_at_10000_bytes={final_size}",
+            projection.settled_node_executions().len(),
+            projection.execution_ids_by_node.len(),
+            projection.settled_execution_by_scope_node.len(),
+            projection.latest_descendant_execution_by_scope_node.len(),
+        );
+    }
     Ok(())
 }

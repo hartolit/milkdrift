@@ -137,9 +137,13 @@ fn crash_after_durable_lease_recovers_only_after_expiry_and_retries_once() -> Te
         assert!(attempt.terminal().is_none());
         assert!(attempt.obligation().is_none());
         assert_eq!(attempt.recovery().len(), 1);
-        assert_eq!(attempt.recovery()[0].lease(), Some(&original_lease));
+        let recovery = attempt
+            .recovery()
+            .first()
+            .ok_or("recovery evidence missing")?;
+        assert_eq!(recovery.lease(), Some(&original_lease));
         assert_eq!(
-            attempt.recovery()[0].classification(),
+            recovery.classification(),
             RecoveryClassification::NotStarted
         );
         assert_eq!(attempt.leases().len(), 2);
@@ -414,11 +418,12 @@ fn crash_after_durable_start_recovers_as_uncertain_without_duplicate_dispatch_hi
         assert!(attempt.terminal().is_none());
         assert!(attempt.obligation().is_some());
         assert_eq!(attempt.recovery().len(), 1);
-        assert_eq!(attempt.recovery()[0].lease(), Some(&original_lease));
-        assert_eq!(
-            attempt.recovery()[0].classification(),
-            RecoveryClassification::Uncertain
-        );
+        let recovery = attempt
+            .recovery()
+            .first()
+            .ok_or("recovery evidence missing")?;
+        assert_eq!(recovery.lease(), Some(&original_lease));
+        assert_eq!(recovery.classification(), RecoveryClassification::Uncertain);
         assert_eq!(
             recovered
                 .leases()

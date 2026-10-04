@@ -730,7 +730,7 @@ mod tests {
         usage.branches.insert((run.clone(), branch), 1);
         assert!(!limits.allows(&request, &usage));
         usage.branches.clear();
-        usage.runs.insert(run.clone(), 2);
+        usage.runs.insert(run, 2);
         assert!(!limits.allows(&request, &usage));
         usage.runs.clear();
         usage.capability_classes.insert(operation, 1);

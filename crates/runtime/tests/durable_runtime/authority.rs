@@ -102,8 +102,12 @@ fn revocation_after_effect_claim_is_durable_and_never_enters_executor() -> TestR
     .body()
     .clone();
     let mut wire = serde_json::to_value(&descriptor)?;
-    wire["locality"] = serde_json::json!("peer");
-    wire["peer"] = serde_json::json!("peer-pinned");
+    wire.as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("locality".to_owned(), serde_json::json!("peer"));
+    wire.as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("peer".to_owned(), serde_json::json!("peer-pinned"));
     let descriptor = serde_json::from_value(wire)?;
     let executor = Arc::new(CountingExecutor::new(descriptor));
     let runtime = revocable_service(
@@ -312,8 +316,14 @@ fn narrowed_placement_admission_requires_task_proof_and_retains_exact_host() -> 
         "../../../capability/tests/fixtures/descriptor-v1.json"
     ))?;
     let mut value = serde_json::to_value(base.body())?;
-    value["locality"] = serde_json::json!("peer");
-    value["peer"] = serde_json::json!(peer);
+    value
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("locality".to_owned(), serde_json::json!("peer"));
+    value
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("peer".to_owned(), serde_json::json!(peer));
     let descriptor: milkdrift_capability::CapabilityDescriptor = serde_json::from_value(value)?;
     for (label, placement, accepted) in [
         (
