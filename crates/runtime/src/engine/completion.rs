@@ -725,9 +725,7 @@ impl RuntimeService {
         scan_remaining: &mut usize,
     ) -> Result<(), RuntimeError> {
         let projection = transition.projection();
-        if run_drain_reason(projection).is_some() {
-            return Ok(());
-        }
+        let draining = run_drain_reason(projection).is_some();
         let mut candidates = BTreeSet::new();
         let requested = (*scan_remaining).min(projection.pending_successor_execution_ids().len());
         let claimed = self.claim_structured_scan_visits(requested);
@@ -745,6 +743,12 @@ impl RuntimeService {
                     "scanned successor execution identity is absent".to_owned(),
                 ));
             };
+            if draining {
+                // A successful task can settle while paused or after cancellation. Consume its
+                // pending scan without admitting successors so the drain can become terminal.
+                processed_sources.push(source_execution);
+                continue;
+            }
             if let Some(branch) = projection
                 .branch_for_execution(execution.execution())
                 .filter(|branch| matches!(branch.state(), BranchState::Completed(_)))

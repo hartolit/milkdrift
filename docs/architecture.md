@@ -314,6 +314,9 @@ Repeat invokes a pinned acyclic body with a hard iteration maximum, optional tig
 limits, and terminal limit policy. Wait/timer and authenticated correlated signal waits are durable.
 Subworkflow pins a revision and interface rather than copying mutable definitions. Explicit
 success/failure/cancellation terminals cannot complete a scope with unaccounted owned work.
+When a successful task finishes while paused or cancelling, cancellation drains its pending
+successor scan without starting future nodes. The journal retains the task's success and records
+the scan and cancelled run outcome; restart cannot leave that completed task blocking the drain.
 
 Prompt-sequence compilation emits fresh/explicitly continued coding tasks, distinct verification
 and result-acceptance tasks, branches over accepted results, review/signal holds, and ordinary

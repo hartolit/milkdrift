@@ -1,6 +1,114 @@
 use super::*;
 
 #[test]
+fn cancellation_drains_successors_of_work_completed_while_paused_or_cancelling() -> TestResult {
+    for paused in [true, false] {
+        let directory = TempDir::new()?;
+        let store = Arc::new(RedbStore::open(directory.path())?);
+        let executor = Arc::new(BlockingExecutor::new(test_descriptor()?)?);
+        let clock = Arc::new(ManualClock::new(NOW));
+        let config = RuntimeConfig::new(
+            WorkerId::new("worker-cancel-successor")?,
+            ActorRef::new("controller:cancel-successor")?,
+            30_000,
+            32,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(1, Vec::new(), 10, 1_000, 0)?,
+        )?;
+        let open = |prefix: &str| -> TestResult<_> {
+            Ok(Arc::new(RuntimeService::new_with_authority(
+                store.clone(),
+                executor.clone(),
+                test_authority(),
+                clock.clone(),
+                Arc::new(SequentialIdGenerator::new(prefix, 1)?),
+                config.clone(),
+            )?))
+        };
+        let runtime = open("cancel-successor")?;
+        let revision = task_revision("workflow-cancel-successor")?;
+        let run = RunId::new("run-cancel-successor")?;
+        store.put_revision(&revision)?;
+        let command = |runtime: &RuntimeService, command| -> TestResult {
+            assert_eq!(
+                submit_command(runtime, store.as_ref(), &run, command)?,
+                CommandDisposition::Accepted
+            );
+            Ok(())
+        };
+        command(
+            &runtime,
+            RunCommand::CreateRun {
+                workflow: revision.semantic().workflow().clone(),
+                revision: revision.id().clone(),
+                root_scope: WorkspaceScope::run_root(
+                    run.clone(),
+                    ScopeId::new("scope-cancel-successor")?,
+                ),
+                workspace_budget: generous_budget()?,
+                inputs: Vec::new(),
+            },
+        )?;
+        command(&runtime, RunCommand::StartRun)?;
+        let tick_runtime = runtime.clone();
+        let dispatch = std::thread::spawn(move || {
+            runtime_tick(&tick_runtime).map_err(|error| error.to_string())
+        });
+        executor.wait_until_entered()?;
+        command(
+            &runtime,
+            if paused {
+                RunCommand::PauseRun
+            } else {
+                RunCommand::RequestCancellation
+            },
+        )?;
+        // The external task finishes successfully before cancellation reaches its executor.
+        executor.release()?;
+        dispatch.join().map_err(|_| "dispatch thread panicked")??;
+        if paused {
+            assert_eq!(
+                runtime
+                    .projection(&run)?
+                    .pending_successor_execution_ids()
+                    .len(),
+                1
+            );
+            command(&runtime, RunCommand::RequestCancellation)?;
+        }
+        let prefix = runtime.history(&run)?;
+        drop(runtime);
+        let runtime = open("reopened-cancel-successor")?;
+        for _ in 0..4 {
+            runtime_tick(&runtime)?;
+        }
+        let projection = runtime.projection(&run)?;
+        assert_eq!(
+            projection.lifecycle(),
+            RunLifecycle::Terminal(RunOutcome::Cancelled)
+        );
+        assert!(projection.pending_successor_execution_ids().is_empty());
+        let history = runtime.history(&run)?;
+        assert_eq!(history.get(..prefix.len()), Some(prefix.as_slice()));
+        assert!(!history.iter().any(|event| matches!(event.kind(),
+            RunEventKind::NodeBecameEligible { node, .. } if node.as_str() == "done")));
+        assert!(history.iter().any(|event| matches!(
+            event.kind(),
+            RunEventKind::NodeTerminal {
+                outcome: milkdrift_persistence::NodeOutcome::Succeeded,
+                ..
+            }
+        )));
+        let mut replay = milkdrift_runtime::RunProjection::default();
+        for event in &history {
+            replay.apply(event)?;
+        }
+        assert_eq!(replay, projection);
+    }
+    Ok(())
+}
+
+#[test]
 fn explicit_terminal_waits_for_an_already_dispatched_any_join_loser() -> TestResult {
     let directory = TempDir::new()?;
     let store = Arc::new(RedbStore::open(directory.path())?);
