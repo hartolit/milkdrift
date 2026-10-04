@@ -24,9 +24,18 @@ fn booking(
 fn book(s: &Service) -> EvidenceResult<(u16, Value)> {
     booking(s, "Ada", s.case.start, s.case.end, 1, Some(&s.token))
 }
+
+fn booking_quantity(item: &Value) -> EvidenceResult<u32> {
+    Ok(u32::try_from(
+        item.get("quantity")
+            .and_then(Value::as_u64)
+            .ok_or("quantity absent")?,
+    )?)
+}
+
 fn fill(s: &Service, mut quantity: u64) -> EvidenceResult {
     while quantity > 0 {
-        let count = quantity.min(u64::from(s.case.quantity)) as u32;
+        let count = u32::try_from(quantity.min(u64::from(s.case.quantity)))?;
         require(
             booking(s, "Bo", s.case.start, s.case.end, count, Some(&s.token))?.0 == 201,
             "declared quantity booking failed",
@@ -188,7 +197,7 @@ pub(super) fn observe(s: &mut Service, name: &str) -> EvidenceResult {
                         "Ada",
                         start,
                         end,
-                        item["quantity"].as_u64().ok_or("quantity absent")? as u32,
+                        booking_quantity(item)?,
                         Some(&s.token),
                     )?
                     .0 == 201,
@@ -290,5 +299,29 @@ pub(super) fn observe(s: &mut Service, name: &str) -> EvidenceResult {
             )
         }
         _ => Err("unsupported required verifier check".into()),
+    }
+}
+
+#[cfg(test)]
+mod quantity_tests {
+    use super::*;
+
+    #[test]
+    fn remote_quantity_cannot_truncate_into_a_different_replacement() -> EvidenceResult {
+        for quantity in [1, u32::MAX] {
+            assert_eq!(booking_quantity(&json!({"quantity":quantity}))?, quantity);
+        }
+        for value in [
+            json!({}),
+            json!({"quantity":-1}),
+            json!({"quantity":u64::from(u32::MAX) + 1}),
+            json!({"quantity":u64::MAX}),
+        ] {
+            assert!(
+                booking_quantity(&value).is_err(),
+                "invalid remote quantity accepted: {value}"
+            );
+        }
+        Ok(())
     }
 }
