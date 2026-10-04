@@ -341,12 +341,12 @@ impl EffectWorkerHost {
         if mode == EffectShutdownMode::Retain {
             self.shared.retain_queued.store(true, Ordering::SeqCst);
         }
-        let expires = Instant::now() + deadline;
+        let started = Instant::now();
         let mut unresolved_invocations = Vec::new();
         let mut lifecycle_complete = mode != EffectShutdownMode::Cancel;
         if mode == EffectShutdownMode::Cancel
             && let Some(report) =
-                capability_shutdown_before(self.capability_host.clone(), true, expires)?
+                capability_shutdown_before(self.capability_host.clone(), true, started, deadline)?
         {
             unresolved_invocations = report.unresolved_invocations;
             lifecycle_complete = true;
@@ -360,13 +360,13 @@ impl EffectWorkerHost {
             .map_err(|_error| EffectWorkerError::StateUnavailable)?
             .take();
 
-        while !self.is_idle() && Instant::now() < expires {
+        while !self.is_idle() && started.elapsed() < deadline {
             thread::sleep(Duration::from_millis(5));
         }
         let idle = self.is_idle();
         if idle && mode != EffectShutdownMode::Cancel {
             if let Some(report) =
-                capability_shutdown_before(self.capability_host.clone(), false, expires)?
+                capability_shutdown_before(self.capability_host.clone(), false, started, deadline)?
             {
                 unresolved_invocations.extend(report.unresolved_invocations);
                 lifecycle_complete = true;
@@ -404,9 +404,10 @@ impl EffectWorkerHost {
 fn capability_shutdown_before(
     host: CapabilityHost,
     force: bool,
-    expires: Instant,
+    started: Instant,
+    timeout: Duration,
 ) -> Result<Option<ShutdownReport>, EffectWorkerError> {
-    let remaining = expires.saturating_duration_since(Instant::now());
+    let remaining = timeout.saturating_sub(started.elapsed());
     if remaining.is_zero() {
         return Ok(None);
     }

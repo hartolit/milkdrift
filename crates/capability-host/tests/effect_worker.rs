@@ -41,6 +41,51 @@ use milkdrift_workspace::{RunId, ScopeId, WorkspaceBudget, WorkspaceScope};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+#[test]
+fn maximum_shutdown_duration_does_not_overflow_the_clock() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let host = CapabilityHost::new(
+        HostConfig {
+            max_registrations: 1,
+            max_generations_per_capability: 1,
+            max_concurrent_per_generation: 1,
+            observation_stale_after_ms: 1_000,
+        },
+        CapabilitySelectionPolicy::priorities(BTreeMap::new()),
+    )?;
+    let runtime = Arc::new(RuntimeService::new_with_authority(
+        Arc::new(RedbStore::open(directory.path())?),
+        Arc::new(host.clone()),
+        Arc::new(AllowAuthority),
+        Arc::new(ManualClock::new(1_000)),
+        Arc::new(SequentialIdGenerator::new("maximum-shutdown", 1)?),
+        RuntimeConfig::new(
+            WorkerId::new("maximum-shutdown")?,
+            ActorRef::new("controller:maximum-shutdown")?,
+            30_000,
+            32,
+            SchedulerLimits::new(8, 4, 2, 4)?,
+            RetryPolicy::new(1, Vec::new(), 1, 1, 0)?,
+        )?,
+    )?);
+    let workers = EffectWorkerHost::start(
+        runtime,
+        host,
+        EffectWorkerConfig {
+            execution_threads: 1,
+            execution_queue: 1,
+            cancellation_queue: 1,
+            maximum_claim_page: 1,
+        },
+    )?;
+    assert!(
+        workers
+            .shutdown(EffectShutdownMode::Drain, Duration::MAX)?
+            .clean
+    );
+    Ok(())
+}
+
 struct AllowAuthority;
 
 impl AuthorityEvaluator for AllowAuthority {
