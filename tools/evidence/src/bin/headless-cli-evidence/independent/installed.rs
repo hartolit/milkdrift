@@ -89,7 +89,8 @@ fn observe(
             ],
             deadline,
         )?;
-        let page: ObservationPage = serde_json::from_value(value["value"].clone())?;
+        let page: ObservationPage =
+            serde_json::from_value(value.pointer("/value").ok_or("missing /value")?.clone())?;
         page.validate(128)?;
         ensure(
             page.execution.as_str() == execution && page.after_sequence == after,
@@ -228,7 +229,11 @@ pub(crate) fn run(args: &Arguments) -> EvidenceResult {
         let health = runner.success(&["daemon", "health"])?;
         let catalog = runner.success(&["invocation", "catalog"])?;
         ensure(
-            health["value"]["role"] == role && catalog["value"]["host"] == endpoint.host,
+            health.pointer("/value/role").ok_or("missing /value/role")? == role
+                && catalog
+                    .pointer("/value/host")
+                    .ok_or("missing /value/host")?
+                    == endpoint.host.as_str(),
             "installed role or host differs from the explicit manifest",
         )?;
         if !args.installed_replay {
@@ -286,7 +291,10 @@ pub(crate) fn run(args: &Arguments) -> EvidenceResult {
         check_result(name, &result, process_bytes)?;
         let state = serving.success(&["invocation", "show", &execution])?;
         ensure(
-            state["value"]["origin"]["type"] == "direct",
+            state
+                .pointer("/value/origin/type")
+                .ok_or("missing /value/origin/type")?
+                == "direct",
             "independent call acquired workflow provenance",
         )?;
         direct.push(json!({"request":path.file_name().and_then(|n| n.to_str()).ok_or("request filename absent")?,"execution":execution,"output":artifact,"output_file":format!("{id}-output"),"state":state}));
@@ -302,7 +310,9 @@ pub(crate) fn run(args: &Arguments) -> EvidenceResult {
         } else {
             &manifest.coordinator_model_capability
         };
-        let candidates = catalog["value"]
+        let candidates = catalog
+            .pointer("/value")
+            .ok_or("missing /value")?
             .as_array()
             .ok_or("coordinator catalog absent")?
             .iter()
@@ -314,7 +324,10 @@ pub(crate) fn run(args: &Arguments) -> EvidenceResult {
             candidates.len() == 1,
             "expected one unambiguous remote capability",
         )?;
-        let remote = required_text(candidates[0], &["capability_id"])?;
+        let remote = required_text(
+            candidates.first().ok_or("remote capability absent")?,
+            &["capability_id"],
+        )?;
         let revision =
             workflow::blueprint(&id, &remote, operation, input_name, &artifact, output_name)?;
         let path = root.join(format!("{id}.json"));
@@ -341,26 +354,42 @@ pub(crate) fn run(args: &Arguments) -> EvidenceResult {
         ])?;
         save(root, &format!("{id}-acceptance.json"), &accepted)?;
         let state = wait_for_run(&coordinator, &id, Duration::from_secs(300), |v| {
-            !v["value"]["terminal"].is_null() || v["value"]["uncertainty_count"] != 0
+            v.pointer("/value/terminal")
+                .is_some_and(|terminal| !terminal.is_null())
+                || v.pointer("/value/uncertainty_count")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|count| count != 0)
         })?;
         save(root, &format!("{id}-state.json"), &state)?;
         ensure(
-            state["value"]["terminal"] == "succeeded",
+            state
+                .pointer("/value/terminal")
+                .ok_or("missing /value/terminal")?
+                == "succeeded",
             "remote workflow did not succeed; inspect retained state",
         )?;
-        let node = state["value"]["nodes"]
+        let node = state
+            .pointer("/value/nodes")
+            .ok_or("missing /value/nodes")?
             .as_array()
             .and_then(|nodes| nodes.iter().find(|node| node["node_id"] == "operation"))
             .ok_or("remote operation absent")?;
         let attempt_id = required_text(node, &["latest_attempt_id"])?;
         let attempt = coordinator.success(&["attempt", "inspect", &id, &attempt_id])?;
         ensure(
-            attempt["value"]["peer_id"] == manifest.serving.host
-                && attempt["value"]["capability_provenance"]["peer"]["remote_capability_id"]
+            attempt
+                .pointer("/value/peer_id")
+                .ok_or("missing /value/peer_id")?
+                == manifest.serving.host.as_str()
+                && attempt
+                    .pointer("/value/capability_provenance/peer/remote_capability_id")
+                    .ok_or("missing /value/capability_provenance/peer/remote_capability_id")?
                     == capability,
             "workflow execution lost the selected serving peer",
         )?;
-        let artifact = attempt["value"]["outputs"]
+        let artifact = attempt
+            .pointer("/value/outputs")
+            .ok_or("missing /value/outputs")?
             .as_array()
             .and_then(|outputs| outputs.iter().find(|o| o["name"] == output_name))
             .ok_or("remote output absent")?["artifact"]
@@ -369,7 +398,7 @@ pub(crate) fn run(args: &Arguments) -> EvidenceResult {
         let result = download(&coordinator, root, &output_id, &format!("{id}-output"))?;
         check_result(name, &result, process_bytes)?;
         save(root, &format!("{id}-attempt.json"), &attempt)?;
-        workflows.push(json!({"run":id,"command":command,"revision":revision.id(),"attempt":attempt_id,"invocation":attempt["value"]["invocation_id"],"output":artifact,"output_file":format!("{id}-output")}));
+        workflows.push(json!({"run":id,"command":command,"revision":revision.id(),"attempt":attempt_id,"invocation":attempt.pointer("/value/invocation_id").ok_or("missing /value/invocation_id")?,"output":artifact,"output_file":format!("{id}-output")}));
     }
     save(
         root,
@@ -400,15 +429,21 @@ fn replay(serving: &CliRunner, coordinator: &CliRunner, root: &Path) -> Evidence
     let downloads = tempfile::Builder::new()
         .prefix("replay-")
         .tempdir_in(root)?;
-    for record in completed["direct"]
+    for record in completed
+        .pointer("/direct")
+        .ok_or("missing /direct")?
         .as_array()
         .ok_or("direct records absent")?
     {
         let path = root.join(required_text(record, &["request"])?);
         let result = serving.success(&["invocation", "submit", path_text(&path)?])?;
         ensure(
-            (result["value"]["replayed"] == true || result["value"]["type"] == "archived")
-                && result["value"]["execution"] == record["execution"],
+            (result.pointer("/value/replayed").and_then(Value::as_bool) == Some(true)
+                || result.pointer("/value/type").and_then(Value::as_str) == Some("archived"))
+                && result
+                    .pointer("/value/execution")
+                    .ok_or("missing /value/execution")?
+                    == record.get("execution").ok_or("execution absent")?,
             "restart changed direct acceptance",
         )?;
         let execution = required_text(record, &["execution"])?;
@@ -432,7 +467,9 @@ fn replay(serving: &CliRunner, coordinator: &CliRunner, root: &Path) -> Evidence
             "restart changed direct output bytes",
         )?;
     }
-    for record in completed["workflows"]
+    for record in completed
+        .pointer("/workflows")
+        .ok_or("missing /workflows")?
         .as_array()
         .ok_or("workflow records absent")?
     {
@@ -450,10 +487,15 @@ fn replay(serving: &CliRunner, coordinator: &CliRunner, root: &Path) -> Evidence
         ])?;
         let state = coordinator.success(&["run", "show", &run])?;
         ensure(
-            state["value"]["terminal"] == "succeeded",
+            state
+                .pointer("/value/terminal")
+                .ok_or("missing /value/terminal")?
+                == "succeeded",
             "restart lost successful workflow",
         )?;
-        let node = state["value"]["nodes"]
+        let node = state
+            .pointer("/value/nodes")
+            .ok_or("missing /value/nodes")?
             .as_array()
             .and_then(|nodes| nodes.iter().find(|n| n["node_id"] == "operation"))
             .ok_or("replayed operation absent")?;
@@ -464,7 +506,10 @@ fn replay(serving: &CliRunner, coordinator: &CliRunner, root: &Path) -> Evidence
         let attempt = required_text(record, &["attempt"])?;
         let inspected = coordinator.success(&["attempt", "inspect", &run, &attempt])?;
         ensure(
-            inspected["value"]["invocation_id"] == record["invocation"],
+            inspected
+                .pointer("/value/invocation_id")
+                .ok_or("missing /value/invocation_id")?
+                == record.get("invocation").ok_or("invocation absent")?,
             "restart changed remote invocation",
         )?;
         let name = required_text(record, &["output_file"])?;

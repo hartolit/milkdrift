@@ -58,9 +58,19 @@ pub(super) fn run(arguments: &Arguments) -> EvidenceResult {
         Some("stdout"),
     )?;
     let mut profile: Value = serde_json::from_slice(&fs::read(&process_profile)?)?;
-    profile["profile"]["arguments"] = json!(["--fixture-independent", marker]);
-    profile["profile"]["inputs"] = json!([{"input":"source","relative_path":"source.txt"}]);
-    profile["profile"]["stdin"] = json!({"type":"input","input":"source","max_bytes":4096});
+    let process = profile
+        .get_mut("profile")
+        .and_then(Value::as_object_mut)
+        .ok_or("process profile absent")?;
+    process.insert("arguments".into(), json!(["--fixture-independent", marker]));
+    process.insert(
+        "inputs".into(),
+        json!([{"input":"source","relative_path":"source.txt"}]),
+    );
+    process.insert(
+        "stdin".into(),
+        json!({"type":"input","input":"source","max_bytes":4096}),
+    );
     fs::write(&process_profile, serde_json::to_vec(&profile)?)?;
     let token = write_private(&directory.join("operator.token"), TOKEN.as_bytes())?;
     let mut model = setup::MockModel::with_text("independent model result".to_owned())?;
@@ -75,20 +85,38 @@ pub(super) fn run(arguments: &Arguments) -> EvidenceResult {
     let mut config: Value = serde_json::to_value(toml::from_str::<toml::Value>(
         &fs::read_to_string(&config_path)?,
     )?)?;
-    config["role"] = json!("execution_only");
-    config["host_id"] = json!("independent-evidence-host");
+    let fields = config
+        .as_object_mut()
+        .ok_or("daemon configuration is not an object")?;
+    fields.insert("role".into(), json!("execution_only"));
+    fields.insert("host_id".into(), json!("independent-evidence-host"));
     // The five-second lease in setup belongs to its crash/recovery case. Peer transfers
     // include multiple durable HTTP operations; use the normal host lease for this lane.
-    config["runtime"]["lease_duration_ms"] =
-        json!(milkdrift_daemon::RuntimeHostConfig::default().lease_duration_ms);
+    config
+        .pointer_mut("/runtime")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /runtime")?
+        .insert(
+            "lease_duration_ms".into(),
+            json!(milkdrift_daemon::RuntimeHostConfig::default().lease_duration_ms),
+        );
     // The fixture is explicitly unbilled; this is not inferred from loopback locality.
     let model_path = directory.join("model-profile.json");
     let mut model_profile: Value = serde_json::from_slice(&fs::read(&model_path)?)?;
-    model_profile["billing"] =
-        json!({"type":"unbilled","source":"deterministic fixture performs no provider billing"});
-    model_profile["token_limits"] = json!({"type":"byte_bpe","template_tokens_per_message":32,"template_tokens_per_request":64,"maximum_input_tokens":65536,"maximum_output_tokens":4096,"output_control":"max_tokens","source":"deterministic fixture response is one bounded token sequence"});
-    model_profile["limits"]["max_request_bytes"] = json!(65536);
-    model_profile["limits"]["max_response_bytes"] = json!(65536);
+    let fields = model_profile
+        .as_object_mut()
+        .ok_or("model profile is not an object")?;
+    fields.insert(
+        "billing".into(),
+        json!({"type":"unbilled","source":"deterministic fixture performs no provider billing"}),
+    );
+    fields.insert("token_limits".into(), json!({"type":"byte_bpe","template_tokens_per_message":32,"template_tokens_per_request":64,"maximum_input_tokens":65536,"maximum_output_tokens":4096,"output_control":"max_tokens","source":"deterministic fixture response is one bounded token sequence"}));
+    let limits = fields
+        .get_mut("limits")
+        .and_then(Value::as_object_mut)
+        .ok_or("model limits absent")?;
+    limits.insert("max_request_bytes".into(), json!(65536));
+    limits.insert("max_response_bytes".into(), json!(65536));
     fs::write(&model_path, serde_json::to_vec(&model_profile)?)?;
     fs::remove_file(&config_path)?;
     let config_path = setup::checked_config(directory, &arguments.daemon, &config)?;
@@ -101,7 +129,11 @@ pub(super) fn run(arguments: &Arguments) -> EvidenceResult {
     let mut daemon = start_daemon(&arguments.daemon, &config_path)?;
     wait_for_readiness(&runner, &mut daemon)?;
     ensure(
-        runner.success(&["daemon", "health"])?["value"]["role"] == "execution_only",
+        runner
+            .success(&["daemon", "health"])?
+            .pointer("/value/role")
+            .ok_or("missing /value/role")?
+            == "execution_only",
         "binary reported another role",
     )?;
     let process_bytes = b"public uploaded process input\n";
@@ -177,12 +209,22 @@ pub(super) fn run(arguments: &Arguments) -> EvidenceResult {
     ] {
         let replay = runner.success(&["invocation", "submit", path_text(saved)?])?;
         ensure(
-            replay["value"]["replayed"] == true && replay["value"]["execution"] == *execution,
+            replay
+                .pointer("/value/replayed")
+                .ok_or("missing /value/replayed")?
+                == true
+                && replay
+                    .pointer("/value/execution")
+                    .ok_or("missing /value/execution")?
+                    == execution.as_str(),
             "hot exact replay changed acceptance",
         )?;
         let inspected = runner.success(&["invocation", "show", execution])?;
         ensure(
-            inspected["value"]["origin"]["type"] == "direct",
+            inspected
+                .pointer("/value/origin/type")
+                .ok_or("missing /value/origin/type")?
+                == "direct",
             "independent invocation acquired workflow provenance",
         )?;
     }
@@ -217,7 +259,10 @@ pub(super) fn run(arguments: &Arguments) -> EvidenceResult {
     wait_for_readiness(&runner, &mut daemon)?;
     for saved in [&process_saved, &model_saved] {
         ensure(
-            runner.success(&["invocation", "submit", path_text(saved)?])?["value"]["replayed"]
+            runner
+                .success(&["invocation", "submit", path_text(saved)?])?
+                .pointer("/value/replayed")
+                .ok_or("missing /value/replayed")?
                 == true,
             "restart did not retain exact acceptance",
         )?;
@@ -265,7 +310,9 @@ fn upload(
     let discovery: DirectDiscovery = serde_json::from_value(
         runner
             .success(&["invocation", "catalog"])
-            .map_err(|error| format!("input owner discovery for {name}: {error}"))?["value"]
+            .map_err(|error| format!("input owner discovery for {name}: {error}"))?
+            .pointer("/value")
+            .ok_or("missing /value")?
             .clone(),
     )?;
     let value = runner.success(&[
@@ -280,7 +327,7 @@ fn upload(
         media,
     ])?;
     let metadata: milkdrift_control_protocol::ArtifactMetadataRead =
-        serde_json::from_value(value["value"].clone())?;
+        serde_json::from_value(value.pointer("/value").ok_or("missing /value")?.clone())?;
     Ok(milkdrift_capability::ArtifactReference::new(
         metadata.artifact_id,
         metadata.digest,
@@ -299,7 +346,8 @@ fn request(
     input: milkdrift_capability::ArtifactReference,
 ) -> EvidenceResult<std::path::PathBuf> {
     let value = runner.success(&["invocation", "catalog"])?;
-    let discovery: DirectDiscovery = serde_json::from_value(value["value"].clone())?;
+    let discovery: DirectDiscovery =
+        serde_json::from_value(value.pointer("/value").ok_or("missing /value")?.clone())?;
     let inputs = directory.join(format!("{id}.inputs.json"));
     fs::write(
         &inputs,
@@ -332,7 +380,8 @@ fn invoke(
     file: &Path,
 ) -> EvidenceResult<(std::path::PathBuf, String, ObservationPage)> {
     let value = runner.success(&["invocation", "submit", path_text(file)?])?;
-    let acceptance: InvocationAcceptance = serde_json::from_value(value["value"].clone())?;
+    let acceptance: InvocationAcceptance =
+        serde_json::from_value(value.pointer("/value").ok_or("missing /value")?.clone())?;
     let InvocationAcceptance::Accepted { execution, .. } = acceptance else {
         return Err("direct admission was not accepted".into());
     };
@@ -357,7 +406,8 @@ fn invoke(
         "--limit",
         "128",
     ])?;
-    let page: ObservationPage = serde_json::from_value(value["value"].clone())?;
+    let page: ObservationPage =
+        serde_json::from_value(value.pointer("/value").ok_or("missing /value")?.clone())?;
     ensure(page.terminal, "invocation omitted terminal evidence")?;
     Ok((file.to_owned(), execution.to_string(), page))
 }

@@ -33,34 +33,66 @@ pub(super) fn run(
     let target = "independent-evidence-host";
     let source = "workflow-evidence-host";
     let mut config = serving_config.clone();
-    config["secret_sources"]["credential:peer"] = json!({"type":"file","path":"peer.token"});
+    config
+        .pointer_mut("/secret_sources")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /secret_sources")?
+        .insert(
+            "credential:peer".into(),
+            json!({"type":"file","path":"peer.token"}),
+        );
     write_private(&serving_directory.join("peer.token"), b"binary-peer-token")?;
     write_private(&directory.join("peer.token"), b"binary-peer-token")?;
     let relationship = json!({
         "peer_id":source,"endpoint":format!("http://{origin_endpoint}/"),"credential_ref":"credential:peer",
         "insecure_loopback_development":true,"actions":["read_catalog","invoke","cancel","artifact_upload","artifact_download"],
         "capability_allow":["independent-process","operator-model"],"capability_deny":[],"operation_allow":["process.execute","model.generate"],
-        "maximum_side_effect":"unknown","execution_filesystem":config["actors"][0]["authority"]["resources"]["filesystem"],
-        "execution_network_profiles":["local-model-loopback"],"execution_network_destinations":config["actors"][0]["authority"]["resources"]["network"]["destinations"],
+        "maximum_side_effect":"unknown","execution_filesystem":config.pointer("/actors/0/authority/resources/filesystem").ok_or("missing /actors/0/authority/resources/filesystem")?,
+        "execution_network_profiles":["local-model-loopback"],"execution_network_destinations":config.pointer("/actors/0/authority/resources/network/destinations").ok_or("missing /actors/0/authority/resources/network/destinations")?,
         "maximum_artifact_bytes":16777216,"artifact_sensitivities":["public","internal","restricted"],"maximum_duration_ms":300000,
         "maximum_input_units":65536,"maximum_output_units":4096,"maximum_observations":4096,"maximum_requests_per_minute":10000,
         "catalog_ttl_ms":300000,"trust_zone":"binary-peer","delegation_ref":"delegation:binary-peer","expires_at_unix_ms":4102444800000_u64
     });
-    config["peers"] = json!({"mode":"enabled","relationships":[relationship]});
+    config
+        .as_object_mut()
+        .ok_or("expected JSON object")?
+        .insert(
+            "peers".into(),
+            json!({"mode":"enabled","relationships":[relationship]}),
+        );
     fs::remove_file(serving_directory.join("daemon.toml"))?;
     let serving_path = setup::checked_config(serving_directory, &arguments.daemon, &config)?;
     let mut origin_config = config.clone();
-    origin_config["host_id"] = json!(source);
-    origin_config["role"] = json!("workflow_enabled");
-    origin_config["runtime"]["controller_activation"] = json!("enabled");
-    origin_config["bind"] = json!(origin_endpoint.to_string());
-    origin_config["adapters"] = json!({"process_profiles":[],"model_profiles":[]});
-    origin_config["peers"]["relationships"][0]["peer_id"] = json!(target);
-    origin_config["peers"]["relationships"][0]["endpoint"] = json!(serving_runner.endpoint);
-    origin_config["actors"][0]["authority"]["resources"]["peers"] =
-        json!({"identities":[target],"allow_any":false});
-    origin_config["actors"][0]["authority"]["resources"]["network"] =
-        json!({"profiles":[format!("peer:{target}")],"destinations":[config["bind"]]});
+    let fields = origin_config
+        .as_object_mut()
+        .ok_or("origin configuration is not an object")?;
+    fields.insert("host_id".into(), json!(source));
+    fields.insert("role".into(), json!("workflow_enabled"));
+    fields.insert("bind".into(), json!(origin_endpoint.to_string()));
+    fields.insert(
+        "adapters".into(),
+        json!({"process_profiles":[],"model_profiles":[]}),
+    );
+    fields
+        .get_mut("runtime")
+        .and_then(Value::as_object_mut)
+        .ok_or("runtime configuration absent")?
+        .insert("controller_activation".into(), json!("enabled"));
+    let relationship = origin_config
+        .pointer_mut("/peers/relationships/0")
+        .and_then(Value::as_object_mut)
+        .ok_or("peer relationship absent")?;
+    relationship.insert("peer_id".into(), json!(target));
+    relationship.insert("endpoint".into(), json!(serving_runner.endpoint));
+    let resources = origin_config
+        .pointer_mut("/actors/0/authority/resources")
+        .and_then(Value::as_object_mut)
+        .ok_or("actor resource grant absent")?;
+    resources.insert(
+        "peers".into(),
+        json!({"identities":[target],"allow_any":false}),
+    );
+    resources.insert("network".into(), json!({"profiles":[format!("peer:{target}")],"destinations":[config.get("bind").ok_or("serving bind absent")?]}));
     let token = write_private(&directory.join("operator.token"), TOKEN.as_bytes())?;
     let origin_path = setup::checked_config(directory, &arguments.daemon, &origin_config)?;
     let runner = CliRunner {
@@ -122,7 +154,9 @@ pub(super) fn run(
             endpoint.disconnect_next.store(true, Ordering::SeqCst);
         }
         let capabilities = runner.success(&["capability", "list"])?;
-        let registered = capabilities["value"]
+        let registered = capabilities
+            .pointer("/value")
+            .ok_or("missing /value")?
             .as_array()
             .and_then(|items| {
                 items.iter().find(|item| {
@@ -190,7 +224,9 @@ pub(super) fn run(
             None,
         )?;
         let runs = runner.success(&["run", "list", "--limit", "100"])?;
-        let children = runs["value"]["items"]
+        let children = runs
+            .pointer("/value/items")
+            .ok_or("missing /value/items")?
             .as_array()
             .ok_or("run list absent")?
             .iter()
@@ -200,7 +236,10 @@ pub(super) fn run(
             children.len() == 1,
             &format!("controller did not create one child: {runs}"),
         )?;
-        let workflow = required_text(children[0], &["run_id"])?;
+        let workflow = required_text(
+            children.first().ok_or("controller child absent")?,
+            &["run_id"],
+        )?;
         // An uncertain attempt is not terminal settlement: its complete reservation stays
         // outstanding. Observe the child boundary, not an invented controller completion.
         let completed = milkdrift_evidence::application::wait_for_run(
@@ -212,9 +251,11 @@ pub(super) fn run(
             },
             std::time::Duration::from_secs(45),
             |read| {
-                !read["value"]["terminal"].is_null()
-                    || read["value"]["uncertainty_count"]
-                        .as_u64()
+                read.pointer("/value/terminal")
+                    .is_some_and(|terminal| !terminal.is_null())
+                    || read
+                        .pointer("/value/uncertainty_count")
+                        .and_then(Value::as_u64)
                         .is_some_and(|count| count > 0)
             },
         );
@@ -229,9 +270,13 @@ pub(super) fn run(
             }
         };
         let controlled_read = runner.success(&["run", "show", root])?;
-        let account = &controlled_read["value"]["controller_accounting"];
+        let account = controlled_read
+            .pointer("/value/controller_accounting")
+            .ok_or("missing /value/controller_accounting")?;
         let run = runner.success(&["run", "show", &workflow])?;
-        let node = run["value"]["nodes"]
+        let node = run
+            .pointer("/value/nodes")
+            .ok_or("missing /value/nodes")?
             .as_array()
             .and_then(|nodes| nodes.iter().find(|node| node["node_id"] == "operation"))
             .ok_or("remote task node missing")?;
@@ -240,12 +285,29 @@ pub(super) fn run(
         let invocation = required_text(&inspected, &["value", "invocation_id"])?;
         if name == "uncertain-model" {
             ensure(
-                inspected["value"]["uncertain"] == true
-                    && account["account"]["outstanding"]["input_units"] == 65536
-                    && account["account"]["outstanding"]["output_units"] == 4096
-                    && account["account"]["outstanding"]["artifact_bytes"] == 16777216
-                    && account["account"]["settled"]["model_admissions"] == 1
-                    && account["account"]["reservations"]
+                inspected
+                    .pointer("/value/uncertain")
+                    .ok_or("missing /value/uncertain")?
+                    == true
+                    && account
+                        .pointer("/account/outstanding/input_units")
+                        .ok_or("missing /account/outstanding/input_units")?
+                        == 65536
+                    && account
+                        .pointer("/account/outstanding/output_units")
+                        .ok_or("missing /account/outstanding/output_units")?
+                        == 4096
+                    && account
+                        .pointer("/account/outstanding/artifact_bytes")
+                        .ok_or("missing /account/outstanding/artifact_bytes")?
+                        == 16777216
+                    && account
+                        .pointer("/account/settled/model_admissions")
+                        .ok_or("missing /account/settled/model_admissions")?
+                        == 1
+                    && account
+                        .pointer("/account/reservations")
+                        .ok_or("missing /account/reservations")?
                         .as_object()
                         .is_some_and(|items| items.len() == 1),
                 &format!(
@@ -256,7 +318,11 @@ pub(super) fn run(
             origins.push((workflow, invocation, None));
             continue;
         }
-        if completed["value"]["terminal"] != "succeeded" {
+        if completed
+            .pointer("/value/terminal")
+            .ok_or("missing /value/terminal")?
+            != "succeeded"
+        {
             return Err(format!(
                 "remote {name} failed: wait_exit={:?}; {}",
                 waited.status.code(),
@@ -264,7 +330,9 @@ pub(super) fn run(
             )
             .into());
         }
-        let output = inspected["value"]["outputs"]
+        let output = inspected
+            .pointer("/value/outputs")
+            .ok_or("missing /value/outputs")?
             .as_array()
             .and_then(|outputs| outputs.iter().find(|output| output["name"] == output_name))
             .ok_or("remote output was not imported")?;
@@ -272,15 +340,25 @@ pub(super) fn run(
         let bytes = download(&runner, directory, &artifact, &format!("{name}-result"))?;
         ensure(
             account["state"] == "active"
-                && account["committed"][if name == "process" {
-                    "process_admissions"
-                } else {
-                    "model_admissions"
-                }] == 1
-                && account["committed"]["artifact_bytes"]
+                && account
+                    .get("committed")
+                    .and_then(|committed| {
+                        committed.get(if name == "process" {
+                            "process_admissions"
+                        } else {
+                            "model_admissions"
+                        })
+                    })
+                    .and_then(Value::as_u64)
+                    == Some(1)
+                && account
+                    .pointer("/committed/artifact_bytes")
+                    .ok_or("missing /committed/artifact_bytes")?
                     .as_u64()
                     .is_some_and(|charged| charged >= bytes.len() as u64)
-                && account["account"]["reservations"]
+                && account
+                    .pointer("/account/reservations")
+                    .ok_or("missing /account/reservations")?
                     .as_object()
                     .is_some_and(|reservations| reservations.is_empty()),
             &format!("remote result did not settle the origin's reservation: {account}"),
@@ -300,8 +378,11 @@ pub(super) fn run(
     wait_for_readiness(&runner, &mut daemon)?;
     let (uncertain_root, retained_account) = uncertain_root.ok_or("loss scenario missing")?;
     ensure(
-        runner.success(&["run", "show", &uncertain_root])?["value"]["controller_accounting"]
-            == retained_account,
+        runner
+            .success(&["run", "show", &uncertain_root])?
+            .pointer("/value/controller_accounting")
+            .ok_or("missing /value/controller_accounting")?
+            == &retained_account,
         "restart changed or released unknown remote usage",
     )?;
     daemon.terminate()?;

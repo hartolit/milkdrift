@@ -101,7 +101,12 @@ fn retained_outputs_survive_page_boundaries_and_archival() -> EvidenceResult {
             observation_digest: format!("b3_{}", "0".repeat(64)),
             archived_at_unix_ms: 3,
             final_observation: page.observations.last().cloned(),
-            output_observations: vec![page.observations[0].clone()],
+            output_observations: vec![
+                page.observations
+                    .first()
+                    .ok_or("output observation absent")?
+                    .clone(),
+            ],
             uncertainty_reason: None,
         }),
     };
