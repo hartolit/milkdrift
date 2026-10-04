@@ -1070,8 +1070,6 @@ fn validate_capture(
 fn validate_environment_name(value: &str) -> Result<(), ProcessProfileError> {
     if value.is_empty()
         || value.len() > 128
-        || !value.is_ascii()
-        || value.contains('=')
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
@@ -1086,7 +1084,6 @@ fn validate_environment_name(value: &str) -> Result<(), ProcessProfileError> {
 fn validate_safe_name(kind: &str, value: &str) -> Result<(), ProcessProfileError> {
     if value.is_empty()
         || value.len() > 128
-        || !value.is_ascii()
         || !value
             .as_bytes()
             .first()
