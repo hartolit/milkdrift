@@ -32,11 +32,20 @@ pub(super) fn command(
 ) -> EvidenceResult<Value> {
     let path = write(s, &format!("{key}.json"), &value)?;
     let result = s.call(key, args!["learning", path.display()], expected, caller)?;
-    Ok(if result["status"] == "success" {
-        result["value"]["value"].clone()
-    } else {
-        result
-    })
+    Ok(
+        if result
+            .pointer("/status")
+            .and_then(serde_json::Value::as_str)
+            == Some("success")
+        {
+            result
+                .pointer("/value/value")
+                .ok_or("missing /value/value")?
+                .clone()
+        } else {
+            result
+        },
+    )
 }
 pub(super) fn receipt(command: &str, actor: &str) -> Value {
     json!({"actor":actor,"command":command})
@@ -66,7 +75,12 @@ pub(super) fn revision(s: &Session, id: &str) -> EvidenceResult<Value> {
     }
     let (document, _) =
         milkdrift_blueprint::BlueprintRevisionDocument::from_json(&fs::read(path)?)?;
-    Ok(serde_json::from_slice::<Value>(&document.to_canonical_json()?)?["revision"].clone())
+    Ok(
+        serde_json::from_slice::<Value>(&document.to_canonical_json()?)?
+            .pointer("/revision")
+            .ok_or("missing /revision")?
+            .clone(),
+    )
 }
 pub(super) fn upload(s: &Session, key: &str, bytes: &[u8], media: &str) -> EvidenceResult<Value> {
     let path = s.root.join("learning-05").join(format!("{key}.input"));
@@ -75,23 +89,26 @@ pub(super) fn upload(s: &Session, key: &str, bytes: &[u8], media: &str) -> Evide
     } else {
         write_private(&path, bytes)?;
     }
-    let value = s.ok(
-        key,
-        args![
-            "artifact",
-            "upload",
-            path.display(),
-            "--host",
-            "host:slotbook-test",
-            "--upload-id",
+    let value = s
+        .ok(
             key,
-            "--media-type",
-            media
-        ],
-    )?["value"]
+            args![
+                "artifact",
+                "upload",
+                path.display(),
+                "--host",
+                "host:slotbook-test",
+                "--upload-id",
+                key,
+                "--media-type",
+                media
+            ],
+        )?
+        .pointer("/value")
+        .ok_or("missing /value")?
         .clone();
     Ok(
-        json!({"artifact":value["artifact_id"],"digest":value["digest"],"media_type":value["content_type"],"size_bytes":value["size"]}),
+        json!({"artifact":value.pointer("/artifact_id").ok_or("missing /artifact_id")?,"digest":value.pointer("/digest").ok_or("missing /digest")?,"media_type":value.pointer("/content_type").ok_or("missing /content_type")?,"size_bytes":value.pointer("/size").ok_or("missing /size")?}),
     )
 }
 pub(super) fn cap_reference(reference: &Value) -> Value {
@@ -129,15 +146,25 @@ pub(super) fn setup(s: &Session, slot: &mut Value) -> EvidenceResult {
             Expected::Success,
         )?;
         ensure(
-            actual["pending"].is_null() && actual["generation"].as_u64().is_some_and(|n| n > 0),
+            actual
+                .pointer("/pending")
+                .is_some_and(serde_json::Value::is_null)
+                && actual
+                    .pointer("/generation")
+                    .and_then(serde_json::Value::as_u64)
+                    .is_some_and(|n| n > 0),
             "learning resource did not reach a verified generation",
         )?;
-        slot[format!("{kind}_state")] = actual;
+        slot.as_object_mut()
+            .ok_or("slot is not an object")?
+            .insert(format!("{kind}_state"), actual);
     }
     Ok(())
 }
-pub(super) fn slot_declaration(slot: &Value, request: &str) -> Value {
-    json!({"invocation":{"actor":OPERATOR,"request":request},"workspace":slot["worker"],"workspace_configuration":slot["worker_state"]["recipe"]["digest"],"workspace_generation":slot["worker_state"]["generation"],"target":slot["target"],"configuration":slot["target_state"]["recipe"]["digest"],"generation":slot["target_state"]["generation"]})
+pub(super) fn slot_declaration(slot: &Value, request: &str) -> EvidenceResult<Value> {
+    Ok(
+        json!({"invocation":{"actor":OPERATOR,"request":request},"workspace":slot["worker"],"workspace_configuration":slot.pointer("/worker_state/recipe/digest").ok_or("missing /worker_state/recipe/digest")?,"workspace_generation":slot.pointer("/worker_state/generation").ok_or("missing /worker_state/generation")?,"target":slot["target"],"configuration":slot.pointer("/target_state/recipe/digest").ok_or("missing /target_state/recipe/digest")?,"generation":slot.pointer("/target_state/generation").ok_or("missing /target_state/generation")?}),
+    )
 }
 
 pub(super) fn worker(
@@ -162,8 +189,10 @@ pub(super) fn worker(
     Ok(s.ok(
         &format!("{key}-wait"),
         args!["invocation", "wait", execution],
-    )?["value"]
-        .clone())
+    )?
+    .pointer("/value")
+    .ok_or("missing /value")?
+    .clone())
 }
 
 pub(in crate::learning) fn run(
@@ -172,7 +201,10 @@ pub(in crate::learning) fn run(
     source: &Value,
 ) -> EvidenceResult {
     let dir = s.root.join("learning-05");
-    let baseline = load(dir.join("governed.json"))?["revision"].clone();
+    let baseline = load(dir.join("governed.json"))?
+        .pointer("/revision")
+        .ok_or("missing /revision")?
+        .clone();
     if dir.join("accepted-slots.json").exists() {
         let slots = load(dir.join("accepted-slots.json"))?
             .as_array()
@@ -185,8 +217,17 @@ pub(in crate::learning) fn run(
             Caller::Operator,
             Expected::Success,
         )?;
-        let mut declaration = load(dir.join("learning-declare.json"))?["declaration"].clone();
-        declaration["proposal_run"] = json!(key(args, "slotbook-learning-proposal"));
+        let mut declaration = load(dir.join("learning-declare.json"))?
+            .pointer("/declaration")
+            .ok_or("missing /declaration")?
+            .clone();
+        declaration
+            .as_object_mut()
+            .ok_or("expected JSON object")?
+            .insert(
+                "proposal_run".into(),
+                json!(key(args, "slotbook-learning-proposal")),
+            );
         if args.proposal_attempt > 1 {
             let profile = upload(
                 s,
@@ -194,7 +235,9 @@ pub(in crate::learning) fn run(
                 &fs::read(&args.model_profile)?,
                 "application/json",
             )?;
-            let provenance = declaration["provenance"]
+            let provenance = declaration
+                .pointer_mut("/provenance")
+                .ok_or("missing /provenance")?
                 .as_array_mut()
                 .ok_or("declaration provenance absent")?;
             if !provenance.contains(&profile) {
@@ -254,7 +297,11 @@ pub(in crate::learning) fn run(
         0,
         args![
             "--evaluation",
-            text(&source["protected_target"]["accepted_evaluation"])?
+            text(
+                source
+                    .pointer("/protected_target/accepted_evaluation")
+                    .ok_or("missing /protected_target/accepted_evaluation")?
+            )?
         ],
         "slotbook-test",
         Expected::Success,
@@ -266,15 +313,21 @@ pub(in crate::learning) fn run(
         &["/bin/cat", "/workspace/KNOWLEDGE.md"],
         true,
     )?;
-    let reference = exported["observations"]
+    let reference = exported
+        .get("observations")
+        .ok_or("knowledge observations absent")?
         .as_array()
         .ok_or("knowledge observations absent")?
         .iter()
         .find(|o| {
             o["category"] == "artifact"
-                && o["event"]["kind"]["reference"]["media_type"] == "application/octet-stream"
+                && o.pointer("/event/kind/reference/media_type")
+                    .and_then(Value::as_str)
+                    == Some("application/octet-stream")
         })
-        .ok_or("knowledge export absent")?["event"]["kind"]["reference"]
+        .ok_or("knowledge export absent")?
+        .pointer("/event/kind/reference")
+        .ok_or("missing /event/kind/reference")?
         .clone();
     let path = dir.join("KNOWLEDGE.md");
     s.ok(
@@ -282,7 +335,7 @@ pub(in crate::learning) fn run(
         args![
             "artifact",
             "get",
-            text(&reference["identity"])?,
+            text(reference.pointer("/identity").ok_or("missing /identity")?)?,
             "--output",
             path.display()
         ],
@@ -310,12 +363,16 @@ pub(in crate::learning) fn run(
         brief.as_bytes(),
         "text/plain",
     )?);
-    let sequence = number(&source["completed_run"]["sequence"])?;
+    let sequence = number(
+        source
+            .pointer("/completed_run/sequence")
+            .ok_or("missing /completed_run/sequence")?,
+    )?;
     let pages = json!([{"run":source["internal_run"],"first":1,"count":3},{"run":source["internal_run"],"first":10,"count":3},{"run":source["internal_run"],"first":sequence-3,"count":4}]);
     let selection = command(
         s,
         "learning-select",
-        json!({"type":"select","selection":{"method":baseline["id"],"workspace":source_slot["worker"],"guidance":guidance,"artifacts":selected,"pages":pages,"supersedes":null,"approval":null}}),
+        json!({"type":"select","selection":{"method":baseline.pointer("/id").ok_or("missing /id")?,"workspace":source_slot["worker"],"guidance":guidance,"artifacts":selected,"pages":pages,"supersedes":null,"approval":null}}),
         Caller::Operator,
         Expected::Success,
     )?;
@@ -325,11 +382,11 @@ pub(in crate::learning) fn run(
             s,
             &format!("learning-input-{name}"),
             &serde_json::to_vec(
-                &json!({"brief":brief,"application":application,"requirements":policy["required_checks"],"operator_obligations":"Authenticated writes, private names, half-open positive-capacity intervals, durable bookings, supplied cancellation cutoff, exact protected deployment; convenience wording never overrides these requirements."}),
+                &json!({"brief":brief,"application":application,"requirements":policy.pointer("/required_checks").ok_or("missing /required_checks")?,"operator_obligations":"Authenticated writes, private names, half-open positive-capacity intervals, durable bookings, supplied cancellation cutoff, exact protected deployment; convenience wording never overrides these requirements."}),
             )?,
             "application/json",
         )?;
-        pairs.push(json!({"name":name,"input":input,"baseline":slot_declaration(&slots[i*2],&format!("evaluate-{name}-baseline")),"candidate":slot_declaration(&slots[i*2+1],&format!("evaluate-{name}-candidate"))}));
+        pairs.push(json!({"name":name,"input":input,"baseline":slot_declaration(slots.get(i.checked_mul(2).ok_or("paired slot index overflow")?).ok_or("baseline slot absent")?,&format!("evaluate-{name}-baseline"))?,"candidate":slot_declaration(slots.get(i.checked_mul(2).and_then(|index| index.checked_add(1)).ok_or("paired slot index overflow")?).ok_or("candidate slot absent")?,&format!("evaluate-{name}-candidate"))?}));
     }
     let profile = upload(
         s,
@@ -337,7 +394,7 @@ pub(in crate::learning) fn run(
         &fs::read(&args.model_profile)?,
         "application/json",
     )?;
-    let declaration = json!({"schema_version":1,"lane":"seeded_fixture","selection":receipt("learning-select",OPERATOR),"baseline":baseline["id"],"proposal_run":"slotbook-learning-proposal","agreement":baseline["semantic"]["agreement"]["digest"],"policy":baseline["semantic"]["agreement"]["effect_policy"],"verifier":policy["verifier"],"checks":policy["required_checks"],"input_field":"product","candidate_output":"candidate","pairs":pairs,"allowance":budget(),"maximum_duration_ms":3600000,"maximum_submissions":3,"minimum_repair_reduction":2,"provenance":[profile],"unknowns":["Model server effective template, sampling and tokenizer bounds are operator-unqualified; proposal generation is outside the paired execution account.","Native seeded implementation and repair are controlled fixtures; no live-model implementation or source planning failure is claimed."],"publication":STUDY_METHOD,"generation":2});
+    let declaration = json!({"schema_version":1,"lane":"seeded_fixture","selection":receipt("learning-select",OPERATOR),"baseline":baseline.pointer("/id").ok_or("missing /id")?,"proposal_run":"slotbook-learning-proposal","agreement":baseline.pointer("/semantic/agreement/digest").ok_or("missing /semantic/agreement/digest")?,"policy":baseline.pointer("/semantic/agreement/effect_policy").ok_or("missing /semantic/agreement/effect_policy")?,"verifier":policy.pointer("/verifier").ok_or("missing /verifier")?,"checks":policy.pointer("/required_checks").ok_or("missing /required_checks")?,"input_field":"product","candidate_output":"candidate","pairs":pairs,"allowance":budget(),"maximum_duration_ms":3600000,"maximum_submissions":3,"minimum_repair_reduction":2,"provenance":[profile],"unknowns":["Model server effective template, sampling and tokenizer bounds are operator-unqualified; proposal generation is outside the paired execution account.","Native seeded implementation and repair are controlled fixtures; no live-model implementation or source planning failure is claimed."],"publication":STUDY_METHOD,"generation":2});
     command(
         s,
         "learning-declare",

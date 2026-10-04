@@ -75,7 +75,10 @@ fn maintained_slotbook_factory_authors_strict_governed_documents()
         ),
     ] {
         let mut changed = value.clone();
-        changed.as_object_mut().ok_or("recipe is not an object")?.insert(key.into(), invalid);
+        changed
+            .as_object_mut()
+            .ok_or("recipe is not an object")?
+            .insert(key.into(), invalid);
         assert!(
             milkdrift_managed_linux::ProtectedServiceRecipe::from_json(&serde_json::to_vec(
                 &changed

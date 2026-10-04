@@ -42,8 +42,13 @@ fn draft(base: &Value, selection: &Value, mode: Mode) -> EvidenceResult<Value> {
     if matches!(mode, Mode::Malformed) {
         return Ok(json!({"schema_version":1,"draft":{}}));
     }
-    let mut node = base["semantic"]["nodes"]["repair.build-1"].clone();
-    let argv = &mut node["data_inputs"]["command"]["binding"]["value"]["argv"];
+    let mut node = base
+        .pointer("/semantic/nodes/repair.build-1")
+        .ok_or("missing /semantic/nodes/repair.build-1")?
+        .clone();
+    let argv = node
+        .pointer_mut("/data_inputs/command/binding/value/argv")
+        .ok_or("native worker command absent")?;
     ensure(
         argv.is_array(),
         "fixture baseline has no native worker command",
@@ -111,8 +116,14 @@ pub(super) fn run(args: Arguments) -> EvidenceResult {
             "fixture endpoint only accepts chat completions",
         )?;
         let dir = root.join("learning-05");
-        let baseline = load(dir.join("governed.json"))?["revision"].clone();
-        let selection = load(dir.join("learning-select.json"))?["selection"].clone();
+        let baseline = load(dir.join("governed.json"))?
+            .pointer("/revision")
+            .ok_or("missing /revision")?
+            .clone();
+        let selection = load(dir.join("learning-select.json"))?
+            .pointer("/selection")
+            .ok_or("missing /selection")?
+            .clone();
         let proposal = draft(&baseline, &selection, args.mode)?;
         let document = serde_json::to_string(&proposal)?;
         if !matches!(args.mode, Mode::Malformed) {
@@ -121,7 +132,10 @@ pub(super) fn run(args: Arguments) -> EvidenceResult {
         let body = serde_json::to_string(
             &json!({"id":format!("slotbook-fixture-{index}"),"model":"learning-fixture","choices":[{"index":0,"message":{"role":"assistant","content":serde_json::to_string(&json!({"proposal_document_json":document}))?},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}),
         )?;
-        let id = format!("fixture-{}-{index}", text(&baseline["id"])?);
+        let id = format!(
+            "fixture-{}-{index}",
+            text(baseline.pointer("/id").ok_or("missing /id")?)?
+        );
         write_private(&dir.join(format!("{id}.request")), request.as_bytes())?;
         write_private(&dir.join(format!("{id}.response")), body.as_bytes())?;
         write!(
@@ -141,16 +155,23 @@ mod tests {
         let example: Value = serde_json::from_str(include_str!(
             "../../../../../examples/operator/process.json"
         ))?;
-        let requirement =
-            &example["revision"]["semantic"]["nodes"]["process"]["kind"]["config"]["requirement"];
+        let requirement = example
+            .pointer("/revision/semantic/nodes/process/kind/config/requirement")
+            .ok_or("missing /revision/semantic/nodes/process/kind/config/requirement")?;
         let node = crate::prepare::worker(
             "repair.build-1",
             requirement,
             &["/bin/cp", "/fixtures/slotbook-seeded", "/workspace/app"],
             false,
         );
-        let mut base = example["revision"].clone();
-        base["semantic"]["nodes"]["repair.build-1"] = node;
+        let mut base = example
+            .pointer("/revision")
+            .ok_or("missing /revision")?
+            .clone();
+        base.pointer_mut("/semantic/nodes")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("missing object /semantic/nodes")?
+            .insert("repair.build-1".into(), node);
         let selection = json!({"artifacts":[{"artifact":"selected-source"}]});
         for mode in [
             Mode::Useful,
@@ -164,7 +185,7 @@ mod tests {
             )?;
             assert_eq!(
                 parsed.proposal().base_revision().as_str(),
-                text(&base["id"])?
+                text(base.pointer("/id").ok_or("missing /id")?)?
             );
         }
         assert!(

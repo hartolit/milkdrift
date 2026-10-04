@@ -78,7 +78,9 @@ pub(super) fn run(args: Arguments) -> EvidenceResult {
         let model = load(&profile)?;
         let mut config: serde_json::Value =
             toml::from_str(&std::fs::read_to_string(root.join("host/daemon.toml"))?)?;
-        let endpoint = url::Url::parse(crate::client::text(&model["base_url"])?)?;
+        let endpoint = url::Url::parse(crate::client::text(
+            model.pointer("/base_url").ok_or("missing /base_url")?,
+        )?)?;
         let destination = serde_json::json!(format!(
             "{}:{}",
             endpoint.host_str().ok_or("model host absent")?,
@@ -86,25 +88,42 @@ pub(super) fn run(args: Arguments) -> EvidenceResult {
                 .port_or_known_default()
                 .ok_or("model port absent")?
         ));
-        let operator = config["actors"]
+        let operator = config
+            .pointer("/actors")
+            .ok_or("missing /actors")?
             .as_array()
             .ok_or("actors absent")?
             .iter()
             .find(|actor| actor["actor"] == author::OPERATOR)
             .ok_or("learning operator absent")?;
-        let network = &operator["authority"]["resources"]["network"];
+        let network = operator
+            .pointer("/authority/resources/network")
+            .ok_or("missing /authority/resources/network")?;
         milkdrift_evidence::application::ensure(
-            network["profiles"]
+            network["profiles"].as_array().is_some_and(|values| {
+                model
+                    .get("identity")
+                    .is_some_and(|identity| values.contains(identity))
+            }) && network["destinations"]
                 .as_array()
-                .is_some_and(|values| values.contains(&model["identity"]))
-                && network["destinations"]
-                    .as_array()
-                    .is_some_and(|values| values.contains(&destination)),
+                .is_some_and(|values| values.contains(&destination)),
             "the new proposal profile requires a separately reviewed network grant; use a fresh study for a different endpoint",
         )?;
-        config["bind"] = serde_json::json!(format!("127.0.0.1:{}", args.port));
-        config["adapters"]["model_profiles"] =
-            serde_json::json!([{"capability_id":author::MODEL,"profile":profile}]);
+        config
+            .as_object_mut()
+            .ok_or("expected JSON object")?
+            .insert(
+                "bind".into(),
+                serde_json::json!(format!("127.0.0.1:{}", args.port)),
+            );
+        config
+            .pointer_mut("/adapters")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("missing object /adapters")?
+            .insert(
+                "model_profiles".into(),
+                serde_json::json!([{"capability_id":author::MODEL,"profile":profile}]),
+            );
         author::save_config(&root, &config)?;
     }
     session.start()?;

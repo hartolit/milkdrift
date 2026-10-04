@@ -7,7 +7,9 @@ pub(super) fn drain_selected(s: &Session, slots: &[Value]) -> EvidenceResult {
     // Deployment was observed after its request completed. Free this study's service capacity
     // before the separate tool-stage experiment, including when resuming a stopped installation.
     let result = load(s.root.join("learning-05/result.json"))?;
-    let expected = &result["selection"]["observed_deployment"];
+    let expected = result
+        .pointer("/selection/observed_deployment")
+        .ok_or("missing /selection/observed_deployment")?;
     let target = text(&slots.get(8).ok_or("selected variant slot absent")?["target"])?;
     let current = s.resource(
         "cleanup-selected-inspect",
@@ -60,13 +62,25 @@ pub(super) fn remove(s: &Session, slots: &[Value]) -> EvidenceResult {
     }
     expected.insert(
         text(&slots.get(8).ok_or("selected variant absent")?["target"])?.to_owned(),
-        result["selection"]["observed_deployment"].clone(),
+        result
+            .pointer("/selection/observed_deployment")
+            .ok_or("missing /selection/observed_deployment")?
+            .clone(),
     );
     expected.insert(
         text(&slots.last().ok_or("source workspace absent")?["worker"])?.to_owned(),
-        setup["activated_setup"].clone(),
+        setup
+            .pointer("/activated_setup")
+            .ok_or("missing /activated_setup")?
+            .clone(),
     );
-    expected.insert("learn-tools-stage".to_owned(), setup["fresh_stage"].clone());
+    expected.insert(
+        "learn-tools-stage".to_owned(),
+        setup
+            .pointer("/fresh_stage")
+            .ok_or("missing /fresh_stage")?
+            .clone(),
+    );
     let mut removed = Vec::new();
     for (name, expected) in expected {
         let state = s.resource(
@@ -126,37 +140,55 @@ mod tests {
     }
 
     #[test]
-    fn stopped_or_removed_original_can_resume_but_replacement_cannot() {
+    fn stopped_or_removed_original_can_resume_but_replacement_cannot() -> EvidenceResult {
         let expected = observed();
         for state in ["stopped", "removed"] {
             let mut current = expected.clone();
-            current["state"] = json!(state);
-            current["desired_running"] = json!(false);
-            current["observed_running"] = json!(false);
-            current["version"] = json!(18);
+            let current_fields = current.as_object_mut().ok_or("expected JSON object")?;
+            current_fields.insert("state".into(), json!(state));
+            current_fields.insert("desired_running".into(), json!(false));
+            current_fields.insert("observed_running".into(), json!(false));
+            current_fields.insert("version".into(), json!(18));
             assert!(unchanged(&current, &expected).is_ok());
-            current["generation"] = json!(3);
+            current
+                .as_object_mut()
+                .ok_or("expected JSON object")?
+                .insert("generation".into(), json!(3));
             assert!(unchanged(&current, &expected).is_err());
         }
+        Ok(())
     }
 
     #[test]
-    fn cleanup_refuses_changed_or_destructive_preservation() {
+    fn cleanup_refuses_changed_or_destructive_preservation() -> EvidenceResult {
         let expected = observed();
         let mut current = expected.clone();
-        current["resources"][0]["disposition"] = json!("delete_on_removal");
+        current
+            .pointer_mut("/resources/0")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("missing object /resources/0")?
+            .insert("disposition".into(), json!("delete_on_removal"));
         assert!(unchanged(&current, &expected).is_err());
         assert!(unchanged(&current, &current).is_err());
+        Ok(())
     }
 
     #[test]
-    fn cleanup_refuses_changed_resource_or_unresolved_transition() {
+    fn cleanup_refuses_changed_resource_or_unresolved_transition() -> EvidenceResult {
         let expected = observed();
         let mut current = expected.clone();
-        current["resources"][0]["identity"] = json!("replacement-volume");
+        current
+            .pointer_mut("/resources/0")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("missing object /resources/0")?
+            .insert("identity".into(), json!("replacement-volume"));
         assert!(unchanged(&current, &expected).is_err());
         current = expected.clone();
-        current["pending"] = json!("transition");
+        current
+            .as_object_mut()
+            .ok_or("expected JSON object")?
+            .insert("pending".into(), json!("transition"));
         assert!(unchanged(&current, &expected).is_err());
+        Ok(())
     }
 }

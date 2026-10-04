@@ -303,27 +303,44 @@ mod tests {
             snapshot_artifact(serde_json::from_value(page.clone())?)?,
             artifact
         );
-        page["closed"] = json!(false);
+        page.as_object_mut()
+            .ok_or("expected JSON object")?
+            .insert("closed".into(), json!(false));
         assert!(snapshot_artifact(serde_json::from_value(page.clone())?).is_err());
-        page["closed"] = json!(true);
-        page["observations"] = json!([]);
-        page["next_sequence"] = json!(0);
-        page["history"] = json!({"type":"archived","summary":{"output_observations":[output],"status":"terminal","last_sequence":2,"observation_digest":format!("b3_{}","b".repeat(64)),"archived_at_unix_ms":3,"final_observation":terminal,"uncertainty_reason":null}});
+        let page_fields = page.as_object_mut().ok_or("expected JSON object")?;
+        page_fields.insert("closed".into(), json!(true));
+        page_fields.insert("observations".into(), json!([]));
+        page_fields.insert("next_sequence".into(), json!(0));
+        page_fields.insert("history".into(), json!({"type":"archived","summary":{"output_observations":[output],"status":"terminal","last_sequence":2,"observation_digest":format!("b3_{}","b".repeat(64)),"archived_at_unix_ms":3,"final_observation":terminal,"uncertainty_reason":null}}));
         assert_eq!(
             snapshot_artifact(serde_json::from_value(page.clone())?)?,
             artifact
         );
-        page["history"]["summary"]["final_observation"] = Value::Null;
+        page.pointer_mut("/history/summary")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("missing object /history/summary")?
+            .insert("final_observation".into(), Value::Null);
         assert!(snapshot_artifact(serde_json::from_value(page)?).is_err());
         Ok(())
     }
 
     #[test]
-    fn diagnostic_excerpt_discloses_omission_at_utf8_boundary() {
+    fn diagnostic_excerpt_discloses_omission_at_utf8_boundary() -> EvidenceResult {
         let selected = excerpt("abéerror", 3);
-        assert_eq!(selected["text"], "ab");
-        assert_eq!(selected["omitted_bytes"], 7);
-        assert_eq!(excerpt("short", 4096)["omitted_bytes"], 0);
+        assert_eq!(selected.pointer("/text").ok_or("missing /text")?, "ab");
+        assert_eq!(
+            selected
+                .pointer("/omitted_bytes")
+                .ok_or("missing /omitted_bytes")?,
+            7
+        );
+        assert_eq!(
+            excerpt("short", 4096)
+                .pointer("/omitted_bytes")
+                .ok_or("missing /omitted_bytes")?,
+            0
+        );
+        Ok(())
     }
 
     #[test]
@@ -336,15 +353,29 @@ mod tests {
         assert!(bytes.len() > usize::try_from(SELECTED_REPORT_BYTES)?);
         fs::write(&path, &bytes)?;
         let selected = selected_report(&path, true)?;
-        let excerpt = text(&selected["stderr"]["text"])?;
+        let excerpt = text(
+            selected
+                .pointer("/stderr/text")
+                .ok_or("missing /stderr/text")?,
+        )?;
         assert!(stderr.starts_with(excerpt));
         assert!(excerpt.len() <= 12288);
         assert_eq!(
-            selected["stderr"]["omitted_bytes"],
+            selected
+                .pointer("/stderr/omitted_bytes")
+                .ok_or("missing /stderr/omitted_bytes")?,
             stderr.len() - excerpt.len()
         );
-        assert_eq!(selected["stdout"]["text"], "build");
-        assert_eq!(selected["exit_code"], 1);
+        assert_eq!(
+            selected
+                .pointer("/stdout/text")
+                .ok_or("missing /stdout/text")?,
+            "build"
+        );
+        assert_eq!(
+            selected.pointer("/exit_code").ok_or("missing /exit_code")?,
+            1
+        );
         assert_eq!(fs::read(&path)?, bytes);
         assert!(selected_report(&path, false).is_err());
         fs::File::create(&path)?.set_len(WORKER_REPORT_BYTES + 1)?;

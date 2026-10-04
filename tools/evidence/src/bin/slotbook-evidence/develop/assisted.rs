@@ -62,7 +62,13 @@ mod tests {
         fs::write(&path, bytes)?;
         let (identity, source) = input(&path)?;
         assert_eq!(source.as_bytes(), bytes);
-        assert_eq!(identity["digest"], format!("b3_{}", blake3::hash(bytes)));
+        assert_eq!(
+            identity
+                .get("digest")
+                .and_then(Value::as_str)
+                .ok_or("digest absent")?,
+            format!("b3_{}", blake3::hash(bytes))
+        );
         for invalid in [Vec::new(), vec![b'x'; 32769], vec![255]] {
             fs::write(&path, invalid)?;
             assert!(input(&path).is_err());
@@ -102,10 +108,16 @@ mod tests {
         fs::write(&source, bytes)?;
         let path = proposal(&s, &source, &base, &Value::Null)?;
         let document = load(&path)?;
-        assert_eq!(document["draft"]["provenance"], json!({"type":"direct"}));
         assert_eq!(
-            document["draft"]["mutation"][0]["node"]["data_inputs"]["command"]["binding"]["value"]
-                ["argv"][5],
+            document
+                .pointer("/draft/provenance")
+                .ok_or("missing /draft/provenance")?,
+            &json!({"type":"direct"})
+        );
+        assert_eq!(
+            document
+                .pointer("/draft/mutation/0/node/data_inputs/command/binding/value/argv/5")
+                .ok_or("missing /draft/mutation/0/node/data_inputs/command/binding/value/argv/5")?,
             bytes
         );
         assert_eq!(proposal(&s, &source, &base, &Value::Null)?, path);

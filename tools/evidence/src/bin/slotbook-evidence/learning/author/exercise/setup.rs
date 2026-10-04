@@ -115,14 +115,18 @@ pub(super) fn run(args: &Arguments, s: &mut Session, slots: &[Value]) -> Evidenc
     }
     let image = fs::read_to_string(image_id)?.trim().to_owned();
     let mut recipe = load(dir.join(format!("{workspace}.json")))?;
-    recipe["name"] = json!("learn-tools-v2");
-    recipe["worker_image"] = json!(image);
+    let recipe_fields = recipe.as_object_mut().ok_or("expected JSON object")?;
+    recipe_fields.insert("name".into(), json!("learn-tools-v2"));
+    recipe_fields.insert("worker_image".into(), json!(image));
     let parsed = milkdrift_managed_linux::LinuxRecipe::from_json(&serde_json::to_vec(&recipe)?)?;
     let reference = serde_json::to_value(parsed.reference()?)?;
     let recipe_path = write(s, "learn-tools-v2.json", &recipe)?;
     // A worker-supplied manager mount is outside the finite recipe contract, even before approval.
     let mut expansion = recipe.clone();
-    expansion["manager_mount"] = json!("/private/manager");
+    expansion
+        .as_object_mut()
+        .ok_or("expected JSON object")?
+        .insert("manager_mount".into(), json!("/private/manager"));
     ensure(
         milkdrift_managed_linux::LinuxRecipe::from_json(&serde_json::to_vec(&expansion)?).is_err(),
         "recipe reader accepted manager-access expansion",
@@ -130,7 +134,9 @@ pub(super) fn run(args: &Arguments, s: &mut Session, slots: &[Value]) -> Evidenc
     write(s, "tools-refused-manager-expansion.json", &expansion)?;
     s.stop()?;
     let mut config: Value = toml::from_str(&fs::read_to_string(s.root.join("host/daemon.toml"))?)?;
-    let recipes = config["adapters"]["managed_linux"]["recipes"]
+    let recipes = config
+        .pointer_mut("/adapters/managed_linux/recipes")
+        .ok_or("missing /adapters/managed_linux/recipes")?
         .as_array_mut()
         .ok_or("recipe catalog absent")?;
     if !recipes.contains(&json!(recipe_path)) {
@@ -155,7 +161,10 @@ pub(super) fn run(args: &Arguments, s: &mut Session, slots: &[Value]) -> Evidenc
         Expected::Success,
     )?;
     ensure(
-        stage["pending"].is_null() && number(&stage["generation"])? > 0,
+        stage
+            .pointer("/pending")
+            .is_some_and(serde_json::Value::is_null)
+            && number(stage.pointer("/generation").ok_or("missing /generation")?)? > 0,
         "tool candidate did not verify in its fresh installation",
     )?;
     let staged_tool = worker(
@@ -215,7 +224,7 @@ pub(super) fn run(args: &Arguments, s: &mut Session, slots: &[Value]) -> Evidenc
         "--installation",
         workspace,
         "--expected-version",
-        number(&current["version"])?,
+        number(current.pointer("/version").ok_or("missing /version")?)?,
         "update"
     ];
     arguments.extend(reference_args(&reference)?);
@@ -229,7 +238,7 @@ pub(super) fn run(args: &Arguments, s: &mut Session, slots: &[Value]) -> Evidenc
     s.resource(
         "tools-approved-update",
         "update",
-        number(&current["version"])?,
+        number(current.pointer("/version").ok_or("missing /version")?)?,
         reference_args(&reference)?,
         workspace,
         Expected::Refused,
@@ -239,7 +248,7 @@ pub(super) fn run(args: &Arguments, s: &mut Session, slots: &[Value]) -> Evidenc
     let update_receipt = s.resource(
         "tools-approved-drained-update",
         "update",
-        number(&current["version"])?,
+        number(current.pointer("/version").ok_or("missing /version")?)?,
         replacement,
         workspace,
         Expected::Success,
@@ -253,8 +262,18 @@ pub(super) fn run(args: &Arguments, s: &mut Session, slots: &[Value]) -> Evidenc
         Expected::Success,
     )?;
     ensure(
-        updated["pending"].is_null()
-            && number(&updated["generation"])? > number(&current["generation"])?,
+        updated
+            .pointer("/pending")
+            .is_some_and(serde_json::Value::is_null)
+            && number(
+                updated
+                    .pointer("/generation")
+                    .ok_or("missing /generation")?,
+            )? > number(
+                current
+                    .pointer("/generation")
+                    .ok_or("missing /generation")?,
+            )?,
         "recipe update did not activate a verified new generation",
     )?;
     let maintained = worker(
@@ -278,11 +297,21 @@ pub(super) fn run(args: &Arguments, s: &mut Session, slots: &[Value]) -> Evidenc
     let learning_result = load(dir.join("result.json"))?;
     let note = format!(
         "Maintained tool recipe {} at generation {} was verified in a fresh installation before activation. Candidate bytes were preserved. Selected method: {}. Comparison: agent:slotbook-evaluator/{}; promoted: {}. Future tasks must select this guidance explicitly.",
-        text(&reference["digest"])?,
-        number(&updated["generation"])?,
-        text(&learning_result["selected_method"])?,
+        text(reference.pointer("/digest").ok_or("missing /digest")?)?,
+        number(
+            updated
+                .pointer("/generation")
+                .ok_or("missing /generation")?
+        )?,
+        text(
+            learning_result
+                .pointer("/selected_method")
+                .ok_or("missing /selected_method")?
+        )?,
         super::key(args, "learning-comparison"),
-        learning_result["promoted"]
+        learning_result
+            .pointer("/promoted")
+            .ok_or("missing /promoted")?
     );
     worker(
         s,
@@ -323,22 +352,55 @@ pub(super) fn run(args: &Arguments, s: &mut Session, slots: &[Value]) -> Evidenc
         &fs::read(destination)?,
         "text/plain",
     )?;
-    let mut selection = load(dir.join("learning-select.json"))?["selection"].clone();
-    let original_guidance = selection["guidance"].clone();
-    selection["guidance"] = guidance.clone();
-    selection["method"] = learning_result["selected_method"].clone();
-    selection["supersedes"] = super::receipt("learning-select", super::OPERATOR);
-    selection["approval"] = if learning_result["promoted"] == true {
-        super::study_receipt(
-            args,
-            "learning-automatic-promotion",
-            "agent:slotbook-evaluator",
-        )
-    } else {
-        Value::Null
-    };
+    let mut selection = load(dir.join("learning-select.json"))?
+        .pointer("/selection")
+        .ok_or("missing /selection")?
+        .clone();
+    let original_guidance = selection
+        .pointer("/guidance")
+        .ok_or("missing /guidance")?
+        .clone();
+    let selection_fields = selection.as_object_mut().ok_or("expected JSON object")?;
+    selection_fields.insert("guidance".into(), guidance.clone());
+    selection_fields.insert(
+        "method".into(),
+        learning_result
+            .pointer("/selected_method")
+            .ok_or("missing /selected_method")?
+            .clone(),
+    );
+    selection_fields.insert(
+        "supersedes".into(),
+        super::receipt("learning-select", super::OPERATOR),
+    );
+    selection_fields.insert(
+        "approval".into(),
+        if learning_result
+            .pointer("/promoted")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+        {
+            super::study_receipt(
+                args,
+                "learning-automatic-promotion",
+                "agent:slotbook-evaluator",
+            )
+        } else {
+            Value::Null
+        },
+    );
     let mut wrong_workspace = selection.clone();
-    wrong_workspace["workspace"] = slots[0]["worker"].clone();
+    wrong_workspace
+        .as_object_mut()
+        .ok_or("expected JSON object")?
+        .insert(
+            "workspace".into(),
+            slots
+                .first()
+                .and_then(|slot| slot.get("worker"))
+                .ok_or("missing /0/worker")?
+                .clone(),
+        );
     super::command(
         s,
         "learning-refused-cross-workspace-supersession",
@@ -363,14 +425,20 @@ pub(super) fn run(args: &Arguments, s: &mut Session, slots: &[Value]) -> Evidenc
         Expected::Success,
     )?;
     ensure(
-        previous["selection"]["guidance"] == original_guidance
-            && guidance["digest"] != original_guidance["digest"],
+        previous
+            .pointer("/selection/guidance")
+            .ok_or("missing /selection/guidance")?
+            == &original_guidance
+            && guidance.pointer("/digest").ok_or("missing /digest")?
+                != original_guidance
+                    .pointer("/digest")
+                    .ok_or("missing /digest")?,
         "future knowledge selection rewrote the original guidance",
     )?;
     write(
         s,
         "knowledge-update-result.json",
-        &json!({"previous":previous,"next":next,"proposal_context":load(dir.join(format!("{}.json",super::key(args,"proposal-observation"))))?["attempt"]["context_manifest"]}),
+        &json!({"previous":previous,"next":next,"proposal_context":load(dir.join(format!("{}.json",super::key(args,"proposal-observation"))))?.pointer("/attempt/context_manifest").ok_or("missing /attempt/context_manifest")?}),
     )?;
     let report = json!({"scratch":scratch,"native_input":tool,"native_manifest":tool_manifest,"build_input":build_input,"image":image,"recipe":reference,"fresh_stage_receipt":stage_receipt,"fresh_stage":stage,"staged_observation":staged,"old_setup":current,"activation_receipt":update_receipt,"activated_setup":updated,"maintained_observation":maintained,"preserved_candidate":before_artifact,"relationship":"The selected method and its prior invocation receipts are unchanged. The recipe has a separately recorded generation; no active context receives new guidance or a new publication implicitly.","limits":["Base OCI bytes must remain preloaded; no upstream rebuild availability is claimed.","Working bookings and notes require data backup; rebuilding the tool image does not restore mutable data."]});
     write(s, "setup-improvement.json", &report)?;
@@ -389,7 +457,7 @@ fn output<'a>(value: &'a Value, media: &str) -> EvidenceResult<&'a Value> {
         .ok_or("worker observations absent")?
         .iter()
         .filter(|o| o["category"] == "artifact")
-        .map(|o| &o["event"]["kind"]["reference"])
+        .filter_map(|o| o.pointer("/event/kind/reference"))
         .find(|a| a["media_type"] == media)
         .ok_or_else(|| "worker artifact absent".into())
 }

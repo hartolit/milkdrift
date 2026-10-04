@@ -49,12 +49,16 @@ pub(super) fn prepare(args: &Arguments, s: &Session, source: &Value) -> Evidence
     )?;
     let dir = s.root.join("learning-05");
     let original = load(s.root.join("governed.json"))?;
-    let mut requirement =
-        original["revision"]["semantic"]["nodes"]["repair.begin"]["kind"]["config"]["requirement"]
-            .clone();
+    let mut requirement = original
+        .pointer("/revision/semantic/nodes/repair.begin/kind/config/requirement")
+        .ok_or("missing /revision/semantic/nodes/repair.begin/kind/config/requirement")?
+        .clone();
     // Every publication has a distinct service grant. Ordinary authority-filtered resolution
     // selects only that service's managed worker; the method itself remains shared.
-    requirement["exact_capability"] = Value::Null;
+    requirement
+        .as_object_mut()
+        .ok_or("expected JSON object")?
+        .insert("exact_capability".into(), Value::Null);
     let mut nodes = Vec::new();
     for i in 1..=3 {
         let source = if i == 1 {
@@ -74,13 +78,29 @@ pub(super) fn prepare(args: &Arguments, s: &Session, source: &Value) -> Evidence
             &["/bin/cat", "/workspace/app"],
             true,
         ));
-        let mut verify = original["revision"]["semantic"]["nodes"]["verify-candidate"].clone();
-        verify["id"] = json!(format!("verify-{i}"));
-        verify["data_inputs"]["target"]["binding"] =
-            json!({"type":"workflow_input","field":format!("target-{i}")});
+        let mut verify = original
+            .pointer("/revision/semantic/nodes/verify-candidate")
+            .ok_or("missing /revision/semantic/nodes/verify-candidate")?
+            .clone();
+        verify
+            .as_object_mut()
+            .ok_or("expected JSON object")?
+            .insert("id".into(), json!(format!("verify-{i}")));
+        verify
+            .pointer_mut("/data_inputs/target")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("missing object /data_inputs/target")?
+            .insert(
+                "binding".into(),
+                json!({"type":"workflow_input","field":format!("target-{i}")}),
+            );
         nodes.push(verify);
     }
-    nodes[0]["control_inputs"] = json!([]);
+    nodes
+        .first_mut()
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("first node absent")?
+        .insert("control_inputs".into(), json!([]));
     let mut done = prepare::node(
         "done",
         json!({"type":"terminal","outcome":"success"}),
@@ -91,12 +111,18 @@ pub(super) fn prepare(args: &Arguments, s: &Session, source: &Value) -> Evidence
         ("candidate", "repair.capture-3", "stdout"),
         ("evaluation", "verify-3", "resource_result"),
     ] {
-        done["data_inputs"][field] = prepare::port(
-            "Input",
-            prepare::artifact_schema(),
-            json!({"type":"node_output","node":node,"port":port,"path":[]}),
-            true,
-        );
+        done.get_mut("data_inputs")
+            .and_then(Value::as_object_mut)
+            .ok_or("terminal inputs absent")?
+            .insert(
+                field.into(),
+                prepare::port(
+                    "Input",
+                    prepare::artifact_schema(),
+                    json!({"type":"node_output","node":node,"port":port,"path":[]}),
+                    true,
+                ),
+            );
     }
     nodes.push(done);
     let mut mutations: Vec<Value> = nodes
@@ -104,7 +130,10 @@ pub(super) fn prepare(args: &Arguments, s: &Session, source: &Value) -> Evidence
         .map(|node| json!({"type":"add_node","node":node}))
         .collect();
     for (i, pair) in nodes.windows(2).enumerate() {
-        mutations.push(json!({"type":"add_edge","edge":prepare::edge(&format!("sequence-{i}"),text(&pair[0]["id"])?,text(&pair[1]["id"])?,"control","out","in")}));
+        let [source, target] = pair else {
+            return Err("adjacent node pair absent".into());
+        };
+        mutations.push(json!({"type":"add_edge","edge":prepare::edge(&format!("sequence-{i}"),text(source.get("id").ok_or("source node identity absent")?)?,text(target.get("id").ok_or("target node identity absent")?)?,"control","out","in")}));
     }
     for i in 1..=3 {
         mutations.push(json!({"type":"add_edge","edge":prepare::edge(&format!("candidate-{i}"),&format!("repair.capture-{i}"),&format!("verify-{i}"),"data","stdout","candidate")}));
@@ -129,8 +158,13 @@ pub(super) fn prepare(args: &Arguments, s: &Session, source: &Value) -> Evidence
     }
     let mut inputs = json!({"product":{"schema":prepare::artifact_schema(),"required":true}});
     for i in 1..=3 {
-        inputs[format!("target-{i}")] =
-            json!({"schema":{"id":"milkdrift.managed.command","version":3},"required":true});
+        inputs
+            .as_object_mut()
+            .ok_or("interface inputs absent")?
+            .insert(
+                format!("target-{i}"),
+                json!({"schema":{"id":"milkdrift.managed.command","version":3},"required":true}),
+            );
     }
     mutations.push(json!({"type":"set_interface","interface":{"inputs":inputs,"outputs":{"candidate":{"schema":prepare::artifact_schema(),"required":true},"evaluation":{"schema":prepare::artifact_schema(),"required":true}}}}));
     milkdrift_blueprint::BlueprintRevision::genesis(
@@ -168,13 +202,18 @@ pub(super) fn prepare(args: &Arguments, s: &Session, source: &Value) -> Evidence
     }
     let verifier_digest = format!("b3_{}", blake3::hash(&verifier_bytes));
     let mut policy = load(s.root.join("policy.json"))?;
-    policy["verifier"] = json!(verifier_digest);
+    policy
+        .as_object_mut()
+        .ok_or("expected JSON object")?
+        .insert("verifier".into(), json!(verifier_digest));
     let path = prepare::write(&dir, "policy.json", &policy)?;
     let policy_digest = prepare::local(
         &s.cli,
         args!["blueprint", "effect-policy", path.display()].as_slice(),
-    )?["digest"]
-        .clone();
+    )?
+    .pointer("/digest")
+    .ok_or("missing /digest")?
+    .clone();
     let scope = prepare::write(
         &dir,
         "scope.json",
@@ -199,20 +238,43 @@ pub(super) fn prepare(args: &Arguments, s: &Session, source: &Value) -> Evidence
         ],
     )?;
     let baseline = load(dir.join("governed.json"))?;
-    let agreement = baseline["revision"]["semantic"]["agreement"]["digest"].clone();
+    let agreement = baseline
+        .pointer("/revision/semantic/agreement/digest")
+        .ok_or("missing /revision/semantic/agreement/digest")?
+        .clone();
     let mut config: Value = toml::from_str(&fs::read_to_string(s.root.join("host/daemon.toml"))?)?;
-    config["bind"] = json!(format!("127.0.0.1:{}", args.port));
-    let mut operator = config["actors"][0].clone();
-    operator["actor"] = json!(OPERATOR);
-    operator["grant_id"] = json!("grant:learning-operator");
-    operator["credential_ref"] = json!("credential:learning-operator");
-    operator["authority"]["resources"]["capability"]["identities"] = json!({"type":"any"});
-    operator["authority"]["resources"]["capability"]["operations"] = json!({"type":"any"});
-    operator["authority"]["budget"]["artifact_bytes"] = json!(PUBLIC_ARTIFACT_BYTES);
-    operator["authority"]["budget"]["duration_ms"] = json!(3_600_000);
+    config
+        .as_object_mut()
+        .ok_or("expected JSON object")?
+        .insert("bind".into(), json!(format!("127.0.0.1:{}", args.port)));
+    let mut operator = config
+        .pointer("/actors/0")
+        .ok_or("missing /actors/0")?
+        .clone();
+    let operator_fields = operator.as_object_mut().ok_or("expected JSON object")?;
+    operator_fields.insert("actor".into(), json!(OPERATOR));
+    operator_fields.insert("grant_id".into(), json!("grant:learning-operator"));
+    operator_fields.insert(
+        "credential_ref".into(),
+        json!("credential:learning-operator"),
+    );
+    let capability_fields = operator
+        .pointer_mut("/authority/resources/capability")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /authority/resources/capability")?;
+    capability_fields.insert("identities".into(), json!({"type":"any"}));
+    capability_fields.insert("operations".into(), json!({"type":"any"}));
+    let budget_fields = operator
+        .pointer_mut("/authority/budget")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /authority/budget")?;
+    budget_fields.insert("artifact_bytes".into(), json!(PUBLIC_ARTIFACT_BYTES));
+    budget_fields.insert("duration_ms".into(), json!(3_600_000));
     let profile = args.model_profile.canonicalize()?;
     let model: Value = load(&profile)?;
-    let endpoint = url::Url::parse(text(&model["base_url"])?)?;
+    let endpoint = url::Url::parse(text(
+        model.pointer("/base_url").ok_or("missing /base_url")?,
+    )?)?;
     let destination = format!(
         "{}:{}",
         endpoint.host_str().ok_or("model host absent")?,
@@ -220,34 +282,69 @@ pub(super) fn prepare(args: &Arguments, s: &Session, source: &Value) -> Evidence
             .port_or_known_default()
             .ok_or("model port absent")?
     );
-    operator["authority"]["resources"]["network"] =
-        json!({"profiles":[model["identity"]],"destinations":[destination]});
+    operator.pointer_mut("/authority/resources").and_then(serde_json::Value::as_object_mut).ok_or("missing object /authority/resources")?.insert("network".into(), json!({"profiles":[model.pointer("/identity").ok_or("missing /identity")?],"destinations":[destination]}));
     prepare::credential(&dir.join("operator.token"))?;
-    config["secret_sources"]["credential:learning-operator"] =
-        json!({"type":"file","path":dir.join("operator.token")});
-    config["actors"]
+    config
+        .pointer_mut("/secret_sources")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /secret_sources")?
+        .insert(
+            "credential:learning-operator".into(),
+            json!({"type":"file","path":dir.join("operator.token")}),
+        );
+    config
+        .pointer_mut("/actors")
+        .ok_or("missing /actors")?
         .as_array_mut()
         .ok_or("actors absent")?
         .push(operator.clone());
     let mut evaluator = operator.clone();
-    evaluator["actor"] = json!("agent:slotbook-evaluator");
-    evaluator["grant_id"] = json!("grant:slotbook-evaluator");
-    evaluator["credential_ref"] = json!("credential:slotbook-evaluator");
-    evaluator["authority"]["resources"]["capability"]["operations"] = json!({"type":"only","values":["learning.inspect","learning.compare","learning.auto_promote","resource.evidence","resource.inspect"]});
+    let evaluator_fields = evaluator.as_object_mut().ok_or("expected JSON object")?;
+    evaluator_fields.insert("actor".into(), json!("agent:slotbook-evaluator"));
+    evaluator_fields.insert("grant_id".into(), json!("grant:slotbook-evaluator"));
+    evaluator_fields.insert(
+        "credential_ref".into(),
+        json!("credential:slotbook-evaluator"),
+    );
+    evaluator.pointer_mut("/authority/resources/capability").and_then(serde_json::Value::as_object_mut).ok_or("missing object /authority/resources/capability")?.insert("operations".into(), json!({"type":"only","values":["learning.inspect","learning.compare","learning.auto_promote","resource.evidence","resource.inspect"]}));
     prepare::credential(&dir.join("evaluator.token"))?;
-    config["secret_sources"]["credential:slotbook-evaluator"] =
-        json!({"type":"file","path":dir.join("evaluator.token")});
-    config["actors"]
+    config
+        .pointer_mut("/secret_sources")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /secret_sources")?
+        .insert(
+            "credential:slotbook-evaluator".into(),
+            json!({"type":"file","path":dir.join("evaluator.token")}),
+        );
+    config
+        .pointer_mut("/actors")
+        .ok_or("missing /actors")?
         .as_array_mut()
         .ok_or("actors absent")?
         .push(evaluator);
-    config["adapters"]["model_profiles"] = json!([{"capability_id":MODEL,"profile":profile}]);
-    config["serving"]["clients"]["execution_limits"]["artifact_bytes"] =
-        json!(PUBLIC_ARTIFACT_BYTES);
-    config["serving"]["clients"]["execution_limits"]["duration_ms"] = json!(3_600_000);
-    config["serving"]["clients"]["execution_limits"]["nested_invocations"] =
-        json!({"process":100,"model":20});
-    config["runtime"]["publication_services"][STUDY_METHOD] = json!("grant:learning-source");
+    config
+        .pointer_mut("/adapters")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /adapters")?
+        .insert(
+            "model_profiles".into(),
+            json!([{"capability_id":MODEL,"profile":profile}]),
+        );
+    let execution_limits_fields = config
+        .pointer_mut("/serving/clients/execution_limits")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /serving/clients/execution_limits")?;
+    execution_limits_fields.insert("artifact_bytes".into(), json!(PUBLIC_ARTIFACT_BYTES));
+    execution_limits_fields.insert("duration_ms".into(), json!(3_600_000));
+    execution_limits_fields.insert(
+        "nested_invocations".into(),
+        json!({"process":100,"model":20}),
+    );
+    config
+        .pointer_mut("/runtime/publication_services")
+        .and_then(Value::as_object_mut)
+        .ok_or("publication services absent")?
+        .insert(STUDY_METHOD.into(), json!("grant:learning-source"));
     let mut slots = Vec::new();
     for (name, application, _) in cases() {
         for arm in ["baseline", "candidate"] {
@@ -267,20 +364,34 @@ pub(super) fn prepare(args: &Arguments, s: &Session, source: &Value) -> Evidence
         let worker = format!("{slot}-work");
         let target = format!("{slot}-target");
         let mut worker_recipe = load(s.root.join("worker-recipe.json"))?;
-        worker_recipe["name"] = json!(worker);
-        worker_recipe["worker_image"] = json!(args.image);
+        let worker_recipe_fields = worker_recipe
+            .as_object_mut()
+            .ok_or("expected JSON object")?;
+        worker_recipe_fields.insert("name".into(), json!(worker));
+        worker_recipe_fields.insert("worker_image".into(), json!(args.image));
         let worker_path = prepare::write(&dir, &format!("{worker}.json"), &worker_recipe)?;
         let mut target_recipe = load(s.root.join("protected-recipe.json"))?;
-        target_recipe["name"] = json!(target);
-        target_recipe["image"] = json!(args.image);
-        target_recipe["port"] = json!(usize::from(args.service_port_base) + index);
-        target_recipe["application"] = application.clone();
-        target_recipe["agreement"] = agreement.clone();
-        target_recipe["policy"] = policy.clone();
-        target_recipe["verifier_digest"] = json!(verifier_digest);
-        target_recipe["verifier_executable"] = json!(dir.join("trusted-verifier"));
+        let target_recipe_fields = target_recipe
+            .as_object_mut()
+            .ok_or("expected JSON object")?;
+        target_recipe_fields.insert("name".into(), json!(target));
+        target_recipe_fields.insert("image".into(), json!(args.image));
+        target_recipe_fields.insert(
+            "port".into(),
+            json!(usize::from(args.service_port_base) + index),
+        );
+        target_recipe_fields.insert("application".into(), application.clone());
+        target_recipe_fields.insert("agreement".into(), agreement.clone());
+        target_recipe_fields.insert("policy".into(), policy.clone());
+        target_recipe_fields.insert("verifier_digest".into(), json!(verifier_digest));
+        target_recipe_fields.insert(
+            "verifier_executable".into(),
+            json!(dir.join("trusted-verifier")),
+        );
         let target_path = prepare::write(&dir, &format!("{target}.json"), &target_recipe)?;
-        config["adapters"]["managed_linux"]["recipes"]
+        config
+            .pointer_mut("/adapters/managed_linux/recipes")
+            .ok_or("missing /adapters/managed_linux/recipes")?
             .as_array_mut()
             .ok_or("recipes absent")?
             .extend([json!(worker_path), json!(target_path)]);
@@ -290,18 +401,39 @@ pub(super) fn prepare(args: &Arguments, s: &Session, source: &Value) -> Evidence
         } else {
             format!("grant:{slot}")
         };
-        config["runtime"]["publication_services"][&capability] = json!(grant);
+        config
+            .pointer_mut("/runtime/publication_services")
+            .and_then(Value::as_object_mut)
+            .ok_or("publication services absent")?
+            .insert(capability.clone(), json!(grant));
         let mut service = operator.clone();
-        service["actor"] = json!(format!("service:{slot}"));
-        service["grant_id"] = json!(grant);
-        service["credential_ref"] = json!(format!("credential:{slot}"));
-        service["authority"]["resources"]["capability"]["identities"] = json!({"type":"only","values":[format!("managed.{worker}.worker"),format!("managed.{target}"),"milkdrift.resources"]});
-        service["authority"]["resources"]["capability"]["operations"] = json!({"type":"only","values":["workspace.execute","resource.evaluate_candidate","resource.evaluate","resource.evidence","resource.inspect"]});
-        service["authority"]["resources"]["network"] = json!({"profiles":[],"destinations":[]});
+        let service_fields = service.as_object_mut().ok_or("expected JSON object")?;
+        service_fields.insert("actor".into(), json!(format!("service:{slot}")));
+        service_fields.insert("grant_id".into(), json!(grant));
+        service_fields.insert("credential_ref".into(), json!(format!("credential:{slot}")));
+        let capability_fields = service
+            .pointer_mut("/authority/resources/capability")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("missing object /authority/resources/capability")?;
+        capability_fields.insert("identities".into(), json!({"type":"only","values":[format!("managed.{worker}.worker"),format!("managed.{target}"),"milkdrift.resources"]}));
+        capability_fields.insert("operations".into(), json!({"type":"only","values":["workspace.execute","resource.evaluate_candidate","resource.evaluate","resource.evidence","resource.inspect"]}));
+        service
+            .pointer_mut("/authority/resources")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("missing object /authority/resources")?
+            .insert("network".into(), json!({"profiles":[],"destinations":[]}));
         prepare::credential(&dir.join(format!("{slot}.token")))?;
-        config["secret_sources"][format!("credential:{slot}")] =
-            json!({"type":"file","path":dir.join(format!("{slot}.token"))});
-        config["actors"]
+        config
+            .get_mut("secret_sources")
+            .and_then(Value::as_object_mut)
+            .ok_or("secret sources absent")?
+            .insert(
+                format!("credential:{slot}"),
+                json!({"type":"file","path":dir.join(format!("{slot}.token"))}),
+            );
+        config
+            .pointer_mut("/actors")
+            .ok_or("missing /actors")?
             .as_array_mut()
             .ok_or("actors absent")?
             .push(service);

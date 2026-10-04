@@ -126,11 +126,18 @@ mod tests {
                 json!({"application_source":source,"rationale":"Implement or repair the API."}),
             )?;
             let operations = serde_json::to_value(parsed.proposal().mutation().operations())?;
-            let argv = &operations[0]["node"]["data_inputs"]["command"]["binding"]["value"]["argv"];
+            let argv = operations
+                .pointer("/0/node/data_inputs/command/binding/value/argv")
+                .ok_or("missing /0/node/data_inputs/command/binding/value/argv")?;
             assert_eq!(argv[4], expected);
             assert_eq!(argv[5], source);
             assert_eq!(operations.as_array().ok_or("operations absent")?.len(), 1);
-            assert_eq!(operations[0]["node"]["id"], "repair.begin");
+            assert_eq!(
+                operations
+                    .pointer("/0/node/id")
+                    .ok_or("missing /0/node/id")?,
+                "repair.begin"
+            );
             for invalid in [
                 json!({"application_source":source,"rationale":"ok","extra":true}),
                 json!({"application_source":"é".repeat(16385),"rationale":"ok"}),
