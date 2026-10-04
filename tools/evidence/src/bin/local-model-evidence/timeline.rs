@@ -10,7 +10,7 @@ use std::{
     process::{Command, Stdio},
     sync::mpsc,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[derive(Default)]
@@ -22,6 +22,7 @@ struct Observations {
 pub(super) struct TimelineFollower {
     child: OwnedChild,
     reader: Option<thread::JoinHandle<io::Result<Observations>>>,
+    finished: Option<Result<(), String>>,
 }
 
 impl TimelineFollower {
@@ -45,30 +46,67 @@ impl TimelineFollower {
             .ok_or("timeline stdout pipe is absent")?;
         let (send, ready) = mpsc::sync_channel(1);
         let reader = thread::spawn(move || observe(stdout, send));
-        let follower = Self {
+        let mut follower = Self {
             child,
             reader: Some(reader),
+            finished: None,
         };
-        ready.recv_timeout(Duration::from_secs(10))?;
+        if let Err(error) = ready.recv_timeout(Duration::from_secs(10)) {
+            return match follower.finish() {
+                Ok(()) => Err(error.into()),
+                Err(cleanup) => {
+                    Err(format!("timeline startup failed: {error}; finish: {cleanup}").into())
+                }
+            };
+        }
         Ok(follower)
     }
 
     pub(super) fn finish(&mut self) -> EvidenceResult {
-        self.child.terminate()?;
-        if let Some(reader) = self.reader.take() {
-            let observed = reader.join().map_err(|_| "timeline reader panicked")??;
-            ensure(
-                observed.page && observed.update,
-                "timeline follow did not expose both its bounded page and resumed observations",
-            )?;
+        if let Some(result) = &self.finished {
+            return result.clone().map_err(Into::into);
         }
-        Ok(())
+        let outcome = (|| -> EvidenceResult {
+            self.child.terminate()?;
+            let started = Instant::now();
+            while self
+                .reader
+                .as_ref()
+                .is_some_and(|reader| !reader.is_finished())
+            {
+                ensure(
+                    started.elapsed() < Duration::from_secs(2),
+                    "timeline reader stop unconfirmed",
+                )?;
+                thread::sleep(Duration::from_millis(5));
+            }
+            if let Some(reader) = self.reader.take() {
+                let observed = reader.join().map_err(|_| "timeline reader panicked")??;
+                ensure(
+                    observed.page && observed.update,
+                    "timeline follow did not expose both its bounded page and resumed observations",
+                )?;
+            }
+            Ok(())
+        })();
+        self.finished = Some(outcome.as_ref().map(|()| ()).map_err(ToString::to_string));
+        outcome
     }
 }
 
 impl Drop for TimelineFollower {
     fn drop(&mut self) {
-        let _ = self.finish();
+        if self.finished.is_none()
+            && let Err(error) = self.finish()
+        {
+            #[expect(
+                clippy::print_stderr,
+                reason = "Cancellation/unwind cannot return follower cleanup failure; completed scenarios must call finish explicitly."
+            )]
+            {
+                eprintln!("timeline follower finish failed: {error}");
+            }
+        }
     }
 }
 
@@ -125,6 +163,31 @@ fn observe(input: impl Read, ready: mpsc::SyncSender<()>) -> io::Result<Observat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn reader_failure_remains_failed_after_child_reaping() -> EvidenceResult {
+        let child = OwnedChild::spawn(Command::new("/bin/sleep").arg("30"))?;
+        let mut follower = TimelineFollower {
+            child,
+            reader: Some(thread::spawn(|| {
+                Err(io::Error::other("injected reader failure"))
+            })),
+            finished: None,
+        };
+        let error = follower
+            .finish()
+            .err()
+            .ok_or("reader failure was discarded")?;
+        assert!(error.to_string().contains("injected reader failure"));
+        assert!(follower.child.try_wait()?.is_some());
+        let repeated = follower
+            .finish()
+            .err()
+            .ok_or("repeated finish erased reader failure")?;
+        assert_eq!(repeated.to_string(), error.to_string());
+        Ok(())
+    }
 
     #[test]
     fn long_stream_is_consumed_through_its_last_document() -> io::Result<()> {
