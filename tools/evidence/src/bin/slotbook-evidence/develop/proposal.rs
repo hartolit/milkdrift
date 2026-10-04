@@ -209,15 +209,12 @@ pub(super) fn generate(
         &format!("source-{index}-model-import"),
         args!["blueprint", "import", document.display()],
     )?;
-    s.ok(
+    s.start_run(
         &format!("source-{index}-model-start"),
-        args![
-            "run",
-            "start",
-            run,
-            run,
-            text(revision.pointer("/id").ok_or("missing /id")?)?
-        ],
+        &run,
+        &run,
+        text(revision.pointer("/id").ok_or("missing /id")?)?,
+        crate::client::Caller::Operator,
     )?;
     let mut state = Value::Null;
     for poll in 0..=360 {

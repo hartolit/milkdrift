@@ -394,6 +394,50 @@ impl Session {
     pub(super) fn ok(&self, label: &str, args: Vec<String>) -> EvidenceResult<Value> {
         self.call(label, args, Expected::Success, Caller::Operator)
     }
+    pub(super) fn start_run(
+        &self,
+        label: &str,
+        run: &str,
+        workflow: &str,
+        revision: &str,
+        caller: Caller,
+    ) -> EvidenceResult<Value> {
+        let path = self.root.join(format!("{label}.run-request.json"));
+        let arguments = if path.exists() {
+            use milkdrift_control_protocol::{Command as ControlCommand, MAX_DOCUMENT_BYTES};
+            use std::io::Read as _;
+            let mut bytes = Vec::new();
+            fs::File::open(&path)?
+                .take(
+                    u64::try_from(MAX_DOCUMENT_BYTES)?
+                        .checked_add(1)
+                        .ok_or("request read bound overflow")?,
+                )
+                .read_to_end(&mut bytes)?;
+            let saved: milkdrift_control_client::SavedRunRequest =
+                milkdrift_control_protocol::decode_json(&bytes)?;
+            saved.validate()?;
+            ensure(
+                saved.request.command_id == label
+                    && matches!(&saved.request.command,
+                ControlCommand::StartRun { run_id, workflow_id, revision_id, inputs }
+                if run_id == run && workflow_id == workflow && revision_id == revision && inputs.is_empty()),
+                "retained Slotbook start differs from the requested run",
+            )?;
+            args!["run", "reconnect", path.display()]
+        } else {
+            args![
+                "run",
+                "start",
+                run,
+                workflow,
+                revision,
+                "--request-file",
+                path.display()
+            ]
+        };
+        self.call(label, arguments, Expected::Success, caller)
+    }
     pub(super) fn resource(
         &self,
         label: &str,
@@ -595,6 +639,106 @@ impl Session {
 #[cfg(all(test, unix))]
 mod lifecycle_tests {
     use super::*;
+
+    #[test]
+    fn run_start_retains_exact_request_across_restart_and_refuses_changed_identity()
+    -> EvidenceResult {
+        use milkdrift_evidence::application::{
+            EvidenceConfig, application_binary, reserve_endpoint, write_config,
+        };
+        let root = tempfile::tempdir()?;
+        let host = root.path().join("host");
+        fs::create_dir(&host)?;
+        let token = write_private(&host.join("operator.token"), b"slotbook-request-fixture")?;
+        let examples = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/operator");
+        let template: milkdrift_daemon::DaemonConfig =
+            toml::from_str(&fs::read_to_string(examples.join("daemon.toml"))?)?;
+        let endpoint = reserve_endpoint()?;
+        write_config(
+            &host,
+            endpoint,
+            &token,
+            "human:operator",
+            EvidenceConfig {
+                process_profiles: vec![],
+                model_profiles: vec![],
+                secret_sources: BTreeMap::new(),
+                lease_duration_ms: 30_000,
+                authority: template
+                    .actors
+                    .first()
+                    .ok_or("operator absent")?
+                    .authority
+                    .clone(),
+            },
+        )?;
+        let mut session = Session::resume(
+            root.path(),
+            &application_binary("milkdrift")?,
+            &application_binary("milkdrift-daemon")?,
+            endpoint.port(),
+            root.path(),
+            &token,
+        )?;
+        session.start()?;
+        let outcome = (|| {
+            let imported = session.ok(
+                "import",
+                args![
+                    "blueprint",
+                    "import",
+                    examples.join("starter.json").display()
+                ],
+            )?;
+            let revision = text(
+                imported
+                    .pointer("/value/value/revision_id")
+                    .ok_or("revision absent")?,
+            )?;
+            session.start_run(
+                "start",
+                "starter",
+                "operator-starter",
+                revision,
+                Caller::Operator,
+            )?;
+            let request = fs::read(root.path().join("start.run-request.json"))?;
+            session.ok(
+                "wait",
+                args!["run", "wait", "starter", "--terminal", "succeeded"],
+            )?;
+            let before = session.ok("before", args!["run", "show", "starter"])?;
+            session.stop()?;
+            session.start()?;
+            let replay = session.start_run(
+                "start",
+                "starter",
+                "operator-starter",
+                revision,
+                Caller::Operator,
+            )?;
+            assert_eq!(replay.pointer("/value/replayed"), Some(&json!(true)));
+            assert_eq!(
+                fs::read(root.path().join("start.run-request.json"))?,
+                request
+            );
+            assert!(
+                session
+                    .start_run(
+                        "start",
+                        "different",
+                        "operator-starter",
+                        revision,
+                        Caller::Operator
+                    )
+                    .is_err()
+            );
+            let after = session.ok("after", args!["run", "show", "starter"])?;
+            assert_eq!(before.get("value"), after.get("value"));
+            Ok(())
+        })();
+        session.finish(outcome)
+    }
 
     fn failed_child_session(root: &Path) -> EvidenceResult<Session> {
         let token = root.join("token");

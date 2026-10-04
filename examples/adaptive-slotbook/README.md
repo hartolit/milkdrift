@@ -106,6 +106,10 @@ of unchanged bytes without overwriting earlier observations. The qualifier inspe
 the store, checks retained failure and removes its installations through the
 resource owner. Failure retains resources and logs for explicit inspection; it never prunes Podman.
 Data disposition is `preserve`, so removal deliberately leaves owned volumes for operator retention.
+Workflow starts retain a private request file before submission. Repeating a source-development,
+learning-proposal or qualification start reconnects that exact request, including after a daemon
+restart. A different run, workflow or revision under the same retained start label refuses instead
+of silently replaying other work. Direct published invocations retain their separate request files.
 
 With only two private container ID mappings available, add `--drain-before-renewal` when retaining
 an unrelated running service. After observing the accepted deployment and its survival across

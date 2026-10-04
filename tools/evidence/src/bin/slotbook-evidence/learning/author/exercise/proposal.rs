@@ -189,15 +189,12 @@ pub(super) fn run(
         &key(args, "learning-proposal-import-v1"),
         args!["blueprint", "import", document.display()],
     )?;
-    s.ok(
+    s.start_run(
         &key(args, "learning-proposal-start"),
-        args![
-            "run",
-            "start",
-            model_run,
-            model_run,
-            text(workflow.pointer("/id").ok_or("missing /id")?)?
-        ],
+        model_run,
+        model_run,
+        text(workflow.pointer("/id").ok_or("missing /id")?)?,
+        crate::client::Caller::Operator,
     )?;
     // Uncertainty needs inspection, not ten minutes of waiting for a terminal event that cannot
     // arrive without reconciliation. Bound both observation and the external provider separately.

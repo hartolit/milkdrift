@@ -16,15 +16,12 @@ pub(super) fn start(
     version: u64,
 ) -> EvidenceResult<Link> {
     if !args.published {
-        s.ok(
+        s.start_run(
             "run-start",
-            args![
-                "run",
-                "start",
-                "slotbook-run",
-                "slotbook",
-                text(&revision["id"])?
-            ],
+            "slotbook-run",
+            "slotbook",
+            text(&revision["id"])?,
+            Caller::Operator,
         )?;
         return Ok(Link {
             internal: "slotbook-run".into(),
@@ -134,16 +131,11 @@ pub(super) fn start(
             Expected::Success,
             Caller::Origin,
         )?;
-        s.call(
+        s.start_run(
             "outer-start",
-            args![
-                "run",
-                "start",
-                "slotbook-caller",
-                "slotbook-caller",
-                text(revision.pointer("/id").ok_or("missing /id")?)?
-            ],
-            Expected::Success,
+            "slotbook-caller",
+            "slotbook-caller",
+            text(revision.pointer("/id").ok_or("missing /id")?)?,
             Caller::Origin,
         )?;
         outer = Some(revision);
@@ -281,16 +273,11 @@ pub(super) fn complete(s: &Session, args: &Qualify, link: &Link) -> EvidenceResu
 }
 pub(super) fn replay(s: &Session, link: &Link) -> EvidenceResult {
     if let Some(revision) = &link.outer {
-        s.call(
+        s.start_run(
             "outer-start",
-            args![
-                "run",
-                "start",
-                "slotbook-caller",
-                "slotbook-caller",
-                text(&revision["id"])?
-            ],
-            Expected::Success,
+            "slotbook-caller",
+            "slotbook-caller",
+            text(&revision["id"])?,
             Caller::Origin,
         )?;
     }

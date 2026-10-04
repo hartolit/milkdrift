@@ -526,9 +526,12 @@ fn exercise(args: &Arguments, s: &mut Session) -> EvidenceResult {
             .ok_or("missing /revision")?
             .clone();
         let run = format!("slotbook-source-{index}");
-        s.ok(
+        s.start_run(
             &format!("source-{index}-start"),
-            args!["run", "start", run, "slotbook", next],
+            &run,
+            "slotbook",
+            next,
+            Caller::Operator,
         )?;
         let result = observe(s, &run, index)?;
         selected = json!({"run":result.pointer("/run/run_id").ok_or("missing /run/run_id")?,"terminal":result.pointer("/run/terminal").ok_or("missing /run/terminal")?,"attempts":result.pointer("/attempts").ok_or("missing /attempts")?,"source":source_snapshot(s,index)?,"omission":"Complete source and selected compiler/verifier diagnostics are supplied with exact artifact references; full run inspection is retained separately."});
