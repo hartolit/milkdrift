@@ -1,1 +1,1 @@
-Harbor Host 1.4: add preview environments; no billing change.
+Harbor Host 1.4 now shows queued jobs and lets operators download completed job logs. This release fixes duplicate status rows after reconnecting. Running jobs keep their current settings during an upgrade. Automatic failover is not included. Write release notes for the operators who will upgrade.

@@ -1,1 +1,1 @@
-Lantern Rally 0.8: improve checkpoint hints; no new vehicles.
+Lantern Rally 0.8 adds private lobby codes and reconnecting to a match for up to 30 seconds after a dropped connection. It fixes duplicate lap notifications. Hosts and players must use the same version. Cross-region matchmaking is not included. Write release notes for players.

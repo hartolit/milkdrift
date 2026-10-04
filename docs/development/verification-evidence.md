@@ -30,6 +30,42 @@ acceptance. The CLI cases separately interrupt an actual start reply and recover
 references. These are focused software checks, not the complete operator journey or browser
 authentication/CORS, desktop packaging, real-model quality or physical durability qualification.
 
+## Authored workflow journey
+
+Build `client-workflow-evidence` with the ordinary daemon and CLI binaries. Its controlled mode
+uses the maintained release-notes prompts and two briefs, authors and reopens the definition,
+keeps a meeting-summary workflow independent, downloads accepted results by output name, restarts
+the daemon and replays the saved requests. It edits both an independent copy and a later source
+revision while checking that accepted run pins remain unchanged. A separate run returns an
+incomplete review, then uses ordinary pause, proposal, approval, application, signal and resume
+commands to add a required repair check. The endpoint independently counts seven calls, checks
+brief/draft selection and rejects unrelated earlier draft content in repair context.
+
+```sh
+cargo build -p milkdrift-daemon --bin milkdrift-daemon -p milkdrift-cli --bin milkdrift \
+  -p milkdrift-evidence --bin client-workflow-evidence
+target/debug/client-workflow-evidence --daemon target/debug/milkdrift-daemon \
+  --cli target/debug/milkdrift --output target/client-workflow-controlled
+```
+
+Choose a new private output directory. The runner retains configuration, binary/source identities,
+the command transcript, requests, results and the store; it stops only its own daemon and fixture.
+Its regression is in ordinary test discovery. The existing independent JSON-client, lost-reply,
+unauthorized/stale repair, protected-agreement, publication and learning tests complement this
+journey rather than depending on the evidence tool for their decisions.
+
+To use an explicitly authorized attached endpoint, add `--model-profile /absolute/profile.json`.
+This mode performs four calls: draft and review for each brief, with the same authored revision.
+Each request asks for at most 1,024 output tokens, with 180-second request/response deadlines and
+no automatic retries. The CLI observes each two-step run for at most 390 seconds. A local deadline
+does not prove external termination. The profile must identify the actual loopback alias and
+features; an authenticated SSH forward can expose an authorized remote listener on loopback.
+For the exercised Ornith configuration, use the explicit
+[reasoning option](../guides/local-model-endpoint.md#llamacpp-reasoning-stream-compatibility).
+The runner does not configure or stop attached servers. Live mode omits synthetic repair failures;
+review the two retained text files separately for usefulness. Product completeness checks require
+nonempty final prose and `stop`, and do not establish editorial correctness or useful learning.
+
 ## Active capacity and publication retirement
 
 Public reuse and request preparation have focused daemon/CLI checks alongside the core publication
