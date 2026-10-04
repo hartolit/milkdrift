@@ -26,7 +26,12 @@ struct ProtectedPlatform {
     revoked: AtomicBool,
     evaluations: AtomicUsize,
     revoke_before_configuration: AtomicBool,
-    prepare_gate: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    prepare_gate: Mutex<
+        Option<(
+            std::sync::mpsc::SyncSender<()>,
+            std::sync::mpsc::Receiver<()>,
+        )>,
+    >,
 }
 fn policy() -> Result<ProtectedEffectPolicy> {
     Ok(ProtectedEffectPolicy {
@@ -138,11 +143,15 @@ impl ManagedPlatform for ProtectedPlatform {
             return self.base.observe(&change.candidate);
         }
         if step == ManagedStep::StartService {
-            self.base.0.lock().map_err(failure)?.content =
-                change.candidate.configuration.value()["bytes"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_owned();
+            self.base.0.lock().map_err(failure)?.content = change
+                .candidate
+                .configuration
+                .value()
+                .get("bytes")
+                .ok_or_else(|| failure("configured bytes absent"))?
+                .as_str()
+                .unwrap_or("")
+                .to_owned();
         }
         let observation = self.base.reconcile(record, step)?;
         if step == ManagedStep::RemoveConfiguration
@@ -288,7 +297,10 @@ fn completed_evaluations_turn_over_and_keep_exact_evidence_and_receipts_after_re
             .managed_evaluation(&initial.identity)?
             .ok_or("evidence absent")?;
         assert!(retained.complete);
-        assert_eq!(retained.checks[0].passed, Some(number % 2 != 0));
+        assert_eq!(
+            retained.checks.first().ok_or("check absent")?.passed,
+            Some(number % 2 != 0)
+        );
         history.push((request, response, retained));
     }
     let store = Arc::new(RedbStore::open_with_config(
@@ -308,20 +320,21 @@ fn completed_evaluations_turn_over_and_keep_exact_evidence_and_receipts_after_re
     }
     assert_eq!(platform.evaluations.load(Ordering::SeqCst), 6);
     // An older passing record still authorizes its exact candidate after later evaluations.
+    let old_passing = &history.get(1).ok_or("passing evaluation absent")?.2;
     owner.execute(
         &caller()?,
         &request(
             "publish-old",
             current(&store)?.version,
             ManagedAction::Publish {
-                evaluation: history[1].2.identity.clone(),
+                evaluation: old_passing.identity.clone(),
             },
         )?,
     )?;
     let setup = current(&store)?.current.ok_or("setup absent")?;
     assert_eq!(
         setup.protection.and_then(|p| p.evidence),
-        Some(history[1].2.clone())
+        Some(old_passing.clone())
     );
     Ok(())
 }
@@ -446,7 +459,7 @@ fn failed_forged_stale_and_revoked_evidence_cannot_publish_and_replay_is_exact()
         "publish",
         current(&store)?.version,
         ManagedAction::Publish {
-            evaluation: repaired.clone(),
+            evaluation: repaired,
         },
     )?;
     let receipt = owner.execute(&caller()?, &publication)?;
@@ -459,7 +472,9 @@ fn failed_forged_stale_and_revoked_evidence_cannot_publish_and_replay_is_exact()
         store
             .managed_evaluation(&failed)?
             .ok_or("failure lost")?
-            .checks[0]
+            .checks
+            .first()
+            .ok_or("failed check absent")?
             .passed
             == Some(false)
     );
@@ -578,10 +593,10 @@ fn content_authority_and_concurrent_revocation_prevent_entry() -> Result {
         current(&store)?.version,
         ManagedAction::Publish { evaluation },
     )?;
-    let (ready_send, ready_recv) = std::sync::mpsc::channel();
-    let (resume_send, resume_recv) = std::sync::mpsc::channel();
+    let (ready_send, ready_recv) = std::sync::mpsc::sync_channel(1);
+    let (resume_send, resume_recv) = std::sync::mpsc::sync_channel(1);
     *platform.prepare_gate.lock().map_err(|e| e.to_string())? = Some((ready_send, resume_recv));
-    let worker = owner.clone();
+    let worker = owner;
     let principal = caller()?;
     let work = std::thread::spawn(move || worker.execute(&principal, &publication));
     ready_recv.recv_timeout(std::time::Duration::from_secs(10))?;
@@ -878,7 +893,9 @@ fn adapter_reports_known_refusal_but_preserves_uncertainty_after_an_accepted_eff
         } else {
             result?;
             assert_eq!(events.len(), 1);
-            let terminal = events[0]
+            let terminal = events
+                .first()
+                .ok_or("event absent")?
                 .kind()
                 .terminal()
                 .ok_or("rejection terminal missing")?;

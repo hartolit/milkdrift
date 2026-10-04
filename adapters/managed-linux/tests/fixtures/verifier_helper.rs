@@ -37,12 +37,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Path::new(field("directory")?).join("launched"),
         output.stdout,
     )?;
-    if value["application"]["timeout"] == true {
+    if value
+        .pointer("/application/timeout")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
         std::thread::sleep(Duration::from_secs(60));
     }
-    println!(
-        "{}",
-        json!([{"name":"lifecycle","passed":true,"diagnostic":"test container launched"}])
-    );
+    use std::io::Write as _;
+    let mut output = std::io::stdout().lock();
+    serde_json::to_writer(
+        &mut output,
+        &json!([{"name":"lifecycle","passed":true,"diagnostic":"test container launched"}]),
+    )?;
+    writeln!(output)?;
     Ok(())
 }

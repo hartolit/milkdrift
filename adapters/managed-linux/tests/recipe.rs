@@ -60,7 +60,10 @@ fn typed_recipe_refuses_raw_engine_unit_injection_and_floating_inputs() -> Resul
         ),
     ] {
         let mut value = valid.clone();
-        value[key] = bad;
+        value
+            .as_object_mut()
+            .ok_or("recipe object absent")?
+            .insert(key.to_owned(), bad);
         assert!(
             LinuxRecipe::from_json(&serde_json::to_vec(&value)?).is_err(),
             "{key}"
@@ -111,10 +114,18 @@ fn manager_namespace_is_exclusive_and_changed_generation_is_exact() -> Result {
     for modification in 0..3 {
         let mut inconsistent = setup.clone();
         match modification {
-            0 => inconsistent.resources[0].identity.push_str("-foreign"),
+            0 => inconsistent
+                .resources
+                .first_mut()
+                .ok_or("resource absent")?
+                .identity
+                .push_str("-foreign"),
             1 => {
-                inconsistent.resources[0].ownership =
-                    milkdrift_capability::managed::ResourceOwnership::Shared
+                inconsistent
+                    .resources
+                    .first_mut()
+                    .ok_or("resource absent")?
+                    .ownership = milkdrift_capability::managed::ResourceOwnership::Shared
             }
             _ => inconsistent.capabilities.clear(),
         }
@@ -122,7 +133,10 @@ fn manager_namespace_is_exclusive_and_changed_generation_is_exact() -> Result {
     }
 
     assert!(
-        setup.capabilities[0]
+        setup
+            .capabilities
+            .first()
+            .ok_or("capability absent")?
             .extensions()
             .keys()
             .any(|k| k.as_str() == MANAGED_BINDING_EXTENSION)
@@ -171,7 +185,7 @@ fn manager_namespace_is_exclusive_and_changed_generation_is_exact() -> Result {
             .plan(
                 &ManagedName::new("slotbook")?,
                 &milkdrift_capability::managed::RecipeReference {
-                    name: recipe.name.clone(),
+                    name: recipe.name,
                     digest: format!("b3_{}", "2".repeat(64))
                 },
                 &setup.ownership,
@@ -228,7 +242,10 @@ fn attached_model_profile_retains_exact_service_dependency_and_never_owns_endpoi
     };
     for field in ["token_limits", "billing"] {
         let mut unknown = serde_json::to_value(&recipe)?;
-        unknown["model_service"][field] = serde_json::json!({"type":"unknown"});
+        *unknown
+            .get_mut("model_service")
+            .and_then(|v| v.get_mut(field))
+            .ok_or("model field absent")? = serde_json::json!({"type":"unknown"});
         assert!(LinuxRecipe::from_json(&serde_json::to_vec(&unknown)?).is_err());
     }
     let path = root.path().join("recipe.json");
@@ -270,17 +287,31 @@ fn attached_model_profile_retains_exact_service_dependency_and_never_owns_endpoi
 fn workload_and_model_choices_are_not_example_restrictions() -> Result {
     let mut value: serde_json::Value =
         serde_json::from_slice(include_bytes!("fixtures/owned-recipe-v2.json"))?;
-    value["name"] = serde_json::json!("data-analysis");
-    value["worker_limits"]["memory_bytes"] = serde_json::json!(274_877_906_944_u64);
-    value["worker_limits"]["cpu_percent"] = serde_json::json!(25_000);
-    value["model_service"]["context_tokens"] = serde_json::json!(262_144);
-    value["model_service"]["threads"] = serde_json::json!(256);
-    value["model_service"]["model_bytes"] = serde_json::json!(274_877_906_944_u64);
+    *value.pointer_mut("/name").ok_or("recipe field absent")? = serde_json::json!("data-analysis");
+    *value
+        .pointer_mut("/worker_limits/memory_bytes")
+        .ok_or("recipe field absent")? = serde_json::json!(274_877_906_944_u64);
+    *value
+        .pointer_mut("/worker_limits/cpu_percent")
+        .ok_or("recipe field absent")? = serde_json::json!(25_000);
+    *value
+        .pointer_mut("/model_service/context_tokens")
+        .ok_or("recipe field absent")? = serde_json::json!(262_144);
+    *value
+        .pointer_mut("/model_service/threads")
+        .ok_or("recipe field absent")? = serde_json::json!(256);
+    *value
+        .pointer_mut("/model_service/model_bytes")
+        .ok_or("recipe field absent")? = serde_json::json!(274_877_906_944_u64);
     let first = LinuxRecipe::from_json(&serde_json::to_vec(&value)?)?;
     assert_eq!(first.task_timeout_ms, 7_200_000);
     let mut changed = value.clone();
-    changed["model_service"]["model_alias"] = serde_json::json!("another-org/other-model:Q4");
-    changed["model_service"]["model_digest"] = serde_json::json!(format!("b3_{}", "d".repeat(64)));
+    *changed
+        .pointer_mut("/model_service/model_alias")
+        .ok_or("recipe field absent")? = serde_json::json!("another-org/other-model:Q4");
+    *changed
+        .pointer_mut("/model_service/model_digest")
+        .ok_or("recipe field absent")? = serde_json::json!(format!("b3_{}", "d".repeat(64)));
     assert_ne!(
         first.reference()?,
         LinuxRecipe::from_json(&serde_json::to_vec(&changed)?)?.reference()?
@@ -289,7 +320,8 @@ fn workload_and_model_choices_are_not_example_restrictions() -> Result {
     assert_eq!(roundtrip, first);
     for legacy in [0, 1, 3] {
         let mut old = value.clone();
-        old["schema_version"] = serde_json::json!(legacy);
+        *old.pointer_mut("/schema_version")
+            .ok_or("recipe field absent")? = serde_json::json!(legacy);
         assert!(
             LinuxRecipe::from_json(&serde_json::to_vec(&old)?)
                 .err()
@@ -366,7 +398,9 @@ fn recipe_diagnostics_identify_invalid_operating_choices() -> Result {
         "a\"b",
     ] {
         let mut value = base.clone();
-        value["model_service"]["model_alias"] = serde_json::json!(alias);
+        *value
+            .pointer_mut("/model_service/model_alias")
+            .ok_or("recipe field absent")? = serde_json::json!(alias);
         assert!(
             LinuxRecipe::from_json(&serde_json::to_vec(&value)?).is_err(),
             "{alias}"

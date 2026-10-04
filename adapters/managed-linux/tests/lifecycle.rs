@@ -87,7 +87,12 @@ struct Physical {
 #[derive(Default)]
 struct Platform(
     Mutex<Physical>,
-    Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    Mutex<
+        Option<(
+            std::sync::mpsc::SyncSender<()>,
+            std::sync::mpsc::Receiver<()>,
+        )>,
+    >,
 );
 impl ManagedPlatform for Platform {
     fn plan(
@@ -268,8 +273,8 @@ fn concurrent_command_replay_cannot_drive_the_same_platform_transition_twice() -
             recipe: reference('1')?,
         },
     )?;
-    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
-    let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(1);
     *platform.1.lock().map_err(|e| e.to_string())? = Some((ready_tx, resume_rx));
     let task_manager = manager.clone();
     let task_request = apply.clone();
@@ -745,7 +750,7 @@ fn lifecycle_adapter_passes_shared_conformance_through_entered_serving_context()
                 unknown_cancellation: UnknownCancellationExpectation::NegativeAcknowledgement,
             },
         )?
-        .with_serving_allowance(accepted.request.limits.clone())
+        .with_serving_allowance(accepted.request.limits)
         .with_keepalive(directory))
     })?;
     Ok(())

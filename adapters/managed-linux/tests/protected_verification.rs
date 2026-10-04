@@ -53,13 +53,18 @@ fn private(path: &Path) -> Result {
 fn verifier_renewal_timeout_recovery_and_preentry_integrity() -> Result {
     let image = std::env::var("MILKDRIFT_PROTECTED_TEST_IMAGE")?;
     let parent = std::env::var_os("MILKDRIFT_LINUX_EVIDENCE_PARENT")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
+        .map_or_else(std::env::temp_dir, PathBuf::from);
     let root = tempfile::Builder::new()
         .prefix("milkdrift-protected-")
         .tempdir_in(parent)?
         .keep();
-    eprintln!("protected verification evidence: {}", root.display());
+    #[expect(
+        clippy::print_stderr,
+        reason = "The real-host verifier test reports the retained evidence directory for recovery"
+    )]
+    {
+        eprintln!("protected verification evidence: {}", root.display());
+    }
     for name in ["state", "quadlet", "systemd"] {
         private(&root.join(name))?;
     }
@@ -146,7 +151,7 @@ fn verifier_renewal_timeout_recovery_and_preentry_integrity() -> Result {
     for key in ["first-evaluation", "renewed-evaluation"] {
         evaluation.identity = digest(key);
         let checks = platform.evaluate_candidate(&setup, &evaluation, bytes)?;
-        assert_eq!(checks[0].passed, Some(true));
+        assert_eq!(checks.first().ok_or("check absent")?.passed, Some(true));
         let directory = root
             .join("state")
             .join(format!("verification-{}", evaluation.identity));
@@ -200,7 +205,7 @@ fn verifier_renewal_timeout_recovery_and_preentry_integrity() -> Result {
     );
 
     evaluation.complete = true;
-    evaluation.checks[0].passed = Some(true);
+    evaluation.checks.first_mut().ok_or("check absent")?.passed = Some(true);
     let prepared = platform.prepare_publication(&setup, &evaluation, bytes, 2)?;
     let path = PathBuf::from(
         prepared.configuration.value()["candidate"]
@@ -261,7 +266,7 @@ fn verifier_renewal_timeout_recovery_and_preentry_integrity() -> Result {
     )?;
     evaluation.identity = digest("timed-out-evaluation");
     evaluation.complete = false;
-    evaluation.checks[0].passed = None;
+    evaluation.checks.first_mut().ok_or("check absent")?.passed = None;
     evaluation.subject.configuration = setup.recipe.digest.clone();
     let Err(error) = platform.evaluate_candidate(&setup, &evaluation, bytes) else {
         return Err("verifier must time out".into());

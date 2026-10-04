@@ -28,7 +28,9 @@ fn service_container(setup: &ApprovedSetup) -> Result<Option<serde_json::Value>>
         return Err("owned service inspection failed".into());
     }
     let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    Ok(Some(value[0].clone()))
+    Ok(Some(
+        value.get(0).ok_or("container inspection absent")?.clone(),
+    ))
 }
 
 fn service_enforcement(
@@ -53,16 +55,33 @@ fn service_enforcement(
         let text = std::fs::read_to_string(format!("/sys/fs/cgroup{path}/{field}"))?;
         observed.insert(field.to_owned(), serde_json::json!(text.trim()));
     }
-    assert_eq!(observed["memory.max"], limits.memory_bytes.to_string());
-    assert_eq!(observed["memory.swap.max"], "0");
-    assert_eq!(observed["pids.max"], limits.pids.to_string());
-    let quota: Vec<u64> = observed["cpu.max"]
+    assert_eq!(
+        *observed.get("memory.max").ok_or("memory limit absent")?,
+        limits.memory_bytes.to_string()
+    );
+    assert_eq!(
+        observed.get("memory.swap.max").ok_or("swap limit absent")?,
+        "0"
+    );
+    assert_eq!(
+        *observed.get("pids.max").ok_or("pid limit absent")?,
+        limits.pids.to_string()
+    );
+    let quota: Vec<u64> = observed
+        .get("cpu.max")
+        .ok_or("CPU limit absent")?
         .as_str()
         .ok_or("CPU quota missing")?
         .split_whitespace()
         .map(str::parse)
         .collect::<std::result::Result<_, _>>()?;
-    assert_eq!(quota[0] * 100, quota[1] * u64::from(limits.cpu_percent));
+    let [quota, period] = quota.as_slice() else {
+        return Err("CPU quota must have exactly two fields".into());
+    };
+    assert_eq!(
+        u128::from(*quota) * 100,
+        u128::from(*period) * u128::from(limits.cpu_percent)
+    );
     let status = std::fs::read_to_string(format!("/proc/{pid}/status"))?;
     assert!(status.lines().any(|v| v == "CapEff:\t0000000000000000"));
     assert!(status.lines().any(|v| v == "NoNewPrivs:\t1"));
@@ -189,19 +208,24 @@ fn real_linux_worker_conformance_reapply_restart_and_preserved_removal() -> Resu
     let recipe = LinuxRecipe::from_json(&std::fs::read(&recipe_file)?)?;
     // Physical failures must leave their durable inventory available for diagnosis/recovery.
     let evidence_parent = std::env::var_os("MILKDRIFT_LINUX_EVIDENCE_PARENT")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
+        .map_or_else(std::env::temp_dir, PathBuf::from);
     let root = tempfile::Builder::new()
         .prefix("milkdrift-linux-")
         .tempdir_in(evidence_parent)?
         .keep();
     let parent = PathBuf::from(std::env::var("MILKDRIFT_QUADLET_TEST_PARENT")?);
     let quadlet = tempfile::tempdir_in(parent)?.keep();
-    eprintln!(
-        "physical evidence root: {}; Quadlet directory: {}",
-        root.display(),
-        quadlet.display()
-    );
+    #[expect(
+        clippy::print_stderr,
+        reason = "The physical test reports retained evidence paths for recovery after failure"
+    )]
+    {
+        eprintln!(
+            "physical evidence root: {}; Quadlet directory: {}",
+            root.display(),
+            quadlet.display()
+        );
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -210,7 +234,7 @@ fn real_linux_worker_conformance_reapply_restart_and_preserved_removal() -> Resu
     }
     let config = LinuxManagerConfig {
         state_root: root.clone(),
-        quadlet_directory: quadlet.clone(),
+        quadlet_directory: quadlet,
         systemd_directory: PathBuf::from(std::env::var("MILKDRIFT_SYSTEMD_TEST_DIRECTORY")?),
         recipes: vec![recipe_file],
     };
@@ -375,7 +399,8 @@ fn real_linux_worker_conformance_reapply_restart_and_preserved_removal() -> Resu
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         loop {
             if let Ok(Some(current)) = service_container(&setup)
-                && current["Id"] != value["Id"]
+                && current.get("Id").ok_or("current container ID absent")?
+                    != value.get("Id").ok_or("prior container ID absent")?
                 && current.pointer("/State/Running").and_then(|v| v.as_bool()) == Some(true)
                 && client
                     .get(format!("http://127.0.0.1:{port}/health"))
@@ -462,7 +487,13 @@ fn real_linux_worker_conformance_reapply_restart_and_preserved_removal() -> Resu
                 "preserved owned volume disappeared"
             );
             // This test explicitly preserved the volume. Print its exact identity for operator cleanup.
-            eprintln!("preserved test volume: {}", resource.identity);
+            #[expect(
+                clippy::print_stderr,
+                reason = "The physical test identifies intentionally preserved volumes for operator cleanup"
+            )]
+            {
+                eprintln!("preserved test volume: {}", resource.identity);
+            }
         }
     }
     Ok(())

@@ -175,10 +175,10 @@ fn attached_model_adapter_passes_shared_conformance_with_durable_holds() -> Resu
             let mut stream = loop { match listener.accept() { Ok((stream, _)) => break stream, Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && std::time::Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)), Err(e) => return Err(e.to_string()) } };
             stream.set_read_timeout(Some(Duration::from_secs(5))).map_err(|e| e.to_string())?;
             let mut bytes = vec![];
-            loop { let mut chunk = [0; 4096]; let n = stream.read(&mut chunk).map_err(|e| e.to_string())?; if n == 0 { return Err("closed request".to_owned()); } bytes.extend_from_slice(&chunk[..n]);
+            loop { let mut chunk = [0; 4096]; let n = stream.read(&mut chunk).map_err(|e| e.to_string())?; if n == 0 { return Err("closed request".to_owned()); } bytes.extend_from_slice(chunk.get(..n).ok_or("request read exceeded its buffer")?);
                 if bytes.len() > 131_072 { return Err("request too large".to_owned()); }
                 if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
-                    let head = String::from_utf8_lossy(&bytes[..end]);
+                    let head = String::from_utf8_lossy(bytes.get(..end).ok_or("header prefix absent")?);
                     let len = head.lines().find_map(|l| l.to_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse::<usize>().ok())).ok_or("length missing")?;
                     if bytes.len() >= end + 4 + len { break; }
                 }
