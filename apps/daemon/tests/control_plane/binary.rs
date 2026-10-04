@@ -78,6 +78,24 @@ pub(super) struct BinaryDaemon {
     pub(super) endpoint: Url,
     pub(super) client: ControlClient,
 }
+
+#[tokio::test]
+async fn failed_startup_retains_evidence_and_reaps_child() -> TestResult {
+    let directory = TempDir::new()?;
+    let path = directory.path().join("invalid.toml");
+    fs::write(&path, "invalid = [")?;
+    let started = Instant::now();
+    let error = BinaryDaemon::start(&path, Url::parse("http://127.0.0.1:1/")?, directory.path())
+        .await
+        .err()
+        .ok_or("invalid configuration unexpectedly started")?
+        .to_string();
+    assert!(error.contains("daemon exited before readiness"), "{error}");
+    assert!(error.contains("diagnostics:"), "{error}");
+    assert!(error.contains("cleanup: Ok(())"), "{error}");
+    assert!(started.elapsed() < Duration::from_secs(6));
+    Ok(())
+}
 impl BinaryDaemon {
     pub(super) fn stop(mut self) -> TestResult {
         self.child.finish()?;
@@ -105,17 +123,20 @@ impl BinaryDaemon {
             .spawn()?;
         let mut owner = ChildOwner(Some(child));
         let client = client(&endpoint, CONTROLLER_TOKEN)?;
-        for _ in 0..100 {
-            if owner
-                .0
-                .as_mut()
-                .ok_or("child absent")?
-                .try_wait()?
-                .is_some()
-            {
-                return Err("daemon exited before readiness".into());
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            if let Some(status) = owner.0.as_mut().ok_or("child absent")?.try_wait()? {
+                let cleanup = owner.finish();
+                return Err(format!(
+                    "daemon exited before readiness ({status}); {}; cleanup: {cleanup:?}",
+                    super::diagnostics::child_failure(directory)
+                )
+                .into());
             }
-            if client.readiness().await.is_ok() {
+            if matches!(
+                tokio::time::timeout_at(deadline, client.readiness()).await,
+                Ok(Ok(_))
+            ) {
                 return Ok(Self {
                     child: owner,
                     endpoint,
@@ -124,6 +145,11 @@ impl BinaryDaemon {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        Err("daemon readiness deadline".into())
+        let cleanup = owner.finish();
+        Err(format!(
+            "daemon readiness deadline; {}; cleanup: {cleanup:?}",
+            super::diagnostics::child_failure(directory)
+        )
+        .into())
     }
 }
