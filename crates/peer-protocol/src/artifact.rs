@@ -76,6 +76,11 @@ pub struct ArtifactMetadataOffer {
 
 impl ArtifactMetadataOffer {
     /// Requires exact media type/size and a nonzero transfer expiry.
+    ///
+    /// # Errors
+    /// Refuses zero expiry or an invalid consuming request. An input transfer must
+    /// match an artifact's identity, digest, size and media type in that request and
+    /// expire no later than its deadline.
     pub fn validate(&self) -> Result<(), PeerProtocolError> {
         if let ArtifactTransferBinding::Input { request } = &self.binding {
             request.validate()?;
@@ -143,6 +148,10 @@ pub struct ArtifactChunk {
 
 impl ArtifactChunk {
     /// Enforces nonempty package and negotiated chunk limits before use.
+    ///
+    /// # Errors
+    /// Refuses an empty chunk or bytes exceeding either the negotiated maximum or
+    /// [`MAX_ARTIFACT_CHUNK_BYTES`]. A zero negotiated maximum permits no chunk.
     pub fn validate(&self, negotiated_maximum: u32) -> Result<(), PeerProtocolError> {
         let limit = negotiated_maximum.min(MAX_ARTIFACT_CHUNK_BYTES);
         if self.bytes.is_empty() || self.bytes.len() > usize::try_from(limit).unwrap_or(usize::MAX)

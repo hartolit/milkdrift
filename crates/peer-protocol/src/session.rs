@@ -40,6 +40,9 @@ pub struct ProtocolVersionRange {
 
 impl ProtocolVersionRange {
     /// Constructs an ordered range within a single major line.
+    ///
+    /// # Errors
+    /// Refuses zero or differing major versions and a minimum greater than the maximum.
     pub fn new(
         minimum: ProtocolVersion,
         maximum: ProtocolVersion,
@@ -53,6 +56,10 @@ impl ProtocolVersionRange {
     }
 
     /// Selects the highest mutually supported version. Unknown majors fail closed.
+    ///
+    /// # Errors
+    /// Returns [`PeerProtocolError::IncompatibleVersion`] if the major lines differ,
+    /// are unsupported, or the ranges do not overlap.
     pub fn negotiate(self, remote: Self) -> Result<ProtocolVersion, PeerProtocolError> {
         if self.minimum.major != remote.minimum.major || self.minimum.major != PROTOCOL_MAJOR_V1 {
             return Err(PeerProtocolError::IncompatibleVersion);
@@ -106,6 +113,10 @@ pub struct HardLimits {
 
 impl HardLimits {
     /// Enforces nonzero package ceilings.
+    ///
+    /// # Errors
+    /// Refuses any zero limit, or document, observation and chunk limits above the
+    /// corresponding protocol ceilings.
     pub fn validate(self) -> Result<Self, PeerProtocolError> {
         if self.document_bytes == 0
             || usize::try_from(self.document_bytes).unwrap_or(usize::MAX)
@@ -164,6 +175,10 @@ pub struct HeartbeatLease {
 
 impl HeartbeatLease {
     /// Validates bounded nonzero timing and an idle timeout of at least two heartbeats.
+    ///
+    /// # Errors
+    /// Refuses heartbeat intervals outside 1–60,000 ms, idle timeouts shorter than two
+    /// heartbeats or longer than 600,000 ms, and execution leases outside 1–86,400,000 ms.
     pub fn validate(self) -> Result<Self, PeerProtocolError> {
         if self.heartbeat_ms == 0
             || self.heartbeat_ms > 60_000

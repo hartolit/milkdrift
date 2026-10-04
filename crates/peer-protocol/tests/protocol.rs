@@ -166,7 +166,7 @@ fn request_with_artifact_limit(
             capability: descriptor.identity().clone(),
             operation,
             request: request_id,
-            limits: limits.clone(),
+            limits,
             expires_at_unix_ms: 20_000,
             nonce: format!("nonce-{suffix}"),
             origin: milkdrift_peer_protocol::InvocationOrigin::Workflow {
@@ -292,7 +292,7 @@ fn catalog_digest_and_expiry_are_exact() -> TestResult {
     assert!(!snapshot.is_live_at(2_001));
     let bytes = serde_json::to_vec(&snapshot)?;
     let mut value: serde_json::Value = serde_json::from_slice(&bytes)?;
-    value["generation"] = serde_json::json!(2);
+    *value.get_mut("generation").ok_or("missing generation")? = serde_json::json!(2);
     assert!(serde_json::from_value::<CatalogSnapshot>(value).is_err());
     Ok(())
 }
@@ -328,7 +328,7 @@ fn invocation_digest_binds_catalog_selection_delegation_and_request() -> TestRes
         publication_ancestry: Vec::new(),
         controller_reservation: None,
         reference: DelegationRef::new("delegation-1")?,
-        issuer_peer: peer_a.clone(),
+        issuer_peer: peer_a,
         actor: ActorRef::new("peer:peer-a")?,
         target_peer: peer_b,
         capability: descriptor.identity().clone(),
@@ -354,12 +354,14 @@ fn invocation_digest_binds_catalog_selection_delegation_and_request() -> TestRes
         catalog.digest,
         selection,
         invocation,
-        limits.clone(),
+        limits,
         15_000,
         delegation,
     )?;
     let mut value = serde_json::to_value(&request)?;
-    value["deadline_unix_ms"] = serde_json::json!(15_001);
+    *value
+        .get_mut("deadline_unix_ms")
+        .ok_or("missing deadline")? = serde_json::json!(15_001);
     assert!(serde_json::from_value::<ServingInvocationRequest>(value).is_err());
     Ok(())
 }
@@ -413,7 +415,9 @@ fn delegated_publication_depth_ceiling_is_retained_and_cannot_be_omitted() -> Te
     let decoded: DelegatedAuthorization = serde_json::from_value(value.clone())?;
     decoded.validate()?;
     assert_eq!(decoded.publication_ancestry, vec![ancestor]);
-    value["publication_ancestry"][0]
+    value
+        .pointer_mut("/publication_ancestry/0")
+        .ok_or("missing ancestor")?
         .as_object_mut()
         .ok_or("ancestor object")?
         .remove("maximum_depth");

@@ -68,7 +68,7 @@ pub struct ProtocolEnvelope<T> {
 }
 
 impl<T> ProtocolEnvelope<T> {
-    /// Wraps one current v1.4 message without optional extensions.
+    /// Wraps one current v1.5 message without optional extensions.
     #[must_use]
     pub fn v1(message: T) -> Self {
         Self {
@@ -80,6 +80,10 @@ impl<T> ProtocolEnvelope<T> {
 }
 
 /// Canonically encodes an envelope after applying structural and extension bounds.
+///
+/// # Errors
+/// Refuses unsupported versions, excessive or improperly namespaced extensions,
+/// serialization failures, and documents exceeding the byte or JSON structural bounds.
 pub fn encode_envelope<T: Serialize>(
     envelope: &ProtocolEnvelope<T>,
 ) -> Result<Vec<u8>, PeerProtocolError> {
@@ -97,6 +101,10 @@ pub fn encode_envelope<T: Serialize>(
 }
 
 /// Preflights, duplicate-checks, structurally bounds, and decodes one envelope.
+///
+/// # Errors
+/// Refuses invalid byte limits, oversized or malformed JSON, duplicate keys, structural
+/// bound violations, payload decoding failures, unsupported versions and invalid extensions.
 pub fn decode_envelope<T: DeserializeOwned>(
     bytes: &[u8],
     limits: DecodeLimits,

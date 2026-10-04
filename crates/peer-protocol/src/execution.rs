@@ -78,6 +78,10 @@ pub struct ExecutionLimits {
 
 impl ExecutionLimits {
     /// Requires nonzero duration and observation ceilings.
+    ///
+    /// # Errors
+    /// Refuses zero duration, observation counts outside 1–1,000,000, an invalid
+    /// currency, or a nonzero monetary allowance with no currency.
     pub fn validate(&self) -> Result<(), PeerProtocolError> {
         if self.duration_ms == 0 || self.observations == 0 || self.observations > 1_000_000 {
             return Err(PeerProtocolError::InvalidContract(
@@ -116,6 +120,10 @@ impl ExecutionLimits {
 
     /// Allowance enforced against the prepared adapter before remote entry. An absent
     /// dimension permits only an adapter that declares the resource inapplicable.
+    ///
+    /// # Errors
+    /// Propagates invalid execution limits from [`Self::validate`], including currency
+    /// validation when constructing the monetary admission bound.
     pub fn admission_envelope(
         &self,
     ) -> Result<milkdrift_capability::InvocationAdmissionEnvelope, PeerProtocolError> {
@@ -167,6 +175,7 @@ impl ExecutionLimits {
     }
 
     /// Refuses entry unless the prepared adapter can enforce every accepted dimension.
+    #[must_use]
     pub fn permits_prepared(
         &self,
         prepared: &milkdrift_capability::InvocationAdmissionEnvelope,
@@ -241,6 +250,11 @@ pub struct DelegatedAuthorization {
 
 impl DelegatedAuthorization {
     /// Validates non-secret bounded delegation facts.
+    ///
+    /// # Errors
+    /// Refuses invalid limits or workflow identities, publication ancestry beyond a
+    /// retained depth ceiling, ancestry or reservation without workflow origin, an
+    /// invalid reservation identity, zero expiry, or an empty, oversized or non-ASCII nonce.
     pub fn validate(&self) -> Result<(), PeerProtocolError> {
         self.limits.validate()?;
         if let InvocationOrigin::Workflow { provenance } = &self.origin {
@@ -286,7 +300,10 @@ fn safe_reference(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 192
         && value.is_ascii()
-        && value.as_bytes()[0].is_ascii_alphanumeric()
+        && value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
         })
@@ -372,7 +389,14 @@ impl<'de> Deserialize<'de> for ServingInvocationRequest {
 
 impl ServingInvocationRequest {
     /// Constructs and canonically digests one exact peer request.
-    #[allow(clippy::too_many_arguments)] // Peer admission binds catalog selection, invocation, deadline, resource limits, and authorization in one digest.
+    ///
+    /// # Errors
+    /// Refuses facts that fail [`Self::validate`] or cannot be encoded within the
+    /// canonical request's JSON bounds.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Peer admission binds catalog selection, invocation, deadline, limits and authorization into one immutable digest"
+    )]
     pub fn new(
         request_id: PeerRequestId,
         catalog_generation: u64,
@@ -410,6 +434,12 @@ impl ServingInvocationRequest {
     }
 
     /// Revalidates exact selection, authorization, bounds, and canonical digest.
+    ///
+    /// # Errors
+    /// Refuses invalid limits or authorization, workflow inputs on direct calls,
+    /// unencodable requests, zero catalog generation or deadline, inconsistent
+    /// selection or delegation, and noncanonical or mismatched digests. Input artifacts
+    /// must have exact sizes whose checked total fits the accepted artifact quota.
     pub fn validate(&self) -> Result<(), PeerProtocolError> {
         self.limits.validate()?;
         self.authorization.validate()?;
@@ -430,7 +460,7 @@ impl ServingInvocationRequest {
                 "direct origin cannot carry workflow-selected inputs".to_owned(),
             ));
         }
-        let _ = InvocationRequestDocument::new(self.request.clone())
+        InvocationRequestDocument::new(self.request.clone())
             .to_canonical_json()
             .map_err(|error| PeerProtocolError::InvalidContract(error.to_string()))?;
         if self.catalog_generation == 0
@@ -473,6 +503,9 @@ impl ServingInvocationRequest {
     }
 
     /// Returns the exact total size of every artifact materialized as input.
+    ///
+    /// # Errors
+    /// Refuses artifact references without an exact size and totals that overflow `u64`.
     pub fn input_artifact_bytes(&self) -> Result<u64, PeerProtocolError> {
         let mut references = self
             .request
@@ -496,7 +529,10 @@ impl ServingInvocationRequest {
     }
 }
 
-#[allow(clippy::too_many_arguments)] // The digest covers every independent admission field; omitting one would permit conflicting request replay.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The digest must cover every independent admission field to reject conflicting request replay"
+)]
 fn compute_request_digest(
     request_id: &PeerRequestId,
     catalog_generation: u64,
@@ -586,6 +622,11 @@ pub enum InvocationAcceptance {
 
 impl InvocationAcceptance {
     /// Validates semantic bounds and binds the response to the exact submitted request.
+    ///
+    /// # Errors
+    /// Refuses a different request identity or accepted digest, zero acceptance time,
+    /// a lease ending before acceptance, or an invalid archived summary. Rejections
+    /// require a nonempty ASCII code of at most 192 bytes and detail of at most 2,048 bytes.
     pub fn validate_for(
         &self,
         request: &ServingInvocationRequest,
@@ -678,6 +719,11 @@ pub enum InvocationLookup {
 
 impl InvocationLookup {
     /// Validates the internal semantics and binds the result to the exact queried identity.
+    ///
+    /// # Errors
+    /// Refuses a different request identity, invalid acceptance time or digest, an
+    /// archived summary inconsistent with the execution/status/sequence, or an unknown
+    /// outcome reason outside 1–2,048 bytes.
     pub fn validate_for(&self, request: &PeerRequestId) -> Result<(), PeerProtocolError> {
         let valid = match self {
             Self::NotAccepted { request_id } => request_id == request,
@@ -752,6 +798,11 @@ pub struct ArchivedExecutionSummary {
 
 impl ArchivedExecutionSummary {
     /// Validates terminal/uncertain summary consistency for one execution.
+    ///
+    /// # Errors
+    /// Refuses invalid archive time, digest or uncertainty reason; more than 256 outputs;
+    /// invalid, unordered or foreign output observations; and terminal/unknown status
+    /// inconsistent with the retained final observation or uncertainty reason.
     pub fn validate(&self, execution: &PeerExecutionId) -> Result<(), PeerProtocolError> {
         if self.archived_at_unix_ms == 0
             || !is_canonical_blake3_digest(&self.observation_digest)
@@ -850,6 +901,10 @@ pub struct PeerObservation {
 
 impl PeerObservation {
     /// Validates sequence and exact category/event mapping.
+    ///
+    /// # Errors
+    /// Refuses zero sequence or observation time, a sequence differing from its event,
+    /// or a category that does not match the event's progress, output or terminal status.
     pub fn validate(&self) -> Result<(), PeerProtocolError> {
         let category_matches = match self.event.kind() {
             milkdrift_capability::InvocationEventKind::Progress { .. } => {
@@ -911,6 +966,11 @@ pub struct ObservationPage {
 
 impl ObservationPage {
     /// Validates page cardinality, execution ownership, and contiguous cursors.
+    ///
+    /// # Errors
+    /// Refuses pages above the requested or protocol item limit, invalid or foreign
+    /// observations, noncontiguous sequences and mismatched resume cursors. Closure,
+    /// terminal status and archived history must agree with their retained evidence.
     pub fn validate(&self, maximum_items: usize) -> Result<(), PeerProtocolError> {
         let limit = maximum_items.min(MAX_OBSERVATIONS_PER_PAGE);
         if self.observations.len() > limit {
@@ -1022,6 +1082,10 @@ pub struct PeerCancellationAcknowledgement {
 
 impl PeerCancellationAcknowledgement {
     /// Enforces truthful terminal-boundary and evidence semantics.
+    ///
+    /// # Errors
+    /// Refuses detail above 512 bytes, a claimed terminal boundary for rejected,
+    /// unsupported or unknown cancellation, and invalid or foreign execution evidence.
     pub fn validate(&self) -> Result<(), PeerProtocolError> {
         if self.detail.as_ref().is_some_and(|value| value.len() > 512)
             || (self.terminal_boundary
@@ -1044,6 +1108,9 @@ impl PeerCancellationAcknowledgement {
     }
 
     /// Validates semantics and binds the acknowledgement to the exact cancellation request.
+    ///
+    /// # Errors
+    /// Propagates [`Self::validate`] failures and refuses a different request or execution.
     pub fn validate_for(&self, request: &PeerCancellationRequest) -> Result<(), PeerProtocolError> {
         self.validate()?;
         if self.request_id != request.request_id || self.execution != request.execution {

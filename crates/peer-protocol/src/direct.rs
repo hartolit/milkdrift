@@ -94,6 +94,10 @@ pub struct DirectInvocationRequest {
 
 impl DirectInvocationRequest {
     /// Freezes the authenticated server basis into the one canonical serving request.
+    ///
+    /// # Errors
+    /// Refuses authority for another host and propagates the request consistency,
+    /// bounds and encoding failures from [`ServingInvocationRequest::new`].
     pub fn bind(
         &self,
         authority: ClientInvocationAuthorization,

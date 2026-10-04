@@ -28,6 +28,10 @@ pub struct CatalogEntry {
 
 impl CatalogEntry {
     /// Checks identity and operation consistency without inventing adapter features.
+    ///
+    /// # Errors
+    /// Refuses a mismatched observation identity, an empty or oversized operation set,
+    /// or any advertised operation absent from the descriptor.
     pub fn validate(&self) -> Result<(), PeerProtocolError> {
         if self.observation.capability() != self.descriptor.identity()
             || self.invocable_operations.is_empty()
@@ -104,6 +108,9 @@ impl<'de> Deserialize<'de> for CatalogSnapshot {
 
 impl CatalogSnapshot {
     /// Constructs, sorts, validates, and digests a complete snapshot.
+    ///
+    /// # Errors
+    /// Returns the bounds, entry, encoding, and digest failures described by [`Self::validate`].
     pub fn new(
         generation: u64,
         issued_at_unix_ms: u64,
@@ -133,6 +140,11 @@ impl CatalogSnapshot {
     }
 
     /// Revalidates defensive bounds and the canonical digest.
+    ///
+    /// # Errors
+    /// Refuses zero generation, non-increasing issue/expiry times, more than 256 entries,
+    /// invalid entries, duplicate descriptor generations, or a mismatched digest.
+    /// Descriptor and snapshot encoding must also satisfy their canonical JSON bounds.
     pub fn validate(&self) -> Result<(), PeerProtocolError> {
         if self.generation == 0
             || self.issued_at_unix_ms >= self.expires_at_unix_ms
@@ -184,7 +196,7 @@ fn compute_digest(
     entries: &[CatalogEntry],
 ) -> Result<CatalogDigest, PeerProtocolError> {
     for entry in entries {
-        let _ = CapabilityDescriptorDocument::new(entry.descriptor.clone())
+        CapabilityDescriptorDocument::new(entry.descriptor.clone())
             .to_canonical_json()
             .map_err(|error| PeerProtocolError::InvalidContract(error.to_string()))?;
     }
@@ -230,6 +242,10 @@ pub struct CatalogUpdate {
 
 impl CatalogUpdate {
     /// Validates monotonicity and update bounds.
+    ///
+    /// # Errors
+    /// Refuses a zero prior generation, a non-increasing generation, a noncanonical
+    /// digest, an update count outside 1–256, or an invalid upsert entry.
     pub fn validate(&self) -> Result<(), PeerProtocolError> {
         if self.prior_generation == 0
             || self.generation <= self.prior_generation
