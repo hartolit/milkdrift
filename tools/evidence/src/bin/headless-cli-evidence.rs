@@ -25,6 +25,7 @@ use milkdrift_control::{
 };
 use milkdrift_persistence::RunSequence;
 use milkdrift_workspace::RunId;
+use serde_json::Value;
 
 use milkdrift_evidence::application::{
     CliRunner, assert_error, ensure, path_text, required_text, required_u64, reserve_endpoint,
@@ -267,7 +268,12 @@ fn run(arguments: Arguments) -> EvidenceResult {
     assert_error(&duplicate, 2, "invalid_input", None)?;
     let after_invalid = runner.success(&["blueprint", "list", "--limit", "10"])?;
     ensure(
-        initial_revisions["value"]["items"] == after_invalid["value"]["items"],
+        initial_revisions
+            .pointer("/value/items")
+            .ok_or("missing /value/items")?
+            == after_invalid
+                .pointer("/value/items")
+                .ok_or("missing /value/items")?,
         "invalid blueprint validation changed revision storage",
     )?;
 
@@ -286,7 +292,10 @@ fn run(arguments: Arguments) -> EvidenceResult {
         &primary_bytes,
     )?;
     ensure(
-        validated["value"]["result_type"] == "blueprint_valid",
+        validated
+            .pointer("/value/result_type")
+            .and_then(Value::as_str)
+            == Some("blueprint_valid"),
         "valid blueprint did not validate through the daemon",
     )?;
     let absent = runner.run(&["blueprint", "show", primary.id().as_str()], None)?;
@@ -312,7 +321,7 @@ fn run(arguments: Arguments) -> EvidenceResult {
         path_text(&primary_path)?,
     ])?;
     ensure(
-        replay["value"]["replayed"] == true,
+        replay.pointer("/value/replayed").and_then(Value::as_bool) == Some(true),
         "exact import command did not replay",
     )?;
     let changed = terminal_blueprint("headless-cli-changed", TerminalOutcome::Success)?;
@@ -378,8 +387,16 @@ fn run(arguments: Arguments) -> EvidenceResult {
         &revision,
     ])?;
     ensure(
-        started["value"]["command_id"] == start_replay["value"]["command_id"]
-            && start_replay["value"]["replayed"] == true,
+        started
+            .pointer("/value/command_id")
+            .ok_or("missing /value/command_id")?
+            == start_replay
+                .pointer("/value/command_id")
+                .ok_or("missing /value/command_id")?
+            && start_replay
+                .pointer("/value/replayed")
+                .and_then(Value::as_bool)
+                == Some(true),
         "exact run-start command did not replay",
     )?;
     let start_conflict = runner.run(
@@ -401,8 +418,8 @@ fn run(arguments: Arguments) -> EvidenceResult {
         "run-headless-primary",
         Duration::from_secs(10),
         |run| {
-            run["value"]["nodes"]
-                .as_array()
+            run.pointer("/value/nodes")
+                .and_then(Value::as_array)
                 .is_some_and(|nodes| nodes.iter().any(|node| node["node_id"] == "approval"))
         },
     )?;
@@ -418,12 +435,14 @@ fn run(arguments: Arguments) -> EvidenceResult {
     ])?;
     let paused = runner.success(&["run", "show", "run-headless-primary"])?;
     ensure(
-        paused["value"]["lifecycle"] == "paused",
+        paused.pointer("/value/lifecycle").and_then(Value::as_str) == Some("paused"),
         "run did not pause",
     )?;
     let paused_sequence = required_u64(&paused, &["value", "sequence"])?;
 
-    let process_node = paused["value"]["nodes"]
+    let process_node = paused
+        .pointer("/value/nodes")
+        .ok_or("missing /value/nodes")?
         .as_array()
         .and_then(|nodes| nodes.iter().find(|node| node["node_id"] == "process"))
         .ok_or("process node is absent")?;
@@ -523,10 +542,12 @@ fn run(arguments: Arguments) -> EvidenceResult {
         &runner,
         "run-headless-primary",
         Duration::from_secs(10),
-        |run| run["value"]["terminal"] == "succeeded",
+        |run| run.pointer("/value/terminal").and_then(Value::as_str) == Some("succeeded"),
     )?;
 
-    let artifact = attempt_read["value"]["outputs"]
+    let artifact = attempt_read
+        .pointer("/value/outputs")
+        .ok_or("missing /value/outputs")?
         .as_array()
         .and_then(|outputs| outputs.iter().find(|output| output["name"] == "stdout"))
         .and_then(|output| output.get("artifact"))
@@ -536,8 +557,14 @@ fn run(arguments: Arguments) -> EvidenceResult {
     let artifact_size = required_u64(artifact, &["size"])?;
     let metadata = runner.success(&["artifact", "metadata", &artifact_id])?;
     ensure(
-        metadata["value"]["digest"] == artifact_digest
-            && metadata["value"]["size"] == artifact_size,
+        metadata
+            .pointer("/value/digest")
+            .ok_or("missing /value/digest")?
+            == artifact_digest.as_str()
+            && metadata
+                .pointer("/value/size")
+                .ok_or("missing /value/size")?
+                == artifact_size,
         "artifact metadata changed",
     )?;
     let artifact_path = directory.path().join("downloaded-artifact.bin");
@@ -590,15 +617,22 @@ fn run(arguments: Arguments) -> EvidenceResult {
         "run-headless-uncertain",
         Duration::from_secs(10),
         |run| {
-            run["value"]["nodes"].as_array().is_some_and(|nodes| {
-                nodes.iter().any(|node| {
-                    node["node_id"] == "process"
-                        && node["latest_attempt"]["entry_authorization"]["allowed"] == true
+            run.pointer("/value/nodes")
+                .and_then(Value::as_array)
+                .is_some_and(|nodes| {
+                    nodes.iter().any(|node| {
+                        node["node_id"] == "process"
+                            && node
+                                .pointer("/latest_attempt/entry_authorization/allowed")
+                                .and_then(Value::as_bool)
+                                == Some(true)
+                    })
                 })
-            })
         },
     )?;
-    let uncertain_attempt = entered["value"]["nodes"]
+    let uncertain_attempt = entered
+        .pointer("/value/nodes")
+        .ok_or("missing /value/nodes")?
         .as_array()
         .and_then(|nodes| nodes.iter().find(|node| node["node_id"] == "process"))
         .and_then(|node| node["latest_attempt_id"].as_str())
@@ -615,8 +649,8 @@ fn run(arguments: Arguments) -> EvidenceResult {
         "run-headless-uncertain",
         Duration::from_secs(10),
         |run| {
-            run["value"]["uncertainty_count"]
-                .as_u64()
+            run.pointer("/value/uncertainty_count")
+                .and_then(Value::as_u64)
                 .is_some_and(|count| count > 0)
         },
     )?;
@@ -643,7 +677,10 @@ fn run(arguments: Arguments) -> EvidenceResult {
         &uncertain_attempt,
     ])?;
     ensure(
-        retained["value"]["uncertain"] == true,
+        retained
+            .pointer("/value/uncertain")
+            .and_then(Value::as_bool)
+            == Some(true),
         "retained work was hidden",
     )?;
 

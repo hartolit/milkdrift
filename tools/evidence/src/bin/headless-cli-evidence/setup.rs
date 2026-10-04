@@ -94,9 +94,12 @@ pub(super) fn exercise_starter(examples: &Path, daemon: &Path, cli: &Path) -> Ev
     let template: toml::Value = toml::from_str(&fs::read_to_string(examples.join("daemon.toml"))?)?;
     let mut config = serde_json::to_value(template)?;
     // Only connection coordinates change. The maintained safe authority remains exact.
-    config["bind"] = json!(endpoint.to_string());
-    config["secret_sources"] =
-        json!({"credential:operator": {"type":"file", "path":"operator.token"}});
+    let config_fields = config.as_object_mut().ok_or("expected JSON object")?;
+    config_fields.insert("bind".into(), json!(endpoint.to_string()));
+    config_fields.insert(
+        "secret_sources".into(),
+        json!({"credential:operator": {"type":"file", "path":"operator.token"}}),
+    );
     let config_path = checked_config(directory.path(), daemon, &config)?;
     let runner = CliRunner {
         executable: cli.to_owned(),
@@ -135,8 +138,11 @@ pub(super) fn exercise_starter(examples: &Path, daemon: &Path, cli: &Path) -> Ev
         "succeeded",
     ])?;
     ensure(
-        runner.success(&["run", "show", "starter"])?["value"]["controller_accounting"]["state"]
-            == "inactive",
+        runner
+            .success(&["run", "show", "starter"])?
+            .pointer("/value/controller_accounting/state")
+            .and_then(Value::as_str)
+            == Some("inactive"),
         "ordinary workflow acquired controller accounting",
     )?;
     child.terminate()?;
@@ -167,8 +173,14 @@ pub(super) fn exercise_model(
     let revision = required_text(&imported, &["value", "value", "revision_id"])?;
     let capability = runner.success(&["capability", "show", "operator-model"])?;
     ensure(
-        capability["value"][0]["generation"] == 1
-            && capability["value"][0]["provider_profile"] == "local-model-loopback",
+        capability
+            .pointer("/value/0/generation")
+            .and_then(Value::as_u64)
+            == Some(1)
+            && capability
+                .pointer("/value/0/provider_profile")
+                .and_then(Value::as_str)
+                == Some("local-model-loopback"),
         "model registration identity changed",
     )?;
     runner.success(&["provider", "show", "local-model-loopback"])?;
@@ -184,7 +196,7 @@ pub(super) fn exercise_model(
     runner.success(&start)?;
     let replay = runner.success(&start)?;
     ensure(
-        replay["value"]["replayed"] == true,
+        replay.pointer("/value/replayed").and_then(Value::as_bool) == Some(true),
         "model start was not replayed",
     )?;
     let waited = runner.success(&[
@@ -208,7 +220,9 @@ pub(super) fn exercise_model(
             .into());
         }
     };
-    let node = run["value"]["nodes"]
+    let node = run
+        .pointer("/value/nodes")
+        .ok_or("missing /value/nodes")?
         .as_array()
         .and_then(|nodes| nodes.iter().find(|node| node["node_id"] == "model"))
         .ok_or("model node absent")?;
@@ -216,7 +230,7 @@ pub(super) fn exercise_model(
     let attempt = required_text(node, &["latest_attempt_id"])?;
     runner.success(&["node", "run-operator-model", &execution])?;
     let inspected = runner.success(&["attempt", "inspect", "run-operator-model", &attempt])?;
-    let value = &inspected["value"];
+    let value = inspected.pointer("/value").ok_or("missing /value")?;
     ensure(
         value["descriptor_revision"] == 1
             && value["provider_profile"] == "local-model-loopback"
@@ -234,7 +248,8 @@ pub(super) fn exercise_model(
         "model observations unbounded or absent",
     )?;
     ensure(
-        value["usage"]["input_units"] == 5 && value["usage"]["output_units"] == 1,
+        value.pointer("/usage/input_units").and_then(Value::as_u64) == Some(5)
+            && value.pointer("/usage/output_units").and_then(Value::as_u64) == Some(1),
         "supplied usage was lost",
     )?;
     let outputs = value["outputs"].as_array().ok_or("model outputs absent")?;
@@ -254,20 +269,31 @@ pub(super) fn exercise_model(
                 directory.join(format!("model-output-{index}.json")),
             )?)?;
             ensure(
-                metadata["org.milkdrift.openai/response"]["id"] == "operator-response-1"
-                    && metadata["org.milkdrift.openai/response"]["model"] == "operator-model",
+                metadata
+                    .pointer("/org.milkdrift.openai~1response/id")
+                    .and_then(Value::as_str)
+                    == Some("operator-response-1")
+                    && metadata
+                        .pointer("/org.milkdrift.openai~1response/model")
+                        .and_then(Value::as_str)
+                        == Some("operator-model"),
                 "supplied model identity was not retained",
             )?;
         }
     }
     let timeline = runner.success(&["run", "timeline", "run-operator-model", "--limit", "100"])?;
-    let events = timeline["value"]["items"]
+    let events = timeline
+        .pointer("/value/items")
+        .ok_or("missing /value/items")?
         .as_array()
         .ok_or("timeline absent")?;
     ensure(
         events
             .windows(2)
-            .all(|pair| pair[0]["sequence"].as_u64() < pair[1]["sequence"].as_u64()),
+            .all(|pair| matches!(pair, [before, after] if matches!(
+                (before.get("sequence").and_then(Value::as_u64), after.get("sequence").and_then(Value::as_u64)),
+                (Some(before), Some(after)) if before < after
+            ))),
         "model timeline is out of order",
     )?;
     Ok(())
@@ -284,21 +310,42 @@ pub(super) fn configure(
     let template = fs::read_to_string(examples.join("daemon.toml"))?;
     let config: toml::Value = toml::from_str(&template)?;
     let mut config = serde_json::to_value(config)?;
-    config["bind"] = json!(endpoint.to_string());
-    config["secret_sources"] =
-        json!({"credential:operator": {"type":"file","path":"operator.token"}});
-    config["actors"][0]["actor"] = json!(super::ACTOR);
-    let authority = &mut config["actors"][0]["authority"];
-    authority["dangerous_allow_broad_authority"] = json!(true);
-    let resources = &mut authority["resources"];
+    let config_fields = config.as_object_mut().ok_or("expected JSON object")?;
+    config_fields.insert("bind".into(), json!(endpoint.to_string()));
+    config_fields.insert(
+        "secret_sources".into(),
+        json!({"credential:operator": {"type":"file","path":"operator.token"}}),
+    );
+    config
+        .pointer_mut("/actors/0")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /actors/0")?
+        .insert("actor".into(), json!(super::ACTOR));
+    let authority = config
+        .pointer_mut("/actors/0/authority")
+        .and_then(Value::as_object_mut)
+        .ok_or("actor authority absent")?;
+    authority.insert("dangerous_allow_broad_authority".into(), json!(true));
+    let resources = authority
+        .get_mut("resources")
+        .and_then(Value::as_object_mut)
+        .ok_or("authority resource grant absent")?;
     // The scenario explicitly acknowledges several workflows and generated artifact/scope IDs.
-    resources["workflow_run"] = json!({"type":"any"});
-    resources["capability"] = json!({"type":"allow", "maximum_side_effect":"unknown", "identities":{"type":"any"},"categories":{"type":"any"},"operations":{"type":"any"},"provider_profiles":{"type":"any"},"trust_zones":{"type":"any"},"execution_trust_classes":{"type":"any"},"localities":{"type":"any"},"peers":{"type":"any"}});
-    resources["artifacts"] = json!({"type":"allow", "identities":{"type":"any"},"sensitivities":["public","internal","restricted"]});
-    resources["layouts"] = json!({"type":"shared", "revisions":{"type":"any"}});
-    resources["workspace"] = json!({"scopes":[],"allow_any_in_run":true});
-    resources["network"] =
-        json!({"profiles":["local-model-loopback"],"destinations":[model.address.to_string()]});
+    resources.insert("workflow_run".into(), json!({"type":"any"}));
+    resources.insert("capability".into(), json!({"type":"allow", "maximum_side_effect":"unknown", "identities":{"type":"any"},"categories":{"type":"any"},"operations":{"type":"any"},"provider_profiles":{"type":"any"},"trust_zones":{"type":"any"},"execution_trust_classes":{"type":"any"},"localities":{"type":"any"},"peers":{"type":"any"}}));
+    resources.insert("artifacts".into(), json!({"type":"allow", "identities":{"type":"any"},"sensitivities":["public","internal","restricted"]}));
+    resources.insert(
+        "layouts".into(),
+        json!({"type":"shared", "revisions":{"type":"any"}}),
+    );
+    resources.insert(
+        "workspace".into(),
+        json!({"scopes":[],"allow_any_in_run":true}),
+    );
+    resources.insert(
+        "network".into(),
+        json!({"profiles":["local-model-loopback"],"destinations":[model.address.to_string()]}),
+    );
     let executable = std::env::current_exe()?.canonicalize()?;
     let roots = [
         directory.canonicalize()?,
@@ -313,17 +360,27 @@ pub(super) fn configure(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    resources["filesystem"] = serde_json::to_value(filesystem)?;
+    resources.insert("filesystem".into(), serde_json::to_value(filesystem)?);
     let mut model_profile: Value = serde_json::from_slice(&fs::read(
         examples.join("../local-model/openai-compatible-loopback.example.json"),
     )?)?;
-    model_profile["base_url"] = json!(format!("http://{}", model.address));
-    model_profile["model"] = json!("operator-model");
+    let model_profile_fields = model_profile
+        .as_object_mut()
+        .ok_or("expected JSON object")?;
+    model_profile_fields.insert(
+        "base_url".into(),
+        json!(format!("http://{}", model.address)),
+    );
+    model_profile_fields.insert("model".into(), json!("operator-model"));
     let model_path = directory.join("model-profile.json");
     fs::write(&model_path, serde_json::to_vec(&model_profile)?)?;
-    config["adapters"] = json!({"process_profiles": profiles, "model_profiles":[{"capability_id":"operator-model","profile":model_path}]});
-    config["runtime"]["lease_duration_ms"] = json!(5_000);
-    config["runtime"]["maintenance_interval_ms"] = json!(10);
+    config.as_object_mut().ok_or("expected JSON object")?.insert("adapters".into(), json!({"process_profiles": profiles, "model_profiles":[{"capability_id":"operator-model","profile":model_path}]}));
+    let runtime = config
+        .pointer_mut("/runtime")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /runtime")?;
+    runtime.insert("lease_duration_ms".into(), json!(5_000));
+    runtime.insert("maintenance_interval_ms".into(), json!(10));
     checked_config(directory, daemon, &config)
 }
 

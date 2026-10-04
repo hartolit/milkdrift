@@ -42,8 +42,11 @@ pub(super) fn prelude(
     )?;
     let read = runner.success(&["run", "show", &run])?;
     ensure(
-        read["value"]["lifecycle"] == "created"
-            && read["value"]["controller_accounting"]["state"] == "inactive"
+        read.pointer("/value/lifecycle").and_then(Value::as_str) == Some("created")
+            && read
+                .pointer("/value/controller_accounting/state")
+                .and_then(Value::as_str)
+                == Some("inactive")
             && super::children(runner, body.semantic().workflow().as_str())? == before,
         "refused prelude created or entered an unaccounted child",
     )?;
@@ -71,9 +74,10 @@ impl Models {
                 .examples
                 .join("../local-model/openai-compatible-loopback.example.json"),
         )?)?;
-        fixture["identity"] = json!("controller-metering-fixture");
-        fixture["base_url"] = json!(format!("http://{}", mock.address));
-        fixture["model"] = json!("operator-model");
+        let fixture_fields = fixture.as_object_mut().ok_or("expected JSON object")?;
+        fixture_fields.insert("identity".into(), json!("controller-metering-fixture"));
+        fixture_fields.insert("base_url".into(), json!(format!("http://{}", mock.address)));
+        fixture_fields.insert("model".into(), json!("operator-model"));
         let mut profiles = vec![fixture];
         for path in &arguments.controller_model_profile {
             profiles.push(serde_json::from_slice(&fs::read(path)?)?);
@@ -102,7 +106,13 @@ impl Models {
                 profile: path,
             });
         }
-        config.actors[0].authority.resources.network = NetworkScope::new(identities, destinations)?;
+        config
+            .actors
+            .first_mut()
+            .ok_or("controller actor absent")?
+            .authority
+            .resources
+            .network = NetworkScope::new(identities, destinations)?;
         Ok(Self { mock, profiles })
     }
 
@@ -116,10 +126,19 @@ impl Models {
             serde_json::from_slice(&fs::read(arguments.examples.join("model.json"))?)?;
         for (index, profile) in self.profiles.iter().enumerate() {
             let identity = format!("controller-unknown-model-{index}");
-            let mut task = template["revision"]["semantic"]["nodes"]["model"].clone();
-            task["kind"]["config"]["requirement"]["exact_capability"] =
-                json!(format!("controller-model-{index}"));
-            task["kind"]["config"]["requirement"]["provider_profile"] = profile["identity"].clone();
+            let mut task = template
+                .pointer("/revision/semantic/nodes/model")
+                .ok_or("missing /revision/semantic/nodes/model")?
+                .clone();
+            let requirement = task
+                .pointer_mut("/kind/config/requirement")
+                .and_then(serde_json::Value::as_object_mut)
+                .ok_or("missing object /kind/config/requirement")?;
+            requirement.insert(
+                "exact_capability".into(),
+                json!(format!("controller-model-{index}")),
+            );
+            requirement.insert("provider_profile".into(), profile["identity"].clone());
             let body = BlueprintRevision::genesis(
                 WorkflowId::new(format!("{identity}-body"))?,
                 MutationBatch::new(vec![
@@ -146,20 +165,26 @@ impl Models {
             ])?;
             let child = wait_for_child(runner, body.semantic().workflow().as_str())?;
             let read = wait_for_run(runner, &child, Duration::from_secs(20), |read| {
-                read["value"]["terminal"] == "failed"
+                read.pointer("/value/terminal").and_then(Value::as_str) == Some("failed")
             })?;
             let inspected = super::inspect_node(runner, &child, &read, "model")?;
-            let attempt = &inspected["value"];
+            let attempt = inspected.pointer("/value").ok_or("missing /value")?;
             let detail = required_text(attempt, &["terminal_detail"])?;
             ensure(
                 detail.contains("Unknown") && detail.contains("input_units"),
                 "model did not refuse unknown hard usage bounds",
             )?;
-            let accounting = &read["value"]["controller_accounting"];
+            let accounting = read
+                .pointer("/value/controller_accounting")
+                .ok_or("missing /value/controller_accounting")?;
             ensure(
-                accounting["committed"]["model_admissions"] == 0
-                    && accounting["account"]["reservations"]
-                        .as_object()
+                accounting
+                    .pointer("/committed/model_admissions")
+                    .and_then(Value::as_u64)
+                    == Some(0)
+                    && accounting
+                        .pointer("/account/reservations")
+                        .and_then(Value::as_object)
                         .is_some_and(|v| v.is_empty())
                     && attempt["uncertain"] == false,
                 "refused model entered or reserved external usage",
@@ -238,9 +263,12 @@ pub(super) fn race(runner: &CliRunner, directory: &Path) -> EvidenceResult {
     ])?;
     let child = wait_for_child(runner, body.semantic().workflow().as_str())?;
     let reserved = wait_for_run(runner, &child, Duration::from_secs(40), |read| {
-        read["value"]["controller_accounting"]["committed"]["process_admissions"] == 2
-            && read["value"]["controller_accounting"]["account"]["reservations"]
-                .as_object()
+        read.pointer("/value/controller_accounting/committed/process_admissions")
+            .and_then(Value::as_u64)
+            == Some(2)
+            && read
+                .pointer("/value/controller_accounting/account/reservations")
+                .and_then(Value::as_object)
                 .is_some_and(|values| values.len() == 2)
     });
     fs::write(
@@ -249,20 +277,23 @@ pub(super) fn race(runner: &CliRunner, directory: &Path) -> EvidenceResult {
     )?;
     let reserved = reserved?;
     ensure(
-        reserved["value"]["controller_accounting"]["remaining"]["process_admissions"] == 0,
+        reserved
+            .pointer("/value/controller_accounting/remaining/process_admissions")
+            .and_then(Value::as_u64)
+            == Some(0),
         "racing reservations did not consume the last allowance",
     )?;
     wait_for_run(
         runner,
         "run-controller-race",
         Duration::from_secs(40),
-        |read| read["value"]["terminal"] == "failed",
+        |read| read.pointer("/value/terminal").and_then(Value::as_str) == Some("failed"),
     )?;
     let mut admitted = 0;
     let mut denied = 0;
     for name in ports {
         let attempt = super::inspect_node(runner, &child, &reserved, name)?;
-        let value = &attempt["value"];
+        let value = attempt.pointer("/value").ok_or("missing /value")?;
         if value["terminal_detail"]
             .as_str()
             .is_some_and(|detail| detail.contains("process_admissions"))
@@ -282,7 +313,10 @@ pub(super) fn race(runner: &CliRunner, directory: &Path) -> EvidenceResult {
     )?;
     let settled = runner.success(&["run", "show", &child])?;
     ensure(
-        settled["value"]["controller_accounting"]["committed"]["process_admissions"] == 2,
+        settled
+            .pointer("/value/controller_accounting/committed/process_admissions")
+            .and_then(Value::as_u64)
+            == Some(2),
         "settlement reset or duplicated the racing allowance",
     )?;
     fs::write(
@@ -297,7 +331,10 @@ pub(super) fn race(runner: &CliRunner, directory: &Path) -> EvidenceResult {
 pub(super) fn entered_process(runner: &CliRunner, directory: &Path) -> EvidenceResult<Value> {
     let mut work =
         serde_json::to_value(workflow::process("work", "controller-crash", false, false)?)?;
-    work["kind"]["config"]["requirement"]["maximum_side_effect"] = json!("non_idempotent_write");
+    work.pointer_mut("/kind/config/requirement")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing object /kind/config/requirement")?
+        .insert("maximum_side_effect".into(), json!("non_idempotent_write"));
     let body = BlueprintRevision::genesis(
         WorkflowId::new("controller-crash-body")?,
         MutationBatch::new(vec![
@@ -324,13 +361,20 @@ pub(super) fn entered_process(runner: &CliRunner, directory: &Path) -> EvidenceR
     ])?;
     let child = wait_for_child(runner, body.semantic().workflow().as_str())?;
     wait_for_run(runner, &child, Duration::from_secs(40), |read| {
-        read["value"]["controller_accounting"]["committed"]["process_admissions"] == 1
+        read.pointer("/value/controller_accounting/committed/process_admissions")
+            .and_then(Value::as_u64)
+            == Some(1)
             && super::node(read, "work").is_some_and(|node| {
-                node["latest_attempt"]["entry_authorization"]["allowed"] == true
-                    && node["latest_attempt"]["progress_observations"]
-                        .as_u64()
+                node.pointer("/latest_attempt/entry_authorization/allowed")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+                    && node
+                        .pointer("/latest_attempt/progress_observations")
+                        .and_then(Value::as_u64)
                         .is_some_and(|count| count > 0)
-                    && node["latest_attempt"]["terminal"].is_null()
+                    && node
+                        .pointer("/latest_attempt/terminal")
+                        .is_some_and(Value::is_null)
             })
     })
 }

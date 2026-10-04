@@ -65,17 +65,40 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         )?;
         if name == "verify" {
             let mut profile: Value = serde_json::from_slice(&fs::read(&path)?)?;
-            profile["profile"]["inputs"] = json!([{"input":"work","relative_path":"work.txt"}]);
-            profile["profile"]["stdout"]["artifact_name"] = Value::Null;
-            profile["profile"]["outputs"] = json!([{"name":"stdout","relative_path":"verification.json","media_type":"application/json","required":true}]);
+            profile
+                .pointer_mut("/profile")
+                .and_then(serde_json::Value::as_object_mut)
+                .ok_or("missing object /profile")?
+                .insert(
+                    "inputs".into(),
+                    json!([{"input":"work","relative_path":"work.txt"}]),
+                );
+            profile
+                .pointer_mut("/profile/stdout")
+                .and_then(serde_json::Value::as_object_mut)
+                .ok_or("missing object /profile/stdout")?
+                .insert("artifact_name".into(), Value::Null);
+            profile.pointer_mut("/profile").and_then(serde_json::Value::as_object_mut).ok_or("missing object /profile")?.insert("outputs".into(), json!([{"name":"stdout","relative_path":"verification.json","media_type":"application/json","required":true}]));
             fs::write(&path, serde_json::to_vec(&profile)?)?;
         }
         if name == "race" || name == "crash" {
             let mut profile: Value = serde_json::from_slice(&fs::read(&path)?)?;
-            profile["profile"]["max_concurrent"] = json!(3);
-            profile["profile"]["limits"]["wall_timeout_ms"] = json!(30_000);
-            profile["profile"]["stdout"]["stream_progress"] = json!(true);
-            profile["profile"]["stdout"]["max_progress_events"] = json!(4);
+            profile
+                .pointer_mut("/profile")
+                .and_then(serde_json::Value::as_object_mut)
+                .ok_or("missing object /profile")?
+                .insert("max_concurrent".into(), json!(3));
+            profile
+                .pointer_mut("/profile/limits")
+                .and_then(serde_json::Value::as_object_mut)
+                .ok_or("missing object /profile/limits")?
+                .insert("wall_timeout_ms".into(), json!(30_000));
+            let stdout = profile
+                .pointer_mut("/profile/stdout")
+                .and_then(serde_json::Value::as_object_mut)
+                .ok_or("missing object /profile/stdout")?;
+            stdout.insert("stream_progress".into(), json!(true));
+            stdout.insert("max_progress_events".into(), json!(4));
             fs::write(&path, serde_json::to_vec(&profile)?)?;
         }
         profiles.push(path);
@@ -106,7 +129,11 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
     config.runtime.effect_threads = 4;
     config.application_receipts.hot_receipt_bound = 8;
     config.application_receipts.archive_batch_size = 4;
-    let mut human = config.actors[0].clone();
+    let mut human = config
+        .actors
+        .first()
+        .ok_or("controller actor absent")?
+        .clone();
     human.actor = HUMAN.to_owned();
     human.grant_id = "grant:controller-human".to_owned();
     human.credential_ref = "credential:controller-human".to_owned();
@@ -161,7 +188,10 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
     fs::write(directory.join("disabled-start.txt"), &started.stdout)?;
     let disabled = runner.success(&["run", "show", "run-controller-disabled"])?;
     ensure(
-        disabled["value"]["controller_accounting"]["state"] == "inactive",
+        disabled
+            .pointer("/value/controller_accounting/state")
+            .and_then(Value::as_str)
+            == Some("inactive"),
         "disabled controller acquired an account",
     )?;
     ensure(
@@ -202,21 +232,33 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
     ])?;
     let child = wait_for_child(&runner, body.semantic().workflow().as_str())?;
     let rejected = wait_for_run(&runner, &child, Duration::from_secs(540), |read| {
-        node(read, "repair-release").is_some() || !read["value"]["terminal"].is_null()
+        node(read, "repair-release").is_some()
+            || read
+                .pointer("/value/terminal")
+                .is_some_and(|value| !value.is_null())
     })?;
     fs::write(
         directory.join("initial-review-boundary.json"),
         serde_json::to_vec_pretty(&rejected)?,
     )?;
-    let original_account = rejected["value"]["controller_accounting"].clone();
+    let original_account = rejected
+        .pointer("/value/controller_accounting")
+        .ok_or("missing /value/controller_accounting")?
+        .clone();
     ensure(
-        original_account["state"] == "active"
-            && original_account["committed"]["process_admissions"] == 2,
+        original_account.pointer("/state").and_then(Value::as_str) == Some("active")
+            && original_account
+                .pointer("/committed/process_admissions")
+                .and_then(Value::as_u64)
+                == Some(2),
         "independent work and verification did not share the canonical account",
     )?;
     let rejection = inspect_node(&runner, &child, &rejected, "first-acceptance")?;
     ensure(
-        rejection["value"]["result_acceptance"]["accepted"] == false,
+        rejection
+            .pointer("/value/result_acceptance/accepted")
+            .and_then(Value::as_bool)
+            == Some(false),
         "failed verification was accepted",
     )?;
     fs::write(
@@ -225,7 +267,9 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
     )?;
     let source = inspect_node(&runner, &child, &rejected, "verify")?;
     let reviewed = review::Review::inspect(&runner, &directory, &child, &rejected, "review")?;
-    let authority = &source["value"]["execution_authority"];
+    let authority = source
+        .pointer("/value/execution_authority")
+        .ok_or("missing /value/execution_authority")?;
     let claim = milkdrift_runtime::CommandAuthorityClaim::new(
         milkdrift_authority::GrantId::new(required_text(authority, &["grant_id"])?)?,
         required_u64(authority, &["grant_revision"])?,
@@ -304,7 +348,10 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
     )?;
     let before_approval = runner.success(&["run", "show", &child])?;
     ensure(
-        before_approval["value"]["revision_id"] == body.id().as_str()
+        before_approval
+            .pointer("/value/revision_id")
+            .ok_or("missing /value/revision_id")?
+            == body.id().as_str()
             && node(&before_approval, "repair").is_none(),
         "proposal ran or replaced work before approval",
     )?;
@@ -334,13 +381,21 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
     wait_for_readiness(&runner, &mut daemon)?;
     let reopened = runner.success(&["run", "show", &child])?;
     ensure(
-        reopened["value"]["controller_accounting"]
-            == before_approval["value"]["controller_accounting"],
+        reopened
+            .pointer("/value/controller_accounting")
+            .ok_or("missing /value/controller_accounting")?
+            == before_approval
+                .pointer("/value/controller_accounting")
+                .ok_or("missing /value/controller_accounting")?,
         "settled restart changed the cumulative account",
     )?;
     // Revoking the approver during a durable approval wait cannot release remediation.
     daemon.terminate()?;
-    config.actors[1].enabled = false;
+    config
+        .actors
+        .get_mut(1)
+        .ok_or("human actor absent")?
+        .enabled = false;
     save_config(&config_path, &config)?;
     daemon = start_daemon(&arguments.daemon, &config_path)?;
     wait_for_readiness(&runner, &mut daemon)?;
@@ -373,9 +428,10 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         "revoked approval entered repair",
     )?;
     daemon.terminate()?;
-    config.actors[1].enabled = true;
-    config.actors[1].grant_revision += 1;
-    config.actors[1].revocation_generation += 1;
+    let human = config.actors.get_mut(1).ok_or("human actor absent")?;
+    human.enabled = true;
+    human.grant_revision += 1;
+    human.revocation_generation += 1;
     save_config(&config_path, &config)?;
     daemon = start_daemon(&arguments.daemon, &config_path)?;
     wait_for_readiness(&runner, &mut daemon)?;
@@ -399,12 +455,18 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         release_sequence,
     )?;
     ensure(
-        replayed["value"]["replayed"] == true
-            && released["value"]["command_id"] == replayed["value"]["command_id"],
+        replayed.pointer("/value/replayed").and_then(Value::as_bool) == Some(true)
+            && released
+                .pointer("/value/command_id")
+                .ok_or("missing /value/command_id")?
+                == replayed
+                    .pointer("/value/command_id")
+                    .ok_or("missing /value/command_id")?,
         "lost signal reply did not recover by exact replay",
     )?;
     let child_done = wait_for_run(&runner, &child, Duration::from_secs(540), |run| {
-        !run["value"]["terminal"].is_null()
+        run.pointer("/value/terminal")
+            .is_some_and(|value| !value.is_null())
             || node(run, "failed-again").is_some()
             || node(run, "model-budget-release").is_some()
     })?;
@@ -421,16 +483,25 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
     review.verify_count()?;
     let accepted = inspect_node(&runner, &child, &child_done, "second-acceptance")?;
     ensure(
-        accepted["value"]["result_acceptance"]["accepted"] == true,
+        accepted
+            .pointer("/value/result_acceptance/accepted")
+            .and_then(Value::as_bool)
+            == Some(true),
         "remediation did not pass independent acceptance",
     )?;
-    let completed_account = child_done["value"]["controller_accounting"].clone();
+    let completed_account = child_done
+        .pointer("/value/controller_accounting")
+        .ok_or("missing /value/controller_accounting")?
+        .clone();
     daemon.terminate()?;
     daemon = start_daemon(&arguments.daemon, &config_path)?;
     wait_for_readiness(&runner, &mut daemon)?;
     let completed_reopen = runner.success(&["run", "show", &child])?;
     ensure(
-        completed_reopen["value"]["controller_accounting"] == completed_account,
+        completed_reopen
+            .pointer("/value/controller_accounting")
+            .ok_or("missing /value/controller_accounting")?
+            == &completed_account,
         "restart after completed reviews changed accounting",
     )?;
     signal(
@@ -441,15 +512,21 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         required_u64(&completed_reopen, &["value", "sequence"])?,
     )?;
     let refused_run = wait_for_run(&runner, &child, Duration::from_secs(30), |run| {
-        !run["value"]["terminal"].is_null()
+        run.pointer("/value/terminal")
+            .is_some_and(|value| !value.is_null())
     })?;
     let refused = inspect_node(&runner, &child, &refused_run, "excess-review")?;
     ensure(
-        refused["value"]["uncertain"] == false
-            && refused["value"]["terminal_detail"]
+        refused.pointer("/value/uncertain").and_then(Value::as_bool) == Some(false)
+            && refused
+                .pointer("/value/terminal_detail")
+                .ok_or("missing /value/terminal_detail")?
                 .as_str()
                 .is_some_and(|detail| detail.contains("model_admissions"))
-            && refused_run["value"]["controller_accounting"]["committed"]["model_admissions"] == 2,
+            && refused_run
+                .pointer("/value/controller_accounting/committed/model_admissions")
+                .and_then(Value::as_u64)
+                == Some(2),
         "excess model request was not refused at account admission",
     )?;
     fs::write(
@@ -466,21 +543,39 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
     )?;
     let status = runner.success(&["controller", "status", ROOT, &execution])?;
     ensure(
-        status["value"]["value"]["cycle_eligible"] == false,
+        status
+            .pointer("/value/value/cycle_eligible")
+            .and_then(Value::as_bool)
+            == Some(false),
         "controller remained eligible after a refused model request",
     )?;
     ensure(
         children(&runner, body.semantic().workflow().as_str())?.len() == 1,
         "bound admitted an extra child cycle",
     )?;
-    let accounting = &stopped["value"]["controller_accounting"];
+    let accounting = stopped
+        .pointer("/value/controller_accounting")
+        .ok_or("missing /value/controller_accounting")?;
     ensure(
-        accounting["committed"]["process_admissions"] == 4
-            && accounting["committed"]["model_admissions"] == 2
-            && accounting["remaining"]["model_admissions"] == 0
-            && accounting["committed"]["cost_micros"] == 0
-            && accounting["account"]["reservations"]
-                .as_object()
+        accounting
+            .pointer("/committed/process_admissions")
+            .and_then(Value::as_u64)
+            == Some(4)
+            && accounting
+                .pointer("/committed/model_admissions")
+                .and_then(Value::as_u64)
+                == Some(2)
+            && accounting
+                .pointer("/remaining/model_admissions")
+                .and_then(Value::as_u64)
+                == Some(0)
+            && accounting
+                .pointer("/committed/cost_micros")
+                .and_then(Value::as_u64)
+                == Some(0)
+            && accounting
+                .pointer("/account/reservations")
+                .and_then(Value::as_object)
                 .is_some_and(|values| values.is_empty()),
         "settled cumulative account is wrong",
     )?;
@@ -503,20 +598,24 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         )?,
     )?;
     wait_for_run(&runner, ROOT, Duration::from_secs(20), |run| {
-        run["value"]["terminal"] == "failed"
+        run.pointer("/value/terminal").and_then(Value::as_str) == Some("failed")
     })?;
     daemon.terminate()?;
     daemon = start_daemon(&arguments.daemon, &config_path)?;
     wait_for_readiness(&runner, &mut daemon)?;
     let final_read = runner.success(&["run", "show", ROOT])?;
     ensure(
-        final_read["value"]["controller_accounting"] == *accounting,
+        final_read
+            .pointer("/value/controller_accounting")
+            .ok_or("missing /value/controller_accounting")?
+            == accounting,
         "terminal reopen reset or charged the account",
     )?;
     let health = runner.success(&["daemon", "health"])?;
     ensure(
-        health["value"]["application_receipts"]["cold_count"]
-            .as_u64()
+        health
+            .pointer("/value/application_receipts/cold_count")
+            .and_then(Value::as_u64)
             .is_some_and(|count| count > 0),
         "receipt archival did not occur",
     )?;
@@ -528,7 +627,10 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         release_sequence,
     )?;
     ensure(
-        cold_replay["value"]["replayed"] == true,
+        cold_replay
+            .pointer("/value/replayed")
+            .and_then(Value::as_bool)
+            == Some(true),
         "archived command lost exact replay",
     )?;
     let retained_proposer = runner.success(&[
@@ -538,7 +640,12 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         &required_text(&proposer, &["value", "attempt_id"])?,
     ])?;
     ensure(
-        retained_proposer["value"]["outputs"] == proposer["value"]["outputs"],
+        retained_proposer
+            .pointer("/value/outputs")
+            .ok_or("missing /value/outputs")?
+            == proposer
+                .pointer("/value/outputs")
+                .ok_or("missing /value/outputs")?,
         "compaction lost the exact proposal result artifact",
     )?;
     ensure(
@@ -558,13 +665,26 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         &required_text(&rejection, &["value", "attempt_id"])?,
     ])?;
     ensure(
-        retained_rejection["value"]["outputs"] == rejection["value"]["outputs"]
-            && retained_rejection["value"]["result_acceptance"]
-                == rejection["value"]["result_acceptance"],
+        retained_rejection
+            .pointer("/value/outputs")
+            .ok_or("missing /value/outputs")?
+            == rejection
+                .pointer("/value/outputs")
+                .ok_or("missing /value/outputs")?
+            && retained_rejection
+                .pointer("/value/result_acceptance")
+                .ok_or("missing /value/result_acceptance")?
+                == rejection
+                    .pointer("/value/result_acceptance")
+                    .ok_or("missing /value/result_acceptance")?,
         "compaction changed failed acceptance evidence",
     )?;
     ensure(
-        runner.success(&["run", "show", ROOT])?["value"]["controller_accounting"] == *accounting,
+        runner
+            .success(&["run", "show", ROOT])?
+            .pointer("/value/controller_accounting")
+            .ok_or("missing /value/controller_accounting")?
+            == accounting,
         "cold replay changed the cumulative account",
     )?;
     let report = json!({"production_activation":"explicit_enabled", "reason":"isolated evidence uses explicit activation; ordinary startup remains disabled by default",
@@ -594,9 +714,16 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
         serde_json::to_vec_pretty(&json!({"entered":crash,"recovered":recovered}))?,
     )?;
     ensure(
-        recovered["value"]["uncertainty_count"] == 1
-            && recovered["value"]["controller_accounting"]
-                == crash["value"]["controller_accounting"],
+        recovered
+            .pointer("/value/uncertainty_count")
+            .and_then(Value::as_u64)
+            == Some(1)
+            && recovered
+                .pointer("/value/controller_accounting")
+                .ok_or("missing /value/controller_accounting")?
+                == crash
+                    .pointer("/value/controller_accounting")
+                    .ok_or("missing /value/controller_accounting")?,
         "recovery released or duplicated the entered process reservation",
     )?;
     daemon.terminate()?;
@@ -604,8 +731,16 @@ pub(super) fn run(arguments: &super::Arguments) -> EvidenceResult {
     wait_for_readiness(&runner, &mut daemon)?;
     let reopened = runner.success(&["run", "show", &crashed_run])?;
     ensure(
-        reopened["value"]["controller_accounting"] == recovered["value"]["controller_accounting"]
-            && reopened["value"]["uncertainty_count"] == 1,
+        reopened
+            .pointer("/value/controller_accounting")
+            .ok_or("missing /value/controller_accounting")?
+            == recovered
+                .pointer("/value/controller_accounting")
+                .ok_or("missing /value/controller_accounting")?
+            && reopened
+                .pointer("/value/uncertainty_count")
+                .and_then(Value::as_u64)
+                == Some(1),
         "second reopen retried uncertain controlled work",
     )?;
     fs::write(
@@ -672,7 +807,7 @@ fn import(
 }
 
 fn node<'a>(read: &'a Value, name: &str) -> Option<&'a Value> {
-    read["value"]["nodes"]
+    read.pointer("/value/nodes")?
         .as_array()?
         .iter()
         .find(|node| node["node_id"] == name)
@@ -698,7 +833,8 @@ fn children(runner: &CliRunner, workflow: &str) -> EvidenceResult<Vec<String>> {
 }
 
 fn child_ids(runs: &Value, workflow: &str) -> EvidenceResult<Vec<String>> {
-    runs["value"]["items"]
+    runs.pointer("/value/items")
+        .ok_or("missing /value/items")?
         .as_array()
         .ok_or("run list absent")?
         .iter()
@@ -760,7 +896,9 @@ fn proposal(
 fn artifact_references(
     attempt: &Value,
 ) -> EvidenceResult<Vec<milkdrift_capability::ArtifactReference>> {
-    attempt["value"]["outputs"]
+    attempt
+        .pointer("/value/outputs")
+        .ok_or("missing /value/outputs")?
         .as_array()
         .ok_or("evidence outputs absent")?
         .iter()
@@ -868,7 +1006,9 @@ fn download_output(
     attempt: &Value,
     output_name: &str,
 ) -> EvidenceResult<Value> {
-    let output = attempt["value"]["outputs"]
+    let output = attempt
+        .pointer("/value/outputs")
+        .ok_or("missing /value/outputs")?
         .as_array()
         .ok_or("attempt outputs absent")?
         .iter()
