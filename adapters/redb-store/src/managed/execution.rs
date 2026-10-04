@@ -136,13 +136,12 @@ fn acquire(
         .iter()
         .filter(|u| u.editing.iter().any(|r| editing.contains(r)))
         .collect();
-    if blockers.is_empty() {
-        use_record.editing = editing.clone();
-    } else if blockers.len() != 1
-        || !matches!(blockers[0].phase, ManagedUsePhase::Quiescent { .. })
-        || !linked(write, blockers[0], &use_record, None)?
-    {
-        return Err(busy("working area already has an exclusive editor"));
+    match blockers.as_slice() {
+        [] => use_record.editing = editing.clone(),
+        [parent]
+            if matches!(parent.phase, ManagedUsePhase::Quiescent { .. })
+                && linked(write, parent, &use_record, None)? => {}
+        _ => return Err(busy("working area already has an exclusive editor")),
     }
     if let Some(parent) = blockers.first()
         && let ManagedUsePhase::Quiescent {
@@ -151,22 +150,21 @@ fn acquire(
     {
         let source = source.clone();
         let parent_id = parent.id.clone();
-        let parent_index = record
+        let parent = record
             .uses
-            .iter()
-            .position(|usage| usage.id == parent_id)
+            .iter_mut()
+            .find(|usage| usage.id == parent_id)
             .ok_or_else(|| invalid("publication parent hold disappeared"))?;
         let plan = crate::published::association_in_transaction(write, &source)?
             .ok_or_else(|| invalid("publication resource hold lost acceptance"))?;
         if editing
             .iter()
-            .any(|resource| !record.uses[parent_index].editing.contains(resource))
-            || !publication_parent_matches(&record.uses[parent_index], &plan)
-            || parent_cancelled(write, &record.uses[parent_index])?
+            .any(|resource| !parent.editing.contains(resource))
+            || !publication_parent_matches(parent, &plan)
+            || parent_cancelled(write, parent)?
         {
             return Err(busy("published resource parent is no longer active"));
         }
-        let parent = &mut record.uses[parent_index];
         parent
             .editing
             .retain(|resource| !editing.contains(resource));
@@ -206,7 +204,10 @@ fn entry(write: &redb::WriteTransaction, id: &str) -> Result<(), PersistenceErro
     let Some((mut record, i)) = locate(write, id)? else {
         return Ok(());
     };
-    let u = &mut record.uses[i];
+    let u = record
+        .uses
+        .get_mut(i)
+        .ok_or_else(|| invalid("use index has no hold"))?;
     if !record.admission_open
         || record.pending.is_some()
         || u.execution_terminal
@@ -228,24 +229,31 @@ fn terminal(write: &redb::WriteTransaction, id: &str) -> Result<(), PersistenceE
     let Some((mut record, i)) = locate(write, id)? else {
         return Ok(());
     };
-    record.uses[i].execution_terminal = true;
-    let stopped_or_never_entered =
-        matches!(record.uses[i].phase, ManagedUsePhase::Quiescent { .. })
-            || (!record.uses[i].entry_committed
-                && matches!(record.uses[i].phase, ManagedUsePhase::Reserved {}));
-    if let Some(parent_id) = &record.uses[i].parent
+    let (before, after) = record
+        .uses
+        .split_at_mut_checked(i)
+        .ok_or_else(|| invalid("use index has no hold"))?;
+    let (u, after) = after
+        .split_first_mut()
+        .ok_or_else(|| invalid("use index has no hold"))?;
+    u.execution_terminal = true;
+    let stopped_or_never_entered = matches!(u.phase, ManagedUsePhase::Quiescent { .. })
+        || (!u.entry_committed && matches!(u.phase, ManagedUsePhase::Reserved {}));
+    if let Some(parent_id) = &u.parent
         && stopped_or_never_entered
-        && let Some(parent_index) = record.uses.iter().position(|usage| &usage.id == parent_id)
+        && let Some(parent) = before
+            .iter_mut()
+            .chain(after.iter_mut())
+            .find(|usage| &usage.id == parent_id)
         && let ManagedUsePhase::Suspended {
             child,
             evidence: milkdrift_persistence::managed::QuiescenceEvidence::NoExternalEntry { source },
-        } = &record.uses[parent_index].phase
+        } = &parent.phase
         && child == id
     {
         let evidence = milkdrift_persistence::managed::QuiescenceEvidence::NoExternalEntry {
             source: source.clone(),
         };
-        let parent = &mut record.uses[parent_index];
         parent.claim = parent
             .claim
             .checked_add(1)
@@ -258,13 +266,15 @@ fn terminal(write: &redb::WriteTransaction, id: &str) -> Result<(), PersistenceE
             .map(|resource| resource.resource.clone())
             .collect();
         parent.phase = ManagedUsePhase::Quiescent { evidence };
-        record.uses[i].parent = None;
+        u.parent = None;
     }
-    let u = &record.uses[i];
     // Terminal observations never stand in for physical stop. Adapters may prove stop before
     // reporting; uncertainty/reporting loss keeps the use for authorized recovery.
     if u.parent.is_none()
-        && !record.uses.iter().any(|c| c.parent.as_deref() == Some(id))
+        && !before
+            .iter()
+            .chain(after.iter())
+            .any(|c| c.parent.as_deref() == Some(id))
         && stopped_or_never_entered
     {
         remove_index(write, u)?;
@@ -672,7 +682,10 @@ pub(crate) fn pending_publication(
     let Some((mut record, index)) = locate(write, &id)? else {
         return Ok(());
     };
-    let usage = &mut record.uses[index];
+    let usage = record
+        .uses
+        .get_mut(index)
+        .ok_or_else(|| invalid("use index has no hold"))?;
     if !matches!(usage.phase, ManagedUsePhase::Reserved {})
         || !publication_parent_matches(usage, plan)
     {

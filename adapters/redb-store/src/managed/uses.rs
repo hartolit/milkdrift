@@ -44,9 +44,13 @@ pub(super) fn begin_resolution(
     }
     let (mut record, i) =
         locate(&write, use_id)?.ok_or_else(|| conflict("unknown resolution use"))?;
+    let usage = record
+        .uses
+        .get(i)
+        .ok_or_else(|| invalid("use index has no hold"))?;
     if record.name != request.installation
         || record.version != request.expected_version
-        || record.uses[i].claim != *expected_claim
+        || usage.claim != *expected_claim
         || record.pending.is_some()
     {
         return Err(conflict("stale resolution guard"));
@@ -64,7 +68,7 @@ pub(super) fn begin_resolution(
         other_index != i
             && !matches!(&other.phase, ManagedUsePhase::Suspended { child, .. } if child == use_id)
             && other.binding.resources.iter().any(|r| {
-                record.uses[i]
+                usage
                     .binding
                     .resources
                     .iter()
@@ -75,7 +79,10 @@ pub(super) fn begin_resolution(
             "other accepted readers or writers prevent disruption of the shared resource",
         ));
     }
-    let usage = &mut record.uses[i];
+    let usage = record
+        .uses
+        .get_mut(i)
+        .ok_or_else(|| invalid("use index has no hold"))?;
     let service = record.current.as_ref().and_then(|setup| {
         setup.resources.iter().find(|r| {
             r.kind == milkdrift_capability::managed::ManagedResourceKind::Service
@@ -91,8 +98,8 @@ pub(super) fn begin_resolution(
             service.map_or_else(|| format!("mdtask-{use_id}"), |r| r.identity.clone())
         }
         ManagedUsePhase::Entered { physical_identity }
-        | ManagedUsePhase::Fencing { physical_identity } => physical_identity.clone(),
-        ManagedUsePhase::Quiescent {
+        | ManagedUsePhase::Fencing { physical_identity }
+        | ManagedUsePhase::Quiescent {
             evidence:
                 QuiescenceEvidence::PhysicalStop {
                     physical_identity, ..
@@ -203,7 +210,10 @@ pub(super) fn enter(
     let write = store.database().begin_write().map_err(error::redb)?;
     let (mut record, i) =
         locate(&write, id)?.ok_or_else(|| conflict("use has no durable acceptance"))?;
-    let u = &mut record.uses[i];
+    let u = record
+        .uses
+        .get_mut(i)
+        .ok_or_else(|| invalid("use index has no hold"))?;
     if !record.admission_open
         || record.pending.is_some()
         || u.claim != claim
@@ -250,7 +260,10 @@ pub(super) fn quiesce(
     }
     let write = store.database().begin_write().map_err(error::redb)?;
     let (mut record, i) = locate(&write, id)?.ok_or_else(|| conflict("unknown use"))?;
-    let u = &mut record.uses[i];
+    let u = record
+        .uses
+        .get_mut(i)
+        .ok_or_else(|| invalid("use index has no hold"))?;
     if u.claim != claim {
         return Err(conflict("stale stop evidence"));
     }
@@ -296,7 +309,10 @@ pub(super) fn release(store: &RedbStore, id: &str, claim: u64) -> Result<(), Per
     let Some((mut record, i)) = locate(&write, id)? else {
         return Ok(());
     };
-    let u = &record.uses[i];
+    let u = record
+        .uses
+        .get(i)
+        .ok_or_else(|| invalid("use index has no hold"))?;
     if u.claim != claim
         || !matches!(u.phase, ManagedUsePhase::Quiescent { .. })
         || u.parent.is_some()
@@ -313,7 +329,7 @@ pub(super) fn release(store: &RedbStore, id: &str, claim: u64) -> Result<(), Per
             "physical quiescence and settled child ownership are required",
         ));
     }
-    super::execution::remove_index(&write, &record.uses[i])?;
+    super::execution::remove_index(&write, u)?;
     record.uses.remove(i);
     write
         .open_table(MANAGED_USES)
@@ -382,12 +398,14 @@ pub(super) fn transfer(
         .iter()
         .position(|u| u.id == h.child)
         .ok_or_else(|| conflict("missing child hold"))?;
-    let parent = record.uses[pi].clone();
-    let child = record.uses[ci].clone();
+    let [parent, child] = record
+        .uses
+        .get_disjoint_mut([pi, ci])
+        .map_err(|_| invalid("handoff requires distinct parent and child holds"))?;
     if parent.claim != h.parent_claim
         || child.claim != h.child_claim
         || parent.binding.generation != child.binding.generation
-        || !super::execution::linked(&write, &parent, &child, Some(&h.association))?
+        || !super::execution::linked(&write, parent, child, Some(&h.association))?
     {
         return Err(conflict(
             "handoff requires exact claims and accepted inherited lineage",
@@ -404,20 +422,20 @@ pub(super) fn transfer(
         }
         if resume
             && (parent.execution_terminal
-                || super::execution::parent_cancelled(&write, &parent)?
-                || !super::execution::parent_authorized(&write, &parent, authorization)?)
+                || super::execution::parent_cancelled(&write, parent)?
+                || !super::execution::parent_authorized(&write, parent, authorization)?)
         {
             return Err(busy("cancelled parent cannot resume editing"));
         }
-        let evidence = match parent.phase {
-            ManagedUsePhase::Suspended { evidence, .. } => evidence,
+        let evidence = match &parent.phase {
+            ManagedUsePhase::Suspended { evidence, .. } => evidence.clone(),
             _ => return Err(conflict("parent not suspended")),
         };
-        record.uses[pi].claim = parent
+        parent.claim = parent
             .claim
             .checked_add(1)
             .ok_or_else(|| invalid("claim exhausted"))?;
-        record.uses[pi].editing = if resume {
+        parent.editing = if resume {
             parent
                 .binding
                 .resources
@@ -431,13 +449,12 @@ pub(super) fn transfer(
         // Only a physical parent needs a new entry epoch. A publication wrapper cannot enter
         // a writer: retain its accepted no-entry proof so later children and terminal settlement
         // use the same resource path as uninterrupted publication.
-        record.uses[pi].phase =
-            if resume && matches!(evidence, QuiescenceEvidence::PhysicalStop { .. }) {
-                ManagedUsePhase::Reserved {}
-            } else {
-                ManagedUsePhase::Quiescent { evidence }
-            };
-        super::execution::remove_index(&write, &record.uses[ci])?;
+        parent.phase = if resume && matches!(evidence, QuiescenceEvidence::PhysicalStop { .. }) {
+            ManagedUsePhase::Reserved {}
+        } else {
+            ManagedUsePhase::Quiescent { evidence }
+        };
+        super::execution::remove_index(&write, child)?;
         record.uses.remove(ci);
         write
             .open_table(MANAGED_USES)
@@ -446,8 +463,8 @@ pub(super) fn transfer(
             .map_err(error::redb)?;
     } else {
         if parent.execution_terminal
-            || super::execution::parent_cancelled(&write, &parent)?
-            || !super::execution::parent_authorized(&write, &parent, authorization)?
+            || super::execution::parent_cancelled(&write, parent)?
+            || !super::execution::parent_authorized(&write, parent, authorization)?
         {
             return Err(busy(
                 "handoff requires a live parent and its current authority",
@@ -474,21 +491,21 @@ pub(super) fn transfer(
         if requested.is_empty() || requested.iter().any(|r| !parent.editing.contains(r)) {
             return Err(conflict("child mutation exceeds the exact parent claim"));
         }
-        record.uses[pi].editing.retain(|r| !requested.contains(r));
-        record.uses[pi].claim = parent
+        parent.editing.retain(|r| !requested.contains(r));
+        parent.claim = parent
             .claim
             .checked_add(1)
             .ok_or_else(|| invalid("claim exhausted"))?;
-        record.uses[pi].phase = ManagedUsePhase::Suspended {
+        parent.phase = ManagedUsePhase::Suspended {
             child: h.child.clone(),
             evidence: evidence.clone(),
         };
-        record.uses[ci].editing = requested;
-        record.uses[ci].claim = child
+        child.editing = requested;
+        child.claim = child
             .claim
             .checked_add(1)
             .ok_or_else(|| invalid("claim exhausted"))?;
-        record.uses[ci].parent = Some(h.parent.clone());
+        child.parent = Some(h.parent.clone());
     }
     bump(&mut record)?;
     let receipt = ResourceReceipt {
