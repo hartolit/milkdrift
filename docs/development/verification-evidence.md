@@ -169,9 +169,13 @@ target/client-workflow-corrections/corrected-binaries/headless-cli-evidence \
 
 `corrected-{strict,workspace,discovery,build,headless,model,controller}.log` retains each result.
 The authored journey already executes in the ordinary full suite. Scanner installation proof is
-`final-tool-probes/checks.json`. `corrected-hosted-runs.json` records no hosted run for this source;
-local commits were not pushed. The earlier `15157c0` hosted result remains a failure, as recorded
-in [quality run 213](https://github.com/hartolit/milkdrift/actions/runs/37224200192).
+`final-tool-probes/checks.json`. `corrected-hosted-runs.json` preserves the earlier pre-push query,
+which returned no hosted runs. It is superseded by successful
+[quality run 214](https://github.com/hartolit/milkdrift/actions/runs/37236785247) at `32a5ba6`,
+the documentation-only closeout of executable source `199d1a5`. Its static gate, workspace tests,
+discovery and all three application scenarios passed; `hosted-run-214.json` and
+`hosted-run-214.log` retain the verified job results. The earlier `15157c0` hosted result remains
+a failure, as recorded in [quality run 213](https://github.com/hartolit/milkdrift/actions/runs/37224200192).
 
 The earlier `9ceac87` local record is under ignored `target/client-ready-workflows/06/`. Its final
 `verified-*` logs identify the build, static matrix, checker probes, runtime suite, discovery and

@@ -291,12 +291,16 @@ startup race. Ordinary CLI and JSON copy now succeed with one grant naming only 
 destination. [Reproducible evidence](../development/verification-evidence.md#client-workflow-acceptance)
 records sensitive regressions, all campaigns, commands, binary identities and remaining limits.
 
-Hosted confirmation remains unavailable for the correction; these local commits were not pushed.
+Hosted [quality run 214](https://github.com/hartolit/milkdrift/actions/runs/37236785247) passes at
+`32a5ba6`, the documentation-only closeout of executable source `199d1a5`. The static gate, full
+workspace tests, discovery and actual headless, deterministic-model and controller scenarios all
+completed successfully. All 45 control-plane tests passed, including both reviewed cases.
+
 Historical [quality run 213](https://github.com/hartolit/milkdrift/actions/runs/37224200192) at
 `15157c0` passed static checks but returned 36 passes and two completion timeouts in the control-plane
 target; later application scenarios were skipped. Those exact deadlines did not reproduce in the
 finite local campaign. The regressions establish the corrected maintenance and report-contention
-defects, not a retroactive deadlock diagnosis or a corrected hosted pass.
+defects without retroactively establishing a deadlock in run 213.
 
 The earlier `9ceac87` local gate passed 1,107 tests, including 24 doctests and 30 repository contracts,
 with eight opt-in cases ignored. Its 33 static checks, sixteen checker probes, discovery and
