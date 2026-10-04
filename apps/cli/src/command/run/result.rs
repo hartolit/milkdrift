@@ -2,7 +2,7 @@
 
 use crate::{error::CliError, session::CliSession};
 use milkdrift_control_protocol::RunResultRead;
-use std::{fmt::Write as _, path::Path};
+use std::path::Path;
 
 pub(super) async fn execute(
     session: &CliSession,
@@ -30,7 +30,7 @@ pub(super) async fn execute(
         }
         session.output("run.result", &result)?;
     } else {
-        print!("{}", render(&value, details));
+        render(&mut std::io::stdout().lock(), &value, details)?;
         if let Some(download) = download {
             session.output("artifact.get", &download)?;
         }
@@ -54,38 +54,41 @@ fn safe(value: &str) -> String {
         .collect()
 }
 
-fn render(value: &RunResultRead, details: bool) -> String {
-    let mut out = String::new();
+fn render(
+    out: &mut impl std::io::Write,
+    value: &RunResultRead,
+    details: bool,
+) -> Result<(), CliError> {
     let run = &value.run;
-    let _ = writeln!(
+    writeln!(
         out,
         "Workflow: {} (version {})",
         safe(value.workflow_name.as_deref().unwrap_or("name unavailable")),
         value
             .version
             .map_or_else(|| "unknown".into(), |v| v.to_string())
-    );
-    let _ = writeln!(
+    )?;
+    writeln!(
         out,
         "Run: {}\nRevision: {}\nSequence: {}",
         safe(&run.run_id),
         safe(run.revision_id.as_deref().unwrap_or("unknown")),
         run.sequence
-    );
-    let _ = writeln!(
+    )?;
+    writeln!(
         out,
         "Workflow outcome: {}",
         safe(run.terminal.as_deref().unwrap_or(&run.lifecycle))
-    );
-    let _ = writeln!(
+    )?;
+    writeln!(
         out,
         "Unresolved external outcomes: {}",
         run.uncertainty_count
-    );
+    )?;
     for node in &run.nodes {
-        let _ = writeln!(out, "  Step {}: {}", safe(&node.node_id), safe(&node.state));
+        writeln!(out, "  Step {}: {}", safe(&node.node_id), safe(&node.state))?;
         if let Some(attempt) = &node.latest_attempt {
-            let _ = writeln!(
+            writeln!(
                 out,
                 "    Invocation: {}{}",
                 safe(attempt.terminal.as_deref().unwrap_or(&attempt.state)),
@@ -94,16 +97,16 @@ fn render(value: &RunResultRead, details: bool) -> String {
                 } else {
                     ""
                 }
-            );
+            )?;
             if let Some(generation) = &attempt.model_generation {
-                let _ = writeln!(
+                writeln!(
                     out,
                     "    Model finish: {}",
                     safe(generation.finish_reason.as_deref().unwrap_or("unknown"))
-                );
+                )?;
             }
             if let Some(acceptance) = &attempt.result_acceptance {
-                let _ = writeln!(
+                writeln!(
                     out,
                     "    Required result: {} ({})",
                     if acceptance.accepted {
@@ -112,101 +115,110 @@ fn render(value: &RunResultRead, details: bool) -> String {
                         "rejected"
                     },
                     safe(&acceptance.reason)
-                );
+                )?;
             }
             if details {
-                let _ = writeln!(
+                writeln!(
                     out,
                     "    Attempt: {}\n    Model/profile: {} / {}",
                     safe(&attempt.attempt_id),
                     safe(attempt.capability_id.as_deref().unwrap_or("unknown")),
                     safe(attempt.provider_profile.as_deref().unwrap_or("none"))
-                );
-                let _ = writeln!(
+                )?;
+                writeln!(
                     out,
                     "    Limits: {}",
-                    safe(&serde_json::to_string(&attempt.model_generation).unwrap_or_default())
-                );
-                let _ = writeln!(
+                    safe(
+                        &serde_json::to_string(&attempt.model_generation)
+                            .map_err(|error| CliError::Internal(error.to_string()))?
+                    )
+                )?;
+                writeln!(
                     out,
                     "    Usage: {}",
-                    attempt.usage.as_ref().map_or_else(
-                        || "unknown".into(),
-                        |usage| safe(&serde_json::to_string(usage).unwrap_or_default())
-                    )
-                );
-                let _ = writeln!(
+                    match &attempt.usage {
+                        None => "unknown".into(),
+                        Some(usage) => safe(
+                            &serde_json::to_string(usage)
+                                .map_err(|error| CliError::Internal(error.to_string()))?
+                        ),
+                    }
+                )?;
+                writeln!(
                     out,
                     "    Selected inputs: {}",
-                    safe(&serde_json::to_string(&attempt.context).unwrap_or_default())
-                );
+                    safe(
+                        &serde_json::to_string(&attempt.context)
+                            .map_err(|error| CliError::Internal(error.to_string()))?
+                    )
+                )?;
                 if let Some(detail) = &attempt.terminal_detail {
-                    let _ = writeln!(out, "    Evidence: {}", safe(detail));
+                    writeln!(out, "    Evidence: {}", safe(detail))?;
                 }
             }
         } else if node.latest_attempt_id.is_some() {
-            let _ = writeln!(
+            writeln!(
                 out,
                 "    Attempt evidence unavailable under this read scope"
-            );
+            )?;
         }
     }
     if value.outputs.is_empty() {
-        let _ = writeln!(
+        writeln!(
             out,
             "Final output: unavailable (no readable successful terminal output)"
-        );
+        )?;
     }
     for output in &value.outputs {
-        let _ = writeln!(
+        writeln!(
             out,
             "Final output {}: {} ({} bytes)",
             safe(&output.name),
             safe(&output.artifact.artifact_id),
             output.artifact.size
-        );
+        )?;
         if let Some(preview) = &output.preview {
-            let _ = writeln!(out, "{}", safe(preview));
+            writeln!(out, "{}", safe(preview))?;
         }
         if output.preview_truncated {
-            let _ = writeln!(out, "[preview truncated; download the complete output]");
+            writeln!(out, "[preview truncated; download the complete output]")?;
         }
-        let _ = writeln!(
+        writeln!(
             out,
             "Download: run result {} --field {} --output NEW_FILE",
             safe(&run.run_id),
             safe(&output.name)
-        );
+        )?;
     }
     if value.outputs_restricted {
-        let _ = writeln!(out, "Some output is outside your read permissions.");
+        writeln!(out, "Some output is outside your read permissions.")?;
     }
     if value.truncated {
-        let _ = writeln!(
+        writeln!(
             out,
             "View bounded; use run show, exact attempt reads or paged timeline for additional evidence."
-        );
+        )?;
     }
     if run.terminal.is_some() {
-        let _ = writeln!(
+        writeln!(
             out,
             "This run has ended; further work requires an explicitly linked new run."
-        );
+        )?;
     }
     if value
         .actions
         .iter()
         .any(|action| action == "start_linked_run")
     {
-        let _ = writeln!(
+        writeln!(
             out,
             "New run: --evidence recovery_observation={} run start NEW_RUN {} {} --request-file NEW_REQUEST_FILE (supply required inputs; admission rechecks authority)",
             safe(&run.run_id),
             safe(run.workflow_id.as_deref().unwrap_or("WORKFLOW")),
             safe(run.revision_id.as_deref().unwrap_or("REVISION"))
-        );
+        )?;
     }
-    let _ = writeln!(
+    writeln!(
         out,
         "Permitted next operations: {}",
         if value.actions.is_empty() {
@@ -214,12 +226,39 @@ fn render(value: &RunResultRead, details: bool) -> String {
         } else {
             safe(&value.actions.join(", "))
         }
-    );
-    out
+    )?;
+    out.flush()?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn result_rendering_propagates_output_failure() -> Result<(), Box<dyn std::error::Error>> {
+        let value = serde_json::from_value(serde_json::json!({
+            "run": {
+                "run_id": "output-fixture", "sequence": 10, "lifecycle": "running",
+                "terminal": null, "workflow_id": "workflow", "revision_id": "revision",
+                "semantic_digest": null, "nodes": [], "governing_agreement": null,
+                "agreement_adoptions": 0, "uncertainty_count": 1
+            },
+            "workflow_name": "Readout", "version": 2, "truncated": false,
+            "outputs": [], "outputs_restricted": true, "actions": []
+        }))?;
+        let mut output = Vec::new();
+        super::render(&mut output, &value, true)?;
+        let text = String::from_utf8(output)?;
+        assert!(text.contains("Workflow: Readout (version 2)"));
+        assert!(text.contains("Unresolved external outcomes: 1"));
+        assert!(text.contains("Some output is outside your read permissions."));
+        let mut full = std::io::Cursor::new([0_u8; 0]);
+        let error = super::render(&mut full, &value, true)
+            .err()
+            .ok_or("full output accepted")?;
+        assert_eq!(crate::error::exit_code(&error), 9);
+        Ok(())
+    }
+
     #[test]
     fn terminal_text_is_data() {
         assert_eq!(

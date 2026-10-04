@@ -182,7 +182,7 @@ impl CliSession {
         _error: &impl std::fmt::Display,
     ) -> Result<(), CliError> {
         if self.cli.json {
-            println!(
+            crate::output::line(format_args!(
                 "{}",
                 crate::output::encode(
                     self.cli.operation(),
@@ -194,9 +194,12 @@ impl CliSession {
                         "retryable": retryable}),
                     false
                 )?
-            );
+            ))?;
         } else {
-            eprintln!("observation stream reconnecting within configured bounds");
+            writeln!(
+                io::stderr().lock(),
+                "observation stream reconnecting within configured bounds"
+            )?;
         }
         Ok(())
     }
@@ -325,7 +328,7 @@ async fn confirm(cli: &Cli, operation: &str) -> Result<(), CliError> {
             "high-risk noninteractive commands require --yes".to_owned(),
         ));
     }
-    eprint!("Confirm {operation}? Type 'yes': ");
+    write!(io::stderr().lock(), "Confirm {operation}? Type 'yes': ")?;
     io::stderr()
         .flush()
         .map_err(|error| CliError::Internal(error.to_string()))?;

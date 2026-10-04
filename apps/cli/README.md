@@ -54,6 +54,8 @@ Normal failure removes an uncommitted output; removal failure returns exit 9 and
 destination may remain, while retaining the original error internally. Cancellation and unwinding
 attempt removal and report any failure on stderr. Forced termination cannot guarantee cleanup.
 Existing files are never replaced.
+Output and diagnostic write failures return exit 9, including a closed stdout pipe. If the error
+channel itself fails, the exit remains nonzero even though no failure envelope can be delivered.
 
 The [model workflow recipe](../../examples/operator/README.md#author-a-model-workflow) uses a local
 draft of pending mutations. `workflow` commands send editing gestures to the daemon; they do not

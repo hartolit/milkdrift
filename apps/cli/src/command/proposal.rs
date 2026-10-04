@@ -147,7 +147,7 @@ async fn impact(
 ) -> Result<milkdrift_control_protocol::ProposalRead, CliError> {
     let value = session.client().proposal(run, proposal, revision).await?;
     if session.cli().json {
-        println!(
+        crate::output::line(format_args!(
             "{}",
             crate::output::encode(
                 "proposal.impact",
@@ -158,20 +158,27 @@ async fn impact(
                 serde_json::Value::Null,
                 false
             )?
-        );
+        ))?;
     } else {
-        println!("Affected work at run sequence {}:", value.sequence);
+        crate::output::line(format_args!(
+            "Affected work at run sequence {}:",
+            value.sequence
+        ))?;
         if let Some(items) = &value.impact {
             for item in items {
-                println!(
+                crate::output::line(format_args!(
                     "  {}: {} — {}",
-                    serde_json::to_string(&item.node).unwrap_or_default(),
+                    serde_json::to_string(&item.node)
+                        .map_err(|error| CliError::Internal(error.to_string()))?,
                     item.action,
-                    serde_json::to_string(&item.reason).unwrap_or_default()
-                );
+                    serde_json::to_string(&item.reason)
+                        .map_err(|error| CliError::Internal(error.to_string()))?
+                ))?;
             }
         } else {
-            println!("  Current plan detail is unavailable; inspect the proposal before applying.");
+            crate::output::line(format_args!(
+                "  Current plan detail is unavailable; inspect the proposal before applying."
+            ))?;
         }
     }
     Ok(value)

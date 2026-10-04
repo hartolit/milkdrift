@@ -222,7 +222,7 @@ pub(super) async fn execute(
                 }
                 if !page.observations.is_empty() {
                     if session.cli().json {
-                        println!(
+                        crate::output::line(format_args!(
                             "{}",
                             crate::output::encode(
                                 "invocation.wait",
@@ -233,7 +233,7 @@ pub(super) async fn execute(
                                 serde_json::Value::Null,
                                 false
                             )?
-                        );
+                        ))?;
                     } else {
                         session.output("invocation.wait", &page)?;
                     }

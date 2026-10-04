@@ -123,7 +123,7 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
 
 fn announce(session: &CliSession, saved: &SavedRunRequest, path: &Path) -> Result<(), CliError> {
     if session.cli().json {
-        println!(
+        crate::output::line(format_args!(
             "{}",
             crate::output::encode(
                 "run.prepared",
@@ -133,7 +133,7 @@ fn announce(session: &CliSession, saved: &SavedRunRequest, path: &Path) -> Resul
                 serde_json::Value::Null,
                 false
             )?
-        );
+        ))?;
     } else {
         session.output("run.prepared", &identity(saved, path))?;
     }

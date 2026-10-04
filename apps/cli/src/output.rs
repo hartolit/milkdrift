@@ -124,6 +124,14 @@ impl Drop for PendingFile {
 
 pub(crate) const JSON_OUTPUT_SCHEMA_VERSION: u32 = 2;
 
+pub(crate) fn line(arguments: std::fmt::Arguments<'_>) -> Result<(), CliError> {
+    use std::io::Write as _;
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "{arguments}")?;
+    stdout.flush()?;
+    Ok(())
+}
+
 pub(crate) fn encode(
     operation: &str,
     command_id: Option<&str>,
@@ -155,7 +163,7 @@ pub(crate) fn success<T: Serialize>(cli: &Cli, kind: &str, value: &T) -> Result<
     let value =
         serde_json::to_value(value).map_err(|error| CliError::Internal(error.to_string()))?;
     if cli.json {
-        println!(
+        crate::output::line(format_args!(
             "{}",
             encode(
                 if cli.is_follow() {
@@ -169,36 +177,37 @@ pub(crate) fn success<T: Serialize>(cli: &Cli, kind: &str, value: &T) -> Result<
                 Value::Null,
                 !cli.is_follow()
             )?
-        );
+        ))?;
     } else {
-        println!("{kind}");
+        crate::output::line(format_args!("{kind}"))?;
         if kind.starts_with("learning.") {
             // Fixed criteria, missing measurements and reasons must survive human presentation.
-            println!(
+            crate::output::line(format_args!(
                 "{}",
                 serde_json::to_string_pretty(&value)
                     .map_err(|error| CliError::Internal(error.to_string()))?
-            );
+            ))?;
         } else {
-            human_value(&value);
+            human_value(&value)?;
         }
     }
     Ok(())
 }
 
-fn human_value(value: &Value) {
+fn human_value(value: &Value) -> Result<(), CliError> {
     match value {
         Value::Array(items) => {
             for item in items {
-                human_value(item);
+                human_value(item)?;
             }
         }
         Value::Object(fields) => {
             if let Some(workflow) = fields.get("workflow") {
-                println!(
+                crate::output::line(format_args!(
                     "  {}",
-                    serde_json::to_string_pretty(workflow).unwrap_or_default()
-                );
+                    serde_json::to_string_pretty(workflow)
+                        .map_err(|error| CliError::Internal(error.to_string()))?
+                ))?;
             }
             for key in [
                 "file",
@@ -262,12 +271,14 @@ fn human_value(value: &Value) {
                 "proposal_digest",
             ] {
                 if let Some(value) = fields.get(key).filter(|value| !value.is_null()) {
-                    println!("  {key}: {value}");
+                    crate::output::line(format_args!("  {key}: {value}"))?;
                 }
             }
             for key in ["controller_accounting", "accounting"] {
                 if let Some(accounting) = fields.get(key) {
-                    println!("  cumulative controller accounting: {accounting}");
+                    crate::output::line(format_args!(
+                        "  cumulative controller accounting: {accounting}"
+                    ))?;
                 }
             }
             for key in [
@@ -289,12 +300,13 @@ fn human_value(value: &Value) {
                 "reconciliation",
             ] {
                 if let Some(value) = fields.get(key) {
-                    human_value(value);
+                    human_value(value)?;
                 }
             }
         }
-        _ => println!("  {value}"),
+        _ => crate::output::line(format_args!("  {value}"))?,
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -336,7 +348,8 @@ mod tests {
         std::fs::create_dir(&output)?;
         let error = pending
             .finish::<()>(Err(CliError::Deadline))
-            .expect_err("cleanup must fail");
+            .err()
+            .ok_or("cleanup must fail")?;
         assert_eq!(crate::error::exit_code(&error), 9);
         let CliError::OutputCleanup { operation, .. } = error else {
             return Err("cleanup uncertainty was discarded".into());

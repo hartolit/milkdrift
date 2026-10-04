@@ -22,7 +22,7 @@ mod workflow_args;
 #[path = "tests/documentation.rs"]
 mod documentation;
 
-use error::{CliError, emit_error, exit_code};
+use error::{CliError, report};
 
 #[derive(Parser)]
 #[command(
@@ -840,12 +840,11 @@ async fn run() -> ExitCode {
                     serde_json::json!({"text": error.to_string()}),
                     serde_json::Value::Null,
                     true,
-                ) {
-                    Ok(encoded) => println!("{encoded}"),
-                    Err(failure) => {
-                        emit_error(true, kind, None, &failure);
-                        return ExitCode::from(exit_code(&failure));
-                    }
+                )
+                .and_then(|encoded| output::line(format_args!("{encoded}")))
+                {
+                    Ok(()) => {}
+                    Err(failure) => return report(true, kind, None, &failure),
                 }
             } else {
                 if error.print().is_err() {
@@ -860,8 +859,7 @@ async fn run() -> ExitCode {
                     "command-line arguments are invalid; use --help for the accepted syntax"
                         .to_owned(),
                 );
-                emit_error(true, "arguments", None, &failure);
-                return ExitCode::from(exit_code(&failure));
+                return report(true, "arguments", None, &failure);
             }
             let code = error.exit_code();
             if error.print().is_err() {
@@ -889,8 +887,7 @@ async fn run() -> ExitCode {
             "run wait, --wait, and noninteractive follow require explicit --timeout-secs"
                 .to_owned(),
         );
-        emit_error(json, operation, command_id.as_deref(), &error);
-        return ExitCode::from(2);
+        return report(json, operation, command_id.as_deref(), &error);
     }
     let deadline = cli
         .timeout_secs
@@ -910,10 +907,7 @@ async fn run() -> ExitCode {
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            emit_error(json, operation, command_id.as_deref(), &error);
-            ExitCode::from(exit_code(&error))
-        }
+        Err(error) => report(json, operation, command_id.as_deref(), &error),
     }
 }
 
