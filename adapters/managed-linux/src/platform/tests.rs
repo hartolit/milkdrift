@@ -122,21 +122,45 @@ fn real_quadlet_failed_start_preserves_a_foreign_container() -> Result {
         setup: &'a ApprovedSetup,
         unit: String,
         container_id: Option<String>,
+        finished: bool,
     }
-    impl Drop for Cleanup<'_> {
-        fn drop(&mut self) {
-            let _ = super::LinuxManagedPlatform::systemctl(&[
+    impl Cleanup<'_> {
+        fn finish(&mut self) -> Result {
+            self.finished = true;
+            let stop = super::LinuxManagedPlatform::systemctl(&[
                 "stop".to_owned(),
                 format!("{}.service", self.unit),
             ]);
-            if let Some(id) = &self.container_id {
-                let _ = super::LinuxManagedPlatform::podman(&[
+            let removal = if let Some(id) = &self.container_id {
+                super::LinuxManagedPlatform::podman(&[
                     "rm".to_owned(),
                     "--force".to_owned(),
                     id.clone(),
-                ]);
+                ])
+                .map(|_| ())
+            } else {
+                Ok(())
+            };
+            let configuration = self.platform.remove_configuration(self.setup);
+            if stop.is_err() || removal.is_err() || configuration.is_err() {
+                return Err(format!("fixture cleanup unconfirmed: stop={stop:?}, removal={removal:?}, configuration={configuration:?}").into());
             }
-            let _ = self.platform.remove_configuration(self.setup);
+            Ok(())
+        }
+    }
+    impl Drop for Cleanup<'_> {
+        fn drop(&mut self) {
+            if !self.finished
+                && let Err(error) = self.finish()
+            {
+                #[expect(
+                    clippy::print_stderr,
+                    reason = "The real-host test unwind guard must expose residual fixture resources without a second panic"
+                )]
+                {
+                    eprintln!("{error}");
+                }
+            }
         }
     }
     let mut cleanup = Cleanup {
@@ -144,6 +168,7 @@ fn real_quadlet_failed_start_preserves_a_foreign_container() -> Result {
         setup: &setup,
         unit: d.unit.clone(),
         container_id: None,
+        finished: false,
     };
     let id = super::LinuxManagedPlatform::podman(&[
         "run".to_owned(),
@@ -180,7 +205,7 @@ fn real_quadlet_failed_start_preserves_a_foreign_container() -> Result {
         observed.pointer("/State/Running").and_then(|v| v.as_bool()),
         Some(true)
     );
-    Ok(())
+    cleanup.finish()
 }
 
 #[test]
