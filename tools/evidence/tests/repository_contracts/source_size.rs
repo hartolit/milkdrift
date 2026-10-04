@@ -25,29 +25,29 @@ pub(super) fn source_size(source: &str) -> TestResult<SourceSize> {
 
 fn collect_code_lines(stream: TokenStream, lines: &mut BTreeSet<usize>) {
     let tokens: Vec<_> = stream.into_iter().collect();
-    let mut position = 0;
-    while position < tokens.len() {
-        let documentation = match &tokens[position..] {
-            [TokenTree::Punct(hash), TokenTree::Group(attribute), ..]
-                if hash.as_char() == '#' && is_documentation(attribute) =>
-            {
-                Some(2)
-            }
+    let mut remaining = tokens.as_slice();
+    while let Some((token, tail)) = remaining.split_first() {
+        let documentation = match remaining {
+            [
+                TokenTree::Punct(hash),
+                TokenTree::Group(attribute),
+                rest @ ..,
+            ] if hash.as_char() == '#' && is_documentation(attribute) => Some(rest),
             [
                 TokenTree::Punct(hash),
                 TokenTree::Punct(bang),
                 TokenTree::Group(attribute),
-                ..,
+                rest @ ..,
             ] if hash.as_char() == '#' && bang.as_char() == '!' && is_documentation(attribute) => {
-                Some(3)
+                Some(rest)
             }
             _ => None,
         };
-        if let Some(length) = documentation {
-            position += length;
+        if let Some(rest) = documentation {
+            remaining = rest;
             continue;
         }
-        match &tokens[position] {
+        match token {
             TokenTree::Group(group) => {
                 // A group's full span includes the comments between its delimiters.
                 record_span(group.span_open(), lines);
@@ -56,7 +56,7 @@ fn collect_code_lines(stream: TokenStream, lines: &mut BTreeSet<usize>) {
             }
             token => record_span(token.span(), lines),
         }
-        position += 1;
+        remaining = tail;
     }
 }
 

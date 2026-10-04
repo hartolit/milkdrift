@@ -452,21 +452,19 @@ fn canonical_version_cells_match_all_owning_constants() -> TestResult {
     let mut documented = BTreeMap::new();
     for line in status.lines().filter(|line| line.starts_with("| ")) {
         let cells: Vec<_> = line.split('|').map(str::trim).collect();
-        if cells[1] == "Contract or durable family" || cells[1] == "---" {
+        let [_, family, version, behavior, _] = cells.as_slice() else {
+            return Err("version row needs family/version/read behavior".into());
+        };
+        if *family == "Contract or durable family" || *family == "---" {
             continue;
         }
-        assert_eq!(
-            cells.len(),
-            5,
-            "version row needs family/version/read behavior"
-        );
         assert!(
             documented
-                .insert(cells[1].to_owned(), cells[2].to_owned())
+                .insert((*family).to_owned(), (*version).to_owned())
                 .is_none(),
             "duplicate version family"
         );
-        assert!(!cells[3].is_empty(), "missing read behavior");
+        assert!(!behavior.is_empty(), "missing read behavior");
     }
     assert_eq!(documented, expected);
     for (path, heading) in [
@@ -603,7 +601,13 @@ fn operator_task_requirements_fit_the_documented_grants() -> TestResult {
     let examples = root()?.join("examples/operator");
     let configuration: milkdrift_daemon::DaemonConfig =
         toml::from_str(&read(examples.join("daemon.toml"))?)?;
-    let process_grant = &configuration.actors[0].authority.resources.capability;
+    let process_grant = &configuration
+        .actors
+        .first()
+        .ok_or("operator actor absent")?
+        .authority
+        .resources
+        .capability;
     // These are the explicit model overrides in the operator guide, independent of the blueprint.
     let model_grant = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
         .only_capabilities(BTreeSet::from([
@@ -681,7 +685,9 @@ fn control_reference_json_uses_current_wire_readers_and_versions() -> TestResult
             request.validate()?;
         } else {
             assert_eq!(
-                value["schema_version"].as_u64(),
+                value
+                    .get("schema_version")
+                    .and_then(serde_json::Value::as_u64),
                 Some(numeric_const(
                     "apps/cli/src/output.rs",
                     "JSON_OUTPUT_SCHEMA_VERSION"
