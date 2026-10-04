@@ -561,7 +561,8 @@ mod tests {
     }
 
     #[test]
-    fn model_validation_refuses_truncated_or_incomplete_finish() {
+    fn model_validation_refuses_truncated_or_incomplete_finish()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut model = normal_model();
         assert!(model.validate_model_semantics().is_ok());
         for finish in [
@@ -571,13 +572,18 @@ mod tests {
             serde_json::json!("toolcalls"),
             serde_json::json!("contentfilter"),
         ] {
-            model.facts["finish_reason"] = finish;
+            *model
+                .facts
+                .get_mut("finish_reason")
+                .ok_or("finish reason absent")? = finish;
             assert!(model.validate_model_semantics().is_err());
         }
+        Ok(())
     }
 
     #[test]
-    fn process_validation_refuses_changed_history_or_missing_diff_evidence() {
+    fn process_validation_refuses_changed_history_or_missing_diff_evidence()
+    -> Result<(), Box<dyn std::error::Error>> {
         for (field, value) in [
             ("repository_final_commit", Value::String("c".repeat(40))),
             ("repository_final_tree", Value::String("c".repeat(40))),
@@ -592,9 +598,10 @@ mod tests {
             ),
         ] {
             let mut process = repaired_process();
-            process.facts[field] = value;
+            *process.facts.get_mut(field).ok_or("process fact absent")? = value;
             assert!(process.validate_process_semantics().is_err(), "{field}");
         }
+        Ok(())
     }
 
     #[test]

@@ -115,7 +115,13 @@ pub(super) async fn run_process_scenario(
         .document
         .as_ref()
         .ok_or_else(|| "process base revision document is absent".to_owned())?;
-    let mut good_verification = sequence.sequence().stages[0].verification.clone();
+    let mut good_verification = sequence
+        .sequence()
+        .stages
+        .first()
+        .ok_or("verification stage absent")?
+        .verification
+        .clone();
     good_verification.profile.capability =
         CapabilityId::new("evidence-verifier-good").map_err(|error| error.to_string())?;
     let proposal = build_remediation_proposal(

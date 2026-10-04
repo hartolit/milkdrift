@@ -96,7 +96,7 @@ mod tests {
         ] {
             let mut value = serde_json::json!({"resource":resource,"capacity":capacity,"cancellation_notice_seconds":notice});
             assert_eq!(Case::from_application(&value)?.cutoff, cutoff);
-            value["capacity"] = serde_json::json!(capacity + 1);
+            *value.get_mut("capacity").ok_or("capacity absent")? = serde_json::json!(capacity + 1);
             assert!(Case::from_application(&value).is_err());
         }
         Ok(())

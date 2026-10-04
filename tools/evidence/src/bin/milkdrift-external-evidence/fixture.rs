@@ -68,7 +68,7 @@ pub(super) fn run(arguments: Vec<String>) -> EvidenceResult {
             std::io::stdin().take(65_537).read_to_end(&mut input)?;
             ensure(input.len() <= 65_536, "fixture prompt exceeds bound")
         }
-        Some("verify") => verify(&arguments[1..]),
+        Some("verify") => verify(arguments.get(1..).ok_or("verify arguments absent")?),
         Some("review") => {
             let root = Path::new(arguments.get(1).ok_or("review root absent")?);
             fs::write(

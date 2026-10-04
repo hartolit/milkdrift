@@ -717,7 +717,10 @@ mod tests {
                     .find(|candidate| candidate.is_file())
                     .ok_or("mutation source has no owning package")?;
                 let manifest: toml::Value = toml::from_str(&fs::read_to_string(manifest)?)?;
-                let package = manifest["package"]["name"]
+                let package = manifest
+                    .get("package")
+                    .and_then(|package| package.get("name"))
+                    .ok_or("package name absent")?
                     .as_str()
                     .ok_or("mutation source package has no name")?;
                 assert!(specification.test_packages.contains(&package));
@@ -749,13 +752,31 @@ mod tests {
 
         let matched = classify_mutation_outcomes(&output, &classifications)?;
         assert_eq!(matched.len(), 1);
-        assert_eq!(matched[0].mutant, "mutant-a");
+        assert_eq!(
+            matched.first().ok_or("classified survivor absent")?.mutant,
+            "mutant-a"
+        );
         let report: serde_json::Value =
             serde_json::from_slice(&fs::read(output.join("classification-report.json"))?)?;
-        assert_eq!(report["schema_version"], 1);
-        assert_eq!(report["cargo_mutants_version"], "27.1.0");
-        assert_eq!(report["missed"][0]["mutant"], "mutant-a");
-        assert_eq!(report["timeouts"], serde_json::json!([]));
+        assert_eq!(
+            report
+                .get("schema_version")
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            report
+                .get("cargo_mutants_version")
+                .and_then(serde_json::Value::as_str),
+            Some("27.1.0")
+        );
+        assert_eq!(
+            report
+                .pointer("/missed/0/mutant")
+                .and_then(serde_json::Value::as_str),
+            Some("mutant-a")
+        );
+        assert_eq!(report.get("timeouts"), Some(&serde_json::json!([])));
         Ok(())
     }
 

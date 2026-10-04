@@ -53,16 +53,21 @@ fn remaining(s: &Service, start: &str, end: &str) -> EvidenceResult<u64> {
     require(
         status == 200
             && body.as_object().is_some_and(|v| v.len() == 4)
-            && body["resource"] == s.spec.application["resource"]
-            && body["start"] == start
-            && body["end"] == end,
+            && body.pointer("/resource").ok_or("missing /resource")?
+                == s.spec
+                    .application
+                    .pointer("/resource")
+                    .ok_or("missing /resource")?
+            && body.pointer("/start").ok_or("missing /start")? == start
+            && body.pointer("/end").ok_or("missing /end")? == end,
         "availability contract differs",
     )?;
     require(
         !body.to_string().contains("Ada") && !body.to_string().contains("Bo"),
         "public response disclosed private names",
     )?;
-    body["remaining"]
+    body.pointer("/remaining")
+        .ok_or("missing /remaining")?
         .as_u64()
         .ok_or_else(|| "remaining capacity absent".into())
 }
@@ -252,14 +257,20 @@ pub(super) fn observe(s: &mut Service, name: &str) -> EvidenceResult {
         "exact-deployment" => {
             let state = s.inspect()?;
             require(
-                state["Image"]
+                state
+                    .pointer("/Image")
+                    .ok_or("missing /Image")?
                     .as_str()
                     .map(|v| v.trim_start_matches("sha256:"))
                     == Some(s.spec.image_identity.as_str())
                     && state.pointer("/HostConfig/ReadonlyRootfs") == Some(&json!(true)),
                 "candidate image or root protection differs",
             )?;
-            let mounts = state["Mounts"].as_array().ok_or("mounts absent")?;
+            let mounts = state
+                .pointer("/Mounts")
+                .ok_or("missing /Mounts")?
+                .as_array()
+                .ok_or("mounts absent")?;
             for (destination, source) in [
                 ("/candidate/app", s.spec.candidate.clone()),
                 ("/config", s.spec.directory.join("config")),
