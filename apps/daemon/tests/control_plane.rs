@@ -4,6 +4,8 @@
 mod authoring;
 #[path = "control_plane/authoring_cli.rs"]
 mod authoring_cli;
+#[path = "control_plane/binary.rs"]
+mod binary;
 #[path = "control_plane/control_workflows.rs"]
 mod control_workflows;
 #[path = "control_plane/direct.rs"]
@@ -12,6 +14,8 @@ mod direct;
 mod direct_preparation;
 #[path = "control_plane/durability.rs"]
 mod durability;
+#[path = "control_plane/independent_client.rs"]
+mod independent_client;
 #[path = "control_plane/inputs.rs"]
 mod inputs;
 #[path = "control_plane/inputs_cli.rs"]

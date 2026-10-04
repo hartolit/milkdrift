@@ -81,7 +81,9 @@ The [architecture](../../docs/architecture.md) owns the full responsibility map.
 accounted lifecycle before recovery; ordinary startup remains disabled by default. The non-default
 `controller-qualification` feature also permits the isolated development configuration.
 The `control_plane`, `configuration_cli`, and `two_daemon_peer` tests check public request,
-configuration, recovery, authority, and peer behavior. The
+configuration, recovery, authority, and peer behavior. The focused `control_plane` filter
+`independent_client::` launches the actual binary and drives workflow authoring, input upload,
+start, restart/replay, result download and copy through JSON requests. The
 [verification policy](../../docs/development/workflow.md#choose-verification-for-the-change)
 selects the required checks for a change.
 

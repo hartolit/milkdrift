@@ -12,6 +12,13 @@ different version; upgrade both components together. Construction does not conta
 The server maps that credential to an actor and grant; possessing it does not authorize every
 operation. The [daemon guide](../../docs/operations/daemon.md) explains the matching configuration.
 
+Other languages use the same [public HTTP operations](../../docs/reference/control-api.md).
+The maintained [independent JSON client test](../../apps/daemon/tests/control_plane/independent_client.rs)
+shows authoring, supplied-input execution, exact recovery, result download and independent copy
+against a real daemon process. It uses public responses for workflow identities and decisions,
+with no CLI, runtime construction or database access. Browser authentication and CORS remain
+separate frontend work.
+
 ## Choose the operation
 
 | Need | Client operation and consequence |
