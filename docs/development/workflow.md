@@ -159,6 +159,13 @@ filters discover the intended cases, and finish each owned boundary with its cal
 Do not defer known in-scope defects to the final prompt. Each early handoff records the tested
 commit, checks, limits and remaining integrated checks; it is not full-system acceptance.
 
+The client-ready sprint's explicitly assigned 05a/05b pair separates enabling static enforcement
+from repairing existing violations. 05a must validate its checkers before activating hard errors
+and may hand off a reproducible red policy report to 05b. It may not hand off broken checkers or
+unexplained compilation failures as success. Both phases may run full static analysis; the full
+runtime gate and combined operator journey remain in 06. Outside that finite pair, this is not
+permission to defer defects or cap lint severity in a required check.
+
 The named final prompt runs the full gate and required operator/evidence scenarios on the
 integrated code and fixes failures. Use focused reruns while fixing defects, then verify the
 final executable state with the full gate and combined journey. Required missing access or

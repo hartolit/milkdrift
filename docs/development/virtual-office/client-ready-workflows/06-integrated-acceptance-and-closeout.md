@@ -1,6 +1,6 @@
 # 06 — Test the full system and fix problems
 
-After 05 is ready, follow [the shared rules](README.md),
+After 05b has cleared the strict checks and its handoff is accepted, follow [the shared rules](README.md),
 [implementation practice](../../practices/implementation.md),
 [documentation practice](../../practices/documentation.md), and
 [office closeout](../README.md).

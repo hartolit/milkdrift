@@ -12,8 +12,8 @@ host, container, publication, or learning systems from the previous sprint.
 The source reference is `a04b55c0e0a3b56a1074da8861ab1d581e16a05c`; 00 inspected the newer checkout
 `d8873cfe32700522347ea4d01858e4a5ddfa9749`. Never reset to the reference. Phases 00–05 are
 complete; [05's handoff](handoffs/05.md) records the tested client boundary. The prepared
-[linting insertion](linting-insertion.md) makes 05a next, then 05b before 06; 05a owns updating
-the phase table and 06 prerequisite when it begins.
+[linting insertion](linting-insertion.md) is integrated below: 05a enables the checks, 05b clears
+their findings, and only then does 06 accept the combined product.
 These temporary prompts now live in the virtual office, as their relative
 links and the repository's coordination rules require.
 
@@ -40,6 +40,8 @@ operation may require CLI-private helpers or make Svelte reproduce Rust-only rul
 | [03 — Read results and fix future steps](03-inspection-and-prospective-repair.md) | Explain failures, retrieve results, and safely change work that has not happened yet. |
 | [04 — Save and reuse workflows](04-reusable-methods.md) | Reuse/copy workflows and simplify existing publication and evaluation commands. |
 | [05 — Keep the interface thin](05-client-boundary-and-contraction.md) | Remove duplicated rules and test another client without the CLI. |
+| [05a — Enable stricter checks](05a-enable-strict-checks.md) | Implement and test strict static enforcement; record existing violations for 05b. |
+| [05b — Fix strict-check findings](05b-fix-strict-check-findings.md) | Correct the implementations and finish with a passing static gate. |
 | [06 — Test the full system and fix problems](06-integrated-acceptance-and-closeout.md) | Test the combined result, fix failures, and finish the sprint. |
 
 Each phase finishes its implementation and focused checks. Its handoff is not a claim that the
@@ -178,6 +180,7 @@ An authorized attached model remains valid; do not require containerized inferen
 | --- | --- |
 | 00 | Changed documents, links, examples where applicable, and whitespace. |
 | 01–05 | Compile affected packages and callers. Run focused behavior, failure, and affected example tests using controlled services. |
+| 05a–05b | Focused checker/regression tests and the full selected static matrix. 05a may hand off confirmed policy violations to 05b; broken checkers and unexplained compiler failures are not an accepted handoff. No combined runtime journey. |
 | 06 | Complete operator journey, full workspace gate, required local-model checks, and fixes. |
 
 Write and run a regression with its fix. A small daemon/CLI test for one changed operation belongs
