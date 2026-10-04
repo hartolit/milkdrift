@@ -629,6 +629,8 @@ mod fixtures;
 mod lifecycle;
 #[path = "structured_runtime/reconciliation.rs"]
 mod reconciliation;
+#[path = "structured_runtime/report_contention.rs"]
+mod report_contention;
 #[path = "structured_runtime/retry_recovery.rs"]
 mod retry_recovery;
 #[path = "structured_runtime/structured_graph.rs"]

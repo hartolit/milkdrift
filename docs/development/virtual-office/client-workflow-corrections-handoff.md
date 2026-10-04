@@ -52,7 +52,31 @@ startup output. Initial configuration now requests port zero and saves the actua
 reopen. The earlier campaign startup failure has no retained logs, so its historical cause cannot
 be proved. Focused startup/CLI/JSON cleanup and recovery checks precede this fixture checkpoint.
 
-Next: commit the fixture fix, run the corrected one-CPU comparison once per case, then repeat
-the final static gate and run workspace tests/discovery plus fresh binary scenarios.
-Historical live/native evidence remains historical unless an affected owner requires a new
-finite qualification.
+Fixture fix is committed at `479f255`. The corrected one-CPU runs pass at 8.93/13.88 seconds.
+At that source the strict gate passes 33 checks, probes record 13 passes/3 expected refusals,
+and the ordinary full workspace passes 1,117 tests (24 doctests, 30 repository contracts),
+with eight ignored cases. Discovery, headless, model and controller scenarios pass. A second
+controller run on preserved application binaries fails; that failure supersedes local acceptance.
+All results remain under `settled-*` and `accepted-*`, including exact binary checksums.
+
+The controller failure is retained in `accepted-controller/`. Read-only stopped-store inspection
+(`controller-stopped-*`) and authenticated recovery on a private stopped copy
+(`controller-inspection/`) identify an uncertain process report: another branch held an artifact
+publication, causing `OwnerBusy`. Report ingestion treated that temporary commit conflict as a
+lost effect, so its parent correctly waited. Inspection is stopped and joined. The original store
+is preserved; raw stores and logs are private and are not CI uploads.
+
+Runtime now retries publication-owner and workspace-usage conflicts within the existing sixteen
+commit attempts, rebuilding the same report without re-entering its adapter. Final-entry retries
+use the same classification and fresh time/authority checks. Production redb fault injection
+proves one entry/terminal/reopen across temporary conflicts, finite exhaustion and refusal of
+unrelated storage failures. The regression fails with the prior conflict classification and passes
+with the correction (`report-contention-old.log`, `report-contention-fixed.log`). This is fault
+injection at the real precommit boundary, not another reproduction of the original hosted stalls.
+
+Focused verification passes: runtime all-target/all-feature Clippy, 206 runtime tests (one existing
+ignored case), fresh applications, and the complete controller qualification. Its competing
+admissions record two entries and one denial, followed by successful crash/reopen checks.
+Next: commit this report-contention fix, then repeat the full gate and preserve freshly built
+application binaries for all three scenarios.
+Historical live/native evidence remains historical. No corrected hosted run exists; no push made.

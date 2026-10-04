@@ -532,10 +532,12 @@ impl RuntimeService {
             )?;
             match self.handle_internal_command_preserving_rejection(&document) {
                 Ok(outcome) => return Ok(outcome),
-                Err(RuntimeError::Persistence(
-                    PersistenceError::SequenceConflict { .. }
-                    | PersistenceError::ControllerAccountRevisionConflict { .. },
-                )) => {}
+                Err(error) if retryable_commit_conflict(&error) => {
+                    // Another branch can publish an artifact between this report's reads
+                    // and commit. Rebuild the same observation against current accounting;
+                    // never re-enter the executor merely because its report was busy.
+                    std::thread::yield_now();
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -618,6 +620,21 @@ impl RuntimeService {
         )?;
         Ok(())
     }
+}
+
+fn retryable_commit_conflict(error: &RuntimeError) -> bool {
+    matches!(
+        error,
+        RuntimeError::Persistence(
+            PersistenceError::SequenceConflict { .. }
+                | PersistenceError::ControllerAccountRevisionConflict { .. }
+                | PersistenceError::WorkspaceUsageConflict { .. }
+                | PersistenceError::Storage {
+                    class: milkdrift_persistence::StorageFailureClass::OwnerBusy,
+                    ..
+                }
+        )
+    )
 }
 
 #[cfg(test)]

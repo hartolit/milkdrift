@@ -3,8 +3,8 @@
 use milkdrift_authority::{BoundaryTimeMillis, DecisionId};
 use milkdrift_capability::ErrorClass;
 use milkdrift_persistence::{
-    ControllerAccountAction, ControllerAdmissionOutcome, ControllerReservationId, PersistenceError,
-    RunEventKind, TimestampMillis,
+    ControllerAccountAction, ControllerAdmissionOutcome, ControllerReservationId, RunEventKind,
+    TimestampMillis,
 };
 use tracing::warn;
 
@@ -515,10 +515,9 @@ pub(super) fn retry_final_entry<T>(
         // time observed by a prior transaction attempt.
         let now = clock.now()?;
         match attempt(now) {
-            Err(RuntimeError::Persistence(
-                PersistenceError::SequenceConflict { .. }
-                | PersistenceError::ControllerAccountRevisionConflict { .. },
-            )) => {}
+            Err(error) if super::retryable_commit_conflict(&error) => {
+                std::thread::yield_now();
+            }
             result => return result,
         }
     }

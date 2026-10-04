@@ -47,6 +47,11 @@ start command -> receipt + events -> eligible work
 
 `ExecutionReporter` accepts sequenced observations incrementally. Runtime validates and commits
 each one before acknowledging it; adapters cannot write projections or journal events directly.
+If another branch changes the run/account revision or holds an artifact publication, report
+ingestion rebuilds the same observation against current state within sixteen commit attempts.
+It does not repeat adapter entry. Exhausted contention and other storage failures still propagate;
+without a durable terminal observation the effect remains uncertain. Final entry uses the same
+bounded conflict handling and rechecks time and authority on each attempt.
 A durable terminal report takes precedence over a later worker error. An adapter returning
 without terminal evidence leaves an uncertain outcome even if some progress or output was saved.
 
