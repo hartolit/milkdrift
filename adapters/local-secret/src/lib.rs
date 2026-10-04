@@ -47,6 +47,10 @@ pub struct LocalSecretSource(SourceKind);
 
 impl LocalSecretSource {
     /// Creates an exact environment-variable source without reading its value.
+    ///
+    /// # Errors
+    /// Rejects empty names, names above 128 bytes, and characters other than ASCII letters,
+    /// digits, or underscores. Source availability is checked only when resolving the value.
     pub fn environment(variable: impl Into<String>) -> Result<Self, LocalSecretConfigError> {
         let variable = variable.into();
         if !valid_environment_name(&variable) {
@@ -56,6 +60,10 @@ impl LocalSecretSource {
     }
 
     /// Creates an absolute restricted-file source without reading its value.
+    ///
+    /// # Errors
+    /// Rejects relative paths. Existence, file permissions, and content bounds are checked
+    /// when resolving the value, without disclosing the source in error messages.
     pub fn file(path: impl Into<PathBuf>) -> Result<Self, LocalSecretConfigError> {
         let path = path.into();
         if !path.is_absolute() {
@@ -282,7 +290,7 @@ mod tests {
             .resolve(&reference)?
             .expose(|bytes| assert_eq!(bytes, b"second-token"));
 
-        fs::write(&path, vec![b'x'; MAX_SECRET_FILE_BYTES as usize + 1])?;
+        fs::write(&path, vec![b'x'; usize::try_from(MAX_SECRET_FILE_BYTES)? + 1])?;
         restrict(&path)?;
         assert!(matches!(
             resolver.resolve(&reference),
