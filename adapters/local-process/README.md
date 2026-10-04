@@ -74,7 +74,12 @@ bounded queue and each joined reader's EOF observation so slow progress reportin
 already collected final output. Failure and panic paths disconnect the channel and use the same
 ownership rule, with a forced-termination allowance when monitoring has not started. There is no
 blocking `child.wait()` hidden in `Drop`. If reporting failed, its original error propagates
-without a replacement terminal report.
+with any cleanup failure in the bounded summary, without a replacement terminal report.
+Forced cleanup retains signal, kill, and wait failures when the deadline expires without proof
+of owned termination. Normal terminal cleanup metadata carries that result. During panic
+unwinding, cleanup has no error return path, so the adapter retains its first bounded cleanup
+failure. Health, preparation, final entry, and shutdown then refuse that generation; registering
+a new generation does not resolve the old invocation's uncertain external effects.
 
 A missing stdout/stderr EOF becomes `process_io_incomplete` with `Uncertain` status, even when the
 parent exited successfully or cancellation was requested. The terminal observation separates

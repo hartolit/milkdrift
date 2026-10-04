@@ -27,6 +27,7 @@ use crate::config::ProcessProfile;
 const STREAM_CHANNEL_MESSAGES: usize = 16;
 
 pub(super) struct IoCleanup {
+    pub(super) process: Result<(), String>,
     pub(super) stdin: Result<IoCompletion, String>,
     pub(super) stdout: Result<IoCompletion, String>,
     pub(super) stderr: Result<IoCompletion, String>,
@@ -34,9 +35,11 @@ pub(super) struct IoCleanup {
 
 impl IoCleanup {
     pub(super) fn error(&self) -> Option<&str> {
-        [&self.stdin, &self.stdout, &self.stderr]
-            .into_iter()
-            .find_map(|result| result.as_ref().err().map(String::as_str))
+        self.process.as_ref().err().map(String::as_str).or_else(|| {
+            [&self.stdin, &self.stdout, &self.stderr]
+                .into_iter()
+                .find_map(|result| result.as_ref().err().map(String::as_str))
+        })
     }
 }
 
@@ -52,12 +55,17 @@ pub(super) struct RunningProcess {
     cleanup_deadline: Option<Instant>,
     cleanup_required: bool,
     forced_termination: Duration,
+    cleanup_failure: Arc<Mutex<Option<String>>>,
     #[cfg(test)]
     fail_reader_spawn: Option<Stream>,
 }
 
 impl RunningProcess {
-    pub(super) fn new(child: Child, forced_termination: Duration) -> Self {
+    pub(super) fn new(
+        child: Child,
+        forced_termination: Duration,
+        cleanup_failure: Arc<Mutex<Option<String>>>,
+    ) -> Self {
         Self {
             control: Arc::new(ProcessControl::new(&child)),
             child,
@@ -70,6 +78,7 @@ impl RunningProcess {
             cleanup_deadline: None,
             cleanup_required: true,
             forced_termination,
+            cleanup_failure,
             #[cfg(test)]
             fail_reader_spawn: None,
         }
@@ -193,6 +202,18 @@ impl RunningProcess {
         joined
     }
 
+    pub(super) fn finish_failure(&mut self, error: AdapterError) -> AdapterError {
+        let cleanup = self.cleanup();
+        match cleanup.error() {
+            Some(failure) => AdapterError::external_failure(format!(
+                "cleanup failed: {}; original failure: {}",
+                milkdrift_contracts::truncate_utf8(failure, 220),
+                milkdrift_contracts::truncate_utf8(error.summary(), 220)
+            )),
+            None => error,
+        }
+    }
+
     fn cleanup(&mut self) -> IoCleanup {
         // Failure/drop disconnects the queue; finish_io keeps it for the final drain.
         // Both paths interrupt workers before joining, including a reader retrying
@@ -204,17 +225,20 @@ impl RunningProcess {
         self.io_cancel
             .output
             .store(true, std::sync::atomic::Ordering::Release);
-        if self.cleanup_required {
+        let process = if self.cleanup_required {
             let deadline = *self
                 .cleanup_deadline
                 .get_or_insert_with(|| Instant::now() + self.forced_termination);
-            terminate_child_until(&mut self.child, &self.control, deadline);
             self.cleanup_required = false;
-        }
+            terminate_child_until(&mut self.child, &self.control, deadline)
+        } else {
+            Ok(())
+        };
         let stdin = join_io(self.stdin.take(), "stdin writer");
         let stdout = join_io(self.stdout.take(), "stdout reader");
         let stderr = join_io(self.stderr.take(), "stderr reader");
         IoCleanup {
+            process,
             stdin,
             stdout,
             stderr,
@@ -226,7 +250,17 @@ impl Drop for RunningProcess {
     fn drop(&mut self) {
         // Also covers partial worker startup and unwinding into the host's panic
         // boundary. Registration drops only after cleanup; the host permit outlives us.
-        let _ = self.cleanup();
+        let cleanup = self.cleanup();
+        if let Some(error) = cleanup.error() {
+            // There is no return path during unwinding. Retain one bounded failure
+            // at the adapter generation so health, new entry, and shutdown expose it.
+            let mut failure = self
+                .cleanup_failure
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            failure
+                .get_or_insert_with(|| milkdrift_contracts::truncate_utf8(error, 512).to_owned());
+        }
     }
 }
 

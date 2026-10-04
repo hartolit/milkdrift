@@ -18,6 +18,62 @@ use process_cleanup::{ProbeCleanup, process_alive};
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 const DEADLINE: Duration = Duration::from_secs(5);
 
+#[test]
+fn failed_cleanup_is_returned_or_latched_through_unwinding() -> TestResult {
+    for unwind in [false, true] {
+        let directory = tempfile::tempdir()?;
+        let child = crate::process::spawn::spawn(
+            &std::env::current_exe()?,
+            directory.path(),
+            &[OsString::from("--list")],
+            &[],
+            false,
+        )?;
+        let failure = Arc::new(Mutex::new(None));
+        let mut process = RunningProcess::new(child, Duration::from_millis(100), failure.clone());
+        process.child.wait()?;
+        process.cleanup_required = false;
+        process.stdout = Some(thread::spawn(|| {
+            Err("injected reader cleanup failure".to_owned())
+        }));
+        let active = Arc::new(Mutex::new(BTreeMap::new()));
+        process.register(active.clone(), InvocationId::new("failed-cleanup")?)?;
+        if unwind {
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                let _process = process;
+                std::panic::resume_unwind(Box::new("primary panic"));
+            }));
+            assert_eq!(
+                result
+                    .err()
+                    .and_then(|payload| payload.downcast::<&str>().ok())
+                    .as_deref(),
+                Some(&"primary panic")
+            );
+            assert_eq!(
+                failure
+                    .lock()
+                    .map_err(|_| "cleanup lock poisoned")?
+                    .as_deref(),
+                Some("injected reader cleanup failure")
+            );
+        } else {
+            let error =
+                process.finish_failure(AdapterError::external_failure("original report failure"));
+            assert!(error.summary().contains("original report failure"));
+            assert!(error.summary().contains("injected reader cleanup failure"));
+            drop(process);
+        }
+        assert!(
+            active
+                .lock()
+                .map_err(|_| "active lock poisoned")?
+                .is_empty()
+        );
+    }
+    Ok(())
+}
+
 // The test executable supplies a real pipe-holding child without requiring an
 // independently built helper binary for `cargo test --lib`.
 #[test]
@@ -89,7 +145,11 @@ fn cleanup_workers(worker_count: usize, unwind: bool) -> TestResult {
         true,
     )?;
     let pid = child.id();
-    let mut process = RunningProcess::new(child, Duration::from_millis(100));
+    let mut process = RunningProcess::new(
+        child,
+        Duration::from_millis(100),
+        Arc::new(Mutex::new(None)),
+    );
     std::fs::write(pid_path, pid.to_string())?;
     let active = Arc::new(Mutex::new(BTreeMap::new()));
     let invocation = InvocationId::new("cleanup-workers")?;
@@ -225,7 +285,11 @@ fn deadline_cleanup_preserves_queued_final_bytes_and_eof() -> TestResult {
         &[],
         false,
     )?;
-    let mut process = RunningProcess::new(child, Duration::from_millis(100));
+    let mut process = RunningProcess::new(
+        child,
+        Duration::from_millis(100),
+        Arc::new(Mutex::new(None)),
+    );
     process.start_io(None, 1024 * 1024, 1024 * 1024)?;
     let deadline = Instant::now() + DEADLINE;
     loop {
@@ -290,7 +354,11 @@ fn partial_reader_spawn_failure_closes_pipes_and_releases_registration() -> Test
             true,
         )?;
         let pid = child.id();
-        let mut process = RunningProcess::new(child, Duration::from_millis(100));
+        let mut process = RunningProcess::new(
+            child,
+            Duration::from_millis(100),
+            Arc::new(Mutex::new(None)),
+        );
         let active = Arc::new(Mutex::new(BTreeMap::new()));
         process.register(active.clone(), InvocationId::new("partial-spawn")?)?;
         process.fail_reader_spawn = Some(failed);
@@ -335,8 +403,16 @@ fn duplicate_registration_preserves_the_original_control() -> TestResult {
             false,
         )
     };
-    let mut original = RunningProcess::new(spawn()?, Duration::from_millis(100));
-    let mut duplicate = RunningProcess::new(spawn()?, Duration::from_millis(100));
+    let mut original = RunningProcess::new(
+        spawn()?,
+        Duration::from_millis(100),
+        Arc::new(Mutex::new(None)),
+    );
+    let mut duplicate = RunningProcess::new(
+        spawn()?,
+        Duration::from_millis(100),
+        Arc::new(Mutex::new(None)),
+    );
     let active = Arc::new(Mutex::new(BTreeMap::new()));
     let invocation = InvocationId::new("duplicate-control")?;
     original.register(active.clone(), invocation.clone())?;

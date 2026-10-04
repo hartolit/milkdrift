@@ -50,6 +50,7 @@ impl LocalProcessAdapter {
         invocation: &AdapterInvocation<'_>,
     ) -> Result<PreparedProcess, PreparationFailure> {
         let request = invocation.request();
+        self.check_cleanup()?;
         if !matches!(
             self.lifecycle.load(Ordering::SeqCst),
             value if value == Lifecycle::Started as u8 || value == Lifecycle::Draining as u8

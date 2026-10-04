@@ -67,6 +67,7 @@ pub struct LocalProcessAdapter {
     secrets: Arc<dyn SecretResolver>,
     lifecycle: AtomicU8,
     identity_failure: Mutex<Option<IdentityFailure>>,
+    cleanup_failure: Arc<Mutex<Option<String>>>,
     active: Arc<Mutex<BTreeMap<InvocationId, Arc<ProcessControl>>>>,
 }
 
@@ -190,6 +191,7 @@ impl LocalProcessAdapter {
             secrets,
             lifecycle: AtomicU8::new(Lifecycle::Created as u8),
             identity_failure: Mutex::new(None),
+            cleanup_failure: Arc::new(Mutex::new(None)),
             active: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
@@ -205,6 +207,19 @@ impl LocalProcessAdapter {
             .lock()
             .map(|failure| *failure)
             .map_err(|_error| AdapterError::unavailable("tool_identity_state_unavailable"))
+    }
+
+    fn check_cleanup(&self) -> Result<(), AdapterError> {
+        let failure = self
+            .cleanup_failure
+            .lock()
+            .map_err(|_| AdapterError::unavailable("process cleanup state unavailable"))?;
+        match failure.as_ref() {
+            Some(failure) => Err(AdapterError::external_failure(format!(
+                "process cleanup failed: {failure}"
+            ))),
+            None => Ok(()),
+        }
     }
 
     fn revalidate_identity(&self) -> Result<VerifiedExecutableIdentity, IdentityFailure> {
@@ -254,6 +269,7 @@ impl LocalProcessAdapter {
         prepared: prepared::PreparedProcess,
     ) -> Result<(), AdapterError> {
         let request = invocation.request();
+        self.check_cleanup()?;
         let mut sequence = 1_u64;
         let context = invocation
             .context()
@@ -303,15 +319,8 @@ impl LocalProcessAdapter {
         let mut process = RunningProcess::new(
             child,
             Duration::from_millis(self.profile.limits.forced_termination_ms),
+            self.cleanup_failure.clone(),
         );
-        process.register(self.active.clone(), request.invocation().clone())?;
-        process.start_io(
-            stdin_bytes,
-            self.profile.stdout.max_capture_bytes,
-            self.profile.stderr.max_capture_bytes,
-        )?;
-        drop(environment);
-
         let mut reports = TerminalReportContext::new(
             reporter,
             request.invocation(),
@@ -319,16 +328,28 @@ impl LocalProcessAdapter {
             self.profile.side_effect,
             spawn_started,
         );
-        reports.report(InvocationEventKind::Progress {
-            message: format!(
-                "local process started; pre-entry identity {} verified",
-                pre_entry_identity.identity_digest
-            ),
-            completed_units: None,
-            total_units: None,
-        })?;
-
-        let mut observed = process.monitor(&mut reports, &self.profile, spawn_started)?;
+        let monitored = (|| {
+            process.register(self.active.clone(), request.invocation().clone())?;
+            process.start_io(
+                stdin_bytes,
+                self.profile.stdout.max_capture_bytes,
+                self.profile.stderr.max_capture_bytes,
+            )?;
+            drop(environment);
+            reports.report(InvocationEventKind::Progress {
+                message: format!(
+                    "local process started; pre-entry identity {} verified",
+                    pre_entry_identity.identity_digest
+                ),
+                completed_units: None,
+                total_units: None,
+            })?;
+            process.monitor(&mut reports, &self.profile, spawn_started)
+        })();
+        let mut observed = match monitored {
+            Ok(observed) => observed,
+            Err(error) => return Err(process.finish_failure(error)),
+        };
         let joined = process.finish_io(&mut observed);
         reports.record_cleanup(&observed, &joined)?;
         redact_capture(&mut observed.stdout, &resolved_secrets);
@@ -532,6 +553,7 @@ impl CapabilityAdapter for LocalProcessAdapter {
     }
 
     fn health(&self, observed_at_unix_ms: u64) -> Result<CapabilityObservation, AdapterError> {
+        self.check_cleanup()?;
         let lifecycle = self.lifecycle.load(Ordering::SeqCst);
         let load = self
             .active
@@ -604,7 +626,7 @@ impl CapabilityAdapter for LocalProcessAdapter {
             // concurrent KILL here can leave it sending TERM to an exiting group.
             control.cancel_requested.store(true, Ordering::SeqCst);
         }
-        Ok(())
+        self.check_cleanup()
     }
 }
 

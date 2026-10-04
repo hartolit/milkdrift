@@ -101,6 +101,7 @@ impl<'a> TerminalReportContext<'a> {
             "parent_exit_code": observed.status.and_then(|status| status.code()),
             "owned_group_absent": if cfg!(unix) { Some(observed.termination_confirmed) } else { None },
             "local_io_joined": true,
+            "forced_cleanup": joined.process,
             "stdin": joined.stdin,
             "stdout": { "eof": observed.stdout_closed, "capture_limit_exceeded": observed.stdout_overflow, "captured_bytes": observed.stdout.len(), "worker": joined.stdout },
             "stderr": { "eof": observed.stderr_closed, "capture_limit_exceeded": observed.stderr_overflow, "captured_bytes": observed.stderr.len(), "worker": joined.stderr },

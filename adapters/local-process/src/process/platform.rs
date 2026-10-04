@@ -113,15 +113,36 @@ pub(super) fn terminate_child_until(
     child: &mut Child,
     control: &ProcessControl,
     deadline: Instant,
-) {
-    let _ = control.request_force();
-    let _ = child.kill();
+) -> Result<(), String> {
+    // Attempt both routes even when one fails. Preserve their errors unless later
+    // observation proves the immediate child and its owned group have stopped.
+    let force = control.request_force();
+    let kill = child.kill();
     loop {
-        if child.try_wait().ok().flatten().is_some() && control.owned_descendants_absent() {
-            return;
+        let wait = child.try_wait();
+        if matches!(&wait, Ok(Some(_))) && control.owned_descendants_absent() {
+            return Ok(());
         }
         if Instant::now() >= deadline {
-            return;
+            return Err(format!(
+                "owned process termination unconfirmed at cleanup deadline; group signal: {}; child kill: {}; wait: {}",
+                force
+                    .as_ref()
+                    .map_or_else(Clone::clone, |()| "requested".to_owned()),
+                kill.as_ref().map_or_else(
+                    |error| format!("{:?}", error.kind()),
+                    |()| "requested".to_owned()
+                ),
+                wait.map_or_else(
+                    |error| format!("{:?}", error.kind()),
+                    |status| if status.is_some() {
+                        "parent exited"
+                    } else {
+                        "parent running"
+                    }
+                    .to_owned()
+                ),
+            ));
         }
         thread::sleep(Duration::from_millis(5));
     }
