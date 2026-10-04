@@ -8,6 +8,8 @@ mod authoring_cli;
 mod binary;
 #[path = "control_plane/control_workflows.rs"]
 mod control_workflows;
+#[path = "control_plane/diagnostics.rs"]
+mod diagnostics;
 #[path = "control_plane/direct.rs"]
 mod direct;
 #[path = "control_plane/direct_preparation.rs"]

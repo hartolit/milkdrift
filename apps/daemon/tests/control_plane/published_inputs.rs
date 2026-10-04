@@ -16,6 +16,7 @@ use serde_json::json;
 async fn published_brief_uses_uploaded_text_and_declared_result() -> TestResult {
     let directory = TempDir::new()?;
     let model = ModelFixture::start().await?;
+    model.checked(async |model| {
     let mut config = super::authoring::model_configuration_document(&directory, model.address)?;
     // Controlled accounts require explicit billing and token bounds, even for this loopback fixture.
     let profile_path = &config
@@ -53,6 +54,7 @@ async fn published_brief_uses_uploaded_text_and_declared_result() -> TestResult 
         milkdrift_authority::GrantId::new("grant:integration-controller")?,
     );
     let daemon = start(config.validate(directory.path())?, CONTROLLER_TOKEN).await?;
+    daemon.checked(model, async |daemon| {
     let source = workflow_with_draft(&daemon.client, "repair.draft").await?;
     let read = daemon.client.revision(&source).await?;
     let (_, base) = BlueprintRevisionDocument::from_json(&serde_json::to_vec(&read.document)?)?;
@@ -141,7 +143,7 @@ async fn published_brief_uses_uploaded_text_and_declared_result() -> TestResult 
         "Harbor Host 1.4 release brief",
     )?;
     cli_ok(
-        &daemon,
+        daemon,
         &directory,
         "prepare-brief",
         &[
@@ -215,52 +217,22 @@ async fn published_brief_uses_uploaded_text_and_declared_result() -> TestResult 
     else {
         return Err("call refused".into());
     };
+    let mut snapshot = super::diagnostics::FailureSnapshot::new(Duration::from_secs(60));
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
-        let page = daemon
-            .client
-            .invocation_observations(&execution, 0, 64)
-            .await?;
+        let page = match tokio::time::timeout_at(deadline, daemon.client.invocation_observations(&execution, 0, 64)).await {
+            Ok(Ok(page)) => page,
+            _ => return Err(snapshot.capture(&daemon.client, None, Some("release-notes"), Some(&execution), model.request_count(), "published observation failed or timed out").await.into()),
+        };
+        snapshot.invocation(&page);
         if let Some(terminal) = page
             .observations
             .iter()
             .find_map(|event| event.event.kind().terminal())
         {
             if terminal.status() != milkdrift_capability::TerminalStatus::Success {
-                let runs = daemon
-                    .client
-                    .runs(
-                        None,
-                        Some("release-notes"),
-                        &PageRequest {
-                            limit: 8,
-                            cursor: None,
-                        },
-                    )
-                    .await?;
-                for run in runs.items {
-                    let state = daemon.client.run(&run.run_id).await?;
-                    for node in state.nodes {
-                        if let Some(attempt) = node.latest_attempt_id {
-                            #[expect(
-                                clippy::print_stderr,
-                                reason = "A failed publication includes the authorized attempt view in captured test diagnostics."
-                            )]
-                            {
-                                eprintln!(
-                                    "internal attempt: {:?}",
-                                    daemon.client.attempt(&run.run_id, &attempt).await?
-                                );
-                            }
-                        }
-                    }
-                }
+                return Err(snapshot.capture(&daemon.client, None, Some("release-notes"), Some(&execution), model.request_count(), "published invocation failed").await.into());
             }
-            assert_eq!(
-                terminal.status(),
-                milkdrift_capability::TerminalStatus::Success,
-                "{terminal:?}"
-            );
             assert_eq!(terminal.outputs().len(), 1);
             let output = daemon
                 .client
@@ -279,10 +251,12 @@ async fn published_brief_uses_uploaded_text_and_declared_result() -> TestResult 
             break;
         }
         if tokio::time::Instant::now() > deadline {
-            return Err(format!("published model stalled: {page:?}").into());
+            return Err(snapshot.capture(&daemon.client, None, Some("release-notes"), Some(&execution), model.request_count(), "published model stalled").await.into());
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(model.requests.lock().map_err(|_| "fixture lock")?.len(), 2);
-    daemon.stop().await
+    Ok(())
+    }).await
+    }).await
 }

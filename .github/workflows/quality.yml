@@ -57,7 +57,8 @@ jobs:
           else
             cargo strict-checks --all-tracked --output target/strict-gate
           fi
-      - run: cargo test --workspace --all-features --no-fail-fast
+      - id: workspace-tests
+        run: cargo test --workspace --all-features --no-fail-fast
       - run: cargo test --workspace --all-features -- --list
       - name: Build real headless applications
         id: applications
@@ -79,5 +80,13 @@ jobs:
           path: |
             target/strict-tools-proof
             target/strict-gate
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retain selected control-plane failure diagnostics
+        if: ${{ !cancelled() && steps.workspace-tests.outcome == 'failure' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: control-plane-failures-${{ runner.os }}
+          path: target/control-plane-failures/failure-*.json
           if-no-files-found: error
           retention-days: 14

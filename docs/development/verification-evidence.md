@@ -9,6 +9,19 @@ The [evidence package guide](../../tools/evidence/README.md) compares the tools 
 
 ## Independent workflow client
 
+Control-plane failure collection uses the same public read authority as the failing test. It
+retains only selected identities, states, sequences, counts and timings under
+`target/control-plane-failures/failure-*.json`. Each collection gets three seconds after the
+normal deadline, at most sixteen reads of 250 ms each, eight runs/nodes per page and a 64 KiB
+retained document. The control client's existing streaming document bound applies before decoding
+each response; absent/refused reads and truncation remain explicit. Prompts, response bodies,
+credentials, raw child logs and stores are not uploaded. In-process child logs are unavailable.
+CI uploads only these selected JSON bundles after a failed workspace test step, with fourteen-day
+retention and an error for missing files. Forced timeout/terminal/stalled-read cases test that
+collection and cleanup cannot turn the primary failure into success. The published-input and
+copy fixtures catch assertion unwinding, join daemon shutdown and join the stopped model listener.
+
+
 The daemon's maintained [JSON client test](../../apps/daemon/tests/control_plane/independent_client.rs)
 launches the real binary and uses ordinary HTTP payloads to author/save a two-step model workflow,
 upload its brief, start, retrieve the result, restart/replay and copy the definition. All semantic

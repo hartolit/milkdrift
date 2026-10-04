@@ -264,7 +264,13 @@ values; repository contracts check the version cells against source.
 
 ## Current validation/evidence snapshot
 
-The full software gate passes at `9ceac87` with Rust 1.95.0 on Linux x86-64:
+Current integrated acceptance is open: hosted [quality run 213](https://github.com/hartolit/milkdrift/actions/runs/37224200192)
+at `15157c0` passed static checks but failed the published-input and independent-copy integration
+cases while waiting for completion. Later actual-binary scenarios were skipped. The active
+[correction](../development/virtual-office/06-client-workflow-corrections.md) owns diagnosis,
+failure evidence, named-workflow copy authority and fresh combined verification.
+
+The earlier local full software gate passed at `9ceac87` with Rust 1.95.0 on Linux x86-64:
 1,107 tests, including 24 doctests and 30 repository contracts, with eight opt-in tests ignored
 by the ordinary command. Test discovery also passes. All 33 entries in the
 [strict static gate](../development/workflow.md#strict-static-gate) pass, including default product

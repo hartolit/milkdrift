@@ -120,13 +120,69 @@ pub(super) fn cli_ok(
 }
 
 impl RunningDaemon {
+    pub(super) async fn checked(
+        self,
+        model: &super::inputs::ModelFixture,
+        work: impl AsyncFnOnce(&Self) -> TestResult,
+    ) -> TestResult {
+        use futures_util::FutureExt as _;
+        let snapshot = super::diagnostics::FailureSnapshot::new(Duration::ZERO);
+        let result = std::panic::AssertUnwindSafe(work(&self))
+            .catch_unwind()
+            .await;
+        let diagnostic = if !matches!(&result, Ok(Ok(()))) {
+            Some(
+                snapshot
+                    .capture(
+                        &self.client,
+                        None,
+                        None,
+                        None,
+                        model.request_count(),
+                        "workflow test failed or panicked",
+                    )
+                    .await,
+            )
+        } else {
+            None
+        };
+        let cleanup = self.stop().await;
+        match result {
+            Ok(Ok(())) => cleanup,
+            Ok(Err(error)) => Err(format!(
+                "{error}; {}; daemon cleanup: {cleanup:?}",
+                diagnostic.as_deref().unwrap_or("diagnostics unavailable")
+            )
+            .into()),
+            Err(panic) => {
+                #[expect(
+                    clippy::print_stderr,
+                    reason = "Retain diagnostic location and cleanup outcome before resuming the original assertion panic."
+                )]
+                {
+                    eprintln!(
+                        "{}; daemon cleanup: {cleanup:?}",
+                        diagnostic.as_deref().unwrap_or("diagnostics unavailable")
+                    );
+                }
+                std::panic::resume_unwind(panic)
+            }
+        }
+    }
+
     pub(super) async fn stop(self) -> TestResult {
         let Self { stop, task, .. } = self;
         let signal = stop.send(());
         // Allow the longest configured ten-second shutdown to settle its durable result.
-        tokio::time::timeout(Duration::from_secs(15), task)
-            .await
-            .map_err(|_| "timed out waiting for the daemon to shut down")???;
+        let mut task = task;
+        match tokio::time::timeout(Duration::from_secs(15), &mut task).await {
+            Ok(result) => result??,
+            Err(_) => {
+                task.abort();
+                let joined = task.await;
+                return Err(format!("daemon shutdown deadline; task joined: {joined:?}").into());
+            }
+        }
         signal.map_err(|()| "daemon shutdown receiver disappeared")?;
         Ok(())
     }
@@ -137,6 +193,7 @@ pub(super) async fn start(config: DaemonPlan, token: &str) -> TestResult<Running
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let address = listener.local_addr()?;
     let endpoint = Url::parse(&format!("http://{address}/"))?;
+    let client = client(&endpoint, token)?;
     let (stop, stopped) = oneshot::channel();
     let task = tokio::spawn(serve(listener, host, async move {
         // Sender loss also requests shutdown when a test exits early.
@@ -144,7 +201,13 @@ pub(super) async fn start(config: DaemonPlan, token: &str) -> TestResult<Running
             tracing::debug!("fixture caller exited; shutting down daemon");
         }
     }));
-    let client = client(&endpoint, token)?;
+    let daemon = RunningDaemon {
+        endpoint,
+        client,
+        stop,
+        task,
+    };
+    let client = &daemon.client;
     let mut health = client.readiness().await;
     for _ in 0..20 {
         if !matches!(&health, Err(ClientError::Api(error)) if error.code == ErrorCode::Overload) {
@@ -153,14 +216,13 @@ pub(super) async fn start(config: DaemonPlan, token: &str) -> TestResult<Running
         tokio::time::sleep(Duration::from_millis(10)).await;
         health = client.readiness().await;
     }
-    let health = health?;
-    assert!(health.ready);
-    Ok(RunningDaemon {
-        endpoint,
-        client,
-        stop,
-        task,
-    })
+    match health {
+        Ok(health) if health.ready => Ok(daemon),
+        result => {
+            let cleanup = daemon.stop().await;
+            Err(format!("daemon did not become ready: {result:?}; cleanup: {cleanup:?}").into())
+        }
+    }
 }
 
 pub(super) fn client(endpoint: &Url, token: &str) -> Result<ControlClient, ClientError> {
@@ -661,60 +723,52 @@ pub(super) async fn wait_for_run<F>(
 where
     F: Fn(&milkdrift_control_protocol::RunRead) -> bool,
 {
-    let mut last = None;
+    let mut snapshot = super::diagnostics::FailureSnapshot::new(timeout);
     let deadline = tokio::time::Instant::now() + timeout;
     while tokio::time::Instant::now() < deadline {
         let state = match tokio::time::timeout_at(deadline, client.run(run)).await {
-            Ok(state) => state?,
+            Ok(Ok(state)) => state,
+            Ok(Err(error)) => {
+                return Err(format!(
+                    "{error}; {}",
+                    snapshot
+                        .capture(client, Some(run), None, None, None, "run read failed")
+                        .await
+                )
+                .into());
+            }
             Err(_) => break,
         };
+        snapshot.run(&state);
         if predicate(&state) {
             return Ok(state);
         }
         if state.terminal.is_some() {
-            let timeline = client
-                .timeline(
-                    run,
-                    &PageRequest {
-                        cursor: None,
-                        limit: 1_000,
-                    },
+            return Err(snapshot
+                .capture(
+                    client,
+                    Some(run),
+                    None,
+                    None,
+                    None,
+                    "unexpected workflow terminal",
                 )
-                .await?;
-            let mut failed_attempts = Vec::new();
-            for item in &timeline.items {
-                if item
-                    .detail
-                    .get("outcome")
-                    .and_then(serde_json::Value::as_str)
-                    == Some("failed")
-                    && let Some(attempt) = &item.attempt_id
-                {
-                    failed_attempts.push(client.attempt(run, attempt).await?);
-                }
-            }
-            return Err(format!(
-                "unexpected workflow terminal {:?}; failed attempts={}; recent evidence={}",
-                state.terminal,
-                serde_json::to_string(&failed_attempts)?,
-                serde_json::to_string(
-                    &timeline
-                        .items
-                        .iter()
-                        .filter(|item| item.detail.get("outcome").is_some())
-                        .collect::<Vec<_>>()
-                )?
-            )
-            .into());
+                .await
+                .into());
         }
-        last = Some(state);
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    Err(format!(
-        "run did not reach the expected bounded state; last={}",
-        serde_json::to_string(&last)?
-    )
-    .into())
+    Err(snapshot
+        .capture(
+            client,
+            Some(run),
+            None,
+            None,
+            None,
+            "run did not reach the expected bounded state",
+        )
+        .await
+        .into())
 }
 
 pub(super) async fn attempt_id_for_node(

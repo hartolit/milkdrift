@@ -9,9 +9,10 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-No active sprints. The [roadmap](../../product/roadmap.md) owns unfinished work; the
-[whiteboard](whiteboard/README.md) retains broader questions. Completing a sprint does not
-start another assignment automatically.
+The active [client workflow correction](06-client-workflow-corrections.md) addresses hosted
+progress failures, bounded failure evidence and named-workflow copy authority. One owner runs
+Cargo jobs and maintains the [working handoff](client-workflow-corrections-handoff.md).
+The [roadmap](../../product/roadmap.md) owns unfinished work; unrelated whiteboard topics remain separate.
 
 ## Prepared assignments
 

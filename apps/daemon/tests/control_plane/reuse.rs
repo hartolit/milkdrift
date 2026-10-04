@@ -10,6 +10,7 @@ use milkdrift_control_protocol::BlueprintDraft;
 async fn independent_copy_is_editable_and_retains_source_without_run_state() -> TestResult {
     let directory = TempDir::new()?;
     let model = ModelFixture::start().await?;
+    model.checked(async |model| {
     // Two accepted runs may enter the controlled endpoint concurrently.
     let mut config =
         super::authoring::model_configuration_with_capacity(&directory, model.address, 2)?;
@@ -20,6 +21,8 @@ async fn independent_copy_is_editable_and_retains_source_without_run_state() -> 
         .preset = AuthorityPresetConfig::Invoker;
     let plan = config.validate(directory.path())?;
     let daemon = start(plan.clone(), CONTROLLER_TOKEN).await?;
+    let mut retained = None;
+    daemon.checked(model, async |daemon| {
     let source = workflow(&daemon.client).await?;
     let original = daemon.client.revision(&source).await?;
     assert_eq!(original.inputs.first().ok_or("input absent")?.name, "brief");
@@ -28,7 +31,7 @@ async fn independent_copy_is_editable_and_retains_source_without_run_state() -> 
         "notes"
     );
     let listing = cli_ok(
-        &daemon,
+        daemon,
         &directory,
         "find",
         &["workflow", "list", "--workflow", "release-notes"],
@@ -43,7 +46,7 @@ async fn independent_copy_is_editable_and_retains_source_without_run_state() -> 
                 .and_then(serde_json::Value::as_str)
                 == Some(source.as_str())))
     );
-    let shown = cli_ok(&daemon, &directory, "show", &["workflow", "show", &source])?;
+    let shown = cli_ok(daemon, &directory, "show", &["workflow", "show", &source])?;
     assert_eq!(
         shown
             .pointer("/inputs/0/name")
@@ -79,7 +82,7 @@ async fn independent_copy_is_editable_and_retains_source_without_run_state() -> 
         matches!(daemon.client.submit(&copy).await, Err(ClientError::Api(error)) if error.code == ErrorCode::Conflict)
     );
     let copied = cli_ok(
-        &daemon,
+        daemon,
         &directory,
         "copy-independent",
         &[
@@ -141,7 +144,7 @@ async fn independent_copy_is_editable_and_retains_source_without_run_state() -> 
         "Review the draft with a new future instruction.",
     )?;
     cli_ok(
-        &daemon,
+        daemon,
         &directory,
         "edit-copy",
         &[
@@ -154,7 +157,7 @@ async fn independent_copy_is_editable_and_retains_source_without_run_state() -> 
         ],
     )?;
     let saved = cli_ok(
-        &daemon,
+        daemon,
         &directory,
         "save-copy",
         &["workflow", "save", "copy.json"],
@@ -228,13 +231,19 @@ async fn independent_copy_is_editable_and_retains_source_without_run_state() -> 
     assert!(
         matches!(daemon.client.submit(&copy).await, Err(ClientError::Api(error)) if error.message.contains("governing agreement"))
     );
-    daemon.stop().await?;
+    retained = Some((source, original, copied_id.to_owned()));
+    Ok(())
+    }).await?;
+    let (source, original, copied_id) = retained.ok_or("successful copy absent")?;
     let daemon = start(plan, CONTROLLER_TOKEN).await?;
+    daemon.checked(model, async |daemon| {
     assert_eq!(daemon.client.revision(&source).await?, original);
     assert_eq!(
         daemon.client.run("copy-run").await?.revision_id.as_deref(),
-        Some(copied_id)
+        Some(copied_id.as_str())
     );
     assert_eq!(model.requests.lock().map_err(|_| "fixture lock")?.len(), 4);
-    daemon.stop().await
+    Ok(())
+    }).await
+    }).await
 }

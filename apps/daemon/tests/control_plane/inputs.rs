@@ -107,6 +107,33 @@ pub(super) struct ModelFixture {
 }
 
 impl ModelFixture {
+    pub(super) fn request_count(&self) -> Option<usize> {
+        self.requests.try_lock().ok().map(|requests| requests.len())
+    }
+
+    pub(super) async fn checked(self, work: impl AsyncFnOnce(&Self) -> TestResult) -> TestResult {
+        use futures_util::FutureExt as _;
+        let result = std::panic::AssertUnwindSafe(work(&self))
+            .catch_unwind()
+            .await;
+        self.task.abort();
+        let mut fixture = self;
+        let cleanup = (&mut fixture.task).await;
+        match result {
+            Ok(result) => {
+                if let Err(error) = result {
+                    return Err(format!("{error}; model cleanup: {cleanup:?}").into());
+                }
+                match cleanup {
+                    Ok(result) => result.map_err(Into::into),
+                    Err(error) if error.is_cancelled() => Ok(()),
+                    Err(error) => Err(error.into()),
+                }
+            }
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+
     pub(super) async fn start() -> TestResult<Self> {
         let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let app = axum::Router::new().route("/v1/chat/completions", axum::routing::post(

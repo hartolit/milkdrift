@@ -2,7 +2,12 @@
 
 Ordered unfinished work; [status](status.md) owns implementation and evidence facts.
 
-The ordinary CLI workflow route is complete through shared public daemon operations: setup,
+The active [client workflow correction](../development/virtual-office/06-client-workflow-corrections.md)
+must explain and correct the two hosted integration stalls, retain safe bounded failure evidence,
+and permit copies under an explicit selection of named workflows. Final combined verification
+remains open. This assignment preserves the shared daemon path and excludes GUI implementation.
+
+The ordinary CLI workflow route is implemented through shared public daemon operations: setup,
 authoring, supplied inputs, exact request recovery, result inspection, supported prospective repair,
 reuse/copy, publication preparation, evaluation and the independent client boundary. Its
 [acceptance and limits](status.md#current-validationevidence-snapshot) are recorded with the
