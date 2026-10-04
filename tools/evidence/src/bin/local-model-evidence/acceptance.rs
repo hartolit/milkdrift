@@ -9,6 +9,35 @@ use milkdrift_control::{
     result_acceptance_task,
 };
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use milkdrift_evidence::application::application_binary;
+
+    #[test]
+    fn rejected_model_repair_replays_authorized_releases_through_actual_cli() -> EvidenceResult {
+        let directory = tempfile::tempdir()?;
+        let arguments = super::super::Arguments {
+            daemon: application_binary("milkdrift-daemon")?,
+            cli: application_binary("milkdrift")?,
+            process_helper: application_binary("evidence-process-helper")?,
+            mode: super::super::Mode::Deterministic,
+            model_profile: None,
+            model_capability: super::super::SUCCESS_CAPABILITY.to_owned(),
+            timeout_secs: 180,
+            max_output_units: 64,
+            secret_sources: Vec::new(),
+            output: directory.path().to_owned(),
+        };
+        let report = scenario(&arguments, directory.path())?;
+        assert_eq!(
+            report.get("exact_release_replay"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        Ok(())
+    }
+}
+
 pub(super) fn scenario(
     arguments: &super::Arguments,
     output: &std::path::Path,
@@ -308,8 +337,8 @@ pub(super) fn scenario(
         ensure(
             first.pointer("/value").ok_or("missing /value")?
                 == replay.pointer("/value").ok_or("missing /value")?
-                && first.pointer("/ok").ok_or("missing /ok")?
-                    == replay.pointer("/ok").ok_or("missing /ok")?,
+                && first.get("status").and_then(serde_json::Value::as_str) == Some("success")
+                && replay.get("status").and_then(serde_json::Value::as_str) == Some("success"),
             "exact authorized release replay changed its durable result",
         )?;
     }
