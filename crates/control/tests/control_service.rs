@@ -221,12 +221,12 @@ impl CapabilityAdapter for CountingProcessAdapter {
         if self.1.load(Ordering::SeqCst) {
             return Err(AdapterError::rejected("injected local preparation refusal"));
         }
-        if let Some(hook) = self
+        let hook = self
             .2
             .lock()
             .map_err(|_| AdapterError::unavailable("preparation hook lock"))?
-            .take()
-        {
+            .take();
+        if let Some(hook) = hook {
             hook()?;
         }
         Ok(InvocationAdmissionEnvelope::not_applicable())

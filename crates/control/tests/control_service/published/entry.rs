@@ -30,12 +30,18 @@ fn expired_or_cancelled_public_call_cannot_enter_after_internal_preparation() ->
         let runtime = fixture.runtime.clone();
         let caller = fixture.context.clone();
         let parent = run.clone();
+        let process = Arc::downgrade(&fixture.process);
         *fixture
             .process
             .2
             .lock()
             .map_err(|_| "preparation hook lock")? = Some(Box::new(move || {
             let change = || -> TestResult {
+                let process = process.upgrade().ok_or("preparing adapter disappeared")?;
+                assert!(
+                    process.2.try_lock().is_ok_and(|hook| hook.is_none()),
+                    "preparation callback must run after releasing its fixture lock"
+                );
                 if cancel {
                     let command = milkdrift_runtime::RunCommandDocument::new(
                         milkdrift_persistence::CommandId::new("command:cancel-during-preparation")?,
