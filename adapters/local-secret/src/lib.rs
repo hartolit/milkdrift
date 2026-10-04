@@ -19,7 +19,8 @@ use thiserror::Error;
 
 const MAX_ENVIRONMENT_NAME_BYTES: usize = 128;
 const MAX_SECRET_BYTES: usize = 4_096;
-const MAX_SECRET_FILE_BYTES: u64 = MAX_SECRET_BYTES as u64 + 1;
+// The content limit excludes the optional two-byte CRLF terminator.
+const MAX_SECRET_FILE_BYTES: u64 = MAX_SECRET_BYTES as u64 + 2;
 
 /// Invalid non-secret local source configuration.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -290,7 +291,10 @@ mod tests {
             .resolve(&reference)?
             .expose(|bytes| assert_eq!(bytes, b"second-token"));
 
-        fs::write(&path, vec![b'x'; usize::try_from(MAX_SECRET_FILE_BYTES)? + 1])?;
+        fs::write(
+            &path,
+            vec![b'x'; usize::try_from(MAX_SECRET_FILE_BYTES)? + 1],
+        )?;
         restrict(&path)?;
         assert!(matches!(
             resolver.resolve(&reference),
@@ -319,6 +323,35 @@ mod tests {
             resolver.resolve(&reference),
             Err(SecretResolverError::Unavailable)
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn secret_file_content_bound_excludes_one_optional_line_ending()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("bounded-token");
+        let source = LocalSecretSource::file(&path)?;
+        for length in [
+            0,
+            MAX_SECRET_BYTES - 1,
+            MAX_SECRET_BYTES,
+            MAX_SECRET_BYTES + 1,
+        ] {
+            let content = vec![b'x'; length];
+            for ending in [b"".as_slice(), b"\n".as_slice(), b"\r\n".as_slice()] {
+                let mut file = content.clone();
+                file.extend_from_slice(ending);
+                fs::write(&path, file)?;
+                restrict(&path)?;
+                let resolved = source.resolve();
+                if (1..=MAX_SECRET_BYTES).contains(&length) {
+                    resolved?.expose(|bytes| assert_eq!(bytes, content));
+                } else {
+                    assert!(matches!(resolved, Err(SecretResolverError::Unavailable)));
+                }
+            }
+        }
         Ok(())
     }
 }
