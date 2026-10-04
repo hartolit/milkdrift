@@ -141,28 +141,56 @@ impl Session {
                 }),
                 output.stdout.as_bytes(),
             )?;
-            Ok(serde_json::from_str::<Value>(&output.stdout)?["recipe"].clone())
+            Ok(serde_json::from_str::<Value>(&output.stdout)?
+                .pointer("/recipe")
+                .ok_or("missing /recipe")?
+                .clone())
         };
         let protected = bootstrap("protected-recipe.json", false)?;
         let worker = bootstrap("worker-recipe.json", true)?;
         let config = host.join("daemon.toml");
         let mut document: Value = toml::from_str(&fs::read_to_string(&config)?)?;
-        document["role"] = json!("workflow_enabled");
-        document["bind"] = json!(format!("127.0.0.1:{}", args.port));
-        document["actors"][0]["actor"] = json!("agent:repair");
-        document["actors"][0]["authority"]["budget"]["artifact_bytes"] =
-            json!(prepare::INTERNAL_ARTIFACT_BYTES);
-        document["adapters"]["managed_linux"]["recipes"] =
-            json!([host.join("recipe.json"), root.join("worker-recipe.json")]);
-        document["actors"][0]["authority"]["resources"]["capability"]["identities"]["values"]
+        let document_fields = document.as_object_mut().ok_or("expected JSON object")?;
+        document_fields.insert("role".into(), json!("workflow_enabled"));
+        document_fields.insert("bind".into(), json!(format!("127.0.0.1:{}", args.port)));
+        document
+            .pointer_mut("/actors/0")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("missing object /actors/0")?
+            .insert("actor".into(), json!("agent:repair"));
+        document
+            .pointer_mut("/actors/0/authority/budget")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("missing object /actors/0/authority/budget")?
+            .insert(
+                "artifact_bytes".into(),
+                json!(prepare::INTERNAL_ARTIFACT_BYTES),
+            );
+        document
+            .pointer_mut("/adapters/managed_linux")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("missing object /adapters/managed_linux")?
+            .insert(
+                "recipes".into(),
+                json!([host.join("recipe.json"), root.join("worker-recipe.json")]),
+            );
+        document
+            .pointer_mut("/actors/0/authority/resources/capability/identities/values")
+            .ok_or("missing /actors/0/authority/resources/capability/identities/values")?
             .as_array_mut()
             .ok_or("bootstrap capability scope absent")?
             .extend([
                 json!("managed.slotbook-build"),
                 json!("managed.slotbook-build.worker"),
             ]);
-        document["serving"]["clients"]["execution_limits"]["artifact_bytes"] =
-            json!(prepare::INTERNAL_ARTIFACT_BYTES);
+        document
+            .pointer_mut("/serving/clients/execution_limits")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("missing object /serving/clients/execution_limits")?
+            .insert(
+                "artifact_bytes".into(),
+                json!(prepare::INTERNAL_ARTIFACT_BYTES),
+            );
         if args.published {
             publication::configure(&mut document, &root)?;
         }
@@ -275,21 +303,38 @@ impl Session {
             .map(serde_json::from_str::<Value>)
             .collect::<Result<Vec<_>, _>>()?;
         let mut final_page = pages.last().cloned().ok_or("CLI produced no response")?;
-        let retryable_preparation = final_page["status"] == "failure"
-            && final_page["value"]["type"] == "rejected"
+        let retryable_preparation = final_page
+            .pointer("/status")
+            .and_then(serde_json::Value::as_str)
+            == Some("failure")
+            && final_page
+                .pointer("/value/type")
+                .and_then(serde_json::Value::as_str)
+                == Some("rejected")
             && matches!(
-                final_page["value"]["code"].as_str(),
+                final_page
+                    .pointer("/value/code")
+                    .ok_or("missing /value/code")?
+                    .as_str(),
                 Some("catalog_stale" | "deadline")
             )
-            && final_page["value"]["known_execution"].is_null();
+            && final_page
+                .pointer("/value/known_execution")
+                .is_some_and(serde_json::Value::is_null);
         let accepted = match expected {
             Expected::Success => output.status.success(),
             Expected::Refused => !output.status.success(),
             Expected::PreAcceptanceRetry => output.status.success() || retryable_preparation,
             Expected::InvocationObservation => {
                 output.status.success()
-                    || (final_page["type"] == "invocation.wait"
-                        && final_page["error"]["code"] == "invocation_failed")
+                    || (final_page
+                        .pointer("/type")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("invocation.wait")
+                        && final_page
+                            .pointer("/error/code")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("invocation_failed"))
             }
         };
         ensure(
@@ -300,31 +345,49 @@ impl Session {
             ),
         )?;
         writeln!(std::io::stdout().lock(), "{label}")?;
-        if final_page["type"] == "invocation.wait" {
+        if final_page
+            .pointer("/type")
+            .and_then(serde_json::Value::as_str)
+            == Some("invocation.wait")
+        {
             let mut observations = BTreeMap::new();
             for page in &pages {
-                for observation in page["value"]["observations"]
+                for observation in page
+                    .pointer("/value/observations")
+                    .ok_or("missing /value/observations")?
                     .as_array()
                     .ok_or("observations absent")?
                 {
                     observations.insert(number(&observation["sequence"])?, observation.clone());
                 }
             }
-            let history = &final_page["value"]["history"];
+            let history = final_page
+                .pointer("/value/history")
+                .ok_or("missing /value/history")?;
             if history["type"] == "archived" {
-                for observation in history["summary"]["output_observations"]
+                for observation in history
+                    .pointer("/summary/output_observations")
+                    .ok_or("missing /summary/output_observations")?
                     .as_array()
                     .ok_or("archived outputs absent")?
                 {
                     observations.insert(number(&observation["sequence"])?, observation.clone());
                 }
-                let terminal = &history["summary"]["final_observation"];
+                let terminal = history
+                    .pointer("/summary/final_observation")
+                    .ok_or("missing /summary/final_observation")?;
                 if !terminal.is_null() {
                     observations.insert(number(&terminal["sequence"])?, terminal.clone());
                 }
             }
-            final_page["value"]["observations"] =
-                json!(observations.into_values().collect::<Vec<_>>());
+            final_page
+                .pointer_mut("/value")
+                .and_then(serde_json::Value::as_object_mut)
+                .ok_or("missing object /value")?
+                .insert(
+                    "observations".into(),
+                    json!(observations.into_values().collect::<Vec<_>>()),
+                );
         }
         Ok(final_page)
     }
@@ -349,7 +412,11 @@ impl Session {
             action
         ];
         arguments.extend(extra);
-        Ok(self.call(label, arguments, expected, Caller::Operator)?["value"].clone())
+        Ok(self
+            .call(label, arguments, expected, Caller::Operator)?
+            .pointer("/value")
+            .ok_or("missing /value")?
+            .clone())
     }
     pub(super) fn write(&self, name: &str, value: &Value) -> EvidenceResult<PathBuf> {
         prepare::write(&self.root, name, value)
@@ -410,9 +477,18 @@ impl Session {
                 Expected::PreAcceptanceRetry,
                 caller,
             )?;
-            if accepted["status"] == "success" {
+            if accepted
+                .pointer("/status")
+                .and_then(serde_json::Value::as_str)
+                == Some("success")
+            {
                 self.requests.insert(label.into(), request);
-                return Ok(text(&accepted["value"]["execution"])?.into());
+                return Ok(text(
+                    accepted
+                        .pointer("/value/execution")
+                        .ok_or("missing /value/execution")?,
+                )?
+                .into());
             }
         }
         Err("catalog changed across six explicit refusals without acceptance".into())

@@ -35,16 +35,28 @@ pub(super) fn finish(
 ) -> EvidenceResult {
     let after = inspect(s, "published-inspect")?;
     ensure(
-        after["pending"].is_null() && after["observed_running"] == true,
+        after
+            .pointer("/pending")
+            .is_some_and(serde_json::Value::is_null)
+            && after
+                .pointer("/observed_running")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true),
         "protected publication did not start",
     )?;
-    let accepted_id = text(&after["accepted_evaluation"])?;
+    let accepted_id = text(
+        after
+            .pointer("/accepted_evaluation")
+            .ok_or("missing /accepted_evaluation")?,
+    )?;
     let accepted = evidence(s, "accepted-evidence", accepted_id)?;
     ensure(
         passed(&accepted),
         "accepted evaluation does not pass every check",
     )?;
-    let verified = &accepted["subject"]["artifact"];
+    let verified = accepted
+        .pointer("/subject/artifact")
+        .ok_or("missing /subject/artifact")?;
     let exported = s.logs.join("deployed-candidate");
     s.ok(
         "candidate-download",
@@ -61,15 +73,21 @@ pub(super) fn finish(
         "deployed artifact differs from corrected binary",
     )?;
     let service = text(
-        &after["resources"]
+        after
+            .pointer("/resources")
+            .ok_or("missing /resources")?
             .as_array()
             .ok_or("resources absent")?
             .iter()
             .find(|r| r["kind"] == "service")
-            .ok_or("service absent")?["identity"],
+            .ok_or("service absent")?
+            .get("identity")
+            .ok_or("service identity absent")?,
     )?;
     let deployed = container(service)?;
-    let mounted = deployed["Mounts"]
+    let mounted = deployed
+        .pointer("/Mounts")
+        .ok_or("missing /Mounts")?
         .as_array()
         .ok_or("mounts absent")?
         .iter()
@@ -84,7 +102,7 @@ pub(super) fn finish(
         s,
         "wrong-generation-refused",
         "publish",
-        number(&after["version"])?,
+        number(after.pointer("/version").ok_or("missing /version")?)?,
         args!["--evaluation", accepted_id],
         Expected::Refused,
     )?;
@@ -110,21 +128,34 @@ pub(super) fn finish(
     )?;
     let health: Value = serde_json::from_slice(&bytes)?;
     ensure(
-        health["status"] == "ready",
+        health
+            .pointer("/status")
+            .and_then(serde_json::Value::as_str)
+            == Some("ready"),
         "protected service health differs",
     )?;
     s.stop()?;
     s.start()?;
     let reopened = inspect(s, "reopened-inspect")?;
     ensure(
-        reopened["generation"] == after["generation"] && reopened["observed_running"] == true,
+        reopened
+            .pointer("/generation")
+            .ok_or("missing /generation")?
+            == after.pointer("/generation").ok_or("missing /generation")?
+            && reopened
+                .pointer("/observed_running")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true),
         "restart lost protected generation",
     )?;
     invocation::replay(s, link)?;
     if args.published {
         let same = inspect(s, "wrapper-replay-no-deployment")?;
         ensure(
-            same["generation"] == after["generation"] && same["version"] == after["version"],
+            same.pointer("/generation").ok_or("missing /generation")?
+                == after.pointer("/generation").ok_or("missing /generation")?
+                && same.pointer("/version").ok_or("missing /version")?
+                    == after.pointer("/version").ok_or("missing /version")?,
             "wrapper replay deployed again",
         )?;
     }
@@ -141,22 +172,36 @@ pub(super) fn finish(
             s,
             "drain-before-renewal",
             "stop",
-            number(&reopened["version"])?,
+            number(reopened.pointer("/version").ok_or("missing /version")?)?,
             vec![],
             Expected::Success,
         )?;
         let stopped = inspect(s, "drained-before-renewal")?;
         ensure(
-            stopped["pending"].is_null()
-                && stopped["observed_running"] == false
-                && stopped["generation"] == reopened["generation"],
+            stopped
+                .pointer("/pending")
+                .is_some_and(serde_json::Value::is_null)
+                && stopped
+                    .pointer("/observed_running")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(false)
+                && stopped
+                    .pointer("/generation")
+                    .ok_or("missing /generation")?
+                    == reopened
+                        .pointer("/generation")
+                        .ok_or("missing /generation")?,
             "owned service did not drain with its accepted generation preserved",
         )?;
         stopped
     } else {
         reopened
     };
-    let direct_version = number(&renewal_state["version"])?;
+    let direct_version = number(
+        renewal_state
+            .pointer("/version")
+            .ok_or("missing /version")?,
+    )?;
     let direct = target(
         s,
         "direct-evaluate",
@@ -165,7 +210,11 @@ pub(super) fn finish(
         candidate_args(verified, "artifact")?,
         Expected::Success,
     )?;
-    let direct_id = text(&direct["evaluation"]["identity"])?;
+    let direct_id = text(
+        direct
+            .pointer("/evaluation/identity")
+            .ok_or("missing /evaluation/identity")?,
+    )?;
     let direct_checks = evidence(s, "direct-evidence", direct_id)?;
     ensure(passed(&direct_checks), "direct verification did not pass")?;
     let renewed = target(
@@ -176,11 +225,20 @@ pub(super) fn finish(
         candidate_args(verified, "artifact")?,
         Expected::Success,
     )?;
-    let renewed_id = text(&renewed["evaluation"]["identity"])?;
+    let renewed_id = text(
+        renewed
+            .pointer("/evaluation/identity")
+            .ok_or("missing /evaluation/identity")?,
+    )?;
     let renewed_checks = evidence(s, "renew-evidence", renewed_id)?;
     ensure(
         renewed_id != direct_id
-            && renewed_checks["subject"] == direct_checks["subject"]
+            && renewed_checks
+                .pointer("/subject")
+                .ok_or("missing /subject")?
+                == direct_checks
+                    .pointer("/subject")
+                    .ok_or("missing /subject")?
             && passed(&renewed_checks),
         "renewed verification changed subject or failed",
     )?;
@@ -198,18 +256,31 @@ pub(super) fn finish(
     )?;
     let published = inspect(s, "direct-published")?;
     ensure(
-        published["pending"].is_null()
-            && number(&published["generation"])? == number(&after["generation"])? + 1
-            && published["observed_running"] == true,
+        published
+            .pointer("/pending")
+            .is_some_and(serde_json::Value::is_null)
+            && number(
+                published
+                    .pointer("/generation")
+                    .ok_or("missing /generation")?,
+            )? == number(after.pointer("/generation").ok_or("missing /generation")?)? + 1
+            && published
+                .pointer("/observed_running")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true),
         "renewed publication differs",
     )?;
     let service = text(
-        &published["resources"]
+        published
+            .pointer("/resources")
+            .ok_or("missing /resources")?
             .as_array()
             .ok_or("resources absent")?
             .iter()
             .find(|r| r["kind"] == "service")
-            .ok_or("service absent")?["identity"],
+            .ok_or("service absent")?
+            .get("identity")
+            .ok_or("service identity absent")?,
     )?
     .to_owned();
     let prior = container(&service)?;
@@ -225,13 +296,25 @@ pub(super) fn finish(
     )?;
     let replayed = inspect(s, "after-exact-replay")?;
     ensure(
-        replayed["generation"] == published["generation"]
-            && replayed["version"] == published["version"],
+        replayed
+            .pointer("/generation")
+            .ok_or("missing /generation")?
+            == published
+                .pointer("/generation")
+                .ok_or("missing /generation")?
+            && replayed.pointer("/version").ok_or("missing /version")?
+                == published.pointer("/version").ok_or("missing /version")?,
         "exact publication replay changed generation",
     )?;
     let again = container(&service)?;
     ensure(
-        again["Id"] == prior["Id"] && again["State"]["StartedAt"] == prior["State"]["StartedAt"],
+        again.pointer("/Id").ok_or("missing /Id")? == prior.pointer("/Id").ok_or("missing /Id")?
+            && again
+                .pointer("/State/StartedAt")
+                .ok_or("missing /State/StartedAt")?
+                == prior
+                    .pointer("/State/StartedAt")
+                    .ok_or("missing /State/StartedAt")?,
         "exact replay restarted service",
     )?;
     ensure(
@@ -251,7 +334,7 @@ pub(super) fn finish(
         s.resource(
             &format!("cleanup-{name}"),
             "remove",
-            number(&state["version"])?,
+            number(state.pointer("/version").ok_or("missing /version")?)?,
             vec![],
             name,
             Expected::Success,
@@ -265,7 +348,10 @@ pub(super) fn finish(
             Expected::Success,
         )?;
         ensure(
-            removed["state"] == "removed",
+            removed
+                .pointer("/state")
+                .and_then(serde_json::Value::as_str)
+                == Some("removed"),
             "qualification resource removal incomplete",
         )?;
     }

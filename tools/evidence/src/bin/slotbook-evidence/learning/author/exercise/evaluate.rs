@@ -39,7 +39,7 @@ fn method(
         ],
     )?["value"]
         .clone();
-    let mut method = publication::method(descriptor, revision, &authority);
+    let mut method = publication::method(descriptor, revision, &authority)?;
     method["descriptor"]["identity"] = json!(capability);
     method["descriptor"]["descriptor_revision"] = json!(generation);
     method["documentation"] = json!(

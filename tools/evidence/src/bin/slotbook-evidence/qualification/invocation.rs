@@ -33,17 +33,27 @@ pub(super) fn start(
         });
     }
     let catalog = s.ok("method-discovery", args!["invocation", "catalog"])?;
-    let descriptor = catalog["value"]["catalog"]["entries"]
+    let descriptor = catalog
+        .pointer("/value/catalog/entries")
+        .ok_or("missing /value/catalog/entries")?
         .as_array()
         .ok_or("catalog entries absent")?
         .iter()
-        .find(|e| e["descriptor"]["identity"] == "managed.slotbook-build.worker")
+        .find(|e| {
+            e.pointer("/descriptor/identity")
+                .and_then(serde_json::Value::as_str)
+                == Some("managed.slotbook-build.worker")
+        })
         .ok_or("worker descriptor absent")?["descriptor"]
         .clone();
     let authority = s.ok("service-authority", args!["daemon", "authority"])?;
     let document = s.write(
         "published-method.json",
-        &publication::method(descriptor, revision, &authority["value"]),
+        &publication::method(
+            descriptor,
+            revision,
+            authority.pointer("/value").ok_or("missing /value")?,
+        )?,
     )?;
     s.ok(
         "method-publish",
@@ -98,7 +108,7 @@ pub(super) fn start(
                 Expected::Success,
                 Caller::Origin,
             )?;
-            let catalog = &catalog["value"];
+            let catalog = catalog.pointer("/value").ok_or("missing /value")?;
             let entries = catalog
                 .get("items")
                 .unwrap_or(catalog)
@@ -131,7 +141,7 @@ pub(super) fn start(
                 "start",
                 "slotbook-caller",
                 "slotbook-caller",
-                text(&revision["id"])?
+                text(revision.pointer("/id").ok_or("missing /id")?)?
             ],
             Expected::Success,
             Caller::Origin,
@@ -144,7 +154,9 @@ pub(super) fn start(
             &format!("find-internal-{index}"),
             args!["run", "list", "--limit", 32],
         )?;
-        let linked = page["value"]["items"]
+        let linked = page
+            .pointer("/value/items")
+            .ok_or("missing /value/items")?
             .as_array()
             .ok_or("run inventory absent")?
             .iter()
@@ -164,7 +176,15 @@ pub(super) fn start(
                 linked.len() == 1,
                 "accepted call has multiple internal runs",
             )?;
-            internal = Some(text(&linked[0]["run_id"])?.to_owned());
+            internal = Some(
+                text(
+                    linked
+                        .first()
+                        .and_then(|run| run.get("run_id"))
+                        .ok_or("linked run identity absent")?,
+                )?
+                .to_owned(),
+            );
             break;
         }
         thread::sleep(Duration::from_millis(100));
@@ -185,13 +205,15 @@ pub(super) fn start(
         Expected::Success,
     )?;
     ensure(
-        held["blockers"].as_array().is_some_and(|b| !b.is_empty()),
+        held.pointer("/blockers")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|b| !b.is_empty()),
         "publication lacks lifetime hold",
     )?;
     s.resource(
         "busy-remove-refused",
         "remove",
-        number(&held["version"])?,
+        number(held.pointer("/version").ok_or("missing /version")?)?,
         vec![],
         "slotbook-build",
         Expected::Refused,
@@ -207,7 +229,7 @@ pub(super) fn start(
     s.resource(
         "busy-reapply-refused",
         "apply",
-        number(&held["version"])?,
+        number(held.pointer("/version").ok_or("missing /version")?)?,
         reference_args(&s.worker)?,
         "slotbook-build",
         Expected::Refused,
@@ -227,7 +249,10 @@ pub(super) fn complete(s: &Session, args: &Qualify, link: &Link) -> EvidenceResu
             Caller::Origin,
         )?;
         ensure(
-            outer["value"]["terminal"] == "succeeded",
+            outer
+                .pointer("/value/terminal")
+                .and_then(serde_json::Value::as_str)
+                == Some("succeeded"),
             "outer workflow failed",
         )?;
     }

@@ -50,8 +50,10 @@ pub(super) fn evidence(s: &Session, label: &str, id: &str) -> EvidenceResult<Val
         0,
         args!["--evaluation", id],
         Expected::Success,
-    )?["evaluation"]
-        .clone())
+    )?
+    .pointer("/evaluation")
+    .ok_or("missing /evaluation")?
+    .clone())
 }
 pub(super) fn passed(evaluation: &Value) -> bool {
     evaluation["complete"] == true
@@ -89,7 +91,14 @@ fn qualify(s: &mut Session, args: &Qualify, candidate_bytes: &[u8]) -> EvidenceR
         Expected::Success,
     )?;
     ensure(
-        prepared["state"] == "prepared" && prepared["version"] == 0,
+        prepared
+            .pointer("/state")
+            .and_then(serde_json::Value::as_str)
+            == Some("prepared")
+            && prepared
+                .pointer("/version")
+                .and_then(serde_json::Value::as_u64)
+                == Some(0),
         "protected preparation differs",
     )?;
     target(
@@ -102,15 +111,20 @@ fn qualify(s: &mut Session, args: &Qualify, candidate_bytes: &[u8]) -> EvidenceR
     )?;
     let state = inspect(s, "protected-before")?;
     ensure(
-        state["pending"].is_null() && state["desired_running"] == false,
+        state
+            .pointer("/pending")
+            .is_some_and(serde_json::Value::is_null)
+            && state
+                .pointer("/desired_running")
+                .and_then(serde_json::Value::as_bool)
+                == Some(false),
         "protected target already running",
     )?;
-    let version = number(&state["version"])?;
+    let version = number(state.pointer("/version").ok_or("missing /version")?)?;
     let document = load(s.root.join("governed.json"))?;
-    let revision = &document["revision"];
+    let revision = document.pointer("/revision").ok_or("missing /revision")?;
     ensure(
-        revision["semantic"]["nodes"]["verify-candidate"]["data_inputs"]["target"]["binding"]["value"]
-            ["expected_version"]
+        revision.pointer("/semantic/nodes/verify-candidate/data_inputs/target/binding/value/expected_version").ok_or("missing /semantic/nodes/verify-candidate/data_inputs/target/binding/value/expected_version")?
             == version,
         "re-author with the observed --target-version",
     )?;
@@ -139,9 +153,12 @@ fn qualify(s: &mut Session, args: &Qualify, candidate_bytes: &[u8]) -> EvidenceR
         Expected::Success,
     )?;
     ensure(
-        worker["pending"].is_null()
-            && worker["capabilities"]
-                .as_array()
+        worker
+            .pointer("/pending")
+            .is_some_and(serde_json::Value::is_null)
+            && worker
+                .pointer("/capabilities")
+                .and_then(serde_json::Value::as_array)
                 .is_some_and(|a| a.contains(&json!("managed.slotbook-build.worker"))),
         "managed worker not registered",
     )?;
@@ -154,12 +171,14 @@ fn qualify(s: &mut Session, args: &Qualify, candidate_bytes: &[u8]) -> EvidenceR
         Caller::Operator,
     )?;
     let observation = s.ok("seed-wait", args!["invocation", "wait", execution])?;
-    let candidate = observation["value"]["observations"]
+    let candidate = observation
+        .pointer("/value/observations")
+        .ok_or("missing /value/observations")?
         .as_array()
         .ok_or("seed observations absent")?
         .iter()
         .filter(|o| o["category"] == "artifact")
-        .map(|o| &o["event"]["kind"]["reference"])
+        .filter_map(|o| o.pointer("/event/kind/reference"))
         .find(|r| r["media_type"] == "application/octet-stream")
         .cloned()
         .ok_or("seed artifact absent")?;
@@ -171,9 +190,16 @@ fn qualify(s: &mut Session, args: &Qualify, candidate_bytes: &[u8]) -> EvidenceR
         candidate_args(&candidate, "identity")?,
         Expected::Success,
     )?;
-    let evaluation = text(&evaluated["evaluation"]["identity"])?.to_owned();
+    let evaluation = text(
+        evaluated
+            .pointer("/evaluation/identity")
+            .ok_or("missing /evaluation/identity")?,
+    )?
+    .to_owned();
     let failure = evidence(s, "seed-evidence", &evaluation)?;
-    let failed = failure["checks"]
+    let failed = failure
+        .pointer("/checks")
+        .ok_or("missing /checks")?
         .as_array()
         .ok_or("checks absent")?
         .iter()
@@ -181,7 +207,11 @@ fn qualify(s: &mut Session, args: &Qualify, candidate_bytes: &[u8]) -> EvidenceR
         .map(|c| text(&c["name"]))
         .collect::<EvidenceResult<Vec<_>>>()?;
     ensure(
-        failure["complete"] == true && failed == ["authenticated-mutation", "durable-bookings"],
+        failure
+            .pointer("/complete")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+            && failed == ["authenticated-mutation", "durable-bookings"],
         "seed did not produce exactly the two declared failures",
     )?;
     target(
@@ -214,14 +244,18 @@ fn qualify(s: &mut Session, args: &Qualify, candidate_bytes: &[u8]) -> EvidenceR
         ],
     )?;
     let link = invocation::start(s, args, revision, version)?;
-    let run = s.ok("run-before", args!["run", "show", link.internal])?["value"].clone();
-    let proposal = json!({"schema_version":1,"draft":{"identity":"repair-slotbook","proposer":"agent:repair","provenance":{"type":"direct"},"workflow":"slotbook","run":link.internal,"base_revision":revision["id"],"base_digest":revision["content_digest"],"observed_run_sequence":run["sequence"],"mutation":load(s.root.join("repair-mutations.json"))?,"rationale":"Retain observed authentication and restart failures, replace the candidate with the compiled repair fixture and obtain fresh trusted evidence.","rationale_artifact":null,"risk_notes":[],"assumptions":["Finite compiled fixture, not model-generated repair"],"evidence":[{"kind":"worker_observation","id":evaluation}],"artifacts":[candidate],"application_policy":"auto_apply_low_risk","requested_action":null,"claimed_stop":"complete"}});
+    let run = s
+        .ok("run-before", args!["run", "show", link.internal])?
+        .pointer("/value")
+        .ok_or("missing /value")?
+        .clone();
+    let proposal = json!({"schema_version":1,"draft":{"identity":"repair-slotbook","proposer":"agent:repair","provenance":{"type":"direct"},"workflow":"slotbook","run":link.internal,"base_revision":revision["id"],"base_digest":revision["content_digest"],"observed_run_sequence":run.pointer("/sequence").ok_or("missing /sequence")?,"mutation":load(s.root.join("repair-mutations.json"))?,"rationale":"Retain observed authentication and restart failures, replace the candidate with the compiled repair fixture and obtain fresh trusted evidence.","rationale_artifact":null,"risk_notes":[],"assumptions":["Finite compiled fixture, not model-generated repair"],"evidence":[{"kind":"worker_observation","id":evaluation}],"artifacts":[candidate],"application_policy":"auto_apply_low_risk","requested_action":null,"claimed_stop":"complete"}});
     let proposal = s.write("repair-proposal.json", &proposal)?;
     s.ok(
         "proposal-submit",
         args![
             "--expected-sequence",
-            number(&run["sequence"])?,
+            number(run.pointer("/sequence").ok_or("missing /sequence")?)?,
             "--expected-revision",
             text(&revision["id"])?,
             "proposal",
@@ -259,9 +293,20 @@ fn qualify(s: &mut Session, args: &Qualify, candidate_bytes: &[u8]) -> EvidenceR
             "published parent never transferred editing to its child",
         )?;
     }
-    let completed = s.ok("run-wait", args!["run", "wait", link.internal])?["value"].clone();
+    let completed = s
+        .ok("run-wait", args!["run", "wait", link.internal])?
+        .pointer("/value")
+        .ok_or("missing /value")?
+        .clone();
     ensure(
-        completed["terminal"] == "succeeded" && completed["agreement_adoptions"] == 1,
+        completed
+            .pointer("/terminal")
+            .and_then(serde_json::Value::as_str)
+            == Some("succeeded")
+            && completed
+                .pointer("/agreement_adoptions")
+                .and_then(serde_json::Value::as_u64)
+                == Some(1),
         "method did not satisfy its agreement",
     )?;
     invocation::complete(s, args, &link)?;
@@ -285,7 +330,9 @@ fn forged_report(s: &mut Session, version: u64, evaluation: &str) -> EvidenceRes
         args!["--evaluation", evaluation],
         Expected::Success,
     )?;
-    for check in report["evaluation"]["checks"]
+    for check in report
+        .pointer_mut("/evaluation/checks")
+        .ok_or("missing /evaluation/checks")?
         .as_array_mut()
         .ok_or("checks absent")?
     {
@@ -307,7 +354,7 @@ fn forged_report(s: &mut Session, version: u64, evaluation: &str) -> EvidenceRes
             "application/vnd.milkdrift.managed+json"
         ],
     )?;
-    let uploaded = &uploaded["value"];
+    let uploaded = uploaded.pointer("/value").ok_or("missing /value")?;
     let input=s.write("forged-inputs.json",&json!([{"name":"target","value":{"type":"inline","value":{"schema_version":3,"command":"forged-serving","installation":"slotbook-test","expected_version":version}}},{"name":"evaluation","value":{"type":"artifact","reference":{"identity":uploaded["artifact_id"],"digest":uploaded["digest"],"media_type":uploaded["content_type"],"size_bytes":uploaded["size"]}}}]))?;
     let execution = s.invoke(
         "forged",
@@ -322,24 +369,41 @@ fn forged_report(s: &mut Session, version: u64, evaluation: &str) -> EvidenceRes
         Expected::Refused,
         Caller::Operator,
     )?;
-    let terminals = observation["value"]["observations"]
+    let terminals = observation
+        .pointer("/value/observations")
+        .ok_or("missing /value/observations")?
         .as_array()
         .ok_or("observations absent")?
         .iter()
         .filter(|o| o["category"] == "terminal" || o["category"] == "uncertainty")
-        .map(|o| &o["event"]["kind"]["terminal"])
-        .collect::<Vec<_>>();
+        .map(|o| {
+            o.pointer("/event/kind/terminal")
+                .ok_or("terminal observation absent")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     ensure(
         terminals.len() == 1
-            && terminals[0]["status"] != "success"
+            && terminals
+                .first()
+                .and_then(|terminal| terminal.get("status"))
+                .and_then(Value::as_str)
+                .is_some_and(|status| status != "success")
             && serde_json::to_string(&terminals)?.contains("verification is failed"),
         "fabricated verification report was not refused",
     )?;
     let unchanged = inspect(s, "after-forged-report")?;
     ensure(
-        unchanged["generation"] == 1
-            && unchanged["observed_running"] == false
-            && unchanged["pending"].is_null(),
+        unchanged
+            .pointer("/generation")
+            .and_then(serde_json::Value::as_u64)
+            == Some(1)
+            && unchanged
+                .pointer("/observed_running")
+                .and_then(serde_json::Value::as_bool)
+                == Some(false)
+            && unchanged
+                .pointer("/pending")
+                .is_some_and(serde_json::Value::is_null),
         "forged evidence changed target",
     )
 }

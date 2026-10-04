@@ -35,7 +35,7 @@ pub(super) fn local(cli: &Path, args: &[String]) -> EvidenceResult<Value> {
         ),
     )?;
     let result: Value = serde_json::from_str(&output.stdout)?;
-    Ok(result["value"].clone())
+    Ok(result.pointer("/value").ok_or("missing /value")?.clone())
 }
 pub(super) fn argument(value: impl AsRef<Path>) -> String {
     value.as_ref().display().to_string()
@@ -85,22 +85,23 @@ pub(super) fn task(
     outputs: &[&str],
 ) -> Value {
     let context = json!({"ancestor_depth":null,"artifact_selector":null,"budget":{"max_artifact_bytes":33554432,"max_bytes":262144,"max_items":64,"max_model_input_units":null},"exclude_categories":["raw_progress","tool_trace","verbose_command_output","prior_prompt"],"fail_closed":true,"include_categories":["direct_input"],"include_direct_inputs":true,"ordering":"causal_kind_source","selected_nodes":[],"selected_roles":[],"session":"fresh","truncation":"omit_oversized"});
-    let mut result = node(
-        identity,
-        json!({"type":"task","config":{"requirement":requirement,"context_policy":context}}),
-        true,
-        true,
-    );
-    result["data_inputs"][name] = port(
+    let input = port(
         "Input",
         schema,
         json!({"type":"literal","value":literal}),
         true,
     );
-    for name in outputs {
-        result["data_outputs"][*name] = port("Output", artifact_schema(), Value::Null, false);
-    }
-    result
+    let inputs = serde_json::Map::from_iter([(name.to_owned(), input)]);
+    let outputs = outputs
+        .iter()
+        .map(|name| {
+            (
+                (*name).to_owned(),
+                port("Output", artifact_schema(), Value::Null, false),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    json!({"id":identity,"kind":{"type":"task","config":{"requirement":requirement,"context_policy":context}},"control_inputs":["in"],"control_outputs":["out"],"data_inputs":inputs,"data_outputs":outputs})
 }
 pub(super) fn worker(identity: &str, requirement: &Value, argv: &[&str], capture: bool) -> Value {
     task(
@@ -118,12 +119,13 @@ fn effect(
     operation: &str,
     selected: &str,
     version: u64,
-) -> Value {
+) -> EvidenceResult<Value> {
     let mut req = requirement.clone();
-    req["categories"] = json!([{"type":"tool"}]);
-    req["exact_capability"] = json!("milkdrift.resources");
-    req["maximum_side_effect"] = json!("idempotent_write");
-    req["operation"] = json!(operation);
+    let req_fields = req.as_object_mut().ok_or("expected JSON object")?;
+    req_fields.insert("categories".into(), json!([{"type":"tool"}]));
+    req_fields.insert("exact_capability".into(), json!("milkdrift.resources"));
+    req_fields.insert("maximum_side_effect".into(), json!("idempotent_write"));
+    req_fields.insert("operation".into(), json!(operation));
     let mut result = task(
         identity,
         req,
@@ -132,8 +134,15 @@ fn effect(
         json!({"id":"milkdrift.managed.command","version":3}),
         &["resource_result"],
     );
-    result["data_inputs"][selected] = port("Input", artifact_schema(), Value::Null, true);
     result
+        .get_mut("data_inputs")
+        .and_then(Value::as_object_mut)
+        .ok_or("task inputs absent")?
+        .insert(
+            selected.to_owned(),
+            port("Input", artifact_schema(), Value::Null, true),
+        );
+    Ok(result)
 }
 pub(super) fn run(args: Prepare) -> EvidenceResult {
     let cli = args.cli.canonicalize()?;
@@ -172,8 +181,10 @@ pub(super) fn run(args: Prepare) -> EvidenceResult {
             "effect-policy".into(),
             argument(&policy_path),
         ],
-    )?["digest"]
-        .clone();
+    )?
+    .pointer("/digest")
+    .ok_or("missing /digest")?
+    .clone();
     let requirement = json!({"cancellation_required":false,"categories":[{"type":"process"}],"exact_capability":"managed.slotbook-build.worker","maximum_side_effect":"non_idempotent_write","operation":"workspace.execute","provider_profile":null,"required_features":[],"streaming":null,"trust_zones":[]});
     let nodes = vec![
         node(
@@ -200,14 +211,14 @@ pub(super) fn run(args: Prepare) -> EvidenceResult {
             "resource.evaluate_candidate",
             "candidate",
             args.target_version,
-        ),
+        )?,
         effect(
             "publish-candidate",
             &requirement,
             "resource.publish_candidate",
             "evaluation",
             args.target_version,
-        ),
+        )?,
         node(
             "done",
             json!({"type":"terminal","outcome":"success"}),
@@ -217,10 +228,19 @@ pub(super) fn run(args: Prepare) -> EvidenceResult {
     ];
     let mut edges = Vec::new();
     for (i, pair) in nodes.windows(2).enumerate() {
+        let [source, target] = pair else {
+            return Err("adjacent node pair absent".into());
+        };
         edges.push(edge(
             &format!("control-{i}"),
-            pair[0]["id"].as_str().ok_or("node identity absent")?,
-            pair[1]["id"].as_str().ok_or("node identity absent")?,
+            source
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or("source node identity absent")?,
+            target
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or("target node identity absent")?,
             "control",
             "out",
             "in",
@@ -290,8 +310,10 @@ pub(super) fn run(args: Prepare) -> EvidenceResult {
             "--output".into(),
             argument(root.join("governed.json")),
         ],
-    )?["agreement"]
-        .clone();
+    )?
+    .pointer("/agreement")
+    .ok_or("missing /agreement")?
+    .clone();
     let limits =
         json!({"memory_bytes":536870912,"cpu_percent":100,"pids":64,"temporary_bytes":16777216});
     write(
