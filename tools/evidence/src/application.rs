@@ -406,6 +406,35 @@ pub struct CliOutput {
     pub stderr: String,
 }
 
+impl CliOutput {
+    /// Reads the final machine result after any nonfinal preview records.
+    ///
+    /// # Errors
+    /// Refuses malformed output, more than 32 records, or missing, repeated or nonterminal finals.
+    pub fn final_json(&self) -> EvidenceResult<Value> {
+        final_json(&self.stdout)
+    }
+}
+
+fn final_json(text: &str) -> EvidenceResult<Value> {
+    let mut result = None;
+    for (index, line) in text.lines().enumerate() {
+        ensure(index < 32, "CLI record bound exceeded")?;
+        ensure(result.is_none(), "CLI record followed its final outcome")?;
+        let record = one_json_line(line)?;
+        ensure(
+            record.get("schema_version").and_then(Value::as_u64) == Some(2),
+            "CLI record schema was not supported",
+        )?;
+        match record.get("final").and_then(Value::as_bool) {
+            Some(true) => result = Some(record),
+            Some(false) => {}
+            None => return Err("CLI record omitted its finality".into()),
+        }
+    }
+    result.ok_or_else(|| "CLI final outcome is missing".into())
+}
+
 /// Scenario inputs to the canonical daemon configuration document.
 pub struct EvidenceConfig {
     /// Byte-pinned process profile paths.
@@ -421,10 +450,10 @@ pub struct EvidenceConfig {
 }
 
 impl CliRunner {
-    /// Requires a successful one-document JSON response.
+    /// Requires a successful JSON response and returns its final record after any previews.
     ///
     /// # Errors
-    /// Returns command/capture failure, an unsuccessful exit, or malformed/multiple JSON records.
+    /// Returns command/capture failure, an unsuccessful exit, or invalid JSON record framing.
     /// Failure diagnostics retain only selected public state.
     pub fn success(&self, arguments: &[&str]) -> EvidenceResult<Value> {
         self.success_with_input(arguments, &[])
@@ -433,7 +462,7 @@ impl CliRunner {
     /// Supplies a bounded input document and requires a successful JSON response.
     ///
     /// # Errors
-    /// Returns input/capture-bound, child execution, unsuccessful exit, or single-record JSON failure.
+    /// Returns input/capture-bound, child execution, unsuccessful exit, or JSON framing failure.
     pub fn success_with_input(&self, arguments: &[&str], stdin: &[u8]) -> EvidenceResult<Value> {
         let result = self.run(arguments, (!stdin.is_empty()).then_some(stdin));
         Self::success_result(arguments, result)
@@ -464,7 +493,7 @@ impl CliRunner {
             )
             .into());
         }
-        one_json_line(&output.stdout)
+        output.final_json()
     }
 
     /// Runs through the configured credential with a hard deadline.
@@ -1019,6 +1048,38 @@ pub fn ensure(condition: bool, message: &str) -> EvidenceResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proposal_preview_precedes_one_final_cli_result() -> EvidenceResult {
+        let preview = json!({"schema_version":2,"type":"proposal.impact","final":false});
+        let result = json!({"schema_version":2,"type":"proposal.apply","final":true});
+        assert_eq!(final_json(&format!("{preview}\n{result}\n"))?, result);
+        assert_eq!(final_json(&format!("{result}\n"))?, result);
+        assert_eq!(
+            final_json(&format!("{}{result}\n", format!("{preview}\n").repeat(31)))?,
+            result
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cli_final_framing_refuses_ambiguous_or_unbounded_records() {
+        let preview = json!({"schema_version":2,"final":false}).to_string();
+        let result = json!({"schema_version":2,"final":true}).to_string();
+        for invalid in [
+            String::new(),
+            preview.clone(),
+            format!("{result}\n{result}"),
+            format!("{result}\n{preview}"),
+            format!("{}\n{result}", format!("{preview}\n").repeat(32)),
+            format!("{{}}\n{result}"),
+            format!("{{\"schema_version\":1,\"final\":false}}\n{result}"),
+            format!("{preview}{result}"),
+            format!("{preview}\nnot-json\n{result}"),
+        ] {
+            assert!(final_json(&invalid).is_err(), "accepted {invalid}");
+        }
+    }
 
     #[test]
     fn unrepresentable_command_deadline_is_refused_before_spawn() -> EvidenceResult {

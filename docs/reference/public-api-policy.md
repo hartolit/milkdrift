@@ -31,6 +31,10 @@ contract consumed by its separate headless, local-model, and external-runner bin
 It owns their shared listener/worker lifecycle and retains failed shutdown evidence; it is not a
 product server port. Its handler construction, bounded finish, and failure/turnover tests belong
 with the existing HTTP fixture owner, and no product package imports it.
+Its `application::CliOutput::final_json` is a development harness contract consumed by the
+shared CLI runner and authored-workflow binary. It reads bounded preview/final machine output;
+the CLI remains the output-schema owner. Framing refusal tests live beside this reader, and
+single-record failure assertions retain their stricter contract.
 
 Workspace use can justify visibility without making a type a stable third-party API. Root
 re-exports exist only when the root is the semantic owner or the re-export is the intentional

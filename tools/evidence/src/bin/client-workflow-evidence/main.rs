@@ -64,22 +64,7 @@ impl Journey {
                 output.stdout, output.stderr
             ),
         )?;
-        // Proposal application presents its impact before the final outcome. Preserve every
-        // record in the transcript while requiring exactly one final result at the end.
-        let mut records = serde_json::Deserializer::from_str(&output.stdout)
-            .into_iter::<Value>()
-            .take(33)
-            .collect::<Result<Vec<_>, _>>()?;
-        ensure(records.len() <= 32, "CLI record bound exceeded")?;
-        let result = records.pop().ok_or("CLI returned no result")?;
-        ensure(
-            result.get("final").and_then(Value::as_bool) == Some(true)
-                && records
-                    .iter()
-                    .all(|record| record.get("final").and_then(Value::as_bool) == Some(false)),
-            "CLI final outcome is missing or duplicated",
-        )?;
-        Ok(result)
+        output.final_json()
     }
 
     fn file(&self, name: &str) -> EvidenceResult<String> {
