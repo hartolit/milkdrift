@@ -1,3 +1,5 @@
+#![deny(clippy::arithmetic_side_effects)]
+
 use serde::{Deserialize, Serialize};
 
 use crate::{ArtifactMetadata, ArtifactReference, WorkspaceError, WorkspaceValue};

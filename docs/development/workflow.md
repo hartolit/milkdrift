@@ -201,16 +201,9 @@ old-writer evidence. The recovery scenario uses the configured grant and normal 
 after repair. Offline copy tests create private temporary parents, including restricted Windows ACLs.
 
 ```sh
-cargo fmt --all -- --check
-cargo check --workspace --all-targets --all-features
+cargo strict-checks --output target/strict-gate
 cargo test --workspace --all-features --no-fail-fast
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps
-cargo deny check
-cargo machete
-cargo tree --workspace --duplicates
 cargo test --workspace --all-features -- --list
-cargo test -p milkdrift-evidence --test repository_contracts --all-features
 ```
 
 In PowerShell set `$env:RUSTDOCFLAGS = '-D warnings'` before `cargo doc` and restore its previous

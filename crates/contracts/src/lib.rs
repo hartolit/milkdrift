@@ -1,3 +1,5 @@
+#![deny(clippy::arithmetic_side_effects)]
+
 //! Keep shared document checks consistent across Milkdrift's schema owners.
 //!
 //! A saved request must have one meaning and fit the reader's limits. These helpers

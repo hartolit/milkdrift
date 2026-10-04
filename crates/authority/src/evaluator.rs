@@ -1,3 +1,5 @@
+#![deny(clippy::wildcard_enum_match_arm)]
+
 use std::collections::BTreeMap;
 
 use crate::{

@@ -1,3 +1,5 @@
+#![deny(clippy::arithmetic_side_effects)]
+
 //! Coordinate resumable artifact files with immutable metadata and accounting.
 //!
 //! Publication saves intent before filesystem changes and accepts metadata only after

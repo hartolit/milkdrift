@@ -242,6 +242,43 @@ Repeatedly violated rules should become tooling or CI checks where practical, in
 
 Passing tests does not excuse duplicate architecture, partial adoption, or an unnecessarily complex interface.
 
+### 1.13 Maintain static enforcement
+
+Root workspace lint tables own shared compiler/Clippy levels; every backend member inherits them.
+Root `clippy.toml` owns type-resolved restrictions on unbounded queues and manual lifetime escapes.
+The [strict static gate](../workflow.md#strict-static-gate) checks product defaults separately from
+the evidence feature union, and repository contracts reject hidden members, reversed dependencies,
+unreviewed exports and broad suppressions. Existing normal Clippy coverage stays enabled; additional
+rules are individually selected rather than enabling opposing restriction groups.
+
+Unchecked arithmetic receives a scoped hard check where overflow changes meaning: shared document
+mechanics, workspace/controller budgets, artifact publication/accounting and runtime projection.
+Closed-state wildcard checking applies to authority evaluation, runtime projection and managed
+resource transitions. These module attributes select scope, not a copied workspace policy. A new
+input/accounting owner needs the same review. Indexing and numeric conversions require a checked
+operation or a narrow explanation of the already-established bounds; saturation is not a substitute
+for refusing an invalid allowance.
+
+Suppressions belong on the smallest actual operation, with an attribute `reason` explaining its
+invariant and evidence. Prefer `expect` when the warning must exist in that build; stale expectations
+fail. Use a justified local `allow` only for a configuration-dependent case. Do not suppress whole
+files, modules, lint groups or all tests. Output/exit restrictions allow only the actual presentation
+or harness operation, not a library writing to its embedding application's terminal. Secret-bearing
+types must not gain a derived `Debug` merely to satisfy a diagnostic.
+
+Handle results according to their meaning. Replacing an ignored error with `.ok()` or `drop` does not
+establish successful cleanup, cancellation or joining. A task handle's drop may detach its work.
+Standard lock/future/process lints help but cannot prove shutdown, deadlock freedom or bounded
+retention. Resource claims and generation holds may deliberately outlive their last reference;
+do not shorten them based on significant-drop suggestions alone. The managed transition guard
+elects an operation driver without retaining a mutex across the platform call; it is not an invalid
+mutex guard to add to Clippy's await list.
+
+Review size/bool-count thresholds, pass-by-value suggestions, unnecessary wrappers and significant
+drop tightening against actual ownership and consumers. They are design evidence, not instructions
+to add boxes, anonymous context bags or blanket shared ownership. Static checks do not replace
+conformance, public-reader, refusal, concurrent-operation, recovery or resource-lifetime tests.
+
 ---
 
 ## 2. Rust design guide

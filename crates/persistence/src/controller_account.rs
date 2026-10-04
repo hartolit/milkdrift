@@ -1,3 +1,5 @@
+#![deny(clippy::arithmetic_side_effects)]
+
 //! Reserve a controller's cumulative allowance before admitting external work.
 //!
 //! A declaration fixes the account and its ceilings. Runtime plans an entry against the

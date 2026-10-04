@@ -1,3 +1,5 @@
+#![deny(clippy::arithmetic_side_effects)]
+
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},

@@ -168,11 +168,17 @@ fn internal_declaration_errors(
     repository: &Path,
 ) -> TestResult<Vec<String>> {
     let mut errors = Vec::new();
-    let version = workspace["workspace"]["package"]["version"]
-        .as_str()
+    let workspace = workspace
+        .get("workspace")
+        .ok_or("missing workspace table")?;
+    let version = workspace
+        .get("package")
+        .and_then(|v| v.get("version"))
+        .and_then(Value::as_str)
         .ok_or("workspace version must be explicit")?;
-    for (alias, declaration) in workspace["workspace"]["dependencies"]
-        .as_table()
+    for (alias, declaration) in workspace
+        .get("dependencies")
+        .and_then(Value::as_table)
         .ok_or("missing workspace dependencies")?
     {
         let name = declaration
@@ -346,5 +352,36 @@ fn cargo_discovery_exposes_excluded_and_nested_backend_packages() -> TestResult 
     assert_eq!(hidden.len(), 2);
     assert!(hidden.contains(&directory.join("hidden/Cargo.toml")));
     assert!(hidden.contains(&directory.join("nested/Cargo.toml")));
+    Ok(())
+}
+
+#[test]
+fn clippy_configuration_has_one_owner_and_cargo_has_no_lint_caps() -> TestResult {
+    let repository = root()?;
+    let mut paths = Vec::new();
+    collect_files(&repository, &mut paths, &|path| {
+        path.file_name()
+            .is_some_and(|name| name == "clippy.toml" || name == ".clippy.toml")
+    })?;
+    assert_eq!(paths, vec![repository.join("clippy.toml")]);
+    let configuration: Value = toml::from_str(&read(repository.join(".cargo/config.toml"))?)?;
+    fn has_cap(value: &Value) -> bool {
+        match value {
+            Value::String(text) => text.contains("--cap-lints"),
+            Value::Array(values) => values.iter().any(has_cap),
+            Value::Table(values) => values.values().any(has_cap),
+            _ => false,
+        }
+    }
+    assert!(
+        !has_cap(&configuration),
+        "a required Cargo path must not cap lint severity"
+    );
+    assert!(has_cap(&toml::from_str(
+        "[build]\nrustflags=['--cap-lints=warn']"
+    )?));
+    assert!(!has_cap(&toml::from_str(
+        "# --cap-lints is a comment\n[build]\nrustflags=[]"
+    )?));
     Ok(())
 }

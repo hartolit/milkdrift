@@ -76,6 +76,14 @@ impl<'ast> Visit<'ast> for Structure {
     }
 
     fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        let mut imports = Vec::new();
+        use_paths(&item.tree, "", &mut imports);
+        for path in &imports {
+            if ["std::include", "core::include"].contains(&path.as_str()) {
+                self.errors
+                    .push("textual include import bypasses named modules".to_owned());
+            }
+        }
         if !matches!(item.vis, Visibility::Inherited) {
             let mut paths = Vec::new();
             use_paths(&item.tree, "", &mut paths);
@@ -136,6 +144,10 @@ impl<'ast> Visit<'ast> for Structure {
     }
 
     fn visit_macro(&mut self, item: &'ast syn::Macro) {
+        if ["include", "std::include", "core::include"].contains(&path_name(&item.path).as_str()) {
+            self.errors
+                .push("textual include bypasses named modules".to_owned());
+        }
         self.macros.push(path_name(&item.path));
         // Macro bodies are opaque to syn's AST. Inspect attribute token groups as well so an
         // allow hidden in macro_rules cannot evade suppression policy. Expansion/type meaning
@@ -292,8 +304,30 @@ fn cfg_enabled(meta: &Meta, helpers: bool) -> syn::Result<bool> {
                 ))
             }
         }
-        _ => Err(syn::Error::new_spanned(meta, "unsupported export cfg")),
+        Meta::NameValue(_) => Err(syn::Error::new_spanned(meta, "unsupported export cfg")),
     }
+}
+
+fn export_enabled(meta: &Meta, helpers: bool) -> syn::Result<bool> {
+    if meta.path().is_ident("cfg") {
+        return cfg_enabled(meta, helpers);
+    }
+    if let Meta::List(list) = meta
+        && list.path.is_ident("cfg_attr")
+    {
+        let values = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?;
+        let condition = values
+            .first()
+            .ok_or_else(|| syn::Error::new_spanned(meta, "empty conditional attribute"))?;
+        if cfg_enabled(condition, helpers)? {
+            for child in values.iter().skip(1) {
+                if !export_enabled(child, helpers)? {
+                    return Ok(false);
+                }
+            }
+        }
+    }
+    Ok(true)
 }
 
 #[test]
@@ -310,11 +344,28 @@ fn syntax_checks_explicit_exports_private_values_and_canonical_owners() -> TestR
             .to_string_lossy()
             .replace('\\', "/");
         assert!(syntax.errors.is_empty(), "{relative}: {:?}", syntax.errors);
-        assert!(
-            syntax.private_field_violations.is_empty(),
-            "{relative}: {:?}",
-            syntax.private_field_violations
-        );
+        if [
+            "crates/authority/src/selection.rs",
+            "crates/blueprint/src/revision.rs",
+            "crates/capability/src/bounded.rs",
+        ]
+        .contains(&relative.as_str())
+        {
+            assert!(
+                syntax.private_field_violations.is_empty(),
+                "{relative}: {:?}",
+                syntax.private_field_violations
+            );
+        }
+        if relative == "crates/blueprint/src/revision.rs" {
+            assert!(
+                !syntax
+                    .public_items
+                    .iter()
+                    .any(|name| name == "from_verified_parts" || name == "publish"),
+                "raw revision construction became external"
+            );
+        }
         if relative.starts_with("crates/contracts/src/") {
             assert!(
                 !syntax
@@ -369,8 +420,7 @@ fn syntax_checks_explicit_exports_private_values_and_canonical_owners() -> TestR
                 {
                     let conditions = attributes
                         .iter()
-                        .filter(|attr| attr.path().is_ident("cfg"))
-                        .map(|attr| cfg_enabled(&attr.meta, false))
+                        .map(|attr| export_enabled(&attr.meta, false))
                         .collect::<syn::Result<Vec<_>>>()?;
                     assert!(
                         conditions.iter().any(|enabled| !enabled),
@@ -482,7 +532,6 @@ fn syntax_checks_explicit_exports_private_values_and_canonical_owners() -> TestR
     Ok(())
 }
 
-// Activation adds the repository-wide assertion after these checkers have a clean tested checkpoint.
 pub(super) fn repository_suppression_errors() -> TestResult<Vec<String>> {
     let repository = root()?;
     let mut sources = Vec::new();
@@ -517,6 +566,13 @@ pub(super) fn repository_suppression_errors() -> TestResult<Vec<String>> {
 }
 
 #[test]
+fn suppressions_are_narrow_and_carry_reasons() -> TestResult {
+    let errors = repository_suppression_errors()?;
+    assert!(errors.is_empty(), "{}", errors.join("\n"));
+    Ok(())
+}
+
+#[test]
 fn syntax_accepts_formatting_literals_grouped_exports_and_rejects_bypasses() -> TestResult {
     let good = structure(
         r#"
@@ -528,6 +584,15 @@ fn syntax_accepts_formatting_literals_grouped_exports_and_rejects_bypasses() -> 
     "#,
     )?;
     assert!(good.errors.is_empty() && good.private_field_violations.is_empty());
+    let broad = structure(
+        "#[allow(dead_code, reason=\"An entire module cannot receive a blanket exception\")] mod hidden {}",
+    )?;
+    assert!(
+        broad
+            .broad_suppressions
+            .iter()
+            .any(|attr| matches!(contains_suppression(&attr.meta), Ok(true)))
+    );
     assert!(
         good.exports
             .iter()
@@ -539,6 +604,27 @@ fn syntax_accepts_formatting_literals_grouped_exports_and_rejects_bypasses() -> 
     assert_eq!(bad.errors.len(), 1);
     assert_eq!(bad.private_field_violations.len(), 1);
     assert!(structure("fn invalid(").is_err());
+    let conditional = structure(
+        "#[cfg_attr(not(test), cfg(feature=\"test-support\"))] pub use owner::ManualClock;",
+    )?;
+    for (_, attributes) in conditional.exports {
+        let defaults = attributes
+            .iter()
+            .map(|attribute| export_enabled(&attribute.meta, false))
+            .collect::<syn::Result<Vec<_>>>()?;
+        let helpers = attributes
+            .iter()
+            .map(|attribute| export_enabled(&attribute.meta, true))
+            .collect::<syn::Result<Vec<_>>>()?;
+        assert!(defaults.contains(&false));
+        assert!(helpers.iter().all(|enabled| *enabled));
+    }
+    for source in [
+        "include!(\"hidden.rs\");",
+        "use std::{include as hidden}; hidden!(\"hidden.rs\");",
+    ] {
+        assert!(!structure(source)?.errors.is_empty());
+    }
     let good = structure(
         "#[expect(dead_code, reason = \"Fixture tests an intentionally unused boundary\")] fn unused() {}",
     )?;

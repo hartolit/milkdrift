@@ -1,0 +1,12 @@
+# Allocation must be bounded at the queue owner, before work is admitted.
+disallowed-methods = [
+    { path = "std::sync::mpsc::channel", reason = "Use a capacity-owned bounded queue or justify the exact finite producer protocol." },
+    { path = "tokio::sync::mpsc::unbounded_channel", reason = "Use the existing bounded owner and truthful exhaustion behavior." },
+    { path = "std::boxed::Box::leak", reason = "Retain a visible owner responsible for the allocation's lifetime." },
+    { path = "std::vec::Vec::leak", reason = "Retain a visible owner responsible for the allocation's lifetime." },
+]
+disallowed-types = [
+    { path = "std::sync::mpsc::Sender", reason = "This is an unbounded queue endpoint; bounded sync_channel uses SyncSender." },
+    { path = "tokio::sync::mpsc::UnboundedSender", reason = "Unbounded queue endpoints bypass the capacity owner." },
+    { path = "tokio::sync::mpsc::UnboundedReceiver", reason = "Unbounded queue endpoints bypass the capacity owner." },
+]

@@ -11,7 +11,7 @@ use super::{
 fn internal_edges(owner: &str) -> Option<&'static str> {
     Some(match owner.strip_prefix("milkdrift-")? {
         "contracts" | "slotbook" => "",
-        "capability" => "contracts",
+        "capability" | "control-protocol" => "contracts",
         "blueprint" | "workspace" => "capability contracts",
         "authority" => "blueprint capability contracts workspace",
         "model" => "blueprint capability contracts persistence workspace",
@@ -26,7 +26,6 @@ fn internal_edges(owner: &str) -> Option<&'static str> {
         "prompt-sequence" => {
             "authority blueprint capability contracts control persistence workspace"
         }
-        "control-protocol" => "contracts",
         "peer-protocol" => "authority capability contracts workspace",
         "control-client" => "capability control-protocol peer-protocol",
         "cli" => {

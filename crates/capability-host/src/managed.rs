@@ -1,3 +1,5 @@
+#![deny(clippy::wildcard_enum_match_arm)]
+
 //! One semantic owner for persistent installations, shared by administration and invocations.
 //!
 //! A command first commits exact identities and closes affected admission. Platform calls then

@@ -16,6 +16,22 @@ fn probe(
         "[package]\nname='policy-probe'\nversion='0.0.0'\nedition='2024'\n[workspace]\n[features]\nprobe=[]\n",
     )?;
     fs::write(directory.path().join("src/lib.rs"), source)?;
+    if source.contains("tokio::") {
+        let workspace: toml::Value = toml::from_str(&read(root()?.join("Cargo.toml"))?)?;
+        let version = workspace
+            .get("workspace")
+            .and_then(|v| v.get("dependencies"))
+            .and_then(|v| v.get("tokio"))
+            .and_then(|v| v.get("version"))
+            .and_then(toml::Value::as_str)
+            .ok_or("missing pinned Tokio declaration")?;
+        let path = directory.path().join("Cargo.toml");
+        let mut manifest = fs::read_to_string(&path)?;
+        manifest.push_str(&format!(
+            "[dependencies]\ntokio={{version='={version}',features=['sync']}}\n"
+        ));
+        fs::write(path, manifest)?;
+    }
     if let Some(configuration) = configuration {
         fs::write(directory.path().join("clippy.toml"), configuration)?;
     }
@@ -25,6 +41,7 @@ fn probe(
             "clippy",
             "--offline",
             "--quiet",
+            "--all-features",
             "--message-format=json",
             "--",
             "-D",
@@ -44,12 +61,22 @@ fn has_diagnostic(output: &std::process::Output, lint: &str) -> bool {
     String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .any(|value| value["message"]["code"]["code"] == lint)
+        .any(|value| value.pointer("/message/code/code").and_then(|v| v.as_str()) == Some(lint))
 }
 
 #[test]
 fn pinned_compiler_and_clippy_reject_config_and_representative_mistakes() -> TestResult {
     for (lint, invalid, valid) in [
+        (
+            "renamed_and_removed_lints",
+            "#![allow(clippy::integer_arithmetic)] pub fn run() {}",
+            "pub fn run() {}",
+        ),
+        (
+            "unfulfilled_lint_expectations",
+            "#[cfg_attr(feature=\"probe\", expect(dead_code, reason=\"Active fixture has no dead code\"))] pub fn run() {}",
+            "#[cfg_attr(feature=\"probe\", expect(dead_code, reason=\"Active fixture contains an unused function\"))] fn run() {}",
+        ),
         (
             "unknown_lints",
             "#[allow(milkdrift_misspelled)] pub fn run() {}",
@@ -151,13 +178,8 @@ fn pinned_compiler_and_clippy_reject_config_and_representative_mistakes() -> Tes
 
 #[test]
 fn configured_disallowed_apis_are_resolved_through_aliases() -> TestResult {
-    // This test becomes mandatory with activation of the root behavior configuration.
     let path = root()?.join("clippy.toml");
-    let configuration = if path.exists() {
-        read(path)?
-    } else {
-        "disallowed-methods = [{ path = \"std::sync::mpsc::channel\", reason = \"Unbounded queues need an explicit capacity owner\" }]".to_owned()
-    };
+    let configuration = read(path)?;
     let output = probe(
         "clippy::disallowed_methods",
         "use std::sync::mpsc::channel as hidden; pub fn run() { let (_send, _recv) = hidden::<u8>(); }",
@@ -170,5 +192,35 @@ fn configured_disallowed_apis_are_resolved_through_aliases() -> TestResult {
         Some(&configuration),
     )?;
     assert!(output.status.success());
+    for (lint, source) in [
+        (
+            "clippy::disallowed_methods",
+            "use tokio::sync::mpsc::unbounded_channel as hidden; pub fn run() { let (_send, _recv) = hidden::<u8>(); }",
+        ),
+        (
+            "clippy::disallowed_types",
+            "use tokio::sync::mpsc::UnboundedSender as Hidden; pub fn run(_: Hidden<u8>) {}",
+        ),
+        (
+            "clippy::disallowed_methods",
+            "use std::boxed::Box as Owner; pub fn run() { let _v = Owner::leak(Owner::new(1)); }",
+        ),
+        (
+            "clippy::disallowed_methods",
+            "pub fn run(v: Vec<u8>) { let _v = v.leak(); }",
+        ),
+        (
+            "clippy::disallowed_types",
+            "use std::sync::mpsc::Sender as Hidden; pub fn run(_: Hidden<u8>) {}",
+        ),
+    ] {
+        let output = probe(lint, source, Some(&configuration))?;
+        assert!(
+            !output.status.success() && has_diagnostic(&output, lint),
+            "unresolved configured API: {lint}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     Ok(())
 }

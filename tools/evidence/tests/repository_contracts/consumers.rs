@@ -64,6 +64,18 @@ fn outside_consumers_require_validated_construction_and_explicit_helper_features
     );
     let output = check(
         directory.path(),
+        "pub fn bypass() { let _ = milkdrift_blueprint::BlueprintRevision::from_verified_parts; }",
+        false,
+    )?;
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(
+        !output.status.success()
+            && stderr.contains("E0624")
+            && stderr.contains("from_verified_parts"),
+        "expected private raw revision constructor: {stderr}"
+    );
+    let output = check(
+        directory.path(),
         "pub fn corrupt(value: &mut milkdrift_blueprint::BlueprintRevision) { value.sequence = 99; }",
         false,
     )?;

@@ -53,6 +53,15 @@ struct Gate {
 }
 
 impl Gate {
+    fn passed(&self) -> bool {
+        self.checks
+            .iter()
+            .all(|check| matches!(check.classification, "passed" | "expected_probe_refusal"))
+    }
+    #[expect(
+        clippy::print_stdout,
+        reason = "The static gate reports only checker names and outcomes to its operator"
+    )]
     fn run(&mut self, name: &str, program: &str, arguments: &[&str]) -> CheckResult<bool> {
         let stdout = self.output.join(format!("{name}.stdout"));
         let stderr = self.output.join(format!("{name}.stderr"));
@@ -125,11 +134,13 @@ fn classify_failure(stdout: &Path, stderr: &Path) -> CheckResult<&'static str> {
         if value.get("reason").and_then(|v| v.as_str()) != Some("compiler-message") {
             continue;
         }
-        let message = &value["message"];
-        if message["level"] != "error" {
+        let message = value
+            .get("message")
+            .ok_or("compiler diagnostic has no message")?;
+        if message.get("level").and_then(|v| v.as_str()) != Some("error") {
             continue;
         }
-        match message["code"]["code"].as_str() {
+        match message.pointer("/code/code").and_then(|v| v.as_str()) {
             Some(code) if code.starts_with('E') => compiler = true,
             Some("unknown_lints" | "renamed_and_removed_lints") => {
                 return Ok("configuration_failure");
@@ -247,27 +258,45 @@ fn summarize(gate: &Gate) -> CheckResult {
             let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
                 continue;
             };
-            if value["reason"] != "compiler-message" {
+            if value.get("reason").and_then(|v| v.as_str()) != Some("compiler-message") {
                 continue;
             }
-            let message = &value["message"];
-            if message["level"] != "error" && message["level"] != "warning" {
+            let message = value
+                .get("message")
+                .ok_or("compiler diagnostic has no message")?;
+            if !matches!(
+                message.get("level").and_then(|v| v.as_str()),
+                Some("error" | "warning")
+            ) {
                 continue;
             }
-            let span = message["spans"]
-                .as_array()
-                .and_then(|spans| spans.iter().find(|s| s["is_primary"] == true));
+            let span = message
+                .get("spans")
+                .and_then(|v| v.as_array())
+                .and_then(|spans| {
+                    spans
+                        .iter()
+                        .find(|s| s.get("is_primary").and_then(|v| v.as_bool()) == Some(true))
+                });
             let Some(span) = span else {
                 continue;
             };
             let key = (
-                message["code"]["code"]
-                    .as_str()
+                message
+                    .pointer("/code/code")
+                    .and_then(|v| v.as_str())
                     .unwrap_or("unclassified")
                     .to_owned(),
-                span["file_name"].as_str().unwrap_or("unknown").to_owned(),
-                span["line_start"].as_u64().unwrap_or(0),
-                message["message"].as_str().unwrap_or("unknown").to_owned(),
+                span.get("file_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_owned(),
+                span.get("line_start").and_then(|v| v.as_u64()).unwrap_or(0),
+                message
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_owned(),
             );
             findings.entry(key).or_default().insert(check.name.clone());
         }
@@ -300,13 +329,11 @@ fn execute(arguments: Arguments) -> CheckResult<bool> {
     };
     gate.run("source-head", "git", &["rev-parse", "HEAD"])?;
     gate.run("source-status", "git", &["status", "--short"])?;
-    gate.run(
-        "source-diff",
-        "git",
-        &["diff", "HEAD", "--", ".", ":(exclude)Cargo.lock"],
-    )?;
+    gate.run("source-diff", "git", &["diff", "HEAD", "--", "."])?;
     gate.run("rust-version", "rustc", &["-Vv"])?;
     gate.cargo("clippy-version", &["clippy", "--version"])?;
+    gate.cargo("deny-version", &["deny", "--version"])?;
+    gate.cargo("machete-version", &["machete", "--version"])?;
     external::versions(&mut gate)?;
     if arguments.probe_tools {
         external::probes(&mut gate)?;
@@ -317,11 +344,13 @@ fn execute(arguments: Arguments) -> CheckResult<bool> {
         external::checks(&mut gate, &arguments.secret_base, arguments.all_tracked)?;
     }
     summarize(&gate)?;
-    Ok(gate.checks.iter().all(|check| {
-        check.classification == "passed" || check.classification == "expected_probe_refusal"
-    }))
+    Ok(gate.passed())
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "The static command reports its startup or verification failure to the operator"
+)]
 fn main() -> ExitCode {
     match execute(Arguments::parse()) {
         Ok(true) => ExitCode::SUCCESS,
@@ -352,6 +381,10 @@ mod tests {
         );
         assert!(!gate.run("bad-command", "rustc", &["--milkdrift-invalid-option"])?);
         assert!(gate.run("valid-command", "rustc", &["--version"])?);
+        assert!(
+            !gate.passed(),
+            "a later success must not erase failed checks"
+        );
         assert!(output.path().join("checks.json").is_file());
         Ok(())
     }

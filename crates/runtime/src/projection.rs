@@ -1,3 +1,5 @@
+#![deny(clippy::arithmetic_side_effects, clippy::wildcard_enum_match_arm)]
+
 //! Pure, deterministic projection of one run's authoritative event history.
 //!
 //! This module deliberately has no persistence, clock, ID-generation, registry, or
