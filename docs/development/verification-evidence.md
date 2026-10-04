@@ -88,16 +88,102 @@ nonempty final prose and `stop`, and do not establish editorial correctness or u
 
 ## Client workflow acceptance
 
-The 2026-10-04 local record is under ignored `target/client-ready-workflows/06/`. The final
+The correction record is under ignored `target/client-workflow-corrections/`, on Linux x86-64
+with Rust 1.95.0. Its executable source is `199d1a5fc86c001972cf205a2b37bb749907c37e`;
+later status and office closeout commits change prose only. `corrected-source.txt`,
+`corrected-source-status.txt`, `corrected-toolchain.txt` and `corrected-binaries.sha256` bind the
+checkout and six preserved applications/helpers in `corrected-binaries/`. Cargo jobs have one
+owner and two build jobs; test execution retains ordinary parallelism. The final scenario build
+follows workspace testing, because its selected package features can produce different binary
+bytes from the workspace build. [Status](../product/status.md#current-validationevidence-snapshot)
+owns the integrated outcome and totals.
+
+The daemon previously performed a complete maintenance pass after every queued request, including
+effect-worker clock reads. The debugger found an effect waiting for such a read while the owner
+replayed history during effect-claim maintenance. The owner now lets requests progress between
+interval-based passes, without accumulating missed ticks. A deterministic regression brackets one
+queued request: old behavior performs six unwanted clock samples, while the correction performs
+none. At `d4ecdf4`, the original published-input and independent-copy cases pass in 6.62/10.91
+seconds, with their original deadlines, one-worker publication and overlapping copied/source runs.
+The earlier isolated results were 31.68/34.03 seconds. A once-per-case one-CPU comparison also
+passes on `39d9677` and `479f255` (40.46/40.40 versus 8.93/13.88 seconds).
+
+Those finite runs do not reproduce the historical hosted deadlines or establish a deadlock. The
+initial three ordinary parallel suites returned 41/42, 42/42 and 42/42; the extra failure was a
+binary fixture exit before readiness whose discarded logs cannot establish its cause. The separate
+port-zero startup regression fails with the old fixture and passes after child-owned binding.
+All campaign results remain retained. A zero-discovery run caused by shared-target artifact reuse
+is excluded; affected package caches were invalidated before fresh builds and sensitivity checks.
+
+Final qualification also exposed a concrete report-loss race: a controller child became uncertain
+when another branch's artifact publication made a report commit return `OwnerBusy`. The parent
+correctly waited for that unresolved child. `accepted-controller/` retains the failed run;
+`controller-stopped-*` records read-only inspection, and `controller-inspection/` contains an
+authenticated recovery read on a private stopped copy. Runtime now rebuilds the same observation
+on publication-owner or workspace-usage conflicts within its existing sixteen commit attempts,
+without repeating the effect. The production-store precommit fault regression fails with the old
+classification, passes with the correction, and covers one entry/terminal across reopen, finite
+exhaustion and other storage failures. `report-contention-controller/` then completes the original
+two-entry/one-denial race and crash/reopen qualification. Raw stores and logs remain private.
+
+Named-workflow success uses one ordinary grant on both actual CLI and independent JSON paths.
+Authority tests cover canonical decoding/digests, malformed selections, missing actions, frozen
+bases and revocation. Copy tests refuse source-only, destination-only, run-only and unrelated
+workflow access without creating destination work, and retain exact replay/conflict after reopen.
+The [authority guide](../operations/authority.md) owns the configuration and collection-read rules.
+
+The final commands use `--locked`; the strict runner receives `CARGO_BUILD_JOBS=2` and the installed
+pinned scanners on `PATH`:
+
+```sh
+cargo strict-checks --output target/client-workflow-corrections/corrected-strict \
+  --secret-base 15157c0acfe4e7f73dbb0eec2b5a5d9e68321f53
+cargo test --locked --workspace --all-features --no-fail-fast -j 2
+cargo test --locked --workspace --all-features -j 2 -- --list
+cargo build --locked --all-features -j 2 \
+  -p milkdrift-daemon --bin milkdrift-daemon -p milkdrift-cli --bin milkdrift \
+  -p milkdrift-local-process --bin milkdrift-process-test-helper \
+  -p milkdrift-evidence --bin headless-cli-evidence --bin local-model-evidence \
+  --bin evidence-process-helper
+```
+
+After copying the six freshly built binaries into `corrected-binaries/` and recording their
+checksums, the application commands are:
+
+```sh
+target/client-workflow-corrections/corrected-binaries/headless-cli-evidence \
+  --daemon target/client-workflow-corrections/corrected-binaries/milkdrift-daemon \
+  --cli target/client-workflow-corrections/corrected-binaries/milkdrift \
+  --examples examples/operator
+target/client-workflow-corrections/corrected-binaries/local-model-evidence \
+  --daemon target/client-workflow-corrections/corrected-binaries/milkdrift-daemon \
+  --cli target/client-workflow-corrections/corrected-binaries/milkdrift \
+  --process-helper target/client-workflow-corrections/corrected-binaries/evidence-process-helper \
+  --output target/client-workflow-corrections/corrected-model
+target/client-workflow-corrections/corrected-binaries/headless-cli-evidence \
+  --daemon target/client-workflow-corrections/corrected-binaries/milkdrift-daemon \
+  --cli target/client-workflow-corrections/corrected-binaries/milkdrift \
+  --controller-qualification \
+  --controller-output target/client-workflow-corrections/corrected-controller
+```
+
+`corrected-{strict,workspace,discovery,build,headless,model,controller}.log` retains each result.
+The authored journey already executes in the ordinary full suite. Scanner installation proof is
+`final-tool-probes/checks.json`. `corrected-hosted-runs.json` records no hosted run for this source;
+local commits were not pushed. The earlier `15157c0` hosted result remains a failure, as recorded
+in [quality run 213](https://github.com/hartolit/milkdrift/actions/runs/37224200192).
+
+The earlier `9ceac87` local record is under ignored `target/client-ready-workflows/06/`. Its final
 `verified-*` logs identify the build, static matrix, checker probes, runtime suite, discovery and
 combined binary journeys; `verified-source.txt` and `verified-binaries.sha256` bind their source
-and executables. [Status](../product/status.md#current-validationevidence-snapshot) owns the accepted
-totals. The authored runner retains its seven-call controlled transcript and private recovery files.
+and executables. [Status](../product/status.md#current-validationevidence-snapshot) preserves that
+earlier result. The authored runner retains its seven-call controlled transcript and private recovery files.
 Independent JSON-client, lost-reply, repair refusal, publication retirement and comparison cases
 remain ordinary tests through their production owners.
 
 `acceptance-live-local/` and `acceptance-live-um790/` retain both assigned briefs on the same authored
-revision, using product `ffbb55d`. Later changes in this acceptance affect evidence tooling only.
+revision, using product `ffbb55d`. Later changes in that earlier acceptance affected evidence
+tooling only; the correction above additionally changes daemon maintenance and runtime reporting.
 The attached endpoints are desktop `ornith-9b` and UM790 `ornith`, reached through a disposable SSH
 forward. Each final run uses the four-request budget above and explicit `reasoning_effort: none`.
 Desktop reports 9,079 input / 649 output tokens; UM790 reports 9,042 / 284. Both pass completeness.
@@ -106,7 +192,7 @@ commentary and explanations beyond the brief, requiring editorial review. These 
 not qualify general model quality, autonomous coding or useful live learning. Earlier runs with
 incorrectly shortened example briefs remain retained and do not qualify the assigned inputs.
 
-`slotbook-{direct,workflow,peer}-accepted/` exercise the final product's native protected publication,
+`slotbook-{direct,workflow,peer}-accepted/` exercise that earlier product's native protected publication,
 invoke-only refusals, exact replay/restart, six fixed checks, verification renewal and owned-resource
 removal. `native-*.log` covers worker conformance, foreign-container collision protection and
 protected-verifier timeout/recovery/integrity with a preloaded neutral worker image. These are

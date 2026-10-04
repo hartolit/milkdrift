@@ -64,7 +64,9 @@ This document owns current implementation, limitations, exact versions, and qual
   and immutable source provenance under a different workflow identity, without copying execution
   state or authority. Identity-bound governing agreements refuse independent copying; exact-version
   reuse remains available. Concurrent controlled runs retain separate briefs, outputs and pins when
-  the copy is edited and saved.
+  the copy is edited and saved. A single grant can name the source and destination in a bounded
+  exact workflow set, without unrelated workflow access. The [authority guide](../operations/authority.md)
+  explains the required actions, canonical scope and filtered collection reads.
 - Ordinary run starts accept named immutable artifacts through existing upload and workspace
   admission. The CLI can upload a separate text brief for each run of one saved revision, retain a
   private exact request before submission, and reconnect under the original host/caller/grant.
@@ -264,34 +266,50 @@ values; repository contracts check the version cells against source.
 
 ## Current validation/evidence snapshot
 
-Current integrated acceptance is open: hosted [quality run 213](https://github.com/hartolit/milkdrift/actions/runs/37224200192)
-at `15157c0` passed static checks but failed the published-input and independent-copy integration
-cases while waiting for completion. Later actual-binary scenarios were skipped. The active
-[correction](../development/virtual-office/06-client-workflow-corrections.md) owns diagnosis,
-failure evidence, named-workflow copy authority and fresh combined verification.
-
-The earlier local full software gate passed at `9ceac87` with Rust 1.95.0 on Linux x86-64:
-1,107 tests, including 24 doctests and 30 repository contracts, with eight opt-in tests ignored
-by the ordinary command. Test discovery also passes. All 33 entries in the
+Local integrated acceptance passes at executable source `199d1a5` with Rust 1.95.0 on Linux x86-64:
+1,119 tests, including 24 doctests and 30 repository contracts, with eight opt-in tests ignored
+by the ordinary command. The control-plane target passes all 45 tests in ordinary parallel
+execution, including both reviewed cases. Test discovery also passes. All 33 entries in the
 [strict static gate](../development/workflow.md#strict-static-gate) pass, including default product
 binaries, all workspace targets/features, Clippy, warning-denying documentation, independent
 consumer probes, dependency hygiene, workflow checks and secret scanning. All 16 checker-probe
-entries pass, including the three expected refusals of synthetic violations.
+entries have their expected outcomes: thirteen passes and three refusals of synthetic violations.
 
-Actual headless, controller, deterministic-model and authored-workflow journeys pass on that
-same final source. The authored endpoint independently counts exactly seven calls across two
-briefs and prospective repair, with selected context, exact restart/replay, separate copies,
+Actual headless, controller and deterministic-model scenarios pass on preserved freshly built
+application binaries from that source. The authored journey executes in the full suite, with
+exactly seven independently counted calls across two briefs and prospective repair. It checks
+selected context, exact restart/replay, separate copies,
 unchanged accepted pins and confirmed child cleanup. The independent JSON-client route remains
 covered by the full gate, without CLI or private definition builders.
 
-Three selected native cases separately pass worker conformance, foreign-container collision
+The correction removes maintenance after every owner request, gives queued effect work time to
+progress between passes, and retries temporary report/accounting conflicts within the existing
+finite commit bound. The latter fixes a controller failure captured during acceptance: another
+branch's artifact publication had caused a report to become uncertain. Bounded failure collection
+and joined fixture cleanup retain useful evidence; child-selected initial ports remove a fixture
+startup race. Ordinary CLI and JSON copy now succeed with one grant naming only their source and
+destination. [Reproducible evidence](../development/verification-evidence.md#client-workflow-acceptance)
+records sensitive regressions, all campaigns, commands, binary identities and remaining limits.
+
+Hosted confirmation remains unavailable for the correction; these local commits were not pushed.
+Historical [quality run 213](https://github.com/hartolit/milkdrift/actions/runs/37224200192) at
+`15157c0` passed static checks but returned 36 passes and two completion timeouts in the control-plane
+target; later application scenarios were skipped. Those exact deadlines did not reproduce in the
+finite local campaign. The regressions establish the corrected maintenance and report-contention
+defects, not a retroactive deadlock diagnosis or a corrected hosted pass.
+
+The earlier `9ceac87` local gate passed 1,107 tests, including 24 doctests and 30 repository contracts,
+with eight opt-in cases ignored. Its 33 static checks, sixteen checker probes, discovery and
+headless/controller/model/authored journeys also passed. That evidence remains scoped to its source.
+
+At the earlier qualification, three selected native cases passed worker conformance, foreign-container collision
 protection and protected-verifier renewal/timeout/recovery/integrity. Direct, workflow and peer
 Slotbook publication qualify through the actual product binaries at `ffbb55d`, with six fixed
-checks, invoke-only refusals, exact replay/restart and owned-resource removal. Later acceptance
-changes affect evidence tooling only. The remaining five manual longevity cases were not rerun;
-their existing scopes and retained evidence remain unchanged.
+checks, invoke-only refusals, exact replay/restart and owned-resource removal. These native results
+belong to the earlier qualification; this correction uses controlled model/process evidence and
+does not rerun the native or attached-model campaign. Existing manual longevity evidence is unchanged.
 
-Both supplied model endpoints pass both assigned release-note briefs through the same authored
+Both supplied model endpoints passed both assigned release-note briefs through the same authored
 workflow on that product: desktop `ornith-9b` and UM790 `ornith`. Each final run uses four requests
 with at most 1,024 output tokens per request and no automatic retries. The UM790 output is concise
 and retains the supplied facts; desktop output includes review commentary and explanations beyond

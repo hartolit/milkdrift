@@ -77,6 +77,13 @@ injection at the real precommit boundary, not another reproduction of the origin
 Focused verification passes: runtime all-target/all-feature Clippy, 206 runtime tests (one existing
 ignored case), fresh applications, and the complete controller qualification. Its competing
 admissions record two entries and one denial, followed by successful crash/reopen checks.
-Next: commit this report-contention fix, then repeat the full gate and preserve freshly built
-application binaries for all three scenarios.
-Historical live/native evidence remains historical. No corrected hosted run exists; no push made.
+The report-contention fix is committed at `199d1a5fc86c001972cf205a2b37bb749907c37e`.
+Final `corrected-*` verification passes all 33 strict checks and 1,119 workspace tests (including
+24 doctests and 30 repository contracts), with eight existing opt-in cases ignored. Discovery
+confirms every affected test. All 45 control-plane cases and the maintained authored journey pass.
+The six preserved application binaries pass headless, deterministic-model and complete controller
+qualification; their SHA-256 checks still match afterward. All owned test children are settled.
+Historical live/native evidence remains historical. Hosted query returns no corrected run; no push made.
+
+Next: check and commit canonical acceptance documentation, then separately remove this completed
+assignment/handoff and update the office/roadmap links with documentation-only verification.
