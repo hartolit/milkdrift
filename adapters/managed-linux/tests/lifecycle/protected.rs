@@ -106,7 +106,8 @@ impl ManagedPlatform for ProtectedPlatform {
         bytes: &[u8],
         _: u64,
     ) -> std::result::Result<ApprovedSetup, ManagedError> {
-        if let Some((ready, resume)) = self.prepare_gate.lock().map_err(failure)?.take() {
+        let gate = self.prepare_gate.lock().map_err(failure)?.take();
+        if let Some((ready, resume)) = gate {
             ready.send(()).map_err(failure)?;
             resume
                 .recv_timeout(std::time::Duration::from_secs(10))
@@ -584,12 +585,17 @@ fn content_authority_and_concurrent_revocation_prevent_entry() -> Result {
     let principal = caller()?;
     let work = std::thread::spawn(move || worker.execute(&principal, &publication));
     ready_recv.recv_timeout(std::time::Duration::from_secs(10))?;
+    let gate_released = platform.prepare_gate.try_lock().is_ok();
     authority.active.store(false, Ordering::SeqCst);
     resume_send.send(())?;
     assert!(
         work.join()
             .map_err(|_| "publication thread panic")?
             .is_err()
+    );
+    assert!(
+        gate_released,
+        "publication held the fixture mutex while waiting for external authorization changes"
     );
     assert_eq!(platform.base.0.lock().map_err(|e| e.to_string())?.starts, 0);
     assert!(current(&store)?.pending.is_none());

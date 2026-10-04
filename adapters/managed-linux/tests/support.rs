@@ -7,10 +7,10 @@ use milkdrift_persistence::*;
 use milkdrift_redb_store::RedbStore;
 use std::collections::BTreeMap;
 /// Fallible fixture result, including bounded mechanism errors.
-pub type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub(crate) type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Allowed decision retaining the complete fixture request.
-pub fn decision(request: AuthorityRequest) -> Result<AuthorityDecisionSnapshot> {
+pub(crate) fn decision(request: AuthorityRequest) -> Result<AuthorityDecisionSnapshot> {
     Ok(AuthorityDecisionSnapshot::from_evaluation(
         PolicyId::new("managed-test")?,
         1,
@@ -21,7 +21,7 @@ pub fn decision(request: AuthorityRequest) -> Result<AuthorityDecisionSnapshot> 
     )?)
 }
 /// Fixture actor and finite originating resource scope.
-pub fn caller() -> Result<AuthorityRequest> {
+pub(crate) fn caller() -> Result<AuthorityRequest> {
     Ok(AuthorityRequest {
         decision: DecisionId::new("managed-test")?,
         actor: ActorRef::new("human:managed")?,
@@ -38,7 +38,7 @@ pub fn caller() -> Result<AuthorityRequest> {
 }
 
 /// Accept and enter through the production serving store; the resource reservation joins that transaction.
-pub fn entered(
+pub(crate) fn entered(
     store: &RedbStore,
     descriptor: &CapabilityDescriptor,
     key: &str,
@@ -61,7 +61,7 @@ pub fn entered(
 }
 
 /// Retain an exact referenced input in the same real acceptance used by inline fixtures.
-pub fn entered_reference(
+pub(crate) fn entered_reference(
     store: &RedbStore,
     descriptor: &CapabilityDescriptor,
     key: &str,
@@ -196,7 +196,7 @@ pub fn entered_reference(
         descriptor.identity().clone(),
         operation,
         descriptor.provider_profile().cloned(),
-        key_value.clone(),
+        key_value,
         request.inputs().to_vec(),
         BTreeMap::new(),
     )?;
