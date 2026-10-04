@@ -705,7 +705,7 @@ pub(crate) fn decode_receipt(
 ) -> Result<ApplicationCommandReceipt, PersistenceError> {
     let receipt: ApplicationCommandReceipt = json::decode(bytes, RECEIPT_FAMILY)?;
     validate_stored(receipt.validate(), RECEIPT_FAMILY)?;
-    let components = codec::decode_components(key, 2)?;
+    let components = codec::decode_components::<2>(key)?;
     if components[0] != receipt.actor().as_str() || components[1] != receipt.command().as_str() {
         return Err(PersistenceError::Corruption(
             "application receipt key does not match its document".to_owned(),

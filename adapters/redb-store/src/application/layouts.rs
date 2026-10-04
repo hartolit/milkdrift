@@ -78,7 +78,7 @@ pub(crate) fn decode_layout(
 ) -> Result<ApplicationLayout, PersistenceError> {
     let layout: ApplicationLayout = json::decode(bytes, LAYOUT_FAMILY)?;
     validate_stored(layout.validate(), LAYOUT_FAMILY)?;
-    let components = codec::decode_components(key, 2)?;
+    let components = codec::decode_components::<2>(key)?;
     if components[0] != layout.workflow().as_str() || components[1] != layout.revision().as_str() {
         return Err(PersistenceError::Corruption(
             "application layout key does not match its document".to_owned(),

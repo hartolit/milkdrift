@@ -83,7 +83,7 @@ where
         .map_err(error::redb)?
     {
         let (key, value) = item.map_err(error::redb)?;
-        let components = codec::decode_components(key.value(), 3)?;
+        let components = codec::decode_components::<3>(key.value())?;
         let reference: ArtifactReference = json::decode(value.value(), "artifact ownership")?;
         if components[0] != owner_key.as_str()
             || components[1] != reference.digest().to_hex()
@@ -136,8 +136,12 @@ pub(crate) fn indexed_owner_artifact_reference(
     let Some((key, bytes)) = item else {
         return Ok(false);
     };
-    let components = codec::decode_components(key.value(), 4)
-        .or_else(|_| codec::decode_components(key.value(), 5))?;
+    let components = codec::decode_components::<4>(key.value())
+        .map(|[digest, artifact, owner, _]| [digest, artifact, owner])
+        .or_else(|_| {
+            codec::decode_components::<5>(key.value())
+                .map(|[digest, artifact, owner, _, _]| [digest, artifact, owner])
+        })?;
     if components[0] != digest
         || components[1] != reference.artifact().as_str()
         || components[2] != owner_key.as_str()

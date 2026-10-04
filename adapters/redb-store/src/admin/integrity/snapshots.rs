@@ -15,7 +15,7 @@ pub(super) fn scan(context: &mut ScanContext<'_, '_>) -> Result<(), PersistenceE
         &snapshots,
         "snapshot_indexes",
         |key, bytes| {
-            let components = codec::decode_components(key, 2)?;
+            let components = codec::decode_components::<2>(key)?;
             let snapshot = SnapshotDocument::from_json(bytes)?;
             if snapshot.run().as_str() != components[0]
                 || snapshot.snapshot().as_str() != components[1]

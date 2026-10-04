@@ -67,7 +67,7 @@ pub(super) fn scan_committed(context: &mut ScanContext<'_, '_>) -> Result<(), Pe
         "artifact_indexes",
         |key, bytes| {
             let (digest, artifact, run) = artifact_occurrence_key(key)?;
-            let _ = crate::artifact::owner::domain_owner(&run)?;
+            crate::artifact::owner::domain_owner(&run)?;
             let reference: ArtifactReference = json::decode(bytes, "artifact reference")?;
             if digest != reference.digest().to_hex() || artifact != reference.artifact().as_str() {
                 return Err(error::corruption(
@@ -93,7 +93,7 @@ pub(super) fn scan_committed(context: &mut ScanContext<'_, '_>) -> Result<(), Pe
         &ownership,
         "artifact_indexes",
         |key, bytes| {
-            let components = codec::decode_components(key, 3)?;
+            let components = codec::decode_components::<3>(key)?;
             let owner = crate::artifact::owner::domain_owner(components[0])?;
             if crate::journal::validated_workspace_domain(read, &owner)?.is_none() {
                 return Err(error::corruption(
@@ -244,23 +244,19 @@ pub(super) fn scan_publications(context: &mut ScanContext<'_, '_>) -> Result<(),
 }
 
 fn artifact_occurrence_key(key: &[u8]) -> Result<(String, String, String), PersistenceError> {
-    let components = match codec::decode_components(key, 4) {
-        Ok(components) => components,
+    let [digest, artifact, owner] = match codec::decode_components::<4>(key) {
+        Ok([digest, artifact, owner, _]) => [digest, artifact, owner],
         Err(_) => {
-            let components = codec::decode_components(key, 5)?;
-            if components[3] != "publication" {
+            let [digest, artifact, owner, kind, _] = codec::decode_components::<5>(key)?;
+            if kind != "publication" {
                 return Err(error::corruption(
                     "five-part artifact occurrence key has an unknown owner kind",
                 ));
             }
-            components
+            [digest, artifact, owner]
         }
     };
-    Ok((
-        components[0].to_owned(),
-        components[1].to_owned(),
-        components[2].to_owned(),
-    ))
+    Ok((digest.to_owned(), artifact.to_owned(), owner.to_owned()))
 }
 
 fn scan_digest_index(
@@ -297,7 +293,7 @@ fn scan_digest_index(
         let (key, value) = item.map_err(error::redb)?;
         context.result.documents_checked += 1;
         let checked = (|| {
-            let components = codec::decode_components(key.value(), 2)?;
+            let components = codec::decode_components::<2>(key.value())?;
             let document: ArtifactMetadata = json::decode(value.value(), "artifact metadata")?;
             let digest = document.reference().digest().to_hex();
             let artifact = document.reference().artifact().as_str();

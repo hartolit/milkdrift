@@ -77,13 +77,12 @@ pub(crate) fn prefix_end(mut prefix: Vec<u8>) -> Option<Vec<u8>> {
     None
 }
 
-pub(crate) fn decode_components(
+pub(crate) fn decode_components<const N: usize>(
     encoded: &[u8],
-    expected: usize,
-) -> Result<Vec<&str>, PersistenceError> {
+) -> Result<[&str; N], PersistenceError> {
     let mut offset = 0_usize;
-    let mut decoded = Vec::with_capacity(expected);
-    for _ in 0..expected {
+    let mut decoded = [""; N];
+    for component in &mut decoded {
         let length_end = offset
             .checked_add(COMPONENT_LENGTH_BYTES)
             .ok_or_else(|| bounds("compound key offset overflow"))?;
@@ -100,9 +99,9 @@ pub(crate) fn decode_components(
         let value = encoded
             .get(length_end..value_end)
             .ok_or_else(|| bounds("compound key has a truncated component"))?;
-        decoded.push(std::str::from_utf8(value).map_err(|_| {
+        *component = std::str::from_utf8(value).map_err(|_| {
             PersistenceError::Corruption("compound key component is not valid UTF-8".to_owned())
-        })?);
+        })?;
         offset = value_end;
     }
     if offset != encoded.len() {
@@ -164,10 +163,22 @@ mod tests {
     fn compound_components_round_trip_exactly() -> Result<(), PersistenceError> {
         let encoded = components(&["first", "second", "third"])?;
         assert_eq!(
-            decode_components(&encoded, 3)?,
-            vec!["first", "second", "third"]
+            decode_components::<3>(&encoded)?,
+            ["first", "second", "third"]
         );
-        assert!(decode_components(&encoded, 2).is_err());
+        assert!(decode_components::<2>(&encoded).is_err());
+        assert!(decode_components::<4>(&encoded).is_err());
+        for length in 0..encoded.len() {
+            let truncated = encoded
+                .get(..length)
+                .ok_or_else(|| bounds("test prefix missing"))?;
+            assert!(decode_components::<3>(truncated).is_err());
+        }
+        let invalid_utf8 = [0, 0, 0, 1, 0xff];
+        assert!(decode_components::<1>(&invalid_utf8).is_err());
+        let empty = components(&["", "", ""])?;
+        assert_eq!(decode_components::<3>(&empty)?, ["", "", ""]);
+        assert!(decode_components::<0>(&[])?.is_empty());
         Ok(())
     }
 }

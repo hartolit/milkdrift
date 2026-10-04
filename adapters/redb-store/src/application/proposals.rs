@@ -192,7 +192,7 @@ pub(crate) fn decode_proposal(
 ) -> Result<ProposalIndexEntry, PersistenceError> {
     let entry: ProposalIndexEntry = json::decode(bytes, PROPOSAL_FAMILY)?;
     validate_stored(entry.validate(), PROPOSAL_FAMILY)?;
-    let components = codec::decode_components(key, 2)?;
+    let components = codec::decode_components::<2>(key)?;
     if components[0] != entry.run.as_str() || components[1] != entry.proposal {
         return Err(PersistenceError::Corruption(
             "proposal index key does not match its document".to_owned(),

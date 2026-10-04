@@ -114,7 +114,7 @@ pub(crate) fn decode_artifact_path_entry(
     storage_key: &[u8],
     logical_key: &[u8],
 ) -> Result<ArtifactPathEntry, PersistenceError> {
-    let components = codec::decode_components(logical_key, 4)?;
+    let components = codec::decode_components::<4>(logical_key)?;
     let kind = match components[0] {
         "temp_pending" => ArtifactPathKind::TempPending,
         "temp_ready" => ArtifactPathKind::TempReady,

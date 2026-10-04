@@ -963,7 +963,7 @@ pub(crate) fn validated_artifact_digest_in_transaction(
         return Ok(false);
     };
     let (key, bytes) = row;
-    let components = codec::decode_components(key.value(), 2)?;
+    let components = codec::decode_components::<2>(key.value())?;
     let metadata: ArtifactMetadata = json::decode(bytes.value(), "artifact metadata")?;
     if components[0] != digest_hex
         || components[1] != metadata.reference().artifact().as_str()

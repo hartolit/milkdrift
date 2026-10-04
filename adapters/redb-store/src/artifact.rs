@@ -431,7 +431,7 @@ pub(crate) fn validate_digest_reservation_scrub(
     key: &[u8],
     marker: u8,
 ) -> Result<(), PersistenceError> {
-    let components = codec::decode_components(key, 2)?;
+    let components = codec::decode_components::<2>(key)?;
     let record = scrub_publication(read, components[1])?;
     if marker != 1
         || !matches!(record.state, PublicationState::Writable)
@@ -474,7 +474,7 @@ pub(crate) fn validate_path_scrub(
 }
 
 pub(crate) fn validate_delete_guard_scrub(key: &[u8], marker: u8) -> Result<(), PersistenceError> {
-    let components = codec::decode_components(key, 2)?;
+    let components = codec::decode_components::<2>(key)?;
     if marker != 1 || !matches!(components[0], "temp" | "content") || components[1].is_empty() {
         return Err(error::corruption("artifact delete guard is malformed"));
     }

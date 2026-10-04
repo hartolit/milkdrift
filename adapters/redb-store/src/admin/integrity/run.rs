@@ -148,7 +148,7 @@ pub(super) fn scan_signal_receipts(
         &signal_receipts,
         "signal_indexes",
         |key, sequence| {
-            let components = codec::decode_components(key, 2)?;
+            let components = codec::decode_components::<2>(key)?;
             let run = RunId::new(components[0]).map_err(|cause| {
                 error::corruption(format!("invalid signal-receipt run identity: {cause}"))
             })?;

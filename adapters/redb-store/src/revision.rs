@@ -146,7 +146,7 @@ impl RevisionStore for RedbStore {
             .map_err(error::redb)?;
         for row in rows.take(limit) {
             let (key, value) = row.map_err(error::redb)?;
-            let components = codec::decode_components(key.value(), 2)?;
+            let components = codec::decode_components::<2>(key.value())?;
             if components[0] != digest.as_str() {
                 return Err(error::corruption(
                     "revision digest index key has the wrong content digest",
@@ -258,7 +258,7 @@ where
         for row in by_digest.iter().map_err(error::redb)? {
             let (key, value) = row.map_err(error::redb)?;
             let summary = decode_summary(value.value())?;
-            let components = codec::decode_components(key.value(), 2)?;
+            let components = codec::decode_components::<2>(key.value())?;
             if components[0] != summary.content_digest.as_str()
                 || components[1] != summary.revision.as_str()
             {
