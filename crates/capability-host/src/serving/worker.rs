@@ -22,6 +22,9 @@ use super::{
     map_execution_persistence,
 };
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum PeerUncertainty {
     AdapterFailure { detail: String },
@@ -601,14 +604,18 @@ impl PeerStoreReporter {
             Ok(now) => now,
             Err(error) => return error,
         };
-        let _ = self.executions.mark_peer_uncertain(
+        if let Err(error) = self.executions.mark_peer_uncertain(
             &self.caller,
             &self.execution,
             &self.worker,
             self.claim_generation,
             observed_at_unix_ms,
             &reason,
-        );
+        ) {
+            return AdapterError::external_failure(format!(
+                "{reason}; uncertainty could not be persisted: {error}"
+            ));
+        }
         AdapterError::external_failure(reason)
     }
 }
