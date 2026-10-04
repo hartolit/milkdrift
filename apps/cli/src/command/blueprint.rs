@@ -110,7 +110,6 @@ pub(super) async fn govern(cli: &crate::Cli) -> Result<(), CliError> {
         AdaptationScope, AuthorRef, BlueprintRevisionDocument, GoverningAgreement, Mutation,
         MutationBatch, NodeId,
     };
-    use std::io::Write as _;
     let crate::TopCommand::Blueprint {
         command:
             BlueprintCommand::Govern {
@@ -157,11 +156,7 @@ pub(super) async fn govern(cli: &crate::Cli) -> Result<(), CliError> {
     let bytes = BlueprintRevisionDocument::new(&revision)
         .to_canonical_json()
         .map_err(|e| invalid(&e))?;
-    let mut destination = crate::output::PendingFile::create(output)?;
-    destination
-        .write_all(&bytes)
-        .and_then(|()| destination.commit())
-        .map_err(|e| CliError::Internal(e.to_string()))?;
+    crate::output::PendingFile::create(output)?.write_complete(&bytes)?;
     crate::output::success(
         cli,
         "blueprint.govern",
@@ -195,7 +190,6 @@ pub(super) async fn author(cli: &crate::Cli) -> Result<(), CliError> {
                     output,
                 },
         } => {
-            use std::io::Write as _;
             let bytes = crate::input::read_bounded(file, 4_194_304, "method mutations").await?;
             let value = milkdrift_control_protocol::decode_json::<serde_json::Value>(&bytes)
                 .map_err(|e| invalid(&e))?;
@@ -211,11 +205,7 @@ pub(super) async fn author(cli: &crate::Cli) -> Result<(), CliError> {
             let bytes = milkdrift_blueprint::BlueprintRevisionDocument::new(&revision)
                 .to_canonical_json()
                 .map_err(|e| invalid(&e))?;
-            let mut destination = crate::output::PendingFile::create(output)?;
-            destination
-                .write_all(&bytes)
-                .and_then(|()| destination.commit())
-                .map_err(|e| CliError::Internal(e.to_string()))?;
+            crate::output::PendingFile::create(output)?.write_complete(&bytes)?;
             crate::output::success(
                 cli,
                 "blueprint.create",

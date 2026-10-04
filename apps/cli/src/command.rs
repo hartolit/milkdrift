@@ -209,7 +209,6 @@ pub(crate) async fn execute(cli: Cli) -> Result<(), CliError> {
             },
     } = &cli.command
     {
-        use std::io::Write as _;
         let bytes = crate::input::read_bounded(
             file,
             milkdrift_prompt_sequence::MAX_PROMPT_SEQUENCE_DOCUMENT_BYTES,
@@ -225,11 +224,7 @@ pub(crate) async fn execute(cli: Cli) -> Result<(), CliError> {
         let bytes = compiled
             .to_canonical_json()
             .map_err(|error| CliError::Invalid(error.to_string()))?;
-        let mut destination = crate::output::PendingFile::create(output)?;
-        destination
-            .write_all(&bytes)
-            .and_then(|()| destination.commit())
-            .map_err(|error| CliError::Internal(error.to_string()))?;
+        crate::output::PendingFile::create(output)?.write_complete(&bytes)?;
         return crate::output::success(
             &cli,
             "sequence.compile",

@@ -18,40 +18,44 @@ pub(super) async fn execute(
             let execution = PeerExecutionId::new(execution)
                 .map_err(|error| CliError::Invalid(error.to_string()))?;
             let mut file = crate::output::PendingFile::create(destination)?;
-            let mut offset = 0;
-            let mut hash = blake3::Hasher::new();
-            let mut expected = None;
-            loop {
-                let chunk = client
-                    .invocation_output(&execution, artifact, offset, 65_536)
-                    .await?;
-                if expected
-                    .as_ref()
-                    .is_some_and(|value| value != &chunk.metadata)
-                {
-                    return Err(CliError::Internal(
-                        "output metadata changed between ranges".to_owned(),
-                    ));
-                }
-                std::io::Write::write_all(&mut file, &chunk.bytes)
-                    .map_err(|error| CliError::Internal(error.to_string()))?;
-                hash.update(&chunk.bytes);
-                offset += chunk.bytes.len() as u64;
-                let reference = chunk.metadata.reference();
-                if chunk.complete {
-                    if hash.finalize().to_hex().as_str() != reference.digest().to_hex() {
+            let outcome = async {
+                let mut offset = 0;
+                let mut hash = blake3::Hasher::new();
+                let mut expected = None;
+                loop {
+                    let chunk = client
+                        .invocation_output(&execution, artifact, offset, 65_536)
+                        .await?;
+                    if expected
+                        .as_ref()
+                        .is_some_and(|value| value != &chunk.metadata)
+                    {
                         return Err(CliError::Internal(
-                            "output bytes contradict the immutable digest".to_owned(),
+                            "output metadata changed between ranges".to_owned(),
                         ));
                     }
-                    file.commit()
+                    std::io::Write::write_all(&mut file, &chunk.bytes)
                         .map_err(|error| CliError::Internal(error.to_string()))?;
-                    return session.output("invocation.output", &serde_json::json!({
+                    hash.update(&chunk.bytes);
+                    offset += chunk.bytes.len() as u64;
+                    let reference = chunk.metadata.reference();
+                    if chunk.complete {
+                        if hash.finalize().to_hex().as_str() != reference.digest().to_hex() {
+                            return Err(CliError::Internal(
+                                "output bytes contradict the immutable digest".to_owned(),
+                            ));
+                        }
+                        file.commit()
+                            .map_err(|error| CliError::Internal(error.to_string()))?;
+                        return session.output("invocation.output", &serde_json::json!({
                         "execution": execution, "artifact": reference, "destination": destination
                     }));
+                    }
+                    expected = Some(chunk.metadata);
                 }
-                expected = Some(chunk.metadata);
             }
+            .await;
+            file.finish(outcome)
         }
         InvocationCommand::Catalog => {
             session.output("invocation.catalog", &client.execution_discovery().await?)
@@ -70,69 +74,75 @@ pub(super) async fn execute(
             };
             let invalid = |error: &dyn std::fmt::Display| CliError::Invalid(error.to_string());
             let mut destination = crate::output::PendingFile::create(output)?;
-            let mut inputs: Vec<InputReference> = match inputs {
-                Some(inputs) => serde_json::from_value(
-                    session
-                        .read_json(
-                            inputs,
-                            milkdrift_control_protocol::MAX_DOCUMENT_BYTES,
-                            "invocation inputs",
-                        )
-                        .await?,
+            let outcome = async {
+                let mut inputs: Vec<InputReference> = match inputs {
+                    Some(inputs) => serde_json::from_value(
+                        session
+                            .read_json(
+                                inputs,
+                                milkdrift_control_protocol::MAX_DOCUMENT_BYTES,
+                                "invocation inputs",
+                            )
+                            .await?,
+                    )
+                    .map_err(|error| invalid(&error))?,
+                    None => Vec::new(),
+                };
+                let mut names: std::collections::BTreeSet<String> =
+                    inputs.iter().map(|input| input.name().to_owned()).collect();
+                if names.len() != inputs.len() {
+                    return Err(CliError::Invalid("input names must be distinct".into()));
+                }
+                for (name, artifact) in super::input::upload_text(
+                    session,
+                    host,
+                    request_id,
+                    "invocation-input",
+                    input,
+                    &mut names,
                 )
-                .map_err(|error| invalid(&error))?,
-                None => Vec::new(),
-            };
-            let mut names: std::collections::BTreeSet<String> =
-                inputs.iter().map(|input| input.name().to_owned()).collect();
-            if names.len() != inputs.len() {
-                return Err(CliError::Invalid("input names must be distinct".into()));
-            }
-            for (name, artifact) in super::input::upload_text(
-                session,
-                host,
-                request_id,
-                "invocation-input",
-                input,
-                &mut names,
-            )
-            .await?
-            {
-                let reference = milkdrift_capability::ArtifactReference::new(
-                    artifact.artifact_id,
-                    artifact.digest,
-                    Some(artifact.content_type),
-                    Some(artifact.size),
+                .await?
+                {
+                    let reference = milkdrift_capability::ArtifactReference::new(
+                        artifact.artifact_id,
+                        artifact.digest,
+                        Some(artifact.content_type),
+                        Some(artifact.size),
+                    )
+                    .map_err(|error| invalid(&error))?;
+                    inputs.push(
+                        InputReference::new(name, InvocationValueReference::Artifact { reference })
+                            .map_err(|error| invalid(&error))?,
+                    );
+                }
+                let request = client
+                    .prepare_invocation(&milkdrift_peer_protocol::DirectInvocationDraft {
+                        host: PeerId::new(host).map_err(|error| invalid(&error))?,
+                        request_id: PeerRequestId::new(request_id)
+                            .map_err(|error| invalid(&error))?,
+                        capability: CapabilityId::new(capability)
+                            .map_err(|error| invalid(&error))?,
+                        operation: OperationId::new(operation).map_err(|error| invalid(&error))?,
+                        inputs,
+                        limits: None,
+                    })
+                    .await?;
+                let bytes = serde_json::to_vec_pretty(&request).map_err(|error| invalid(&error))?;
+                use std::io::Write as _;
+                destination
+                    .write_all(&bytes)
+                    .and_then(|()| destination.commit())
+                    .map_err(|error| invalid(&error))?;
+                session.output(
+                    "invocation.prepare",
+                    &serde_json::json!({
+                        "request_id": request.request_id, "host": request.host,
+                        "deadline_unix_ms": request.deadline_unix_ms, "output": output,
+                    }),
                 )
-                .map_err(|error| invalid(&error))?;
-                inputs.push(
-                    InputReference::new(name, InvocationValueReference::Artifact { reference })
-                        .map_err(|error| invalid(&error))?,
-                );
             }
-            let request = client
-                .prepare_invocation(&milkdrift_peer_protocol::DirectInvocationDraft {
-                    host: PeerId::new(host).map_err(|error| invalid(&error))?,
-                    request_id: PeerRequestId::new(request_id).map_err(|error| invalid(&error))?,
-                    capability: CapabilityId::new(capability).map_err(|error| invalid(&error))?,
-                    operation: OperationId::new(operation).map_err(|error| invalid(&error))?,
-                    inputs,
-                    limits: None,
-                })
-                .await?;
-            let bytes = serde_json::to_vec_pretty(&request).map_err(|error| invalid(&error))?;
-            use std::io::Write as _;
-            destination
-                .write_all(&bytes)
-                .and_then(|()| destination.commit())
-                .map_err(|error| invalid(&error))?;
-            session.output(
-                "invocation.prepare",
-                &serde_json::json!({
-                    "request_id": request.request_id, "host": request.host,
-                    "deadline_unix_ms": request.deadline_unix_ms, "output": output,
-                }),
-            )
+            .await;
+            destination.finish(outcome)
         }
         InvocationCommand::Submit { file } => {
             let value = session

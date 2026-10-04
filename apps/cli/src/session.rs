@@ -42,7 +42,7 @@ impl CliSession {
         let mut config = ClientConfig::new(cli.endpoint.clone());
         config.request_timeout = std::time::Duration::from_secs(cli.timeout_secs.unwrap_or(60));
         let client = ControlClient::new(config, credential)?;
-        let _ = client.negotiate().await?;
+        client.negotiate().await?;
         Ok(Self {
             cli,
             client,
@@ -154,16 +154,7 @@ impl CliSession {
                     "use --document, not --output -, to emit a document to stdout".to_owned(),
                 ));
             }
-            let mut file = crate::output::PendingFile::create(destination)?;
-            file.write_all(bytes)
-                .and_then(|()| file.commit())
-                .map_err(|error| {
-                    CliError::Internal(format!(
-                        "canonical document write failed: {:?}",
-                        error.kind()
-                    ))
-                })?;
-            return Ok(());
+            return crate::output::PendingFile::create(destination)?.write_complete(bytes);
         }
         let mut stdout = io::stdout().lock();
         stdout

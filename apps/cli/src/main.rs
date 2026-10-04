@@ -848,7 +848,9 @@ async fn run() -> ExitCode {
                     }
                 }
             } else {
-                let _ = error.print();
+                if error.print().is_err() {
+                    return ExitCode::from(9);
+                }
             }
             return ExitCode::SUCCESS;
         }
@@ -862,7 +864,9 @@ async fn run() -> ExitCode {
                 return ExitCode::from(exit_code(&failure));
             }
             let code = error.exit_code();
-            let _ = error.print();
+            if error.print().is_err() {
+                return ExitCode::from(9);
+            }
             return ExitCode::from(u8::try_from(code).unwrap_or(2));
         }
     };

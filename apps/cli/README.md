@@ -50,7 +50,10 @@ belong to different feeds. A following timeline can therefore repeat facts from 
 
 Artifact downloads and blueprint/sequence exports require a new destination file. The artifact
 command assembles bounded ranges and verifies size and digest before committing its output.
-An interrupted uncommitted output is removed on normal cleanup; existing files are never replaced.
+Normal failure removes an uncommitted output; removal failure returns exit 9 and reports that the
+destination may remain, while retaining the original error internally. Cancellation and unwinding
+attempt removal and report any failure on stderr. Forced termination cannot guarantee cleanup.
+Existing files are never replaced.
 
 The [model workflow recipe](../../examples/operator/README.md#author-a-model-workflow) uses a local
 draft of pending mutations. `workflow` commands send editing gestures to the daemon; they do not

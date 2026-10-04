@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::{Cli, error::CliError};
 
-/// Removes a newly created file on drop unless the caller commits a complete result.
+/// Owns a new output until commit or explicit cleanup; Drop only covers interruption.
 ///
 /// Artifact callers verify size and digest before committing; export callers finish encoding.
 /// The destination is visible while being written, so this is cleanup ownership, not an atomic
@@ -14,7 +14,7 @@ use crate::{Cli, error::CliError};
 pub(crate) struct PendingFile {
     file: Option<std::fs::File>,
     path: std::path::PathBuf,
-    committed: bool,
+    finished: bool,
 }
 
 impl PendingFile {
@@ -35,18 +35,55 @@ impl PendingFile {
         Ok(Self {
             file: Some(file),
             path: path.to_owned(),
-            committed: false,
+            finished: false,
         })
     }
 
-    pub(crate) fn commit(mut self) -> std::io::Result<()> {
+    pub(crate) fn commit(&mut self) -> std::io::Result<()> {
         let file = self
             .file
-            .take()
+            .as_ref()
             .ok_or_else(|| std::io::Error::other("output already closed"))?;
         file.sync_all()?;
-        self.committed = true;
+        self.finished = true;
         Ok(())
+    }
+
+    pub(crate) fn write_complete(mut self, bytes: &[u8]) -> Result<(), CliError> {
+        use std::io::Write as _;
+        let outcome = self
+            .write_all(bytes)
+            .and_then(|()| self.commit())
+            .map_err(|error| {
+                CliError::Internal(format!("output write failed: {:?}", error.kind()))
+            });
+        self.finish(outcome)
+    }
+
+    pub(crate) fn finish<T>(mut self, outcome: Result<T, CliError>) -> Result<T, CliError> {
+        if self.finished {
+            return outcome;
+        }
+        let operation = outcome
+            .err()
+            .unwrap_or_else(|| CliError::Internal("output was not committed".into()));
+        match self.abort() {
+            Ok(()) => Err(operation),
+            Err(error) => Err(CliError::OutputCleanup {
+                operation: Box::new(operation),
+                cleanup: error.kind(),
+            }),
+        }
+    }
+
+    fn abort(&mut self) -> std::io::Result<()> {
+        drop(self.file.take());
+        // An explicit failure must remain visible; Drop must not silently retry it afterward.
+        self.finished = true;
+        match std::fs::remove_file(&self.path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        }
     }
 }
 
@@ -68,8 +105,19 @@ impl std::io::Write for PendingFile {
 impl Drop for PendingFile {
     fn drop(&mut self) {
         drop(self.file.take());
-        if !self.committed {
-            let _ = std::fs::remove_file(&self.path);
+        if !self.finished
+            && let Err(error) = self.abort()
+        {
+            #[expect(
+                clippy::print_stderr,
+                reason = "Cancellation or unwind cannot return a result; report unconfirmed local-file cleanup without revealing the destination path."
+            )]
+            {
+                eprintln!(
+                    "milkdrift: incomplete output cleanup unconfirmed ({:?}); destination may remain",
+                    error.kind()
+                );
+            }
         }
     }
 }
@@ -269,6 +317,49 @@ mod tests {
         pending.commit()?;
         assert_eq!(std::fs::read(&output)?, b"complete");
         assert!(PendingFile::create(&output).is_err());
+        assert_eq!(std::fs::read(&output)?, b"complete");
+        Ok(())
+    }
+
+    #[test]
+    fn failed_output_reports_cleanup_uncertainty_without_losing_the_operation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::Write as _;
+        let directory = tempfile::tempdir()?;
+        let output = directory.path().join("artifact");
+        let mut pending = PendingFile::create(&output)?;
+        pending.write_all(b"partial")?;
+        // Replace the destination with a directory so file removal deterministically fails.
+        // Close the descriptor first so this fault is also valid on Windows.
+        drop(pending.file.take());
+        std::fs::remove_file(&output)?;
+        std::fs::create_dir(&output)?;
+        let error = pending
+            .finish::<()>(Err(CliError::Deadline))
+            .expect_err("cleanup must fail");
+        assert_eq!(crate::error::exit_code(&error), 9);
+        let CliError::OutputCleanup { operation, .. } = error else {
+            return Err("cleanup uncertainty was discarded".into());
+        };
+        assert!(matches!(*operation, CliError::Deadline));
+        assert!(output.is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn ordinary_failure_explicitly_removes_uncommitted_output()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::Write as _;
+        let directory = tempfile::tempdir()?;
+        let output = directory.path().join("artifact");
+        let mut pending = PendingFile::create(&output)?;
+        pending.write_all(b"partial")?;
+        assert!(matches!(
+            pending.finish::<()>(Err(CliError::Deadline)),
+            Err(CliError::Deadline)
+        ));
+        assert!(!output.exists());
+        PendingFile::create(&output)?.write_complete(b"complete")?;
         assert_eq!(std::fs::read(&output)?, b"complete");
         Ok(())
     }

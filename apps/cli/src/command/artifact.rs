@@ -99,7 +99,7 @@ pub(in crate::command) async fn download(
         Ok::<(), CliError>(())
     }
     .await;
-    result?;
+    file.finish(result)?;
     Ok(json!({
         "artifact_id": metadata.artifact_id,
         "digest": metadata.digest,

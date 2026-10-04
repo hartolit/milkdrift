@@ -100,7 +100,6 @@ async fn decide(
 }
 
 async fn prepare_repair(session: &CliSession, args: &crate::RepairArgs) -> Result<(), CliError> {
-    use std::io::Write as _;
     let bytes = crate::input::read_bounded(
         &args.prompt,
         milkdrift_control_protocol::MAX_DOCUMENT_BYTES,
@@ -134,14 +133,9 @@ async fn prepare_repair(session: &CliSession, args: &crate::RepairArgs) -> Resul
         .value
         .get("document")
         .ok_or_else(|| CliError::Internal("repair response has no proposal".into()))?;
-    let mut file = crate::output::PendingFile::create(&args.file)?;
-    file.write_all(
-        &milkdrift_control_protocol::encode_json(document)
-            .map_err(|error| CliError::Invalid(error.to_string()))?,
-    )
-    .map_err(|error| CliError::Internal(error.to_string()))?;
-    file.commit()
-        .map_err(|error| CliError::Internal(error.to_string()))?;
+    let bytes = milkdrift_control_protocol::encode_json(document)
+        .map_err(|error| CliError::Invalid(error.to_string()))?;
+    crate::output::PendingFile::create(&args.file)?.write_complete(&bytes)?;
     session.output("proposal.repair", &serde_json::json!({"file":args.file,"proposal_id":args.proposal,"base_revision":revision,"sequence":state.sequence,"summary":prepared.value["summary"]}))
 }
 

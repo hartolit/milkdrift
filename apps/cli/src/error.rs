@@ -17,6 +17,11 @@ pub(crate) enum CliError {
     InvocationFailed(Box<Value>),
     #[error("internal CLI failure: {0}")]
     Internal(String),
+    #[error("incomplete output cleanup unconfirmed: {operation}; cleanup: {cleanup:?}")]
+    OutputCleanup {
+        operation: Box<CliError>,
+        cleanup: std::io::ErrorKind,
+    },
     #[error(
         "command deadline or polling/reconnect bound reached; submitted work may still be running"
     )]
@@ -29,7 +34,7 @@ pub(crate) fn exit_code(error: &CliError) -> u8 {
     match error {
         CliError::Invalid(_) => 2,
         CliError::NotFound(_) => 6,
-        CliError::Internal(_) => 9,
+        CliError::Internal(_) | CliError::OutputCleanup { .. } => 9,
         CliError::FailedTask(_) | CliError::InvocationFailed(_) => 8,
         CliError::Deadline => 10,
         CliError::Cancelled => 130,
@@ -67,6 +72,10 @@ pub(crate) fn emit_error(json: bool, operation: &str, command_id: Option<&str>, 
         CliError::Cancelled => (
             "cancelled",
             "client cancelled; submitted work may still be running",
+        ),
+        CliError::OutputCleanup { .. } => (
+            "internal_client",
+            "incomplete output cleanup could not be confirmed; the destination may remain",
         ),
         CliError::Internal(_)
         | CliError::Client(ClientError::Protocol(_) | ClientError::Stream(_)) => {
