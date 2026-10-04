@@ -21,6 +21,13 @@ retention and an error for missing files. Forced timeout/terminal/stalled-read c
 collection and cleanup cannot turn the primary failure into success. The published-input and
 copy fixtures catch assertion unwinding, join daemon shutdown and join the stopped model listener.
 
+Binary fixtures retain at most 16 KiB from each owned child's stdout/stderr in private files under
+`target/control-plane-private/`, separately from the redacted CI bundle. Initial startup lets the
+daemon bind port zero and discovers its actual address from at most 64 KiB of structured startup
+output within the existing five-second readiness allowance. This avoids releasing a guessed free
+port before the child binds it. The fixture then saves the bound port for exact-endpoint reopen.
+Startup failure captures evidence after attempting to reap the child; no raw child output is
+included in the selected CI artifact.
 
 The daemon's maintained [JSON client test](../../apps/daemon/tests/control_plane/independent_client.rs)
 launches the real binary and uses ordinary HTTP payloads to author/save a two-step model workflow,

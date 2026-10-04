@@ -80,6 +80,23 @@ pub(super) struct BinaryDaemon {
 }
 
 #[tokio::test]
+async fn daemon_selects_and_reports_its_own_listening_port() -> TestResult {
+    let directory = TempDir::new()?;
+    let config = configuration_document_with_process_profiles(&directory, 32, vec![])?;
+    assert_eq!(config.bind.port(), 0);
+    let path = directory.path().join("daemon.toml");
+    fs::write(&path, toml::to_string(&config)?)?;
+    // The child owns port allocation. No probe listener is released between choosing
+    // the address and binding it, even when other fixtures start concurrently.
+    let daemon =
+        BinaryDaemon::start(&path, Url::parse("http://127.0.0.1:0/")?, directory.path()).await?;
+    assert!(daemon.endpoint.port().is_some_and(|port| port != 0));
+    assert!(daemon.client.readiness().await?.ready);
+    daemon.stop()?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn failed_startup_retains_evidence_and_reaps_child() -> TestResult {
     let directory = TempDir::new()?;
     let path = directory.path().join("invalid.toml");
@@ -118,23 +135,37 @@ impl BinaryDaemon {
                 WorkflowId::new("independent-notes")?,
             ])?,
         };
-        let socket = std::net::TcpListener::bind("127.0.0.1:0")?;
-        config.bind = socket.local_addr()?;
-        drop(socket);
+        config.bind.set_port(0);
         let endpoint = Url::parse(&format!("http://{}/", config.bind))?;
         let path = directory.path().join("daemon.toml");
         fs::write(&path, toml::to_string(&config)?)?;
-        Ok((Self::start(&path, endpoint, directory.path()).await?, path))
+        let daemon = Self::start(&path, endpoint, directory.path()).await?;
+        // Reopen the same endpoint after stopping this owned child. The initial port
+        // was allocated by its actual listener, not by a released probe socket.
+        config
+            .bind
+            .set_port(daemon.endpoint.port().ok_or("listener port absent")?);
+        fs::write(&path, toml::to_string(&config)?)?;
+        Ok((daemon, path))
     }
-    pub(super) async fn start(config: &Path, endpoint: Url, directory: &Path) -> TestResult<Self> {
+    pub(super) async fn start(
+        config: &Path,
+        mut endpoint: Url,
+        directory: &Path,
+    ) -> TestResult<Self> {
         let child = std::process::Command::new(env!("CARGO_BIN_EXE_milkdrift-daemon"))
             .args(["--config"])
             .arg(config)
+            .env("RUST_LOG", "info")
             .stdout(fs::File::create(directory.join("daemon.stdout"))?)
             .stderr(fs::File::create(directory.join("daemon.stderr"))?)
             .spawn()?;
         let mut owner = ChildOwner(Some(child));
-        let client = client(&endpoint, CONTROLLER_TOKEN)?;
+        let mut control = if endpoint.port() == Some(0) {
+            None
+        } else {
+            Some(client(&endpoint, CONTROLLER_TOKEN)?)
+        };
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         while tokio::time::Instant::now() < deadline {
             if let Some(status) = owner.0.as_mut().ok_or("child absent")?.try_wait()? {
@@ -145,14 +176,33 @@ impl BinaryDaemon {
                 )
                 .into());
             }
-            if matches!(
-                tokio::time::timeout_at(deadline, client.readiness()).await,
-                Ok(Ok(_))
-            ) {
+            if control.is_none() {
+                match listening_endpoint(directory) {
+                    Ok(Some(bound)) => {
+                        endpoint = bound;
+                        control = Some(client(&endpoint, CONTROLLER_TOKEN)?);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        let cleanup = owner.finish();
+                        return Err(format!(
+                            "daemon listener discovery failed: {error}; {}; cleanup: {cleanup:?}",
+                            super::diagnostics::child_failure(directory)
+                        )
+                        .into());
+                    }
+                }
+            }
+            if let Some(client) = &control
+                && matches!(
+                    tokio::time::timeout_at(deadline, client.readiness()).await,
+                    Ok(Ok(_))
+                )
+            {
                 return Ok(Self {
                     child: owner,
                     endpoint,
-                    client,
+                    client: control.take().ok_or("ready client absent")?,
                 });
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -164,4 +214,34 @@ impl BinaryDaemon {
         )
         .into())
     }
+}
+
+fn listening_endpoint(directory: &Path) -> TestResult<Option<Url>> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    fs::File::open(directory.join("daemon.stdout"))?
+        .take(65_536)
+        .read_to_end(&mut bytes)?;
+    for line in bytes.split(|byte| *byte == b'\n') {
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value
+            .pointer("/fields/phase")
+            .and_then(serde_json::Value::as_str)
+            != Some("listening")
+        {
+            continue;
+        }
+        let address: std::net::SocketAddr = value
+            .pointer("/fields/address")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("listener address absent")?
+            .parse()?;
+        if !address.ip().is_loopback() || address.port() == 0 {
+            return Err("invalid fixture listener address".into());
+        }
+        return Ok(Some(Url::parse(&format!("http://{address}/"))?));
+    }
+    Ok(None)
 }

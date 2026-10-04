@@ -39,6 +39,20 @@ replay/reopen, all-target Clippy and eight documentation contracts pass. New pub
 limited to the durable scope variant and validated set; inventories live under
 `target/public-api/client-workflow-corrections/`.
 
-Next: commit scoped copy, then run final strict/workspace/discovery gates and fresh binary scenarios.
+Scoped copy is committed at `a08038e`; its 33-check static gate and sixteen scanner probes pass.
+The additional one-CPU comparison ran each original case once on `39d9677`: both pass at
+40.46/40.40 seconds. It does not reproduce the hosted deadlines; the deterministic maintenance
+regression is the cause-sensitive evidence. The disposable worktree is removed. Shared-target
+reuse then produced a zero-test filter; that result is discarded and the affected package caches
+were invalidated before rebuilding. No zero-discovery command counts as coverage.
+
+Binary fixture startup has a demonstrated released-port race. A child-selected-port regression
+fails before the fixture can discover the bound address, then passes after using its structured
+startup output. Initial configuration now requests port zero and saves the actual bound port for
+reopen. The earlier campaign startup failure has no retained logs, so its historical cause cannot
+be proved. Focused startup/CLI/JSON cleanup and recovery checks precede this fixture checkpoint.
+
+Next: commit the fixture fix, run the corrected one-CPU comparison once per case, then repeat
+the final static gate and run workspace tests/discovery plus fresh binary scenarios.
 Historical live/native evidence remains historical unless an affected owner requires a new
 finite qualification.
