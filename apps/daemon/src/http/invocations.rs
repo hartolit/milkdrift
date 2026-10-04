@@ -10,7 +10,8 @@ use milkdrift_authority::ActorRef;
 use milkdrift_capability_host::{PeerService, ServingError};
 use milkdrift_control_protocol::{ErrorCode, decode_json};
 use milkdrift_peer_protocol::{
-    DirectInvocationRequest, PeerCancellationRequest, PeerExecutionId, PeerRequestId,
+    DirectInvocationDraft, DirectInvocationRequest, PeerCancellationRequest, PeerExecutionId,
+    PeerRequestId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -67,6 +68,19 @@ pub(super) async fn invoke(
         let request: DirectInvocationRequest =
             decode_json(&body).map_err(|error| ServingError::Protocol(error.to_string()))?;
         service.invoke_client(actor, &request)
+    })
+    .await
+}
+
+pub(super) async fn prepare(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    serving(state, headers, move |service, actor| {
+        let draft: DirectInvocationDraft =
+            decode_json(&body).map_err(|error| ServingError::Protocol(error.to_string()))?;
+        service.prepare_client_invocation(actor, &draft)
     })
     .await
 }

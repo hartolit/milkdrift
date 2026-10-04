@@ -32,6 +32,12 @@ package entry point. Consumers otherwise import the canonical owner directly.
 
 ## Surface ownership
 
+`DirectInvocationDraft`, `PeerService::prepare_client_invocation` and
+`ControlClient::prepare_invocation` are external request and workspace adapter contracts consumed
+by the daemon and CLI. The serving owner constructs the exact direct/published request through
+existing snapshot, input and authority owners. Client formatting no longer derives that selection,
+idempotency policy or deadline. Preparation adds no accepted execution record or durable format.
+
 `learning::KnowledgeSelectionDraft` and `LearningRequest::SelectSources` are public request
 contracts consumed by the daemon and CLI. Artifact references are resolved through existing
 authorized readers; the private handler passes them to the unchanged selection owner. Named CLI

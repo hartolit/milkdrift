@@ -586,14 +586,15 @@ fn cli_refuses_mismatched_negotiation_success_and_error_versions() -> TestResult
 }
 
 #[test]
-fn prepared_direct_requests_satisfy_each_operations_idempotency_contract() -> TestResult {
+fn prepared_direct_requests_preserve_the_servers_exact_document() -> TestResult {
     use milkdrift_capability::{
         AdmissionConstraints, BoundedJson, CancellationBehavior, CapabilityCategory, CapabilityId,
-        CapabilityObservation, DescriptorBuilder, IdempotencyBehavior, Locality, OperationContract,
-        OperationId, PeerId, SchemaContract, SchemaId, SideEffectClass, StreamingMode,
+        DescriptorBuilder, IdempotencyBehavior, IdempotencyKey, InvocationId, InvocationRequest,
+        Locality, OperationContract, OperationId, PeerId, ResolvedCapabilitySnapshot,
+        SchemaContract, SchemaId, SideEffectClass, StreamingMode,
     };
     use milkdrift_peer_protocol::{
-        CatalogEntry, CatalogSnapshot, DirectDiscovery, DirectInvocationRequest, ExecutionLimits,
+        CatalogDigest, DirectInvocationRequest, ExecutionLimits, PeerRequestId,
     };
     use std::collections::{BTreeMap, BTreeSet};
     for (effect, idempotency, expected_key) in [
@@ -640,8 +641,23 @@ fn prepared_direct_requests_satisfy_each_operations_idempotency_contract() -> Te
             )?,
         )]))
         .build()?;
-        let discovery = DirectDiscovery {
+        let returned = DirectInvocationRequest {
             host: PeerId::new("host-test")?,
+            request_id: PeerRequestId::new("stable-request")?,
+            catalog_generation: 19,
+            catalog_digest: CatalogDigest::new(format!("b3_{}", "1".repeat(64)))?,
+            selection: ResolvedCapabilitySnapshot::from_descriptor(&descriptor, &operation)?,
+            request: InvocationRequest::new(
+                InvocationId::new("stable-request")?,
+                capability,
+                operation,
+                None,
+                expected_key.map(IdempotencyKey::new).transpose()?,
+                vec![],
+                BTreeMap::new(),
+            )?,
+            // Intentionally unrelated to the client clock: the CLI must not renew it.
+            deadline_unix_ms: 12345,
             limits: ExecutionLimits {
                 nested_invocations: None,
                 artifact_bytes: 4096,
@@ -652,21 +668,10 @@ fn prepared_direct_requests_satisfy_each_operations_idempotency_contract() -> Te
                 output_units: None,
                 observations: 16,
             },
-            catalog: CatalogSnapshot::new(
-                1,
-                1,
-                1000,
-                vec![CatalogEntry {
-                    descriptor,
-                    invocable_operations: BTreeSet::from([operation]),
-                    observation: CapabilityObservation::new(capability, 1, true, 0, "available")?,
-                    draining: false,
-                }],
-            )?,
         };
         let server = Server::new(vec![
             negotiation(),
-            response(serde_json::to_value(discovery)?),
+            response(serde_json::to_value(&returned)?),
         ])?;
         let directory = tempfile::tempdir()?;
         let inputs = directory.path().join("inputs.json");
@@ -692,6 +697,7 @@ fn prepared_direct_requests_satisfy_each_operations_idempotency_contract() -> Te
         )?;
         assert_eq!(exit, 0, "{records:?}: {errors}");
         let prepared: DirectInvocationRequest = serde_json::from_slice(&std::fs::read(output)?)?;
+        assert_eq!(prepared, returned);
         prepared.selection.validate_request(&prepared.request)?;
         assert_eq!(
             prepared.request.idempotency_key().map(|key| key.as_str()),

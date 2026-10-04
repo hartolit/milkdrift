@@ -2,7 +2,10 @@ use crate::{
     CatalogDigest, ClientInvocationAuthorization, ExecutionLimits, PeerProtocolError,
     PeerRequestId, ServingInvocationRequest,
 };
-use milkdrift_capability::{InvocationRequest, PeerId, ResolvedCapabilitySnapshot};
+use milkdrift_capability::{
+    CapabilityId, InputReference, InvocationRequest, OperationId, PeerId,
+    ResolvedCapabilitySnapshot,
+};
 use serde::{Deserialize, Serialize};
 
 /// An authenticated client's current serving installation and exact capability catalog.
@@ -15,6 +18,29 @@ pub struct DirectDiscovery {
     pub limits: ExecutionLimits,
     /// Current authorized capability generations.
     pub catalog: crate::CatalogSnapshot,
+}
+
+/// Choices for preparing an independent call without accepting or executing it.
+///
+/// The host supplies the current catalog, exact selection, profile, required idempotency key
+/// and deadline. Persist the returned [`DirectInvocationRequest`] before submission and replay
+/// that exact document after a lost reply; preparing again does not recover an accepted call.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DirectInvocationDraft {
+    /// Installation selected by the caller; another host must refuse preparation.
+    pub host: PeerId,
+    /// Caller-owned identity for the eventual submission and adapter invocation.
+    pub request_id: PeerRequestId,
+    /// Explicit capability from authorized discovery.
+    pub capability: CapabilityId,
+    /// Explicit operation offered by that capability.
+    pub operation: OperationId,
+    /// Named inline values or committed artifact references; no workflow context.
+    pub inputs: Vec<InputReference>,
+    /// Explicit per-call ceilings, or the discovered host ceilings when absent.
+    /// Preparation refuses unavailable allowances rather than silently clamping them.
+    pub limits: Option<ExecutionLimits>,
 }
 
 /// Bounded projection of one accepted invocation, independent of persistence layout.

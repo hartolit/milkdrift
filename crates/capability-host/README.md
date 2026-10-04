@@ -12,6 +12,11 @@ serving owner commits direct/remote acceptance and entry. Ordinary builds expose
 shortcut; test-support helpers exercise preparation without a durable owner. Public direct calls
 use the [independent execution recipe](../../examples/operator/README.md#independent-execution).
 
+`PeerService::prepare_client_invocation` turns explicit client choices into a reviewable request
+using the current authorized catalog and durable clock. Clients need no snapshot/hash construction
+or private profile rules. This performs no adapter preparation or execution: submission and final
+entry still recheck their own authority and lifecycle boundaries.
+
 `DirectInputSelection` freezes only explicit inputs. Workflow context retains its required manifest,
 exact coordinates and continuation rules. An adapter opts into direct discovery only when it can
 consume that selection without workflow services; process and fresh model operations do so, while

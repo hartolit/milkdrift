@@ -1,9 +1,9 @@
 //! Typed independent execution requests over the same authenticated control connection.
 use super::{ClientError, ControlClient};
 use milkdrift_peer_protocol::{
-    DirectDiscovery, DirectInvocationRequest, InvocationAcceptance, InvocationLookup,
-    ObservationPage, PeerCancellationAcknowledgement, PeerCancellationRequest, PeerExecutionId,
-    PeerRequestId, ServingInvocationRead,
+    DirectDiscovery, DirectInvocationDraft, DirectInvocationRequest, InvocationAcceptance,
+    InvocationLookup, ObservationPage, PeerCancellationAcknowledgement, PeerCancellationRequest,
+    PeerExecutionId, PeerRequestId, ServingInvocationRead,
 };
 use reqwest::Method;
 
@@ -35,6 +35,37 @@ impl ControlClient {
         discovery.catalog.validate().map_err(protocol)?;
         discovery.limits.validate().map_err(protocol)?;
         Ok(discovery)
+    }
+
+    /// Asks the serving owner to construct a current authorized call without executing it.
+    /// Persist the returned document before [`Self::invoke`]; recover a lost submission with
+    /// that document or lookup, never by preparing a replacement with a renewed deadline.
+    pub async fn prepare_invocation(
+        &self,
+        draft: &DirectInvocationDraft,
+    ) -> Result<DirectInvocationRequest, ClientError> {
+        let request: DirectInvocationRequest = self
+            .json_request(Method::POST, "v1/invocations/prepare", Some(draft), false)
+            .await?;
+        if request.host != draft.host
+            || request.request_id != draft.request_id
+            || request.request.capability() != &draft.capability
+            || request.request.operation() != &draft.operation
+            || request.request.inputs() != draft.inputs
+            || draft
+                .limits
+                .as_ref()
+                .is_some_and(|limits| limits != &request.limits)
+        {
+            return Err(protocol(
+                "prepared invocation differs from the requested choices",
+            ));
+        }
+        request
+            .selection
+            .validate_request(&request.request)
+            .map_err(protocol)?;
+        Ok(request)
     }
 
     /// Submits once. A lost response requires lookup or exact replay of this saved document.

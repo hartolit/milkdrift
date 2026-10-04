@@ -24,7 +24,7 @@ origin                                      serving host
 The handshake's claimed peer is a cross-check against transport authentication, not a way to choose
 an identity. A session identifies a daemon boot; it is not the lifetime of accepted work.
 `ProtocolVersionRange` offers version selection and `HardLimits::intersect` computes lower ceilings.
-Current codecs and the HTTP implementation accept only v1.4. The HTTP service reports its supported
+Current codecs and the HTTP implementation accept only v1.5. The HTTP service reports its supported
 feature flags and disables incremental catalogs; `CatalogUpdate` defines a message shape without
 making that transport path available.
 
@@ -42,6 +42,9 @@ conflict. A delegation reference narrows a configured relationship; it is not a 
 
 `DirectInvocationRequest` supplies an independent client's explicit selection without actor or
 workflow claims. The serving authentication owner binds it to `ClientInvocationAuthorization`.
+Clients can submit a `DirectInvocationDraft` through the control API's preparation endpoint to
+obtain that exact document from the serving owner. Keep the returned document before invoking;
+preparation is not acceptance and preparing again is not request recovery.
 Peer transport only accepts peer delegation, whose `InvocationOrigin` is explicitly direct or
 workflow-originated. `ServingCaller` keeps target host, caller realm and principal separate in
 replay keys, so equal client/peer request names cannot share accepted work.

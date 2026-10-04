@@ -7,13 +7,83 @@ use milkdrift_authority::{
     RequestedResourceFacts,
 };
 use milkdrift_peer_protocol::{
-    CatalogSnapshot, ClientInvocationAuthorization, DirectInvocationRequest, DrainState,
-    InvocationAcceptance, InvocationLookup, PeerExecutionId, PeerRequestId, ServingAuthorization,
-    ServingCaller, ServingPrincipal,
+    CatalogSnapshot, ClientInvocationAuthorization, DirectInvocationDraft, DirectInvocationRequest,
+    DrainState, InvocationAcceptance, InvocationLookup, PeerExecutionId, PeerRequestId,
+    ServingAuthorization, ServingCaller, ServingPrincipal,
 };
 use milkdrift_persistence::{PeerExecutionSnapshot, ServingCatalogState};
 
 impl PeerService {
+    /// Prepares one current authorized direct or published call without accepting work.
+    ///
+    /// Submission rechecks catalog, authority, inputs and limits. Preparation reserves neither
+    /// a generation nor execution capacity and must never replace exact replay after submission.
+    pub fn prepare_client_invocation(
+        &self,
+        actor: &ActorRef,
+        draft: &DirectInvocationDraft,
+    ) -> Result<DirectInvocationRequest, ServingError> {
+        use milkdrift_capability::{
+            IdempotencyKey, InvocationId, InvocationRequest, ResolvedCapabilitySnapshot,
+            SideEffectClass,
+        };
+        let protocol = |error: &dyn std::fmt::Display| ServingError::Protocol(error.to_string());
+        if draft.host != self.config.local_peer {
+            return Err(ServingError::Protocol(
+                "direct request targets another host".into(),
+            ));
+        }
+        let discovery = self.client_discovery(actor)?;
+        let entry = discovery
+            .catalog
+            .entries
+            .iter()
+            .find(|entry| {
+                entry.descriptor.identity() == &draft.capability
+                    && entry.invocable_operations.contains(&draft.operation)
+                    && !entry.draining
+            })
+            .ok_or_else(|| {
+                ServingError::Unauthorized("capability operation is not currently callable".into())
+            })?;
+        let selection =
+            ResolvedCapabilitySnapshot::from_descriptor(&entry.descriptor, &draft.operation)
+                .map_err(|error| protocol(&error))?;
+        let key = (selection.operation_contract().side_effect()
+            == SideEffectClass::IdempotentWrite)
+            .then(|| IdempotencyKey::new(draft.request_id.as_str()))
+            .transpose()
+            .map_err(|error| protocol(&error))?;
+        let limits = draft.limits.clone().unwrap_or(discovery.limits);
+        let deadline_unix_ms = self.now()?.checked_add(limits.duration_ms).ok_or_else(|| {
+            ServingError::Protocol("invocation deadline exceeds the clock range".into())
+        })?;
+        let request = DirectInvocationRequest {
+            host: discovery.host,
+            request_id: draft.request_id.clone(),
+            catalog_generation: discovery.catalog.generation,
+            catalog_digest: discovery.catalog.digest,
+            selection,
+            request: InvocationRequest::new(
+                InvocationId::new(draft.request_id.as_str()).map_err(|error| protocol(&error))?,
+                draft.capability.clone(),
+                draft.operation.clone(),
+                entry.descriptor.provider_profile().cloned(),
+                key,
+                draft.inputs.clone(),
+                Default::default(),
+            )
+            .map_err(|error| protocol(&error))?,
+            limits,
+            deadline_unix_ms,
+        };
+        let bound = request
+            .bind(self.client_authorization(actor)?)
+            .map_err(|error| protocol(&error))?;
+        self.authorize_serving_request(&self.client_caller(actor), &bound)?;
+        Ok(request)
+    }
+
     /// Discovers this installation and the client's currently authorized exact generations.
     pub fn client_discovery(
         &self,
@@ -251,7 +321,7 @@ impl PeerService {
     ) -> Result<InvocationAcceptance, ServingError> {
         self.check_client_rate(actor, "invoke")?;
         let caller = self.client_caller(actor);
-        let grant = self.client_grant(actor)?;
+        self.client_grant(actor)?;
         let existing = self
             .executions
             .peer_execution_by_request(&caller, &submission.request_id)
@@ -272,16 +342,7 @@ impl PeerService {
                 }
             }
         } else {
-            ClientInvocationAuthorization {
-                host: self.config.local_peer.clone(),
-                actor: actor.clone(),
-                grant: grant.identity().clone(),
-                grant_revision: grant.revision(),
-                grant_digest: grant
-                    .digest()
-                    .map_err(|error| ServingError::Configuration(error.to_string()))?,
-                revocation_generation: grant.revocation_generation(),
-            }
+            self.client_authorization(actor)?
         };
         let request = submission
             .bind(basis)
@@ -351,6 +412,23 @@ impl PeerService {
             .map_err(|error| ServingError::Protocol(error.to_string()))?;
         let (decision, generation) = self.authorize_serving_request(&caller, &request)?;
         self.accept_serving(request, decision, generation)
+    }
+
+    fn client_authorization(
+        &self,
+        actor: &ActorRef,
+    ) -> Result<ClientInvocationAuthorization, ServingError> {
+        let grant = self.client_grant(actor)?;
+        Ok(ClientInvocationAuthorization {
+            host: self.config.local_peer.clone(),
+            actor: actor.clone(),
+            grant: grant.identity().clone(),
+            grant_revision: grant.revision(),
+            grant_digest: grant
+                .digest()
+                .map_err(|error| ServingError::Configuration(error.to_string()))?,
+            revocation_generation: grant.revocation_generation(),
+        })
     }
 
     /// Looks up only the authenticated client's request namespace, including archived work.

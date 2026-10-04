@@ -1,4 +1,4 @@
-# Local control API 2.15
+# Local control API 2.16
 
 The `learning` command body accepts an operation document owned by
 `milkdrift_control::learning::LearningRequest`: `select`, `select_sources`, `declare`, `candidate`, `compare`,
@@ -37,10 +37,10 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":15}}
+{"protocol":{"major":2,"minor":16}}
 ```
 
-Version 2.15 is required on both sides. Older and newer major/minor versions are refused with
+Version 2.16 is required on both sides. Older and newer major/minor versions are refused with
 `unsupported_version`; update the client and daemon together. There is no protocol downgrade.
 Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
@@ -48,7 +48,7 @@ the negotiated envelope version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 15},
+  "protocol": {"major": 2, "minor": 16},
   "request_id": "req-1",
   "value": {}
 }
@@ -62,7 +62,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 15},
+  "protocol": {"major": 2, "minor": 16},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -81,6 +81,15 @@ ceilings and exact authorized catalog. `POST /v1/invocations` accepts `DirectInv
 which fixes that host/catalog, an exact selection, explicit inputs, limits, deadline and caller-scoped
 request ID. It cannot supply actor, grant or workflow origin. Serving acceptance is durable before
 acknowledgement and remains distinct from outcome.
+
+`POST /v1/invocations/prepare` accepts `DirectInvocationDraft`: `host`, `request_id`, `capability`,
+`operation`, named `inputs`, and optional `limits`. It returns the complete `DirectInvocationRequest`
+without accepting work. The serving owner resolves the current catalog and profile, derives the
+operation's required idempotency key, and calculates the deadline from its durable clock. Absent
+limits use the discovered host ceilings; explicit limits must fit current host and caller authority.
+Preparation checks the same direct-input and admission authority contracts as submission, including
+artifact access. Adapter-specific input validation still occurs before external entry. Preparation
+reserves no generation or worker and is not a promise that later submission will succeed.
 
 `GET /v1/invocation-requests/{request}` recovers acceptance after a lost reply.
 `GET /v1/invocations/{execution}` reads its accepted identity, status and accounting;
@@ -106,8 +115,8 @@ artifact and attempt reads remain independently scoped; unreadable final fields 
 `outputs_restricted`. Current action hints do not replace command validation or approval.
 
 Use the [independent execution recipe](../../examples/operator/README.md#independent-execution).
-`invocation prepare` obtains discovery and writes a create-new exact request file without execution.
-For an idempotent-write operation it derives the operation's idempotency key from the supplied
+`invocation prepare` calls the preparation endpoint and writes its reply to a create-new request file.
+For an idempotent-write operation the serving owner derives the operation's idempotency key from the supplied
 stable request ID; operations that do not accept that key leave it absent. Keep the saved file for
 submission/replay. Discovery is not a reservation: a typed `catalog_stale` refusal with no known
 execution permits preparing a fresh request, while response loss requires recovering the original
@@ -119,7 +128,7 @@ administration uses the separate routes below. A command envelope has no actor f
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 15},
+  "protocol": {"major": 2, "minor": 16},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,

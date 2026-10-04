@@ -16,7 +16,7 @@ operation. The [daemon guide](../../docs/operations/daemon.md) explains the matc
 
 | Need | Client operation and consequence |
 | --- | --- |
-| Invoke independently | `execution_discovery`, `invoke`, `invocation_lookup`, `invocation`, `invocation_observations`, and `cancel_invocation` operate the common serving owner in either daemon role. Preserve the exact host/catalog/request across retries. |
+| Invoke independently | `execution_discovery` lists choices; `prepare_invocation` asks the serving owner to construct an authorized request. Save that reply before `invoke`. `invocation_lookup`, `invocation`, `invocation_observations`, and `cancel_invocation` inspect or control accepted work in either daemon role. Preserve the exact request across retries. |
 | Supply an input file | `upload_input` publishes bounded verified content with a caller-scoped upload ID. No destination path or producer claim is accepted. |
 | Change workflow or run state | `submit` sends one `CommandRequest` and does not retry it automatically. Retain the exact request to recover a lost reply. |
 | Inspect current or past work | `run_result` explains current progress, checks, terminal output fields and permitted actions. `run`, `node`, `attempt`, and `timeline` expose additional authorized evidence. A compact run does not contain every historical attempt. |

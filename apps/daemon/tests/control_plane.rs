@@ -8,6 +8,8 @@ mod authoring_cli;
 mod control_workflows;
 #[path = "control_plane/direct.rs"]
 mod direct;
+#[path = "control_plane/direct_preparation.rs"]
+mod direct_preparation;
 #[path = "control_plane/durability.rs"]
 mod durability;
 #[path = "control_plane/inputs.rs"]

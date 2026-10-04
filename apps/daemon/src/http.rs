@@ -96,7 +96,7 @@ struct AppState {
     serving_requests: Arc<tokio::sync::Semaphore>,
 }
 
-/// Builds the bounded protocol-2.3 router. CORS is intentionally absent.
+/// Builds the bounded control router. CORS is intentionally absent.
 pub(crate) fn router(host: DaemonHost) -> Router {
     let peer_service = host.peer_service();
     let state = AppState {
@@ -125,6 +125,7 @@ pub(crate) fn router(host: DaemonHost) -> Router {
         "/v1/runs/{run}/proposals/{proposal}" => get(proposal), RouteAuthorityMapping::Exact(AuthorityOperation::InspectProposal), RouteResourceMapping::Run;
         "/v1/capabilities" => get(capabilities), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Capability;
         "/v1/execution/catalog" => get(invocations::catalog), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Capability;
+        "/v1/invocations/prepare" => post(invocations::prepare), RouteAuthorityMapping::QueryDerived, RouteResourceMapping::Capability;
         "/v1/invocations" => post(invocations::invoke), RouteAuthorityMapping::Exact(AuthorityOperation::InvokeCapability), RouteResourceMapping::Capability;
         "/v1/invocation-requests/{request}" => get(invocations::lookup), RouteAuthorityMapping::Exact(AuthorityOperation::Inspect), RouteResourceMapping::Capability;
         "/v1/invocations/{execution}" => get(invocations::inspect), RouteAuthorityMapping::Exact(AuthorityOperation::Inspect), RouteResourceMapping::Capability;

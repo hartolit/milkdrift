@@ -71,8 +71,7 @@ pub(super) async fn execute(
             output,
         } => {
             use milkdrift_capability::{
-                IdempotencyKey, InputReference, InvocationId, InvocationRequest,
-                InvocationValueReference, OperationId, ResolvedCapabilitySnapshot, SideEffectClass,
+                CapabilityId, InputReference, InvocationValueReference, OperationId, PeerId,
             };
             let invalid = |error: &dyn std::fmt::Display| CliError::Invalid(error.to_string());
             let mut destination = crate::output::PendingFile::create(output)?;
@@ -89,47 +88,6 @@ pub(super) async fn execute(
                 .map_err(|error| invalid(&error))?,
                 None => Vec::new(),
             };
-            if inputs.iter().any(|input| {
-                matches!(
-                    input.value(),
-                    InvocationValueReference::WorkspaceValue { .. }
-                )
-            }) {
-                return Err(CliError::Invalid(
-                    "direct inputs must be inline values or artifact references".to_owned(),
-                ));
-            }
-            let discovery = client.execution_discovery().await?;
-            if discovery.host.as_str() != host {
-                return Err(CliError::Invalid(
-                    "discovery belongs to another host".to_owned(),
-                ));
-            }
-            let operation = OperationId::new(operation).map_err(|error| invalid(&error))?;
-            let entry = discovery
-                .catalog
-                .entries
-                .iter()
-                .find(|entry| {
-                    entry.descriptor.identity().as_str() == capability
-                        && entry.invocable_operations.contains(&operation)
-                        && !entry.draining
-                })
-                .ok_or_else(|| {
-                    CliError::Invalid("capability operation is not currently callable".to_owned())
-                })?;
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|error| invalid(&error))?;
-            let deadline_unix_ms = u64::try_from(now.as_millis())
-                .ok()
-                .and_then(|now| now.checked_add(discovery.limits.duration_ms))
-                .ok_or_else(|| {
-                    CliError::Invalid("invocation deadline exceeds the clock range".to_owned())
-                })?;
-            let selection =
-                ResolvedCapabilitySnapshot::from_descriptor(&entry.descriptor, &operation)
-                    .map_err(|error| invalid(&error))?;
             let mut names: std::collections::BTreeSet<String> =
                 inputs.iter().map(|input| input.name().to_owned()).collect();
             if names.len() != inputs.len() {
@@ -157,36 +115,16 @@ pub(super) async fn execute(
                         .map_err(|error| invalid(&error))?,
                 );
             }
-            // The saved request ID is already the caller's stable replay identity. Operations
-            // promising idempotent writes also require a key at adapter entry.
-            let key = (selection.operation_contract().side_effect()
-                == SideEffectClass::IdempotentWrite)
-                .then(|| IdempotencyKey::new(request_id))
-                .transpose()
-                .map_err(|error| invalid(&error))?;
-            let request = DirectInvocationRequest {
-                host: discovery.host,
-                request_id: PeerRequestId::new(request_id).map_err(|error| invalid(&error))?,
-                catalog_generation: discovery.catalog.generation,
-                catalog_digest: discovery.catalog.digest,
-                selection,
-                request: InvocationRequest::new(
-                    InvocationId::new(request_id).map_err(|error| invalid(&error))?,
-                    entry.descriptor.identity().clone(),
-                    operation,
-                    entry.descriptor.provider_profile().cloned(),
-                    key,
+            let request = client
+                .prepare_invocation(&milkdrift_peer_protocol::DirectInvocationDraft {
+                    host: PeerId::new(host).map_err(|error| invalid(&error))?,
+                    request_id: PeerRequestId::new(request_id).map_err(|error| invalid(&error))?,
+                    capability: CapabilityId::new(capability).map_err(|error| invalid(&error))?,
+                    operation: OperationId::new(operation).map_err(|error| invalid(&error))?,
                     inputs,
-                    Default::default(),
-                )
-                .map_err(|error| invalid(&error))?,
-                limits: discovery.limits,
-                deadline_unix_ms,
-            };
-            request
-                .selection
-                .validate_request(&request.request)
-                .map_err(|error| invalid(&error))?;
+                    limits: None,
+                })
+                .await?;
             let bytes = serde_json::to_vec_pretty(&request).map_err(|error| invalid(&error))?;
             use std::io::Write as _;
             destination
@@ -197,7 +135,7 @@ pub(super) async fn execute(
                 "invocation.prepare",
                 &serde_json::json!({
                     "request_id": request.request_id, "host": request.host,
-                    "deadline_unix_ms": deadline_unix_ms, "output": output,
+                    "deadline_unix_ms": request.deadline_unix_ms, "output": output,
                 }),
             )
         }
