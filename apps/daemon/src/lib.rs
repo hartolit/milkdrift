@@ -17,10 +17,10 @@ mod http;
 
 pub use config::{
     ActorBindingConfig, ActorGrantConfig, AdapterConfig, ApplicationReceiptConfig,
-    AuthorityPresetConfig, ClientServingConfig, ControllerActivation, DAEMON_CONFIG_SCHEMA_VERSION,
-    DaemonConfig, DaemonPlan, ModelProfileConfig, PeerHostConfig, PeerRelationshipConfig,
-    PeerSideEffectConfig, RuntimeHostConfig, SecretSourceConfig, ServingHostConfig, ShutdownConfig,
-    ShutdownEffectPolicy,
+    AuthorityPresetConfig, ClientServingConfig, ConfigError, ControllerActivation,
+    DAEMON_CONFIG_SCHEMA_VERSION, DaemonConfig, DaemonPlan, ModelProfileConfig, PeerHostConfig,
+    PeerRelationshipConfig, PeerSideEffectConfig, RuntimeHostConfig, SecretSourceConfig,
+    ServingHostConfig, ShutdownConfig, ShutdownEffectPolicy,
 };
 pub use host::{DaemonHost, HostError};
 pub use http::serve;

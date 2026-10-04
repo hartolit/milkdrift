@@ -379,7 +379,7 @@ fn authorize_artifact(
 ) -> Result<(), PublicFailure> {
     // Use the existing public metadata and content boundary, including sensitivity and identity
     // refusal. The one-byte read establishes content authority without eagerly loading a document.
-    let metadata = owner.artifact_metadata(session, reference.artifact().as_str())?;
+    owner.artifact_metadata(session, reference.artifact().as_str())?;
     let actual = owner
         .store
         .metadata(reference.artifact())
@@ -406,7 +406,6 @@ fn authorize_artifact(
             )?;
         }
     }
-    let _ = metadata;
     owner.artifact_range(session, reference.artifact().as_str(), 0, 1, "learning")?;
     Ok(())
 }

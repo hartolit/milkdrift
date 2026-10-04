@@ -20,11 +20,11 @@ pub(crate) struct ActorSession {
 }
 
 impl ActorSession {
-    pub const fn cursor_key(&self) -> &[u8; 32] {
+    pub(crate) const fn cursor_key(&self) -> &[u8; 32] {
         &self.cursor_key
     }
 
-    pub fn cursor_binding(&self, exact_resource_and_filter: &str) -> CursorBinding {
+    pub(crate) fn cursor_binding(&self, exact_resource_and_filter: &str) -> CursorBinding {
         let claim = self.context.authority();
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"milkdrift.continuation-scope.v1\0");
@@ -80,7 +80,7 @@ impl fmt::Debug for AuthRegistry {
 }
 
 impl AuthRegistry {
-    pub fn from_plan(config: &AuthenticationPlan) -> Result<Self, ConfigError> {
+    pub(crate) fn from_plan(config: &AuthenticationPlan) -> Result<Self, ConfigError> {
         let resolver = Arc::new(LocalSecretResolver::new(config.secret_sources.clone()));
         let mut bindings = Vec::with_capacity(config.actors.len());
         let mut grants = Vec::with_capacity(config.actors.len());
@@ -136,7 +136,7 @@ impl AuthRegistry {
     }
 
     /// Authenticates one exact bearer value with constant-time digest comparison.
-    pub fn authenticate(&self, supplied: &[u8]) -> Option<ActorSession> {
+    pub(crate) fn authenticate(&self, supplied: &[u8]) -> Option<ActorSession> {
         if supplied.is_empty() || supplied.len() > 4_096 {
             return None;
         }
@@ -168,15 +168,15 @@ impl AuthRegistry {
         })
     }
 
-    pub fn grants(&self) -> Vec<AuthorityGrant> {
+    pub(crate) fn grants(&self) -> Vec<AuthorityGrant> {
         self.grants.as_ref().clone()
     }
 
-    pub fn resolver(&self) -> Arc<LocalSecretResolver> {
+    pub(crate) fn resolver(&self) -> Arc<LocalSecretResolver> {
         self.resolver.clone()
     }
 
-    pub fn revocations(&self) -> BTreeMap<GrantId, u64> {
+    pub(crate) fn revocations(&self) -> BTreeMap<GrantId, u64> {
         self.revocations.as_ref().clone()
     }
 }
