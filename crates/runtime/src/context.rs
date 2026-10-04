@@ -24,6 +24,8 @@ use milkdrift_workspace::{
 };
 use thiserror::Error;
 
+#[cfg(test)]
+mod publication_tests;
 mod retained;
 mod selection;
 mod source;
@@ -281,13 +283,14 @@ pub(crate) fn publish_context_artifact(
         }
     };
     let start = usize::try_from(offset).map_err(|_| ContextBuildError::AccountingOverflow)?;
-    if start > bytes.len() {
-        let _abort = store.abort_publication(&publication);
-        return Err(ContextBuildError::Persistence(
-            "resumed manifest publication exceeds its exact content size".to_owned(),
+    let Some(remaining) = bytes.get(start..) else {
+        return Err(abort_failed_context_publication(
+            store,
+            &publication,
+            "resumed manifest publication exceeds its exact content size",
         ));
-    }
-    for (index, chunk) in bytes[start..].chunks(MAX_ARTIFACT_CHUNK_BYTES).enumerate() {
+    };
+    for (index, chunk) in remaining.chunks(MAX_ARTIFACT_CHUNK_BYTES).enumerate() {
         let chunk_offset = offset
             .checked_add(
                 u64::try_from(index)
@@ -297,18 +300,38 @@ pub(crate) fn publish_context_artifact(
             )
             .ok_or(ContextBuildError::AccountingOverflow)?;
         if let Err(error) = store.write_chunk(&publication, chunk_offset, chunk) {
-            let _abort = store.abort_publication(&publication);
-            return Err(ContextBuildError::Persistence(error.to_string()));
+            return Err(abort_failed_context_publication(
+                store,
+                &publication,
+                &error.to_string(),
+            ));
         }
     }
     let outcome = match store.commit_publication(&publication) {
         Ok(outcome) => outcome,
         Err(error) => {
-            let _abort = store.abort_publication(&publication);
-            return Err(ContextBuildError::Persistence(error.to_string()));
+            return Err(abort_failed_context_publication(
+                store,
+                &publication,
+                &error.to_string(),
+            ));
         }
     };
     capability_artifact(outcome.metadata().reference())
+}
+
+fn abort_failed_context_publication(
+    store: &dyn milkdrift_persistence::ArtifactStore,
+    publication: &milkdrift_persistence::ArtifactPublicationId,
+    failure: &str,
+) -> ContextBuildError {
+    let summary = match store.abort_publication(publication) {
+        Ok(()) => failure.to_owned(),
+        Err(cleanup) => format!(
+            "{failure}; publication cleanup also failed and the session may remain: {cleanup}"
+        ),
+    };
+    ContextBuildError::Persistence(summary)
 }
 
 fn capability_artifact(
