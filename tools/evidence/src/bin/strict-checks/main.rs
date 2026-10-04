@@ -74,6 +74,9 @@ impl Gate {
             // Directly launched evidence binaries do not inherit rustup's selection. Without
             // this, dependency working directories can select the user's unrelated default.
             .env("RUSTUP_TOOLCHAIN", &self.toolchain)
+            // cargo-machete uses this cargo-run marker to distinguish its own launcher from
+            // a Cargo subcommand. Our package metadata must not change a child's argument parsing.
+            .env_remove("CARGO_PKG_NAME")
             .env_remove("RUSTFLAGS")
             .env_remove("CARGO_ENCODED_RUSTFLAGS")
             .env_remove("CLIPPY_CONF_DIR")
@@ -400,6 +403,59 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{CheckResult, Gate};
+
+    #[test]
+    fn nested_gate_removes_cargo_launcher_package_metadata() -> CheckResult {
+        const MARKER: &str = "MILKDRIFT_STRICT_CHECK_LAUNCHER_PROBE";
+        let executable = std::env::current_exe()?;
+        if std::env::var_os(MARKER).is_some() {
+            let directory = tempfile::tempdir()?;
+            let mut gate = Gate {
+                root: directory.path().to_owned(),
+                output: directory.path().to_owned(),
+                toolchain: super::selected_toolchain(
+                    &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+                )?,
+                checks: Vec::new(),
+            };
+            assert!(
+                gate.run(
+                    "nested-cargo-checker",
+                    executable
+                        .to_str()
+                        .ok_or("test executable path is not UTF-8")?,
+                    &[
+                        "--exact",
+                        "tests::nested_checker_receives_no_launcher_package_marker"
+                    ],
+                )?
+            );
+            return Ok(());
+        }
+        // Reproduce cargo run's package metadata without mutating the parallel test process.
+        let output = std::process::Command::new(executable)
+            .args([
+                "--exact",
+                "tests::nested_gate_removes_cargo_launcher_package_metadata",
+            ])
+            .env(MARKER, "1")
+            .env("CARGO_PKG_NAME", "outer-launcher")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nested_checker_receives_no_launcher_package_marker() {
+        if std::env::var_os("MILKDRIFT_STRICT_CHECK_LAUNCHER_PROBE").is_some() {
+            assert!(std::env::var_os("CARGO_PKG_NAME").is_none());
+        }
+    }
 
     #[test]
     fn runner_never_accepts_missing_tools_or_nonzero_status() -> CheckResult {
