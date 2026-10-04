@@ -14,26 +14,26 @@ use milkdrift_evidence::application::hash_file;
 use milkdrift_local_process::{PlatformSupport, ProcessProfileDocument};
 use serde_json::{Value, json};
 
-pub struct AgentProfile {
-    pub path: PathBuf,
-    pub capability: String,
-    pub canonical_executable: PathBuf,
-    pub content_digest: String,
-    pub size_bytes: u64,
-    pub version_output: String,
-    pub output_names: Vec<String>,
-    pub secret_refs: BTreeSet<String>,
+pub(crate) struct AgentProfile {
+    pub(crate) path: PathBuf,
+    pub(crate) capability: String,
+    pub(crate) canonical_executable: PathBuf,
+    pub(crate) content_digest: String,
+    pub(crate) size_bytes: u64,
+    pub(crate) version_output: String,
+    pub(crate) output_names: Vec<String>,
+    pub(crate) secret_refs: BTreeSet<String>,
 }
 
-pub struct GeneratedProfiles {
-    pub canonical_executable: PathBuf,
-    pub weak_verifier: PathBuf,
-    pub good_verifier: PathBuf,
-    pub reviewer: PathBuf,
-    pub evidence_source: PathBuf,
+pub(crate) struct GeneratedProfiles {
+    pub(crate) canonical_executable: PathBuf,
+    pub(crate) weak_verifier: PathBuf,
+    pub(crate) good_verifier: PathBuf,
+    pub(crate) reviewer: PathBuf,
+    pub(crate) evidence_source: PathBuf,
 }
 
-pub fn prepare_agent_profile(
+pub(crate) fn prepare_agent_profile(
     source: Option<&Path>,
     fixture: bool,
     repository: &Path,
@@ -165,7 +165,7 @@ fn executable_version_output(
     Ok(version_output)
 }
 
-pub fn generated_profiles(
+pub(crate) fn generated_profiles(
     repository: &Path,
     session_root: &Path,
 ) -> Result<GeneratedProfiles, String> {

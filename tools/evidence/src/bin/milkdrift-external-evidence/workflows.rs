@@ -28,23 +28,23 @@ use milkdrift_model_provider::EndpointProfile;
 use milkdrift_prompt_sequence::PromptSequenceDocument;
 use serde_json::{Value, json};
 
-pub const PROCESS_WORKFLOW: &str = "external-evidence-process";
-pub const PROCESS_RUN: &str = "run-external-evidence-process";
-pub const MODEL_WORKFLOW: &str = "external-evidence-model";
-pub const MODEL_RUN: &str = "run-external-evidence-model";
+pub(crate) const PROCESS_WORKFLOW: &str = "external-evidence-process";
+pub(crate) const PROCESS_RUN: &str = "run-external-evidence-process";
+pub(crate) const MODEL_WORKFLOW: &str = "external-evidence-model";
+pub(crate) const MODEL_RUN: &str = "run-external-evidence-model";
 
-pub struct ModelProfileFacts {
-    pub profile_id: String,
-    pub revision: u64,
-    pub protocol: String,
-    pub model_alias: String,
-    pub endpoint_origin: String,
-    pub streaming: bool,
-    pub structured_output: bool,
-    pub secret_refs: BTreeSet<String>,
+pub(crate) struct ModelProfileFacts {
+    pub(crate) profile_id: String,
+    pub(crate) revision: u64,
+    pub(crate) protocol: String,
+    pub(crate) model_alias: String,
+    pub(crate) endpoint_origin: String,
+    pub(crate) streaming: bool,
+    pub(crate) structured_output: bool,
+    pub(crate) secret_refs: BTreeSet<String>,
 }
 
-pub fn initialize_repository(repository: &Path) -> Result<(String, String), String> {
+pub(crate) fn initialize_repository(repository: &Path) -> Result<(String, String), String> {
     fs::create_dir_all(repository).map_err(|error| error.to_string())?;
     fs::write(repository.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
     fs::write(
@@ -77,7 +77,7 @@ pub fn initialize_repository(repository: &Path) -> Result<(String, String), Stri
     ))
 }
 
-pub fn git(repository: &Path, arguments: &[&str]) -> Result<String, String> {
+pub(crate) fn git(repository: &Path, arguments: &[&str]) -> Result<String, String> {
     let output = milkdrift_evidence::application::run_command(
         Command::new("git").args(arguments).current_dir(repository),
         None,
@@ -95,7 +95,7 @@ pub fn git(repository: &Path, arguments: &[&str]) -> Result<String, String> {
     Ok(output.stdout.trim().to_owned())
 }
 
-pub fn process_sequence(
+pub(crate) fn process_sequence(
     agent_capability: &str,
     agent_outputs: &[String],
 ) -> Result<PromptSequenceDocument, String> {
@@ -149,7 +149,7 @@ pub fn process_sequence(
     .map_err(|error| error.to_string())
 }
 
-pub fn model_profile_facts(bytes: &[u8]) -> Result<ModelProfileFacts, String> {
+pub(crate) fn model_profile_facts(bytes: &[u8]) -> Result<ModelProfileFacts, String> {
     let profile = EndpointProfile::from_json(bytes).map_err(|error| error.to_string())?;
     let value: Value = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
     let profile_id = profile.identity().as_str().to_owned();
@@ -211,7 +211,7 @@ pub fn model_profile_facts(bytes: &[u8]) -> Result<ModelProfileFacts, String> {
     })
 }
 
-pub fn model_revision(
+pub(crate) fn model_revision(
     model_capability: &str,
     profile: &ModelProfileFacts,
     max_output_units: u64,

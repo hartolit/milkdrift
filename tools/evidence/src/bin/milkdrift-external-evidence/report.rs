@@ -8,25 +8,25 @@ use std::{collections::BTreeSet, fs, path::Path};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const REPORT_SCHEMA_VERSION: u32 = 1;
+pub(crate) const REPORT_SCHEMA_VERSION: u32 = 1;
 const MAX_REPORT_BYTES: usize = 1_048_576;
 const MAX_REPORT_ITEMS: usize = 4_096;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct EvidenceReport {
-    pub schema_version: u32,
-    pub generated_at_unix_ms: u64,
-    pub platform: PlatformEvidence,
-    pub milkdrift: MilkdriftEvidence,
-    pub configuration_digest: Option<String>,
-    pub qualifying: bool,
-    pub fixture_mode: bool,
-    pub process: ScenarioEvidence,
-    pub model: ScenarioEvidence,
-    pub validation: Vec<ValidationEvidence>,
-    pub redactions: Vec<String>,
-    pub failure_reason: Option<String>,
+pub(crate) struct EvidenceReport {
+    pub(crate) schema_version: u32,
+    pub(crate) generated_at_unix_ms: u64,
+    pub(crate) platform: PlatformEvidence,
+    pub(crate) milkdrift: MilkdriftEvidence,
+    pub(crate) configuration_digest: Option<String>,
+    pub(crate) qualifying: bool,
+    pub(crate) fixture_mode: bool,
+    pub(crate) process: ScenarioEvidence,
+    pub(crate) model: ScenarioEvidence,
+    pub(crate) validation: Vec<ValidationEvidence>,
+    pub(crate) redactions: Vec<String>,
+    pub(crate) failure_reason: Option<String>,
 }
 
 impl EvidenceReport {
@@ -121,36 +121,36 @@ fn bounded_string<'a>(object: &'a Value, key: &str) -> Option<&'a str> {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct PlatformEvidence {
-    pub os: String,
-    pub architecture: String,
-    pub build_target: String,
+pub(crate) struct PlatformEvidence {
+    pub(crate) os: String,
+    pub(crate) architecture: String,
+    pub(crate) build_target: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct MilkdriftEvidence {
-    pub starting_commit: String,
-    pub starting_tree: String,
-    pub workspace_version: String,
-    pub dirty_at_start: bool,
+pub(crate) struct MilkdriftEvidence {
+    pub(crate) starting_commit: String,
+    pub(crate) starting_tree: String,
+    pub(crate) workspace_version: String,
+    pub(crate) dirty_at_start: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct ScenarioEvidence {
-    pub qualifying: bool,
-    pub outcome: String,
-    pub profile: Value,
-    pub commands: Vec<String>,
-    pub runs: Vec<String>,
-    pub revisions: Vec<String>,
-    pub attempts: Vec<String>,
-    pub proposals: Vec<String>,
-    pub artifacts: Vec<ArtifactEvidence>,
-    pub restart_boundaries: Vec<RestartEvidence>,
-    pub facts: Value,
-    pub failure_reason: Option<String>,
+pub(crate) struct ScenarioEvidence {
+    pub(crate) qualifying: bool,
+    pub(crate) outcome: String,
+    pub(crate) profile: Value,
+    pub(crate) commands: Vec<String>,
+    pub(crate) runs: Vec<String>,
+    pub(crate) revisions: Vec<String>,
+    pub(crate) attempts: Vec<String>,
+    pub(crate) proposals: Vec<String>,
+    pub(crate) artifacts: Vec<ArtifactEvidence>,
+    pub(crate) restart_boundaries: Vec<RestartEvidence>,
+    pub(crate) facts: Value,
+    pub(crate) failure_reason: Option<String>,
 }
 
 impl ScenarioEvidence {
@@ -366,7 +366,7 @@ impl ScenarioEvidence {
         Ok(())
     }
 
-    pub fn pending(reason: impl Into<String>) -> Self {
+    pub(crate) fn pending(reason: impl Into<String>) -> Self {
         Self {
             qualifying: false,
             outcome: "not_run".to_owned(),
@@ -383,7 +383,7 @@ impl ScenarioEvidence {
         }
     }
 
-    pub fn failed(reason: impl Into<String>) -> Self {
+    pub(crate) fn failed(reason: impl Into<String>) -> Self {
         Self {
             qualifying: false,
             outcome: "failed".to_owned(),
@@ -403,32 +403,32 @@ impl ScenarioEvidence {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct ArtifactEvidence {
-    pub artifact_id: String,
-    pub digest: String,
-    pub size: u64,
-    pub content_type: String,
-    pub role: String,
+pub(crate) struct ArtifactEvidence {
+    pub(crate) artifact_id: String,
+    pub(crate) digest: String,
+    pub(crate) size: u64,
+    pub(crate) content_type: String,
+    pub(crate) role: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct RestartEvidence {
-    pub boundary: String,
-    pub sequence_before: u64,
-    pub sequence_after: u64,
-    pub recovered_state: String,
-    pub duplicate_attempts: bool,
+pub(crate) struct RestartEvidence {
+    pub(crate) boundary: String,
+    pub(crate) sequence_before: u64,
+    pub(crate) sequence_after: u64,
+    pub(crate) recovered_state: String,
+    pub(crate) duplicate_attempts: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct ValidationEvidence {
-    pub command: String,
-    pub exit_status: i32,
+pub(crate) struct ValidationEvidence {
+    pub(crate) command: String,
+    pub(crate) exit_status: i32,
 }
 
-pub fn write_report(
+pub(crate) fn write_report(
     path: &Path,
     report: &EvidenceReport,
     forbidden_values: &[Vec<u8>],
