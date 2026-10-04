@@ -10,10 +10,19 @@ fn bounded_profile(address: &str, billing: Value) -> TestResult<EndpointProfile>
         AuthMode::NoAuth,
         BTreeSet::from([ModelFeature::SystemRole, ModelFeature::Streaming]),
     )?)?;
-    value["billing"] = billing;
-    value["token_limits"] = json!({"type":"byte_bpe","template_tokens_per_message":64,
+    value
+        .as_object_mut()
+        .ok_or("fixture object absent")?
+        .insert("billing".to_owned(), billing);
+    value
+        .as_object_mut()
+        .ok_or("fixture object absent")?
+        .insert(
+            "token_limits".to_owned(),
+            json!({"type":"byte_bpe","template_tokens_per_message":64,
         "template_tokens_per_request":64,"maximum_input_tokens":32768,"maximum_output_tokens":64,
-        "output_control":"max_completion_tokens","source":"bounded mock endpoint contract v1"});
+        "output_control":"max_completion_tokens","source":"bounded mock endpoint contract v1"}),
+        );
     Ok(serde_json::from_value(value)?)
 }
 
@@ -44,7 +53,11 @@ fn prepared_mapping_and_reported_usage_settle_the_supported_tariff_without_relab
     )?;
     let request = server.join().map_err(|_| "fixture panicked")??;
     let wire: Value = serde_json::from_str(request.split_once("\r\n\r\n").ok_or("body absent")?.1)?;
-    assert_eq!(wire["max_completion_tokens"], 64);
+    assert_eq!(
+        wire.get("max_completion_tokens")
+            .ok_or("output ceiling absent")?,
+        64
+    );
     assert!(wire.get("max_tokens").is_none());
     let terminal = events
         .last()
@@ -62,11 +75,27 @@ fn prepared_mapping_and_reported_usage_settle_the_supported_tariff_without_relab
             .ok_or("response absent")?
             .2,
     )?;
-    assert!(response["response"]["usage"]["cost_micros"].is_null());
-    let facts = &response["response"]["provider_metadata"]["org.milkdrift/model-accounting"];
-    assert_eq!(facts["cost_basis"], "tariff_calculated");
-    let envelope: InvocationAdmissionEnvelope =
-        serde_json::from_value(facts["reservation_envelope"].clone())?;
+    assert!(
+        response
+            .pointer("/response/usage/cost_micros")
+            .ok_or("cost absent")?
+            .is_null()
+    );
+    let facts = response
+        .pointer("/response/provider_metadata/org.milkdrift~1model-accounting")
+        .ok_or("accounting absent")?;
+    assert_eq!(
+        facts
+            .get("cost_basis")
+            .ok_or("accounting cost_basis absent")?,
+        "tariff_calculated"
+    );
+    let envelope: InvocationAdmissionEnvelope = serde_json::from_value(
+        facts
+            .get("reservation_envelope")
+            .ok_or("accounting reservation_envelope absent")?
+            .clone(),
+    )?;
     let mut account = ControllerAccountState::establish(ControllerAccountDeclaration::new(
         RunId::new("run-billed")?,
         NodeExecutionId::new("execution-billed")?,
@@ -176,12 +205,32 @@ fn complete_but_missing_or_conflicting_model_usage_stays_visible_and_conservativ
             .find(|v| v.0 == "model_response")
         {
             let response: Value = serde_json::from_slice(&response.2)?;
-            let facts =
-                &response["response"]["provider_metadata"]["org.milkdrift/model-accounting"];
-            assert_eq!(facts["cost_basis"], "unresolved");
-            assert!(facts["accounted_cost_micros"].is_null());
-            if response["response"]["usage"]["cost_micros"].is_u64() {
-                assert_eq!(response["response"]["usage"]["cost_micros"], 1);
+            let facts = response
+                .pointer("/response/provider_metadata/org.milkdrift~1model-accounting")
+                .ok_or("accounting absent")?;
+            assert_eq!(
+                facts
+                    .get("cost_basis")
+                    .ok_or("accounting cost_basis absent")?,
+                "unresolved"
+            );
+            assert!(
+                facts
+                    .get("accounted_cost_micros")
+                    .ok_or("accounting accounted_cost_micros absent")?
+                    .is_null()
+            );
+            if response
+                .pointer("/response/usage/cost_micros")
+                .ok_or("cost absent")?
+                .is_u64()
+            {
+                assert_eq!(
+                    response
+                        .pointer("/response/usage/cost_micros")
+                        .ok_or("cost absent")?,
+                    1
+                );
                 assert!(
                     terminal
                         .usage()
@@ -257,11 +306,23 @@ fn nullable_usage_details_preserve_raw_evidence_and_settle_in_both_response_mode
                 .2,
         )?;
         assert_eq!(
-            response["response"]["provider_metadata"]["org.milkdrift.openai/response"]["usage"],
+            *response
+                .pointer("/response/provider_metadata/org.milkdrift.openai~1response/usage")
+                .ok_or("raw usage absent")?,
             raw_usage
         );
-        assert!(response["response"]["usage"]["cached_input_units"].is_null());
-        assert!(response["response"]["usage"]["cost_micros"].is_null());
+        assert!(
+            response
+                .pointer("/response/usage/cached_input_units")
+                .ok_or("cache usage absent")?
+                .is_null()
+        );
+        assert!(
+            response
+                .pointer("/response/usage/cost_micros")
+                .ok_or("cost absent")?
+                .is_null()
+        );
     }
     Ok(())
 }

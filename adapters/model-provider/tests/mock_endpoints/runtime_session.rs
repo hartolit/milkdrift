@@ -61,7 +61,8 @@ fn governing_session_is_enforced_before_http_for_both_request_forms() -> TestRes
                 let listener = TcpListener::bind("127.0.0.1:0")?;
                 let address = listener.local_addr()?.to_string();
                 listener.set_nonblocking(true)?;
-                let (stop, stopped) = mpsc::channel();
+                let stop = Arc::new(AtomicBool::new(false));
+                let stopped = stop.clone();
                 let server = thread::spawn(move || -> std::io::Result<Option<String>> {
                     for _ in 0..600 {
                         match listener.accept() {
@@ -81,7 +82,8 @@ fn governing_session_is_enforced_before_http_for_both_request_forms() -> TestRes
                             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
                             Err(error) => return Err(error),
                         }
-                        if stopped.recv_timeout(Duration::from_millis(5)).is_ok() {
+                        thread::sleep(Duration::from_millis(5));
+                        if stopped.load(Ordering::SeqCst) {
                             return Ok(None);
                         }
                     }
@@ -146,7 +148,7 @@ fn governing_session_is_enforced_before_http_for_both_request_forms() -> TestRes
                 for action in runtime.claim_execution_effects(PageSize::new(8)?)? {
                     runtime.execute_effect(action)?;
                 }
-                let _ = stop.send(());
+                stop.store(true, Ordering::SeqCst);
                 let captured = server.join().map_err(|_| "endpoint observer panicked")??;
                 let history = runtime.history(&run)?;
                 assert_eq!(
@@ -258,7 +260,10 @@ impl ModelFixture {
         )?);
         let (host, adapter, read_denial) = model_host(store.clone(), directory.path(), profile)?;
         let mut policy = serde_json::to_value(TaskContextPolicy::default())?;
-        policy["session"] = json!(declared);
+        policy
+            .as_object_mut()
+            .ok_or("fixture object absent")?
+            .insert("session".to_owned(), json!(declared));
         let mut node = Node::new(
             NodeId::new("model")?,
             NodeKind::task(
@@ -491,7 +496,7 @@ fn model_host(
     let data = Arc::new(ReadGuard {
         denied: read_denial.clone(),
         inner: StoreInvocationDataAccess::new(
-            store.clone(),
+            store,
             directory.join("materialized"),
             ArtifactReadAuthority::Authorized {
                 actor: ActorRef::new("human:session")?,
@@ -505,7 +510,7 @@ fn model_host(
         capability,
         profile,
         Arc::new(InMemorySecretResolver::new()),
-        data.clone(),
+        data,
     )?);
     let host = Arc::new(CapabilityHost::new(
         HostConfig {

@@ -81,13 +81,18 @@ fn fresh_direct_model_uses_explicit_selection_without_workflow_manifest() -> Tes
             .nth(1)
             .ok_or("request body missing")?,
     )?;
-    let selection = body["messages"][0]["content"][0]["text"]
-        .as_str()
+    let selection = body
+        .pointer("/messages/0/content/0/text")
+        .and_then(Value::as_str)
         .ok_or("selection header missing")?;
     assert!(selection.contains("explicit_inputs_only"));
     assert!(selection.contains("\"origin\":\"direct\""));
     assert!(!selection.contains("\"run\""));
-    assert_eq!(body["messages"][1]["content"], "explicit direct prompt");
+    assert_eq!(
+        body.pointer("/messages/1/content")
+            .ok_or("direct prompt absent")?,
+        "explicit direct prompt"
+    );
     assert!(
         data.published
             .lock()

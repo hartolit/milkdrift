@@ -85,7 +85,7 @@ fn causal_context_is_persisted_sent_streamed_published_and_inspectable_after_res
             .ok_or("evidence size missing")?,
     );
     let evidence_source = ContextSource::Artifact {
-        reference: durable_evidence.clone(),
+        reference: durable_evidence,
     };
     let policy = TaskContextPolicy::default().with_exact_sources(
         BTreeSet::new(),

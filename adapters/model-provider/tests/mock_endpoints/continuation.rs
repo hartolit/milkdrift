@@ -75,7 +75,7 @@ fn append_with_policy(
     hold_after: bool,
     task: ModelTaskRequest,
     declared: &str,
-    change: impl FnOnce(&mut serde_json::Value),
+    change: impl FnOnce(&mut serde_json::Value) -> TestResult,
 ) -> TestResult {
     let projection = fixture.runtime.projection(&fixture.run)?;
     let base_id = projection.revision().ok_or("active revision missing")?;
@@ -89,9 +89,11 @@ fn append_with_policy(
         .get(&NodeId::new("model")?)
         .ok_or("source node missing")?;
     let mut policy = serde_json::to_value(TaskContextPolicy::default())?;
-    policy["session"] = json!(declared);
-    policy["exclude_categories"] = json!([]);
-    change(&mut policy);
+    *policy.get_mut("session").ok_or("session policy absent")? = json!(declared);
+    *policy
+        .get_mut("exclude_categories")
+        .ok_or("exclusion policy absent")? = json!([]);
+    change(&mut policy)?;
     let mut next = Node::new(
         NodeId::new(pending)?,
         NodeKind::task(
@@ -381,7 +383,8 @@ fn exact_continuation_reaches_both_wires_and_fresh_has_no_implicit_history() -> 
             let listener = TcpListener::bind("127.0.0.1:0")?;
             let address = listener.local_addr()?.to_string();
             listener.set_nonblocking(true)?;
-            let (stop, stopped) = mpsc::channel();
+            let stop = Arc::new(AtomicBool::new(false));
+            let stopped = stop.clone();
             let server = thread::spawn(move || -> std::io::Result<Vec<String>> {
                 let deadline = std::time::Instant::now() + Duration::from_secs(15);
                 let mut requests = Vec::new();
@@ -391,7 +394,7 @@ fn exact_continuation_reaches_both_wires_and_fresh_has_no_implicit_history() -> 
                     2
                 };
                 while requests.len() < expected && std::time::Instant::now() < deadline {
-                    if stopped.try_recv().is_ok() {
+                    if stopped.load(Ordering::SeqCst) {
                         break;
                     }
                     match listener.accept() {
@@ -444,12 +447,13 @@ fn exact_continuation_reaches_both_wires_and_fresh_has_no_implicit_history() -> 
             let mut original =
                 serde_json::to_value(task("original question", SessionSelection::Fresh)?)?;
             if case.starts_with("tool_") {
-                original["tools"] = json!([{"name":"lookup","description":"Read supplied data","input_schema":{"type":"object"}}]);
+                original.as_object_mut().ok_or("fixture object absent")?.insert("tools".to_owned(), json!([{"name":"lookup","description":"Read supplied data","input_schema":{"type":"object"}}]));
             }
             if case == "excluded_tool_history" {
-                original["tools"] = json!([{"name":"lookup","description":"Read supplied data","input_schema":{"type":"object"}}]);
-                let messages = original["messages"]
-                    .as_array_mut()
+                original.as_object_mut().ok_or("fixture object absent")?.insert("tools".to_owned(), json!([{"name":"lookup","description":"Read supplied data","input_schema":{"type":"object"}}]));
+                let messages = original
+                    .get_mut("messages")
+                    .and_then(Value::as_array_mut)
                     .ok_or("messages absent")?;
                 messages.insert(1, json!({"role":"assistant","parts":[{"type":"text","text":""}],"tool_call_id":null,"tool_calls":[{"id":"earlier-call","name":"lookup","arguments":{"query":"private trace"}}]}));
                 messages.insert(2, json!({"role":"tool_result","parts":[{"type":"text","text":"private tool output"}],"tool_call_id":"earlier-call"}));
@@ -624,8 +628,9 @@ fn exact_continuation_reaches_both_wires_and_fresh_has_no_implicit_history() -> 
                 "tool_pair" | "tool_chain" | "tool_duplicate" | "tool_unknown"
             ) {
                 let result = json!({"role":"tool_result","parts":[{"type":"text","text":"exact result"}],"tool_call_id":if case == "tool_unknown" { "unknown" } else { "call-1" }});
-                let messages = next_task["messages"]
-                    .as_array_mut()
+                let messages = next_task
+                    .get_mut("messages")
+                    .and_then(Value::as_array_mut)
                     .ok_or("messages absent")?;
                 messages.insert(1, result.clone());
                 if case == "tool_duplicate" {
@@ -642,19 +647,36 @@ fn exact_continuation_reaches_both_wires_and_fresh_has_no_implicit_history() -> 
                 } else {
                     "fresh"
                 },
-                |policy| match case {
-                    "budget_items" => {
-                        policy["budget"]["max_items"] = json!(1);
-                        policy["budget"]["max_artifacts"] = json!(1);
+                |policy| {
+                    let budget = policy
+                        .get_mut("budget")
+                        .and_then(Value::as_object_mut)
+                        .ok_or("context budget absent")?;
+                    match case {
+                        "budget_items" => {
+                            budget.insert("max_items".to_owned(), json!(1));
+                            budget.insert("max_artifacts".to_owned(), json!(1));
+                        }
+                        "budget_bytes" => {
+                            budget.insert("max_artifact_bytes".to_owned(), json!(1));
+                        }
+                        "budget_journal" => {
+                            budget.insert("max_candidate_records".to_owned(), json!(1));
+                            budget.insert("max_event_summaries".to_owned(), json!(0));
+                        }
+                        "excluded" => {
+                            *policy
+                                .get_mut("exclude_categories")
+                                .ok_or("exclusions absent")? = json!(["prior_prompt"])
+                        }
+                        "excluded_tool_history" => {
+                            *policy
+                                .get_mut("exclude_categories")
+                                .ok_or("exclusions absent")? = json!(["tool_trace"])
+                        }
+                        _ => {}
                     }
-                    "budget_bytes" => policy["budget"]["max_artifact_bytes"] = json!(1),
-                    "budget_journal" => {
-                        policy["budget"]["max_candidate_records"] = json!(1);
-                        policy["budget"]["max_event_summaries"] = json!(0);
-                    }
-                    "excluded" => policy["exclude_categories"] = json!(["prior_prompt"]),
-                    "excluded_tool_history" => policy["exclude_categories"] = json!(["tool_trace"]),
-                    _ => {}
+                    Ok(())
                 },
             )?;
             command(
@@ -792,7 +814,7 @@ fn exact_continuation_reaches_both_wires_and_fresh_has_no_implicit_history() -> 
                                 SessionSelection::ExplicitContinuation { manifest, response },
                             )?,
                             "explicit_continuation",
-                            |_| {},
+                            |_| Ok(()),
                         )?;
                         command(
                             &fixture,
@@ -810,7 +832,7 @@ fn exact_continuation_reaches_both_wires_and_fresh_has_no_implicit_history() -> 
                     }
                 }
             }
-            let _ = stop.send(());
+            stop.store(true, Ordering::SeqCst);
             let requests = server.join().map_err(|_| "server panicked")??;
             assert_eq!(
                 requests.len(),
@@ -862,50 +884,64 @@ fn exact_continuation_reaches_both_wires_and_fresh_has_no_implicit_history() -> 
             }
             if matches!(case, "chain" | "tool_chain") {
                 let third: serde_json::Value = serde_json::from_str(
-                    requests[2]
+                    requests
+                        .get(2)
+                        .ok_or("third request absent")?
                         .split("\r\n\r\n")
                         .nth(1)
                         .ok_or("third body absent")?,
                 )?;
-                let messages = third["messages"]
-                    .as_array()
+                let messages = third
+                    .get("messages")
+                    .and_then(Value::as_array)
                     .ok_or("third messages absent")?;
                 assert_eq!(
                     messages
                         .iter()
-                        .filter(|message| message["role"] == "assistant")
+                        .filter(|message| message.get("role").and_then(Value::as_str)
+                            == Some("assistant"))
                         .count(),
                     2,
                     "{third}"
                 );
                 for text in ["original question", "new question", "third question"] {
                     assert!(
-                        messages.iter().any(|message| message["role"] == "user"
-                            && message.to_string().contains(text)),
+                        messages
+                            .iter()
+                            .any(|message| message.get("role").and_then(Value::as_str)
+                                == Some("user")
+                                && message.to_string().contains(text)),
                         "{third}"
                     );
                 }
             }
             let wire: serde_json::Value = serde_json::from_str(
-                requests[1]
+                requests
+                    .get(1)
+                    .ok_or("second request absent")?
                     .split("\r\n\r\n")
                     .nth(1)
                     .ok_or("request body missing")?,
             )?;
-            let messages = wire["messages"].as_array().ok_or("messages missing")?;
+            let messages = wire
+                .get("messages")
+                .and_then(Value::as_array)
+                .ok_or("messages missing")?;
             assert_eq!(
                 messages
                     .iter()
-                    .any(|message| message["role"] == "assistant"),
+                    .any(|message| message.get("role").and_then(Value::as_str) == Some("assistant")),
                 continue_prior,
                 "{wire}"
             );
             let system = if anthropic {
-                wire["system"].to_string()
+                wire.get("system")
+                    .ok_or("system prompt absent")?
+                    .to_string()
             } else {
                 messages
                     .iter()
-                    .filter(|message| message["role"] == "system")
+                    .filter(|message| message.get("role").and_then(Value::as_str) == Some("system"))
                     .map(ToString::to_string)
                     .collect::<String>()
             };
@@ -919,33 +955,57 @@ fn exact_continuation_reaches_both_wires_and_fresh_has_no_implicit_history() -> 
                     messages
                         .iter()
                         .any(|message| message.to_string().contains("original question")
-                            && message["role"] == "user")
+                            && message.get("role").and_then(Value::as_str) == Some("user"))
                 );
             }
             if case == "tool_pair" {
                 let assistant = messages
                     .iter()
-                    .find(|message| message["role"] == "assistant")
+                    .find(|message| {
+                        message.get("role").and_then(Value::as_str) == Some("assistant")
+                    })
                     .ok_or("assistant missing")?;
                 if anthropic {
-                    assert_eq!(assistant["content"][0]["type"], "tool_use");
-                    assert!(
-                        messages
-                            .iter()
-                            .any(|message| message["content"][0]["tool_use_id"] == "call-1")
+                    assert_eq!(
+                        assistant
+                            .pointer("/content/0/type")
+                            .ok_or("tool type absent")?,
+                        "tool_use"
                     );
+                    assert!(messages.iter().any(|message| {
+                        message
+                            .pointer("/content/0/tool_use_id")
+                            .and_then(Value::as_str)
+                            == Some("call-1")
+                    }));
                 } else {
-                    assert_eq!(assistant["tool_calls"][0]["id"], "call-1");
-                    assert!(
-                        messages.iter().any(|message| message["role"] == "tool"
-                            && message["tool_call_id"] == "call-1")
+                    assert_eq!(
+                        assistant
+                            .pointer("/tool_calls/0/id")
+                            .ok_or("tool call absent")?,
+                        "call-1"
                     );
+                    assert!(messages.iter().any(|message| {
+                        message.get("role").and_then(Value::as_str) == Some("tool")
+                            && message.get("tool_call_id").and_then(Value::as_str) == Some("call-1")
+                    }));
                 }
             }
             if case == "selected_evidence" {
-                assert!(requests[0].contains("PRIOR_SELECTED_EVIDENCE"));
-                assert!(messages.iter().any(|message| message["role"] == "user"
-                    && message.to_string().contains("PRIOR_SELECTED_EVIDENCE")));
+                assert!(
+                    requests
+                        .first()
+                        .ok_or("first request absent")?
+                        .contains("PRIOR_SELECTED_EVIDENCE")
+                );
+                assert!(
+                    messages
+                        .iter()
+                        .any(
+                            |message| message.get("role").and_then(Value::as_str) == Some("user")
+                                && message.to_string().contains("PRIOR_SELECTED_EVIDENCE")
+                        )
+                );
                 assert!(!system.contains("PRIOR_SELECTED_EVIDENCE"));
             }
         }

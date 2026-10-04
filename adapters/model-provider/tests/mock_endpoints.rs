@@ -373,7 +373,7 @@ fn serve(
 struct CancellableStream {
     address: String,
     ready: mpsc::Receiver<()>,
-    release: mpsc::Sender<()>,
+    release: mpsc::SyncSender<()>,
     server: thread::JoinHandle<std::io::Result<()>>,
 }
 
@@ -381,7 +381,7 @@ fn serve_cancellable_stream(first_event: String) -> TestResult<CancellableStream
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let address = listener.local_addr()?.to_string();
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
-    let (release_tx, release_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::sync_channel(1);
     let handle = thread::spawn(move || {
         let (mut stream, _) = listener.accept()?;
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
@@ -417,10 +417,18 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<String> {
         if read == 0 {
             break;
         }
-        bytes.extend_from_slice(&buffer[..read]);
+        bytes.extend_from_slice(
+            buffer
+                .get(..read)
+                .ok_or_else(|| std::io::Error::other("invalid read length"))?,
+        );
         if let Some(header_end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-            let headers = std::str::from_utf8(&bytes[..header_end + 4])
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+            let headers = std::str::from_utf8(
+                bytes
+                    .get(..header_end + 4)
+                    .ok_or_else(|| std::io::Error::other("headers truncated"))?,
+            )
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
             let content_length = headers
                 .lines()
                 .find_map(|line| {
@@ -465,8 +473,9 @@ fn execute_bound(
         &OperationId::new("model.generate")?,
     )?;
     let request = request(&capability, &profile, manifest, task, context_inputs)?;
-    let expected_artifact_bytes = serde_json::to_value(&profile)?["limits"]["max_response_bytes"]
-        .as_u64()
+    let expected_artifact_bytes = serde_json::to_value(&profile)?
+        .pointer("/limits/max_response_bytes")
+        .and_then(Value::as_u64)
         .ok_or("profile omitted its response byte bound")?
         .saturating_mul(4);
     let adapter = ModelEndpointAdapter::new(capability, profile, secrets, data)?;
@@ -648,10 +657,19 @@ fn endpoint_policy_rejects_remote_plaintext_and_cross_origin_redirects_by_defaul
     let bytes = canonical.to_canonical_json()?;
     assert_eq!(EndpointProfile::from_json(&bytes)?, canonical);
     let mut hostile: Value = serde_json::from_slice(&bytes)?;
-    hostile["schema_version"] = json!(1);
+    hostile
+        .as_object_mut()
+        .ok_or("fixture object absent")?
+        .insert("schema_version".to_owned(), json!(1));
     assert!(EndpointProfile::from_json(&serde_json::to_vec(&hostile)?).is_err());
-    hostile["schema_version"] = json!(1);
-    hostile["surprise"] = json!(true);
+    hostile
+        .as_object_mut()
+        .ok_or("fixture object absent")?
+        .insert("schema_version".to_owned(), json!(1));
+    hostile
+        .as_object_mut()
+        .ok_or("fixture object absent")?
+        .insert("surprise".to_owned(), json!(true));
     assert!(EndpointProfile::from_json(&serde_json::to_vec(&hostile)?).is_err());
 
     let mut tiny_limits = limits();

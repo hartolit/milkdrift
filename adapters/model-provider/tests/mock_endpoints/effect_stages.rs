@@ -28,10 +28,16 @@ fn endpoint(address: &str, streaming: bool) -> TestResult<EndpointProfile> {
         AuthMode::NoAuth,
         features,
     )?)?;
-    value["billing"] = json!({"type":"unbilled","source":"operator controlled fault fixture v1"});
-    value["token_limits"] = json!({"type":"byte_bpe","template_tokens_per_message":64,
+    value
+        .as_object_mut()
+        .ok_or("fixture object absent")?
+        .insert(
+            "billing".to_owned(),
+            json!({"type":"unbilled","source":"operator controlled fault fixture v1"}),
+        );
+    value.as_object_mut().ok_or("fixture object absent")?.insert("token_limits".to_owned(), json!({"type":"byte_bpe","template_tokens_per_message":64,
         "template_tokens_per_request":64,"maximum_input_tokens":32768,"maximum_output_tokens":65536,
-        "output_control":"max_tokens","source":"fault fixture v1; single-choice total generation bound"});
+        "output_control":"max_tokens","source":"fault fixture v1; single-choice total generation bound"}));
     Ok(serde_json::from_value(value)?)
 }
 
@@ -114,10 +120,20 @@ fn billed_profile_declares_rounded_permission_cost_and_refuses_insufficient_auth
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let mut profile =
             serde_json::to_value(endpoint(&listener.local_addr()?.to_string(), false)?)?;
-        profile["token_limits"]["maximum_output_tokens"] = json!(64);
-        profile["billing"] = json!({"type":"text_tariff","currency":"EUR",
+        profile
+            .pointer_mut("/token_limits")
+            .and_then(Value::as_object_mut)
+            .ok_or("fixture object absent")?
+            .insert("maximum_output_tokens".to_owned(), json!(64));
+        profile
+            .as_object_mut()
+            .ok_or("fixture object absent")?
+            .insert(
+                "billing".to_owned(),
+                json!({"type":"text_tariff","currency":"EUR",
             "input_micros_per_million":1_000_000,"cached_input_micros_per_million":2_000_000,
-            "output_micros_per_million":3_000_000,"source":"fixture v1, all text charges"});
+            "output_micros_per_million":3_000_000,"source":"fixture v1, all text charges"}),
+            );
         let fixture = ModelFixture::new(
             serde_json::from_value(profile)?,
             "fresh",
@@ -207,7 +223,11 @@ fn local_feature_and_encoded_request_refusals_are_terminal_without_intent_or_sen
         let mut profile =
             serde_json::to_value(endpoint(&listener.local_addr()?.to_string(), false)?)?;
         if oversized {
-            profile["limits"]["max_request_bytes"] = json!(1);
+            profile
+                .pointer_mut("/limits")
+                .and_then(Value::as_object_mut)
+                .ok_or("fixture object absent")?
+                .insert("max_request_bytes".to_owned(), json!(1));
         }
         let fixture = ModelFixture::new(
             serde_json::from_value(profile)?,
@@ -432,7 +452,7 @@ fn prepared_request_is_consumed_once_and_changed_dispatch_or_generation_cannot_e
     let captured = server.join().map_err(|_| "server panic")??;
     let wire: Value =
         serde_json::from_str(captured.split_once("\r\n\r\n").ok_or("request body")?.1)?;
-    assert_eq!(wire["model"], "mock-model");
+    assert_eq!(wire.get("model").ok_or("model absent")?, "mock-model");
     assert!(captured.contains("bounded hostile endpoint"));
     assert!(
         observations
@@ -731,7 +751,8 @@ fn interrupted_request_reception_acceptance_and_stream_never_repeat_after_reopen
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let address = listener.local_addr()?.to_string();
         listener.set_nonblocking(true)?;
-        let (stop, stopped) = mpsc::channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = stop.clone();
         let count = Arc::new(AtomicUsize::new(0));
         let entries = count.clone();
         let server = thread::spawn(move || -> std::io::Result<()> {
@@ -761,7 +782,8 @@ fn interrupted_request_reception_acceptance_and_stream_never_repeat_after_reopen
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
                     Err(error) => return Err(error),
                 }
-                if stopped.recv_timeout(Duration::from_millis(5)).is_ok() {
+                thread::sleep(Duration::from_millis(5));
+                if stopped.load(Ordering::SeqCst) {
                     return Ok(());
                 }
             }
@@ -790,7 +812,7 @@ fn interrupted_request_reception_acceptance_and_stream_never_repeat_after_reopen
         );
         assert_released(&fixture)?;
         reopen_and_assert(fixture, true)?;
-        let _ = stop.send(());
+        stop.store(true, Ordering::SeqCst);
         server.join().map_err(|_| "counting server panic")??;
         assert_eq!(count.load(Ordering::SeqCst), 1, "{stage}");
     }
