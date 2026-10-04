@@ -13,8 +13,8 @@ edits and canvas layout, but only daemon-validated submissions become executable
 The daemon and its domain libraries own construction, validation, semantic identities, authority,
 execution, recovery and saved results. Essential operations must be available without CLI-private
 helpers or client-side copies of those rules. Canvas, timeline and inspector views project these
-facts; they do not own workflow state. This is the client boundary to complete, not a claim that
-a GUI or every authoring operation already exists.
+facts; they do not own workflow state. Ordinary model authoring, supplied-input execution,
+result inspection and reuse are available headlessly; GUI work remains separate.
 
 Offline `storage-admin` is a separate daemon executable path under OS file-owner authority.
 Redb owns source locking, private inspection copies and complete stopped-generation copies;

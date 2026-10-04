@@ -10,8 +10,10 @@ Finish that path and fix the awkward or duplicated code it exposes. Do not rebui
 host, container, publication, or learning systems from the previous sprint.
 
 The source reference is `a04b55c0e0a3b56a1074da8861ab1d581e16a05c`; 00 inspected the newer checkout
-`d8873cfe32700522347ea4d01858e4a5ddfa9749`. Never reset to the reference. Phases 00–04 are
-complete; [04's handoff](handoffs/04.md) records the tested boundary and 05 is next.
+`d8873cfe32700522347ea4d01858e4a5ddfa9749`. Never reset to the reference. Phases 00–05 are
+complete; [05's handoff](handoffs/05.md) records the tested client boundary. The prepared
+[linting insertion](linting-insertion.md) makes 05a next, then 05b before 06; 05a owns updating
+the phase table and 06 prerequisite when it begins.
 These temporary prompts now live in the virtual office, as their relative
 links and the repository's coordination rules require.
 
@@ -48,7 +50,7 @@ whole system passed. Run sequentially; do not start a GUI automatically after 06
 00 traced the CLI through `control-client`, `control-protocol`, daemon command handlers and the
 blueprint/control/runtime owners. The table records the assignments; authoring, input/recovery,
 result inspection, prospective repair, reuse and publication/evaluation conveniences are complete,
-while 05–06 remain unfinished.
+including the independent client boundary; final integrated acceptance remains unfinished.
 
 | Operation | Existing owner | Needed change | Prompt |
 | --- | --- | --- | --- |

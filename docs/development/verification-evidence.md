@@ -7,6 +7,29 @@ lanes below exercise application use, mutation sensitivity, sustained load, and 
 The [evidence package guide](../../tools/evidence/README.md) compares the tools and their entry points.
 [Status](../product/status.md#current-validationevidence-snapshot) owns the latest executed state.
 
+## Independent workflow client
+
+The daemon's maintained [JSON client test](../../apps/daemon/tests/control_plane/independent_client.rs)
+launches the real binary and uses ordinary HTTP payloads to author/save a two-step model workflow,
+upload its brief, start, retrieve the result, restart/replay and copy the definition. All semantic
+identities and results come from public responses. It uses no CLI, private definition builder,
+in-process runtime or database access. The external fixture counts model requests, and exact replay
+after restart leaves that count at two. Changed requests conflict and missing inputs refuse.
+
+```sh
+cargo build -p milkdrift-daemon --bin milkdrift-daemon -p milkdrift-cli --bin milkdrift \
+  -p milkdrift-local-process --bin milkdrift-process-test-helper
+cargo test -p milkdrift-daemon --test control_plane independent_client::
+cargo test -p milkdrift-daemon --test control_plane direct_preparation::
+cargo test -p milkdrift-daemon --test control_plane inputs_cli::
+```
+
+The preparation cases exercise the serving-owned request builder for idempotent, read-only and
+non-idempotent operations, with host, capability, operation, input and limit refusals before
+acceptance. The CLI cases separately interrupt an actual start reply and recover saved input
+references. These are focused software checks, not the complete operator journey or browser
+authentication/CORS, desktop packaging, real-model quality or physical durability qualification.
+
 ## Active capacity and publication retirement
 
 Public reuse and request preparation have focused daemon/CLI checks alongside the core publication

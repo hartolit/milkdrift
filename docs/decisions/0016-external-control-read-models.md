@@ -40,7 +40,8 @@ readiness. Heartbeats are transport comments. Establishment and polling recheck 
 authority, and an invalid, stale, cross-actor, cross-grant, cross-filter, or wrong-feed cursor
 produces an explicit error or resync observation.
 
-`milkdrift-control-client` is the only HTTP/SSE mapping used by the CLI and future Iced client.
+`milkdrift-control-client` is the HTTP/SSE mapping used by the CLI. Other clients use the same
+public protocol; the current [client direction](../architecture.md) selects Svelte first.
 Safe queries may follow a bounded retry policy. Mutation retry is caller-explicit and must reuse the
 exact durable idempotency identity and body.
 

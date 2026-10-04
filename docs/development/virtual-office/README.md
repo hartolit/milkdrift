@@ -9,9 +9,10 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-The [client-ready workflows sprint](client-ready-workflows/README.md) is active. Phases 00–04 are
-complete; [05 — Keep the interface thin](client-ready-workflows/05-client-boundary-and-contraction.md)
-is next. [04's handoff](client-ready-workflows/handoffs/04.md) records focused acceptance.
+The [client-ready workflows sprint](client-ready-workflows/README.md) is active. Phases 00–05 are
+complete; [05's handoff](client-ready-workflows/handoffs/05.md) records focused acceptance.
+The prepared [linting insertion](client-ready-workflows/linting-insertion.md) assigns 05a and 05b
+before 06; 05a is next and owns integration of those assignments into the sprint table.
 Phases run sequentially, with focused checks in 01–05 and full acceptance in 06 under the
 [verification policy](../workflow.md#explicit-multi-phase-sprint-schedule). The
 [roadmap](../../product/roadmap.md) owns the authorized scope; the

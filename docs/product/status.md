@@ -82,6 +82,12 @@ This document owns current implementation, limitations, exact versions, and qual
   Controlled CLI/daemon tests cover restart, unchanged completed history, stale/unauthorized
   refusal and terminal-run refusal. Richer definitions and repeated automatic repair are outside
   this convenience; protected agreements retain their existing admission checks.
+- Independent clients can author/save, upload an input, start, recover the exact request, download
+  results and copy through ordinary public JSON. A focused actual-daemon test uses no CLI or private
+  domain builders and retains the same two external fixture calls across restart/replay. Direct and
+  published-call preparation now uses the serving owner for selection, profile, idempotency and
+  deadline, with unchanged acceptance/replay owners. These focused checks do not establish browser
+  authentication, CORS, packaging, real-model quality or full sprint acceptance.
 - Causal context uses bounded historical discovery, explicit branch/join/subworkflow visibility,
   exact provenance, authority/sensitivity checks, deterministic budgets and omissions, and
   selected-only materialization. Required-evidence checks continue after selection stops, and

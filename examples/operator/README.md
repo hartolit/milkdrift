@@ -53,8 +53,9 @@ For a fresh model call, upload [direct-model-task.json](direct-model-task.json) 
 `milkdrift --endpoint http://127.0.0.1:9734/ --token-env MILKDRIFT_TOKEN --json artifact get ARTIFACT --output ./result.txt`. The CLI verifies size and digest
 and requires a new destination file. Direct requests cannot reuse workflow continuation.
 
-`prepare` writes a new request file without admitting execution. It binds the selected host,
-catalog, operation, inputs, advertised ceilings and absolute deadline. Review it and submit promptly;
+`prepare` asks the daemon to construct a request and writes the reply to a new file without
+admitting execution. The daemon binds the selected host, catalog, operation, inputs, advertised
+ceilings and absolute deadline. Review it and submit promptly;
 stale discovery is refused. Preserve the file unchanged for replay after a lost reply or restart.
 Use `invocation lookup process-1` to recover acceptance; a new request identity could create new work.
 Cancellation uses `invocation cancel EXECUTION --request-id stop-1`; acknowledgement does not prove
@@ -230,7 +231,9 @@ documents optional structural qualification and hermetic failure tests.
 Use a running workflow-enabled daemon and a model profile configured as above. The caller needs
 blueprint validation/import and inspection, catalogue/profile reads, and permission to select the
 model and the control acceptance capability. Use a credential scoped to `release-notes`, then
-one scoped to `meeting-summary` for the second workflow, or an existing explicitly broader grant.
+switch to one scoped to `meeting-summary` for the separately authored workflow. The optional
+cross-workflow copy requires one reviewed credential with `workflow_run` type `any`: a
+single-workflow grant cannot inspect the source and import the independent destination.
 The starter configuration's `operator-starter` scope does not cover these identities. Configure
 the scopes through the existing [authority configuration](../../docs/operations/authority.md).
 Running the saved definition also needs `model.generate`, `workflow.accept_result`, artifact
@@ -255,6 +258,10 @@ milkdrift workflow output release-notes.draft.json review --name notes
 milkdrift workflow inspect release-notes.draft.json
 milkdrift --command-id release-notes-save-1 workflow save release-notes.draft.json
 ```
+
+The save reply returns the daemon's exact `revision_id`. Substitute it for `REVISION` in the
+commands below. Saving with no changes returns the same version; changing a prompt and saving
+produces a child of that exact base. Old versions and work already using them remain unchanged.
 
 The `brief` declaration names a value supplied separately on each run. It is not embedded in the
 definition. The review's bindings select that brief and only the draft step's final text; there is no
@@ -304,13 +311,12 @@ review fails its check, follow the [held model repair](../../docs/guides/headles
 procedure before signalling its review hold. Editing the saved draft below affects future starts;
 repairing a paused run requires a separately approved prospective proposal.
 
-The save reply returns the daemon's exact `revision_id`. Use it as `REVISION` below. Saving with
-no changes returns the same version; changing a prompt and saving produces a child of that exact
-base. Old versions and any work already using them remain unchanged.
+To change future starts, copy the review prompt into `review-edited.txt` and edit its instructions,
+then reopen the saved definition and submit the new text:
 
 ```sh
 milkdrift workflow open REVISION --file reopened.draft.json
-milkdrift workflow prompt reopened.draft.json review --prompt examples/operator/release-notes/review.txt
+milkdrift workflow prompt reopened.draft.json review --prompt review-edited.txt
 milkdrift --command-id release-notes-save-2 workflow save reopened.draft.json
 milkdrift workflow inspect reopened.draft.json
 ```
@@ -320,8 +326,6 @@ changes a model; no unavailable choice is silently substituted. `workflow discon
 INPUT` removes a connection. `workflow move FILE STEP --before OTHER` changes order, and omitting
 `--before` moves the step to the end. A reorder that puts a source after its consumer refuses.
 `workflow remove FILE STEP` refuses while another step or the selected output still uses it.
-
-Create a second independent workflow beside the first:
 
 Find and reuse saved definitions through bounded version pages. `show` returns the declared
 inputs and outputs without execution values. A run always names one exact revision; there is no
