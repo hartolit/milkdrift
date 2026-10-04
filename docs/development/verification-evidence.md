@@ -66,6 +66,42 @@ The runner does not configure or stop attached servers. Live mode omits syntheti
 review the two retained text files separately for usefulness. Product completeness checks require
 nonempty final prose and `stop`, and do not establish editorial correctness or useful learning.
 
+## Client workflow acceptance
+
+The 2026-10-04 local record is under ignored `target/client-ready-workflows/06/`. The final
+`verified-*` logs identify the build, static matrix, checker probes, runtime suite, discovery and
+combined binary journeys; `verified-source.txt` and `verified-binaries.sha256` bind their source
+and executables. [Status](../product/status.md#current-validationevidence-snapshot) owns the accepted
+totals. The authored runner retains its seven-call controlled transcript and private recovery files.
+Independent JSON-client, lost-reply, repair refusal, publication retirement and comparison cases
+remain ordinary tests through their production owners.
+
+`acceptance-live-local/` and `acceptance-live-um790/` retain both assigned briefs on the same authored
+revision, using product `ffbb55d`. Later changes in this acceptance affect evidence tooling only.
+The attached endpoints are desktop `ornith-9b` and UM790 `ornith`, reached through a disposable SSH
+forward. Each final run uses the four-request budget above and explicit `reasoning_effort: none`.
+Desktop reports 9,079 input / 649 output tokens; UM790 reports 9,042 / 284. Both pass completeness.
+The UM790 notes are concise and retain the supplied facts and caveats. Desktop notes add review
+commentary and explanations beyond the brief, requiring editorial review. These observations do
+not qualify general model quality, autonomous coding or useful live learning. Earlier runs with
+incorrectly shortened example briefs remain retained and do not qualify the assigned inputs.
+
+`slotbook-{direct,workflow,peer}-accepted/` exercise the final product's native protected publication,
+invoke-only refusals, exact replay/restart, six fixed checks, verification renewal and owned-resource
+removal. `native-*.log` covers worker conformance, foreign-container collision protection and
+protected-verifier timeout/recovery/integrity with a preloaded neutral worker image. These are
+finite desktop checks; attached UM790 inference adds no managed Vulkan, pressure, active-reboot or
+power-loss qualification. Test installations are removed through their owner; preserved volumes,
+definitions, requests and results remain available. The attached model servers and unrelated
+container are outside test ownership.
+
+The interrupted native workflow supplies a retained recovery case in `pressure-*.json`. After a
+task completed while paused, cancellation formerly left its pending successor scan blocking
+completion. The fixed runtime appends the scan and cancelled outcome without admitting future
+nodes. Reopening that original store preserves its three successful steps, settles child and
+parent, releases the wrapper hold and permits owned removal. The corresponding ordinary runtime
+regression covers both paused completion and success arriving after cancellation intent.
+
 ## Active capacity and publication retirement
 
 Public reuse and request preparation have focused daemon/CLI checks alongside the core publication
@@ -457,6 +493,12 @@ configuration, source identities, current results and supported limits.
 
 ## Actual-binary scenarios
 
+Finish compilation before starting self-pinning scenarios. If later builds are needed, retain
+copies of every scenario executable and its daemon, CLI and helpers outside Cargo's output paths,
+and record their hashes. Replacing a running executable can make its self-pin unavailable; that
+failed scenario is not product acceptance. Run deadline-sensitive scenarios separately from the
+full runtime suite on an occupied desktop, retaining timeouts rather than widening their budgets.
+
 The deterministic `local-model-evidence` lane also exercises explicit model continuation. It
 inspects a canonical predecessor, submits and adopts an ordinary prospective proposal, restarts
 before release, and captures the continued request beside a Fresh request. Inspection exposes the
@@ -464,6 +506,8 @@ exact companion and remains unchanged after a second restart. A separate case gi
 response to a tool-output acceptance contract: continuation must refuse that rejected answer before
 scheduling or contacting its endpoint. Both cases use the actual daemon and CLI, not a provider
 session service. Run the lane with the `evidence-process-helper` binary, as specified below and in CI.
+Its actual-client acceptance repair/replay case is also in normal binary-test discovery. It checks
+the current CLI envelope and exact retained signal receipt across three restart boundaries.
 
 `cargo test -p milkdrift-model-provider --test mock_endpoints --all-features` exercises both wire
 mappings through runtime and the capability host. Continuation cases cover same-run source linkage,

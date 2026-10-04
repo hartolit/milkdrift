@@ -9,16 +9,9 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-The [client-ready workflows sprint](client-ready-workflows/README.md) is active. Phases 00–05 are
-complete; [05's handoff](client-ready-workflows/handoffs/05.md) records focused acceptance.
-The [linting insertion](client-ready-workflows/linting-insertion.md) is integrated before 06.
-[05a's handoff](client-ready-workflows/handoffs/05a.md) records enforcement, and
-[05b's handoff](client-ready-workflows/handoffs/05b.md) records completed remediation with a passing
-static gate and checker negatives. 06 is next for combined runtime acceptance.
-Phases run sequentially, with focused checks in 01–05 and full acceptance in 06 under the
-[verification policy](../workflow.md#explicit-multi-phase-sprint-schedule). The
-[roadmap](../../product/roadmap.md) owns the authorized scope; the
-[whiteboard](whiteboard/README.md) retains questions outside it.
+No active sprints. The [roadmap](../../product/roadmap.md) owns unfinished work; the
+[whiteboard](whiteboard/README.md) retains broader questions. Completing a sprint does not
+start another assignment automatically.
 
 ## Prepared assignments
 

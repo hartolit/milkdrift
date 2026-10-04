@@ -70,11 +70,11 @@ implementation evidence for current versions.
 - Write documentation to explain purpose, use, and consequences in plain language. Follow the
   [documentation practice](docs/development/practices/documentation.md) for prose,
   code comments, and package READMEs; naming technical properties is not an explanation.
-- Follow the finite authorization in [the roadmap](docs/product/roadmap.md): the current sprint
-  completes ordinary workflow authoring, supplied-input execution, inspection, prospective repair,
-  and reuse through shared daemon operations. Preserve the existing host, managed-resource,
-  publication, and evaluation behavior. GUI implementation, inference, new provider families,
-  and unrelated workflow primitives remain excluded.
+- Follow the finite authorization in [the roadmap](docs/product/roadmap.md); completing a sprint
+  does not authorize its successor. Keep ordinary workflow operations on the shared daemon path.
+  Preserve the existing host, managed-resource, publication, and evaluation behavior.
+  GUI implementation, inference, new provider families, and unrelated workflow primitives
+  remain excluded.
 - Make no support, safety, portability, or interoperability claim that tests or evidence do not
   establish.
 - Before completion, follow the [verification policy](docs/development/workflow.md#choose-verification-for-the-change).

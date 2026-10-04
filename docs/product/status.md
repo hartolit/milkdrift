@@ -71,7 +71,8 @@ This document owns current implementation, limitations, exact versions, and qual
   Selected brief and prior-step bytes reach model requests through frozen context manifests.
   Bounded optional waiting ends local observation without cancelling daemon work. Controlled
   endpoint and actual CLI/daemon tests cover isolated inputs and lost-reply recovery without
-  repeating provider requests; integrated sprint acceptance remains open.
+  repeating provider requests. The authored workflow journey also exercises two supplied briefs,
+  output retrieval, independent copies and prospective repair through actual client binaries.
 - The public run-result view shows a bounded current frontier, separate invocation/acceptance/
   workflow outcomes, authorized output previews and current permitted-action hints. The CLI
   retrieves final artifacts with range, size and digest verification and escapes terminal controls.
@@ -87,7 +88,7 @@ This document owns current implementation, limitations, exact versions, and qual
   domain builders and retains the same two external fixture calls across restart/replay. Direct and
   published-call preparation now uses the serving owner for selection, profile, idempotency and
   deadline, with unchanged acceptance/replay owners. These focused checks do not establish browser
-  authentication, CORS, packaging, real-model quality or full sprint acceptance.
+  authentication, CORS, packaging or general real-model quality.
 - Causal context uses bounded historical discovery, explicit branch/join/subworkflow visibility,
   exact provenance, authority/sensitivity checks, deterministic budgets and omissions, and
   selected-only materialization. Required-evidence checks continue after selection stops, and
@@ -263,14 +264,41 @@ values; repository contracts check the version cells against source.
 
 ## Current validation/evidence snapshot
 
-The [strict static gate](../development/workflow.md#strict-static-gate) now enforces shared compiler
-and Clippy policy, parsed repository boundaries, independent consumer probes, dependency hygiene,
-workflow checks and bounded secret scanning. The complete selected static matrix passes on the
-pinned Linux target, including default product binaries, all workspace targets/features and
-warning-denying documentation. [05b's handoff](../development/virtual-office/client-ready-workflows/handoffs/05b.md)
-records the exact checkpoint, checker negatives and focused regressions for cleanup uncertainty,
-bounded access and output failures. Final combined runtime acceptance remains assigned to 06;
-the static gate and earlier runtime evidence below do not establish that result.
+The full software gate passes at `9ceac87` with Rust 1.95.0 on Linux x86-64:
+1,107 tests, including 24 doctests and 30 repository contracts, with eight opt-in tests ignored
+by the ordinary command. Test discovery also passes. All 33 entries in the
+[strict static gate](../development/workflow.md#strict-static-gate) pass, including default product
+binaries, all workspace targets/features, Clippy, warning-denying documentation, independent
+consumer probes, dependency hygiene, workflow checks and secret scanning. All 16 checker-probe
+entries pass, including the three expected refusals of synthetic violations.
+
+Actual headless, controller, deterministic-model and authored-workflow journeys pass on that
+same final source. The authored endpoint independently counts exactly seven calls across two
+briefs and prospective repair, with selected context, exact restart/replay, separate copies,
+unchanged accepted pins and confirmed child cleanup. The independent JSON-client route remains
+covered by the full gate, without CLI or private definition builders.
+
+Three selected native cases separately pass worker conformance, foreign-container collision
+protection and protected-verifier renewal/timeout/recovery/integrity. Direct, workflow and peer
+Slotbook publication qualify through the actual product binaries at `ffbb55d`, with six fixed
+checks, invoke-only refusals, exact replay/restart and owned-resource removal. Later acceptance
+changes affect evidence tooling only. The remaining five manual longevity cases were not rerun;
+their existing scopes and retained evidence remain unchanged.
+
+Both supplied model endpoints pass both assigned release-note briefs through the same authored
+workflow on that product: desktop `ornith-9b` and UM790 `ornith`. Each final run uses four requests
+with at most 1,024 output tokens per request and no automatic retries. The UM790 output is concise
+and retains the supplied facts; desktop output includes review commentary and explanations beyond
+the brief. Completeness passes separately from editorial quality. This adds no browser, autonomous
+coding, useful live-learning, managed GPU or power-loss claim. The
+[client workflow evidence](../development/verification-evidence.md#client-workflow-acceptance)
+identifies profiles, budgets, binary hashes, outputs, failed attempts and cleanup records.
+
+Cancellation now drains a pending successor scan when a successful task finishes while paused or
+cancelling. It retains the completed task, admits no future node and can settle after restart.
+The original interrupted Slotbook store recovers child and parent as cancelled, preserves three
+successful child steps, releases its hold and permits removal. Ordinary regressions cover both
+completion races, replayed history and the existing active-work cancellation boundaries.
 
 ### Active capacity and boundary validation
 

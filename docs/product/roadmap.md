@@ -2,31 +2,16 @@
 
 Ordered unfinished work; [status](status.md) owns implementation and evidence facts.
 
-The active [client-ready workflows sprint](../development/virtual-office/client-ready-workflows/README.md)
-completes the ordinary CLI route through shared public daemon operations. Setup, workflow
-authoring, supplied-input execution, exact request recovery, result inspection and the supported
-prospective repair, reuse/copy, separate publication preparation, evaluation commands and the
-independent client boundary are complete. Strict static enforcement and remediation are complete;
-the selected static gate and checker negatives pass, as recorded in
-[05b's handoff](../development/virtual-office/client-ready-workflows/handoffs/05b.md). The next assignment is
-[06 — Integrated acceptance and closeout](../development/virtual-office/client-ready-workflows/06-integrated-acceptance-and-closeout.md).
+The ordinary CLI workflow route is complete through shared public daemon operations: setup,
+authoring, supplied inputs, exact request recovery, result inspection, supported prospective repair,
+reuse/copy, publication preparation, evaluation and the independent client boundary. Its
+[acceptance and limits](status.md#current-validationevidence-snapshot) are recorded with the
+[reproducible evidence](../development/verification-evidence.md#client-workflow-acceptance).
+There is no automatic successor assignment.
 
-Run the integrated operator journey, full gate and authorized local-model checks in 06; fix
-failures before closing the sprint. Integrate 05b's cleanup, retry and lifetime regressions while
-preserving the passing static gate.
-
-The [verification schedule](../development/virtual-office/client-ready-workflows/README.md#test-as-you-build-test-the-full-system-in-06)
-assigns focused checks to 01–05 and full acceptance to 06. Early handoffs do not establish full-system
-acceptance. Missing required model access keeps final acceptance open. Each prompt assigns its own
-bounded work; adopting the sprint does not automatically execute later prompts.
-
-Svelte is the first future GUI, and every frontend uses the daemon's public operations. This sprint
-adds no GUI code or dependencies and does not authorize an automatic GUI successor.
-
-The previous adaptive methods and independent hosts implementation is closed. Its integrated
-physical acceptance includes explicitly assisted application source; unaided model coding was not
-a closure requirement. Preserve that behavior and its regression coverage while completing the
-client route.
+Svelte remains the first future GUI, and every frontend uses the daemon's public operations.
+GUI implementation needs a separately scoped assignment. Preserve the accepted host,
+managed-resource, protected publication, evaluation and client behavior when planning further work.
 
 The managed resource, protected adaptation, publication and evaluated-learning implementations
 have finite desktop and UM790 qualification. Current coverage and limits belong to
@@ -47,6 +32,6 @@ No live production deployment, data destruction, or host privilege change follow
 GUI implementation, an inference engine, new cloud-provider families, a discovery/VPN mesh,
 shared multi-host storage, consensus/failover, a general package manager, custom supervisor,
 second scheduler, global static/dynamic modes, and unrelated graph primitives remain excluded.
-Necessary contract and ownership changes are authorized; unrelated architectural cleanup needs
+Further implementation needs a bounded assignment; unrelated architectural cleanup needs
 a demonstrated defect or a separately authorized operator need. The whiteboard's generation-policy
 and external-configuration-provenance discussions remain separate work.
