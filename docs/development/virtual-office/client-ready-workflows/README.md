@@ -12,9 +12,9 @@ host, container, publication, or learning systems from the previous sprint.
 The source reference is `a04b55c0e0a3b56a1074da8861ab1d581e16a05c`; 00 inspected the newer checkout
 `d8873cfe32700522347ea4d01858e4a5ddfa9749`. Never reset to the reference. Phases 00–05 are
 complete; [05's handoff](handoffs/05.md) records the tested client boundary. The prepared
-[linting insertion](linting-insertion.md) is integrated below. [05a](handoffs/05a.md) has implemented
-and validated enforcement, with existing policy violations keeping the strict gate red. 05b clears
-those findings next, and only then does 06 accept the combined product.
+[linting insertion](linting-insertion.md) is integrated below. [05a](handoffs/05a.md) implemented
+enforcement; [05b](handoffs/05b.md) cleared the findings and passes the complete selected static
+gate and checker negatives. 06 is next and retains acceptance of the combined product.
 These temporary prompts now live in the virtual office, as their relative
 links and the repository's coordination rules require.
 

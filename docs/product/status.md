@@ -265,10 +265,12 @@ values; repository contracts check the version cells against source.
 
 The [strict static gate](../development/workflow.md#strict-static-gate) now enforces shared compiler
 and Clippy policy, parsed repository boundaries, independent consumer probes, dependency hygiene,
-workflow checks and bounded secret scanning. Its checker fixtures are validated, but existing code
-violations keep the required gate red. [05a's handoff](../development/virtual-office/client-ready-workflows/handoffs/05a.md)
-records the observed findings and incomplete downstream coverage. 05b must clear them before 06
-runs final system acceptance; earlier runtime evidence below does not establish a passing current gate.
+workflow checks and bounded secret scanning. The complete selected static matrix passes on the
+pinned Linux target, including default product binaries, all workspace targets/features and
+warning-denying documentation. [05b's handoff](../development/virtual-office/client-ready-workflows/handoffs/05b.md)
+records the exact checkpoint, checker negatives and focused regressions for cleanup uncertainty,
+bounded access and output failures. Final combined runtime acceptance remains assigned to 06;
+the static gate and earlier runtime evidence below do not establish that result.
 
 ### Active capacity and boundary validation
 

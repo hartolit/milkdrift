@@ -38,6 +38,13 @@ package entry point. Consumers otherwise import the canonical owner directly.
 
 ## Surface ownership
 
+Runtime's `CurrentNodeExecution` and `SettledNodeExecutionProjection` are workspace projection
+contracts returned by `RunProjection` and consumed by control, daemon inspection and evidence.
+`SubworkflowUsageSummary` names the durable compact child-usage shape exposed by the existing
+projection query and serialized snapshot. Their root re-exports make existing return types
+nameable; construction and mutation remain with replay, and no alternate runtime state owner
+is added. Default builds still exclude `ManualClock` and `DeterministicExecutor`.
+
 `DirectInvocationDraft`, `PeerService::prepare_client_invocation` and
 `ControlClient::prepare_invocation` are external request and workspace adapter contracts consumed
 by the daemon and CLI. The serving owner constructs the exact direct/published request through
