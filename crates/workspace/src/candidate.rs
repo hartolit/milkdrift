@@ -61,6 +61,11 @@ pub struct CandidateEvaluation {
 }
 impl CandidateEvaluation {
     /// Check finite document shape. Authenticity must be established by the retaining owner.
+    ///
+    /// # Errors
+    /// Rejects unsupported schemas, zero generation/size, expired-at-start evidence,
+    /// malformed digests, duplicate/excess checks, invalid names/diagnostics, or a
+    /// pass/fail observation on an incomplete evaluation.
     pub fn validate(&self) -> Result<(), WorkspaceError> {
         let s = &self.subject;
         if self.schema_version != 1

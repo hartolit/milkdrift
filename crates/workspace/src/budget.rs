@@ -47,6 +47,9 @@ milkdrift_contracts::deserialize_via!(WorkspaceBudget, WorkspaceBudgetWire, |wir
 
 impl WorkspaceBudget {
     /// Constructs a consistent set of workspace limits.
+    ///
+    /// # Errors
+    /// Rejects a per-value or per-artifact byte limit greater than its aggregate limit.
     pub fn new(
         max_value_versions: u64,
         max_inline_bytes_per_value: u64,
@@ -112,6 +115,9 @@ impl WorkspaceBudget {
     }
 
     /// Validates persisted/projected usage against this budget.
+    ///
+    /// # Errors
+    /// Reports the first count or aggregate byte total above its inclusive limit.
     pub fn validate_usage(&self, usage: &WorkspaceUsage) -> Result<(), WorkspaceError> {
         enforce(
             "value versions",
@@ -136,6 +142,10 @@ impl WorkspaceBudget {
     /// Every value counts as a version. JSON adds its encoded bytes; an artifact value
     /// adds no inline bytes. Admit its artifact reference separately if this accounting
     /// domain has not already charged it. Excess or arithmetic overflow returns an error.
+    ///
+    /// # Errors
+    /// Rejects invalid existing usage, an unencodable inline value, accounting overflow,
+    /// or a value/version/aggregate byte limit exceeded by admission.
     pub fn admit_value(
         &self,
         usage: &WorkspaceUsage,
@@ -164,6 +174,10 @@ impl WorkspaceBudget {
     }
 
     /// Computes usage after admitting one artifact metadata/content publication.
+    ///
+    /// # Errors
+    /// Propagates the usage, byte/count limit or overflow refusal from
+    /// [`Self::admit_artifact_reference`].
     pub fn admit_artifact(
         &self,
         usage: &WorkspaceUsage,
@@ -175,6 +189,10 @@ impl WorkspaceBudget {
     /// Computes usage after this budget domain first references one already
     /// committed artifact. Repeated references to the same exact artifact must
     /// be de-duplicated by the owning persistence transaction before this call.
+    ///
+    /// # Errors
+    /// Rejects invalid existing usage, accounting overflow, an oversized artifact,
+    /// or admission exceeding the artifact count or aggregate byte limit.
     pub fn admit_artifact_reference(
         &self,
         usage: &WorkspaceUsage,

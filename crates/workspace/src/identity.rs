@@ -26,7 +26,10 @@ fn validate_identity(
             reason: "must contain ASCII characters only".to_owned(),
         });
     }
-    if !value.as_bytes()[0].is_ascii_alphanumeric()
+    if !value
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_alphanumeric)
         || !value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
         })
@@ -125,6 +128,9 @@ impl ValueVersion {
     pub const FIRST: Self = Self(1);
 
     /// Constructs a non-zero value version.
+    ///
+    /// # Errors
+    /// Rejects zero because a new stream begins at version one.
     pub fn new(value: u64) -> Result<Self, WorkspaceError> {
         if value == 0 {
             return Err(WorkspaceError::InvalidValue(
@@ -141,6 +147,9 @@ impl ValueVersion {
     }
 
     /// Returns the next version, failing instead of wrapping at `u64::MAX`.
+    ///
+    /// # Errors
+    /// Returns accounting overflow when this version is already `u64::MAX`.
     pub fn next(self) -> Result<Self, WorkspaceError> {
         self.0
             .checked_add(1)

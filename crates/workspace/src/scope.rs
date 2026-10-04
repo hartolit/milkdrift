@@ -107,11 +107,17 @@ impl WorkspaceScope {
     }
 
     /// Creates a branch-local child scope.
+    ///
+    /// # Errors
+    /// Rejects a child scope identity equal to its parent's identity.
     pub fn branch(scope: ScopeId, parent: &Self, branch: BranchId) -> Result<Self, WorkspaceError> {
         Self::child(scope, parent, ScopeKind::Branch { branch })
     }
 
     /// Creates an isolated repeat-iteration child scope.
+    ///
+    /// # Errors
+    /// Rejects a child scope identity equal to its parent's identity.
     pub fn iteration(
         scope: ScopeId,
         parent: &Self,
@@ -121,6 +127,9 @@ impl WorkspaceScope {
     }
 
     /// Creates an isolated child-subworkflow scope.
+    ///
+    /// # Errors
+    /// Rejects a child scope identity equal to its parent's identity.
     pub fn subworkflow(
         scope: ScopeId,
         parent: &Self,
@@ -224,35 +233,41 @@ impl ScopeLineage {
     /// Supply 1..=[`MAX_SCOPE_DEPTH`] distinct scopes, starting at a run root. Each later
     /// scope must name the preceding scope as its exact parent. A partial chain or one
     /// assembled from unrelated branches returns [`WorkspaceError::InvalidScope`].
+    ///
+    /// # Errors
+    /// Rejects an empty, excessive or duplicate chain, a nonroot first entry, or a
+    /// scope whose parent is not the immediately preceding entry.
     pub fn new(scopes: Vec<WorkspaceScope>) -> Result<Self, WorkspaceError> {
-        if scopes.is_empty() {
+        let Some(first) = scopes.first() else {
             return Err(WorkspaceError::InvalidScope(
                 "a scope lineage must contain a run root".to_owned(),
             ));
-        }
+        };
         if scopes.len() > MAX_SCOPE_DEPTH {
             return Err(WorkspaceError::InvalidScope(format!(
                 "a scope lineage may contain at most {MAX_SCOPE_DEPTH} scopes"
             )));
         }
-        if !scopes[0].kind().is_run_root() {
+        if !first.kind().is_run_root() {
             return Err(WorkspaceError::InvalidScope(
                 "the first lineage entry must be a run root".to_owned(),
             ));
         }
 
         let mut seen = BTreeSet::new();
+        let mut previous = None;
         for (index, scope) in scopes.iter().enumerate() {
             if !seen.insert(scope.reference().clone()) {
                 return Err(WorkspaceError::InvalidScope(
                     "a scope lineage cannot contain duplicate scopes".to_owned(),
                 ));
             }
-            if index > 0 && scope.parent() != Some(scopes[index - 1].reference()) {
+            if previous.is_some() && scope.parent() != previous {
                 return Err(WorkspaceError::InvalidScope(format!(
                     "scope at lineage index {index} does not name the preceding scope as its parent"
                 )));
             }
+            previous = Some(scope.reference());
         }
         Ok(Self { scopes })
     }
@@ -265,12 +280,20 @@ impl ScopeLineage {
 
     /// Returns the run-root scope.
     #[must_use]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "Private construction and deserialization both require a nonempty lineage beginning with a root"
+    )]
     pub fn root(&self) -> &WorkspaceScope {
         &self.scopes[0]
     }
 
     /// Returns the active leaf scope.
     #[must_use]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "The private lineage vector is nonempty after validated construction and cannot be mutated by callers"
+    )]
     pub fn leaf(&self) -> &WorkspaceScope {
         &self.scopes[self.scopes.len() - 1]
     }

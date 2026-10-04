@@ -157,6 +157,9 @@ impl WorkspaceValueEntry {
     /// The source and target must be different scopes in the same run. A
     /// [`crate::ScopeLineage`] can additionally prove that the source is an
     /// ancestor rather than a sibling before this record is persisted.
+    ///
+    /// # Errors
+    /// Rejects a source from another run or the same scope as the new stream.
     pub fn inherited(
         scope: ScopeReference,
         key: ValueKey,
@@ -175,6 +178,9 @@ impl WorkspaceValueEntry {
     /// Storage proves the exact source exists. Cross-run imports deliberately do
     /// not use scope ancestry; the corresponding runtime event proves the
     /// parent/subworkflow ownership relationship.
+    ///
+    /// # Errors
+    /// Rejects a source in the target run; same-run ancestry uses [`Self::inherited`].
     pub fn imported(
         scope: ScopeReference,
         key: ValueKey,
@@ -193,6 +199,9 @@ impl WorkspaceValueEntry {
     /// Scope and key stay unchanged, and the version advances by one. To change an
     /// ancestor's value locally, call [`Self::inherited`] first. Version overflow is
     /// refused; storage separately checks that `previous` is the accepted predecessor.
+    ///
+    /// # Errors
+    /// Returns accounting overflow when the predecessor version is already `u64::MAX`.
     pub fn successor(
         previous: WorkspaceValueReference,
         value: WorkspaceValue,

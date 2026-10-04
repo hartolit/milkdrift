@@ -93,6 +93,9 @@ impl ContentDigest {
     }
 
     /// Parses the canonical lowercase hexadecimal representation.
+    ///
+    /// # Errors
+    /// Rejects any length other than 64 bytes, uppercase hex, or nonhexadecimal text.
     pub fn from_hex(value: &str) -> Result<Self, WorkspaceError> {
         if value.len() != BLAKE3_HEX_BYTES {
             return Err(WorkspaceError::InvalidDigest(format!(
@@ -109,8 +112,8 @@ impl ContentDigest {
         }
 
         let mut bytes = [0_u8; BLAKE3_DIGEST_BYTES];
-        for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
-            bytes[index] = (hex_nibble(pair[0]) << 4) | hex_nibble(pair[1]);
+        for (byte, &[high, low]) in bytes.iter_mut().zip(value.as_bytes().as_chunks::<2>().0) {
+            *byte = (hex_nibble(high) << 4) | hex_nibble(low);
         }
         Ok(Self(bytes))
     }
@@ -170,6 +173,10 @@ impl MediaType {
     ///
     /// Media-type parameters belong in the content's schema metadata rather than
     /// this identity. ASCII case is normalized to lowercase.
+    ///
+    /// # Errors
+    /// Rejects empty/oversized or non-ASCII text, parameters, wildcards, or a missing
+    /// type/subtype token. Exactly one slash separates the two nonempty tokens.
     pub fn new(value: impl Into<String>) -> Result<Self, WorkspaceError> {
         let value = value.into();
         if value.is_empty() || value.len() > MAX_MEDIA_TYPE_BYTES || !value.is_ascii() {
@@ -334,6 +341,9 @@ pub struct RetentionDeadline(u64);
 
 impl RetentionDeadline {
     /// Constructs a non-zero Unix timestamp in milliseconds.
+    ///
+    /// # Errors
+    /// Rejects zero, which is not a valid retention deadline.
     pub fn from_unix_millis(value: u64) -> Result<Self, WorkspaceError> {
         if value == 0 {
             return Err(WorkspaceError::InvalidArtifact(
@@ -502,6 +512,10 @@ milkdrift_contracts::deserialize_via!(
 impl ArtifactProvenance {
     /// Constructs bounded provenance and rejects duplicate causal references.
     /// Causes preserve caller order and may contain at most 128 distinct references.
+    ///
+    /// # Errors
+    /// Rejects duplicate/excess causes or any producer/cause crossing more than four
+    /// authenticated import boundaries.
     pub fn new(
         producer: CausalReference,
         causes: Vec<CausalReference>,
@@ -575,6 +589,9 @@ milkdrift_contracts::deserialize_via!(ArtifactMetadata, ArtifactMetadataWire, |w
 
 impl ArtifactMetadata {
     /// Constructs complete metadata and rejects direct self-referential provenance.
+    ///
+    /// # Errors
+    /// Rejects a producer or cause referencing the same exact artifact being described.
     pub fn new(
         reference: ArtifactReference,
         sensitivity: ArtifactSensitivity,

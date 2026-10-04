@@ -76,6 +76,30 @@ fn artifact(content: &[u8]) -> Result<ArtifactMetadata, Box<dyn std::error::Erro
 }
 
 #[test]
+fn lineage_construction_and_deserialization_preserve_nonempty_parent_chain()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = WorkspaceScope::run_root(RunId::new("run-1")?, ScopeId::new("root")?);
+    let branch = WorkspaceScope::branch(ScopeId::new("child")?, &root, BranchId::new("left")?)?;
+    let sibling = WorkspaceScope::branch(ScopeId::new("sibling")?, &root, BranchId::new("right")?)?;
+    let singleton = ScopeLineage::new(vec![root.clone()])?;
+    assert_eq!(singleton.root(), &root);
+    assert_eq!(singleton.leaf(), &root);
+    let complete = ScopeLineage::new(vec![root.clone(), branch.clone()])?;
+    assert_eq!(complete.root(), &root);
+    assert_eq!(complete.leaf(), &branch);
+    for scopes in [
+        vec![],
+        vec![branch.clone()],
+        vec![root.clone(), root.clone()],
+        vec![root, branch, sibling],
+    ] {
+        assert!(ScopeLineage::new(scopes.clone()).is_err());
+        assert!(serde_json::from_value::<ScopeLineage>(json!({"scopes": scopes})).is_err());
+    }
+    Ok(())
+}
+
+#[test]
 fn structured_lineages_isolate_sibling_branch_value_streams()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = WorkspaceScope::run_root(RunId::new("run-1")?, ScopeId::new("root")?);
@@ -151,7 +175,9 @@ fn cross_run_imports_begin_a_new_parent_local_stream() -> Result<(), Box<dyn std
     );
 
     let mut wire = serde_json::to_value(&imported)?;
-    wire["reference"]["version"] = json!(2);
+    *wire
+        .pointer_mut("/reference/version")
+        .ok_or("missing imported version")? = json!(2);
     assert!(serde_json::from_value::<WorkspaceValueEntry>(wire).is_err());
     Ok(())
 }
@@ -376,7 +402,7 @@ proptest! {
             prop_assert!(!identity.as_str().is_empty());
             prop_assert!(identity.as_str().len() <= 128);
             prop_assert!(identity.as_str().is_ascii());
-            prop_assert!(identity.as_str().as_bytes()[0].is_ascii_alphanumeric());
+            prop_assert!(identity.as_str().as_bytes().first().is_some_and(u8::is_ascii_alphanumeric));
         }
     }
 
