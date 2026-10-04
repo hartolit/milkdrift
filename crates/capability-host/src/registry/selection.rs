@@ -45,6 +45,11 @@ impl CapabilityHost {
     /// Identical descriptor facts replay the existing registration without starting or replacing
     /// its adapter. A new generation is visible only after `start` succeeds. Registering a higher
     /// revision makes it current for new resolution while retaining older exact selections.
+    ///
+    /// # Errors
+    /// Refuses closed/full registration, conflicting descriptors or mismatched observations,
+    /// and returns adapter lifecycle or registry failures. Failed startup attempts shutdown;
+    /// a cleanup failure takes precedence and explicitly leaves resource quiescence uncertain.
     pub fn register(
         &self,
         descriptor: CapabilityDescriptor,
@@ -59,6 +64,11 @@ impl CapabilityHost {
     /// The callback runs exactly once after validation, including identical registration replay.
     /// No new generation becomes visible if it fails. It must not reenter this host: the registry
     /// lock protects the commit-to-visibility boundary. Durable replay recovers a lost commit reply.
+    ///
+    /// # Errors
+    /// Returns registration validation/lifecycle failures and the callback's error. If rollback
+    /// shutdown also fails, returns that cleanup uncertainty through `E` instead of implying
+    /// the failed registration stopped its adapter. No new generation is exposed on either error.
     pub fn register_with_commit<T, E: From<HostError>>(
         &self,
         descriptor: CapabilityDescriptor,
@@ -117,26 +127,26 @@ impl CapabilityHost {
             .max_concurrent()
             .min(self.core.config.max_concurrent_per_generation);
         if let Err(error) = lifecycle_call(|| adapter.start()) {
-            let _ = lifecycle_call(|| adapter.shutdown());
+            shutdown_failed_registration(adapter.as_ref())?;
             return Err(error.into());
         }
         let mut state = match self.lock_state() {
             Ok(state) => state,
             Err(error) => {
-                let _ = lifecycle_call(|| adapter.shutdown());
+                shutdown_failed_registration(adapter.as_ref())?;
                 return Err(error.into());
             }
         };
         if !state.admission_open || state.shutdown {
             drop(state);
-            let _ = lifecycle_call(|| adapter.shutdown());
+            shutdown_failed_registration(adapter.as_ref())?;
             return Err(HostError::RegistrationClosed.into());
         }
         let committed = match commit() {
             Ok(value) => value,
             Err(error) => {
                 drop(state);
-                let _ = lifecycle_call(|| adapter.shutdown());
+                shutdown_failed_registration(adapter.as_ref())?;
                 return Err(error);
             }
         };
@@ -442,6 +452,14 @@ impl CapabilityHost {
             ResolvedCapabilitySnapshot::from_descriptor(&descriptor, requirement.operation())?;
         ResolvedCapability::new(descriptor, snapshot)
     }
+}
+
+fn shutdown_failed_registration(adapter: &dyn CapabilityAdapter) -> Result<(), HostError> {
+    lifecycle_call(|| adapter.shutdown()).map_err(|error| {
+        HostError::Adapter(crate::AdapterError::external_failure(format!(
+            "registration failed and adapter cleanup failed; resources may remain active: {error}"
+        )))
+    })
 }
 
 struct RegistrationReservation {

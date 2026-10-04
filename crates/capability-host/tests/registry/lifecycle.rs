@@ -32,6 +32,38 @@ fn standalone_lifecycle_shutdown_observes_deadline_and_adapter_cleanup() -> Test
 }
 
 #[test]
+fn registration_cleanup_failure_preserves_uncertainty() -> TestResult {
+    for fail_start in [true, false] {
+        let descriptor = descriptor("cap-failed-cleanup", 1, "profile-lifecycle", 1)?;
+        let host = host(BTreeMap::new(), 1)?;
+        let mut adapter =
+            LifecycleProbeAdapter::new(descriptor.identity().clone(), LifecyclePanic::Shutdown);
+        adapter.fail_start = fail_start;
+        let adapter = Arc::new(adapter);
+        let result = host.register_with_commit(descriptor, adapter.clone(), None, || {
+            Err::<(), _>(HostError::Descriptor(
+                "planned durable commit refusal".to_owned(),
+            ))
+        });
+        let error = result.err().ok_or("registration unexpectedly succeeded")?;
+        assert!(
+            error
+                .to_string()
+                .contains("adapter cleanup failed; resources may remain active")
+        );
+        assert_eq!(adapter.shutdowns.load(Ordering::SeqCst), 1);
+        assert!(
+            host.generations(
+                &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
+                100
+            )?
+            .is_empty()
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn registration_and_lifecycle_failures_are_contained_without_partial_visibility() -> TestResult {
     let visible = CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown);
 
@@ -262,7 +294,10 @@ fn adapter_calls_run_without_the_registry_lock() -> TestResult {
             Ok(())
         })()
         .map_err(|error| error.to_string());
-        let _ = finished_tx.send(result);
+        assert!(
+            finished_tx.send(result).is_ok(),
+            "registration test receiver disappeared"
+        );
     });
     let result = finished_rx
         .recv_timeout(Duration::from_secs(5))

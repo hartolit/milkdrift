@@ -13,6 +13,11 @@ impl CapabilityHost {
     /// Runs adapter shutdown under one caller-owned deadline. A timeout retains the host
     /// on the lifecycle thread and returns `None`; it does not establish that work stopped.
     /// A completed result joins that thread before returning.
+    ///
+    /// # Errors
+    /// Returns thread/registry failures and shutdown refusal or adapter failures received before
+    /// the deadline. After timeout, the lifecycle thread retains the host and reports any late
+    /// result through tracing; `None` never proves quiescence.
     pub fn shutdown_with_deadline(
         &self,
         force: bool,
@@ -31,7 +36,15 @@ impl CapabilityHost {
                 } else {
                     host.shutdown()
                 };
-                let _ = sender.send(result);
+                if let Err(undelivered) = sender.send(result) {
+                    match undelivered.0 {
+                        Ok(report) => tracing::warn!(
+                            unresolved_invocations = report.unresolved_invocations.len(),
+                            "adapter shutdown completed after its caller stopped waiting"
+                        ),
+                        Err(error) => tracing::error!(%error, "adapter shutdown failed after its caller stopped waiting"),
+                    }
+                }
             })
             .map_err(|_| HostError::RegistryUnavailable)?;
         match receiver.recv_timeout(timeout) {
@@ -40,7 +53,7 @@ impl CapabilityHost {
                 result.map(Some)
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                let _ = join.join();
+                join.join().map_err(|_| HostError::RegistryUnavailable)?;
                 Err(HostError::RegistryUnavailable)
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
