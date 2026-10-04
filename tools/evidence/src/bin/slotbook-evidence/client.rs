@@ -55,6 +55,7 @@ pub(super) struct Session {
     port: u16,
     origin: Option<(PathBuf, u16)>,
     children: Vec<OwnedChild>,
+    stop_failure: Option<String>,
     starts: u32,
     calls: std::cell::Cell<u64>,
     token: PathBuf,
@@ -92,6 +93,7 @@ impl Session {
             requests: BTreeMap::new(),
             origin: None,
             children: Vec::new(),
+            stop_failure: None,
             starts: 0,
             calls: std::cell::Cell::new(0),
         })
@@ -201,6 +203,7 @@ impl Session {
             port: args.port,
             origin,
             children: Vec::new(),
+            stop_failure: None,
             starts: 0,
             calls: std::cell::Cell::new(0),
         })
@@ -416,10 +419,24 @@ impl Session {
     }
     pub(super) fn start(&mut self) -> EvidenceResult {
         ensure(
+            self.stop_failure.is_none(),
+            "session retains failed shutdown evidence",
+        )?;
+        ensure(
             self.children.is_empty(),
             "qualification daemons already running",
         )?;
-        self.starts += 1;
+        match self.start_children() {
+            Ok(()) => Ok(()),
+            Err(error) => self.finish(Err(error)),
+        }
+    }
+
+    fn start_children(&mut self) -> EvidenceResult {
+        self.starts = self
+            .starts
+            .checked_add(1)
+            .ok_or("session start count overflow")?;
         for (name, config) in self
             .origin
             .as_ref()
@@ -467,10 +484,102 @@ impl Session {
         Err("qualification readiness deadline".into())
     }
     pub(super) fn stop(&mut self) -> EvidenceResult {
-        for child in &mut self.children {
-            child.shutdown()?;
+        if let Some(failure) = &self.stop_failure {
+            return Err(failure.clone().into());
+        }
+        let mut failures = Vec::new();
+        for (index, child) in self.children.iter_mut().enumerate() {
+            if let Err(error) = child.shutdown() {
+                let cleanup = match child.terminate() {
+                    Ok(()) => "forced cleanup=reaped".to_owned(),
+                    Err(error) => format!("forced cleanup unconfirmed: {error}"),
+                };
+                failures.push(format!("child {index} shutdown failed: {error}; {cleanup}"));
+            }
+        }
+        if !failures.is_empty() {
+            let failure = failures.join("; ");
+            self.stop_failure = Some(failure.clone());
+            return Err(failure.into());
         }
         self.children.clear();
+        Ok(())
+    }
+
+    pub(super) fn finish<T>(&mut self, outcome: EvidenceResult<T>) -> EvidenceResult<T> {
+        match (outcome, self.stop()) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), Ok(())) => Err(error),
+            (Ok(_), Err(cleanup)) => Err(cleanup),
+            (Err(error), Err(cleanup)) => Err(format!("{error}; {cleanup}").into()),
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod lifecycle_tests {
+    use super::*;
+
+    fn failed_child_session(root: &Path) -> EvidenceResult<Session> {
+        let token = root.join("token");
+        fs::write(&token, b"fixture")?;
+        let mut session = Session::resume(
+            root,
+            Path::new("/bin/true"),
+            Path::new("/bin/true"),
+            1,
+            root,
+            &token,
+        )?;
+        let mut exited = OwnedChild::spawn(Command::new("/bin/false").stdin(Stdio::null()))?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while exited.try_wait()?.is_none() {
+            ensure(
+                std::time::Instant::now() < deadline,
+                "fixture child did not exit",
+            )?;
+            thread::yield_now();
+        }
+        session.children.push(exited);
+        session
+            .children
+            .push(OwnedChild::spawn(Command::new("/bin/sleep").arg("30"))?);
+        Ok(session)
+    }
+
+    #[test]
+    fn failed_shutdown_still_reaps_other_children_and_retains_failure() -> EvidenceResult {
+        let root = tempfile::tempdir()?;
+        let mut session = failed_child_session(root.path())?;
+        let first = session
+            .stop()
+            .err()
+            .ok_or("failed daemon shutdown accepted")?;
+        for child in &mut session.children {
+            assert!(
+                child.try_wait()?.is_some(),
+                "later owned child left running"
+            );
+        }
+        let repeated = session.stop().err().ok_or("repeated stop erased failure")?;
+        assert_eq!(first.to_string(), repeated.to_string());
+        Ok(())
+    }
+
+    #[test]
+    fn failed_scenario_retains_shutdown_evidence() -> EvidenceResult {
+        let root = tempfile::tempdir()?;
+        let mut session = failed_child_session(root.path())?;
+        let error = session
+            .finish::<()>(Err("injected scenario failure".into()))
+            .err()
+            .ok_or("failed scenario accepted")?;
+        let detail = error.to_string();
+        assert!(detail.contains("injected scenario failure"));
+        assert!(
+            detail.contains("shutdown"),
+            "cleanup evidence lost: {detail}"
+        );
         Ok(())
     }
 }

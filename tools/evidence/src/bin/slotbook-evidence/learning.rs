@@ -109,7 +109,5 @@ pub(super) fn run(args: Arguments) -> EvidenceResult {
     }
     session.start()?;
     let result = author::exercise(&args, &mut session, &source);
-    let stop = session.stop();
-    result?;
-    stop
+    session.finish(result)
 }

@@ -72,9 +72,7 @@ pub(super) fn run(args: Qualify) -> EvidenceResult {
     let mut session = Session::prepare(&args)?;
     session.start()?;
     let result = qualify(&mut session, &args, &candidate);
-    let stop = session.stop();
-    result?;
-    stop?;
+    session.finish(result)?;
     writeln!(
         std::io::stdout().lock(),
         "finite Rust binary qualification passed"

@@ -93,9 +93,7 @@ pub(super) fn run(args: Arguments) -> EvidenceResult {
         configure_author(&s)?;
         s.start()?;
         let result = exercise(&args, &mut s);
-        let stopped = s.stop();
-        result?;
-        return stopped;
+        return s.finish(result);
     }
     prepare::run(Prepare {
         root: args.root.clone(),
@@ -129,9 +127,7 @@ pub(super) fn run(args: Arguments) -> EvidenceResult {
     configure_author(&s)?;
     s.start()?;
     let result = exercise(&args, &mut s);
-    let stopped = s.stop();
-    result?;
-    stopped
+    s.finish(result)
 }
 
 fn declared_inputs(args: &Arguments) -> EvidenceResult<Value> {
