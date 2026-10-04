@@ -6,13 +6,13 @@ The active [client-ready workflows sprint](../development/virtual-office/client-
 completes the ordinary CLI route through shared public daemon operations. Setup, workflow
 authoring, supplied-input execution, exact request recovery, result inspection and the supported
 prospective repair, reuse/copy, separate publication preparation, evaluation commands and the
-independent client boundary are complete. The next assignment is
-[05a — Enable stricter checks](../development/virtual-office/client-ready-workflows/05a-enable-strict-checks.md),
-under the prepared [linting insertion](../development/virtual-office/client-ready-workflows/linting-insertion.md).
+independent client boundary are complete. Strict static enforcement is implemented and validated;
+existing policy violations keep its gate red. The next assignment is
+[05b — Fix strict-check findings](../development/virtual-office/client-ready-workflows/05b-fix-strict-check-findings.md).
 
 Work proceeds in this order:
 
-1. Enable the assigned strict static checks, then fix their findings in 05b.
+1. Fix the strict-check findings and finish with a passing static gate in 05b.
 2. Run the integrated operator journey, full gate and authorized local-model checks in 06; fix failures
    before closing the sprint.
 

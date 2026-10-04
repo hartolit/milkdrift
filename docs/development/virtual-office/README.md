@@ -11,8 +11,9 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 The [client-ready workflows sprint](client-ready-workflows/README.md) is active. Phases 00–05 are
 complete; [05's handoff](client-ready-workflows/handoffs/05.md) records focused acceptance.
-The prepared [linting insertion](client-ready-workflows/linting-insertion.md) assigns 05a and 05b
-before 06; 05a is next and owns integration of those assignments into the sprint table.
+The [linting insertion](client-ready-workflows/linting-insertion.md) is integrated before 06.
+[05a's handoff](client-ready-workflows/handoffs/05a.md) records implemented and validated enforcement
+with an intentionally red policy gate. 05b is next and must clear its findings.
 Phases run sequentially, with focused checks in 01–05 and full acceptance in 06 under the
 [verification policy](../workflow.md#explicit-multi-phase-sprint-schedule). The
 [roadmap](../../product/roadmap.md) owns the authorized scope; the

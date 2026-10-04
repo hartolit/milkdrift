@@ -263,6 +263,13 @@ values; repository contracts check the version cells against source.
 
 ## Current validation/evidence snapshot
 
+The [strict static gate](../development/workflow.md#strict-static-gate) now enforces shared compiler
+and Clippy policy, parsed repository boundaries, independent consumer probes, dependency hygiene,
+workflow checks and bounded secret scanning. Its checker fixtures are validated, but existing code
+violations keep the required gate red. [05a's handoff](../development/virtual-office/client-ready-workflows/handoffs/05a.md)
+records the observed findings and incomplete downstream coverage. 05b must clear them before 06
+runs final system acceptance; earlier runtime evidence below does not establish a passing current gate.
+
 ### Active capacity and boundary validation
 
 Publication turnover now passes six generations through a two-slot registry across complete store
