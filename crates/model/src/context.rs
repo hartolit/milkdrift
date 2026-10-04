@@ -24,6 +24,9 @@ pub struct ContextManifestDigest(String);
 impl ContextManifestDigest {
     /// Checks the `b3_` plus 64 lowercase hexadecimal spelling of a manifest digest.
     /// The [`ContextManifest`] reader separately recomputes it from the saved selection.
+    ///
+    /// # Errors
+    /// Refuses text other than `b3_` followed by 64 lowercase hexadecimal characters.
     pub fn new(value: impl Into<String>) -> Result<Self, ModelContractError> {
         let value = value.into();
         if !milkdrift_contracts::is_canonical_blake3_digest(&value) {
@@ -359,7 +362,15 @@ impl ContextManifestEntry {
     /// must be marked authorized. An empty artifact still sets `selected_artifact = true`
     /// so it counts against the artifact limit. This checks supplied facts, not stored
     /// source existence or the validity of an authority decision.
-    #[allow(clippy::too_many_arguments)] // An entry validates exact source provenance against selected content, byte accounting, authority, and inclusion reason.
+    ///
+    /// # Errors
+    /// Refuses invalid source/producer provenance, zero ordinal, excessive roles/causes,
+    /// inconsistent artifact or attempt facts, and missing required authority or an
+    /// authority reference outside 1–192 bytes.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "An entry binds source provenance to selected content, byte accounting, authority and inclusion reason"
+    )]
     pub fn new(
         ordinal: u32,
         kind: ContextSemanticKind,
@@ -726,7 +737,14 @@ impl ContextManifest {
     /// totals must exactly match entries and fit the aggregate budget. The selector owns
     /// causal ordering, per-item/discovery checks, and the policy's manifest-byte ceiling.
     /// This constructor does not rerun those checks or prove that sources were accessible.
-    #[allow(clippy::too_many_arguments)] // The manifest binds one attempt and frozen policy to entries, omissions, and budget-checked aggregate totals.
+    ///
+    /// # Errors
+    /// Refuses zero policy version, excessive entries/omissions, noncontiguous ordinals,
+    /// overflowing or mismatched totals, exceeded aggregate budgets, and digest encoding bounds.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The manifest binds one attempt and frozen policy to entries, omissions and budget-checked aggregate totals"
+    )]
     pub fn new(
         run: RunId,
         revision: RevisionId,
@@ -880,6 +898,10 @@ impl ContextManifest {
     /// produces a new digest. This operation does not evaluate the governing task or
     /// validate omission disclosure. Runtime checks retained evidence before calling it
     /// and persists the resulting document for the retry.
+    ///
+    /// # Errors
+    /// Propagates the manifest bounds, totals and encoding refusals from [`Self::new`]
+    /// while computing the digest for the new attempt.
     pub fn rebind_attempt(&self, attempt: AttemptId) -> Result<Self, ModelContractError> {
         Self::new(
             self.run.clone(),

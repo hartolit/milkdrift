@@ -95,7 +95,9 @@ fn context_manifest_has_exact_golden_bytes_and_verified_digest() -> TestResult {
     );
     assert_eq!(ContextManifestDocument::from_json(&bytes)?, document);
     let mut tampered: serde_json::Value = serde_json::from_slice(&bytes)?;
-    tampered["manifest"]["digest"] =
+    *tampered
+        .pointer_mut("/manifest/digest")
+        .ok_or("missing manifest digest")? =
         json!("b3_0000000000000000000000000000000000000000000000000000000000000000");
     assert!(ContextManifestDocument::from_json(&serde_json::to_vec(&tampered)?).is_err());
     Ok(())
@@ -124,7 +126,10 @@ fn tool_results_and_sessions_are_explicit() -> TestResult {
         .is_err()
     );
     let mut value = serde_json::to_value(ModelTaskRequestDocument::new(request()?))?;
-    value["request"]["session"] = json!({"type":"provider_managed","session_id":"bad session"});
+    *value
+        .pointer_mut("/request/session")
+        .ok_or("missing request session")? =
+        json!({"type":"provider_managed","session_id":"bad session"});
     assert!(ModelTaskRequestDocument::from_json(&serde_json::to_vec(&value)?).is_err());
     Ok(())
 }

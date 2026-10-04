@@ -216,7 +216,10 @@ fn history_reader_refuses_future_unknown_duplicate_and_oversized_data() -> TestR
     let document = ContinuationHistoryDocument::new(history);
     for field in ["schema_version", "unknown"] {
         let mut value = serde_json::to_value(&document)?;
-        value[field] = json!(2);
+        value
+            .as_object_mut()
+            .ok_or("missing history document")?
+            .insert(field.to_owned(), json!(2));
         assert!(ContinuationHistoryDocument::from_json(&serde_json::to_vec(&value)?).is_err());
     }
     let bytes = document.to_canonical_json()?;

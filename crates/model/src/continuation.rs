@@ -43,6 +43,12 @@ pub struct ContinuationHistory {
 impl ContinuationHistory {
     /// Validates the finite source chain and message bounds. Runtime additionally proves
     /// artifact integrity, causality, current authority and the messages' exact derivation.
+    ///
+    /// # Errors
+    /// Refuses empty/excessive or duplicate source turns, zero/unordered anchors,
+    /// non-increasing message boundaries, invalid authority length, prior system/developer
+    /// instructions, request message/text bounds, inconsistent tool-result order or repeated
+    /// call identities. A final assistant call may await results supplied by the current task.
     pub fn new(
         turns: Vec<ContinuationTurn>,
         messages: Vec<Message>,
@@ -54,15 +60,20 @@ impl ContinuationHistory {
             || turns.iter().any(|turn| {
                 !seen.insert(turn.manifest.identity())
                     || turn.events.contains(&RunSequence::ZERO)
-                    || turn.events.windows(2).any(|events| events[0] >= events[1])
+                    || turn
+                        .events
+                        .iter()
+                        .zip(turn.events.iter().skip(1))
+                        .any(|(left, right)| left >= right)
             })
             || turns
                 .last()
                 .is_none_or(|turn| turn.message_end as usize != messages.len())
             || turns.first().is_none_or(|turn| turn.message_end == 0)
             || turns
-                .windows(2)
-                .any(|turns| turns[0].message_end >= turns[1].message_end)
+                .iter()
+                .zip(turns.iter().skip(1))
+                .any(|(left, right)| left.message_end >= right.message_end)
             || authority.is_empty()
             || authority.len() > 192
             || messages.iter().any(|message| {
@@ -124,6 +135,10 @@ impl ModelTaskRequest {
     /// Combines runtime-prepared history with this request. Current instructions precede
     /// the history; remaining current messages follow it. Every proposed tool call must
     /// have exactly one following result before another user/assistant turn or HTTP entry.
+    ///
+    /// # Errors
+    /// Refuses missing or mismatched predecessor artifacts, incomplete/invalid tool exchanges,
+    /// and combined history/current messages exceeding the request owner's bounds.
     pub fn with_continuation(
         &self,
         history: &ContinuationHistory,

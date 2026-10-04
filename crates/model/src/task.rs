@@ -79,6 +79,7 @@ pub struct Message {
 impl Message {
     /// Constructs and validates one message.
     ///
+    /// # Errors
     /// Supply 1..=1,024 parts, with at most 1,048,576 UTF-8 bytes per text part. Tool-result
     /// messages require a nonempty safe call ID; supplying it for another role is refused.
     /// The whole request imposes an additional aggregate text limit.
@@ -116,6 +117,10 @@ impl Message {
     }
 
     /// Attaches returned calls to an assistant message. Calls remain data, never execution authority.
+    ///
+    /// # Errors
+    /// Refuses more than 128 calls, duplicate call identities, nonempty calls on another
+    /// role, or a message violating the part/text and tool-result rules of [`Self::new`].
     pub fn with_tool_calls(mut self, calls: Vec<ToolCall>) -> Result<Self, ModelContractError> {
         self.tool_calls = calls;
         self.validate()?;
@@ -204,6 +209,9 @@ pub struct ToolDefinition {
 
 impl ToolDefinition {
     /// Constructs a bounded tool definition.
+    ///
+    /// # Errors
+    /// Refuses an empty/unsafe or over-128-byte ASCII name, or a description above 4,096 bytes.
     pub fn new(
         name: impl Into<String>,
         description: impl Into<String>,
@@ -273,6 +281,9 @@ pub struct StructuredOutput {
 
 impl StructuredOutput {
     /// Constructs a named bounded output schema.
+    ///
+    /// # Errors
+    /// Refuses an empty/unsafe or over-128-byte ASCII name.
     pub fn new(
         name: impl Into<String>,
         schema: BoundedJson,
@@ -408,7 +419,10 @@ impl ModelTaskRequest {
     /// A valid allowance can still exceed an endpoint's own limit; the adapter does not
     /// discover numeric token ceilings. Encoded HTTP request/response limits are separate.
     /// See the [crate example](crate) for request construction and document encoding.
-    #[allow(clippy::too_many_arguments)] // Messages, tools, output format, session, and generation bounds are validated as one executable model request.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Messages, tools, output format, session and generation bounds are validated as one executable model request"
+    )]
     pub fn new(
         messages: Vec<Message>,
         tools: Vec<ToolDefinition>,
@@ -570,6 +584,9 @@ pub struct ToolCall {
 
 impl ToolCall {
     /// Constructs a bounded returned tool call.
+    ///
+    /// # Errors
+    /// Refuses a call identity or tool name outside the safe 1–128-byte ASCII spelling.
     pub fn new(
         id: impl Into<String>,
         name: impl Into<String>,
@@ -679,8 +696,10 @@ pub struct ModelResponse {
 impl ModelResponse {
     /// Constructs a bounded canonical model response.
     ///
+    /// # Errors
     /// Refuses text above 1,048,576 bytes, more than 128 tool calls or 64 metadata entries,
-    /// and inconsistent cost/currency facts. It does not infer missing usage or validate
+    /// and inconsistent cost/currency facts or currency other than three uppercase ASCII
+    /// letters. It does not infer missing usage or validate
     /// structured output against the original request's schema.
     pub fn new(
         text: String,

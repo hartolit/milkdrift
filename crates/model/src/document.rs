@@ -146,12 +146,16 @@ macro_rules! document {
             }
 
             /// Encodes compact, key-sorted JSON within the 2,097,152-byte document limit.
+            ///
+            /// # Errors
+            /// Returns serialization failures or encoded byte/JSON structural bound violations.
             pub fn to_canonical_json(&self) -> Result<Vec<u8>, ModelContractError> {
                 encode(self)
             }
 
             /// Loads a bounded document through its body's validation path.
             ///
+            /// # Errors
             /// Refuses excessive bytes/structure, duplicate or unknown fields, unsupported
             /// versions, and inconsistent body facts. Use this reader for external bytes;
             /// direct Serde decoding does not apply all document-level bounds.
