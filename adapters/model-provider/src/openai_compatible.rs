@@ -54,21 +54,25 @@ pub(crate) fn request(
                 }
             }
         }
-        let content = if parts.len() == 1 && parts[0].get("type") == Some(&Value::String("text".to_owned())) {
-            parts[0]["text"].clone()
-        } else {
-            Value::Array(parts)
+        let content = match parts.as_slice() {
+            [part] if part.get("type").and_then(Value::as_str) == Some("text") => {
+                part.get("text").ok_or(HttpError::MalformedResponse)?.clone()
+            }
+            _ => Value::Array(parts),
         };
-        let mut value = json!({"role":role,"content":content});
+        let mut value = Map::from_iter([
+            ("role".to_owned(), Value::String(role.to_owned())),
+            ("content".to_owned(), content),
+        ]);
         if let Some(id) = message.tool_call_id() {
-            value["tool_call_id"] = Value::String(id.to_owned());
+            value.insert("tool_call_id".to_owned(), Value::String(id.to_owned()));
         }
         if !message.tool_calls().is_empty() {
-            value["tool_calls"] = Value::Array(message.tool_calls().iter().map(|call| json!({
+            value.insert("tool_calls".to_owned(), Value::Array(message.tool_calls().iter().map(|call| json!({
                 "id": call.id(), "type": "function", "function": { "name": call.name(), "arguments": call.arguments().value().to_string() }
-            })).collect());
+            })).collect()));
         }
-        Ok(value)
+        Ok(Value::Object(value))
     }).collect::<Result<Vec<_>, HttpError>>()?;
     messages.insert(0, json!({
         "role":"system",
@@ -418,7 +422,7 @@ fn retain_consistent_metadata(
 fn parse_tool_calls(value: Option<&Value>) -> Result<Vec<ToolCall>, HttpError> {
     value
         .and_then(Value::as_array)
-        .map(|calls| {
+        .map_or(Ok(Vec::new()), |calls| {
             calls
                 .iter()
                 .map(|call| {
@@ -450,7 +454,6 @@ fn parse_tool_calls(value: Option<&Value>) -> Result<Vec<ToolCall>, HttpError> {
                 })
                 .collect()
         })
-        .unwrap_or(Ok(Vec::new()))
 }
 
 fn parse_usage(value: Option<&Value>) -> Result<Usage, HttpError> {

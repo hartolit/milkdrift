@@ -16,6 +16,10 @@ pub struct StreamFixtureEvidence {
 }
 
 /// Exercises the production bounded SSE and provider state machines with fixed fixtures.
+///
+/// # Errors
+/// Reports fixture framing, provider-event, or completion failures and unrepresentable
+/// input lengths. This exercises local parsers without contacting any endpoint.
 pub fn exercise_stream_fixtures(iterations: u32) -> Result<StreamFixtureEvidence, String> {
     let openai = concat!(
         "data: {\"id\":\"response-1\",\"model\":\"fixed\",\"choices\":[{\"delta\":{\"content\":\"milk\"},\"finish_reason\":null}]}\n\n",

@@ -7,10 +7,11 @@ fn profile(billing: Value) -> TestResult<EndpointProfile> {
     let mut value: Value = serde_json::from_str(include_str!(
         "../../../../examples/local-model/openai-compatible-loopback.example.json"
     ))?;
-    value["billing"] = billing;
-    value["token_limits"] = json!({"type":"byte_bpe", "template_tokens_per_message":32,
+    let fields = value.as_object_mut().ok_or("profile object absent")?;
+    fields.insert("billing".to_owned(), billing);
+    fields.insert("token_limits".to_owned(), json!({"type":"byte_bpe", "template_tokens_per_message":32,
         "template_tokens_per_request":64, "maximum_input_tokens":10000, "maximum_output_tokens":128,
-        "output_control":"max_tokens", "source":"controlled byte-BPE/template fixture v1; all generation capped"});
+        "output_control":"max_tokens", "source":"controlled byte-BPE/template fixture v1; all generation capped"}));
     Ok(serde_json::from_value(value)?)
 }
 
@@ -47,7 +48,10 @@ fn whole_request_bound_includes_utf8_context_and_template_and_rejects_underminin
         ("response_format", json!({})),
     ] {
         let mut hostile = wire.clone();
-        hostile[key] = value;
+        hostile
+            .as_object_mut()
+            .ok_or("wire object absent")?
+            .insert(key.to_owned(), value);
         assert!(
             profile
                 .prepared_envelope(&hostile, &serde_json::to_vec(&hostile)?)
@@ -55,8 +59,10 @@ fn whole_request_bound_includes_utf8_context_and_template_and_rejects_underminin
             "{key}"
         );
     }
-    let mut expanded = wire.clone();
-    expanded["messages"][0]["content"] = json!("evidence".repeat(2000));
+    let mut expanded = wire;
+    *expanded
+        .pointer_mut("/messages/0/content")
+        .ok_or("message content absent")? = json!("evidence".repeat(2000));
     assert!(
         profile
             .prepared_envelope(&expanded, &serde_json::to_vec(&expanded)?)
@@ -69,7 +75,9 @@ fn whole_request_bound_includes_utf8_context_and_template_and_rejects_underminin
 fn explicit_reasoning_none_preserves_the_frozen_total_generation_bound() -> TestResult {
     let profile = profile(json!({"type":"unbilled","source":"operator fixture declaration v1"}))?;
     let mut wire = wire();
-    wire["reasoning_effort"] = json!("none");
+    wire.as_object_mut()
+        .ok_or("wire object absent")?
+        .insert("reasoning_effort".to_owned(), json!("none"));
     let bytes = serde_json::to_vec(&wire)?;
     let envelope = profile.prepared_envelope(&wire, &bytes)?;
     assert_eq!(
@@ -84,7 +92,9 @@ fn explicit_reasoning_none_preserves_the_frozen_total_generation_bound() -> Test
         json!(0),
         json!(null),
     ] {
-        wire["reasoning_effort"] = invalid;
+        *wire
+            .get_mut("reasoning_effort")
+            .ok_or("reasoning effort absent")? = invalid;
         assert!(
             profile
                 .prepared_envelope(&wire, &serde_json::to_vec(&wire)?)
@@ -166,7 +176,10 @@ fn old_missing_and_invalid_contracts_never_become_unbilled() -> TestResult {
         ("billing", json!({"type":"text_tariff","currency":"USD"})),
     ] {
         let mut invalid = original.clone();
-        invalid[key] = value;
+        invalid
+            .as_object_mut()
+            .ok_or("profile object absent")?
+            .insert(key.to_owned(), value);
         assert!(EndpointProfile::from_json(&serde_json::to_vec(&invalid)?).is_err());
     }
     let unknown: EndpointProfile = serde_json::from_value(original)?;

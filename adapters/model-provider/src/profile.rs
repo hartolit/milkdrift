@@ -199,7 +199,14 @@ pub struct EndpointProfile {
 
 impl EndpointProfile {
     /// Constructs a completely validated non-secret profile.
-    #[allow(clippy::too_many_arguments)] // Endpoint identity, transport policy, features, and ceilings are validated together before registration.
+    ///
+    /// # Errors
+    /// Refuses invalid identity/count/transport bounds, non-allowlisted or unsafe endpoints,
+    /// incompatible authentication/features, and invalid billing or token-limit declarations.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Endpoint identity, transport policy, features, and ceilings are validated together before registration"
+    )]
     pub fn new(
         identity: ProviderProfileRef,
         revision: u64,
@@ -246,6 +253,9 @@ impl EndpointProfile {
     }
 
     /// Encodes the exact profile as bounded canonical JSON.
+    ///
+    /// # Errors
+    /// Reports serialization failure or a profile exceeding structural or encoded byte bounds.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, ProfileError> {
         let bytes = milkdrift_contracts::canonical_json_bytes(self, PROFILE_JSON_LIMITS)
             .map_err(|error| ProfileError::Invalid(format!("profile JSON: {error:?}")))?;
@@ -258,6 +268,10 @@ impl EndpointProfile {
     }
 
     /// Bounds-checks, duplicate-checks, parses, and validates one exact v2 profile.
+    ///
+    /// # Errors
+    /// Refuses malformed, duplicate-key, oversized, or unsupported-version documents and
+    /// profiles that violate endpoint, transport, feature, or accounting constraints.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ProfileError> {
         if bytes.len() > MAX_PROFILE_BYTES {
             return Err(ProfileError::Invalid(

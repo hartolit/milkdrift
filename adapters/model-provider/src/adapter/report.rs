@@ -94,7 +94,10 @@ use milkdrift_model::{ModelResponse, ModelResponseDocument};
 use serde_json::json;
 
 impl ModelEndpointAdapter {
-    #[allow(clippy::too_many_arguments)] // Publication binds the completed response to its exact prepared accounting facts.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Publication binds the completed response to its exact prepared accounting facts"
+    )]
     pub(super) fn publish_response(
         &self,
         context: &milkdrift_capability_host::AdapterExecutionContext,

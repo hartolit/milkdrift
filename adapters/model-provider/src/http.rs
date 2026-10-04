@@ -182,7 +182,8 @@ fn read_sse_body(
             return Err(HttpError::ResponseTooLarge);
         }
         let mut callback_error = None;
-        let parsed = parser.push(&buffer[..read], |data| match event(data) {
+        let received = buffer.get(..read).ok_or(HttpError::Transport)?;
+        let parsed = parser.push(received, |data| match event(data) {
             Ok(()) => Ok(()),
             Err(error) => {
                 callback_error = Some(error);
@@ -287,10 +288,7 @@ mod tests {
                 match self.outcome {
                     0 => Ok(0),
                     1 => Err(std::io::Error::from(std::io::ErrorKind::ConnectionReset)),
-                    _ => {
-                        buffer[..8].copy_from_slice(b"unknown\n");
-                        Ok(8)
-                    }
+                    _ => (&b"unknown\n"[..]).read(buffer),
                 }
             }
         }

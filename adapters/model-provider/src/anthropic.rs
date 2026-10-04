@@ -342,7 +342,6 @@ impl StreamState {
             }
             "message_stop" if self.phase == Phase::Started => self.phase = Phase::Stopped,
             "ping" if self.phase == Phase::Started => {}
-            "error" => return Err(HttpError::MalformedResponse),
             _ => return Err(HttpError::MalformedResponse),
         }
         Ok(())

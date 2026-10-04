@@ -158,6 +158,10 @@ pub struct ModelEndpointAdapter {
 
 impl ModelEndpointAdapter {
     /// Creates an adapter after endpoint policy and HTTP client construction succeed.
+    ///
+    /// # Errors
+    /// Refuses invalid endpoint/network identity or overflowing accounting ceilings, and
+    /// reports HTTP client construction failure. No provider request is sent during setup.
     pub fn new(
         capability: CapabilityId,
         profile: EndpointProfile,
@@ -670,7 +674,7 @@ impl ModelEndpointAdapter {
             } else if media_type.starts_with("image/") {
                 parts.push(MaterializedContextPart::Image {
                     label,
-                    media_type: media_type.to_owned(),
+                    media_type: media_type.clone(),
                     bytes,
                 });
             } else {
@@ -1007,6 +1011,10 @@ fn network_destination(endpoint: &url::Url) -> Result<String, AdapterError> {
 }
 
 /// Advertises the configured profile for [`ModelEndpointAdapter`] without probing the endpoint.
+///
+/// # Errors
+/// Reports profile encoding or origin failure, or invalid bounded provenance, trust zones,
+/// operation contracts, or descriptor admission constraints.
 pub fn descriptor_for_profile(
     capability: CapabilityId,
     profile: &EndpointProfile,
