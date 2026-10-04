@@ -66,6 +66,10 @@ use self::{
 /// The embedding daemon uses its durable clock; tests can inject controlled failures and time.
 pub trait PeerClock: Send + Sync {
     /// Current Unix epoch milliseconds, rejecting unavailable or backward-moving time.
+    ///
+    /// # Errors
+    /// Rejects time before the epoch, unrepresentable milliseconds, unavailable time, or a
+    /// regression detected by the supplied clock owner.
     fn now_unix_ms(&self) -> Result<u64, PeerClockError>;
 }
 
@@ -200,6 +204,10 @@ impl PeerService {
 
     /// Constructs a service with admission closed and artifact exchange disabled.
     /// Call [`Self::recover`] after local adapters register.
+    ///
+    /// # Errors
+    /// Rejects invalid configuration and returns authority construction, durable admission/setup,
+    /// worker-startup, or continuation-owner installation failures.
     pub fn new(
         config: PeerServerConfig,
         capability_host: CapabilityHost,
@@ -216,6 +224,10 @@ impl PeerService {
     }
 
     /// Constructs a service with admission closed and a verified artifact exchange port.
+    ///
+    /// # Errors
+    /// Rejects invalid configuration and returns authority construction, durable admission/setup,
+    /// worker-startup, or continuation-owner installation failures.
     pub fn new_with_artifacts(
         config: PeerServerConfig,
         capability_host: CapabilityHost,
@@ -234,6 +246,10 @@ impl PeerService {
     }
 
     /// Constructs with a request-time server authenticator for credential rotation.
+    ///
+    /// # Errors
+    /// Rejects invalid configuration and returns authority construction, durable admission/setup,
+    /// worker-startup, or continuation-owner installation failures.
     pub fn new_with_artifacts_and_authenticator(
         config: PeerServerConfig,
         capability_host: CapabilityHost,
@@ -255,7 +271,10 @@ impl PeerService {
 
     /// Constructs one serving owner for peer relationships and independently authenticated clients.
     /// The embedding authentication owner supplies the client grants; recover before admission.
-    #[allow(clippy::too_many_arguments)] // One owner binds registry, persistence, artifacts, peer authentication, client policy, and clock.
+    ///
+    /// # Errors
+    /// Rejects invalid peer/client configuration and returns authority construction, durable
+    /// admission/setup, worker-startup, or continuation-owner installation failures.
     pub fn with_clients(
         config: PeerServerConfig,
         capability_host: CapabilityHost,
@@ -386,6 +405,10 @@ impl PeerService {
 
     /// Authenticates only the transport bearer value and returns its configured identity.
     /// Request payload identity fields never choose this result.
+    ///
+    /// # Errors
+    /// Returns `Unauthenticated` when the supplied credential cannot identify an active configured
+    /// peer, including revoked or unavailable revocation state. Clock failures also propagate.
     pub fn authenticate_bearer(&self, supplied: &[u8]) -> Result<PeerId, ServingError> {
         let now = self.now()?;
         if let Some(authenticator) = &self.authenticator {
@@ -425,6 +448,10 @@ impl PeerService {
     }
 
     /// Negotiates a session and cross-checks the claimed identity against authentication.
+    ///
+    /// # Errors
+    /// Rejects inactive relationships, insufficient negotiation authority, mismatched peer identity,
+    /// incompatible protocol versions, invalid bounds, or request-rate limits.
     pub fn handshake(
         &self,
         authenticated_peer: &PeerId,
@@ -479,6 +506,11 @@ impl PeerService {
     /// Atomically accepts one exact request into the durable bounded dispatch queue.
     /// The response confirms acceptance, not adapter entry. Exact replay is looked up before
     /// fresh catalog/capacity checks; conflicting request bytes retain the original execution.
+    ///
+    /// # Errors
+    /// Rejects unauthenticated/mismatched callers, malformed requests, or inaccessible replay
+    /// records, and propagates durable-owner failures. Fresh admission refusal and exact-request
+    /// conflict may instead be represented by a successful rejection response.
     pub fn invoke(
         self: &Arc<Self>,
         authenticated_peer: &PeerId,
@@ -645,6 +677,10 @@ impl PeerService {
     }
 
     /// Returns durable knowledge for a request identity without inferring from connectivity.
+    ///
+    /// # Errors
+    /// Rejects inactive relationships, insufficient current execution-inspection authority,
+    /// and rate limits; propagates persistence failures. Checked absence returns `NotAccepted`.
     pub fn lookup(
         &self,
         authenticated_peer: &PeerId,
@@ -678,6 +714,10 @@ impl PeerService {
     }
 
     /// Returns a contiguous resumable observation page for one owned execution.
+    ///
+    /// # Errors
+    /// Rejects inactive relationships, insufficient execution/artifact authority, rate limits,
+    /// and invalid page bounds. Persistence and noncontiguous observation failures propagate.
     pub fn observations(
         &self,
         authenticated_peer: &PeerId,
@@ -729,6 +769,11 @@ impl PeerService {
     }
 
     /// Routes a separately authenticated cancellation and persists its acknowledgement.
+    ///
+    /// # Errors
+    /// Rejects inactive relationships, malformed cancellations, unowned/missing executions,
+    /// insufficient cancellation authority, and rate limits. Durable cancellation and
+    /// acknowledgement failures propagate without implying external termination.
     pub fn cancel(
         &self,
         authenticated_peer: &PeerId,
@@ -901,7 +946,6 @@ impl PeerService {
     fn drain_state(&self) -> DrainState {
         match self.drain.load(Ordering::SeqCst) {
             0 => DrainState::Ready,
-            1 => DrainState::Draining,
             2 => DrainState::ShuttingDown,
             _ => DrainState::Draining,
         }

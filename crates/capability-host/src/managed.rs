@@ -58,17 +58,29 @@ pub enum ManagedError {
 pub trait ManagedPlatform: Send + Sync {
     /// Fence verifier resources left by an interrupted host before admission opens.
     /// Retained incomplete evaluations stay unknown and are never rerun by recovery.
+    ///
+    /// # Errors
+    /// Returns an error when retained verifier resources cannot be inspected or fenced. Recovery
+    /// must leave incomplete evaluations unknown rather than rerun them.
     fn recover_verifications(&self) -> Result<(), ManagedError> {
         Ok(())
     }
 
     /// Recheck active operator policy and verifier implementation immediately before entry.
+    ///
+    /// # Errors
+    /// Rejects unsupported protected evaluation or policy/verifier facts that no longer match
+    /// the approved setup. No candidate execution is permitted on refusal.
     fn check_protected_policy(&self, _setup: &ApprovedSetup) -> Result<(), ManagedError> {
         Err(rejected(
             "protected service evaluation is unsupported by this platform",
         ))
     }
     /// Run the separate trusted implementation against the immutable candidate in isolation.
+    ///
+    /// # Errors
+    /// Rejects unsupported or invalid evaluations and returns platform failures from the
+    /// isolated verifier. Failed evaluation must not imply successful candidate evidence.
     fn evaluate_candidate(
         &self,
         _setup: &ApprovedSetup,
@@ -80,6 +92,10 @@ pub trait ManagedPlatform: Send + Sync {
         ))
     }
     /// Prepare exact read-only candidate bytes and a new service generation, without starting it.
+    ///
+    /// # Errors
+    /// Rejects unsupported publication, mismatched evidence, or invalid candidate bytes; returns
+    /// platform failures while preparing the exact new generation.
     fn prepare_publication(
         &self,
         _setup: &ApprovedSetup,
@@ -92,6 +108,10 @@ pub trait ManagedPlatform: Send + Sync {
         ))
     }
     /// Compile one exact operator-approved recipe without changing platform resources.
+    ///
+    /// # Errors
+    /// Rejects recipes outside operator configuration or invalid ownership/generation facts.
+    /// Planning failure must not have changed live resources.
     fn plan(
         &self,
         installation: &ManagedName,
@@ -101,25 +121,44 @@ pub trait ManagedPlatform: Send + Sync {
     ) -> Result<ApprovedSetup, ManagedError>;
     /// Inspect prerequisites without changing resources. The saved current generation permits
     /// accounting for resources that reapply retains or an authorized update would replace.
+    ///
+    /// # Errors
+    /// Returns an error when setup or prerequisites cannot be inspected under the configured
+    /// platform policy. Findings returned in the vector are successful diagnostic results.
     fn diagnose(
         &self,
         setup: &ApprovedSetup,
         current: Option<&ApprovedSetup>,
     ) -> Result<Vec<String>, ManagedError>;
     /// Execute or recover one specifically replay-safe boundary, verifying ownership first.
+    ///
+    /// # Errors
+    /// Rejects stale ownership or unsupported steps and returns platform failures with uncertain
+    /// effects. The accepted transition must remain recoverable on failure.
     fn reconcile(
         &self,
         record: &InstallationRecord,
         step: ManagedStep,
     ) -> Result<ManagedObservation, ManagedError>;
     /// Observe a verified setup without restarting healthy services or rewriting working files.
+    ///
+    /// # Errors
+    /// Returns an error if exact owned resources cannot be inspected or their identity conflicts
+    /// with the approved setup. Observation must not repair resources implicitly.
     fn observe(&self, setup: &ApprovedSetup) -> Result<ManagedObservation, ManagedError>;
     /// Exact host resource permission facts derived from approved configuration, not request text.
+    ///
+    /// # Errors
+    /// Rejects setups whose exact host permissions cannot be derived from approved configuration.
     fn requirements(
         &self,
         setup: &ApprovedSetup,
     ) -> Result<CapabilityExecutionRequirements, ManagedError>;
     /// Physically fence one exact owned task; terminal execution outcome remains unchanged.
+    ///
+    /// # Errors
+    /// Returns an error when ownership cannot be verified or the exact task cannot be proved
+    /// quiescent. Resource-use protection must remain held on failure.
     fn fence(
         &self,
         setup: &ApprovedSetup,
@@ -131,6 +170,10 @@ pub trait ManagedPlatform: Send + Sync {
 /// independent authority over resource state and is replayed after restart or a lost response.
 pub trait ManagedGenerationPublisher: Send + Sync {
     /// Publish eligible descriptors and drain unavailable generations without discarding permits.
+    ///
+    /// # Errors
+    /// Returns an error if eligible generations cannot be published or unavailable generations
+    /// cannot drain. Durable resource state remains the authority for a later retry.
     fn synchronize(&self, record: &InstallationRecord) -> Result<(), ManagedError>;
 }
 
@@ -227,6 +270,10 @@ impl ManagedResources {
 
     /// Inspect retained uses and recover only transitions whose original acceptance is still
     /// pending. Uncertain transitions remain closed until an authorized recovery request.
+    ///
+    /// # Errors
+    /// Returns integrity, inventory, coordination, platform, or registry-publication failures.
+    /// Execution admission must remain closed when startup recovery cannot complete.
     pub fn recover_startup(&self) -> Result<(), ManagedError> {
         self.store.verify_managed_integrity()?;
         self.platform.recover_verifications()?;
@@ -267,6 +314,11 @@ impl ManagedResources {
 
     /// Execute one request under a trusted authenticated caller's exact grant claim. Authorization
     /// is re-evaluated here for both HTTP and in-process adapters; transports cannot widen it.
+    ///
+    /// # Errors
+    /// Rejects malformed or unauthorized requests, conflicting command replays, busy drivers,
+    /// and unsafe resource transitions. Persistence or platform failures preserve accepted
+    /// transition evidence for inspection and authorized recovery.
     pub fn execute(
         &self,
         caller: &AuthorityRequest,
@@ -344,12 +396,15 @@ impl ManagedResources {
                 .as_ref()
                 .or_else(|| r.pending.as_ref().map(|p| &p.change.candidate))
         });
-        let ownership = existing.map(|s| s.ownership.clone()).unwrap_or_else(|| {
-            digest(&format!(
-                "{}:{}:{}:{}",
-                caller.actor, caller.grant_digest, request.installation, request.command
-            ))
-        });
+        let ownership = existing.map_or_else(
+            || {
+                digest(&format!(
+                    "{}:{}:{}:{}",
+                    caller.actor, caller.grant_digest, request.installation, request.command
+                ))
+            },
+            |setup| setup.ownership.clone(),
+        );
         let generation = record.as_ref().map_or(1, |r| {
             r.generation.saturating_add(u64::from(matches!(
                 request.action,
@@ -368,7 +423,17 @@ impl ManagedResources {
                 .and_then(|r| r.pending.as_ref())
                 .map(|pending| pending.change.candidate.clone())
                 .ok_or_else(|| ManagedError::Conflict("no pending transition".to_owned()))?,
-            _ => existing
+            ManagedAction::Evaluate { .. }
+            | ManagedAction::Publish { .. }
+            | ManagedAction::Evidence { .. }
+            | ManagedAction::Inspect { .. }
+            | ManagedAction::Start { .. }
+            | ManagedAction::Stop { .. }
+            | ManagedAction::Preserve { .. }
+            | ManagedAction::Remove { .. }
+            | ManagedAction::Handoff { .. }
+            | ManagedAction::Return { .. }
+            | ManagedAction::Resolve { .. } => existing
                 .cloned()
                 .ok_or_else(|| ManagedError::Rejected("installation does not exist".to_owned()))?,
         };
@@ -632,7 +697,13 @@ impl ManagedResources {
                 }
                 return Ok(receipt.response);
             }
-            _ => {
+            ManagedAction::Evaluate { .. }
+            | ManagedAction::Evidence { .. }
+            | ManagedAction::Prepare { .. }
+            | ManagedAction::Inspect { .. }
+            | ManagedAction::Handoff { .. }
+            | ManagedAction::Return { .. }
+            | ManagedAction::Resolve { .. } => {
                 return Err(ManagedError::Rejected(
                     "unsupported lifecycle action".to_owned(),
                 ));

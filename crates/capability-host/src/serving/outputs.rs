@@ -10,6 +10,10 @@ use milkdrift_persistence::{
 impl PeerService {
     /// Read a bounded range of an artifact listed by this caller's exact accepted operation.
     /// Archival retains terminal references; unfinished output observations use bounded pages.
+    ///
+    /// # Errors
+    /// Rejects invalid range bounds, inaccessible invocations, missing retained terminal outputs,
+    /// or insufficient current output permission. Metadata, read, and integrity failures propagate.
     pub fn client_output(
         &self,
         actor: &ActorRef,

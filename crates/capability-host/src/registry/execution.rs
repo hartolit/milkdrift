@@ -23,6 +23,10 @@ use crate::{
 impl CapabilityHost {
     /// Exercises prepared adapter entry without a durable owner in conformance tests.
     #[cfg(any(test, feature = "test-support"))]
+    ///
+    /// # Errors
+    /// Rejects invalid snapshots, closed admission, unavailable generations, and exhausted
+    /// permits; propagates adapter preparation, entry, panic, and reporting failures.
     pub fn execute_exact(
         &self,
         snapshot: &ResolvedCapabilitySnapshot,
@@ -35,6 +39,10 @@ impl CapabilityHost {
 
     /// Exercises contextual prepared entry without a durable owner in adapter tests.
     #[cfg(any(test, feature = "test-support"))]
+    ///
+    /// # Errors
+    /// Rejects invalid exact dispatch or unavailable permits, and propagates adapter preparation,
+    /// entry, panic, and reporting failures. Context does not replace durable admission.
     pub fn execute_exact_with_context(
         &self,
         snapshot: &ResolvedCapabilitySnapshot,
@@ -77,6 +85,10 @@ impl CapabilityHost {
     ///
     /// This inherent boundary lets capability adapters such as peer transports reuse host
     /// ownership semantics without depending on the runtime trait that also exposes it.
+    ///
+    /// # Errors
+    /// Returns an error if no retained generation owns the invocation, the registry is unavailable,
+    /// the adapter fails or panics, or its acknowledgement names another request.
     pub fn cancel_exact(
         &self,
         request: &CancellationRequest,

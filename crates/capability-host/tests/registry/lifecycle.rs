@@ -157,7 +157,8 @@ fn registration_and_lifecycle_failures_are_contained_without_partial_visibility(
         ),
         Err(HostError::AdapterPanicked)
     ));
-    let view = &drain_host.generations(&visible, 100)?[0];
+    let views = drain_host.generations(&visible, 100)?;
+    let view = views.first().ok_or("draining generation missing")?;
     assert!(view.draining);
     assert!(!view.current);
     drain_host.finish_drain(
@@ -200,7 +201,7 @@ fn shutdown_refuses_an_incomplete_registration_and_the_started_adapter_cleans_up
     adapter.start_gate = Some(gate.clone());
     let adapter = Arc::new(adapter);
     let registering_host = host.clone();
-    let registering_descriptor = descriptor.clone();
+    let registering_descriptor = descriptor;
     let registering_adapter = adapter.clone();
     let registration = std::thread::spawn(move || {
         registering_host.register(registering_descriptor, registering_adapter, None)

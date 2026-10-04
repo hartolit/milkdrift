@@ -17,6 +17,10 @@ pub struct DirectInputSelection {
 impl DirectInputSelection {
     /// Selects only supplied inline values and exact immutable artifact references.
     /// Workflow context and workspace-value references are refused, never silently omitted.
+    ///
+    /// # Errors
+    /// Rejects workflow bindings, incomplete artifact metadata, byte overflow, or inputs exceeding
+    /// the allowance. Canonical encoding failures are also returned.
     pub fn new(
         request: &InvocationRequest,
         maximum_bytes: u64,
@@ -102,6 +106,10 @@ impl DirectInputSelection {
     }
 
     /// Checks the immutable request facts after the serving owner scopes invocation identities.
+    ///
+    /// # Errors
+    /// Rejects changes to the frozen capability, operation, profile, inputs, or extensions, and
+    /// refuses any added workflow context manifest.
     pub fn validate_request(&self, request: &InvocationRequest) -> Result<(), InvocationDataError> {
         if self.request.capability() != request.capability()
             || self.request.operation() != request.operation()
@@ -123,6 +131,9 @@ impl DirectInputSelection {
     }
 
     /// Refuses nested or substituted references before a data-access implementation reads them.
+    ///
+    /// # Errors
+    /// Rejects references absent from the exact accepted input set, including substituted metadata.
     pub fn require_artifact(
         &self,
         reference: &ArtifactReference,

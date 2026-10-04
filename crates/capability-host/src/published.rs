@@ -9,6 +9,10 @@ use milkdrift_runtime::ExecutorError;
 pub trait PublishedWorkflowContinuation: Send + Sync {
     /// Arrange/recover the exact child and observe one terminal result without waiting for work.
     /// Errors retain the association and must not authorize a replacement child.
+    ///
+    /// # Errors
+    /// Returns an execution error when the retained association cannot be recovered, advanced,
+    /// or observed durably. Failure never permits replacement of the accepted child.
     fn continue_invocation(
         &self,
         plan: &PublishedInvocationPlan,

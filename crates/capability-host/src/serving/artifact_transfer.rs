@@ -14,6 +14,10 @@ use super::{PeerService, ServingError, map_execution_persistence};
 impl PeerService {
     /// Offers the exact artifact at one durable output observation to its authenticated owner.
     /// Metadata requires the same download authority as subsequent chunks.
+    ///
+    /// # Errors
+    /// Rejects unavailable relationships, missing output observations, or insufficient inspection
+    /// and download authority. Rate, clock, metadata, and persistence failures also propagate.
     pub fn output_artifact_offer(
         &self,
         authenticated_peer: &PeerId,
@@ -83,6 +87,11 @@ impl PeerService {
     }
 
     /// Negotiates a metadata-first authorized upload or download.
+    ///
+    /// # Errors
+    /// Rejects invalid offers, stale or draining input requests, unowned executions, mismatched
+    /// metadata, insufficient artifact authority, and rate or byte limits. Core transfer
+    /// failures propagate without implying that temporary bytes were removed.
     pub fn negotiate_artifact(
         &self,
         authenticated_peer: &PeerId,
@@ -243,6 +252,10 @@ impl PeerService {
     }
 
     /// Accepts one sequential bounded artifact chunk.
+    ///
+    /// # Errors
+    /// Rejects unauthenticated or revoked peers, unknown/wrong-direction transfers, insufficient
+    /// upload authority, and rate limits. Chunk verification and publication failures propagate.
     pub fn write_artifact_chunk(
         &self,
         authenticated_peer: &PeerId,
@@ -277,6 +290,10 @@ impl PeerService {
     }
 
     /// Returns one authorized verified artifact range.
+    ///
+    /// # Errors
+    /// Rejects unavailable relationships, unknown/wrong-direction transfers, insufficient download
+    /// authority, and rate limits. Range, expiry, and core read failures propagate.
     pub fn read_artifact_chunk(
         &self,
         authenticated_peer: &PeerId,
@@ -314,6 +331,10 @@ impl PeerService {
     }
 
     /// Aborts an incomplete artifact transfer and removes temporary bytes.
+    ///
+    /// # Errors
+    /// Rejects unavailable relationships, unknown transfers, insufficient transfer authority,
+    /// and rate limits. A core abort failure leaves cleanup pending for retry.
     pub fn abort_artifact(
         &self,
         authenticated_peer: &PeerId,

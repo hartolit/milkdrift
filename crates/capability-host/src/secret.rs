@@ -22,6 +22,10 @@ pub enum SecretResolverError {
 /// invocation contracts. Production sources are supplied by `milkdrift-local-secret`.
 pub trait SecretResolver: Send + Sync {
     /// Resolves one authorized opaque reference into explicitly sensitive bytes.
+    ///
+    /// # Errors
+    /// Returns `Unavailable` for an unconfigured reference or `ResolverUnavailable` when the
+    /// resolver cannot read its source. Errors must not disclose secret bytes.
     fn resolve(&self, reference: &SecretRef) -> Result<SensitiveSecret, SecretResolverError>;
 }
 
@@ -41,6 +45,9 @@ impl InMemorySecretResolver {
     }
 
     /// Installs test-only secret bytes under an opaque reference.
+    ///
+    /// # Errors
+    /// Returns `ResolverUnavailable` if a panic poisoned the test resolver's lock.
     pub fn insert(&self, reference: SecretRef, value: Vec<u8>) -> Result<(), SecretResolverError> {
         self.values
             .lock()

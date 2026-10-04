@@ -451,7 +451,13 @@ fn duplicate_effect_delivery_never_enters_twice_or_leaks_the_prepared_generation
         1_000,
     )?;
     assert_eq!(generations.len(), 1);
-    assert_eq!(generations[0].active_permits, 0);
+    assert_eq!(
+        generations
+            .first()
+            .ok_or("registered generation missing")?
+            .active_permits,
+        0
+    );
     Ok(())
 }
 
@@ -523,7 +529,13 @@ fn admission_panic_is_contained_before_entry_and_releases_the_generation_permit(
         &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
         1_000,
     )?;
-    assert_eq!(generations[0].active_permits, 0);
+    assert_eq!(
+        generations
+            .first()
+            .ok_or("registered generation missing")?
+            .active_permits,
+        0
+    );
     Ok(())
 }
 

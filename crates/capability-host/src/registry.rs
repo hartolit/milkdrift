@@ -37,6 +37,9 @@ pub struct HostConfig {
 
 impl HostConfig {
     /// Validates nonzero defensive bounds.
+    ///
+    /// # Errors
+    /// Rejects any zero registry, generation, concurrency, or observation-age bound.
     pub fn validate(self) -> Result<Self, HostError> {
         if self.max_registrations == 0
             || self.max_generations_per_capability == 0

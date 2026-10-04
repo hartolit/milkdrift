@@ -16,6 +16,10 @@ use super::{
 
 impl PeerService {
     /// Derives a complete filtered, expiring catalog from the live capability host.
+    ///
+    /// # Errors
+    /// Rejects inactive relationships or insufficient catalog/health/profile authority and rate
+    /// limits. Clock, registry, encoding, cache, or durable catalog failures propagate.
     pub fn catalog(&self, authenticated_peer: &PeerId) -> Result<CatalogSnapshot, ServingError> {
         let relationship = self.relationship(authenticated_peer)?;
         self.require_operation(

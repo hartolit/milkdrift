@@ -18,6 +18,10 @@ impl PeerService {
     ///
     /// Submission rechecks catalog, authority, inputs and limits. Preparation reserves neither
     /// a generation nor execution capacity and must never replace exact replay after submission.
+    ///
+    /// # Errors
+    /// Rejects the wrong host, unavailable or unauthorized operations, invalid inputs or limits,
+    /// and deadline overflow. Discovery, authority, and clock failures also propagate.
     pub fn prepare_client_invocation(
         &self,
         actor: &ActorRef,
@@ -85,6 +89,10 @@ impl PeerService {
     }
 
     /// Discovers this installation and the client's currently authorized exact generations.
+    ///
+    /// # Errors
+    /// Rejects absent client policy or insufficient current catalog authority; propagates
+    /// catalog rate, clock, registry, encoding, and persistence failures.
     pub fn client_discovery(
         &self,
         actor: &ActorRef,
@@ -102,6 +110,10 @@ impl PeerService {
     }
 
     /// Projects a protected invocation without exposing internal claims or storage documents.
+    ///
+    /// # Errors
+    /// Rejects unknown or unowned executions and insufficient current inspection/output
+    /// authority. Rate, clock, and persistence failures propagate.
     pub fn client_read(
         &self,
         actor: &ActorRef,
@@ -143,6 +155,11 @@ impl PeerService {
         })
     }
     /// Requests durable cancellation; acknowledgement is separate from terminal evidence.
+    ///
+    /// # Errors
+    /// Rejects malformed cancellation, unknown executions, insufficient current cancellation
+    /// authority, and rate limits. Durable request or acknowledgement failures propagate;
+    /// cancellation receipt alone is never terminal evidence.
     pub fn cancel_client(
         &self,
         actor: &ActorRef,
@@ -165,6 +182,10 @@ impl PeerService {
     }
 
     /// Reads a bounded contiguous page after checking current access to all disclosed artifacts.
+    ///
+    /// # Errors
+    /// Rejects invalid page bounds, missing executions, insufficient current inspection/output
+    /// authority, and rate limits. Persistence and noncontiguous observation failures propagate.
     pub fn client_observations(
         &self,
         actor: &ActorRef,
@@ -221,6 +242,10 @@ impl PeerService {
     }
 
     /// Discovers exact current generations after client authentication and resource authorization.
+    ///
+    /// # Errors
+    /// Rejects unconfigured/revoked clients, insufficient catalog permissions, and rate limits.
+    /// Clock, registry, encoding, cache, and durable catalog failures propagate.
     pub fn client_catalog(&self, actor: &ActorRef) -> Result<CatalogSnapshot, ServingError> {
         self.check_client_rate(actor, "catalog")?;
         let grant = self.client_grant(actor)?;
@@ -314,6 +339,11 @@ impl PeerService {
     }
 
     /// Accepts an independent client request after resolving its server-owned authority basis.
+    ///
+    /// # Errors
+    /// Rejects missing client authority, malformed submissions, or inaccessible replay records;
+    /// propagates rate, clock, and persistence failures. Admission refusals, including exact
+    /// request conflicts, can also be returned as a successful rejection response.
     pub fn invoke_client(
         &self,
         actor: &ActorRef,
@@ -432,6 +462,10 @@ impl PeerService {
     }
 
     /// Looks up only the authenticated client's request namespace, including archived work.
+    ///
+    /// # Errors
+    /// Rejects insufficient current inspection/output authority or rate limits, and propagates
+    /// clock/storage failures. A successfully checked absent request returns `NotAccepted`.
     pub fn client_lookup(
         &self,
         actor: &ActorRef,
@@ -461,6 +495,10 @@ impl PeerService {
     }
 
     /// Inspects only an execution owned by this authenticated client, with current permissions.
+    ///
+    /// # Errors
+    /// Rejects missing or unowned executions, insufficient current inspection/output authority,
+    /// and rate limits. Clock and persistence failures propagate.
     pub fn client_inspect(
         &self,
         actor: &ActorRef,

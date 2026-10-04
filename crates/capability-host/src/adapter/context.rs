@@ -75,6 +75,7 @@ impl AdapterExecutionContext {
     }
 
     /// Existing acceptance owner; serving workflow coordinates never become a second local attempt.
+    #[must_use]
     pub fn published_source(
         &self,
     ) -> Option<milkdrift_persistence::published::PublishedInvocationSource> {
@@ -108,6 +109,10 @@ impl AdapterExecutionContext {
 
     /// Recover a public result's local owner from the exact attempt association. This constructor
     /// carries the original reservation so publishing result bytes cannot escape its accounting.
+    ///
+    /// # Errors
+    /// Returns an integrity error if the plan does not match this run's exact retained attempt
+    /// and revision, or if its controller account or reservation cannot be recovered.
     pub fn published_local_result(
         plan: &milkdrift_persistence::published::PublishedInvocationPlan,
         projection: &milkdrift_runtime::RunProjection,
@@ -155,6 +160,10 @@ impl AdapterExecutionContext {
 
     /// Recover the serving artifact namespace from the entered operation, including a workflow
     /// origin on another host. That origin must never be mistaken for a locally owned run.
+    ///
+    /// # Errors
+    /// Rejects a mismatched plan, source, input selection, or execution that lacks durable entry.
+    /// Invalid authorization facts and exhausted artifact allowances also fail.
     pub fn published_serving_result(
         plan: &milkdrift_persistence::published::PublishedInvocationPlan,
         record: &milkdrift_persistence::PeerExecutionRecord,

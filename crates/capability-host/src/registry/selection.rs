@@ -19,6 +19,9 @@ use crate::CapabilityAdapter;
 
 impl CapabilityHost {
     /// Constructs an empty host with admission open.
+    ///
+    /// # Errors
+    /// Rejects invalid host bounds before constructing the registry.
     pub fn new(config: HostConfig, policy: CapabilitySelectionPolicy) -> Result<Self, HostError> {
         let config = config.validate()?;
         Ok(Self {
@@ -174,6 +177,10 @@ impl CapabilityHost {
     }
 
     /// Replaces the live observation for one exact generation.
+    ///
+    /// # Errors
+    /// Rejects mismatched capability identities, unavailable generations or registry state,
+    /// and observations whose timestamp regresses.
     pub fn update_observation(
         &self,
         capability: &CapabilityId,
@@ -206,6 +213,10 @@ impl CapabilityHost {
     }
 
     /// Pulls one bounded health observation from the exact adapter generation.
+    ///
+    /// # Errors
+    /// Returns registry/generation failures, adapter errors or panics, and observations with
+    /// mismatched identity, boundary time, or regressing timestamps.
     pub fn refresh_health(
         &self,
         capability: &CapabilityId,
@@ -239,6 +250,10 @@ impl CapabilityHost {
     /// Authority is evaluated before mutable availability so denial is not presented as absence.
     /// Prospective revision checks defer health and capacity checks to ordinary scheduling.
     /// The returned selection holds no permit; exact entry can still fail after this call.
+    ///
+    /// # Errors
+    /// Returns closed-admission, semantic mismatch, authority refusal, unavailable health,
+    /// capacity, or registry failures. Authority evaluation failures remain refusals.
     pub fn resolve_authorized_at(
         &self,
         requirement: &CapabilityRequirement,
@@ -371,6 +386,10 @@ impl CapabilityHost {
     /// Resolves semantic/health/capacity state for registry inspection only.
     ///
     /// The returned value has no authority decision and cannot be dispatched by the runtime.
+    ///
+    /// # Errors
+    /// Returns closed-admission, semantic mismatch, unavailable health, exhausted capacity,
+    /// or registry failures; successful inspection grants no execution authority.
     pub fn resolve_at(
         &self,
         requirement: &CapabilityRequirement,

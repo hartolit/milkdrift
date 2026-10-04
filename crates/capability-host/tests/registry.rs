@@ -457,8 +457,10 @@ fn exact_execution_refuses_every_mismatched_request_selection_before_adapter_ent
         host.generations(
             &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
             150,
-        )?[0]
-            .active_permits,
+        )?
+        .first()
+        .ok_or("registered generation missing")?
+        .active_permits,
         0
     );
     Ok(())
@@ -541,7 +543,13 @@ fn permits_cancel_exact_owner_and_release_after_panic_and_completion() -> TestRe
         &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
         150,
     )?;
-    assert_eq!(views[0].active_permits, 0);
+    assert_eq!(
+        views
+            .first()
+            .ok_or("registered generation missing")?
+            .active_permits,
+        0
+    );
 
     adapter.panic_execute.store(true, Ordering::SeqCst);
     assert!(matches!(
@@ -556,7 +564,13 @@ fn permits_cancel_exact_owner_and_release_after_panic_and_completion() -> TestRe
         &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
         150,
     )?;
-    assert_eq!(views[0].active_permits, 0);
+    assert_eq!(
+        views
+            .first()
+            .ok_or("registered generation missing")?
+            .active_permits,
+        0
+    );
     host.finish_drain(descriptor.identity(), descriptor.descriptor_revision())?;
     Ok(())
 }
@@ -616,8 +630,10 @@ fn adapter_failures_preserve_pre_entry_and_post_entry_uncertainty() -> TestResul
             host.generations(
                 &CapabilityAuthorityScope::allow_any(SideEffectClass::Unknown),
                 150,
-            )?[0]
-                .active_permits,
+            )?
+            .first()
+            .ok_or("registered generation missing")?
+            .active_permits,
             0
         );
     }

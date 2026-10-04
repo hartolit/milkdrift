@@ -364,7 +364,7 @@ fn seed_invocation(
         vec![created, event],
         vec![milkdrift_persistence::WorkspaceMutation::CreateScope { scope: root_scope }],
         Some(WorkspaceAccounting {
-            budget: budget.clone(),
+            budget,
             expected_usage: WorkspaceUsage::EMPTY,
             resulting_usage,
         }),
@@ -470,7 +470,7 @@ fn configured_process_input_can_materialize_the_exact_context_manifest() -> Test
     let budget = WorkspaceBudget::new(16, 1024, 4096, 16, 1024, 4096)?;
     let context = context()?;
     let base_request = request()?;
-    seed_invocation(store.as_ref(), &context, &base_request, budget.clone())?;
+    seed_invocation(store.as_ref(), &context, &base_request, budget)?;
     let authorized = ArtifactReadAuthority::Authorized {
         actor: ActorRef::new("actor-materialization")?,
         evidence: EvidenceId::new("evidence-materialization")?,

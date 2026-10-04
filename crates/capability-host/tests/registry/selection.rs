@@ -343,15 +343,15 @@ fn visible_generation_operations_are_filtered_by_the_exact_selector() -> TestRes
         .build();
     let views = host.generations(&allow_one, 150)?;
     assert_eq!(views.len(), 1);
+    let view = views.first().ok_or("authorized generation missing")?;
     assert_eq!(
-        views[0]
-            .operation_contracts
+        view.operation_contracts
             .keys()
             .cloned()
             .collect::<BTreeSet<_>>(),
         BTreeSet::from([allowed])
     );
-    assert!(!views[0].operation_contracts.contains_key(&denied));
+    assert!(!view.operation_contracts.contains_key(&denied));
 
     let deny_every_operation = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
         .only_operations(BTreeSet::from([OperationId::new("model.missing")?]))?
@@ -486,7 +486,7 @@ fn task_placement_filters_lookalikes_denial_health_and_removed_selection() -> Te
         )?;
         adapters.push(adapter);
     }
-    let requirement = CapabilityRequirement::new(operation.clone()).with_placement(
+    let requirement = CapabilityRequirement::new(operation).with_placement(
         PlacementRequirement::new(None, Some(BTreeSet::from([peer_a.clone()])))?,
     );
     let scope = CapabilityAuthorityScopeBuilder::new(SideEffectClass::Unknown)
@@ -600,8 +600,10 @@ fn peer_set_order_is_deterministic_and_registration_race_cannot_change_frozen_ho
     )?;
     // The same identity with a new revision deliberately advertises another host.
     let mut wire = serde_json::to_value(&a)?;
-    wire["descriptor_revision"] = serde_json::json!(2);
-    wire["peer"] = serde_json::json!("peer-b");
+    *wire
+        .get_mut("descriptor_revision")
+        .ok_or("descriptor revision missing")? = serde_json::json!(2);
+    *wire.get_mut("peer").ok_or("peer placement missing")? = serde_json::json!("peer-b");
     let replacement: CapabilityDescriptor = serde_json::from_value(wire)?;
     let new_adapter = Arc::new(FakeAdapter::new(replacement.identity().clone()));
     let barrier = Arc::new(std::sync::Barrier::new(2));

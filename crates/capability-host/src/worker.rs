@@ -34,6 +34,9 @@ pub struct EffectWorkerConfig {
 
 impl EffectWorkerConfig {
     /// Validates nonzero, deliberately modest process-local bounds.
+    ///
+    /// # Errors
+    /// Rejects zero or excessive thread, queue, and claim-page bounds.
     pub fn validate(self) -> Result<Self, EffectWorkerError> {
         if self.execution_threads == 0
             || self.execution_threads > 256
@@ -169,6 +172,10 @@ impl Drop for WorkerStartup {
 
 impl EffectWorkerHost {
     /// Starts exactly the configured threads; no singleton or async runtime is used.
+    ///
+    /// # Errors
+    /// Rejects invalid worker bounds and returns thread-spawn failures. Partial startup closes
+    /// the unexposed queues and joins every thread already started.
     pub fn start(
         runtime: Arc<RuntimeService>,
         capability_host: CapabilityHost,
@@ -223,6 +230,11 @@ impl EffectWorkerHost {
     }
 
     /// Claims only enough actions to fit the exact currently available queue space.
+    ///
+    /// # Errors
+    /// Rejects closed admission and unavailable synchronization, and returns runtime-claim,
+    /// disconnected-queue, or capacity-accounting failures. Claimed durable work remains
+    /// subject to recovery when it cannot be queued.
     pub fn poll(&self) -> Result<EffectPollReport, EffectWorkerError> {
         let _poll = self
             .poll_gate
@@ -309,6 +321,9 @@ impl EffectWorkerHost {
     }
 
     /// Returns one bounded lock-free/small-lock health snapshot.
+    ///
+    /// # Errors
+    /// Returns `StateUnavailable` if a panic poisoned the bounded counters lock.
     pub fn health(&self) -> Result<EffectWorkerHealth, EffectWorkerError> {
         let counters = self
             .shared
@@ -332,6 +347,10 @@ impl EffectWorkerHost {
     ///
     /// `deadline` is a duration from this call. An unclean result means worker or adapter lifecycle
     /// completion was not established within it; it is not proof that external work stopped.
+    ///
+    /// # Errors
+    /// Returns host drain/shutdown or synchronization failures. A failed or unclean result
+    /// does not establish external quiescence or resolve durable invocation outcomes.
     pub fn shutdown(
         &self,
         mode: EffectShutdownMode,

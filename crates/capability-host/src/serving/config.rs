@@ -102,6 +102,10 @@ impl fmt::Debug for PeerRelationship {
 
 impl PeerRelationship {
     /// Validates quotas, credential presence, TTL, and the default-deny relationship shape.
+    ///
+    /// # Errors
+    /// Rejects unsupported protocol ranges, invalid execution/network bounds, absent or oversized
+    /// credentials, and invalid concurrency, request-rate, TTL, expiry, or sensitivity limits.
     pub fn validate(&self) -> Result<(), ServingError> {
         validate_current_protocol_range(self.versions)?;
         self.execution_limits
@@ -213,6 +217,10 @@ impl ServingClientPolicy {
 
 impl PeerServerConfig {
     /// Validates all bounds and rejects duplicate remote identities.
+    ///
+    /// # Errors
+    /// Rejects unsupported protocol versions, invalid hard limits, leases or worker bounds,
+    /// excessive relationships, invalid relationship settings, and duplicate/local peer identities.
     pub fn validate(&self) -> Result<(), ServingError> {
         validate_current_protocol_range(self.versions)?;
         self.limits

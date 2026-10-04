@@ -35,6 +35,9 @@ pub struct AdapterError {
 
 impl AdapterError {
     /// Constructs a failure with a summary limited to 512 bytes.
+    ///
+    /// # Errors
+    /// Returns an error when the summary is empty or exceeds 512 bytes.
     pub fn new(
         kind: AdapterFailureKind,
         summary: impl Into<String>,
@@ -191,9 +194,17 @@ impl<'a> AdapterInvocation<'a> {
 /// boundary; it is not merely queued in adapter memory.
 pub trait AdapterReporter: Send + Sync {
     /// Submits one bounded sequenced invocation observation durably.
+    ///
+    /// # Errors
+    /// Returns an error if the event violates this invocation's sequence or terminal contract,
+    /// or if its observation cannot be committed. The adapter must propagate the failure.
     fn invocation(&self, event: InvocationEvent) -> Result<(), AdapterError>;
 
     /// Requests a runtime-chosen lease extension and waits for durability.
+    ///
+    /// # Errors
+    /// Returns an error if the invocation cannot renew its lease or the renewal cannot be
+    /// persisted. Receipt of this call alone does not prove a renewed lease.
     fn heartbeat(&self) -> Result<(), AdapterError>;
 }
 
@@ -227,6 +238,10 @@ pub trait CapabilityAdapter: Send + Sync + 'static {
     /// bounded and authorized. The returned closure owns the prepared bytes until the
     /// final authority/account transaction permits its single entry. The default only
     /// freezes admission facts; adapters with local request validation should override it.
+    ///
+    /// # Errors
+    /// Returns an error when local validation, bounded input reads, or admission-envelope
+    /// construction fails. Preparation must not have entered the external capability.
     fn prepare(
         self: Arc<Self>,
         invocation: &AdapterInvocation<'_>,
@@ -241,6 +256,10 @@ pub trait CapabilityAdapter: Send + Sync + 'static {
     /// Derives enforceable bounds for this exact immutable request and generation.
     /// This hook runs before durable entry intent; it must not start external work. Return
     /// unknown resource dimensions honestly so runtime can refuse unsupported reservations.
+    ///
+    /// # Errors
+    /// Returns an error when the exact request cannot be validated or its enforceable bounds
+    /// cannot be represented. Unknown dimensions must remain unknown rather than invented.
     fn admission_envelope(
         &self,
         invocation: &AdapterInvocation<'_>,
@@ -256,12 +275,20 @@ pub trait CapabilityAdapter: Send + Sync + 'static {
     ///
     /// Repeated calls must either replay idempotently or return a stable typed lifecycle conflict.
     /// A failed call must remain safe for one cleanup call to [`CapabilityAdapter::shutdown`].
+    ///
+    /// # Errors
+    /// Returns an error if resources cannot start or lifecycle replay conflicts. The host will
+    /// call shutdown once after a failed start; failure itself does not prove cleanup.
     fn start(&self) -> Result<(), AdapterError>;
 
     /// Executes exactly the supplied immutable selection with no fallback.
     /// Emit observations through the reporter and propagate its failures. A successful method
     /// return without durable terminal evidence does not establish completion. Resource-owning
     /// implementations must also arrange cleanup when reporting fails after external entry.
+    ///
+    /// # Errors
+    /// Returns an error on external execution or durable reporter failure. An error after entry
+    /// does not prove the external effect stopped or authorize replay.
     fn execute(
         &self,
         invocation: &AdapterInvocation<'_>,
@@ -269,18 +296,30 @@ pub trait CapabilityAdapter: Send + Sync + 'static {
     ) -> Result<(), AdapterError>;
 
     /// Routes cancellation to the adapter generation owning the invocation.
+    ///
+    /// # Errors
+    /// Returns an error if cancellation cannot be routed or the mechanism cannot report its
+    /// acknowledgement. Neither an error nor receipt alone establishes termination.
     fn cancel(
         &self,
         request: &CancellationRequest,
     ) -> Result<CancellationAcknowledgement, AdapterError>;
 
     /// Returns one bounded observation at an explicitly supplied boundary time.
+    ///
+    /// # Errors
+    /// Returns an error if the mechanism cannot produce a bounded observation at the supplied
+    /// time. The host must not turn that failure into an available observation.
     fn health(&self, observed_at_unix_ms: u64) -> Result<CapabilityObservation, AdapterError>;
 
     /// Stops adapter-owned admission while already selected exact work and active work can finish.
     ///
     /// The host separately removes this generation from new resolution before invoking the hook.
     /// Repeated drain calls must be idempotent.
+    ///
+    /// # Errors
+    /// Returns an error if admission cannot be stopped. Existing work retains its resource
+    /// ownership until independently established completion or shutdown.
     fn begin_drain(&self) -> Result<(), AdapterError>;
 
     /// Releases adapter-owned live resources after admission and in-flight work close.
@@ -288,6 +327,10 @@ pub trait CapabilityAdapter: Send + Sync + 'static {
     /// Repeated calls must be idempotent. Resource-owning implementations must join or release
     /// everything they own, while stateless implementations explicitly return the no-resource
     /// outcome.
+    ///
+    /// # Errors
+    /// Returns an error if owned resources cannot be joined or released. Callers must retain
+    /// uncertainty about external quiescence when shutdown fails.
     fn shutdown(&self) -> Result<(), AdapterError>;
 }
 
@@ -313,6 +356,7 @@ enum PreparedAdapterAction {
 impl PreparedAdapterExecution {
     /// Arrange a real internal workflow through the caller's durable continuation owner.
     /// This preparation performs no child creation; the association must first be committed.
+    #[must_use]
     pub fn published(
         envelope: InvocationAdmissionEnvelope,
         plan: milkdrift_persistence::published::PublishedInvocationPlan,
@@ -347,6 +391,10 @@ impl PreparedAdapterExecution {
     /// Add an adapter's resource-entry guard around already prepared work without preparing again.
     /// The host invokes the wrapper only after final authority and durable entry. The wrapped
     /// one-shot entry cannot escape before that boundary, and the original admission envelope stays fixed.
+    ///
+    /// # Errors
+    /// Rejects published workflow continuations, whose durable lifetime cannot be wrapped in
+    /// a synchronous external-entry guard.
     pub fn with_entry_wrapper(
         self,
         wrapper: impl FnOnce(

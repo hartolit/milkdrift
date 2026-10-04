@@ -32,6 +32,10 @@ impl CapabilityHost {
     }
 
     /// Install the workflow-enabled composition's owner before accepting published calls.
+    ///
+    /// # Errors
+    /// Returns `RegistryUnavailable` if the continuation slot is poisoned or already has a
+    /// live owner. The caller must retain the supplied owner for accepted continuations.
     pub fn install_published_continuation(
         &self,
         owner: &Arc<dyn PublishedWorkflowContinuation>,
@@ -73,6 +77,10 @@ impl CapabilityHost {
     }
     /// Restore a saved invocation's lifetime pin before reopening admission. The publication's
     /// immutable pending bound is independent of live worker/entry capacity.
+    ///
+    /// # Errors
+    /// Rejects conflicting invocation ownership, unavailable generations, exhausted pending
+    /// capacity, unavailable registry state, or inconsistent entry-permit accounting.
     pub fn retain_published_invocation(
         &self,
         plan: &PublishedInvocationPlan,

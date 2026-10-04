@@ -24,6 +24,10 @@ use crate::{
 
 /// Applies the production serving-entry checks to a storage fixture's retained record.
 /// Production callers receive this context only from the serving worker after durable entry.
+///
+/// # Errors
+/// Rejects a record without matching durable entry, authorization, input selection, or
+/// remaining artifact allowance, using the production serving checks.
 pub fn entered_serving_context(
     context: AdapterExecutionContext,
     record: &milkdrift_persistence::PeerExecutionRecord,
@@ -103,6 +107,10 @@ pub struct AdapterConformanceCase {
 
 impl AdapterConformanceCase {
     /// Constructs one exact case. The request must name an operation on the descriptor.
+    ///
+    /// # Errors
+    /// Rejects requests whose operation, capability, or provider profile does not match the
+    /// supplied immutable descriptor.
     pub fn new(
         adapter: Arc<dyn CapabilityAdapter>,
         descriptor: CapabilityDescriptor,
@@ -203,6 +211,10 @@ impl fmt::Display for AdapterConformanceError {
 impl std::error::Error for AdapterConformanceError {}
 
 /// Runs the same common contract against one fresh production fixture per scenario.
+///
+/// # Errors
+/// Returns the first fixture, lifecycle, execution, cancellation, reporting, or cleanup
+/// failure, including any observed violation of the declared adapter contract.
 pub fn run_adapter_conformance<E>(
     mut factory: impl FnMut(ConformanceScenario) -> Result<AdapterConformanceCase, E>,
 ) -> Result<(), AdapterConformanceError>
@@ -501,6 +513,9 @@ pub struct RecordingReporter {
 
 impl RecordingReporter {
     /// Returns the exact observations in arrival order for independent assertions.
+    ///
+    /// # Errors
+    /// Returns an external failure if a panic poisoned the observation lock.
     pub fn events(&self) -> Result<Vec<InvocationEvent>, AdapterError> {
         self.events
             .lock()
@@ -650,6 +665,7 @@ fn require(condition: bool, message: &'static str) -> Result<(), AdapterConforma
         .ok_or_else(|| AdapterConformanceError::new(message))
 }
 /// Supplies the host's explicit no-transfer policy to adapter conformance fixtures.
+#[must_use]
 pub fn disabled_artifact_store() -> std::sync::Arc<dyn crate::PeerArtifactStore> {
     std::sync::Arc::new(crate::serving::DisabledArtifactStore)
 }

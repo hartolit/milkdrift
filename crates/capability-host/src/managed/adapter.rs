@@ -36,6 +36,10 @@ impl ManagedLifecycleAdapter {
 
 /// The resource-management operation itself grants no raw platform access. The semantic owner
 /// separately checks the exact installation and requested operation beneath every caller.
+///
+/// # Errors
+/// Returns a contract error if the built-in schema, operation, or descriptor constants no
+/// longer satisfy the capability contract.
 pub fn managed_lifecycle_descriptor()
 -> Result<CapabilityDescriptor, milkdrift_capability::ContractError> {
     let schema = SchemaContract::new(
@@ -96,7 +100,8 @@ fn parse(
     };
     let value = match input(name)?.value() {
         InvocationValueReference::Inline { value } => value.value().clone(),
-        _ => {
+        InvocationValueReference::Artifact { .. }
+        | InvocationValueReference::WorkspaceValue { .. } => {
             let context = invocation.context().ok_or_else(|| {
                 AdapterError::rejected(
                     "referenced managed target/request requires authorized execution context",

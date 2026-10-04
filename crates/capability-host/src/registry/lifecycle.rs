@@ -61,6 +61,10 @@ impl CapabilityHost {
     }
 
     /// Marks an exact generation draining and removes it from new resolution.
+    ///
+    /// # Errors
+    /// Returns registry or missing-generation errors and adapter drain failures, including
+    /// contained panics. A failed hook does not reopen the generation to new resolution.
     pub fn begin_drain(
         &self,
         capability: &CapabilityId,
@@ -87,6 +91,10 @@ impl CapabilityHost {
     }
 
     /// Removes a drained generation only after every exact owner released its permit.
+    ///
+    /// # Errors
+    /// Rejects absent or undrained generations and outstanding execution/continuation permits.
+    /// Returns registry or adapter shutdown failures; failure does not prove resources stopped.
     pub fn finish_drain(
         &self,
         capability: &CapabilityId,
@@ -128,6 +136,10 @@ impl CapabilityHost {
     }
 
     /// Forcibly removes an exact generation and leaves later exact dispatch unavailable.
+    ///
+    /// # Errors
+    /// Returns registry, absent-generation, or adapter shutdown failures. Even after removal,
+    /// a failed shutdown does not establish external quiescence.
     pub fn force_remove(
         &self,
         capability: &CapabilityId,
@@ -165,6 +177,10 @@ impl CapabilityHost {
     }
 
     /// Closes admission and marks every generation draining.
+    ///
+    /// # Errors
+    /// Returns registry or adapter drain failures. Admission remains closed after a hook fails;
+    /// all captured adapters are asked to drain before the first failure is returned.
     pub fn begin_shutdown(&self) -> Result<(), HostError> {
         let adapters = {
             let mut state = self.lock_state()?;
@@ -187,6 +203,10 @@ impl CapabilityHost {
     }
 
     /// Gracefully shuts down only after every permit is released.
+    ///
+    /// # Errors
+    /// Returns drain/registry failures, registrations still starting, outstanding permits, or
+    /// adapter shutdown failures. A failed shutdown does not prove resource release.
     pub fn shutdown(&self) -> Result<ShutdownReport, HostError> {
         self.begin_shutdown()?;
         let adapters = {
@@ -219,6 +239,10 @@ impl CapabilityHost {
     ///
     /// Returned invocation identities remain unresolved unless their executing worker
     /// subsequently records terminal evidence. This operation never invents completion.
+    ///
+    /// # Errors
+    /// Returns drain/registry failures, registrations still starting, or adapter shutdown
+    /// failures. Forced removal never turns an unresolved invocation into terminal evidence.
     pub fn force_shutdown(&self) -> Result<ShutdownReport, HostError> {
         self.begin_shutdown()?;
         let (adapters, unresolved_invocations) = {
@@ -248,6 +272,9 @@ impl CapabilityHost {
     }
 
     /// Returns a stable sorted generation view, filtered by authority scope.
+    ///
+    /// # Errors
+    /// Returns an error if a panic poisoned the registry lock.
     pub fn generations(
         &self,
         visible: &CapabilityAuthorityScope,
@@ -322,6 +349,9 @@ impl CapabilityHost {
     ///
     /// Peer transports use this narrow snapshot to derive a further relationship-filtered,
     /// expiring advertisement. The returned values do not expose adapter handles.
+    ///
+    /// # Errors
+    /// Returns an error if the registry cannot provide a consistent locked snapshot.
     pub fn catalog_generations(
         &self,
         visible: &CapabilityAuthorityScope,

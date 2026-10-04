@@ -61,6 +61,10 @@ pub struct InputMaterialization {
 
 impl InputMaterialization {
     /// Validates one named input destination.
+    ///
+    /// # Errors
+    /// Rejects empty or oversized names and destinations that are not bounded normal relative
+    /// paths, including traversal, absolute paths, and excessive depth.
     pub fn new(
         input_name: impl Into<String>,
         relative_path: impl Into<PathBuf>,
@@ -112,6 +116,10 @@ pub struct MaterializationLimits {
 
 impl MaterializationLimits {
     /// Validates nonzero and internally consistent materialization bounds.
+    ///
+    /// # Errors
+    /// Rejects zero or inconsistent file/byte bounds, excessive path length/depth, and chunk
+    /// sizes outside the persistence read ceiling.
     pub fn validate(self) -> Result<Self, InvocationDataError> {
         if self.max_files == 0
             || self.max_file_bytes == 0
@@ -150,6 +158,10 @@ pub trait MaterializedExecution: Send {
 /// across calls; one publication method cannot account for an adapter's whole output set.
 pub trait InvocationDataAccess: Send + Sync {
     /// Reads and verifies one exact invocation input through the host-owned ports.
+    ///
+    /// # Errors
+    /// Rejects unsupported reads, invalid selections or limits, and unauthorized or inconsistent
+    /// references. Returns integrity/storage failures without substituting other input bytes.
     fn read_input_bytes(
         &self,
         _context: &AdapterExecutionContext,
@@ -163,6 +175,10 @@ pub trait InvocationDataAccess: Send + Sync {
 
     /// Resolve a selected artifact-valued workspace output to its immutable content reference.
     /// This returns no bytes and grants no read authority to a later effect owner.
+    ///
+    /// # Errors
+    /// Rejects unsupported resolution or an input outside the frozen selection. Missing,
+    /// non-artifact, or inconsistent durable values fail rather than grant read authority.
     fn resolve_artifact_reference(
         &self,
         _context: &AdapterExecutionContext,
@@ -174,6 +190,10 @@ pub trait InvocationDataAccess: Send + Sync {
     }
 
     /// Reads and verifies one exact durable artifact without exposing store layout.
+    ///
+    /// # Errors
+    /// Rejects unsupported reads, invalid limits, unauthorized references, and digest/size
+    /// mismatches. Storage failures must propagate to the invoking adapter.
     fn read_artifact_bytes(
         &self,
         _context: &AdapterExecutionContext,
@@ -187,6 +207,10 @@ pub trait InvocationDataAccess: Send + Sync {
     }
 
     /// Reads exact durable inputs and creates one isolated execution workspace.
+    ///
+    /// # Errors
+    /// Rejects invalid selections, paths, limits, or reference integrity. Filesystem and storage
+    /// failures abort materialization; no partial workspace is returned.
     fn materialize(
         &self,
         context: &AdapterExecutionContext,
@@ -196,7 +220,14 @@ pub trait InvocationDataAccess: Send + Sync {
     ) -> Result<Box<dyn MaterializedExecution>, InvocationDataError>;
 
     /// Imports and publishes one declared regular output file.
-    #[allow(clippy::too_many_arguments)] // Publication binds an authorized invocation to one workspace path, output identity, media type, and byte limits.
+    ///
+    /// # Errors
+    /// Rejects invalid output paths, nonregular files, missing publication authority, and exceeded
+    /// budgets. Read, publication, and failed cleanup errors must propagate to the adapter.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Publication binds an authorized invocation to one workspace path, output identity, media type, and byte limits."
+    )]
     fn publish_file(
         &self,
         context: &AdapterExecutionContext,
@@ -209,6 +240,10 @@ pub trait InvocationDataAccess: Send + Sync {
     ) -> Result<CapabilityArtifactReference, InvocationDataError>;
 
     /// Publishes one bounded adapter-owned byte capture without exposing store layout.
+    ///
+    /// # Errors
+    /// Rejects invalid output metadata, missing publication authority, and exceeded byte budgets.
+    /// Publication or cleanup failure must not be reported as a committed output.
     fn publish_bytes(
         &self,
         context: &AdapterExecutionContext,
@@ -234,6 +269,10 @@ pub struct StoreInvocationDataAccess {
 
 impl StoreInvocationDataAccess {
     /// Creates a bridge rooted at one preconfigured canonical temporary directory.
+    ///
+    /// # Errors
+    /// Returns filesystem errors while creating or canonicalizing the root, and rejects a root
+    /// that is not a directory.
     pub fn new(
         store: Arc<dyn RuntimeStore>,
         temporary_root: impl Into<PathBuf>,
@@ -487,7 +526,7 @@ impl StoreInvocationDataAccess {
                     publication.clone(),
                     run,
                     metadata,
-                    workspace_budget.clone(),
+                    workspace_budget,
                     usage,
                     reservation.clone(),
                 )
@@ -498,7 +537,7 @@ impl StoreInvocationDataAccess {
                     host,
                     invocation,
                     metadata,
-                    workspace_budget.clone(),
+                    workspace_budget,
                     usage,
                 )
             }
@@ -507,7 +546,7 @@ impl StoreInvocationDataAccess {
                     publication.clone(),
                     run,
                     metadata,
-                    workspace_budget.clone(),
+                    workspace_budget,
                     usage,
                 )
             }
@@ -703,7 +742,6 @@ impl InvocationDataAccess for StoreInvocationDataAccess {
         }))
     }
 
-    #[allow(clippy::too_many_arguments)] // Publication binds an authorized invocation to one workspace path, output identity, media type, and byte limits.
     fn publish_file(
         &self,
         context: &AdapterExecutionContext,

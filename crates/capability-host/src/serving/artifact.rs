@@ -59,17 +59,29 @@ mod tests;
 pub trait PeerArtifactStore: Send + Sync {
     /// Reads a selected local input for preparation. The origin owns selection authorization;
     /// this bounded range still passes through the ordinary artifact read and digest checks.
+    ///
+    /// # Errors
+    /// Returns read-authority, range, digest, or persistence failures from the ordinary artifact
+    /// owner. The origin must already have authorized selection of this input.
     fn read_input_chunk(
         &self,
         request: &ArtifactReadRequest,
     ) -> Result<milkdrift_persistence::ArtifactReadChunk, PeerArtifactError>;
     /// Reads exact core metadata after the caller has proved execution ownership.
+    ///
+    /// # Errors
+    /// Rejects missing metadata or an exact reference that contradicts it; returns core storage
+    /// failures without exposing implementation paths.
     fn metadata(
         &self,
         reference: &milkdrift_capability::ArtifactReference,
     ) -> Result<ArtifactMetadata, PeerArtifactError>;
 
     /// Returns exact immutable transfer facts for chunk-time reauthorization.
+    ///
+    /// # Errors
+    /// Rejects unknown transfers or mismatched callers, and returns unavailable transfer-state
+    /// errors. These facts do not replace current chunk-time authorization.
     fn transfer_facts(
         &self,
         caller: &PeerId,
@@ -77,6 +89,10 @@ pub trait PeerArtifactStore: Send + Sync {
     ) -> Result<PeerArtifactTransferFacts, PeerArtifactError>;
 
     /// Negotiates exact metadata before any bytes, returning deduplication or resume state.
+    ///
+    /// # Errors
+    /// Rejects invalid, expired, conflicting, unauthorized, or over-budget offers and exhausted
+    /// transfer capacity. Returns core publication and cleanup failures without claiming success.
     fn negotiate(
         &self,
         caller: &PeerId,
@@ -86,6 +102,10 @@ pub trait PeerArtifactStore: Send + Sync {
     ) -> Result<ArtifactTransferDecision, PeerArtifactError>;
 
     /// Appends one exact bounded chunk and publishes only through the core artifact authority.
+    ///
+    /// # Errors
+    /// Rejects unknown, expired, wrong-direction, out-of-order, oversized, or inconsistent chunks.
+    /// Returns persistence or verification failures; failed abort retains cleanup ownership.
     fn write_chunk(
         &self,
         caller: &PeerId,
@@ -94,6 +114,10 @@ pub trait PeerArtifactStore: Send + Sync {
     ) -> Result<ArtifactTransferDecision, PeerArtifactError>;
 
     /// Reads one bounded verified range through the core authorized read port.
+    ///
+    /// # Errors
+    /// Rejects unknown, expired, wrong-direction, or unauthorized transfers and invalid ranges.
+    /// Returns core read or verification failures without substituting bytes.
     fn read_chunk(
         &self,
         caller: &PeerId,
@@ -103,6 +127,10 @@ pub trait PeerArtifactStore: Send + Sync {
     ) -> Result<ArtifactChunk, PeerArtifactError>;
 
     /// Aborts an incomplete core publication.
+    ///
+    /// # Errors
+    /// Returns owner, state, or core cleanup failures. A failed core abort must retain the transfer
+    /// for retry; successful return means the incomplete publication was aborted.
     fn abort(&self, caller: &PeerId, transfer: &TransferId) -> Result<(), PeerArtifactError>;
 }
 
@@ -151,6 +179,9 @@ impl std::fmt::Debug for CorePeerArtifactStore {
 
 impl CorePeerArtifactStore {
     /// Constructs bounded staging over one ordinary core artifact owner.
+    ///
+    /// # Errors
+    /// Rejects artifact-size or aggregate import bounds that violate workspace budget limits.
     pub fn new(
         core: Arc<dyn ArtifactStore>,
         maximum_artifact_bytes: u64,

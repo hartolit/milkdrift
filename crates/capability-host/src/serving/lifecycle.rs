@@ -18,6 +18,10 @@ use super::{
 
 impl PeerService {
     /// Marks all catalogs stale and stops accepting new peer invocations.
+    ///
+    /// # Errors
+    /// Returns a persistence error if durable admission cannot be closed; callers must not
+    /// infer that draining began from a failed call.
     pub fn begin_drain(&self) -> Result<(), ServingError> {
         self.executions
             .set_peer_admission_open(false)
@@ -28,6 +32,10 @@ impl PeerService {
     }
 
     /// Marks shutdown state for handshake and catalog consumers.
+    ///
+    /// # Errors
+    /// Returns a persistence error if durable admission closure fails. Local claims still close,
+    /// but the failure does not prove that shutdown or external work has completed.
     pub fn begin_shutdown(&self) -> Result<(), ServingError> {
         let closed = self
             .executions
@@ -79,6 +87,10 @@ impl PeerService {
     }
 
     /// Revokes one relationship immediately for inbound authentication and protocol actions.
+    ///
+    /// # Errors
+    /// Rejects unknown relationships and propagates durable revocation, local state, or catalog
+    /// cache failures. No failed operation proves all revocation steps completed.
     pub fn revoke_peer(&self, peer: &PeerId) -> Result<(), ServingError> {
         let Some(relationship) = self.relationships.get(peer) else {
             return Err(ServingError::NotFound(
@@ -106,6 +118,10 @@ impl PeerService {
     }
 
     /// Recovers bounded prior-owner claims. Pre-entry work requeues; entered work becomes uncertain.
+    ///
+    /// # Errors
+    /// Returns clock, bounded-page, persistence, or integrity failures and refuses recovery pages
+    /// that claim more work without progress. Admission opens only after recovery succeeds.
     pub fn recover(self: &Arc<Self>, maximum: usize) -> Result<(), ServingError> {
         let configured = usize::from(self.config.workers.recovery_page);
         let bounded = maximum.min(configured).max(1);
@@ -132,6 +148,10 @@ impl PeerService {
     }
 
     /// Compacts one bounded page beyond the configured hot observation horizon.
+    ///
+    /// # Errors
+    /// Returns continuation, clock, page-bound, archival, or status-read failures. Archival never
+    /// permits loss of exact request replay or conflict evidence.
     pub fn maintain_retention(&self) -> Result<PeerExecutionStatus, ServingError> {
         self.continue_published()?;
         let now = self.now()?;
@@ -153,6 +173,9 @@ impl PeerService {
     }
 
     /// Returns redacted serving execution accounting for daemon health projection.
+    ///
+    /// # Errors
+    /// Returns durable-owner overload, storage, or integrity errors instead of inventing counts.
     pub fn execution_status(&self) -> Result<PeerExecutionStatus, ServingError> {
         self.executions
             .peer_execution_status()
