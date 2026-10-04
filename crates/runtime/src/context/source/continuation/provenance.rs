@@ -61,17 +61,17 @@ impl DurableContextCandidateSource<'_> {
                     RunEventKind::NodeBecameEligible { execution, .. }
                         if execution == manifest.execution() =>
                     {
-                        Some(0)
+                        Some(&mut events[0])
                     }
                     RunEventKind::NodeScheduled { attempt, .. }
                         if attempt == manifest.attempt() =>
                     {
-                        Some(1)
+                        Some(&mut events[1])
                     }
                     RunEventKind::CapabilityResolutionDecisionRecorded { attempt, .. }
                         if attempt == manifest.attempt() =>
                     {
-                        Some(2)
+                        Some(&mut events[2])
                     }
                     RunEventKind::NodeOutputPublished {
                         attempt,
@@ -80,15 +80,15 @@ impl DurableContextCandidateSource<'_> {
                     } if attempt == manifest.attempt()
                         && artifact == &workspace_artifact(response)? =>
                     {
-                        Some(3)
+                        Some(&mut events[3])
                     }
                     RunEventKind::NodeTerminal { attempt, .. } if attempt == manifest.attempt() => {
-                        Some(4)
+                        Some(&mut events[4])
                     }
                     _ => None,
                 };
                 if let Some(slot) = slot {
-                    events[slot] = event.sequence();
+                    *slot = event.sequence();
                 }
                 next = next.next().map_err(persistence)?;
             }
@@ -115,21 +115,26 @@ impl DurableContextCandidateSource<'_> {
         if turn.response.media_type() != Some("application/vnd.milkdrift.model-response.v1+json") {
             return Err(unavailable("unsupported predecessor response family"));
         }
-        let mut facts = Vec::with_capacity(5);
-        for sequence in turn.events {
-            facts.push(super::super::event_at(
+        let [eligibility, scheduling, resolution, publication, terminal] = turn.events;
+        let read = |sequence| {
+            super::super::event_at(
                 self.store,
                 &request.identity.run,
                 sequence,
                 request.through_sequence,
-            )?);
-        }
+            )
+        };
+        let eligibility = read(eligibility)?;
+        let scheduling = read(scheduling)?;
+        let resolution = read(resolution)?;
+        let publication = read(publication)?;
+        let terminal = read(terminal)?;
         let RunEventKind::NodeBecameEligible {
             execution,
             node,
             scope,
             ..
-        } = facts[0].kind()
+        } = eligibility.kind()
         else {
             return Err(unavailable("predecessor eligibility proof missing"));
         };
@@ -164,7 +169,7 @@ impl DurableContextCandidateSource<'_> {
             node,
             request: invocation,
             ..
-        } = facts[1].kind()
+        } = scheduling.kind()
         else {
             return Err(unavailable("predecessor scheduling proof missing"));
         };
@@ -183,7 +188,7 @@ impl DurableContextCandidateSource<'_> {
             attempt,
             snapshot,
             authorization,
-        } = facts[2].kind()
+        } = resolution.kind()
         else {
             return Err(unavailable("predecessor authority proof missing"));
         };
@@ -206,7 +211,7 @@ impl DurableContextCandidateSource<'_> {
             artifact: Some(artifact),
             value,
             ..
-        } = facts[3].kind()
+        } = publication.kind()
         else {
             return Err(unavailable("predecessor response publication missing"));
         };
@@ -224,13 +229,13 @@ impl DurableContextCandidateSource<'_> {
             attempt,
             outcome: NodeOutcome::Succeeded,
             ..
-        } = facts[4].kind()
+        } = terminal.kind()
         else {
             return Err(unavailable("predecessor invocation did not succeed"));
         };
         if execution != manifest.execution()
             || attempt != manifest.attempt()
-            || facts[4].sequence() <= facts[3].sequence()
+            || terminal.sequence() <= publication.sequence()
         {
             return Err(unavailable("predecessor terminal does not match"));
         }
@@ -445,7 +450,10 @@ impl DurableContextCandidateSource<'_> {
         }
         let mut entries = manifest.entries().to_vec();
         entries.push(ContextManifestEntry::new(
-            entries.len() as u32 + 1,
+            u32::try_from(entries.len())
+                .ok()
+                .and_then(|count| count.checked_add(1))
+                .ok_or(ContextBuildError::AccountingOverflow)?,
             ContextSemanticKind::PriorPrompt,
             BTreeSet::new(),
             ContextSource::Artifact {

@@ -111,7 +111,7 @@ impl DurableContextCandidateSource<'_> {
     fn resolve_continuation(
         &self,
         request: &ContextSourceRequest<'_>,
-        mut turns: Vec<ContinuationTurn>,
+        turns: Vec<ContinuationTurn>,
         reads: &mut ReadBudget,
     ) -> Result<ContinuationHistory, ContextBuildError> {
         if turns.is_empty() || turns.len() > MAX_CONTINUATION_DEPTH {
@@ -128,15 +128,15 @@ impl DurableContextCandidateSource<'_> {
         }
         let mut seen = BTreeSet::new();
         let mut messages = Vec::new();
-        for index in 0..turns.len() {
-            let turn = turns[index].clone();
+        let mut resolved_turns: Vec<ContinuationTurn> = Vec::with_capacity(turns.len());
+        for mut turn in turns {
             if !seen.insert(turn.manifest.identity().to_owned()) {
                 return Err(unavailable("continuation cycle"));
             }
             let manifest = self.continuation_manifest(request, &turn.manifest, reads)?;
             let invocation = self.verify_continuation_turn(request, &manifest, &turn)?;
             let task = self.continuation_task(request, invocation.inputs(), reads)?;
-            match (index.checked_sub(1).map(|i| &turns[i]), task.session()) {
+            match (resolved_turns.last(), task.session()) {
                 (None, SessionSelection::Fresh) => {}
                 (Some(prior), SessionSelection::ExplicitContinuation { manifest, response })
                     if manifest == &prior.manifest && response == &prior.response => {}
@@ -146,13 +146,12 @@ impl DurableContextCandidateSource<'_> {
                     ));
                 }
             }
-            match (index, history_reference(&manifest)?) {
+            match (resolved_turns.len(), history_reference(&manifest)?) {
                 (0, None) => {}
                 (1.., Some(reference)) => {
                     let bytes = self.continuation_artifact(request, &reference, reads)?;
                     let prior = ContinuationHistoryDocument::from_json(&bytes)?;
-                    if prior.body().turns() != &turns[..index]
-                        || prior.body().messages() != messages
+                    if prior.body().turns() != resolved_turns || prior.body().messages() != messages
                     {
                         return Err(unavailable(
                             "predecessor consumed a different frozen conversation",
@@ -287,16 +286,18 @@ impl DurableContextCandidateSource<'_> {
                     "continuation message provenance boundary mismatch",
                 ));
             }
-            turns[index].message_end = messages.len() as u32;
+            turn.message_end =
+                u32::try_from(messages.len()).map_err(|_| ContextBuildError::AccountingOverflow)?;
+            resolved_turns.push(turn);
             // Apply aggregate message bounds incrementally, before the next predecessor read.
             ContinuationHistory::new(
-                turns[..=index].to_vec(),
+                resolved_turns.clone(),
                 messages.clone(),
                 request.authority.accepted_decision_digest().to_owned(),
             )?;
         }
         Ok(ContinuationHistory::new(
-            turns,
+            resolved_turns,
             messages,
             request.authority.accepted_decision_digest().to_owned(),
         )?)
