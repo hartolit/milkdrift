@@ -31,6 +31,10 @@ The library's `application` module owns child launch, bounded capture, readiness
 restart helpers. `OwnedChild::terminate` kills and reaps for an abrupt restart boundary;
 `OwnedChild::shutdown` separately checks public Ctrl-C shutdown on Unix. A settled-work restart
 scenario using the former does not prove graceful process shutdown.
+Command capture and authenticated startup explicitly combine failure with child cleanup evidence.
+An unsuccessful termination remains unconfirmed; Drop does not silently retry a reported failure.
+Cancellation/unwind cleanup reports uncertainty on stderr because it cannot return a result.
+Unrepresentable command and observation deadlines are refused before launching a child.
 CLI waits derive their outer watchdog from the requested work budget. Polling callers pass their
 existing deadline to nested commands, and failed observations collect bounded public state before
 temporary evidence disappears. The [application lane](../../docs/development/verification-evidence.md#actual-binary-scenarios)

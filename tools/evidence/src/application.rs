@@ -72,39 +72,50 @@ impl DaemonLaunch {
     }
 
     /// Starts the real daemon and waits for public authenticated readiness.
+    ///
+    /// # Errors
+    /// Returns launch, credential, early-exit, or readiness-deadline failure. A failed startup
+    /// also reports whether termination/reaping succeeded before returning the original failure.
     pub async fn start(&self, token: &str) -> EvidenceResult<(OwnedChild, ControlClient)> {
         let mut child = start_daemon(&self.executable, &self.config)?;
-        let mut config = ClientConfig::new(self.endpoint.clone());
-        config.safe_query_retries = 0;
-        let client = ControlClient::new(config, BearerCredential::new(token)?)?;
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            ensure(
-                child.try_wait()?.is_none(),
-                "daemon exited before readiness",
-            )?;
-            // Bound each startup probe without shortening subsequent scenario requests.
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            ensure(
-                !remaining.is_zero(),
-                "daemon readiness exceeded its deadline",
-            )?;
-            if tokio::time::timeout(remaining.min(Duration::from_secs(2)), client.readiness())
-                .await
-                .is_ok_and(|result| result.is_ok_and(|ready| ready.ready))
-            {
-                return Ok((child, client));
+        let ready = async {
+            let mut config = ClientConfig::new(self.endpoint.clone());
+            config.safe_query_retries = 0;
+            let client = ControlClient::new(config, BearerCredential::new(token)?)?;
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                ensure(
+                    child.try_wait()?.is_none(),
+                    "daemon exited before readiness",
+                )?;
+                // Bound each startup probe without shortening subsequent scenario requests.
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                ensure(
+                    !remaining.is_zero(),
+                    "daemon readiness exceeded its deadline",
+                )?;
+                if tokio::time::timeout(remaining.min(Duration::from_secs(2)), client.readiness())
+                    .await
+                    .is_ok_and(|result| result.is_ok_and(|ready| ready.ready))
+                {
+                    return Ok(client);
+                }
+                ensure(
+                    Instant::now() < deadline,
+                    "daemon readiness exceeded its deadline",
+                )?;
+                tokio::time::sleep(
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(Duration::from_millis(25)),
+                )
+                .await;
             }
-            ensure(
-                Instant::now() < deadline,
-                "daemon readiness exceeded its deadline",
-            )?;
-            tokio::time::sleep(
-                deadline
-                    .saturating_duration_since(Instant::now())
-                    .min(Duration::from_millis(25)),
-            )
-            .await;
+        }
+        .await;
+        match ready {
+            Ok(client) => Ok((child, client)),
+            Err(error) => child.finish(Err(error)),
         }
     }
 }
@@ -113,41 +124,64 @@ impl DaemonLaunch {
 ///
 /// This is harness cleanup, not process-tree containment. Use an explicit lifecycle method
 /// when its success or failure is part of the evidence instead of relying on best-effort drop.
-pub struct OwnedChild(Child);
+/// A failed explicit termination remains an error; Drop does not retry and erase that evidence.
+pub struct OwnedChild {
+    child: Child,
+    cleanup_attempted: bool,
+}
 
 impl OwnedChild {
     /// Starts a child whose lifetime is bounded by this owner.
     pub fn spawn(command: &mut ProcessCommand) -> EvidenceResult<Self> {
-        Ok(Self(command.spawn()?))
+        Ok(Self {
+            child: command.spawn()?,
+            cleanup_attempted: false,
+        })
     }
 
     /// Observes exit without blocking.
     pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
-        self.0.try_wait()
+        self.child.try_wait()
     }
 
     /// Process identity, used only for process observation and owned signal delivery.
     pub fn id(&self) -> u32 {
-        self.0.id()
+        self.child.id()
     }
 
     /// Transfers a configured stdout pipe to a bounded evidence reader.
     pub fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
-        self.0.stdout.take()
+        self.child.stdout.take()
     }
 
     /// Abrupt restart boundary; kill and reap within a hard deadline.
+    ///
+    /// # Errors
+    /// Process observation, kill, or bounded reaping can fail. Such a result is not stop evidence;
+    /// a later explicit call may retry, but Drop does not silently repeat this attempt.
     pub fn terminate(&mut self) -> EvidenceResult {
-        if self.0.try_wait()?.is_none() {
-            self.0.kill()?;
+        self.cleanup_attempted = true;
+        if self.child.try_wait()?.is_none() {
+            self.child.kill()?;
         }
         self.wait_until(Instant::now() + Duration::from_secs(2))?;
         Ok(())
     }
 
+    fn finish<T>(&mut self, outcome: EvidenceResult<T>) -> EvidenceResult<T> {
+        match (outcome, self.terminate()) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), Ok(())) => Err(format!("{error}; cleanup=reaped").into()),
+            (Ok(_), Err(cleanup)) => Err(format!("child cleanup unconfirmed: {cleanup}").into()),
+            (Err(error), Err(cleanup)) => {
+                Err(format!("{error}; child cleanup unconfirmed: {cleanup}").into())
+            }
+        }
+    }
+
     fn wait_until(&mut self, deadline: Instant) -> EvidenceResult<ExitStatus> {
         loop {
-            if let Some(status) = self.0.try_wait()? {
+            if let Some(status) = self.child.try_wait()? {
                 return Ok(status);
             }
             ensure(
@@ -187,7 +221,17 @@ impl OwnedChild {
 
 impl Drop for OwnedChild {
     fn drop(&mut self) {
-        let _ = self.terminate();
+        if !self.cleanup_attempted
+            && let Err(error) = self.terminate()
+        {
+            #[expect(
+                clippy::print_stderr,
+                reason = "Cancellation or unwind has no result channel; report bounded child cleanup uncertainty without treating it as stop evidence."
+            )]
+            {
+                eprintln!("evidence child {} cleanup unconfirmed: {error}", self.id());
+            }
+        }
     }
 }
 
@@ -196,12 +240,19 @@ impl Drop for OwnedChild {
 /// The harness polls output sizes and a deadline, then bounds each captured read. These checks
 /// are observed limits; they do not impose an OS disk quota between polls. The child owner
 /// attempts cleanup on error, and callers decide which captured text is safe to publish.
+///
+/// # Errors
+/// Refuses unrepresentable/exhausted deadlines and excessive input or captured output. File I/O,
+/// process launch/observation, UTF-8 decoding, and cleanup failures propagate with cleanup evidence.
 pub fn run_command(
     command: &mut ProcessCommand,
     stdin: Option<&[u8]>,
     timeout: Duration,
 ) -> EvidenceResult<CliOutput> {
-    run_command_until(command, stdin, Instant::now() + timeout)
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or("child command deadline overflow")?;
+    run_command_until(command, stdin, deadline)
 }
 
 fn run_command_until(
@@ -233,65 +284,64 @@ fn run_command_until(
     )?;
     let started = Instant::now();
     let mut child = OwnedChild::spawn(command)?;
-    let status = loop {
-        let overflow =
-            stdout.metadata()?.len() > MAX_CAPTURE || stderr.metadata()?.len() > MAX_CAPTURE;
-        if overflow || Instant::now() >= deadline {
-            let cause = if overflow {
-                "child output exceeds evidence bound"
-            } else {
-                "child command exceeded its deadline"
-            };
-            let elapsed = started.elapsed();
-            let observed_stdout_bytes = stdout.metadata().ok().map(|metadata| metadata.len());
-            let cleanup = match child.terminate() {
-                Ok(()) => "reaped".to_owned(),
-                Err(_) => "termination/reap failed".to_owned(),
-            };
-            let captured = (|| -> std::io::Result<String> {
-                stdout.rewind()?;
-                let mut bytes = Vec::new();
-                std::io::Read::by_ref(&mut stdout)
-                    .take(64 * 1024)
-                    .read_to_end(&mut bytes)?;
-                Ok(diagnostics::captured_summary(
-                    &String::from_utf8_lossy(&bytes),
-                    usize::try_from(stderr.metadata()?.len()).unwrap_or(usize::MAX),
-                ))
-            })()
-            .unwrap_or_else(|_| "capture summary unavailable".to_owned());
-            return Err(format!(
-                "{cause}; elapsed_ms={}; pid={}; cleanup={cleanup}; stdout_observed_bytes={observed_stdout_bytes:?}; capture_prefix_limit_bytes=65536; {captured}",
+    let outcome = (|| -> EvidenceResult<CliOutput> {
+        let status = loop {
+            let overflow =
+                stdout.metadata()?.len() > MAX_CAPTURE || stderr.metadata()?.len() > MAX_CAPTURE;
+            if overflow || Instant::now() >= deadline {
+                let cause = if overflow {
+                    "child output exceeds evidence bound"
+                } else {
+                    "child command exceeded its deadline"
+                };
+                let elapsed = started.elapsed();
+                let observed_stdout_bytes = stdout.metadata().ok().map(|metadata| metadata.len());
+                let captured = (|| -> std::io::Result<String> {
+                    stdout.rewind()?;
+                    let mut bytes = Vec::new();
+                    std::io::Read::by_ref(&mut stdout)
+                        .take(64 * 1024)
+                        .read_to_end(&mut bytes)?;
+                    Ok(diagnostics::captured_summary(
+                        &String::from_utf8_lossy(&bytes),
+                        usize::try_from(stderr.metadata()?.len()).unwrap_or(usize::MAX),
+                    ))
+                })()
+                .unwrap_or_else(|_| "capture summary unavailable".to_owned());
+                return Err(format!(
+                "{cause}; elapsed_ms={}; pid={}; stdout_observed_bytes={observed_stdout_bytes:?}; capture_prefix_limit_bytes=65536; {captured}",
                 elapsed.as_millis(),
                 child.id()
             )
             .into());
-        }
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
-        thread::sleep(
-            deadline
-                .saturating_duration_since(Instant::now())
-                .min(Duration::from_millis(10)),
-        );
-    };
-    let read = |file: &mut fs::File| -> EvidenceResult<String> {
-        file.rewind()?;
-        let mut bytes = Vec::new();
-        file.take(MAX_CAPTURE + 1).read_to_end(&mut bytes)?;
-        ensure(
-            u64::try_from(bytes.len())? <= MAX_CAPTURE,
-            "child output exceeds evidence bound",
-        )?;
-        Ok(String::from_utf8(bytes)?)
-    };
-    Ok(CliOutput {
-        status,
-        elapsed: started.elapsed(),
-        stdout: read(&mut stdout)?,
-        stderr: read(&mut stderr)?,
-    })
+            }
+            if let Some(status) = child.try_wait()? {
+                break status;
+            }
+            thread::sleep(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(10)),
+            );
+        };
+        let read = |file: &mut fs::File| -> EvidenceResult<String> {
+            file.rewind()?;
+            let mut bytes = Vec::new();
+            file.take(MAX_CAPTURE + 1).read_to_end(&mut bytes)?;
+            ensure(
+                u64::try_from(bytes.len())? <= MAX_CAPTURE,
+                "child output exceeds evidence bound",
+            )?;
+            Ok(String::from_utf8(bytes)?)
+        };
+        Ok(CliOutput {
+            status,
+            elapsed: started.elapsed(),
+            stdout: read(&mut stdout)?,
+            stderr: read(&mut stderr)?,
+        })
+    })();
+    child.finish(outcome)
 }
 
 /// Locates a previously built sibling application, including Cargo's `deps` layout.
@@ -564,6 +614,10 @@ pub fn wait_for_readiness(runner: &CliRunner, daemon: &mut OwnedChild) -> Eviden
 }
 
 /// Polls actual CLI run state until an independent scenario predicate holds.
+///
+/// # Errors
+/// Refuses an unrepresentable deadline or a failed/malformed CLI observation. When the predicate
+/// remains false until expiry, returns the last bounded observation and finite failure diagnostics.
 pub fn wait_for_run<F>(
     runner: &CliRunner,
     run: &str,
@@ -573,7 +627,9 @@ pub fn wait_for_run<F>(
 where
     F: Fn(&Value) -> bool,
 {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or("run observation deadline overflow")?;
     loop {
         let output = match runner.run_until(&["run", "show", run], None, deadline) {
             Ok(output) => output,
@@ -861,5 +917,53 @@ pub fn ensure(condition: bool, message: &str) -> EvidenceResult {
         Ok(())
     } else {
         Err(message.to_owned().into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unrepresentable_command_deadline_is_refused_before_spawn() -> EvidenceResult {
+        let error = run_command(
+            &mut ProcessCommand::new("must-not-start-for-an-invalid-deadline"),
+            None,
+            Duration::MAX,
+        )
+        .err()
+        .ok_or("unrepresentable deadline accepted")?;
+        assert_eq!(error.to_string(), "child command deadline overflow");
+        Ok(())
+    }
+
+    #[test]
+    fn unrepresentable_observation_deadline_is_refused_before_cli_entry() -> EvidenceResult {
+        let runner = CliRunner {
+            executable: PathBuf::from("must-not-start-for-an-invalid-deadline"),
+            endpoint: "http://127.0.0.1:9/".into(),
+            token_file: PathBuf::from("unused-credential"),
+            forbidden_storage_path: PathBuf::from("unused-store"),
+        };
+        let error = wait_for_run(&runner, "unused-run", Duration::MAX, |_| true)
+            .err()
+            .ok_or("unrepresentable observation deadline accepted")?;
+        assert_eq!(error.to_string(), "run observation deadline overflow");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_operation_retains_its_error_and_reaps_the_owned_child() -> EvidenceResult {
+        let mut child = OwnedChild::spawn(ProcessCommand::new("/bin/sleep").arg("30"))?;
+        assert!(child.try_wait()?.is_none());
+        let error = child
+            .finish::<()>(Err("primary fixture refusal".into()))
+            .err()
+            .ok_or("primary failure was discarded")?;
+        assert_eq!(error.to_string(), "primary fixture refusal; cleanup=reaped");
+        assert!(child.try_wait()?.is_some());
+        child.terminate()?;
+        Ok(())
     }
 }
