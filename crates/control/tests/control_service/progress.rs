@@ -87,7 +87,7 @@ fn installed_runtime_assesses_and_stops_a_controller_at_exact_cycle_bound() -> T
         &context,
         OptimisticGuard::default(),
         ControlCommand::InspectController {
-            run: run.clone(),
+            run,
             controller_execution,
         },
     )?)?;
@@ -146,25 +146,40 @@ fn controller_progress_preserves_every_durable_counter_and_reassesses_matching_p
         .map(|execution| execution.execution().clone())
         .ok_or("active controller execution is absent")?;
     let mut value = serde_json::to_value(&projection)?;
-    value["subworkflow_usage_by_execution"] = serde_json::json!([[
-        serde_json::to_value(&controller_execution)?,
-        {
-            "completed_children": 3,
-            "failed_children": 2,
-            "cost_micros": [["USD", 700]],
-            "overflowed": false,
-            "input_units": 11,
-            "output_units": 13,
-            "artifact_bytes": 17,
-            "process_invocations": 19,
-            "model_invocations": 23,
-            "unknown_input_usage": 29,
-            "unknown_output_usage": 31,
-            "unknown_cost_usage": 37
-        }
-    ]]);
-    value["run_actor_revision_requests"] = serde_json::json!(41);
-    value["run_actor_rejections"] = serde_json::json!(43);
+    value
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert(
+            "subworkflow_usage_by_execution".to_owned(),
+            serde_json::json!([[
+                serde_json::to_value(&controller_execution)?,
+                {
+                    "completed_children": 3,
+                    "failed_children": 2,
+                    "cost_micros": [["USD", 700]],
+                    "overflowed": false,
+                    "input_units": 11,
+                    "output_units": 13,
+                    "artifact_bytes": 17,
+                    "process_invocations": 19,
+                    "model_invocations": 23,
+                    "unknown_input_usage": 29,
+                    "unknown_output_usage": 31,
+                    "unknown_cost_usage": 37
+                }
+            ]]),
+        );
+    value
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert(
+            "run_actor_revision_requests".to_owned(),
+            serde_json::json!(41),
+        );
+    value
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("run_actor_rejections".to_owned(), serde_json::json!(43));
     let projection: milkdrift_runtime::RunProjection = serde_json::from_value(value)?;
     let document =
         ControllerPolicyDocument::from_revision(&wrapper, &NodeId::new("controller-repeat")?)?

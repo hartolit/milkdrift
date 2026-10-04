@@ -197,15 +197,34 @@ fn eligible_only_after_all_four_pairs_meet_the_unchanged_threshold() -> Result {
             .iter()
             .all(|p| p.baseline_repairs == Some(1) && p.candidate_repairs == Some(0))
     );
-    assert!(compare_methods(&declaration, &candidate, &observations[..3]).is_err());
+    assert!(
+        compare_methods(
+            &declaration,
+            &candidate,
+            observations
+                .get(..3)
+                .ok_or("three observation pairs missing")?
+        )
+        .is_err()
+    );
     Ok(())
 }
 #[test]
 fn one_regression_rejects_even_with_a_better_total_and_unknown_other_cost() -> Result {
     let (declaration, candidate, mut observations) = fixture()?;
-    let pair = &declaration.pairs[0];
-    observations[0].1 = observed(&declaration, &pair.candidate, &candidate, &pair.input, 2)?;
-    observations[1].0.usage = None;
+    let pair = declaration
+        .pairs
+        .first()
+        .ok_or("first declaration pair missing")?;
+    observations
+        .first_mut()
+        .ok_or("first observation pair missing")?
+        .1 = observed(&declaration, &pair.candidate, &candidate, &pair.input, 2)?;
+    observations
+        .get_mut(1)
+        .ok_or("second observation pair missing")?
+        .0
+        .usage = None;
     assert_eq!(
         compare_methods(&declaration, &candidate, &observations)?.outcome,
         LearningOutcome::Rejected
@@ -235,13 +254,20 @@ fn incomplete_history_usage_or_verification_never_becomes_zero_failures() -> Res
     let (declaration, candidate, observations) = fixture()?;
     for mutate in 0..4 {
         let mut values = observations.clone();
-        let value = &mut values[0].1;
+        let value = &mut values
+            .first_mut()
+            .ok_or("first observation pair missing")?
+            .1;
         match mutate {
             0 => value.history_complete = false,
             1 => value.usage = None,
             2 => {
-                value.submissions[0].complete = false;
-                for check in &mut value.submissions[0].checks {
+                let submission = value
+                    .submissions
+                    .first_mut()
+                    .ok_or("first submission missing")?;
+                submission.complete = false;
+                for check in &mut submission.checks {
                     check.passed = None;
                 }
             }
@@ -249,7 +275,14 @@ fn incomplete_history_usage_or_verification_never_becomes_zero_failures() -> Res
         }
         let compared = compare_methods(&declaration, &candidate, &values)?;
         assert_eq!(compared.outcome, LearningOutcome::Inconclusive);
-        assert_eq!(compared.pairs[0].candidate_repairs, None);
+        assert_eq!(
+            compared
+                .pairs
+                .first()
+                .ok_or("first comparison pair missing")?
+                .candidate_repairs,
+            None
+        );
     }
     Ok(())
 }
@@ -259,13 +292,21 @@ fn a_passing_verifier_cannot_qualify_a_different_or_missing_returned_product() -
     let (declaration, candidate, observations) = fixture()?;
     for output in [None, Some(artifact("unchecked-product")?)] {
         let mut values = observations.clone();
-        values[0].1.output = output;
+        values
+            .first_mut()
+            .ok_or("first observation pair missing")?
+            .1
+            .output = output;
         assert_eq!(
             compare_methods(&declaration, &candidate, &values)?.outcome,
             LearningOutcome::Rejected
         );
         // Failure to read an output is missing evidence, not proof of a defective product.
-        values[0].1.history_complete = false;
+        values
+            .first_mut()
+            .ok_or("first observation pair missing")?
+            .1
+            .history_complete = false;
         assert_eq!(
             compare_methods(&declaration, &candidate, &values)?.outcome,
             LearningOutcome::Inconclusive
@@ -284,19 +325,28 @@ fn changed_target_input_checkset_or_verifier_cannot_qualify() -> Result {
     let (declaration, candidate, observations) = fixture()?;
     for mutate in 0..5 {
         let mut values = observations.clone();
-        let value = &mut values[0].1;
+        let value = &mut values
+            .first_mut()
+            .ok_or("first observation pair missing")?
+            .1;
+        let submission = value
+            .submissions
+            .first_mut()
+            .ok_or("first submission missing")?;
         match mutate {
             0 => value.input = artifact("other-input")?,
             1 => {
-                value.submissions[0].subject.target = declaration.pairs[1].candidate.target.clone()
+                submission.subject.target = declaration
+                    .pairs
+                    .get(1)
+                    .ok_or("second declaration pair missing")?
+                    .candidate
+                    .target
+                    .clone()
             }
-            2 => value.submissions[0]
-                .checks
-                .pop()
-                .map(|_| ())
-                .ok_or("check absent")?,
-            3 => value.submissions[0].subject.verifier = digest('d'),
-            _ => value.submissions[0].subject.configuration = digest('e'),
+            2 => submission.checks.pop().map(|_| ()).ok_or("check absent")?,
+            3 => submission.subject.verifier = digest('d'),
+            _ => submission.subject.configuration = digest('e'),
         }
         assert!(compare_methods(&declaration, &candidate, &values).is_err());
     }
@@ -307,10 +357,22 @@ fn exceeded_bounds_failed_obligations_and_authority_violations_reject() -> Resul
     let (declaration, candidate, observations) = fixture()?;
     for mutate in 0..5 {
         let mut values = observations.clone();
-        let value = &mut values[0].1;
+        let value = &mut values
+            .first_mut()
+            .ok_or("first observation pair missing")?
+            .1;
         match mutate {
             0 => value.duration_ms = Some(declaration.maximum_duration_ms + 1),
-            1 => value.submissions[0].checks[0].passed = Some(false),
+            1 => {
+                value
+                    .submissions
+                    .first_mut()
+                    .ok_or("first submission missing")?
+                    .checks
+                    .first_mut()
+                    .ok_or("first verification check missing")?
+                    .passed = Some(false)
+            }
             2 => value.violation = Some("forbidden publication".into()),
             3 => {
                 value.allowance = Some(ControllerResourceBudget::new(
@@ -324,13 +386,11 @@ fn exceeded_bounds_failed_obligations_and_authority_violations_reject() -> Resul
                 )?)
             }
             _ => {
-                *value = observed(
-                    &declaration,
-                    &declaration.pairs[0].candidate,
-                    &candidate,
-                    &declaration.pairs[0].input,
-                    3,
-                )?;
+                let pair = declaration
+                    .pairs
+                    .first()
+                    .ok_or("first declaration pair missing")?;
+                *value = observed(&declaration, &pair.candidate, &candidate, &pair.input, 3)?;
             }
         }
         assert_eq!(
@@ -343,17 +403,34 @@ fn exceeded_bounds_failed_obligations_and_authority_violations_reject() -> Resul
 #[test]
 fn shared_working_area_and_reused_inputs_are_refused_before_evaluation() -> Result {
     let (declaration, _, _) = fixture()?;
+    let first = declaration
+        .pairs
+        .first()
+        .ok_or("first declaration pair missing")?;
     let mut changed = declaration.clone();
-    changed.pairs[1].candidate.workspace = changed.pairs[0].baseline.workspace.clone();
+    changed
+        .pairs
+        .get_mut(1)
+        .ok_or("second declaration pair missing")?
+        .candidate
+        .workspace = first.baseline.workspace.clone();
     assert!(changed.validate().is_err());
     changed = declaration.clone();
-    changed.pairs[1].input = changed.pairs[0].input.clone();
+    changed
+        .pairs
+        .get_mut(1)
+        .ok_or("second declaration pair missing")?
+        .input = first.input.clone();
     assert!(changed.validate().is_err());
-    changed.pairs[1].input = ArtifactReference::new(
+    changed
+        .pairs
+        .get_mut(1)
+        .ok_or("second declaration pair missing")?
+        .input = ArtifactReference::new(
         ArtifactId::new("same-bytes-different-identity")?,
-        changed.pairs[0].input.digest(),
-        changed.pairs[0].input.media_type().clone(),
-        changed.pairs[0].input.size_bytes(),
+        first.input.digest(),
+        first.input.media_type().clone(),
+        first.input.size_bytes(),
     );
     assert!(changed.validate().is_err());
     changed = declaration.clone();

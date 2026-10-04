@@ -8,7 +8,10 @@ fn expired_or_cancelled_public_call_cannot_enter_after_internal_preparation() ->
         let fixture = fixture_with_resources(directory.path(), "final-public-entry", managed)?;
         let mut method = fixture.method.clone();
         let mut descriptor = serde_json::to_value(&method.descriptor)?;
-        descriptor["descriptor_revision"] = serde_json::json!(2);
+        descriptor
+            .as_object_mut()
+            .ok_or("fixture must be an object")?
+            .insert("descriptor_revision".to_owned(), serde_json::json!(2));
         method.descriptor = serde_json::from_value(descriptor)?;
         method.maximum_duration_ms = 1_000;
         fixture.published.publish(

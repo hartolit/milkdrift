@@ -213,7 +213,13 @@ fn controller_process_ceiling_denies_n_plus_one_before_executor_entry() -> TestR
         NOW,
     )?;
     assert_eq!(generations.len(), 1);
-    assert_eq!(generations[0].active_permits, 0);
+    assert_eq!(
+        generations
+            .first()
+            .ok_or("registered generation missing")?
+            .active_permits,
+        0
+    );
     let account = store
         .controller_account_binding(&run)?
         .ok_or("controller account is unbound")?;
@@ -562,7 +568,7 @@ fn controller_artifact_charge_is_exact_replay_safe_abort_safe_and_restart_durabl
         let exact = BeginArtifactPublication::new(
             ArtifactPublicationId::new("publication-controller-exact")?,
             run.clone(),
-            exact_metadata.clone(),
+            exact_metadata,
             budget.clone(),
             expected_usage,
         )?;
@@ -645,7 +651,7 @@ fn controller_artifact_charge_is_exact_replay_safe_abort_safe_and_restart_durabl
         let excess_metadata = controller_artifact_metadata("artifact-controller-excess", b"x")?;
         let excess = BeginArtifactPublication::new(
             ArtifactPublicationId::new("publication-controller-excess")?,
-            run.clone(),
+            run,
             excess_metadata.clone(),
             budget,
             after_dedup,
@@ -859,7 +865,7 @@ fn release_controller_admission_longevity_turns_over_reservations_artifacts_and_
             },
             ControlCommand::ContinueController {
                 run: run.clone(),
-                controller_execution: controller_execution.clone(),
+                controller_execution,
                 decision: RepeatDecisionId::new(
                     "controller-admission-longevity-decision-twenty-two",
                 )?,

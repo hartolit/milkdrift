@@ -50,7 +50,10 @@ fn retired_generations_turn_over_beyond_registry_capacity_and_reopen() -> TestRe
         let fixture = fixture(directory.path(), &format!("turnover-{number}"))?;
         let mut method = fixture.method.clone();
         let mut descriptor = serde_json::to_value(&method.descriptor)?;
-        descriptor["descriptor_revision"] = serde_json::json!(number);
+        descriptor
+            .as_object_mut()
+            .ok_or("fixture must be an object")?
+            .insert("descriptor_revision".to_owned(), serde_json::json!(number));
         method.descriptor = serde_json::from_value(descriptor)?;
         let request = milkdrift_persistence::IntegrityDigest::hash(&serde_json::to_vec(&method)?);
         let expected = (number > 1).then_some(2);
@@ -70,12 +73,23 @@ fn retired_generations_turn_over_beyond_registry_capacity_and_reopen() -> TestRe
         let retired = retire(&fixture, number)?;
         fixture.published.maintain_retirement()?;
         assert_eq!(generations(&fixture)?.len(), 1);
-        assert_eq!(generations(&fixture)?[0].pending_workflows, 1);
+        assert_eq!(
+            generations(&fixture)?
+                .first()
+                .ok_or("retiring generation missing")?
+                .pending_workflows,
+            1
+        );
         drop(fixture);
 
         let fixture = super::fixture(directory.path(), &format!("settle-{number}"))?;
         assert_eq!(generations(&fixture)?.len(), 1);
-        assert!(generations(&fixture)?[0].draining);
+        assert!(
+            generations(&fixture)?
+                .first()
+                .ok_or("retiring generation missing")?
+                .draining
+        );
         for _ in 0..64 {
             fixture.clock.advance(1)?;
             runtime_tick(&fixture.runtime)?;
@@ -218,7 +232,13 @@ fn queued_serving_acceptance_survives_retirement_and_reopen_before_entry() -> Te
     let queued = first.store.peer_execution(&caller, &execution)?;
     retire(&first, 1)?;
     assert_eq!(generations(&first)?.len(), 1);
-    assert_eq!(generations(&first)?[0].pending_workflows, 0);
+    assert_eq!(
+        generations(&first)?
+            .first()
+            .ok_or("queued generation missing")?
+            .pending_workflows,
+        0
+    );
     assert!(matches!(
         first.store.admit_peer_execution(&admission)?,
         PeerAdmissionOutcome::Replayed(_)
@@ -239,7 +259,12 @@ fn queued_serving_acceptance_survives_retirement_and_reopen_before_entry() -> Te
     assert_eq!(reopened.store.peer_execution(&caller, &execution)?, queued);
     reopened.published.maintain_retirement()?;
     assert_eq!(generations(&reopened)?.len(), 1);
-    assert!(generations(&reopened)?[0].draining);
+    assert!(
+        generations(&reopened)?
+            .first()
+            .ok_or("restored generation missing")?
+            .draining
+    );
     let worker = WorkerId::new("worker:queued")?;
     assert!(matches!(
         reopened

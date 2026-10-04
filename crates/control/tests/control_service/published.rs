@@ -349,7 +349,7 @@ fn publication_releases_single_scheduler_slot_and_creates_one_internal_run() -> 
         1,
         "the outer attempt must commit its child before creating it"
     );
-    let plan = &plans[0];
+    let plan = plans.first().ok_or("accepted publication plan missing")?;
     assert_eq!(
         fixture.runtime.projection(&plan.child_run)?.lifecycle(),
         RunLifecycle::Uncreated

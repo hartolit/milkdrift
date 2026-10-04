@@ -467,13 +467,26 @@ fn controller_pattern_is_explicit_bounded_repeat() -> TestResult {
     }
 
     let mut tampered = serde_json::to_value(&policy.1)?;
-    tampered["policy"]["limits"]["max_invocations"] = serde_json::json!(9);
+    tampered
+        .get_mut("policy")
+        .ok_or("fixture field policy missing")?
+        .get_mut("limits")
+        .ok_or("fixture field limits missing")?
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("max_invocations".to_owned(), serde_json::json!(9));
     assert!(serde_json::from_value::<ControllerPolicyDocument>(tampered).is_err());
     let mut future = serde_json::to_value(&policy.1)?;
-    future["schema_version"] = serde_json::json!(3);
+    future
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("schema_version".to_owned(), serde_json::json!(3));
     assert!(serde_json::from_value::<ControllerPolicyDocument>(future).is_err());
     let mut legacy = serde_json::to_value(&policy.1)?;
-    legacy["schema_version"] = serde_json::json!(1);
+    legacy
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("schema_version".to_owned(), serde_json::json!(1));
     assert!(serde_json::from_value::<ControllerPolicyDocument>(legacy).is_err());
     assert_eq!(BTreeSet::from([wrapper.id().clone()]).len(), 1);
     Ok(())

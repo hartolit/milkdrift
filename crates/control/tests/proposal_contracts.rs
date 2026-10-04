@@ -74,7 +74,15 @@ fn proposal_round_trip_is_canonical_and_digest_bound() -> TestResult {
     assert_eq!(decoded.to_canonical_json()?, bytes);
 
     let mut value: serde_json::Value = serde_json::from_slice(&bytes)?;
-    value["proposal"]["rationale"] = serde_json::json!("tampered after digest");
+    value
+        .get_mut("proposal")
+        .ok_or("fixture field proposal missing")?
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert(
+            "rationale".to_owned(),
+            serde_json::json!("tampered after digest"),
+        );
     assert!(matches!(
         WorkflowProposalDocument::from_json(&serde_json::to_vec(&value)?),
         Err(ControlError::InvalidContract(_))
@@ -94,14 +102,25 @@ fn hostile_json_is_rejected_before_use() -> TestResult {
     assert!(WorkflowProposalDocument::from_json(duplicate.as_bytes()).is_err());
 
     let mut future: serde_json::Value = serde_json::from_slice(&bytes)?;
-    future["schema_version"] = serde_json::json!(99);
+    future
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("schema_version".to_owned(), serde_json::json!(99));
     assert!(matches!(
         WorkflowProposalDocument::from_json(&serde_json::to_vec(&future)?),
         Err(ControlError::UnsupportedVersion { .. })
     ));
 
     let mut hostile: serde_json::Value = serde_json::from_slice(&bytes)?;
-    hostile["proposal"]["shell_command"] = serde_json::json!("rm -rf /not-a-real-path");
+    hostile
+        .get_mut("proposal")
+        .ok_or("fixture field proposal missing")?
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert(
+            "shell_command".to_owned(),
+            serde_json::json!("rm -rf /not-a-real-path"),
+        );
     assert!(WorkflowProposalDocument::from_json(&serde_json::to_vec(&hostile)?).is_err());
 
     let oversized = vec![b' '; MAX_PROPOSAL_DOCUMENT_BYTES + 1];
@@ -204,22 +223,40 @@ fn inline_analysis_is_bounded_and_model_schema_is_strict() -> TestResult {
 fn strict_draft_derives_the_same_identity_and_rejects_ambiguous_envelopes() -> TestResult {
     let canonical = proposal_document()?;
     let value: serde_json::Value = serde_json::from_slice(&canonical.to_canonical_json()?)?;
-    let mut body = value["proposal"].clone();
+    let mut body = value
+        .get("proposal")
+        .ok_or("proposal body missing")?
+        .clone();
     body.as_object_mut()
         .ok_or("missing proposal")?
         .remove("digest");
-    body["mutation"] = body["mutation"]["operations"].clone();
+    let operations = body
+        .pointer("/mutation/operations")
+        .ok_or("mutation operations missing")?
+        .clone();
+    body.as_object_mut()
+        .ok_or("proposal must be an object")?
+        .insert("mutation".to_owned(), operations);
     let draft = serde_json::json!({"schema_version":1,"draft":body});
     assert_eq!(
         WorkflowProposalDocument::from_json(&serde_json::to_vec(&draft)?)?,
         canonical
     );
     for (key, extra) in [
-        ("proposal", value["proposal"].clone()),
+        (
+            "proposal",
+            value
+                .get("proposal")
+                .ok_or("proposal body missing")?
+                .clone(),
+        ),
         ("unknown", serde_json::json!(true)),
     ] {
         let mut mixed = draft.clone();
-        mixed[key] = extra;
+        mixed
+            .as_object_mut()
+            .ok_or("draft must be an object")?
+            .insert(key.to_owned(), extra);
         assert!(WorkflowProposalDocument::from_json(&serde_json::to_vec(&mixed)?).is_err());
     }
     let duplicate = serde_json::to_string(&draft)?.replacen(

@@ -124,9 +124,7 @@ fn low_risk_live_proposal_applies_pauses_replays_and_survives_restart() -> TestR
         "control-submit-reviewer",
         &context,
         proposal_guard,
-        ControlCommand::SubmitProposal {
-            proposal: proposal.clone(),
-        },
+        ControlCommand::SubmitProposal { proposal },
     )?;
     let first = service.execute(&submit)?;
     let (proposed_revision, risk) = match &first {
@@ -214,7 +212,7 @@ fn terminal_change_requires_recorded_approval_before_apply() -> TestResult {
     .with_control_input(PortId::new("in")?)?;
     let proposal = WorkflowProposalDocument::new(WorkflowProposal::new(
         ProposalId::new("proposal-terminal-change")?,
-        actor.clone(),
+        actor,
         ProposalProvenance::Direct,
         base.semantic().workflow().clone(),
         Some(run.clone()),
@@ -672,7 +670,9 @@ fn malformed_control_capability_input_is_a_normal_rejected_terminal() -> TestRes
 
     let events = reporter.events()?;
     assert_eq!(events.len(), 1);
-    let terminal = events[0]
+    let terminal = events
+        .first()
+        .ok_or("rejection event missing")?
         .kind()
         .terminal()
         .ok_or("malformed control output did not produce a terminal event")?;

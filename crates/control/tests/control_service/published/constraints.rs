@@ -6,7 +6,10 @@ use milkdrift_persistence::ControllerAccountStore;
 fn generation(fixture: &Fixture, number: u64) -> TestResult<PublishedMethod> {
     let mut method = fixture.method.clone();
     let mut descriptor = serde_json::to_value(&method.descriptor)?;
-    descriptor["descriptor_revision"] = serde_json::json!(number);
+    descriptor
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("descriptor_revision".to_owned(), serde_json::json!(number));
     method.descriptor = serde_json::from_value(descriptor)?;
     Ok(method)
 }
@@ -421,7 +424,10 @@ fn descendants_cannot_reset_an_ancestors_stricter_depth_ceiling() -> TestResult 
         let inner_id = CapabilityId::new("method:inner")?;
         let mut inner = fixture.method.clone();
         let mut descriptor = serde_json::to_value(&inner.descriptor)?;
-        descriptor["identity"] = serde_json::json!(inner_id);
+        descriptor
+            .as_object_mut()
+            .ok_or("fixture must be an object")?
+            .insert("identity".to_owned(), serde_json::json!(inner_id));
         inner.descriptor = serde_json::from_value(descriptor)?;
         inner.maximum_depth = 32;
         let caller = publication_grant("human:caller", "grant:caller")?;
@@ -529,8 +535,24 @@ fn descendants_cannot_reset_an_ancestors_stricter_depth_ceiling() -> TestResult 
             );
         } else {
             assert_eq!(nested.len(), 1);
-            assert_eq!(nested[0].ancestry.len(), 1);
-            assert_eq!(nested[0].ancestry[0].maximum_depth(), maximum_depth);
+            assert_eq!(
+                nested
+                    .first()
+                    .ok_or("nested invocation missing")?
+                    .ancestry
+                    .len(),
+                1
+            );
+            assert_eq!(
+                nested
+                    .first()
+                    .ok_or("nested invocation missing")?
+                    .ancestry
+                    .first()
+                    .ok_or("retained ancestor missing")?
+                    .maximum_depth(),
+                maximum_depth
+            );
             assert_eq!(fixture.process.entries(), 3);
             assert_eq!(
                 fixture.runtime.projection(&run)?.lifecycle(),

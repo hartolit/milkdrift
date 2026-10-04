@@ -328,7 +328,7 @@ fn controller_oversized_proposal_is_rejected_before_revision_persistence() -> Te
         actor,
         ProposalProvenance::Direct,
         wrapper.semantic().workflow().clone(),
-        Some(run.clone()),
+        Some(run),
         wrapper.id().clone(),
         wrapper.content_digest().clone(),
         Some(observed),
@@ -527,7 +527,7 @@ fn release_controller_longevity_stops_once_across_checkpoints_and_restart() -> T
             },
             ControlCommand::ContinueController {
                 run: run.clone(),
-                controller_execution: controller_execution.clone(),
+                controller_execution,
                 decision: RepeatDecisionId::new("longevity-decision-six")?,
             },
         )?)?;

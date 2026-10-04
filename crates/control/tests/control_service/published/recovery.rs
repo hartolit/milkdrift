@@ -51,7 +51,10 @@ fn failed_or_lost_promotion_commit_preserves_old_generation_and_exact_replay() -
             original = fixture.method.clone();
             let mut method = original.clone();
             let mut descriptor = serde_json::to_value(&method.descriptor)?;
-            descriptor["descriptor_revision"] = serde_json::json!(2);
+            descriptor
+                .as_object_mut()
+                .ok_or("fixture must be an object")?
+                .insert("descriptor_revision".to_owned(), serde_json::json!(2));
             method.descriptor = serde_json::from_value(descriptor)?;
             next = method;
             faults.arm(point, 1)?;

@@ -242,7 +242,7 @@ fn governed_repair_auto_applies_through_control_and_replays_after_store_reopen()
         },
     )?;
     let (_, _, reopened_context) = services(
-        store.clone(),
+        store,
         &ActorRef::new("agent:repair")?,
         &run,
         &grant_id,

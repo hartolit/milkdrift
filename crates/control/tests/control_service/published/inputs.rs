@@ -53,7 +53,10 @@ fn two_callers_receive_isolated_inputs_and_unapproved_values_create_no_child() -
     fixture.store.put_revision(&governed)?;
     let mut method = fixture.method.clone();
     let mut descriptor = serde_json::to_value(&method.descriptor)?;
-    descriptor["descriptor_revision"] = serde_json::json!(2);
+    descriptor
+        .as_object_mut()
+        .ok_or("fixture must be an object")?
+        .insert("descriptor_revision".to_owned(), serde_json::json!(2));
     method.descriptor = serde_json::from_value(descriptor)?;
     method.revision = governed.id().clone();
     method.agreement = agreement.digest().to_owned();
@@ -157,7 +160,10 @@ fn two_callers_receive_isolated_inputs_and_unapproved_values_create_no_child() -
         );
         children.push(plan.child_run);
     }
-    assert_ne!(children[0], children[1]);
+    let [first, second] = children.as_slice() else {
+        return Err("expected exactly two isolated child runs".into());
+    };
+    assert_ne!(first, second);
     assert_eq!(
         fixture.process.entries(),
         4,

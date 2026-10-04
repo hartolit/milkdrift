@@ -24,7 +24,14 @@ pub(super) fn install(
         }],
     };
     let mut value = serde_json::to_value(&descriptor)?;
-    value["extensions"][MANAGED_BINDING_EXTENSION] = serde_json::to_value(binding)?;
+    value
+        .get_mut("extensions")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("descriptor extensions missing")?
+        .insert(
+            MANAGED_BINDING_EXTENSION.to_owned(),
+            serde_json::to_value(binding)?,
+        );
     let descriptor: milkdrift_capability::CapabilityDescriptor = serde_json::from_value(value)?;
     if store
         .managed_installation(&name("publication-test")?)?
@@ -211,7 +218,10 @@ fn publication_hands_editing_to_exact_internal_writers_and_releases_every_hold()
                 1,
                 "the first child must release its hold"
             );
-            let parent = &inventory.uses[0];
+            let parent = inventory
+                .uses
+                .first()
+                .ok_or("parent lifetime hold missing")?;
             assert!(matches!(
                 parent.phase,
                 ManagedUsePhase::Quiescent {
