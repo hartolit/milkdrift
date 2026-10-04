@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub(super) fn execute(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     mut request: CommandRequest,
 ) -> Result<CommandAccepted, PublicFailure> {
@@ -170,7 +170,7 @@ fn application_receipt(
         command_digest,
         session.grant.identity().clone(),
         session.grant.revision(),
-        session.grant.digest().map_err(|_| internal())?.clone(),
+        session.grant.digest().map_err(|_| internal())?,
         None,
         created_at,
         completed_at,
@@ -280,8 +280,8 @@ fn command_run_identity(command: &Command) -> Option<&str> {
         | Command::InspectController { run_id, .. }
         | Command::ContinueController { run_id, .. }
         | Command::DecideProposal { run_id, .. }
-        | Command::ApplyProposal { run_id, .. } => Some(run_id),
-        Command::PrepareModelRepair { run_id, .. } => Some(run_id),
+        | Command::ApplyProposal { run_id, .. }
+        | Command::PrepareModelRepair { run_id, .. } => Some(run_id),
         Command::Learning { .. }
         | Command::AuthorBlueprint { .. }
         | Command::ConstructBlueprint { .. }

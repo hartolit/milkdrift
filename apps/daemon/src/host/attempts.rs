@@ -70,7 +70,7 @@ impl Owner {
     }
 
     pub(super) fn attempt_read(
-        &mut self,
+        &self,
         session: &ActorSession,
         run: &str,
         attempt: &str,

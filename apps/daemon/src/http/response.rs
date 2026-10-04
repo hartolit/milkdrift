@@ -100,13 +100,15 @@ pub(super) fn request_id(state: &AppState, headers: &HeaderMap) -> String {
                 && value.is_ascii()
                 && !value.bytes().any(|byte| byte.is_ascii_control())
         })
-        .map(str::to_owned)
-        .unwrap_or_else(|| {
-            format!(
-                "req-{}",
-                state.request_sequence.fetch_add(1, Ordering::SeqCst)
-            )
-        })
+        .map_or_else(
+            || {
+                format!(
+                    "req-{}",
+                    state.request_sequence.fetch_add(1, Ordering::SeqCst)
+                )
+            },
+            str::to_owned,
+        )
 }
 
 pub(super) fn success<T: serde::Serialize>(

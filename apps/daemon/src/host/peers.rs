@@ -156,7 +156,10 @@ pub(super) struct PeerRuntime {
     pub(super) clock: DurableClock,
 }
 
-#[allow(clippy::too_many_arguments)] // Composition supplies independent owners without a service-locator object.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Daemon composition supplies independent owners explicitly; no service locator owns their lifetimes."
+)]
 pub(super) fn build_peer_runtime(
     host_id: &str,
     serving: &crate::config::ServingHostConfig,
@@ -365,7 +368,7 @@ pub(super) fn build_peer_runtime(
         },
         host.clone(),
         executions,
-        artifacts.clone(),
+        artifacts,
         Some(Arc::new(ConfiguredPeerAuthenticator {
             resolver: secrets,
             relationships: authentication,

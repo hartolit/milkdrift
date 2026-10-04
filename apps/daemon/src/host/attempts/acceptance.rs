@@ -7,7 +7,7 @@ use milkdrift_control_protocol::{ErrorCode, ResultAcceptanceRead};
 
 impl Owner {
     pub(super) fn attach_acceptance(
-        &mut self,
+        &self,
         session: &ActorSession,
         located: &mut LocatedAttempt,
     ) -> Result<(), PublicFailure> {

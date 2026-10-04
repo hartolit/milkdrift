@@ -13,7 +13,7 @@ use crate::host::{
 
 impl Owner {
     pub(super) fn attach_model_generation(
-        &mut self,
+        &self,
         session: &ActorSession,
         located: &mut LocatedAttempt,
     ) -> Result<(), PublicFailure> {

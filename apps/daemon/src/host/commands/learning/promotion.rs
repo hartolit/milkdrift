@@ -9,9 +9,8 @@ use milkdrift_authority::{AuthorityOperation, RequestedResourceFacts};
 use milkdrift_capability::OperationId;
 use milkdrift_persistence::RunQueryStore;
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn preauthorize(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     request: &CommandRequest,
     reference: LearningReceiptReference,
@@ -57,7 +56,7 @@ pub(super) fn preauthorize(
 }
 
 pub(super) fn automatic(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     request: &CommandRequest,
     policy: LearningReceiptReference,

@@ -144,17 +144,14 @@ impl AuthRegistry {
         let mut matched = None;
         for binding in self.bindings.iter() {
             let candidate = self.resolver.resolve(&binding.reference);
-            let equal = candidate
-                .ok()
-                .map(|candidate| {
-                    candidate.expose(|bytes| {
-                        blake3::hash(bytes)
-                            .as_bytes()
-                            .ct_eq(supplied_digest.as_bytes())
-                            .into()
-                    })
+            let equal = candidate.is_ok_and(|candidate| {
+                candidate.expose(|bytes| {
+                    blake3::hash(bytes)
+                        .as_bytes()
+                        .ct_eq(supplied_digest.as_bytes())
+                        .into()
                 })
-                .unwrap_or(false);
+            });
             if equal && binding.enabled {
                 if matched.is_some() {
                     return None;

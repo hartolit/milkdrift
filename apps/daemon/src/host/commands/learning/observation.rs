@@ -73,7 +73,7 @@ fn completion(
 }
 
 pub(super) fn read(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     request: &CommandRequest,
     declaration: &LearningDeclaration,
@@ -327,8 +327,15 @@ pub(super) fn read(
                             invalid("host-owned verification evidence is unavailable")
                         })?;
                     let accepted: milkdrift_workspace::CandidateEvaluation =
-                        serde_json::from_value(response["evaluation"].clone())
-                            .map_err(|_| invalid("invalid accepted verification receipt"))?;
+                        serde_json::from_value(
+                            response
+                                .get("evaluation")
+                                .ok_or_else(|| {
+                                    invalid("accepted verification receipt has no evaluation")
+                                })?
+                                .clone(),
+                        )
+                        .map_err(|_| invalid("invalid accepted verification receipt"))?;
                     accepted
                         .validate()
                         .map_err(|_| invalid("invalid accepted verification receipt"))?;

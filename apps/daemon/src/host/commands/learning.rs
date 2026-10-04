@@ -71,7 +71,7 @@ enum Record {
 }
 
 pub(super) fn execute(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     request: &CommandRequest,
     document: &Value,
@@ -245,7 +245,7 @@ pub(super) fn execute(
                 ));
             }
             let mut resources = RequestedResourceFacts::empty();
-            resources.capability = Some(decl.publication.clone());
+            resources.capability = Some(decl.publication);
             resources.capability_operation =
                 Some(OperationId::new("method.publish").map_err(|e| invalid(&e.to_string()))?);
             let authorization = owner.authorize(
@@ -358,7 +358,7 @@ fn revision(
 }
 
 fn selected_reference(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     artifact: &milkdrift_workspace::ArtifactId,
 ) -> Result<ArtifactReference, PublicFailure> {
@@ -373,7 +373,7 @@ fn selected_reference(
 }
 
 fn authorize_artifact(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     reference: &ArtifactReference,
 ) -> Result<(), PublicFailure> {
@@ -431,7 +431,7 @@ fn authorize_resource(
 }
 
 fn select(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     request: &CommandRequest,
     selection: KnowledgeSelection,
@@ -589,7 +589,7 @@ fn select(
 }
 
 fn declare(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     request: &CommandRequest,
     declaration: LearningDeclaration,
@@ -690,7 +690,7 @@ fn declare(
 }
 
 fn authorize_declaration(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     request: &CommandRequest,
     declaration: &LearningDeclaration,
@@ -737,9 +737,12 @@ fn authorize_declaration(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The command fixes three independent evidence statements beside the proposal and its declaration; validate that boundary together."
+)]
 fn candidate(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     request: &CommandRequest,
     declaration_ref: LearningReceiptReference,
@@ -810,9 +813,9 @@ fn candidate(
         .map(|a| a.artifact().as_str().to_owned())
         .collect::<std::collections::BTreeSet<_>>();
     for page in pages {
-        if let Some(events) = page["events"].as_array() {
+        if let Some(events) = page.get("events").and_then(Value::as_array) {
             for event in events {
-                if let Some(id) = event["detail"]["event_id"].as_str() {
+                if let Some(id) = event.pointer("/detail/event_id").and_then(Value::as_str) {
                     permitted.insert(id.into());
                 }
             }
@@ -858,8 +861,13 @@ fn candidate(
     guarded.expected_revision = Some(p.base_revision().to_string());
     let submitted = super::proposals::submit(owner, session, &guarded, &proposal)?;
     let submission: Value = submitted.value;
-    let revision_id: RevisionId =
-        serde_json::from_value(submission["proposed_revision"].clone()).map_err(|_| internal())?;
+    let revision_id: RevisionId = serde_json::from_value(
+        submission
+            .get("proposed_revision")
+            .ok_or_else(internal)?
+            .clone(),
+    )
+    .map_err(|_| internal())?;
     Ok(Record::Candidate {
         declaration: declaration_ref,
         revision: revision_id,
@@ -871,7 +879,7 @@ fn candidate(
 }
 
 fn authorize_record(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     request: &CommandRequest,
     record: &Record,

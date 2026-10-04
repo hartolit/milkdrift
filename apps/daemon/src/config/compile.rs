@@ -22,6 +22,10 @@ impl DaemonConfig {
     ///
     /// This validates configuration and referenced paths without starting the host. Adapter
     /// profile contents, executable identity, and storage recovery are checked during startup.
+    ///
+    /// # Errors
+    /// Rejects unreadable, oversized, malformed, or unsupported configuration and propagates
+    /// the path, authority, adapter, and resource-bound validation failures from `validate`.
     pub fn load(path: &Path) -> Result<DaemonPlan, ConfigError> {
         let bytes = fs::read(path).map_err(|error| ConfigError::Read(error.kind().to_string()))?;
         if bytes.len() > MAX_DOCUMENT_BYTES {
@@ -57,6 +61,10 @@ impl DaemonConfig {
     ///
     /// Use this instead of passing unchecked Serde input to host components. The returned plan
     /// fixes effective values for one startup; it does not open storage or reload a live daemon.
+    ///
+    /// # Errors
+    /// Rejects unsupported versions, non-loopback binds, invalid identities or bounds,
+    /// inconsistent authority and adapter settings, and unusable configured paths.
     pub fn validate(mut self, base: &Path) -> Result<DaemonPlan, ConfigError> {
         if self.schema_version != DAEMON_CONFIG_SCHEMA_VERSION {
             return Err(ConfigError::UnsupportedVersion(self.schema_version));
@@ -526,7 +534,10 @@ fn validate_safe_identity(location: &str, value: &str) -> Result<(), ConfigError
     if value.is_empty()
         || value.len() > 192
         || !value.is_ascii()
-        || !value.as_bytes()[0].is_ascii_alphanumeric()
+        || !value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
         || !value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
         })

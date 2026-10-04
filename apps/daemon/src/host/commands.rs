@@ -20,7 +20,7 @@ impl Owner {
         reason = "this exhaustive match is the single routing map from the public command protocol to focused owners"
     )]
     pub(super) fn execute_new_command(
-        &mut self,
+        &self,
         session: &ActorSession,
         request: &CommandRequest,
     ) -> Result<CommandAccepted, PublicFailure> {

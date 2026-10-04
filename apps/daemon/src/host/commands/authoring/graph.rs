@@ -235,8 +235,10 @@ impl ModelWorkflow {
             )?;
             for (name, source) in &step.inputs {
                 if let BindingSource::NodeOutput { node, port, .. } = source {
-                    if !self.steps[..index]
+                    if !self
+                        .steps
                         .iter()
+                        .take(index)
                         .any(|step| step.id == node.as_str())
                     {
                         return Err(format!(

@@ -23,7 +23,7 @@ fn optional<T>(value: Result<T, PublicFailure>) -> Result<Option<T>, PublicFailu
 
 impl Owner {
     pub(super) fn run_result(
-        &mut self,
+        &self,
         session: &ActorSession,
         run: &str,
     ) -> Result<RunResultRead, PublicFailure> {
@@ -123,7 +123,7 @@ impl Owner {
                         }
                         Err(_) => 0,
                     };
-                    preview = std::str::from_utf8(&chunk.bytes[..end])
+                    preview = std::str::from_utf8(chunk.bytes.get(..end).ok_or_else(internal)?)
                         .ok()
                         .map(str::to_owned);
                 }

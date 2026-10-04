@@ -10,7 +10,7 @@ use super::super::{
 };
 
 pub(super) fn start(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     request: &CommandRequest,
     run_id: &str,
@@ -38,7 +38,7 @@ pub(super) fn start(
 }
 
 fn create(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     request: &CommandRequest,
     run_id: &str,

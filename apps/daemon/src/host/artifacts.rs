@@ -14,7 +14,7 @@ use milkdrift_workspace::{ArtifactId, ArtifactSensitivity};
 
 impl Owner {
     pub(super) fn artifact_metadata(
-        &mut self,
+        &self,
         session: &ActorSession,
         artifact: &str,
     ) -> Result<ArtifactMetadataRead, PublicFailure> {
@@ -55,7 +55,7 @@ impl Owner {
     }
 
     pub(super) fn artifact_range(
-        &mut self,
+        &self,
         session: &ActorSession,
         artifact: &str,
         offset: u64,

@@ -8,7 +8,7 @@ use milkdrift_workspace::{
 };
 
 pub(super) fn resolve(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     revision: &str,
     root: &WorkspaceScope,

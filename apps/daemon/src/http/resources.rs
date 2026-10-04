@@ -47,8 +47,8 @@ fn failure(error: ManagedError, id: &str) -> ApiError {
     let (status, code) = match error {
         ManagedError::Unauthorized => (StatusCode::FORBIDDEN, ErrorCode::Unauthorized),
         ManagedError::Rejected(_) => (StatusCode::BAD_REQUEST, ErrorCode::InvalidInput),
-        ManagedError::Conflict(_) => (StatusCode::CONFLICT, ErrorCode::Conflict),
-        ManagedError::Persistence(
+        ManagedError::Conflict(_)
+        | ManagedError::Persistence(
             milkdrift_persistence::PersistenceError::ImmutableConflict { .. }
             | milkdrift_persistence::PersistenceError::Storage {
                 class: milkdrift_persistence::StorageFailureClass::OwnerBusy,

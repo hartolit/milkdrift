@@ -135,7 +135,9 @@ pub(super) fn copy(
     let metadata = source.semantic().metadata();
     // Preserve descriptive extensions and every graph fact; the source is retained in immutable
     // revision provenance and the exact copy command, without transferring any execution state.
-    mutations[0] = Mutation::SetMetadata {
+    *mutations
+        .first_mut()
+        .ok_or_else(super::super::read_model::internal)? = Mutation::SetMetadata {
         metadata: milkdrift_blueprint::BlueprintMetadata::new(
             name,
             metadata.description(),

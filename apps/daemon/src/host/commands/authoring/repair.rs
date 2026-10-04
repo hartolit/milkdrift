@@ -20,7 +20,7 @@ use milkdrift_workspace::RunId;
 use serde_json::json;
 
 pub(in crate::host::commands) fn prepare(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     request: &CommandRequest,
     run: &str,
@@ -155,7 +155,11 @@ fn build(
             maximum_output_units: repair.maximum_output_units,
         },
     )?;
-    replacement.steps[0].inputs = failed
+    replacement
+        .steps
+        .first_mut()
+        .ok_or("repair step absent")?
+        .inputs = failed
         .inputs
         .iter()
         .filter(|(_, source)| matches!(source, BindingSource::WorkflowInput { .. }))

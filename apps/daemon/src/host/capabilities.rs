@@ -288,7 +288,9 @@ impl ControlArtifactAccess for ResultSink {
                 )
                 .map_err(|_| unavailable())?
             }
-            _ => return Err(unavailable()),
+            milkdrift_capability::InvocationValueReference::Inline { .. } => {
+                return Err(unavailable());
+            }
         };
         let identity = ArtifactId::new(reference.identity()).map_err(|_| unavailable())?;
         let metadata = self

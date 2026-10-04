@@ -10,7 +10,7 @@ use milkdrift_persistence::{ArtifactStore, PageSize, RunEventKind, RunSequence};
 use milkdrift_workspace::ArtifactReference;
 
 pub(super) fn bytes(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     reference: &ArtifactReference,
 ) -> Result<Vec<u8>, PublicFailure> {
@@ -58,9 +58,12 @@ fn reference(
     Ok(actual.clone())
 }
 
-#[allow(clippy::too_many_arguments)] // Check the independent declaration and selected source boundary together.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Verify the independently retained declaration, source selection, proposal, and declaration time at the same authority boundary."
+)]
 pub(super) fn verify(
-    owner: &mut Owner,
+    owner: &Owner,
     session: &ActorSession,
     request: &CommandRequest,
     proposal: &WorkflowProposal,

@@ -9,7 +9,7 @@ use crate::host::{
 
 impl Owner {
     pub(super) fn attach_context(
-        &mut self,
+        &self,
         session: &ActorSession,
         attempt: &str,
         located: &mut LocatedAttempt,

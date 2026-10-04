@@ -54,7 +54,14 @@ fn maintained_operator_configuration_uses_the_production_reader()
     let plan = DaemonConfig::load(&path)?;
     let document: DaemonConfig = toml::from_str(&fs::read_to_string(&path)?)?;
     assert!(plan.bind().ip().is_loopback());
-    assert!(!document.actors[0].authority.dangerous_allow_broad_authority);
+    assert!(
+        !document
+            .actors
+            .first()
+            .ok_or("actor absent")?
+            .authority
+            .dangerous_allow_broad_authority
+    );
     assert_eq!(document.runtime, RuntimeHostConfig::default());
     assert_eq!(document.shutdown, ShutdownConfig::default());
     assert_eq!(
@@ -74,7 +81,7 @@ fn maintained_operator_configuration_uses_the_production_reader()
 fn schema_v13_fixture_is_explicit_safe_and_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     let plan = DaemonConfig::load(&fixture_path())?;
     let document = fixture_document()?;
-    let actor = &document.actors[0];
+    let actor = document.actors.first().ok_or("actor absent")?;
     assert_eq!(document.schema_version, DAEMON_CONFIG_SCHEMA_VERSION);
     assert!(!actor.authority.dangerous_allow_broad_authority);
     assert!(matches!(
@@ -198,10 +205,11 @@ fn peer_mode_decodes_only_complete_explicit_states() -> Result<(), Box<dyn std::
 fn wildcard_or_unbounded_authority_requires_the_dangerous_flag()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut config = fixture_document()?;
-    config.actors[0].authority.resources.workflow_run = WorkflowRunScope::Any;
-    config.actors[0].authority.budget.duration_ms = None;
-    config.actors[0].authority.valid_until = BoundaryTimeMillis::new(u64::MAX);
-    config.actors[0].authority.dangerous_allow_broad_authority = false;
+    let authority = &mut config.actors.first_mut().ok_or("actor absent")?.authority;
+    authority.resources.workflow_run = WorkflowRunScope::Any;
+    authority.budget.duration_ms = None;
+    authority.valid_until = BoundaryTimeMillis::new(u64::MAX);
+    authority.dangerous_allow_broad_authority = false;
     let directory = tempfile::tempdir()?;
     assert!(matches!(
         config.validate(directory.path()),
@@ -216,13 +224,26 @@ fn empty_or_legacy_capability_selectors_are_rejected_not_widened()
 -> Result<(), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(fixture_path())?;
     let mut empty_only: toml::Value = toml::from_str(&source)?;
-    empty_only["actors"][0]["authority"]["resources"]["capability"]["operations"]["values"] =
-        toml::Value::Array(Vec::new());
+    *empty_only
+        .get_mut("actors")
+        .and_then(|value| value.get_mut(0))
+        .and_then(|value| value.get_mut("authority"))
+        .and_then(|value| value.get_mut("resources"))
+        .and_then(|value| value.get_mut("capability"))
+        .and_then(|value| value.get_mut("operations"))
+        .and_then(|value| value.get_mut("values"))
+        .ok_or("fixture field absent")? = toml::Value::Array(Vec::new());
     assert!(toml::from_str::<DaemonConfig>(&toml::to_string(&empty_only)?).is_err());
 
     let mut legacy_array: toml::Value = toml::from_str(&source)?;
-    legacy_array["actors"][0]["authority"]["resources"]["capability"]["operations"] =
-        toml::Value::Array(Vec::new());
+    *legacy_array
+        .get_mut("actors")
+        .and_then(|value| value.get_mut(0))
+        .and_then(|value| value.get_mut("authority"))
+        .and_then(|value| value.get_mut("resources"))
+        .and_then(|value| value.get_mut("capability"))
+        .and_then(|value| value.get_mut("operations"))
+        .ok_or("fixture field absent")? = toml::Value::Array(Vec::new());
     assert!(toml::from_str::<DaemonConfig>(&toml::to_string(&legacy_array)?).is_err());
     Ok(())
 }
@@ -231,14 +252,24 @@ fn empty_or_legacy_capability_selectors_are_rejected_not_widened()
 fn daemon_authority_uses_canonical_cross_platform_filesystem_roots()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut config = fixture_document()?;
-    config.actors[0].authority.resources.filesystem = vec![FilesystemScope::new(
+    let authority = &mut config.actors.first_mut().ok_or("actor absent")?.authority;
+    authority.resources.filesystem = vec![FilesystemScope::new(
         "C:/work/tools",
         BTreeSet::from([milkdrift_authority::AccessMode::Execute]),
     )?];
     let encoded = toml::to_string(&config)?;
     let decoded: DaemonConfig = toml::from_str(&encoded)?;
     assert_eq!(
-        decoded.actors[0].authority.resources.filesystem[0].root(),
+        decoded
+            .actors
+            .first()
+            .ok_or("actor absent")?
+            .authority
+            .resources
+            .filesystem
+            .first()
+            .ok_or("filesystem scope absent")?
+            .root(),
         "C:/work/tools"
     );
 
@@ -251,9 +282,9 @@ fn daemon_authority_uses_canonical_cross_platform_filesystem_roots()
 fn explicit_capability_wildcard_alone_requires_acknowledgement()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut config = fixture_document()?;
-    config.actors[0].authority.resources.capability =
-        CapabilityAuthorityScope::allow_any(SideEffectClass::ReadOnly);
-    config.actors[0].authority.dangerous_allow_broad_authority = false;
+    let authority = &mut config.actors.first_mut().ok_or("actor absent")?.authority;
+    authority.resources.capability = CapabilityAuthorityScope::allow_any(SideEffectClass::ReadOnly);
+    authority.dangerous_allow_broad_authority = false;
     let directory = tempfile::tempdir()?;
     assert!(matches!(
         config.validate(directory.path()),
@@ -272,21 +303,42 @@ fn deny_all_is_not_broad_and_redaction_preserves_selector_kinds()
         .validate(fixture_path().parent().ok_or("fixture parent absent")?)?;
     let redacted: toml::Value = toml::from_str(plan.redacted_toml())?;
     assert_eq!(
-        redacted["actors"][0]["authority"]["resources"]["capability"]["type"].as_str(),
+        redacted
+            .get("actors")
+            .and_then(|value| value.get(0))
+            .and_then(|value| value.get("authority"))
+            .and_then(|value| value.get("resources"))
+            .and_then(|value| value.get("capability"))
+            .and_then(|value| value.get("type"))
+            .ok_or("fixture field absent")?
+            .as_str(),
         Some("allow")
     );
     assert_eq!(
-        redacted["actors"][0]["authority"]["resources"]["capability"]["operations"]["type"]
+        redacted
+            .get("actors")
+            .and_then(|value| value.get(0))
+            .and_then(|value| value.get("authority"))
+            .and_then(|value| value.get("resources"))
+            .and_then(|value| value.get("capability"))
+            .and_then(|value| value.get("operations"))
+            .and_then(|value| value.get("type"))
+            .ok_or("fixture field absent")?
             .as_str(),
         Some("only")
     );
     assert_eq!(
-        redacted["secret_sources"]["values"].as_str(),
+        redacted
+            .get("secret_sources")
+            .and_then(|value| value.get("values"))
+            .ok_or("fixture field absent")?
+            .as_str(),
         Some("[redacted]")
     );
 
-    config.actors[0].authority.resources.capability = CapabilityAuthorityScope::deny_all();
-    config.actors[0].authority.dangerous_allow_broad_authority = false;
+    let authority = &mut config.actors.first_mut().ok_or("actor absent")?.authority;
+    authority.resources.capability = CapabilityAuthorityScope::deny_all();
+    authority.dangerous_allow_broad_authority = false;
     let directory = tempfile::tempdir()?;
     config.validate(directory.path())?;
     Ok(())
