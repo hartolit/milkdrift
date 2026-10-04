@@ -423,9 +423,8 @@ pub fn preflight_json_structure(
     let mut in_string = false;
     let mut escaped = false;
     let mut string_bytes = 0usize;
-    let mut index = 0usize;
-    while index < bytes.len() {
-        let byte = bytes[index];
+    let mut remaining = bytes.iter().copied();
+    while let Some(byte) = remaining.next() {
         if in_string {
             // Count wire bytes, including escape spelling, without allocating decoded text.
             if escaped {
@@ -436,11 +435,8 @@ pub fn preflight_json_structure(
                 string_bytes = string_bytes.saturating_add(1);
             } else if byte == b'"' {
                 in_string = false;
-                let mut next = index.saturating_add(1);
-                while next < bytes.len() && bytes[next].is_ascii_whitespace() {
-                    next = next.saturating_add(1);
-                }
-                let (kind, maximum) = if bytes.get(next) == Some(&b':') {
+                let next = remaining.clone().find(|byte| !byte.is_ascii_whitespace());
+                let (kind, maximum) = if next == Some(b':') {
                     (JsonBoundKind::Key, limits.maximum_key_bytes)
                 } else {
                     (JsonBoundKind::String, limits.maximum_string_bytes)
@@ -451,7 +447,6 @@ pub fn preflight_json_structure(
             } else {
                 string_bytes = string_bytes.saturating_add(1);
             }
-            index = index.saturating_add(1);
             continue;
         }
         match byte {
@@ -505,7 +500,6 @@ pub fn preflight_json_structure(
                 }
             }
         }
-        index = index.saturating_add(1);
     }
     Ok(())
 }
@@ -565,7 +559,11 @@ fn validate_value(
                 ));
             }
             for (index, child) in values.iter().enumerate() {
-                validate_value(child, &format!("{path}[{index}]"), depth + 1, limits)?;
+                let child_path = format!("{path}[{index}]");
+                let child_depth = depth.checked_add(1).ok_or_else(|| {
+                    violation(&child_path, JsonBoundKind::Depth, limits.maximum_depth)
+                })?;
+                validate_value(child, &child_path, child_depth, limits)?;
             }
             Ok(())
         }
@@ -585,7 +583,11 @@ fn validate_value(
                         limits.maximum_key_bytes,
                     ));
                 }
-                validate_value(child, &format!("{path}.{key}"), depth + 1, limits)?;
+                let child_path = format!("{path}.{key}");
+                let child_depth = depth.checked_add(1).ok_or_else(|| {
+                    violation(&child_path, JsonBoundKind::Depth, limits.maximum_depth)
+                })?;
+                validate_value(child, &child_path, child_depth, limits)?;
             }
             Ok(())
         }
@@ -769,6 +771,24 @@ mod tests {
             assert_eq!(string.kind(), JsonBoundKind::String);
         }
         assert!(preflight_json_structure(br#"{"a":[1,2]}"#, LIMITS).is_ok());
+    }
+
+    #[test]
+    fn preflight_lookahead_preserves_key_and_string_bounds() {
+        let limits = JsonLimits {
+            maximum_key_bytes: 2,
+            maximum_string_bytes: 8,
+            ..LIMITS
+        };
+        for input in [br#"{"key":"ok"}"#.as_slice(), b"{\"key\" \t\n :\"ok\"}"] {
+            assert!(matches!(
+                preflight_json_structure(input, limits),
+                Err(error) if error.kind() == JsonBoundKind::Key
+            ));
+        }
+        assert!(preflight_json_structure(br#"{"a":"a\"b"}"#, limits).is_ok());
+        assert!(preflight_json_structure(br#""key""#, limits).is_ok());
+        assert!(preflight_json_structure(b"", limits).is_ok());
     }
 
     #[test]

@@ -18,14 +18,7 @@
 /// ```
 #[must_use]
 pub fn truncate_utf8(value: &str, maximum_bytes: usize) -> &str {
-    if value.len() <= maximum_bytes {
-        return value;
-    }
-    let mut boundary = maximum_bytes;
-    while !value.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
-    &value[..boundary]
+    value.split_at(value.floor_char_boundary(maximum_bytes)).0
 }
 
 /// Whether `value` is exactly `b3_` followed by 64 lowercase hexadecimal bytes.
@@ -68,6 +61,10 @@ mod tests {
             ("éclair", 2, "é"),
             ("éclair", 3, "éc"),
             ("short", 64, "short"),
+            ("", 0, ""),
+            ("é", usize::MAX, "é"),
+            ("🙂end", 3, ""),
+            ("🙂end", 4, "🙂"),
         ] {
             assert_eq!(truncate_utf8(value, maximum), expected);
         }
