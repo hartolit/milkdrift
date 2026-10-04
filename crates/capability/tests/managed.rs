@@ -47,7 +47,9 @@ fn generation_binding_requires_unique_exact_resources() -> Result {
         "a".repeat(64)
     );
     assert_eq!(serde_json::to_string(&binding)?, expected);
-    binding.resources.push(binding.resources[0].clone());
+    binding
+        .resources
+        .push(binding.resources.first().ok_or("missing resource")?.clone());
     assert!(binding.validate().is_err());
     binding.resources.pop();
     binding.generation = 0;

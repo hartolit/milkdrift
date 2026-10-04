@@ -298,7 +298,9 @@ fn resolved_snapshot_is_exact_digest_bound_and_golden() -> Result<(), Box<dyn st
 
     assert!(snapshot.validate_against(&descriptor_at(8)?).is_err());
     let mut tampered = serde_json::to_value(&snapshot)?;
-    tampered["descriptor_revision"] = json!(8);
+    *tampered
+        .get_mut("descriptor_revision")
+        .ok_or("missing descriptor revision")? = json!(8);
     assert!(serde_json::from_value::<ResolvedCapabilitySnapshot>(tampered).is_err());
     Ok(())
 }
@@ -396,8 +398,9 @@ fn immutable_accessors_expose_every_executor_fact() -> Result<(), Box<dyn std::e
         request.idempotency_key().map(IdempotencyKey::as_str),
         Some("run-1-node-2-attempt-1")
     );
-    assert_eq!(request.inputs()[0].name(), "payload");
-    assert!(request.inputs()[0].value().inline().is_some());
+    let input = request.inputs().first().ok_or("missing payload input")?;
+    assert_eq!(input.name(), "payload");
+    assert!(input.value().inline().is_some());
     assert_eq!(request.extensions().len(), 1);
 
     let event = invocation_event()?;
@@ -406,7 +409,10 @@ fn immutable_accessors_expose_every_executor_fact() -> Result<(), Box<dyn std::e
     let terminal = event.kind().terminal().ok_or("missing terminal")?;
     assert_eq!(terminal.status(), TerminalStatus::Uncertain);
     assert_eq!(terminal.side_effect(), SideEffectClass::IdempotentWrite);
-    let output = &terminal.outputs()[0];
+    let output = terminal
+        .outputs()
+        .first()
+        .ok_or("missing terminal output")?;
     assert_eq!(output.identity(), "artifact-output");
     assert_eq!(output.digest(), ARTIFACT_DIGEST);
     assert_eq!(output.media_type(), Some("application/json"));
@@ -448,11 +454,15 @@ fn immutable_accessors_expose_every_executor_fact() -> Result<(), Box<dyn std::e
 fn malformed_direct_serde_input_cannot_bypass_constructors()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut operation_value = serde_json::to_value(operation()?)?;
-    operation_value["streaming"] = json!([]);
+    *operation_value
+        .get_mut("streaming")
+        .ok_or("missing streaming modes")? = json!([]);
     assert!(serde_json::from_value::<OperationContract>(operation_value).is_err());
 
     let mut feature_schema_value = serde_json::to_value(operation()?)?;
-    feature_schema_value["features"]["tool.batch"]["settings_schema"]["version"] = json!(0);
+    *feature_schema_value
+        .pointer_mut("/features/tool.batch/settings_schema/version")
+        .ok_or("missing feature schema version")? = json!(0);
     assert!(serde_json::from_value::<OperationContract>(feature_schema_value).is_err());
 
     assert!(
@@ -500,19 +510,25 @@ fn malformed_direct_serde_input_cannot_bypass_constructors()
     );
 
     let mut terminal_value = serde_json::to_value(terminal()?)?;
-    terminal_value["failure"] = Value::Null;
+    *terminal_value
+        .get_mut("failure")
+        .ok_or("missing terminal failure")? = Value::Null;
     assert!(serde_json::from_value::<InvocationTerminal>(terminal_value).is_err());
 
     let oversized_features: Vec<_> = (0..=256).map(|index| format!("tool.f{index}")).collect();
     let mut requirement_value = serde_json::to_value(CapabilityRequirement::new(
         OperationId::new("tool.publish")?,
     ))?;
-    requirement_value["required_features"] = json!(oversized_features);
+    *requirement_value
+        .get_mut("required_features")
+        .ok_or("missing required features")? = json!(oversized_features);
     assert!(serde_json::from_value::<CapabilityRequirement>(requirement_value).is_err());
 
     let mut direct_document =
         serde_json::to_value(InvocationEventDocument::new(invocation_event()?))?;
-    direct_document["schema_version"] = json!(2);
+    *direct_document
+        .get_mut("schema_version")
+        .ok_or("missing schema version")? = json!(2);
     assert!(serde_json::from_value::<InvocationEventDocument>(direct_document).is_err());
     Ok(())
 }

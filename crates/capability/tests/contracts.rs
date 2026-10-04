@@ -59,9 +59,6 @@ fn descriptor_round_trip_and_golden_encoding() -> Result<(), Box<dyn std::error:
     let document = CapabilityDescriptorDocument::new(descriptor()?);
     let bytes = document.to_canonical_json()?;
     let fixture = include_bytes!("fixtures/descriptor-v1.json").trim_ascii_end();
-    if fixture.is_empty() {
-        eprintln!("{}", String::from_utf8(bytes.clone())?);
-    }
     assert_eq!(bytes, fixture);
     let decoded = CapabilityDescriptorDocument::from_json(fixture)?;
     assert_eq!(decoded, document);

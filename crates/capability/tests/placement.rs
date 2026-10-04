@@ -32,7 +32,7 @@ fn descriptor(
 #[test]
 fn absent_empty_exact_and_intersecting_placement_have_distinct_meanings() -> TestResult {
     let operation = OperationId::new("model.generate")?;
-    let base = CapabilityRequirement::new(operation.clone());
+    let base = CapabilityRequirement::new(operation);
     let a = PeerId::new("peer-a")?;
     let b = PeerId::new("peer-b")?;
     let local = descriptor(Locality::Local, None)?;
@@ -130,13 +130,14 @@ fn snapshots_require_current_schema_and_bind_host_facts() -> TestResult {
         ("trust_zones", json!(["trusted"])),
     ] {
         let mut bad = serde_json::to_value(&snapshot)?;
-        bad[key] = value;
+        *bad.get_mut(key).ok_or("missing snapshot field")? = value;
         assert!(serde_json::from_value::<ResolvedCapabilitySnapshot>(bad).is_err());
     }
     // Envelope and nested readers both reject obsolete formats; no missing host fact is inferred.
     for version in [0, 1, 2, 4, u32::MAX] {
         let mut bad = serde_json::to_value(&document)?;
-        bad["schema_version"] = json!(version);
+        *bad.get_mut("schema_version")
+            .ok_or("missing schema version")? = json!(version);
         assert!(ResolvedCapabilitySnapshotDocument::from_json(&serde_json::to_vec(&bad)?).is_err());
         assert!(serde_json::from_value::<ResolvedCapabilitySnapshotDocument>(bad).is_err());
     }
@@ -148,7 +149,7 @@ fn snapshots_require_current_schema_and_bind_host_facts() -> TestResult {
                     .ok_or("snapshot must be an object")?
                     .remove(field);
             } else {
-                bad[field] = json!(null);
+                *bad.get_mut(field).ok_or("missing snapshot field")? = json!(null);
             }
             assert!(serde_json::from_value::<ResolvedCapabilitySnapshot>(bad).is_err());
         }

@@ -32,6 +32,9 @@ milkdrift_contracts::deserialize_via!(PublicationAncestor, PublicationAncestorWi
 
 impl PublicationAncestor {
     /// Retain the exact enclosing generation and its inclusive call-chain depth ceiling.
+    ///
+    /// # Errors
+    /// Rejects generation zero or a depth outside `1..=MAX_PUBLICATION_DEPTH`.
     pub fn new(
         capability: crate::CapabilityId,
         generation: u64,
@@ -185,6 +188,9 @@ milkdrift_contracts::deserialize_via!(AdmissionMonetaryBound, AdmissionMonetaryB
 
 impl AdmissionMonetaryBound {
     /// Constructs an exact-currency inclusive cost maximum.
+    ///
+    /// # Errors
+    /// Rejects a currency that is not three uppercase ASCII letters.
     pub fn new(maximum_micros: u64, currency: impl Into<String>) -> Result<Self, ContractError> {
         let currency = currency.into();
         if currency.len() != 3 || !currency.bytes().all(|byte| byte.is_ascii_uppercase()) {

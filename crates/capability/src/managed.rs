@@ -22,7 +22,7 @@ milkdrift_contracts::validated_string_type! {
     pub struct ManagedName;
     error = ContractError;
     validate = |value: &str, kind: &'static str| {
-        if value.is_empty() || value.len() > 64 || !value.as_bytes()[0].is_ascii_lowercase()
+        if value.is_empty() || value.len() > 64 || !value.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
             || !value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
             Err(ContractError::InvalidIdentity { type_name: kind, reason: "expected 1..=64 lowercase letters, digits or hyphens, starting with a letter".to_owned() })
         } else { Ok(()) }
@@ -139,6 +139,10 @@ pub struct ManagedRequest {
 
 impl ManagedRequest {
     /// Checks finite version and digest semantics before any authorization or platform effect.
+    ///
+    /// # Errors
+    /// Rejects unsupported schemas, malformed recipe/evaluation identities, unbounded
+    /// candidate sizes, or inconsistent use-resolution and editing-transfer claims.
     pub fn validate(&self) -> Result<(), ContractError> {
         if self.schema_version != MANAGED_SCHEMA_VERSION {
             return Err(invalid("unsupported managed request version"));
@@ -281,6 +285,10 @@ pub struct ManagedBinding {
 
 impl ManagedBinding {
     /// Validate finite, unique dependencies before use acquisition or durable decoding.
+    ///
+    /// # Errors
+    /// Rejects generation zero, a malformed recipe digest, or empty, duplicate or
+    /// excessive resource dependencies.
     pub fn validate(&self) -> Result<(), ContractError> {
         if self.generation == 0
             || !milkdrift_contracts::is_canonical_blake3_digest(&self.recipe_digest)
@@ -400,6 +408,10 @@ pub struct EditingHandoff {
 
 impl ManagedResponse {
     /// Check bounded response facts and target correlation before a client exposes the result.
+    ///
+    /// # Errors
+    /// Rejects the wrong schema/installation, invalid lifecycle state or digests,
+    /// excessive collections/diagnostics, and invalid resource or blocker identities.
     pub fn validate_for(&self, request: &ManagedRequest) -> Result<(), ContractError> {
         if self.schema_version != MANAGED_SCHEMA_VERSION
             || self.installation != request.installation
@@ -469,6 +481,9 @@ pub struct ManagedTarget {
 }
 impl ManagedTarget {
     /// Construct the same canonical request used by direct API and CLI consumers.
+    ///
+    /// # Errors
+    /// Returns the version, identity, bounds or claim refusal from [`ManagedRequest::validate`].
     pub fn request(&self, action: ManagedAction) -> Result<ManagedRequest, ContractError> {
         let request = ManagedRequest {
             schema_version: self.schema_version,

@@ -104,6 +104,10 @@ milkdrift_contracts::deserialize_via!(
 
 impl ResolvedCapabilitySnapshot {
     /// Resolves and clones one exact operation from an immutable descriptor.
+    ///
+    /// # Errors
+    /// Rejects an operation the descriptor does not advertise, or a snapshot whose
+    /// canonical digest payload cannot be encoded within document bounds.
     pub fn from_descriptor(
         descriptor: &CapabilityDescriptor,
         operation: &OperationId,
@@ -212,6 +216,9 @@ impl ResolvedCapabilitySnapshot {
     }
 
     /// Checks task placement against the exact frozen host facts.
+    ///
+    /// # Errors
+    /// Rejects a locality or peer outside the requirement's intersecting allowlists.
     pub fn validate_placement(
         &self,
         requirement: &PlacementRequirement,
@@ -231,6 +238,10 @@ impl ResolvedCapabilitySnapshot {
     }
 
     /// Verifies that this snapshot is the exact resolution of `descriptor`.
+    ///
+    /// # Errors
+    /// Rejects invalid snapshot facts/digest, a missing operation, or any difference
+    /// between the frozen selection and the descriptor's exact revision.
     pub fn validate_against(&self, descriptor: &CapabilityDescriptor) -> Result<(), ContractError> {
         self.validate()?;
         let descriptor_operation = descriptor.operation(&self.operation).ok_or_else(|| {
@@ -261,6 +272,10 @@ impl ResolvedCapabilitySnapshot {
 
     /// Verifies that an invocation request names this exact resolved selection and obeys its
     /// idempotency contract.
+    ///
+    /// # Errors
+    /// Rejects invalid snapshot facts, mismatched selection, an unsupported idempotency
+    /// key, or an idempotent-write request missing its required key.
     pub fn validate_request(&self, request: &InvocationRequest) -> Result<(), ContractError> {
         self.validate()?;
         if request.capability() != self.capability()

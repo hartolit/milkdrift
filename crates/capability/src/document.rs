@@ -119,11 +119,18 @@ macro_rules! document {
             }
 
             /// Serializes the envelope as deterministic compact JSON.
+            ///
+            /// # Errors
+            /// Rejects encoding failures or an envelope exceeding document byte/structure bounds.
             pub fn to_canonical_json(&self) -> Result<Vec<u8>, ContractError> {
                 canonical_json_bytes(self)
             }
 
             /// Parses, bounds-checks, version-checks, and validates an envelope.
+            ///
+            /// # Errors
+            /// Rejects malformed/duplicate JSON, excessive structure or size, unsupported
+            /// versions, unknown fields and invalid body contracts.
             pub fn from_json(bytes: &[u8]) -> Result<Self, ContractError> {
                 read_document(bytes, $label)
             }
@@ -169,11 +176,18 @@ impl InvocationRequestDocument {
     }
 
     /// Deterministic canonical JSON.
+    ///
+    /// # Errors
+    /// Rejects encoding failures or a request exceeding document byte/structure bounds.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, ContractError> {
         canonical_json_bytes(self)
     }
 
     /// Reads v2 and deliberately migrates unambiguous context-free v1 requests.
+    ///
+    /// # Errors
+    /// Rejects malformed/duplicate JSON, excess bounds, unknown fields, unsupported
+    /// versions, invalid request facts and v1 input that would ambiguously bind context.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ContractError> {
         if bytes.len() > MAX_DOCUMENT_BYTES {
             return Err(ContractError::Bounds {
@@ -287,11 +301,18 @@ impl ResolvedCapabilitySnapshotDocument {
     }
 
     /// Serializes the envelope as deterministic compact JSON.
+    ///
+    /// # Errors
+    /// Rejects encoding failures or a snapshot exceeding document byte/structure bounds.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, ContractError> {
         canonical_json_bytes(self)
     }
 
     /// Reads the current placement-bound schema; obsolete development formats are refused.
+    ///
+    /// # Errors
+    /// Rejects malformed/duplicate JSON, excess bounds, unknown fields, noncurrent
+    /// versions or a snapshot whose facts do not match its digest.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ContractError> {
         if bytes.len() > MAX_DOCUMENT_BYTES {
             return Err(ContractError::Bounds {
@@ -345,6 +366,9 @@ impl<'de> Deserialize<'de> for ResolvedCapabilitySnapshotDocument {
 
 impl CancellationRequestDocument {
     /// Performs semantic validation in addition to envelope validation.
+    ///
+    /// # Errors
+    /// Rejects sequence zero or a cancellation reason outside 1..=512 UTF-8 bytes.
     pub fn validate(&self) -> Result<(), ContractError> {
         self.body().validate()
     }
@@ -352,6 +376,9 @@ impl CancellationRequestDocument {
 
 impl CancellationAcknowledgementDocument {
     /// Performs semantic validation in addition to envelope validation.
+    ///
+    /// # Errors
+    /// Rejects sequence zero, excess detail or a terminal boundary on a rejected cancellation.
     pub fn validate(&self) -> Result<(), ContractError> {
         self.body().validate()
     }

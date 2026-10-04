@@ -37,7 +37,12 @@ fn exact_set<T: Ord>(
     let Some(values) = values else {
         return Ok(None);
     };
-    if values.len() > maximum || values.windows(2).any(|pair| pair[0] >= pair[1]) {
+    if values.len() > maximum
+        || values
+            .iter()
+            .zip(values.iter().skip(1))
+            .any(|(left, right)| left >= right)
+    {
         return Err(ContractError::InvalidContract(
             "placement sets must be bounded, unique, and in canonical order".to_owned(),
         ));
@@ -49,6 +54,9 @@ impl PlacementRequirement {
     /// Constructs intersecting locality and peer allowlists (at most 128 peers).
     /// `None` is unrestricted; `Some(empty)` denies every placement. Nonempty peers
     /// combined with a locality set that excludes `Peer` are contradictory and refused.
+    ///
+    /// # Errors
+    /// Rejects more than 128 peers or nonempty peers when locality excludes `Peer`.
     pub fn new(
         localities: Option<BTreeSet<Locality>>,
         peers: Option<BTreeSet<PeerId>>,

@@ -142,6 +142,9 @@ milkdrift_contracts::deserialize_via!(SchemaContract, SchemaContractWire, |wire|
 
 impl SchemaContract {
     /// Constructs a nonzero schema version with a bounded schema value.
+    ///
+    /// # Errors
+    /// Returns an invalid-contract error when `version` is zero.
     pub fn new(id: SchemaId, version: u32, schema: BoundedJson) -> Result<Self, ContractError> {
         if version == 0 {
             return Err(ContractError::InvalidContract(
@@ -260,6 +263,10 @@ milkdrift_contracts::deserialize_via!(OperationContract, OperationContractWire, 
 
 impl OperationContract {
     /// Constructs and validates an operation contract.
+    ///
+    /// # Errors
+    /// Rejects invalid input/output schemas, an empty streaming set, excess features,
+    /// or feature entries whose keys and declared identities disagree.
     pub fn new(
         input: SchemaContract,
         output: SchemaContract,
@@ -400,6 +407,9 @@ milkdrift_contracts::deserialize_via!(AdmissionConstraints, AdmissionConstraints
 
 impl AdmissionConstraints {
     /// Constructs limits; concurrency must be nonzero.
+    ///
+    /// # Errors
+    /// Rejects zero concurrency; zero queued capacity is valid.
     pub fn new(max_concurrent: u32, max_queued: u32) -> Result<Self, ContractError> {
         if max_concurrent == 0 {
             return Err(ContractError::InvalidContract(
@@ -455,6 +465,10 @@ milkdrift_contracts::deserialize_via!(ResourceObservations, ResourceObservations
 
 impl ResourceObservations {
     /// Constructs validated optional resource estimates.
+    ///
+    /// # Errors
+    /// Rejects cost without currency, currency without cost, or a currency that is
+    /// not three uppercase ASCII letters.
     pub fn new(
         estimated_cost_micros: Option<u64>,
         estimated_duration_ms: Option<u64>,
@@ -806,6 +820,10 @@ impl DescriptorBuilder {
     }
 
     /// Validates all facts and publishes the immutable descriptor.
+    ///
+    /// # Errors
+    /// Rejects invalid operation/schema contracts, revision or concurrency zero,
+    /// inconsistent peer locality, excessive labels/extensions, or invalid resource estimates.
     pub fn build(self) -> Result<CapabilityDescriptor, ContractError> {
         let descriptor = self.descriptor;
         if descriptor.descriptor_revision == 0 {
@@ -916,6 +934,7 @@ milkdrift_contracts::deserialize_via!(CapabilityRequirement, CapabilityRequireme
 
 impl CapabilityRequirement {
     /// Requires this operation, allowing any provider and side-effect class until narrowed.
+    #[must_use]
     pub fn new(operation: OperationId) -> Self {
         Self {
             exact_capability: None,
@@ -1069,6 +1088,9 @@ impl CapabilityRequirement {
     }
 
     /// Validates collection bounds after deserialization or composition.
+    ///
+    /// # Errors
+    /// Rejects excessive category, required-feature or trust-zone collections.
     pub fn validate(&self) -> Result<(), ContractError> {
         if self.categories.len() > 32
             || self.required_features.len() > MAX_FEATURES
@@ -1136,6 +1158,9 @@ milkdrift_contracts::deserialize_via!(CapabilityObservation, CapabilityObservati
 
 impl CapabilityObservation {
     /// Creates a bounded live observation.
+    ///
+    /// # Errors
+    /// Rejects a health summary longer than 512 UTF-8 bytes.
     pub fn new(
         capability: CapabilityId,
         observed_at_unix_ms: u64,

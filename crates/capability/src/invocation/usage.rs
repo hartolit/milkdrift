@@ -53,6 +53,10 @@ milkdrift_contracts::deserialize_via!(UsageObservation, UsageObservationWire, |w
 
 impl UsageObservation {
     /// Constructs validated adapter-reported usage measurements.
+    ///
+    /// # Errors
+    /// Rejects unpaired cost/currency, a currency other than three uppercase ASCII
+    /// letters, or extensions exceeding their count and JSON bounds.
     pub fn new(
         input_units: Option<u64>,
         output_units: Option<u64>,

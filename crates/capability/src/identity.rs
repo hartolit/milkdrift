@@ -28,7 +28,12 @@ fn validate_id(
     let valid = value.bytes().all(|byte| {
         byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
     });
-    if !valid || !value.as_bytes()[0].is_ascii_alphanumeric() {
+    if !valid
+        || !value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+    {
         return Err(ContractError::InvalidIdentity {
             type_name,
             reason: "must start with an alphanumeric character and use only alphanumerics, '-', '_', '.', ':', or '/'".to_owned(),

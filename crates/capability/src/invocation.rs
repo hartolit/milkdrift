@@ -46,6 +46,10 @@ milkdrift_contracts::deserialize_via!(ArtifactReference, ArtifactReferenceWire, 
 
 impl ArtifactReference {
     /// Constructs a bounded artifact reference with a lowercase BLAKE3 hex digest.
+    ///
+    /// # Errors
+    /// Rejects an empty/oversized identity or media type, or a digest that is not
+    /// exactly 64 lowercase hexadecimal characters.
     pub fn new(
         identity: impl Into<String>,
         digest: impl Into<String>,
@@ -239,6 +243,9 @@ milkdrift_contracts::deserialize_via!(InputReference, InputReferenceWire, |wire|
 
 impl InputReference {
     /// Constructs a bounded named input.
+    ///
+    /// # Errors
+    /// Rejects an empty, oversized or unsafe ASCII name, or an invalid value reference.
     pub fn new(
         name: impl Into<String>,
         value: InvocationValueReference,
@@ -345,6 +352,10 @@ impl<'de> Deserialize<'de> for InvocationRequest {
 
 impl InvocationRequest {
     /// Constructs a completely validated invocation request.
+    ///
+    /// # Errors
+    /// Rejects excess inputs, invalid or duplicate input names, invalid references,
+    /// or extensions exceeding their count and JSON bounds.
     pub fn new(
         invocation: InvocationId,
         capability: CapabilityId,
@@ -414,6 +425,10 @@ impl InvocationRequest {
     }
 
     /// Binds an exact, already persisted context manifest before external dispatch.
+    ///
+    /// # Errors
+    /// Rejects an invalid artifact reference, a missing exact size, or media type other
+    /// than `application/vnd.milkdrift.context-manifest.v2+json`.
     pub fn with_context_manifest(
         mut self,
         reference: ArtifactReference,
@@ -434,6 +449,10 @@ impl InvocationRequest {
     ///
     /// Context inputs use a reserved name prefix so adapters can distinguish them
     /// from workflow-declared task inputs without an implicit global file.
+    ///
+    /// # Errors
+    /// Rejects excess inputs, invalid references, duplicate/nonreserved input names,
+    /// or a manifest refused by [`Self::with_context_manifest`].
     pub fn with_context_materialization(
         mut self,
         reference: ArtifactReference,
@@ -546,6 +565,9 @@ milkdrift_contracts::deserialize_via!(InvocationFailure, InvocationFailureWire, 
 
 impl InvocationFailure {
     /// Constructs bounded, structured failure details.
+    ///
+    /// # Errors
+    /// Rejects a code outside 1..=128 bytes or a message exceeding `MAX_EVENT_TEXT`.
     pub fn new(
         class: ErrorClass,
         retryable: bool,
@@ -659,6 +681,10 @@ milkdrift_contracts::deserialize_via!(InvocationTerminal, InvocationTerminalWire
 
 impl InvocationTerminal {
     /// Constructs a validated terminal invocation outcome.
+    ///
+    /// # Errors
+    /// Rejects excessive/invalid output references, failure details inconsistent with
+    /// status, outputs on a nonsuccess/nonuncertain status, or invalid failure/usage facts.
     pub fn new(
         status: TerminalStatus,
         outputs: Vec<ArtifactReference>,
@@ -898,6 +924,10 @@ milkdrift_contracts::deserialize_via!(InvocationEvent, InvocationEventWire, |wir
 
 impl InvocationEvent {
     /// Constructs a validated event; sequence starts at one.
+    ///
+    /// # Errors
+    /// Rejects sequence zero, excessive progress text or completed units above the total,
+    /// invalid output names/references, or an invalid terminal report.
     pub fn new(
         invocation: InvocationId,
         sequence: u64,
@@ -949,6 +979,9 @@ pub struct CancellationRequest {
 
 impl CancellationRequest {
     /// Constructs a validated cancellation request.
+    ///
+    /// # Errors
+    /// Rejects sequence zero or a reason outside 1..=512 UTF-8 bytes.
     pub fn new(
         invocation: InvocationId,
         request_sequence: u64,
@@ -1025,6 +1058,10 @@ pub struct CancellationAcknowledgement {
 
 impl CancellationAcknowledgement {
     /// Constructs a validated cancellation acknowledgement.
+    ///
+    /// # Errors
+    /// Rejects sequence zero, detail above 512 bytes, or a terminal boundary claimed
+    /// while cancellation was not accepted.
     pub fn new(
         invocation: InvocationId,
         request_sequence: u64,

@@ -67,6 +67,10 @@ pub struct BoundedJson(Value);
 
 impl BoundedJson {
     /// Validates and stores a JSON value.
+    ///
+    /// # Errors
+    /// Rejects excessive depth, key/string or container sizes, encoding failure,
+    /// or a serialized value larger than the extension byte limit.
     pub fn new(value: Value) -> Result<Self, ContractError> {
         validate_json_value(&value)?;
         if serde_json::to_vec(&value)?.len() > MAX_EXTENSION_BYTES {
