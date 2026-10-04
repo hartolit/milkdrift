@@ -13,7 +13,11 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 fn process_sequence_refuses_continuation_declarations() -> TestResult {
     for session in ["explicit_continuation", "provider_managed"] {
         let mut value = document_value();
-        value["sequence"]["stages"][0]["session"] = json!(session);
+        value
+            .pointer_mut("/sequence/stages/0")
+            .and_then(Value::as_object_mut)
+            .ok_or("first stage absent")?
+            .insert("session".to_owned(), json!(session));
         assert!(PromptSequenceDocument::from_json(&serde_json::to_vec(&value)?).is_err());
     }
     Ok(())
@@ -225,7 +229,9 @@ fn json_import_compiles_to_only_ordinary_blueprint_primitives() -> TestResult {
 #[test]
 fn fail_run_stage_has_one_direct_failure_route_without_review_state() -> TestResult {
     let mut value = document_value();
-    value["sequence"]["stages"][1]["failure"] = json!("fail_run");
+    *value
+        .pointer_mut("/sequence/stages/1/failure")
+        .ok_or("failure policy absent")? = json!("fail_run");
     let document = PromptSequenceDocument::from_json(&serde_json::to_vec(&value)?)?;
     let compiled = compile(&document, AuthorRef::new("human:sequence-test")?)?;
     let semantic = compiled.revision().semantic();
@@ -253,8 +259,9 @@ fn fail_run_stage_has_one_direct_failure_route_without_review_state() -> TestRes
 #[test]
 fn markdown_sections_supply_exact_prompt_bytes() -> TestResult {
     let mut header = document_value();
-    for stage in header["sequence"]["stages"]
-        .as_array_mut()
+    for stage in header
+        .pointer_mut("/sequence/stages")
+        .and_then(Value::as_array_mut)
         .ok_or("stages must be an array")?
     {
         stage
@@ -267,12 +274,15 @@ fn markdown_sections_supply_exact_prompt_bytes() -> TestResult {
         serde_json::to_string(&header)?
     );
     let document = PromptSequenceDocument::from_bytes(markdown.as_bytes())?;
+    let [first, second] = document.sequence().stages.as_slice() else {
+        return Err("expected two prompt stages".into());
+    };
     assert!(matches!(
-        &document.sequence().stages[0].prompt,
+        &first.prompt,
         PromptSource::InlineMarkdown { content } if content == "First *Markdown* prompt.\n"
     ));
     assert!(matches!(
-        &document.sequence().stages[1].prompt,
+        &second.prompt,
         PromptSource::InlineMarkdown { content } if content == "Second prompt.\n"
     ));
     Ok(())
@@ -281,12 +291,20 @@ fn markdown_sections_supply_exact_prompt_bytes() -> TestResult {
 #[test]
 fn prompt_documents_cannot_smuggle_shell_or_unbounded_content() -> TestResult {
     let mut hostile = document_value();
-    hostile["sequence"]["stages"][0]["verification"]["command"] =
-        json!("cargo test && curl example.invalid");
+    hostile
+        .pointer_mut("/sequence/stages/0/verification")
+        .and_then(Value::as_object_mut)
+        .ok_or("verification absent")?
+        .insert(
+            "command".to_owned(),
+            json!("cargo test && curl example.invalid"),
+        );
     assert!(PromptSequenceDocument::from_json(&serde_json::to_vec(&hostile)?).is_err());
 
     let mut oversized = document_value();
-    oversized["sequence"]["stages"][0]["prompt"] = json!({
+    *oversized
+        .pointer_mut("/sequence/stages/0/prompt")
+        .ok_or("prompt absent")? = json!({
         "type": "inline_markdown",
         "content": "x".repeat(MAX_INLINE_PROMPT_BYTES + 1)
     });
@@ -309,12 +327,12 @@ fn prompt_documents_cannot_smuggle_shell_or_unbounded_content() -> TestResult {
 #[test]
 fn portable_paths_and_process_profile_contract_fail_closed() -> TestResult {
     let mut legacy = document_value();
-    legacy["schema_version"] = json!(1);
+    *legacy.get_mut("schema_version").ok_or("schema absent")? = json!(1);
     assert!(matches!(
         PromptSequenceDocument::from_json(&serde_json::to_vec(&legacy)?),
         Err(PromptSequenceError::UnsupportedVersion { found: 1 })
     ));
-    legacy["schema_version"] = json!(2);
+    *legacy.get_mut("schema_version").ok_or("schema absent")? = json!(2);
     assert!(matches!(
         PromptSequenceDocument::from_json(&serde_json::to_vec(&legacy)?),
         Err(PromptSequenceError::UnsupportedVersion { found: 2 })
@@ -328,7 +346,9 @@ fn portable_paths_and_process_profile_contract_fail_closed() -> TestResult {
         r"\\?\C:\device",
     ] {
         let mut hostile = document_value();
-        hostile["sequence"]["repository"]["allowed_paths"] = json!([path]);
+        *hostile
+            .pointer_mut("/sequence/repository/allowed_paths")
+            .ok_or("paths absent")? = json!([path]);
         assert!(
             PromptSequenceDocument::from_json(&serde_json::to_vec(&hostile)?).is_err(),
             "portable path validator accepted {path:?}"
@@ -336,8 +356,12 @@ fn portable_paths_and_process_profile_contract_fail_closed() -> TestResult {
     }
 
     let mut model_backed = document_value();
-    model_backed["sequence"]["stages"][0]["coding"]["operation"] = json!("model.generate");
-    model_backed["sequence"]["stages"][0]["coding"]["execution_trust"] = json!("remote_provider");
+    let coding = model_backed
+        .pointer_mut("/sequence/stages/0/coding")
+        .and_then(Value::as_object_mut)
+        .ok_or("coding profile absent")?;
+    coding.insert("operation".to_owned(), json!("model.generate"));
+    coding.insert("execution_trust".to_owned(), json!("remote_provider"));
     assert!(
         PromptSequenceDocument::from_json(&serde_json::to_vec(&model_backed)?).is_err(),
         "schema accepted a profile that cannot consume generated task inputs"
@@ -458,7 +482,9 @@ fn remediation_is_a_digest_bound_prospective_ordinary_revision() -> TestResult {
     );
 
     let mut altered = document_value();
-    altered["sequence"]["repository"]["root_ref"] = json!("workspace:substituted");
+    *altered
+        .pointer_mut("/sequence/repository/root_ref")
+        .ok_or("repository root absent")? = json!("workspace:substituted");
     let altered = PromptSequenceDocument::from_json(&serde_json::to_vec(&altered)?)?;
     assert!(
         build_remediation_proposal(
@@ -487,13 +513,18 @@ fn remediation_is_a_digest_bound_prospective_ordinary_revision() -> TestResult {
 fn sequence_profiles_preserve_peer_placement_in_each_compiled_task() -> TestResult {
     let mut input = document_value();
     let placement = json!({"localities":["peer"],"peers":["peer-a"]});
-    for stage in input["sequence"]["stages"]
-        .as_array_mut()
+    for stage in input
+        .pointer_mut("/sequence/stages")
+        .and_then(Value::as_array_mut)
         .ok_or("stages absent")?
     {
-        stage["coding"]["placement"] = placement.clone();
-        stage["verification"]["profile"]["placement"] = placement.clone();
-        stage["reviewer"]["placement"] = placement.clone();
+        for profile in ["/coding", "/verification/profile", "/reviewer"] {
+            stage
+                .pointer_mut(profile)
+                .and_then(Value::as_object_mut)
+                .ok_or("stage profile absent")?
+                .insert("placement".to_owned(), placement.clone());
+        }
     }
     let document = PromptSequenceDocument::from_json(&serde_json::to_vec(&input)?)?;
     let compiled = compile(&document, AuthorRef::new("human:placement-test")?)?;
@@ -510,7 +541,9 @@ fn sequence_profiles_preserve_peer_placement_in_each_compiled_task() -> TestResu
         }
     }
     assert_eq!(count, 6);
-    input["sequence"]["stages"][0]["coding"]["placement"]["localities"] = json!(["local"]);
+    *input
+        .pointer_mut("/sequence/stages/0/coding/placement/localities")
+        .ok_or("coding localities absent")? = json!(["local"]);
     assert!(PromptSequenceDocument::from_json(&serde_json::to_vec(&input)?).is_err());
     Ok(())
 }

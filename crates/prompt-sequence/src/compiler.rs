@@ -66,6 +66,9 @@ pub struct CompiledPromptSequence {
 
 impl CompiledPromptSequence {
     /// Encodes the generated ordinary blueprint for independent inspection or import.
+    ///
+    /// # Errors
+    /// Reports failure to encode the generated revision within blueprint document bounds.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, PromptSequenceError> {
         milkdrift_blueprint::BlueprintRevisionDocument::new(&self.revision)
             .to_canonical_json()
@@ -101,6 +104,10 @@ impl CompiledPromptSequence {
 /// The import owns this association, including remediation; do not infer it from node-name prefixes.
 /// Missing/unsupported provenance, absent stages, and absent declared nodes are refused.
 /// Returned node IDs associate definitions with a stage; they do not establish execution.
+///
+/// # Errors
+/// Refuses invalid revision bytes, unsupported or missing import provenance, an absent stage,
+/// and stage associations naming nodes absent from the revision.
 pub fn stage_node_ids(
     revision_document: &[u8],
     stage_id: &str,
@@ -199,6 +206,10 @@ fn declared_stage_nodes(stage: &StageBlueprintSummary) -> BTreeSet<String> {
 /// Artifact prompts need an exact size and media type in addition to identity and digest.
 /// Port/identifier conflicts, blueprint bounds, and invalid topology return a compilation
 /// error; import bounds and graph/batch bounds apply separately.
+///
+/// # Errors
+/// Reports canonical import encoding failure or invalid generated identities, ports,
+/// artifact declarations, topology, or mutation bounds. No workflow is stored on failure.
 pub fn compile(
     document: &PromptSequenceDocument,
     author: AuthorRef,
@@ -462,7 +473,7 @@ pub(crate) fn remediation_mutation(
         },
         Mutation::AddNode {
             node: Node::new(
-                superseded_pass.clone(),
+                superseded_pass,
                 NodeKind::Terminal {
                     outcome: TerminalOutcome::Success,
                 },

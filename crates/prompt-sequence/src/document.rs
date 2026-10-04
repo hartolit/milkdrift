@@ -350,6 +350,10 @@ impl PromptSequenceDocument {
     /// Each stage needs one `## Prompt: STAGE` section. Markdown normalizes line endings
     /// and retains one trailing newline per prompt; missing, duplicate, extra, and empty
     /// sections fail. Both formats apply the import byte and sequence validation bounds.
+    ///
+    /// # Errors
+    /// Refuses oversized input, invalid JSON or Markdown envelopes, unsupported schemas,
+    /// and invalid sequence declarations. Markdown additionally requires exact prompt sections.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PromptSequenceError> {
         if bytes.len() > MAX_PROMPT_SEQUENCE_DOCUMENT_BYTES {
             return Err(PromptSequenceError::Bounds {
@@ -375,6 +379,10 @@ impl PromptSequenceDocument {
     /// require starting-state/diff/verification evidence, and each stage must declare a
     /// `diff` output. Invalid identities, paths, counts, and inline prompt bounds fail
     /// before compilation. Capability availability and artifact bytes are checked later.
+    ///
+    /// # Errors
+    /// Refuses duplicate keys, invalid or oversized JSON, unsupported schemas, and sequence
+    /// declarations that violate identity, repository, stage, capability, or prompt constraints.
     pub fn from_json(bytes: &[u8]) -> Result<Self, PromptSequenceError> {
         if bytes.len() > MAX_PROMPT_SEQUENCE_DOCUMENT_BYTES {
             return Err(PromptSequenceError::Bounds {
@@ -412,6 +420,9 @@ impl PromptSequenceDocument {
 
     /// Encodes key-sorted JSON used for import provenance, subject to document bounds.
     /// This does not rerun semantic validation of public fields; see the type's construction path.
+    ///
+    /// # Errors
+    /// Reports serialization failure or a document exceeding the JSON or encoded byte bounds.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, PromptSequenceError> {
         let bytes = milkdrift_contracts::canonical_json_bytes(self, DOCUMENT_LIMITS)
             .map_err(|error| PromptSequenceError::Json(format!("{error:?}")))?;
@@ -696,7 +707,10 @@ fn validate_identity(location: &str, value: &str, max: usize) -> Result<(), Prom
     if value.is_empty()
         || value.len() > max
         || !value.is_ascii()
-        || !value.as_bytes()[0].is_ascii_alphanumeric()
+        || !value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
         || !value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
         })

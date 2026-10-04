@@ -50,6 +50,11 @@ pub struct RemediationProposalSpec {
 /// The result requires ordinary approval and application. It neither changes the run
 /// nor delivers its approval signal. Apply an accepted repair before signalling the hold:
 /// the original hold still leads to failure until its future route is revised.
+///
+/// # Errors
+/// Refuses invalid base revision or proposal identities, mismatched import provenance,
+/// absent or ineligible stages, and generations outside the review-loop allowance.
+/// Also reports invalid remediation topology or failure to construct the bounded proposal.
 pub fn build_remediation_proposal(
     document: &PromptSequenceDocument,
     base_document: &[u8],
