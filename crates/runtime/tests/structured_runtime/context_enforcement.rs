@@ -765,7 +765,7 @@ fn offline_binary_inspects_blocked_legacy_context_without_disclosing_or_rewritin
         while child.try_wait()?.is_none() {
             if Instant::now() >= deadline {
                 child.kill()?;
-                let _ = child.wait();
+                child.wait()?;
                 return Err("maintenance/startup fixture exceeded its deadline".into());
             }
             std::thread::sleep(Duration::from_millis(10));

@@ -16,10 +16,24 @@ use std::{
 };
 
 struct ProcessGuard(Child);
+impl ProcessGuard {
+    fn stop(&mut self) -> std::io::Result<()> {
+        if self.0.try_wait()?.is_none() {
+            self.0.kill()?;
+            self.0.wait()?;
+        }
+        Ok(())
+    }
+}
 impl Drop for ProcessGuard {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        if let Err(error) = self.stop() {
+            #[expect(
+                clippy::print_stderr,
+                reason = "The test guard reports cleanup uncertainty during unwinding without panicking again; the ordinary path propagates stop errors."
+            )]
+            eprintln!("recovery daemon cleanup failed; process may remain alive: {error}");
+        }
     }
 }
 
@@ -188,7 +202,7 @@ async fn recovery_binary_authorizes_reviews_replays_and_applies_repair_without_e
         .replace("127.0.0.1:9734", &address.to_string());
     fs::write(&config, text)?;
     drop(listener);
-    let (process, client) = launch(&config, &endpoint).await?;
+    let (mut process, client) = launch(&config, &endpoint).await?;
     assert_eq!(client.run(run.as_str()).await?.sequence, sequence.get());
     let read = client.attempt(run.as_str(), &attempt).await?;
     assert_eq!(read.context_access, "recovery_redacted");
@@ -269,8 +283,8 @@ async fn recovery_binary_authorizes_reviews_replays_and_applies_repair_without_e
             .await
             .is_err()
     );
-    drop(process);
-    let (process, client) = launch(&config, &endpoint).await?;
+    process.stop()?;
+    let (mut process, client) = launch(&config, &endpoint).await?;
     let replay = client.submit(&apply).await?;
     assert!(replay.replayed);
     assert_eq!(replay.value, applied.value);
@@ -278,7 +292,7 @@ async fn recovery_binary_authorizes_reviews_replays_and_applies_repair_without_e
     conflict.reason.push_str(" changed");
     assert!(client.submit(&conflict).await.is_err());
     assert_eq!(client.run(run.as_str()).await?.sequence, repaired_sequence);
-    drop(process);
+    process.stop()?;
     let (store, _, executor, runtime) =
         open_closed_runtime_at(directory.path(), "binary-repaired", NOW, 64)?;
     runtime.initialize_startup()?;
