@@ -10,6 +10,10 @@ use reqwest::Method;
 impl ControlClient {
     /// Execute a typed lifecycle request once. Preserve its exact command document for replay;
     /// an acceptance receipt and the later inspected installation state have separate meanings.
+    ///
+    /// # Errors
+    /// Refuses an invalid resource request and reports transport/API failure or a response
+    /// that does not match it. A lost reply can follow execution; retain the exact request.
     pub async fn manage_resources(
         &self,
         request: &milkdrift_capability::managed::ManagedRequest,
@@ -22,6 +26,10 @@ impl ControlClient {
         Ok(response)
     }
     /// Publishes one bounded input atomically. Replay the exact request after a lost reply.
+    ///
+    /// # Errors
+    /// Reports daemon validation/access refusal, transport failure, or an invalid bounded
+    /// upload response. The request is sent once.
     pub async fn upload_input(
         &self,
         request: &milkdrift_control_protocol::InputUploadRequest,
@@ -30,6 +38,9 @@ impl ControlClient {
             .await
     }
     /// Discovers the exact host identity, ceilings, and authorized capability generations.
+    ///
+    /// # Errors
+    /// Reports failure to read the catalog or invalid advertised capabilities and limits.
     pub async fn execution_discovery(&self) -> Result<DirectDiscovery, ClientError> {
         let discovery: DirectDiscovery = self.safe_get("v1/execution/catalog").await?;
         discovery.catalog.validate().map_err(protocol)?;
@@ -40,6 +51,10 @@ impl ControlClient {
     /// Asks the serving owner to construct a current authorized call without executing it.
     /// Persist the returned document before [`Self::invoke`]; recover a lost submission with
     /// that document or lookup, never by preparing a replacement with a renewed deadline.
+    ///
+    /// # Errors
+    /// Reports daemon/transport failure or a selection whose identity, operation, inputs,
+    /// or requested limits differ from the draft. Persist a successful selection before invoking.
     pub async fn prepare_invocation(
         &self,
         draft: &DirectInvocationDraft,
@@ -69,6 +84,10 @@ impl ControlClient {
     }
 
     /// Submits once. A lost response requires lookup or exact replay of this saved document.
+    ///
+    /// # Errors
+    /// Reports transport/API failure or an acceptance whose request identity or archived
+    /// summary is inconsistent. A lost reply may follow acceptance; recover by the saved key.
     pub async fn invoke(
         &self,
         request: &DirectInvocationRequest,
@@ -94,6 +113,9 @@ impl ControlClient {
     }
 
     /// Recovers acceptance in this authenticated actor's request namespace.
+    ///
+    /// # Errors
+    /// Reports failure to read the lookup or a response that does not belong to the requested key.
     pub async fn invocation_lookup(
         &self,
         request: &PeerRequestId,
@@ -109,6 +131,9 @@ impl ControlClient {
     }
 
     /// Inspects an accepted invocation after current permission checks.
+    ///
+    /// # Errors
+    /// Reports failure to read the invocation or acceptance evidence inconsistent with its execution.
     pub async fn invocation(
         &self,
         execution: &PeerExecutionId,
@@ -133,6 +158,10 @@ impl ControlClient {
     }
 
     /// Fetches one bounded observation page; callers own the overall wait deadline.
+    ///
+    /// # Errors
+    /// Reports read failure or an invalid page, including execution/cursor mismatches,
+    /// excessive observations, and inconsistent terminal or closure evidence.
     pub async fn invocation_observations(
         &self,
         execution: &PeerExecutionId,
@@ -155,6 +184,10 @@ impl ControlClient {
     }
 
     /// Read bytes only from the retained terminal outputs of this caller's accepted capability.
+    ///
+    /// # Errors
+    /// Reports read failure, mismatched execution/artifact/offset, excessive or nonprogressing
+    /// bytes, and a range or completion flag inconsistent with the declared artifact size.
     pub async fn invocation_output(
         &self,
         execution: &PeerExecutionId,
@@ -189,6 +222,10 @@ impl ControlClient {
     }
 
     /// Requests cancellation once. The acknowledgement does not prove terminal completion.
+    ///
+    /// # Errors
+    /// Reports daemon/transport failure or an acknowledgement for another execution.
+    /// A failed reply does not establish that cancellation was refused.
     pub async fn cancel_invocation(
         &self,
         request: &PeerCancellationRequest,

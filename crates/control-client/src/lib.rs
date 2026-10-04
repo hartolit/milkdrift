@@ -51,6 +51,9 @@ pub struct BearerCredential(String);
 
 impl BearerCredential {
     /// Accepts a nonempty credential without exposing it through diagnostics.
+    ///
+    /// # Errors
+    /// Refuses empty, oversized, or newline-bearing credentials without including their value.
     pub fn new(value: impl Into<String>) -> Result<Self, ClientError> {
         let value = value.into();
         if value.is_empty() || value.len() > 4_096 || value.contains(['\r', '\n']) {
@@ -211,6 +214,10 @@ impl fmt::Debug for ControlClient {
 
 impl ControlClient {
     /// Constructs one client with redirects disabled and bounded timeouts.
+    ///
+    /// # Errors
+    /// Refuses unsafe endpoint URLs, zero timeouts, or invalid artifact bounds, and reports
+    /// failure to construct the HTTP transport. Construction performs no daemon request.
     pub fn new(config: ClientConfig, credential: BearerCredential) -> Result<Self, ClientError> {
         config.validate()?;
         let http = reqwest::Client::builder()
@@ -227,6 +234,10 @@ impl ControlClient {
     }
 
     /// Confirms that the daemon uses the same current protocol version.
+    ///
+    /// # Errors
+    /// Reports transport/API failure, an invalid response, or a daemon protocol version
+    /// incompatible with this client.
     pub async fn negotiate(&self) -> Result<VersionResponse, ClientError> {
         let response: VersionResponse = self
             .json_request(
@@ -243,16 +254,28 @@ impl ControlClient {
     }
 
     /// Reads liveness state.
+    ///
+    /// # Errors
+    /// Reports failure to obtain a bounded, decodable liveness response after the configured
+    /// safe-query retries.
     pub async fn health(&self) -> Result<HealthRead, ClientError> {
         self.safe_get("v1/health").await
     }
 
     /// Reads readiness state; a non-ready daemon returns an availability error.
+    ///
+    /// # Errors
+    /// Returns the daemon's availability refusal when it is not ready, or a transport or
+    /// protocol failure after the configured safe-query retries.
     pub async fn readiness(&self) -> Result<HealthRead, ClientError> {
         self.safe_get("v1/readiness").await
     }
 
     /// Submits one exact idempotent command. The client does not retry it implicitly.
+    ///
+    /// # Errors
+    /// Refuses invalid or oversized commands and reports daemon, transport, or response errors.
+    /// A lost reply can follow durable acceptance; recover with the exact saved request.
     pub async fn submit(&self, request: &CommandRequest) -> Result<CommandAccepted, ClientError> {
         request.validate()?;
         let body = encode_json(request)?;
@@ -277,12 +300,19 @@ impl ControlClient {
     }
 
     /// Reads one immutable revision.
+    ///
+    /// # Errors
+    /// Refuses an unsafe revision identity or reports failure to read its authorized projection.
     pub async fn revision(&self, revision: &str) -> Result<RevisionRead, ClientError> {
         self.safe_get(&format!("v1/revisions/{}", path_segment(revision)?))
             .await
     }
 
     /// Lists one bounded revision page.
+    ///
+    /// # Errors
+    /// Refuses invalid page bounds or workflow filters, and reports daemon refusal or an
+    /// unreadable response. An expired cursor requires a fresh authorized listing.
     pub async fn revisions(
         &self,
         workflow: Option<&str>,
@@ -296,6 +326,9 @@ impl ControlClient {
     }
 
     /// Compares two semantic revisions through a bounded structured diff.
+    ///
+    /// # Errors
+    /// Refuses unsafe revision identities or reports failure to obtain the authorized diff.
     pub async fn revision_diff(
         &self,
         from: &str,
@@ -310,12 +343,19 @@ impl ControlClient {
     }
 
     /// Reads one compact current run.
+    ///
+    /// # Errors
+    /// Refuses an unsafe run identity or reports failure to obtain its authorized current state.
     pub async fn run(&self, run: &str) -> Result<RunRead, ClientError> {
         self.safe_get(&format!("v1/runs/{}", path_segment(run)?))
             .await
     }
 
     /// Lists one bounded run page with optional stable filters.
+    ///
+    /// # Errors
+    /// Refuses invalid page bounds or filters, and reports daemon refusal or an unreadable
+    /// page. A refused continuation must be replaced with a fresh authorized listing.
     pub async fn runs(
         &self,
         state: Option<&str>,
@@ -331,6 +371,9 @@ impl ControlClient {
     }
 
     /// Reads one exact node execution from a current run projection.
+    ///
+    /// # Errors
+    /// Refuses unsafe run/execution identities or reports failure to read the authorized node.
     pub async fn node(
         &self,
         run: &str,
@@ -345,6 +388,9 @@ impl ControlClient {
     }
 
     /// Reads one exact current or historical attempt with authorized context provenance.
+    ///
+    /// # Errors
+    /// Refuses unsafe run/attempt identities or reports failure to read authorized attempt evidence.
     pub async fn attempt(
         &self,
         run: &str,
@@ -360,6 +406,9 @@ impl ControlClient {
 
     /// Reads current progress, terminal outputs and currently permitted control actions.
     /// Output previews and attempt evidence are separately authorized by the daemon.
+    ///
+    /// # Errors
+    /// Refuses an unsafe run identity or reports failure to read the authorized result projection.
     pub async fn run_result(
         &self,
         run: &str,
@@ -369,6 +418,10 @@ impl ControlClient {
     }
 
     /// Reads one bounded projected timeline page.
+    ///
+    /// # Errors
+    /// Refuses invalid page bounds or an unsafe run identity, and reports daemon cursor/access
+    /// refusal or failure to decode the bounded timeline response.
     pub async fn timeline(
         &self,
         run: &str,
@@ -385,22 +438,35 @@ impl ControlClient {
     }
 
     /// Lists capability generation observations visible to the actor.
+    ///
+    /// # Errors
+    /// Reports daemon refusal or failure to read the bounded capability catalog after safe-query retries.
     pub async fn capabilities(&self) -> Result<Vec<CapabilityRead>, ClientError> {
         self.safe_get("v1/capabilities").await
     }
 
     /// Lists configured peer health and live catalog status without secret values.
+    ///
+    /// # Errors
+    /// Reports daemon refusal or failure to decode the bounded peer-status response.
     pub async fn peers(&self) -> Result<Vec<PeerRead>, ClientError> {
         self.safe_get("v1/peers").await
     }
 
     /// Reads one configured peer relationship status.
+    ///
+    /// # Errors
+    /// Refuses an unsafe peer identity or reports failure to obtain its authorized status.
     pub async fn peer(&self, peer: &str) -> Result<PeerRead, ClientError> {
         self.safe_get(&format!("v1/peers/{}", path_segment(peer)?))
             .await
     }
 
     /// Requests one explicit mutable peer lifecycle action.
+    ///
+    /// # Errors
+    /// Refuses an unsupported action or unsafe peer identity and reports daemon/transport
+    /// failures. The action is sent once; a lost reply does not establish non-execution.
     pub async fn peer_action(&self, peer: &str, action: &str) -> Result<PeerRead, ClientError> {
         if !matches!(
             action,
@@ -420,6 +486,10 @@ impl ControlClient {
     }
 
     /// Lists one bounded proposal page for an exact run.
+    ///
+    /// # Errors
+    /// Refuses invalid page bounds or an unsafe run identity, and reports access/cursor
+    /// refusal or failure to decode the bounded proposal page.
     pub async fn proposals(
         &self,
         run: &str,
@@ -436,6 +506,10 @@ impl ControlClient {
     }
 
     /// Reads one exact proposal/reconciliation status.
+    ///
+    /// # Errors
+    /// Refuses unsafe run, proposal, or revision identities, and reports failure to read
+    /// the exact authorized proposal status.
     pub async fn proposal(
         &self,
         run: &str,
@@ -452,11 +526,18 @@ impl ControlClient {
     }
 
     /// Reads current server-owned actor/grant context.
+    ///
+    /// # Errors
+    /// Reports failure to obtain the daemon's bounded actor/grant context; no authority
+    /// is inferred locally when the read fails.
     pub async fn authority(&self) -> Result<AuthorityRead, ClientError> {
         self.safe_get("v1/authority").await
     }
 
     /// Reads safe artifact metadata.
+    ///
+    /// # Errors
+    /// Refuses an unsafe artifact identity or reports failure to read authorized metadata.
     pub async fn artifact_metadata(
         &self,
         artifact: &str,
@@ -469,6 +550,11 @@ impl ControlClient {
     ///
     /// This bounds the response body; it does not hash a complete artifact. Read metadata
     /// first, assemble ranges, and verify total size and content digest before accepting a file.
+    ///
+    /// # Errors
+    /// Refuses reversed, overflowing, or oversized ranges and unsafe artifact identities.
+    /// Reports transport/API failure, mismatched range headers, and truncated or oversized
+    /// bodies. Successful chunks still require the caller's complete-artifact verification.
     pub async fn artifact_range(
         &self,
         artifact: &str,
@@ -552,6 +638,9 @@ impl ControlClient {
     }
 
     /// Reads layout independently from semantic revision identity.
+    ///
+    /// # Errors
+    /// Refuses unsafe workflow/revision identities or reports failure to read the authorized layout.
     pub async fn layout(
         &self,
         workflow: &str,

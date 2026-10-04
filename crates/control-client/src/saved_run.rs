@@ -23,6 +23,10 @@ pub struct SavedRunRequest {
 
 impl SavedRunRequest {
     /// Refuses unsupported records and operations before any replay can cause work.
+    ///
+    /// # Errors
+    /// Refuses unsupported schemas, missing authority or run identities, commands other than
+    /// `StartRun`, inconsistent sequence/revision preconditions, and oversized requests.
     pub fn validate(&self) -> Result<(), ClientError> {
         if self.schema_version != 1
             || self.authority.host.is_empty()
@@ -68,6 +72,10 @@ impl SavedRunRequest {
 
 impl ControlClient {
     /// Captures authenticated recovery identity without submitting or pinning a model selection.
+    ///
+    /// # Errors
+    /// Reports failure to read current authority or validate the constructed start request.
+    /// No run is submitted when preparation fails.
     pub async fn prepare_run(
         &self,
         request: CommandRequest,
@@ -86,6 +94,10 @@ impl ControlClient {
     /// The server's canonical command receipt owns replay/conflict behavior. This check prevents
     /// inadvertently using a recovery file with another endpoint or credential. It does not
     /// relax current authority, renew execution allowances, or select a replacement capability.
+    ///
+    /// # Errors
+    /// Refuses an invalid saved request or authority that differs from its saved context.
+    /// Submission errors may follow durable acceptance; retain the exact request for recovery.
     pub async fn submit_saved_run(
         &self,
         saved: &SavedRunRequest,

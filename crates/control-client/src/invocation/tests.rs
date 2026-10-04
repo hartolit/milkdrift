@@ -46,13 +46,18 @@ async fn observation_pages_require_the_exact_execution_cursor_and_status() -> Te
     let page = json!({"execution":expected,"after_sequence":2,"next_sequence":2,"observations":[],"status":"running","terminal":false,"closed":false,"history":{"type":"hot"}});
     for alteration in [None, Some("execution"), Some("cursor"), Some("closure")] {
         let mut value = page.clone();
+        let fields = value.as_object_mut().ok_or("page is not an object")?;
         match alteration {
-            Some("execution") => value["execution"] = json!("execution:other"),
-            Some("cursor") => {
-                value["after_sequence"] = json!(3);
-                value["next_sequence"] = json!(3);
+            Some("execution") => {
+                fields.insert("execution".to_owned(), json!("execution:other"));
             }
-            Some("closure") => value["closed"] = json!(true),
+            Some("cursor") => {
+                fields.insert("after_sequence".to_owned(), json!(3));
+                fields.insert("next_sequence".to_owned(), json!(3));
+            }
+            Some("closure") => {
+                fields.insert("closed".to_owned(), json!(true));
+            }
             _ => {}
         }
         let (client, worker) = response(value)?;
@@ -100,8 +105,10 @@ async fn output_ranges_require_progress_but_allow_an_empty_complete_artifact() -
             }
         });
         // Establish that a failure tests the range contract, not malformed metadata.
-        let _: milkdrift_peer_protocol::InvocationOutputChunk =
+        let decoded: milkdrift_peer_protocol::InvocationOutputChunk =
             serde_json::from_value(chunk.clone())?;
+        assert_eq!(decoded.execution, execution);
+        assert_eq!(decoded.metadata.reference().size_bytes(), size);
         let (client, worker) = response(chunk)?;
         let result = client.invocation_output(&execution, "output", 0, 1).await;
         worker.join().map_err(|_| "fixture panicked")??;
