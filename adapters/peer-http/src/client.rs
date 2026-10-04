@@ -58,7 +58,9 @@ impl PeerHttpClient {
         credential: Arc<dyn PeerCredentialSource>,
     ) -> Result<Arc<Self>, PeerHttpError> {
         config.validate()?;
-        let _ = credential.resolve()?;
+        // Check startup availability, then erase this value. Requests resolve again so
+        // this probe cannot cache a credential across operator rotation.
+        drop(credential.resolve()?);
         let client = Client::builder()
             .timeout(config.request_timeout)
             .connect_timeout(

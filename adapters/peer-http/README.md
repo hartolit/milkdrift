@@ -74,10 +74,12 @@ provenance while adding peer/execution origin. Uploads resume from exact offsets
 only after content verification and publication. Downloads use verified ranges. The remote adapter
 imports each durable output observation before forwarding it to the origin reporter. Metadata is
 bound to the authenticated execution owner and exact observation; both transfer owners enforce
-bounds and release staging on failure. Empty outputs commit without a data chunk. Input transfer
+bounds and attempt to release staging on failure. Abort failures reach the caller alongside the
+original transfer failure, while each staging owner retains failed cleanup for retry or expiry.
+Empty outputs commit without a data chunk. Input transfer
 remains explicit. A remote context manifest names origin evidence and does not imply a shared store.
 Between output chunks the adapter renews the origin's durable execution lease and checks shutdown.
-A refused renewal or shutdown stops the transfer and releases staging; accepted remote work keeps
+A refused renewal or shutdown stops the transfer and attempts staging cleanup; accepted remote work keeps
 its existing uncertainty rules.
 
 Serving publication consumes the durably entered request's remaining artifact allowance under an

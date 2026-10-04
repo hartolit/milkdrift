@@ -169,16 +169,42 @@ impl RemoteCapabilityAdapter {
         } else {
             Ok(())
         };
-        // Both owners bound staging independently. Every exit releases transport state;
-        // aborting a completed transfer does not remove its durable core artifact.
-        let _ = self.client.abort_artifact(&transfer);
-        let _ = self.artifacts.abort(peer, &transfer);
-        result?;
-        renewal?;
+        // Attempt both cleanups even if one fails. A completed durable artifact survives
+        // abort, while failed staging cleanup remains owned for retry or expiry.
+        finish_transfer(
+            result.and(renewal),
+            self.client.abort_artifact(&transfer),
+            self.artifacts.abort(peer, &transfer),
+        )?;
         imported.insert(reference.identity().to_owned());
         *total_bytes = next_total;
         Ok(())
     }
+}
+
+pub(super) fn finish_transfer(
+    outcome: Result<(), AdapterError>,
+    remote: Result<(), crate::PeerHttpError>,
+    local: Result<(), milkdrift_capability_host::PeerArtifactError>,
+) -> Result<(), AdapterError> {
+    if remote.is_ok() && local.is_ok() {
+        return outcome;
+    }
+    let summary = |error: Option<String>| {
+        error.map_or_else(
+            || "confirmed".to_owned(),
+            |error| milkdrift_contracts::truncate_utf8(&error, 140).to_owned(),
+        )
+    };
+    Err(AdapterError::external_failure(format!(
+        "transfer cleanup unconfirmed; remote: {}; local: {}; original: {}",
+        summary(remote.err().map(|error| error.to_string())),
+        summary(local.err().map(|error| error.to_string())),
+        outcome.err().map_or_else(
+            || "transfer completed".to_owned(),
+            |error| milkdrift_contracts::truncate_utf8(&error.to_string(), 140).to_owned()
+        ),
+    )))
 }
 
 impl RemoteCapabilityAdapter {

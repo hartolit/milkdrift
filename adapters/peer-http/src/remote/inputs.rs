@@ -214,9 +214,11 @@ impl RemoteCapabilityAdapter {
             } else {
                 Ok(())
             };
-            let _ = self.client.abort_artifact(&transfer);
-            result?;
-            renewal?;
+            super::artifacts::finish_transfer(
+                result.and(renewal),
+                self.client.abort_artifact(&transfer),
+                Ok(()),
+            )?;
         }
         Ok(())
     }

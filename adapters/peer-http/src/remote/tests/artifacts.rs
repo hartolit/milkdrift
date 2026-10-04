@@ -14,6 +14,7 @@ use milkdrift_capability_host::{CorePeerArtifactStore, PeerArtifactStore};
 #[derive(Clone, Copy)]
 enum TransferOutcome {
     Complete,
+    CleanupRefused,
     LeaseRefused,
     Shutdown,
 }
@@ -212,7 +213,12 @@ fn transfer_case(
                     },
                 )?;
             } else if target.ends_with("/abort") {
-                write_response(&mut stream, ())?;
+                if matches!(outcome, TransferOutcome::CleanupRefused) {
+                    stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .map_err(|error| error.to_string())?;
+                } else {
+                    write_response(&mut stream, ())?;
+                }
                 return Ok(offset);
             } else {
                 if !target.ends_with(&format!("/content?offset={offset}&maximum_bytes=2"))
@@ -254,11 +260,17 @@ fn transfer_case(
     );
     let received = server.join().map_err(|_| "transfer server panicked")??;
     let complete = matches!(outcome, TransferOutcome::Complete);
+    let published = complete || matches!(outcome, TransferOutcome::CleanupRefused);
     assert_eq!(result.is_ok(), complete, "{result:?}");
-    assert_eq!(received, if complete { content.len() } else { 2 });
+    if matches!(outcome, TransferOutcome::CleanupRefused) {
+        assert!(
+            result.is_err_and(|error| error.to_string().contains("transfer cleanup unconfirmed"))
+        );
+    }
+    assert_eq!(received, if published { content.len() } else { 2 });
     assert_eq!(
         core.metadata(offer.artifact.artifact())?.is_some(),
-        complete
+        published
     );
     assert_eq!(imported.len(), usize::from(complete));
     assert_eq!(total, if complete { content.len() as u64 } else { 0 });
@@ -268,6 +280,30 @@ fn transfer_case(
             .is_err()
     );
     Ok(())
+}
+
+#[test]
+fn failed_remote_abort_does_not_claim_transfer_completion_or_skip_local_cleanup()
+-> Result<(), Box<dyn std::error::Error>> {
+    transfer_case(TransferOutcome::CleanupRefused, false)
+}
+
+#[test]
+fn transfer_failure_preserves_both_cleanup_errors() {
+    let result = super::super::artifacts::finish_transfer(
+        Err(AdapterError::external_failure("injected transfer failure")),
+        Err(crate::PeerHttpError::Unavailable(
+            "injected remote abort failure".to_owned(),
+        )),
+        Err(milkdrift_capability_host::PeerArtifactError::Persistence(
+            "injected local abort failure".to_owned(),
+        )),
+    );
+    assert!(result.is_err_and(|error| {
+        error.to_string().contains("injected transfer failure")
+            && error.to_string().contains("injected remote abort failure")
+            && error.to_string().contains("injected local abort failure")
+    }));
 }
 
 #[test]
