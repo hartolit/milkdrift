@@ -13,7 +13,10 @@ pub enum Candidate {
 }
 
 /// Serve the selected candidate using the protected container's fixed configuration/data mounts.
+///
+/// # Errors
 /// Invalid configuration or retained data refuses startup before the listener is bound.
+/// Configuration/store reads, listener binding, and HTTP serving failures propagate to the launcher.
 pub async fn serve(candidate: Candidate) -> Result<(), Box<dyn std::error::Error>> {
     http::serve(candidate).await
 }

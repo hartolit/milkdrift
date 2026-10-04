@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut file = match fs::File::create_new(root.join("KNOWLEDGE.md")) {
                 Ok(file) => file,
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    println!("retained existing KNOWLEDGE.md");
+                    writeln!(std::io::stdout().lock(), "retained existing KNOWLEDGE.md")?;
                     return Ok(());
                 }
                 Err(error) => return Err(error.into()),
@@ -26,9 +26,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             file.write_all(
                 b"# Slotbook working knowledge\n\nPurpose: construct one booking product under the selected method and operator obligations.\n\nOperate through the granted workspace worker. Export exact candidate bytes, obtain the protected verifier result, and retain failures before attempting repairs. Public browsing does not permit anonymous mutation. Prototype language does not remove durable booking requirements.\n\nThe source failure and repair are seeded fixtures. Model planning decisions are unknown unless separately retained. No learned guidance is approved by this file. Select immutable evidence and an exact comparison/promotion receipt before claiming approval. Editable notes never change a prepared task's selected context.\n\nLimitations: finite synthetic HTTP checks, orderly restart only, no payment or external identity integration. Scratch tools require a recorded, staged recipe update before maintained use.\n",
             )?;
-            println!(
+            writeln!(
+                std::io::stdout().lock(),
                 "created KNOWLEDGE.md; immutable selection remains a separate authorized operation"
-            );
+            )?;
         }
         "note" => {
             let note = note.ok_or("note text required")?;
@@ -48,10 +49,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if bytes == 0 || bytes > 4 * 1024 * 1024 {
                 return Err("candidate outside finite native fixture bounds".into());
             }
-            println!(
+            writeln!(
+                std::io::stdout().lock(),
                 "{}",
                 serde_json::json!({"candidate_digest":format!("b3_{}",hash.finalize()),"bytes":bytes,"acceptance":"requires the independent protected verifier"})
-            );
+            )?;
         }
         _ => return Err("expected knowledge or inspect".into()),
     }

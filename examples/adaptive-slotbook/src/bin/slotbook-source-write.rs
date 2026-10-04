@@ -41,14 +41,10 @@ fn replace(path: &Path, expected: &str, source: &str) -> Result<(), Box<dyn std:
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if args.len() != 2 {
+    let [expected, source] = args.as_slice() else {
         return Err("expected observed source digest (or absent) and complete new source".into());
-    }
-    replace(
-        Path::new("/workspace/source/slotbook.rs"),
-        &args[0],
-        &args[1],
-    )
+    };
+    replace(Path::new("/workspace/source/slotbook.rs"), expected, source)
 }
 
 #[cfg(test)]

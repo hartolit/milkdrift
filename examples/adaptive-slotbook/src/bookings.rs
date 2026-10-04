@@ -40,8 +40,11 @@ impl Timestamp {
         // Parsing has already checked the Gregorian fields. An ordinal avoids local time zones
         // and makes a cancellation notice period work across midnight, month and leap boundaries.
         let digits = |start: usize, end: usize| {
-            self.0.as_bytes()[start..end]
+            self.0
+                .as_bytes()
                 .iter()
+                .skip(start)
+                .take(end - start)
                 .fold(0_u64, |value, digit| value * 10 + u64::from(digit - b'0'))
         };
         let year = digits(0, 4);
@@ -86,25 +89,30 @@ impl Timestamp {
     pub(super) fn parse(value: &str) -> Result<Self, Failure> {
         let b = value.as_bytes();
         if !(20..=32).contains(&b.len())
-            || b[4] != b'-'
-            || b[7] != b'-'
-            || b[10] != b'T'
-            || b[13] != b':'
-            || b[16] != b':'
+            || b.get(4) != Some(&b'-')
+            || b.get(7) != Some(&b'-')
+            || b.get(10) != Some(&b'T')
+            || b.get(13) != Some(&b':')
+            || b.get(16) != Some(&b':')
             || b.last() != Some(&b'Z')
             || (b.len() != 20
-                && (b[19] != b'.'
+                && (b.get(19) != Some(&b'.')
                     || b.len() < 22
-                    || !b[20..b.len() - 1].iter().all(u8::is_ascii_digit)))
-            || b[..19]
-                .iter()
+                    || b.get(20..b.len() - 1)
+                        .is_none_or(|fraction| !fraction.iter().all(u8::is_ascii_digit))))
+            || b.iter()
+                .take(19)
                 .enumerate()
                 .any(|(i, c)| ![4, 7, 10, 13, 16].contains(&i) && !c.is_ascii_digit())
         {
             return Err(Failure::Invalid);
         }
         let number = |range: std::ops::Range<usize>| {
-            value[range].parse::<u32>().map_err(|_| Failure::Invalid)
+            value
+                .get(range)
+                .ok_or(Failure::Invalid)?
+                .parse::<u32>()
+                .map_err(|_| Failure::Invalid)
         };
         let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
         let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
