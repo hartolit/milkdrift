@@ -90,6 +90,9 @@ pub struct StorageEvidence {
 }
 
 /// Appends one accepted command/event transaction through the production redb journal.
+///
+/// # Errors
+/// Returns temporary-store, request-validation, journal-commit, or result-encoding failure.
 pub fn journal_append_one() -> EvidenceResult<ScenarioMeasurement> {
     let directory = tempfile::tempdir()?;
     let store = RedbStore::open(directory.path())?;
@@ -105,6 +108,9 @@ pub fn journal_append_one() -> EvidenceResult<ScenarioMeasurement> {
 }
 
 /// Appends one maximum-representative bounded event batch in one transaction.
+///
+/// # Errors
+/// Returns temporary-store, batch-validation, atomic-commit, or result-encoding failure.
 pub fn journal_append_batch() -> EvidenceResult<ScenarioMeasurement> {
     let directory = tempfile::tempdir()?;
     let store = RedbStore::open(directory.path())?;
@@ -120,6 +126,9 @@ pub fn journal_append_batch() -> EvidenceResult<ScenarioMeasurement> {
 }
 
 /// Rebuilds a projection from representative bounded lifetime history.
+///
+/// # Errors
+/// Invalid fixture history, rejected replay, or projection encoding fails the measurement.
 pub fn projection_rebuild() -> EvidenceResult<ScenarioMeasurement> {
     let history = projection_history(4_096)?;
     let projection = RunProjection::replay(&history)?;
@@ -133,13 +142,19 @@ pub fn projection_rebuild() -> EvidenceResult<ScenarioMeasurement> {
 }
 
 /// Restores an in-memory projection serialization and applies an authoritative tail.
+///
+/// # Errors
+/// History/checkpoint encoding, decoding, or replay can fail, including an invalid tail boundary.
 pub fn projection_snapshot_tail() -> EvidenceResult<ScenarioMeasurement> {
     let history = projection_history(4_096)?;
     let split = history.len().saturating_sub(128);
-    let checkpoint = RunProjection::replay(&history[..split])?;
+    let (prefix, tail) = history
+        .split_at_checked(split)
+        .ok_or("projection checkpoint exceeds history")?;
+    let checkpoint = RunProjection::replay(prefix)?;
     let payload = serde_json::to_vec(&checkpoint)?;
     let mut restored: RunProjection = serde_json::from_slice(&payload)?;
-    for event in &history[split..] {
+    for event in tail {
         restored.apply(event)?;
     }
     let encoded = serde_json::to_vec(&restored)?;
@@ -152,6 +167,10 @@ pub fn projection_snapshot_tail() -> EvidenceResult<ScenarioMeasurement> {
 }
 
 /// Exercises hot/cold exact receipt lookup, replay, conflict-safe commit, and archival.
+///
+/// # Errors
+/// Store access, rejected commits, unexpected replay, or disagreement in exact hot/cold lookup
+/// fails the measurement; archive status and encoding errors propagate.
 pub fn application_receipt_paths() -> EvidenceResult<ScenarioMeasurement> {
     let directory = tempfile::tempdir()?;
     let store = RedbStore::open_with_config(
@@ -203,6 +222,10 @@ pub fn application_receipt_paths() -> EvidenceResult<ScenarioMeasurement> {
 }
 
 /// Publishes and range-reads one representative content-addressed artifact.
+///
+/// # Errors
+/// Store creation, metadata/budget validation, staged publication, commit, or authorized range
+/// reading can fail; incomplete work is retained only in the temporary evidence store.
 pub fn artifact_publication() -> EvidenceResult<ScenarioMeasurement> {
     let directory = tempfile::tempdir()?;
     let store = RedbStore::open(directory.path())?;
@@ -255,6 +278,10 @@ pub fn artifact_publication() -> EvidenceResult<ScenarioMeasurement> {
 }
 
 /// Measures receipt turnover, durable growth, projection boundedness, and reopen recovery.
+///
+/// # Errors
+/// Refuses fewer than two hot-receipt turnovers. Store operations, archival/reopen checks,
+/// projection replay, peer retention measurements, size conversion, and directory reads can fail.
 pub fn measure_storage_growth(operations: u32) -> EvidenceResult<StorageEvidence> {
     if operations < HOT_BOUND.saturating_mul(2) {
         return Err(
@@ -312,16 +339,18 @@ pub fn measure_storage_growth(operations: u32) -> EvidenceResult<StorageEvidence
         Ok::<_, std::num::TryFromIntError>(total.saturating_add(u64::try_from(bytes.len())?))
     })?;
     let receipt_cold_logical_bytes =
-        receipt_bytes[..hot_start]
+        receipt_bytes
             .iter()
+            .take(hot_start)
             .try_fold(0_u64, |total, bytes| {
                 Ok::<_, std::num::TryFromIntError>(
                     total.saturating_add(u64::try_from(bytes.len())?),
                 )
             })?;
     let receipt_hot_logical_bytes =
-        receipt_bytes[hot_start..]
+        receipt_bytes
             .iter()
+            .skip(hot_start)
             .try_fold(0_u64, |total, bytes| {
                 Ok::<_, std::num::TryFromIntError>(
                     total.saturating_add(u64::try_from(bytes.len())?),
@@ -364,6 +393,10 @@ pub fn measure_storage_growth(operations: u32) -> EvidenceResult<StorageEvidence
 }
 
 /// Runs peer append/page/resume and active/hot/tombstone exact-lookup scenarios.
+///
+/// # Errors
+/// Returns serving-store admission, observation, paging, archival/replay, or report-encoding
+/// failure from the controlled peer lifecycle.
 pub fn peer_observation_paths() -> EvidenceResult<ScenarioMeasurement> {
     let peer = peer_operational_counts(4)?;
     let encoded = serde_json::to_vec(&peer)?;

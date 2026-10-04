@@ -41,48 +41,48 @@ fn label(value: &Value) -> Value {
 
 fn attempt(value: &Value) -> Value {
     json!({
-        "attempt_id": label(&value["attempt_id"]),
-        "state": label(&value["state"]),
-        "terminal": label(&value["terminal"]),
-        "uncertain": value["uncertain"].as_bool(),
-        "outputs": value["outputs"].as_array().map(Vec::len),
+        "attempt_id": label(value.pointer("/attempt_id").unwrap_or(&Value::Null)),
+        "state": label(value.pointer("/state").unwrap_or(&Value::Null)),
+        "terminal": label(value.pointer("/terminal").unwrap_or(&Value::Null)),
+        "uncertain": value.pointer("/uncertain").unwrap_or(&Value::Null).as_bool(),
+        "outputs": value.pointer("/outputs").unwrap_or(&Value::Null).as_array().map(Vec::len),
         // Retain this known diagnostic classification without copying arbitrary adapter text.
-        "lease_renewal_rejected": value["terminal_detail"].as_str().is_some_and(|text| text.contains("heartbeat requires a still-valid active lease and later expiration"))
+        "lease_renewal_rejected": value.pointer("/terminal_detail").unwrap_or(&Value::Null).as_str().is_some_and(|text| text.contains("heartbeat requires a still-valid active lease and later expiration"))
     })
 }
 
 fn selected_state(document: &Value) -> Value {
-    let value = &document["value"];
-    match document["type"].as_str() {
+    let value = document.pointer("/value").unwrap_or(&Value::Null);
+    match document.pointer("/type").unwrap_or(&Value::Null).as_str() {
         Some("run.show" | "run.wait") => json!({
-            "run_id": label(&value["run_id"]), "sequence": value["sequence"].as_u64(),
-            "lifecycle": label(&value["lifecycle"]), "terminal": label(&value["terminal"]),
-            "uncertainty_count": value["uncertainty_count"].as_u64(),
-            "nodes": value["nodes"].as_array().map(|nodes| nodes.iter().take(8).map(|node| json!({
-                "node_id": label(&node["node_id"]), "state": label(&node["state"]),
-                "latest_attempt_id": label(&node["latest_attempt_id"]),
-                "attempt": attempt(&node["latest_attempt"])
+            "run_id": label(value.pointer("/run_id").unwrap_or(&Value::Null)), "sequence": value.pointer("/sequence").unwrap_or(&Value::Null).as_u64(),
+            "lifecycle": label(value.pointer("/lifecycle").unwrap_or(&Value::Null)), "terminal": label(value.pointer("/terminal").unwrap_or(&Value::Null)),
+            "uncertainty_count": value.pointer("/uncertainty_count").unwrap_or(&Value::Null).as_u64(),
+            "nodes": value.pointer("/nodes").unwrap_or(&Value::Null).as_array().map(|nodes| nodes.iter().take(8).map(|node| json!({
+                "node_id": label(node.pointer("/node_id").unwrap_or(&Value::Null)), "state": label(node.pointer("/state").unwrap_or(&Value::Null)),
+                "latest_attempt_id": label(node.pointer("/latest_attempt_id").unwrap_or(&Value::Null)),
+                "attempt": attempt(node.pointer("/latest_attempt").unwrap_or(&Value::Null))
             })).collect::<Vec<_>>())
         }),
         Some("run.timeline") => json!({
-            "events": value["items"].as_array().map(|items| items.iter().take(16).map(|item| json!({
-                "sequence": item["sequence"].as_u64(), "timestamp_ms": item["timestamp_ms"].as_u64(),
-                "category": label(&item["category"]), "node_id": label(&item["node_id"]),
-                "attempt_id": label(&item["attempt_id"]), "outcome": label(&item["detail"]["outcome"])
+            "events": value.pointer("/items").unwrap_or(&Value::Null).as_array().map(|items| items.iter().take(16).map(|item| json!({
+                "sequence": item.pointer("/sequence").unwrap_or(&Value::Null).as_u64(), "timestamp_ms": item.pointer("/timestamp_ms").unwrap_or(&Value::Null).as_u64(),
+                "category": label(item.pointer("/category").unwrap_or(&Value::Null)), "node_id": label(item.pointer("/node_id").unwrap_or(&Value::Null)),
+                "attempt_id": label(item.pointer("/attempt_id").unwrap_or(&Value::Null)), "outcome": label(item.pointer("/detail/outcome").unwrap_or(&Value::Null))
             })).collect::<Vec<_>>()),
-            "more": !value["next_cursor"].is_null()
+            "more": !value.pointer("/next_cursor").unwrap_or(&Value::Null).is_null()
         }),
         Some("daemon.health" | "daemon.readiness") => json!({
-            "ready": value["ready"].as_bool(), "live": value["live"].as_bool(),
-            "state": label(&value["state"]), "active_effects": value["active_effects"].as_u64(),
-            "queued_requests": value["queued_requests"].as_u64(),
-            "failure_present": !value["last_failure"].is_null()
+            "ready": value.pointer("/ready").unwrap_or(&Value::Null).as_bool(), "live": value.pointer("/live").unwrap_or(&Value::Null).as_bool(),
+            "state": label(value.pointer("/state").unwrap_or(&Value::Null)), "active_effects": value.pointer("/active_effects").unwrap_or(&Value::Null).as_u64(),
+            "queued_requests": value.pointer("/queued_requests").unwrap_or(&Value::Null).as_u64(),
+            "failure_present": !value.pointer("/last_failure").unwrap_or(&Value::Null).is_null()
         }),
         Some("capability.show") => json!({
             "capabilities": value.as_array().map(|items| items.iter().take(4).map(|item| json!({
-                "capability_id": label(&item["capability_id"]), "generation": item["generation"].as_u64(),
-                "health": label(&item["health"]), "available": item["available"].as_bool(),
-                "active_permits": item["active_permits"].as_u64()
+                "capability_id": label(item.pointer("/capability_id").unwrap_or(&Value::Null)), "generation": item.pointer("/generation").unwrap_or(&Value::Null).as_u64(),
+                "health": label(item.pointer("/health").unwrap_or(&Value::Null)), "available": item.pointer("/available").unwrap_or(&Value::Null).as_bool(),
+                "active_permits": item.pointer("/active_permits").unwrap_or(&Value::Null).as_u64()
             })).collect::<Vec<_>>())
         }),
         Some("attempt.inspect") => attempt(value),
@@ -97,8 +97,8 @@ pub(super) fn output_summary(output: &CliOutput) -> String {
 pub(super) fn captured_summary(stdout: &str, stderr_bytes: usize) -> String {
     let summary = match serde_json::from_str::<Value>(stdout) {
         Ok(document) => json!({
-            "status": label(&document["status"]),
-            "classification": label(&document["error"]["classification"]),
+            "status": label(document.pointer("/status").unwrap_or(&Value::Null)),
+            "classification": label(document.pointer("/error/classification").unwrap_or(&Value::Null)),
             "state": selected_state(&document)
         })
         .to_string(),
@@ -122,6 +122,7 @@ impl CliRunner {
     ///
     /// Each diagnostic has at most two seconds including child exit. Errors become evidence;
     /// callers keep the original failure. Cleanup's separate two-second reap bound still applies.
+    #[must_use]
     pub fn run_diagnostics(&self, run: &str, capability: Option<&str>) -> String {
         let deadline = Instant::now() + Duration::from_secs(6);
         let mut commands = vec![

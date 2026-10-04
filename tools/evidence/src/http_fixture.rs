@@ -7,6 +7,10 @@ use std::{
 };
 
 /// Reads one content-length request within the fixture byte bound.
+///
+/// # Errors
+/// Returns socket configuration/read failure, timeout, truncated or oversized framing, and
+/// invalid UTF-8 in headers or the captured request.
 pub fn read_request(stream: &mut TcpStream) -> std::io::Result<String> {
     const MAX_REQUEST_BYTES: usize = 1024 * 1024;
     // Accepted sockets can inherit the listener's nonblocking mode on Windows.
@@ -29,13 +33,21 @@ pub fn read_request(stream: &mut TcpStream) -> std::io::Result<String> {
                 "truncated fixture request",
             ));
         }
-        bytes.extend_from_slice(&buffer[..read]);
+        bytes.extend_from_slice(
+            buffer
+                .get(..read)
+                .ok_or_else(|| std::io::Error::other("fixture read exceeds buffer"))?,
+        );
         if bytes.len() > MAX_REQUEST_BYTES {
             return Err(std::io::Error::other("fixture request exceeds byte bound"));
         }
         if let Some(header_end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-            let headers = std::str::from_utf8(&bytes[..header_end + 4])
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+            let headers = std::str::from_utf8(
+                bytes
+                    .get(..header_end + 4)
+                    .ok_or_else(|| std::io::Error::other("fixture headers exceed request"))?,
+            )
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
             let content_length = headers
                 .lines()
                 .find_map(|line| {

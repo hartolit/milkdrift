@@ -56,6 +56,10 @@ struct RunningDaemon {
 }
 
 /// Exercises one authenticated daemon owner request over loopback.
+///
+/// # Errors
+/// Requires the built daemon and a working loopback listener. Startup, authenticated health,
+/// queue-contract checks, graceful shutdown, and result encoding can fail.
 pub fn daemon_owner_round_trip() -> EvidenceResult<ScenarioMeasurement> {
     runtime()?.block_on(async {
         let directory = tempfile::tempdir()?;
@@ -66,7 +70,7 @@ pub fn daemon_owner_round_trip() -> EvidenceResult<ScenarioMeasurement> {
         if !health.ready || health.request_queue_capacity != 4 {
             return Err(std::io::Error::other("daemon health contract changed").into());
         }
-        stop(running).await?;
+        stop(running)?;
         let encoded = serde_json::to_vec(&(health, elapsed.as_micros()))?;
         Ok(ScenarioMeasurement::new(
             "daemon/authenticated_owner_health_round_trip",
@@ -78,6 +82,10 @@ pub fn daemon_owner_round_trip() -> EvidenceResult<ScenarioMeasurement> {
 }
 
 /// Runs low, medium, saturated, slow-consumer, recovery, and graceful-shutdown phases.
+///
+/// # Errors
+/// Refuses fewer than 64 requests. Launch, load, stream, recovery, bounded-task checks, or graceful
+/// shutdown failure prevents qualification; unavailable process observations propagate.
 pub fn measure_daemon_saturation(operations: u32) -> EvidenceResult<DaemonEvidence> {
     if operations < 64 {
         return Err(std::io::Error::other("daemon evidence needs at least 64 requests").into());
@@ -213,7 +221,7 @@ async fn start(config: DaemonLaunch) -> EvidenceResult<RunningDaemon> {
     Ok(RunningDaemon { client, process })
 }
 
-async fn stop(mut running: RunningDaemon) -> EvidenceResult {
+fn stop(mut running: RunningDaemon) -> EvidenceResult {
     running.process.shutdown()
 }
 

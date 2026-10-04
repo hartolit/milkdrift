@@ -194,7 +194,10 @@ pub(crate) fn peer_storage_turnover(executions: u32) -> EvidenceResult<PeerTurno
         if first.observations.len() != 8
             || second.observations.len() != 8
             || third.observations.len() != 1
-            || third.observations[0].sequence != terminal_sequence
+            || third
+                .observations
+                .first()
+                .is_none_or(|observation| observation.sequence != terminal_sequence)
         {
             return Err(std::io::Error::other("peer observation paging/resume changed").into());
         }

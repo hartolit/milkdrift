@@ -28,6 +28,10 @@ const DISCOVERY_CANDIDATES: u32 = 2_048;
 const MATERIALIZED_CANDIDATES: u32 = 64;
 
 /// Builds and deterministically selects a bounded manifest from synthetic candidate metadata.
+///
+/// # Errors
+/// Invalid fixture definitions, rejected context construction, or changed selection accounting
+/// fail the measurement; result encoding and platform-sized conversions also propagate.
 pub fn context_discovery_and_selection() -> EvidenceResult<ScenarioMeasurement> {
     let policy = policy(128)?;
     let revision = revision(policy.clone())?;
@@ -74,6 +78,10 @@ pub fn context_discovery_and_selection() -> EvidenceResult<ScenarioMeasurement> 
 }
 
 /// Materializes only the exact selected node-execution sources through the runtime boundary.
+///
+/// # Errors
+/// Fixture validation, temporary store access, selection/materialization refusal, or a mismatch
+/// between selected entries and loaded bytes fails the measurement.
 pub fn context_materialization() -> EvidenceResult<ScenarioMeasurement> {
     let policy = policy(MATERIALIZED_CANDIDATES)?;
     let revision = revision(policy.clone())?;

@@ -45,6 +45,10 @@ pub struct DaemonLaunch {
 
 impl DaemonLaunch {
     /// Writes the owner-defined configuration and checks it using the product binary.
+    ///
+    /// # Errors
+    /// Returns configuration encoding/private-file errors, product-binary launch/capture failure,
+    /// a rejected configuration check, or an invalid endpoint.
     pub fn write(
         executable: PathBuf,
         directory: &Path,
@@ -132,6 +136,9 @@ pub struct OwnedChild {
 
 impl OwnedChild {
     /// Starts a child whose lifetime is bounded by this owner.
+    ///
+    /// # Errors
+    /// Propagates the operating system's process-creation failure; no child exists on that path.
     pub fn spawn(command: &mut ProcessCommand) -> EvidenceResult<Self> {
         Ok(Self {
             child: command.spawn()?,
@@ -140,11 +147,15 @@ impl OwnedChild {
     }
 
     /// Observes exit without blocking.
+    ///
+    /// # Errors
+    /// Propagates the operating system's process-status or reaping error.
     pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
         self.child.try_wait()
     }
 
     /// Process identity, used only for process observation and owned signal delivery.
+    #[must_use]
     pub fn id(&self) -> u32 {
         self.child.id()
     }
@@ -195,6 +206,10 @@ impl OwnedChild {
     /// Uses the daemon's public Ctrl-C boundary and verifies a successful exit on Unix.
     ///
     /// Other platforms return an error: forced termination cannot stand in for this observation.
+    ///
+    /// # Errors
+    /// Signal delivery, command capture, bounded exit observation, or unsuccessful daemon exit
+    /// returns an error. Non-Unix hosts refuse this graceful-shutdown observation.
     pub fn shutdown(&mut self) -> EvidenceResult {
         #[cfg(unix)]
         {
@@ -345,6 +360,10 @@ fn run_command_until(
 }
 
 /// Locates a previously built sibling application, including Cargo's `deps` layout.
+///
+/// # Errors
+/// Returns an error when the current executable location or Cargo profile directory cannot
+/// be resolved, or the requested sibling binary has not been built.
 pub fn application_binary(name: &str) -> EvidenceResult<PathBuf> {
     let executable = std::env::current_exe()?;
     let mut directory = executable
@@ -403,24 +422,34 @@ pub struct EvidenceConfig {
 
 impl CliRunner {
     /// Requires a successful one-document JSON response.
+    ///
+    /// # Errors
+    /// Returns command/capture failure, an unsuccessful exit, or malformed/multiple JSON records.
+    /// Failure diagnostics retain only selected public state.
     pub fn success(&self, arguments: &[&str]) -> EvidenceResult<Value> {
         self.success_with_input(arguments, &[])
     }
 
     /// Supplies a bounded input document and requires a successful JSON response.
+    ///
+    /// # Errors
+    /// Returns input/capture-bound, child execution, unsuccessful exit, or single-record JSON failure.
     pub fn success_with_input(&self, arguments: &[&str], stdin: &[u8]) -> EvidenceResult<Value> {
         let result = self.run(arguments, (!stdin.is_empty()).then_some(stdin));
-        self.success_result(arguments, result)
+        Self::success_result(arguments, result)
     }
 
     /// Requires JSON success without letting a nested probe restart an enclosing wait budget.
+    ///
+    /// # Errors
+    /// Returns execution or JSON failure and refuses an exhausted enclosing deadline without
+    /// granting the nested probe a fresh wait budget.
     pub fn success_until(&self, arguments: &[&str], deadline: Instant) -> EvidenceResult<Value> {
         let result = self.run_until(arguments, None, deadline);
-        self.success_result(arguments, result)
+        Self::success_result(arguments, result)
     }
 
     fn success_result(
-        &self,
         arguments: &[&str],
         result: EvidenceResult<CliOutput>,
     ) -> EvidenceResult<Value> {
@@ -439,11 +468,19 @@ impl CliRunner {
     }
 
     /// Runs through the configured credential with a hard deadline.
+    ///
+    /// # Errors
+    /// Returns argument/budget refusal, child launch/capture failure, or unconfirmed cleanup.
+    /// A captured nonzero process exit remains available in the returned output.
     pub fn run(&self, arguments: &[&str], stdin: Option<&[u8]>) -> EvidenceResult<CliOutput> {
         self.run_with_token(&self.token_file, arguments, stdin)
     }
 
     /// Runs a probe under both its command allowance and the remaining enclosing budget.
+    ///
+    /// # Errors
+    /// Returns command/capture failure or exhaustion of either the command or enclosing deadline.
+    /// Child cleanup uncertainty is preserved with the operation failure.
     pub fn run_until(
         &self,
         arguments: &[&str],
@@ -454,6 +491,10 @@ impl CliRunner {
     }
 
     /// Uses an explicit credential file for authentication-refusal evidence.
+    ///
+    /// # Errors
+    /// Returns argument/budget refusal or child/capture/cleanup failure. Authentication refusals
+    /// with successfully captured output remain ordinary process results for assertions.
     pub fn run_with_token(
         &self,
         token_file: &Path,
@@ -542,6 +583,10 @@ impl CliRunner {
 }
 
 /// Verifies the stable JSON failure and process exit classifications.
+///
+/// # Errors
+/// Returns an error if exit, stderr redaction, single JSON framing, schema/finality, or the
+/// requested classification/daemon code differs from the expected failure contract.
 pub fn assert_error(
     output: &CliOutput,
     exit: i32,
@@ -562,18 +607,24 @@ pub fn assert_error(
     )?;
     let document = one_json_line(&output.stdout)?;
     ensure(
-        document["status"] == "failure"
-            && document["schema_version"] == 2
-            && document["final"] == true,
+        document.get("status").and_then(Value::as_str) == Some("failure")
+            && document.get("schema_version").and_then(Value::as_u64) == Some(2)
+            && document.get("final").and_then(Value::as_bool) == Some(true),
         "failure was not a typed JSON error",
     )?;
     ensure(
-        document["error"]["classification"] == classification,
+        document
+            .pointer("/error/classification")
+            .and_then(Value::as_str)
+            == Some(classification),
         "failure classification changed",
     )?;
     match daemon_code {
         Some(code) => ensure(
-            document["error"]["daemon_code"] == code,
+            document
+                .pointer("/error/daemon_code")
+                .and_then(Value::as_str)
+                == Some(code),
             "daemon error code changed",
         ),
         None => Ok(()),
@@ -592,6 +643,10 @@ fn one_json_line(text: &str) -> EvidenceResult<Value> {
 }
 
 /// Polls actual CLI readiness while checking child exit and a hard deadline.
+///
+/// # Errors
+/// Returns child exit/status failure, failed CLI probing, or exhaustion of the shared ten-second
+/// startup deadline.
 pub fn wait_for_readiness(runner: &CliRunner, daemon: &mut OwnedChild) -> EvidenceResult {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -661,11 +716,17 @@ where
 }
 
 /// Requires the CLI failed-terminal exit within a hard deadline.
+///
+/// # Errors
+/// Returns bounded CLI execution failure or a mismatch with the failed-terminal exit/envelope.
 pub fn wait_for_failed_exit(runner: &CliRunner, run: &str) -> EvidenceResult {
     let output = runner.run(&["--timeout-secs", "5", "run", "wait", run], None)?;
     assert_error(&output, 8, "failed_terminal", None)
 }
 /// Starts the product daemon with private diagnostics and owned cleanup.
+///
+/// # Errors
+/// Propagates daemon process creation failure; readiness is a separate caller observation.
 pub fn start_daemon(executable: &Path, config: &Path) -> EvidenceResult<OwnedChild> {
     OwnedChild::spawn(
         ProcessCommand::new(executable)
@@ -678,6 +739,9 @@ pub fn start_daemon(executable: &Path, config: &Path) -> EvidenceResult<OwnedChi
 }
 
 /// Chooses an ephemeral loopback endpoint; bind races fail at startup.
+///
+/// # Errors
+/// Returns failure to bind or inspect the temporary loopback listener.
 pub fn reserve_endpoint() -> EvidenceResult<SocketAddr> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     let address = listener.local_addr()?;
@@ -686,6 +750,9 @@ pub fn reserve_endpoint() -> EvidenceResult<SocketAddr> {
 }
 
 /// Writes the canonical daemon document from explicit scenario inputs.
+///
+/// # Errors
+/// Returns canonical TOML serialization or private configuration-file creation/write failure.
 pub fn write_config(
     directory: &Path,
     bind: SocketAddr,
@@ -748,6 +815,10 @@ pub fn write_config(
 }
 
 /// Builds the deterministic evidence process profile with exact executable bytes.
+///
+/// # Errors
+/// Returns executable byte-pinning, parent-path, profile-validation, encoding, or private-file
+/// write failure before the profile can be used by a scenario.
 pub fn write_process_profile(
     directory: &Path,
     executable: &Path,
@@ -839,6 +910,10 @@ pub fn write_process_profile(
 }
 
 /// Hashes a regular executable and verifies its observed size.
+///
+/// # Errors
+/// Returns open/read/metadata failure, a non-regular file, an unrepresentable observed size,
+/// or a size mismatch indicating the executable changed while being hashed.
 pub fn hash_file(path: &Path) -> EvidenceResult<(String, u64)> {
     let mut file = fs::File::open(path).map_err(|error| {
         format!(
@@ -859,8 +934,14 @@ pub fn hash_file(path: &Path) -> EvidenceResult<(String, u64)> {
         if read == 0 {
             break;
         }
-        hasher.update(&buffer[..read]);
-        observed_size = observed_size.saturating_add(u64::try_from(read)?);
+        hasher.update(
+            buffer
+                .get(..read)
+                .ok_or("executable read exceeded buffer")?,
+        );
+        observed_size = observed_size
+            .checked_add(u64::try_from(read)?)
+            .ok_or("executable byte count overflow")?;
     }
     ensure(
         observed_size == metadata.len(),
@@ -870,6 +951,9 @@ pub fn hash_file(path: &Path) -> EvidenceResult<(String, u64)> {
 }
 
 /// Creates a private evidence file.
+///
+/// # Errors
+/// Returns exclusive-file creation or write failure; existing destinations are never replaced.
 pub fn write_private(path: &Path, bytes: &[u8]) -> EvidenceResult<PathBuf> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -883,6 +967,9 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> EvidenceResult<PathBuf> {
 }
 
 /// Reads a required textual JSON field without defaulting missing evidence.
+///
+/// # Errors
+/// Returns an error when any path segment is absent or the selected value is not text.
 pub fn required_text(value: &Value, path: &[&str]) -> EvidenceResult<String> {
     let mut current = value;
     for segment in path {
@@ -895,6 +982,9 @@ pub fn required_text(value: &Value, path: &[&str]) -> EvidenceResult<String> {
 }
 
 /// Reads a required unsigned JSON field without defaulting missing evidence.
+///
+/// # Errors
+/// Returns an error when any path segment is absent or the selected value is not an unsigned integer.
 pub fn required_u64(value: &Value, path: &[&str]) -> EvidenceResult<u64> {
     let mut current = value;
     for segment in path {
@@ -906,12 +996,18 @@ pub fn required_u64(value: &Value, path: &[&str]) -> EvidenceResult<u64> {
 }
 
 /// Requires a UTF-8 path at the CLI argument boundary.
+///
+/// # Errors
+/// Returns an error when the path cannot be represented as UTF-8 for a CLI argument.
 pub fn path_text(path: &Path) -> EvidenceResult<&str> {
     path.to_str()
         .ok_or_else(|| "fixture path is not UTF-8".into())
 }
 
 /// Rejects a failed independent evidence assertion.
+///
+/// # Errors
+/// Returns the supplied failure message when the independent evidence assertion is false.
 pub fn ensure(condition: bool, message: &str) -> EvidenceResult {
     if condition {
         Ok(())

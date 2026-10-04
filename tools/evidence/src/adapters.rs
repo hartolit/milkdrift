@@ -28,11 +28,17 @@ use milkdrift_workspace::RunId;
 use crate::{EvidenceResult, ScenarioMeasurement};
 
 /// Exercises the production artifact publication and bounded range-read path.
+///
+/// # Errors
+/// Temporary-store creation, artifact publication, or the authorized bounded read can fail.
 pub fn artifact_range_read() -> EvidenceResult<ScenarioMeasurement> {
     crate::persistence::artifact_publication()
 }
 
 /// Exercises both production model-provider bounded stream parsers with fixed fixtures.
+///
+/// # Errors
+/// Returns a parser fixture failure or an error encoding its measured result.
 pub fn model_stream_parsers() -> EvidenceResult<ScenarioMeasurement> {
     let evidence =
         milkdrift_model_provider::exercise_stream_fixtures(1_024).map_err(std::io::Error::other)?;
@@ -46,6 +52,10 @@ pub fn model_stream_parsers() -> EvidenceResult<ScenarioMeasurement> {
 }
 
 /// Executes a byte-pinned local-process fixture and drains bounded stdout/stderr streams.
+///
+/// # Errors
+/// Requires the configured helper executable and a supported local process profile. Byte pinning,
+/// host admission, stream/drain checks, terminal validation, or artifact reads can fail.
 pub fn local_process_stream_drain() -> EvidenceResult<ScenarioMeasurement> {
     let executable = std::env::var_os("MILKDRIFT_EVIDENCE_PROCESS_HELPER")
         .map(PathBuf::from)
