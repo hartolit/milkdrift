@@ -151,6 +151,7 @@ impl RemoteCapabilityAdapter {
                 },
                 expires_at_unix_ms: request.deadline_unix_ms,
             };
+            let mut published = false;
             let result = (|| {
                 reporter.heartbeat()?;
                 let (mut offset, maximum) = match self
@@ -158,7 +159,10 @@ impl RemoteCapabilityAdapter {
                     .negotiate_artifact(&offer)
                     .map_err(|error| AdapterError::external_failure(error.to_string()))?
                 {
-                    ArtifactTransferDecision::AlreadyPresent => return Ok(()),
+                    ArtifactTransferDecision::AlreadyPresent => {
+                        published = true;
+                        return Ok(());
+                    }
                     ArtifactTransferDecision::Transfer {
                         next_offset,
                         maximum_chunk_bytes,
@@ -199,7 +203,9 @@ impl RemoteCapabilityAdapter {
                         .write_artifact_chunk(&chunk)
                         .map_err(|error| AdapterError::external_failure(error.to_string()))?;
                     match decision {
-                        ArtifactTransferDecision::AlreadyPresent if chunk.final_chunk => {}
+                        ArtifactTransferDecision::AlreadyPresent if chunk.final_chunk => {
+                            published = true;
+                        }
                         ArtifactTransferDecision::Transfer { next_offset, .. }
                             if next_offset == end as u64 && !chunk.final_chunk => {}
                         _ => {
@@ -215,6 +221,11 @@ impl RemoteCapabilityAdapter {
                         "remote input resume offset exceeds its exact size",
                     ));
                 }
+                if !published {
+                    return Err(AdapterError::external_failure(
+                        "remote input staging did not confirm publication",
+                    ));
+                }
                 Ok(())
             })();
             let renewal = if result.is_ok() {
@@ -222,11 +233,17 @@ impl RemoteCapabilityAdapter {
             } else {
                 Ok(())
             };
-            super::artifacts::finish_transfer(
-                result.and(renewal),
-                self.client.abort_artifact(&transfer),
-                Ok(()),
-            )?;
+            // AlreadyPresent proves that the upload is committed and its temporary transfer
+            // is closed. Download transfers have a separate lifetime and still require abort.
+            if published {
+                result.and(renewal)?;
+            } else {
+                super::artifacts::finish_transfer(
+                    result.and(renewal),
+                    self.client.abort_artifact(&transfer),
+                    Ok(()),
+                )?;
+            }
         }
         Ok(())
     }

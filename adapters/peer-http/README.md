@@ -76,6 +76,9 @@ imports each durable output observation before forwarding it to the origin repor
 bound to the authenticated execution owner and exact observation; both transfer owners enforce
 bounds and attempt to release staging on failure. Abort failures reach the caller alongside the
 original transfer failure, while each staging owner retains failed cleanup for retry or expiry.
+An input upload's `AlreadyPresent` response confirms publication and closure of its temporary
+transfer; the origin does not abort that closed transfer. A resume offset alone does not establish
+publication. Output downloads remain open until their explicit abort releases the read transfer.
 Empty outputs commit without a data chunk. Input transfer
 remains explicit. A remote context manifest names origin evidence and does not imply a shared store.
 Between output chunks the adapter renews the origin's durable execution lease and checks shutdown.
