@@ -14,6 +14,10 @@ use crate::RuntimeError;
 /// [`SystemBoundaryClock`] only samples the OS clock and provides no durable watermark.
 pub trait BoundaryClock: Send + Sync {
     /// Returns the current epoch-millisecond observation.
+    ///
+    /// # Errors
+    /// Returns an error when the clock cannot supply a valid epoch-millisecond observation,
+    /// including overflow or a rollback rejected by the configured clock owner.
     fn now(&self) -> Result<TimestampMillis, RuntimeError>;
 }
 
@@ -51,6 +55,9 @@ impl ManualClock {
     }
 
     /// Advances by a checked duration and returns the resulting fact.
+    ///
+    /// # Errors
+    /// Rejects additions that would overflow the timestamp, leaving the clock unchanged.
     pub fn advance(&self, millis: u64) -> Result<TimestampMillis, RuntimeError> {
         let mut current = self.0.load(Ordering::SeqCst);
         loop {
@@ -85,6 +92,10 @@ impl BoundaryClock for ManualClock {
 /// recorded identities instead of allocating replacements.
 pub trait IdGenerator: Send + Sync {
     /// Produces one bounded safe-ASCII identity under a stable semantic kind.
+    ///
+    /// # Errors
+    /// Returns an error when the kind cannot form a valid identity, the sequence is exhausted,
+    /// or the configured identity owner is unavailable.
     fn next(&self, kind: &'static str) -> Result<String, RuntimeError>;
 }
 
@@ -99,6 +110,10 @@ pub struct SequentialIdGenerator {
 
 impl SequentialIdGenerator {
     /// Creates a generator. Prefix validation prevents path/control text from entering IDs.
+    ///
+    /// # Errors
+    /// Rejects empty, oversized, non-ASCII, or unsafe prefixes, including a nonalphanumeric
+    /// first byte. The caller remains responsible for preventing reuse across restarts.
     pub fn new(prefix: impl Into<String>, first: u64) -> Result<Self, RuntimeError> {
         let prefix = prefix.into();
         if prefix.is_empty()

@@ -84,6 +84,10 @@ pub trait ControllerLifecycle: Send + Sync {
     /// `None` means the revision is an ordinary non-controller repeat. A revision
     /// carrying [`CONTROLLER_POLICY_EXTENSION_KEY`] must return `Some` or an error;
     /// the runtime rejects marked controllers when no lifecycle owner is installed.
+    ///
+    /// # Errors
+    /// Rejects malformed or unsupported controller policy and inconsistent assessment facts.
+    /// Evaluation failures must not be converted to an ordinary non-controller result.
     fn assess(
         &self,
         context: &ControllerAssessmentContext<'_>,

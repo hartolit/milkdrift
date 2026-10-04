@@ -202,6 +202,11 @@ impl RuntimeService {
 impl RuntimeService {
     /// Recover the child through the canonical create/start command association saved by its
     /// caller. Runtime still owns both command receipts and every internal run event.
+    ///
+    /// # Errors
+    /// Rejects invalid or mismatched retained associations, methods, or saved create/start commands;
+    /// propagates authorization, projection, and storage failures. Refused child creation/start
+    /// remains a failure and never permits substitution of another child.
     pub fn arrange_published_run(
         &self,
         plan: &milkdrift_persistence::published::PublishedInvocationPlan,
@@ -299,6 +304,10 @@ impl RuntimeService {
 impl RuntimeService {
     /// Record cleanup for this exact accepted child. The child command receipt is the stable
     /// cancellation association, so a lost reply cannot request a second cancellation action.
+    ///
+    /// # Errors
+    /// Rejects missing or mismatched acceptance/create evidence and propagates projection,
+    /// authorization, or durable cancellation failures. An uncreated child needs no cancellation.
     pub fn cancel_published_run(
         &self,
         plan: &milkdrift_persistence::published::PublishedInvocationPlan,

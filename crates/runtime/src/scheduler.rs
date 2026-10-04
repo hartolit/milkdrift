@@ -41,6 +41,10 @@ pub struct SchedulerLimits {
 
 impl SchedulerLimits {
     /// Constructs bounded global, run, branch, and default capability-class limits.
+    ///
+    /// # Errors
+    /// Rejects zero limits, global capacity above the durable lease-page bound, or branch/run
+    /// limits exceeding their enclosing capacity.
     pub fn new(
         global: u32,
         per_run: u32,
@@ -76,6 +80,9 @@ impl SchedulerLimits {
     }
 
     /// Adds an exact operation-class limit.
+    ///
+    /// # Errors
+    /// Rejects a zero class limit or a limit above global capacity.
     pub fn with_capability_class(
         mut self,
         operation: OperationId,
@@ -227,6 +234,10 @@ pub struct RetryPolicy {
 
 impl RetryPolicy {
     /// Constructs a bounded retry policy; maximum attempts includes the first attempt.
+    ///
+    /// # Errors
+    /// Rejects zero or excessive attempt counts, too many error classes, zero initial backoff,
+    /// or an initial backoff above the maximum.
     pub fn new(
         maximum_attempts: u32,
         retryable_errors: Vec<ErrorClass>,
@@ -287,6 +298,9 @@ impl RetryPolicy {
     }
 
     /// Calculates capped exponential backoff plus an already-recorded jitter fact.
+    ///
+    /// # Errors
+    /// Rejects attempt numbers before the first retry and jitter above the recorded-jitter bound.
     pub fn backoff_ms(
         &self,
         next_attempt_number: u32,
@@ -313,6 +327,10 @@ impl RetryPolicy {
     ///
     /// A provider delay above the configured hard maximum disables this automatic
     /// retry path instead of silently firing earlier than the provider requested.
+    ///
+    /// # Errors
+    /// Rejects invalid retry/jitter facts and provider minimum delays above the policy maximum.
+    /// The runtime must refuse that automatic retry rather than fire earlier.
     pub fn retry_delay_ms(
         &self,
         next_attempt_number: u32,

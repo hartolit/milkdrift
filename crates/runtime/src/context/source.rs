@@ -74,6 +74,11 @@ pub struct ContextSourceRequest<'a> {
 /// Narrow runtime boundary that discovers bounded metadata candidates from durable state.
 pub trait ContextCandidateSource {
     /// Discovers metadata only; large artifact content is not read by this method.
+    ///
+    /// # Errors
+    /// Returns an error when the frozen revision, scope, history, or authority facts cannot be
+    /// validated, or when discovery exceeds its bounds. Missing optional evidence may instead
+    /// be represented by the candidate's availability classification.
     fn discover(
         &self,
         request: ContextSourceRequest<'_>,

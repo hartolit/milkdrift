@@ -286,6 +286,9 @@ pub struct CommandAuthorityClaim {
 
 impl CommandAuthorityClaim {
     /// Constructs a production claim bound to the authenticated immutable grant digest.
+    ///
+    /// # Errors
+    /// Rejects a zero grant revision. Constructing a claim does not establish its authority.
     pub fn new(
         grant: GrantId,
         grant_revision: u64,
@@ -387,6 +390,10 @@ impl RunCommandDocument {
         clippy::too_many_arguments,
         reason = "Command/run/actor identity, expected sequence, time, reason, evidence, and closed command payload are independently signed admission facts."
     )]
+    ///
+    /// # Errors
+    /// Rejects invalid envelope bounds, evidence, or command-specific facts. No command is
+    /// admitted until the runtime separately authorizes and commits it.
     pub fn new(
         command_id: CommandId,
         run_id: RunId,
@@ -467,11 +474,18 @@ impl RunCommandDocument {
     }
 
     /// Encodes deterministic compact JSON for durable idempotency evidence.
+    ///
+    /// # Errors
+    /// Returns a serialization error if the command cannot be represented as canonical JSON.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, RuntimeError> {
         canonical_json(self)
     }
 
     /// Bounds-checks and rejects unsupported future command schemas.
+    ///
+    /// # Errors
+    /// Rejects oversized, malformed, duplicate-field, or unsupported-version documents and
+    /// invalid envelope or command-specific facts.
     pub fn from_json(bytes: &[u8]) -> Result<Self, RuntimeError> {
         if bytes.len() > MAX_COMMAND_DOCUMENT_BYTES {
             return Err(RuntimeError::InvalidCommand(format!(
@@ -513,6 +527,10 @@ impl RunCommandDocument {
     /// Optimistic sequence and delivery timestamp remain in the retained document but are
     /// deliberately excluded from the idempotency fingerprint, allowing safe redelivery of
     /// the same command after an ordinary aggregate-head race.
+    ///
+    /// # Errors
+    /// Returns canonical encoding or receipt-bound errors. The retained audit bytes and
+    /// idempotency intent must both be constructed successfully.
     pub fn receipt(&self) -> Result<CommandReceipt, RuntimeError> {
         let intent = RunCommandIntent {
             schema_version: self.schema_version,
@@ -532,6 +550,10 @@ impl RunCommandDocument {
     }
 
     /// Creates a receipt whose audit and idempotency bytes include the exact authority claim.
+    ///
+    /// # Errors
+    /// Returns canonical encoding or receipt-bound errors while binding the complete authority
+    /// claim to both the retained audit document and semantic intent.
     pub fn authorized_receipt(
         &self,
         authority: &CommandAuthorityClaim,
@@ -564,6 +586,10 @@ impl RunCommandDocument {
     }
 
     /// Derives exact typed authorization facts from this closed external command.
+    ///
+    /// # Errors
+    /// Rejects private system/worker command families and invalid derived decision identities;
+    /// propagates budget/accounting or authority-fact construction failures.
     pub fn authority_request(
         &self,
         claim: &CommandAuthorityClaim,

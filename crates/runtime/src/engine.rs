@@ -117,6 +117,10 @@ pub struct RuntimeConfig {
 impl RuntimeConfig {
     /// Constructs a service policy with a nonzero lease duration in milliseconds and
     /// a tick bound no greater than [`milkdrift_persistence::MAX_PAGE_SIZE`].
+    ///
+    /// # Errors
+    /// Rejects zero lease duration, a zero tick bound, or a tick bound above the persistence
+    /// page ceiling.
     pub fn new(
         worker: WorkerId,
         internal_actor: ActorRef,
@@ -311,6 +315,10 @@ impl RuntimeService {
     /// [`Self::initialize_startup`] explicitly. Startup never performs a complete
     /// historical integrity scrub or artifact-content rehash; operators invoke
     /// [`StorageAdmin::scan_integrity`] separately when that administrative work is needed.
+    ///
+    /// # Errors
+    /// Returns storage/schema, default-authority construction, or active-state recovery failures.
+    /// Admission opens only after startup validation and recovery complete.
     pub fn new(
         store: Arc<dyn RuntimeStore>,
         executor: Arc<dyn TaskExecutor>,
@@ -331,6 +339,10 @@ impl RuntimeService {
     }
 
     /// Opens and recovers a runtime with an explicit external-command authority boundary.
+    ///
+    /// # Errors
+    /// Returns storage/schema or active-state recovery failures. Admission opens only after
+    /// startup validation and recovery complete under the supplied owners.
     pub fn new_with_authority(
         store: Arc<dyn RuntimeStore>,
         executor: Arc<dyn TaskExecutor>,
@@ -350,6 +362,10 @@ impl RuntimeService {
     /// This is the only intentionally uninitialized constructor. The returned
     /// handle may serve health/startup queries, but create/start/resume/dispatch
     /// work remains rejected until [`Self::initialize_startup`] succeeds.
+    ///
+    /// # Errors
+    /// Returns default-authority construction or storage/schema errors, including required
+    /// migration and unsupported future storage versions.
     pub fn open_closed(
         store: Arc<dyn RuntimeStore>,
         executor: Arc<dyn TaskExecutor>,
@@ -367,6 +383,10 @@ impl RuntimeService {
     }
 
     /// Opens a closed runtime with an explicit external-command authority boundary.
+    ///
+    /// # Errors
+    /// Returns storage inspection errors or refuses a schema requiring migration or a future
+    /// unsupported storage version.
     pub fn open_closed_with_authority(
         store: Arc<dyn RuntimeStore>,
         executor: Arc<dyn TaskExecutor>,
@@ -432,6 +452,10 @@ impl RuntimeService {
     ///
     /// Installation is intentionally one-shot. Marked controller revisions fail
     /// closed when no owner is installed, while ordinary repeats remain unchanged.
+    ///
+    /// # Errors
+    /// Rejects installation after admission opens, an already-installed owner, or a poisoned
+    /// lifecycle lock. The existing owner is never silently replaced.
     pub fn install_controller_lifecycle(
         &self,
         lifecycle: Arc<dyn ControllerLifecycle>,
@@ -542,6 +566,9 @@ impl RuntimeService {
     }
 
     /// Builds a complete command using the injected clock and identity boundary.
+    ///
+    /// # Errors
+    /// Returns clock, identity allocation, or command-envelope validation failures.
     pub fn command(
         &self,
         run: RunId,
@@ -565,11 +592,19 @@ impl RuntimeService {
 
     /// Loads the latest verified operational checkpoint and replays only its
     /// authoritative tail. Complete history remains available from the journal.
+    ///
+    /// # Errors
+    /// Returns storage, checkpoint-integrity, or authoritative journal replay errors. An invalid
+    /// history is not repaired by this read.
     pub fn projection(&self, run: &RunId) -> Result<RunProjection, RuntimeError> {
         project_from_latest_snapshot(self.store.as_ref(), run)
     }
 
     /// Loads the exact controller account immutably bound to a run, when present.
+    ///
+    /// # Errors
+    /// Returns storage or account-validation errors, including a binding whose account is
+    /// missing. An absent binding returns `None`.
     pub fn controller_account_for_run(
         &self,
         run: &RunId,
@@ -594,6 +629,9 @@ impl RuntimeService {
     ///
     /// Active projection collections are deliberately compact and must not be used
     /// as an attempt, progress, signal, recovery, or reconciliation audit timeline.
+    ///
+    /// # Errors
+    /// Returns cursor, run, bounded-page, or storage errors from the journal owner.
     pub fn history_page(&self, query: &EventPageQuery) -> Result<EventPage, RuntimeError> {
         Ok(self.store.events(query)?)
     }
@@ -602,6 +640,10 @@ impl RuntimeService {
     ///
     /// Runtime decisions use a paged fold and never call this materializing helper.
     /// Histories above [`MAX_PAGE_SIZE`] return a bounds error rather than truncating.
+    ///
+    /// # Errors
+    /// Returns storage/history errors or a bounds error if the complete run exceeds one page;
+    /// it never returns a silently truncated history.
     pub fn history(&self, run: &RunId) -> Result<Vec<RunEventEnvelope>, RuntimeError> {
         load_bounded_history(self.store.as_ref(), run, PageSize::new(MAX_PAGE_SIZE)?)
     }
@@ -618,6 +660,10 @@ impl RuntimeService {
     /// state rather than complete historical storage. The operation does not invoke the
     /// administrative integrity scanner or rehash artifact content. A failure leaves
     /// admission closed and preserves resumable recovery progress for an explicit retry.
+    ///
+    /// # Errors
+    /// Returns active-state validation, recovery, clock, or coordination failures. Admission
+    /// remains closed when recovery cannot complete.
     pub fn initialize_startup(&self) -> Result<(), RuntimeError> {
         self.recover_startup_closed()?;
         self.resume_admission()
@@ -628,6 +674,9 @@ impl RuntimeService {
     /// This does not certify active state as executable or run automatic recovery. Existing
     /// command planners, authority, sequence guards and durable receipts still apply. Drop
     /// this handle and initialize a new one normally to validate repaired state for execution.
+    ///
+    /// # Errors
+    /// Rejects a handle that is no longer newly opened and closed, or a poisoned startup lock.
     pub fn enable_recovery_controls(&self) -> Result<(), RuntimeError> {
         let _guard = self.startup_gate.lock().map_err(|_| {
             RuntimeError::Scheduling("runtime startup coordination lock is poisoned".to_owned())
@@ -648,6 +697,10 @@ impl RuntimeService {
     ///
     /// Daemon composition uses this split phase so application state and adapters can finish
     /// validation before any externally initiated runtime command is admitted.
+    ///
+    /// # Errors
+    /// Rejects recovery-only mode and unavailable startup coordination; propagates active-state
+    /// validation, clock, storage, and recovery progress failures while admission stays closed.
     pub fn recover_startup_closed(&self) -> Result<(), RuntimeError> {
         let _guard = self.startup_gate.lock().map_err(|_error| {
             RuntimeError::Scheduling("runtime startup coordination lock is poisoned".to_owned())
@@ -666,6 +719,9 @@ impl RuntimeService {
     }
 
     /// Re-opens admission only after active-run validation and recovery completed.
+    ///
+    /// # Errors
+    /// Rejects reopening before successful active-run validation and recovery.
     pub fn resume_admission(&self) -> Result<(), RuntimeError> {
         if self.startup_state() != RuntimeStartupState::RecoveryCompleted {
             return Err(RuntimeError::Scheduling(
@@ -689,6 +745,9 @@ impl RuntimeService {
     }
 
     /// Reads one immutable runtime/storage health snapshot without mutating state.
+    ///
+    /// # Errors
+    /// Returns boundary-clock or storage-health errors rather than inventing a healthy snapshot.
     pub fn health(&self) -> Result<RuntimeHealth, RuntimeError> {
         let observed_at = self.clock.now()?;
         Ok(RuntimeHealth {
@@ -713,6 +772,11 @@ impl RuntimeService {
     ///
     /// Internal system transitions and worker reports are rejected before evaluation and
     /// remain reachable only through private runtime-owned paths.
+    ///
+    /// # Errors
+    /// Returns invalid external command/claim facts, conflicting replay, authority-evaluator,
+    /// projection, or atomic-storage errors. Ordinary authority/transition refusals can be
+    /// durable rejection results; inspect their disposition. Storage errors require exact replay.
     pub fn handle_authorized_command(
         &self,
         command: &RunCommandDocument,

@@ -48,6 +48,10 @@ impl RunProjection {
     }
 
     /// Replays a complete ordered history without consulting any external state.
+    ///
+    /// # Errors
+    /// Rejects invalid or noncontiguous journal histories, inconsistent authority/ownership,
+    /// and exceeded projection bounds. Replay never supplies replacement external facts.
     pub fn replay(events: &[RunEventEnvelope]) -> Result<Self, RuntimeError> {
         let mut projection = Self::new();
         for event in events {
@@ -68,6 +72,10 @@ impl RunProjection {
     ///
     /// On failure `self` remains unchanged, allowing callers to retain a previously
     /// verified journal prefix.
+    ///
+    /// # Errors
+    /// Rejects wrong-run, noncontiguous, out-of-state, inconsistent, or over-budget events.
+    /// A rejected event leaves the existing projection unchanged.
     pub fn apply(&mut self, event: &RunEventEnvelope) -> Result<(), RuntimeError> {
         let mut candidate = self.clone();
         candidate.apply_in_place(event)?;

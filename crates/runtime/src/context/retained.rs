@@ -9,6 +9,11 @@ use super::{ContextBuildError, ContextBuildIdentity};
 /// Checks the frozen identity, governing policy and omission evidence used by retry
 /// and lease recovery. Offline diagnostics may call this pure check without constructing
 /// a runtime. Passing it is only a context-reuse check, not authority to execute work.
+///
+/// # Errors
+/// Rejects mismatched attempt identities, unsupported or changed selection policy/budget,
+/// incomplete required selection, and old omissions lacking independent disclosure evidence.
+/// Policy digest failures also propagate.
 pub fn validate_retained_manifest(
     manifest: &ContextManifest,
     identity: &ContextBuildIdentity,

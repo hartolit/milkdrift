@@ -58,6 +58,11 @@ impl RuntimeService {
         clippy::too_many_lines,
         reason = "scheduling is one ordered admission pass over a single projection snapshot"
     )]
+    ///
+    /// # Errors
+    /// Rejects recovery-only mode or unavailable coordination; propagates clock, projection,
+    /// authority, bounded-progress, and storage failures. Accepted durable effects still
+    /// require separate claiming and execution.
     pub fn scheduler_tick(&self) -> Result<SchedulerTickResult, RuntimeError> {
         self.require_execution_mode()?;
         let now = self.clock.now()?;

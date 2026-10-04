@@ -19,6 +19,10 @@ use super::{
 /// travel with the frozen request. This helper does not evaluate grants: use a manifest
 /// from the authorized discovery/selection path and preserve the host's read boundary.
 /// Missing or changed selected sources fail instead of selecting replacement evidence.
+///
+/// # Errors
+/// Rejects missing or changed selected sources, mismatched content digests/sizes, and invalid
+/// invocation-input representations. Storage and encoding failures propagate.
 pub fn materialize_selected_context(
     store: &dyn crate::RuntimeStore,
     manifest: &ContextManifest,
@@ -105,6 +109,10 @@ pub fn materialize_selected_context(
 }
 
 /// Reads and verifies one exact manifest artifact through bounded artifact reads.
+///
+/// # Errors
+/// Rejects over-budget, unauthorized, missing, truncated, or digest-inconsistent artifact
+/// reads and malformed or unsupported manifest documents.
 pub fn read_context_manifest(
     store: &dyn crate::RuntimeStore,
     reference: &CapabilityArtifactReference,

@@ -105,6 +105,9 @@ pub struct ResolvedCapability {
 
 impl ResolvedCapability {
     /// Constructs and cross-checks an exact descriptor/snapshot pair.
+    ///
+    /// # Errors
+    /// Rejects a snapshot that differs from the exact immutable descriptor or operation contract.
     pub fn new(
         descriptor: CapabilityDescriptor,
         snapshot: ResolvedCapabilitySnapshot,
@@ -118,6 +121,10 @@ impl ResolvedCapability {
     }
 
     /// Constructs an exact resolution with its canonical allowed decision.
+    ///
+    /// # Errors
+    /// Rejects mismatched descriptor/snapshot facts or a decision that does not allow and bind
+    /// the exact capability, operation, profile, generation, locality, peer, and trust zones.
     pub fn new_authorized(
         descriptor: CapabilityDescriptor,
         snapshot: ResolvedCapabilitySnapshot,
@@ -231,6 +238,10 @@ impl CapabilityResolutionContext {
     }
 
     /// Builds the complete exact candidate request seen by the canonical evaluator.
+    ///
+    /// # Errors
+    /// Rejects operations absent from the descriptor and invalid derived decision identities.
+    /// Constructing this request does not itself authorize the candidate.
     pub fn candidate_request(
         &self,
         descriptor: &CapabilityDescriptor,
@@ -565,12 +576,20 @@ pub enum ObservationDisposition {
 /// completion.
 pub trait ExecutionReporter: Send + Sync {
     /// Persists one exactly correlated invocation observation.
+    ///
+    /// # Errors
+    /// Rejects invalid correlation, sequence, state, or durable observation writes. Propagate
+    /// every error; failed reporting does not establish a terminal external outcome.
     fn invocation(&self, report: InvocationEvent) -> Result<ObservationDisposition, ExecutorError>;
 
     /// Persists a policy-bounded lease extension while the invocation is still alive.
     ///
     /// The runtime chooses the new expiry from its trusted boundary clock and lease policy;
     /// an adapter cannot pin ownership arbitrarily far into the future.
+    ///
+    /// # Errors
+    /// Returns an error if the lease cannot be extended in the current state or the clock/storage
+    /// boundary fails. A failed call does not prove renewed ownership.
     fn heartbeat(&self) -> Result<ObservationDisposition, ExecutorError>;
 }
 
@@ -697,6 +716,10 @@ impl<'a> PreparedExecution<'a> {
     }
 
     /// Consumes this handle and enters the exact prepared generation once.
+    ///
+    /// # Errors
+    /// Rejects a dispatch that differs from the prepared facts or a published continuation;
+    /// propagates external-entry and reporter failures without implying safe replay.
     pub fn enter(
         self,
         dispatch: &ExecutionDispatch,
@@ -706,6 +729,10 @@ impl<'a> PreparedExecution<'a> {
     }
 
     /// Consumes this handle with the exact reservation committed at final entry.
+    ///
+    /// # Errors
+    /// Rejects mismatched final dispatch facts or a durable published continuation; propagates
+    /// entry/reporting failures. A supplied reservation does not replace committed authority.
     pub fn enter_with_controller_reservation(
         self,
         dispatch: &ExecutionDispatch,
@@ -730,6 +757,10 @@ impl<'a> PreparedExecution<'a> {
 pub trait TaskExecutor: Send + Sync {
     /// Recheck an incoming published call with its serving owner before internal work enters.
     /// Runtime checks local callers itself; an unavailable serving owner must fail closed.
+    ///
+    /// # Errors
+    /// Returns an error when the serving authority owner is unavailable or cannot verify this
+    /// exact accepted plan. The caller must refuse entry on error.
     fn published_serving_entry_allowed(
         &self,
         _plan: &milkdrift_persistence::published::PublishedInvocationPlan,
@@ -741,6 +772,10 @@ pub trait TaskExecutor: Send + Sync {
 
     /// Advance the exact already-durable child association without waiting for internal work.
     /// A missing terminal leaves the operation pending, including across restart.
+    ///
+    /// # Errors
+    /// Returns an error when the continuation owner is unavailable or cannot advance/read the
+    /// retained child association. Failure must not authorize replacement of that child.
     fn continue_published(
         &self,
         _plan: &milkdrift_persistence::published::PublishedInvocationPlan,
@@ -753,6 +788,10 @@ pub trait TaskExecutor: Send + Sync {
     }
 
     /// Release live generation ownership only after the caller has committed terminal evidence.
+    ///
+    /// # Errors
+    /// Returns an error if retained generation ownership cannot be released consistently.
+    /// Callers must already have durable terminal evidence before requesting release.
     fn complete_published(
         &self,
         _plan: &milkdrift_persistence::published::PublishedInvocationPlan,
@@ -761,6 +800,10 @@ pub trait TaskExecutor: Send + Sync {
     }
 
     /// Deterministically resolves an exact immutable descriptor and operation snapshot.
+    ///
+    /// # Errors
+    /// Returns semantic mismatch, unavailable-generation, health, capacity, or resolver failures.
+    /// Successful resolution alone does not acquire an execution permit.
     fn resolve(
         &self,
         requirement: &CapabilityRequirement,
@@ -772,6 +815,10 @@ pub trait TaskExecutor: Send + Sync {
     /// The default checks the resolved descriptor with empty adapter requirements. Hosts
     /// with path, network, secret, or resource requirements must override it so those
     /// facts participate in candidate authorization; the production capability host does.
+    ///
+    /// # Errors
+    /// Returns resolution or authority-evaluation failures, a denied decision, or a decision
+    /// inconsistent with the exact selected generation and required resources.
     fn resolve_authorized(
         &self,
         requirement: &CapabilityRequirement,
@@ -800,12 +847,20 @@ pub trait TaskExecutor: Send + Sync {
     }
 
     /// Acquires one exact generation, prepared request, and envelope without external work.
+    ///
+    /// # Errors
+    /// Rejects mismatched dispatch, closed admission, unavailable generations, or exhausted
+    /// permits; returns local preparation failures before external work begins.
     fn prepare_exact_entry<'a>(
         &'a self,
         dispatch: &ExecutionDispatch,
     ) -> Result<PreparedExecution<'a>, ExecutorError>;
 
     /// Requests cancellation without implying a terminal outcome.
+    ///
+    /// # Errors
+    /// Returns an error when exact ownership cannot be found, cancellation fails, or its
+    /// acknowledgement is invalid. Acknowledgement alone is not terminal evidence.
     fn cancel(
         &self,
         request: &CancellationRequest,
@@ -839,6 +894,10 @@ impl DeterministicExecutor {
     }
 
     /// Installs a bounded deterministic script for an operation.
+    ///
+    /// # Errors
+    /// Rejects empty/oversized scripts and scripts that do not end with exactly one terminal
+    /// observation; returns an error if the script registry lock is poisoned.
     pub fn set_script(
         &self,
         operation: OperationId,

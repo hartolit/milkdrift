@@ -59,6 +59,10 @@ impl RuntimeService {
     /// Claiming an invocation atomically records `NodeStarted` before returning the
     /// dispatch. Only the call that first commits that transition receives an action;
     /// idempotent command replay never authorizes duplicate execution.
+    ///
+    /// # Errors
+    /// Returns execution-mode, coordination, clock, projection, or storage failures while
+    /// claiming bounded durable work. A claim alone does not establish external entry.
     pub fn claim_effects(&self, maximum: PageSize) -> Result<Vec<EffectAction>, RuntimeError> {
         self.claim_effects_filtered(maximum, true, true)
     }
@@ -67,6 +71,10 @@ impl RuntimeService {
     ///
     /// This split lets a caller reserve independent cancellation capacity even while
     /// every process-execution worker is occupied.
+    ///
+    /// # Errors
+    /// Returns execution-mode, coordination, clock, projection, or durable claim failures.
+    /// Claimed actions must enter through the runtime's exact effect boundary.
     pub fn claim_execution_effects(
         &self,
         maximum: PageSize,
@@ -75,6 +83,10 @@ impl RuntimeService {
     }
 
     /// Claims only cancellation effects for a bounded control-worker queue.
+    ///
+    /// # Errors
+    /// Returns execution-mode, coordination, clock, projection, or cancellation-claim failures.
+    /// Receipt of an action does not establish that external work stopped.
     pub fn claim_cancellation_effects(
         &self,
         maximum: PageSize,
@@ -173,6 +185,10 @@ impl RuntimeService {
     ///
     /// This may block for the complete external invocation and therefore must not be
     /// called on the scheduler/recovery call stack.
+    ///
+    /// # Errors
+    /// Rejects stale or inconsistent dispatch and propagates preparation, authority, durable-entry,
+    /// adapter, and reporting failures. Post-entry failures remain uncertain without terminal evidence.
     pub fn execute_effect(
         &self,
         action: EffectAction,

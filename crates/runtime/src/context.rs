@@ -194,6 +194,10 @@ pub struct CausalContextBuilder;
 impl CausalContextBuilder {
     /// Builds one exact manifest. Stable order is causal depth, semantic kind,
     /// source node, then canonical source-reference bytes.
+    ///
+    /// # Errors
+    /// Rejects invalid policy or missing semantic nodes, required unavailable/denied evidence,
+    /// and exceeded selection budgets. Accounting, digest, and manifest contract failures propagate.
     pub fn build(request: ContextBuildRequest<'_>) -> Result<ContextManifest, ContextBuildError> {
         selection::build(request)
     }
@@ -203,6 +207,10 @@ impl CausalContextBuilder {
 ///
 /// Publication identity and artifact identity derive from the manifest digest, so retrying the
 /// same frozen attempt is idempotent and cannot substitute revised context.
+///
+/// # Errors
+/// Returns encoding, metadata, accounting, or publication errors. If abort also fails, the
+/// error retains that cleanup uncertainty; callers must not treat the artifact as committed.
 pub fn persist_context_manifest(
     store: &dyn milkdrift_persistence::ArtifactStore,
     manifest: &ContextManifest,
