@@ -559,7 +559,13 @@ fn create_and_start(
             inputs: Vec::new(),
         },
     )?;
-    let _ = runtime.handle_authorized_command(&create, &authority_claim()?)?;
+    assert_eq!(
+        runtime
+            .handle_authorized_command(&create, &authority_claim()?)?
+            .result()
+            .disposition(),
+        milkdrift_persistence::CommandDisposition::Accepted
+    );
     let start = RunCommandDocument::new(
         CommandId::new(format!("command-start-effect-worker-{index}"))?,
         run.clone(),
@@ -570,7 +576,13 @@ fn create_and_start(
         Vec::new(),
         RunCommand::StartRun,
     )?;
-    let _ = runtime.handle_authorized_command(&start, &authority_claim()?)?;
+    assert_eq!(
+        runtime
+            .handle_authorized_command(&start, &authority_claim()?)?
+            .result()
+            .disposition(),
+        milkdrift_persistence::CommandDisposition::Accepted
+    );
     Ok(())
 }
 

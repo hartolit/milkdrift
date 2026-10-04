@@ -166,7 +166,7 @@ pub struct PeerService {
 /// Fixed worker-owner shutdown result. A timeout reports retained owners instead of hiding them.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PeerWorkerShutdownReport {
-    /// True when every fixed worker joined and no accepted execution remains nonterminal.
+    /// True when every fixed worker joined without panic and no accepted execution remains nonterminal.
     pub clean: bool,
     /// Workers joined during this call.
     pub joined: u16,

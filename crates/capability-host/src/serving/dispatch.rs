@@ -67,6 +67,7 @@ impl DispatchSignal {
 pub(crate) struct PeerDispatchWorkers {
     signal: Arc<DispatchSignal>,
     handles: Vec<JoinHandle<()>>,
+    panicked: bool,
 }
 
 impl PeerDispatchWorkers {
@@ -101,16 +102,21 @@ impl PeerDispatchWorkers {
                 Ok(handle) => handles.push(handle),
                 Err(error) => {
                     signal.stop();
+                    let mut panicked = false;
                     for handle in handles {
-                        let _ = handle.join();
+                        panicked |= handle.join().is_err();
                     }
                     return Err(ServingError::Unavailable(format!(
-                        "peer worker owner failed to spawn: {error}"
+                        "peer worker owner failed to spawn: {error}; started worker panicked: {panicked}"
                     )));
                 }
             }
         }
-        Ok(Self { signal, handles })
+        Ok(Self {
+            signal,
+            handles,
+            panicked: false,
+        })
     }
 
     pub(crate) fn notify(&self) {
@@ -119,14 +125,14 @@ impl PeerDispatchWorkers {
 
     pub(crate) fn shutdown(&mut self, timeout: Duration) -> super::PeerWorkerShutdownReport {
         self.signal.stop();
-        let deadline = Instant::now() + timeout;
+        let started = Instant::now();
         let mut joined = 0_u16;
-        while !self.handles.is_empty() && Instant::now() < deadline {
+        while !self.handles.is_empty() && started.elapsed() < timeout {
             let mut index = 0;
-            while index < self.handles.len() {
-                if self.handles[index].is_finished() {
+            while let Some(handle) = self.handles.get(index) {
+                if handle.is_finished() {
                     let handle = self.handles.swap_remove(index);
-                    let _ = handle.join();
+                    self.panicked |= handle.join().is_err();
                     joined = joined.saturating_add(1);
                 } else {
                     index += 1;
@@ -137,7 +143,7 @@ impl PeerDispatchWorkers {
             }
         }
         super::PeerWorkerShutdownReport {
-            clean: self.handles.is_empty(),
+            clean: self.handles.is_empty() && !self.panicked,
             joined,
             retained_workers: u16::try_from(self.handles.len()).unwrap_or(u16::MAX),
         }
@@ -164,8 +170,9 @@ fn worker_loop(
                 if signal.wait(&mut observed_generation, poll_interval) {
                     if let Some(service) = weak_service.upgrade()
                         && let Some(recovery) = pending_recovery.as_mut()
+                        && let Err(error) = service.recover_worker(recovery, &worker)
                     {
-                        let _ = service.recover_worker(recovery, &worker);
+                        tracing::error!(%error, "peer worker stopped with durable recovery still incomplete");
                     }
                     return;
                 }
@@ -212,6 +219,25 @@ mod tests {
     use super::*;
 
     #[test]
+    #[expect(
+        clippy::panic,
+        reason = "Injects an abnormal worker exit to verify shutdown never reports it as clean, including repeat calls."
+    )]
+    fn panicked_worker_cannot_be_reported_as_clean_on_later_shutdown() {
+        let handle = thread::spawn(|| panic!("injected peer worker panic"));
+        let mut workers = PeerDispatchWorkers {
+            signal: Arc::new(DispatchSignal::default()),
+            handles: vec![handle],
+            panicked: false,
+        };
+        let report = workers.shutdown(Duration::MAX);
+        assert_eq!(report.joined, 1);
+        assert_eq!(report.retained_workers, 0);
+        assert!(!report.clean);
+        assert!(!workers.shutdown(Duration::ZERO).clean);
+    }
+
+    #[test]
     fn partial_spawn_failure_stops_and_joins_started_workers() {
         let calls = Arc::new(AtomicUsize::new(0));
         let finished = Arc::new(AtomicUsize::new(0));
@@ -228,7 +254,6 @@ mod tests {
                 poll_interval: Duration::from_millis(1),
             },
             {
-                let calls = calls.clone();
                 let finished = finished.clone();
                 move |name, task| {
                     if calls.fetch_add(1, Ordering::SeqCst) == 1 {

@@ -158,7 +158,11 @@ impl Drop for WorkerStartup {
         self.execution.take();
         self.cancellation.take();
         for join in self.joins.drain(..) {
-            let _ = join.join();
+            if join.join().is_err() {
+                // Startup has not exposed either queue, so no effect was admitted to this
+                // worker. Join still proves the thread ended; preserve its abnormal exit.
+                tracing::error!("effect worker panicked while unwinding failed startup");
+            }
         }
     }
 }
