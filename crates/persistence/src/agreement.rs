@@ -41,6 +41,9 @@ milkdrift_contracts::deserialize_via!(AcceptedAgreement, Wire, |wire| {
 
 impl AcceptedAgreement {
     /// Bind a validated governed revision when the runtime accepts its run scope.
+    ///
+    /// # Errors
+    /// Refuses a revision without an agreement definition.
     pub fn new(origin_run: RunId, revision: &BlueprintRevision) -> Result<Self, PersistenceError> {
         let agreement = revision.semantic().agreement().ok_or_else(|| {
             PersistenceError::InvalidDocument(

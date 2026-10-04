@@ -7,6 +7,10 @@ use crate::PersistenceError;
 
 impl ControllerAccountState {
     /// Validates all redundant totals and the exact revision digest.
+    ///
+    /// # Errors
+    /// Refuses invalid declarations, block reasons or reservation identities; overflowing
+    /// or inconsistent totals; committed use above the budget; and encoding or digest mismatch.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         self.declaration.validate()?;
         validate_account_block(self.blocked.as_ref())?;

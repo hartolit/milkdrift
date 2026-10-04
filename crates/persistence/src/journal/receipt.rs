@@ -65,6 +65,9 @@ impl CommandReceipt {
     /// `expected_sequence` and `submitted_at` arguments are retained metadata; they
     /// affect the fingerprint only if the caller also includes them in the document.
     /// See [`Self::new_idempotent`] for byte requirements and errors.
+    ///
+    /// # Errors
+    /// Propagates the canonical document bounds/encoding refusals from [`Self::new_idempotent`].
     pub fn new(
         command: CommandId,
         run: RunId,
@@ -358,7 +361,14 @@ impl CommandResultDocument {
     /// that the decision belongs to the supplied command. See [`Self::new`] for
     /// event/sequence inputs and their errors. Serialization retains the decision so
     /// redelivery can return it even after current authority changes.
-    #[allow(clippy::too_many_arguments)] // External results bind exact command identity and disposition to event identities, sequence, payload, and authorization.
+    ///
+    /// # Errors
+    /// Propagates the event cardinality, identity, sequence and encoding failures from
+    /// [`Self::new`], retaining the supplied authority decision under schema version 2.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "External results bind exact command identity and disposition to event identities, sequence, payload and authorization"
+    )]
     pub fn new_authorized(
         command: CommandId,
         run: RunId,
@@ -382,7 +392,10 @@ impl CommandResultDocument {
         )
     }
 
-    #[allow(clippy::too_many_arguments)] // One constructor enforces schema/authorization consistency and accepted/rejected event invariants for both readers.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Both schema readers share construction of authorization consistency and accepted/rejected event invariants"
+    )]
     fn build(
         schema_version: u32,
         command: CommandId,

@@ -23,11 +23,18 @@ pub enum ClockWatermarkObservation {
 /// accepted observation, although elapsed downtime still depends on the external clock.
 pub trait ClockWatermarkStore: Send + Sync {
     /// Compares and, when newer, durably records one boundary-clock observation.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid retained watermark evidence. An older valid
+    /// observation instead returns [`ClockWatermarkObservation::RejectedRollback`].
     fn observe_clock(
         &self,
         observed: TimestampMillis,
     ) -> Result<ClockWatermarkObservation, PersistenceError>;
 
     /// Returns the latest durably accepted observation, if this store has observed one.
+    ///
+    /// # Errors
+    /// Returns storage/read failures or corrupt watermark evidence.
     fn clock_watermark(&self) -> Result<Option<TimestampMillis>, PersistenceError>;
 }

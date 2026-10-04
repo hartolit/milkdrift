@@ -60,6 +60,9 @@ impl ControllerResourceBudget {
     }
 
     /// Constructs resource ceilings. With no currency, cost must be zero and billed entry is refused.
+    ///
+    /// # Errors
+    /// Refuses nonzero cost without an explicit currency.
     pub fn new(
         cost_micros: u64,
         currency: Option<CurrencyCode>,
@@ -154,6 +157,10 @@ struct DeclarationDigestInput<'a> {
 
 impl ControllerAccountDeclaration {
     /// Derives a stable account identity and declaration digest from immutable policy facts.
+    ///
+    /// # Errors
+    /// Refuses a budget with unlabelled monetary cost, a policy digest outside 4–192
+    /// ASCII bytes, or declaration facts exceeding canonical encoding bounds.
     pub fn new(
         controller_run: RunId,
         controller_execution: NodeExecutionId,
@@ -171,6 +178,9 @@ impl ControllerAccountDeclaration {
 
     /// Establish a sub-allowance for one real published invocation. It is a distinct account from
     /// any caller reservation, so ordinary internal entries are never charged twice to that caller.
+    ///
+    /// # Errors
+    /// Refuses the invalid budget, digest or encoding conditions described by [`Self::new`].
     pub fn for_published_invocation(
         run: RunId,
         invocation: InvocationId,
@@ -244,6 +254,10 @@ impl ControllerAccountDeclaration {
     }
 
     /// Revalidates an untrusted stored declaration.
+    ///
+    /// # Errors
+    /// Refuses invalid budget or digest facts, anything other than exactly one durable
+    /// owner, encoding failures, and identity or digest differing from the rebuilt declaration.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         let rebuilt = Self::build(
             self.controller_run.clone(),
@@ -524,6 +538,10 @@ struct StateDigestInput<'a> {
 
 impl ControllerAccountState {
     /// Creates the exact genesis state for one declaration.
+    ///
+    /// # Errors
+    /// Refuses an invalid declaration or a genesis state that cannot be canonically
+    /// encoded and validated within the account document bounds.
     pub fn establish(declaration: ControllerAccountDeclaration) -> Result<Self, PersistenceError> {
         declaration.validate()?;
         let mut state = Self {
@@ -577,6 +595,9 @@ impl ControllerAccountState {
     }
 
     /// Conservative totals consumed by controller lifecycle assessment.
+    ///
+    /// # Errors
+    /// Refuses arithmetic overflow when adding settled and outstanding use in any dimension.
     pub fn committed_totals(&self) -> Result<ControllerResourceTotals, PersistenceError> {
         self.settled.checked_add(self.outstanding)
     }
@@ -585,6 +606,10 @@ impl ControllerAccountState {
     ///
     /// A blocked account has no knowable spendable remainder. In particular, missing
     /// external usage must not appear as zero spend or a renewed allowance.
+    ///
+    /// # Errors
+    /// Refuses invalid account evidence, overflowing committed totals, or committed use
+    /// exceeding its immutable budget. A valid blocked account instead returns `None`.
     pub fn remaining_allowance(
         &self,
     ) -> Result<Option<ControllerResourceTotals>, PersistenceError> {
@@ -595,12 +620,15 @@ impl ControllerAccountState {
         let committed = self.committed_totals()?;
         let budget = self.declaration.budget();
         Ok(Some(ControllerResourceTotals {
-            cost_micros: budget.cost_micros - committed.cost_micros,
-            input_units: budget.input_units - committed.input_units,
-            output_units: budget.output_units - committed.output_units,
-            artifact_bytes: budget.artifact_bytes - committed.artifact_bytes,
-            process_admissions: budget.process_admissions - committed.process_admissions,
-            model_admissions: budget.model_admissions - committed.model_admissions,
+            cost_micros: checked_sub(budget.cost_micros, committed.cost_micros)?,
+            input_units: checked_sub(budget.input_units, committed.input_units)?,
+            output_units: checked_sub(budget.output_units, committed.output_units)?,
+            artifact_bytes: checked_sub(budget.artifact_bytes, committed.artifact_bytes)?,
+            process_admissions: checked_sub(
+                budget.process_admissions,
+                committed.process_admissions,
+            )?,
+            model_admissions: checked_sub(budget.model_admissions, committed.model_admissions)?,
         }))
     }
 
@@ -717,11 +745,17 @@ pub enum ControllerArtifactOwner {
 /// revision evidence on load; missing bound state is corruption, not an unbound run.
 pub trait ControllerAccountStore: Send + Sync {
     /// Resolves the immutable optional account binding for a run.
+    ///
+    /// # Errors
+    /// Returns storage/read failures and corruption when a retained binding lacks valid account state.
     fn controller_account_binding(
         &self,
         run: &RunId,
     ) -> Result<Option<ControllerAccountId>, PersistenceError>;
     /// Loads and validates one exact current account state.
+    ///
+    /// # Errors
+    /// Returns storage/read failures and invalid declaration, totals or revision evidence.
     fn controller_account(
         &self,
         account: &ControllerAccountId,
@@ -731,6 +765,12 @@ pub trait ControllerAccountStore: Send + Sync {
 fn checked_add(left: u64, right: u64) -> Result<u64, PersistenceError> {
     left.checked_add(right).ok_or_else(|| {
         PersistenceError::InvalidDocument("controller resource arithmetic overflow".to_owned())
+    })
+}
+
+fn checked_sub(left: u64, right: u64) -> Result<u64, PersistenceError> {
+    left.checked_sub(right).ok_or_else(|| {
+        PersistenceError::InvalidDocument("controller resource arithmetic underflow".to_owned())
     })
 }
 

@@ -51,6 +51,10 @@ pub struct ProjectionCheckpoint {
 
 impl ProjectionCheckpoint {
     /// Commits to one exact, bounded, non-empty projection payload.
+    ///
+    /// # Errors
+    /// Refuses zero schema, empty or oversized payload, length conversion overflow,
+    /// or invalid generated digest encoding.
     pub fn new(payload_schema: u32, payload: &[u8]) -> Result<Self, PersistenceError> {
         if payload_schema == 0 || payload.is_empty() {
             return Err(PersistenceError::InvalidDocument(
@@ -96,6 +100,10 @@ impl ProjectionCheckpoint {
 /// The input must start at sequence one, belong to one run, and be contiguous. Each
 /// versioned, domain-separated link binds the run identity, sequence, previous digest,
 /// and canonical envelope checksum.
+///
+/// # Errors
+/// Refuses empty history, a prefix not beginning at one, foreign or noncontiguous events,
+/// sequence exhaustion, or history-link framing/digest failures.
 pub fn history_digest(events: &[RunEventEnvelope]) -> Result<IntegrityDigest, PersistenceError> {
     let first = events.first().ok_or_else(|| {
         PersistenceError::InvalidDocument(
@@ -134,6 +142,10 @@ fn framed_history_length(
 }
 
 /// Computes the domain-separated genesis digest for one run history chain.
+///
+/// # Errors
+/// Refuses values exceeding the `u32` length framing or invalid generated digest text.
+/// Current validated run identities and the fixed genesis marker fit the framing bound.
 pub fn history_genesis_digest(run: &RunId) -> Result<IntegrityDigest, PersistenceError> {
     let run_bytes = run.as_str().as_bytes();
     let mut hasher = blake3::Hasher::new();
@@ -149,6 +161,10 @@ pub fn history_genesis_digest(run: &RunId) -> Result<IntegrityDigest, Persistenc
 }
 
 /// Computes one domain-separated link in a run history chain.
+///
+/// # Errors
+/// Refuses values exceeding the `u32` length framing or invalid generated digest text.
+/// Current validated identities and digests fit the framing bound.
 pub fn history_link_digest(
     run: &RunId,
     sequence: RunSequence,
@@ -213,6 +229,10 @@ struct SnapshotWireRef<'a> {
 
 impl SnapshotDocument {
     /// Creates and checksums a bounded snapshot.
+    ///
+    /// # Errors
+    /// Refuses zero covered sequence or payload schema, empty/oversized payload,
+    /// and checksum framing or digest failures.
     pub fn new(
         snapshot: SnapshotId,
         run: RunId,
@@ -285,6 +305,9 @@ impl SnapshotDocument {
     }
 
     /// Computes the append-time commitment that must authorize this payload.
+    ///
+    /// # Errors
+    /// Propagates schema, payload and digest failures from [`ProjectionCheckpoint::new`].
     pub fn payload_checkpoint(&self) -> Result<ProjectionCheckpoint, PersistenceError> {
         ProjectionCheckpoint::new(self.projection_payload_schema, &self.payload)
     }
@@ -296,6 +319,9 @@ impl SnapshotDocument {
     }
 
     /// Encodes deterministic compact canonical JSON.
+    ///
+    /// # Errors
+    /// Returns serialization failures or violations of snapshot JSON/document bounds.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, PersistenceError> {
         let encoded_payload = snapshot_base64().encode(&self.payload);
         debug_assert!(encoded_payload.len() <= MAX_SNAPSHOT_ENCODED_PAYLOAD_BYTES);
@@ -326,6 +352,10 @@ impl SnapshotDocument {
     }
 
     /// Decodes and verifies a persisted snapshot document.
+    ///
+    /// # Errors
+    /// Refuses oversized or malformed JSON, duplicate keys, structural bounds, unsupported
+    /// schema, invalid Base64, invalid snapshot fields, or a checksum differing from the payload.
     pub fn from_json(bytes: &[u8]) -> Result<Self, PersistenceError> {
         if bytes.len() > MAX_SNAPSHOT_DOCUMENT_BYTES {
             return Err(PersistenceError::Bounds {
@@ -509,6 +539,9 @@ pub trait SnapshotStore: Send + Sync {
     /// Adapters should use their append-time chain checkpoint rather than
     /// replaying the prefix. The digest is an input to a runtime-owned snapshot;
     /// authoritative events remain the sole source of truth.
+    ///
+    /// # Errors
+    /// Refuses nonexistent prefixes and returns storage failures or corrupt history-chain evidence.
     fn history_digest(
         &self,
         run: &RunId,
@@ -522,12 +555,23 @@ pub trait SnapshotStore: Send + Sync {
     /// projection commitment recorded atomically at that sequence. The prefix digest may
     /// come from the append-time chain checkpoint; saving a snapshot does not require a
     /// fresh scan of all covered events.
+    ///
+    /// # Errors
+    /// Refuses conflicting snapshot identities, invalid envelopes, a prefix beyond the
+    /// journal head, or mismatched history/payload commitment; returns storage failures.
     fn put_snapshot(&self, snapshot: &SnapshotDocument) -> Result<(), PersistenceError>;
 
     /// Loads and validates the latest candidate. A rejected snapshot is never used to
     /// repair or replace history; callers replay authoritative events from sequence one.
+    ///
+    /// # Errors
+    /// Returns storage or authoritative-history failures. Invalid optional snapshot
+    /// evidence is represented by [`SnapshotLoad`] rejection, permitting journal replay.
     fn latest_snapshot(&self, run: &RunId) -> Result<SnapshotLoad, PersistenceError>;
 
     /// Removes only an optional optimization. Authoritative events are untouched.
+    ///
+    /// # Errors
+    /// Returns storage failures while removing the snapshot and its derived latest pointer.
     fn discard_snapshot(&self, run: &RunId, snapshot: &SnapshotId) -> Result<(), PersistenceError>;
 }

@@ -19,13 +19,15 @@ fn snapshot_checksum_and_history_prefix_are_verified() -> Result<(), Box<dyn std
         SNAPSHOT_ENVELOPE_SCHEMA_VERSION_V2
     );
     let mut tampered_value: serde_json::Value = serde_json::from_slice(&encoded)?;
-    tampered_value["run"] = json!("run-tampered");
+    *tampered_value.get_mut("run").ok_or("missing run")? = json!("run-tampered");
     let tampered = serde_json::to_vec(&tampered_value)?;
     assert!(matches!(
         SnapshotDocument::from_json(&tampered),
         Err(PersistenceError::Corruption(_))
     ));
-    let encoded_payload = tampered_value["encoded_payload"]
+    let encoded_payload = tampered_value
+        .get("encoded_payload")
+        .ok_or("missing encoded payload")?
         .as_str()
         .ok_or("snapshot encoded payload is not a string")?
         .to_owned();
@@ -34,8 +36,10 @@ fn snapshot_checksum_and_history_prefix_are_verified() -> Result<(), Box<dyn std
     } else {
         "A"
     };
-    tampered_value["run"] = json!(event.run_id());
-    tampered_value["encoded_payload"] = json!(format!(
+    *tampered_value.get_mut("run").ok_or("missing run")? = json!(event.run_id());
+    *tampered_value
+        .get_mut("encoded_payload")
+        .ok_or("missing encoded payload")? = json!(format!(
         "{replacement}{}",
         encoded_payload.get(1..).ok_or("encoded payload is empty")?
     ));
@@ -75,9 +79,12 @@ fn snapshot_payload_larger_than_generic_json_array_limit_roundtrips_canonically(
     assert_eq!(SnapshotDocument::from_json(&encoded)?, snapshot);
     assert_eq!(snapshot.to_canonical_json()?, encoded);
     let value: serde_json::Value = serde_json::from_slice(&encoded)?;
-    assert!(value["encoded_payload"].is_string());
+    let encoded_payload = value
+        .get("encoded_payload")
+        .ok_or("missing encoded payload")?;
+    assert!(encoded_payload.is_string());
     assert!(value.get("payload").is_none());
-    assert!(value["encoded_payload"].as_array().is_none());
+    assert!(encoded_payload.as_array().is_none());
     Ok(())
 }
 
@@ -92,19 +99,26 @@ fn snapshot_base64_and_closed_wire_are_strict() -> Result<(), Box<dyn std::error
         b"projection".to_vec(),
     )?;
     let mut value: serde_json::Value = serde_json::from_slice(&snapshot.to_canonical_json()?)?;
-    value["encoded_payload"] = json!("cHJvamVjdGlvbg");
+    *value
+        .get_mut("encoded_payload")
+        .ok_or("missing encoded payload")? = json!("cHJvamVjdGlvbg");
     assert!(matches!(
         SnapshotDocument::from_json(&serde_json::to_vec(&value)?),
         Err(PersistenceError::InvalidDocument(_))
     ));
-    value["encoded_payload"] = json!("cHJvamVjdGlvbg==trailing");
+    *value
+        .get_mut("encoded_payload")
+        .ok_or("missing encoded payload")? = json!("cHJvamVjdGlvbg==trailing");
     assert!(matches!(
         SnapshotDocument::from_json(&serde_json::to_vec(&value)?),
         Err(PersistenceError::InvalidDocument(_))
     ));
 
     let mut unknown: serde_json::Value = serde_json::from_slice(&snapshot.to_canonical_json()?)?;
-    unknown["future_field"] = json!(true);
+    unknown
+        .as_object_mut()
+        .ok_or("missing snapshot object")?
+        .insert("future_field".to_owned(), json!(true));
     assert!(matches!(
         SnapshotDocument::from_json(&serde_json::to_vec(&unknown)?),
         Err(PersistenceError::Json(_))
@@ -123,7 +137,10 @@ fn snapshot_bounds_apply_before_document_construction() -> Result<(), Box<dyn st
         b"projection".to_vec(),
     )?;
     let mut value: serde_json::Value = serde_json::from_slice(&snapshot.to_canonical_json()?)?;
-    value["encoded_payload"] = json!(STANDARD.encode(vec![0_u8; MAX_SNAPSHOT_PAYLOAD_BYTES + 1]));
+    *value
+        .get_mut("encoded_payload")
+        .ok_or("missing encoded payload")? =
+        json!(STANDARD.encode(vec![0_u8; MAX_SNAPSHOT_PAYLOAD_BYTES + 1]));
     let decoded_over_bound = serde_json::to_vec(&value)?;
     assert!(decoded_over_bound.len() <= MAX_SNAPSHOT_DOCUMENT_BYTES);
     assert!(matches!(

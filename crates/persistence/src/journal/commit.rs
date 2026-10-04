@@ -400,7 +400,10 @@ impl AtomicRunCommitRequest {
     /// the append exhausts the sequence; and [`PersistenceError::InvalidDocument`] for
     /// inconsistent documents, duplicates, or invalid budget/accounting calculations.
     /// No storage is read or changed, so these errors cannot indicate a partial commit.
-    #[allow(clippy::too_many_arguments)] // One atomic commit binds receipt/events to workspace accounting, artifact references, lease guard, result, and indexes.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "One atomic commit binds receipt/events to workspace accounting, artifact references, lease guard, result and indexes"
+    )]
     pub fn new(
         receipt: CommandReceipt,
         events: Vec<RunEventEnvelope>,
@@ -724,6 +727,8 @@ impl AtomicRunCommitRequest {
     ///
     /// Storage commits this evidence with the events. A later [`crate::SnapshotStore`]
     /// write can fail without undoing the command; the commitment is not the payload.
+    ///
+    /// # Errors
     /// Returns [`PersistenceError::InvalidDocument`] for rejection or a second attachment.
     pub fn with_projection_checkpoint(
         mut self,
@@ -748,6 +753,8 @@ impl AtomicRunCommitRequest {
     /// Storage checks current account state and events before committing both, so entry
     /// intent cannot become visible without its reservation. This builder only attaches
     /// the transaction; account-specific validation remains with its constructor and store.
+    ///
+    /// # Errors
     /// Returns [`PersistenceError::InvalidDocument`] for rejection or a second attachment.
     pub fn with_controller_account_transaction(
         mut self,
@@ -968,6 +975,7 @@ impl AtomicRunCommitOutcome {
 pub trait RunJournal: Send + Sync {
     /// Persists the runtime's decision according to this trait's atomicity/replay contract.
     ///
+    /// # Errors
     /// Sequence, usage, lease, or account conflicts require rereading state and replanning.
     /// Idempotency conflicts preserve the saved result. Missing artifacts, invalid stored
     /// relationships, corruption, and storage failures also refuse the operation.
@@ -982,9 +990,15 @@ pub trait RunJournal: Send + Sync {
     /// A rejected command can have a saved result at sequence zero, so this is not a
     /// command-result lookup. Integrity or storage failure must return an error, not
     /// zero. The observed head can become stale before a subsequent commit.
+    ///
+    /// # Errors
+    /// Returns storage or journal-head integrity failures, preserving absence as sequence zero.
     fn head(&self, run: &RunId) -> Result<RunSequence, PersistenceError>;
 
     /// Reads the saved result for `(run, command)`, including durable rejections.
+    ///
+    /// # Errors
+    /// Returns storage failures or corrupt receipt/result evidence; neither proves no command committed.
     ///
     /// Compare its fingerprint with the intended receipt before treating it as that
     /// request's answer: this lookup takes no intent to compare. `None` means no result

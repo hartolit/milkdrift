@@ -56,8 +56,14 @@ fn missing_nested_usage_retains_counts_and_internal_bytes() -> TestResult {
     let mut state = account(3, 3)?;
     let (id, attempt) = reservation(&state, "unknown-published")?;
     let envelope = bounded_envelope(4)?.with_nested_invocations(InvocationCounts::new(2, 2));
-    let _ = state.admit(id.clone(), attempt, CapabilityCategory::Tool, &envelope)?;
-    let _ = state.charge_artifact(Some(&id), 1)?;
+    assert!(matches!(
+        state.admit(id.clone(), attempt, CapabilityCategory::Tool, &envelope)?,
+        ControllerAdmissionOutcome::Reserved { .. }
+    ));
+    assert_eq!(
+        state.charge_artifact(Some(&id), 1)?,
+        ControllerArtifactChargeOutcome::Charged
+    );
     state.settle_terminal(&id, None)?;
     assert!(state.blocked().is_some());
     assert_eq!(state.outstanding().process_admissions(), 2);

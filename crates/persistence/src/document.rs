@@ -76,6 +76,10 @@ struct EventChecksumInput<'a> {
 
 impl RunEventEnvelope {
     /// Constructs a validated envelope and calculates its canonical checksum.
+    ///
+    /// # Errors
+    /// Refuses sequence zero, invalid event/run references or current-schema semantics,
+    /// and encoding beyond the event byte or JSON structural bounds.
     pub fn new(
         event_id: EventId,
         run_id: RunId,
@@ -108,7 +112,7 @@ impl RunEventEnvelope {
             checksum,
         };
         // Enforce the encoded bound at the trusted construction boundary too.
-        let _ = envelope.to_canonical_json()?;
+        envelope.to_canonical_json()?;
         Ok(envelope)
     }
 
@@ -155,6 +159,10 @@ impl RunEventEnvelope {
     }
 
     /// Encodes deterministic recursively key-sorted compact JSON.
+    ///
+    /// # Errors
+    /// Refuses an unsupported schema projection, serialization failures or byte/structure
+    /// bounds exceeded by the retained event.
     pub fn to_canonical_json(&self) -> Result<Vec<u8>, PersistenceError> {
         let mut value = serde_json::to_value(self)?;
         project_event_kind_shape(&mut value, self.schema_version)?;
@@ -165,6 +173,11 @@ impl RunEventEnvelope {
     ///
     /// Future schemas, malformed fields, and checksum failures are returned explicitly;
     /// none are interpreted as an absent event.
+    ///
+    /// # Errors
+    /// Refuses oversized, malformed or duplicate-key JSON, structural bound violations,
+    /// unsupported/mismatched schema shapes, invalid run references, zero sequence and
+    /// checksum disagreement.
     pub fn from_json(bytes: &[u8]) -> Result<Self, PersistenceError> {
         if bytes.len() > MAX_EVENT_DOCUMENT_BYTES {
             return Err(PersistenceError::Bounds {
@@ -539,32 +552,32 @@ mod tests {
 
     #[test]
     fn legacy_final_entry_shape_round_trips_without_current_admission_field()
-    -> Result<(), PersistenceError> {
+    -> Result<(), Box<dyn std::error::Error>> {
         let current = include_bytes!("../tests/fixtures/run-event-final-entry-admission-v3.json");
         let current: Value = serde_json::from_slice(current)?;
-        let kind: RunEventKind = serde_json::from_value(current["kind"].clone())?;
-        let event_id: EventId = serde_json::from_value(current["event_id"].clone())?;
-        let run_id: RunId = serde_json::from_value(current["run_id"].clone())?;
-        let sequence: RunSequence = serde_json::from_value(current["sequence"].clone())?;
-        let occurred_at: TimestampMillis = serde_json::from_value(current["occurred_at"].clone())?;
+        let wire: RunEventEnvelopeWire = serde_json::from_value(current.clone())?;
 
         for version in [RUN_EVENT_SCHEMA_VERSION_V1, RUN_EVENT_SCHEMA_VERSION_V2] {
             let mut legacy = current.clone();
-            legacy["schema_version"] = Value::from(version);
-            legacy["kind"]
+            *legacy
+                .get_mut("schema_version")
+                .ok_or("missing schema version")? = Value::from(version);
+            legacy
+                .get_mut("kind")
+                .ok_or("missing event kind")?
                 .as_object_mut()
                 .ok_or_else(|| {
                     PersistenceError::InvalidDocument("test event kind is not an object".to_owned())
                 })?
                 .remove("controller_admission");
-            legacy["checksum"] = Value::from(
+            *legacy.get_mut("checksum").ok_or("missing checksum")? = Value::from(
                 calculate_event_checksum(
                     version,
-                    &event_id,
-                    &run_id,
-                    sequence,
-                    occurred_at,
-                    &kind,
+                    &wire.event_id,
+                    &wire.run_id,
+                    wire.sequence,
+                    wire.occurred_at,
+                    &wire.kind,
                 )?
                 .to_string(),
             );

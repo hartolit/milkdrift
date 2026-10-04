@@ -16,7 +16,10 @@ fn validate_account_identity(value: &str, kind: &'static str) -> Result<(), Pers
     if value.is_empty()
         || value.len() > 192
         || !value.is_ascii()
-        || !value.as_bytes()[0].is_ascii_alphanumeric()
+        || !value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
         || !value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
         })
@@ -38,6 +41,10 @@ account_identity!(/// One idempotent durable account transition.
 
 impl ControllerReservationId {
     /// Derives the one stable reservation identity for an account-bound attempt.
+    ///
+    /// # Errors
+    /// Propagates identity validation if the generated digest reference exceeds the
+    /// identity bounds. The current fixed prefix and hexadecimal digest fit those bounds.
     pub fn for_attempt(
         account: &ControllerAccountId,
         attempt: &AttemptId,

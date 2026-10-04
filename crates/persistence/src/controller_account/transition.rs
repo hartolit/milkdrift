@@ -3,12 +3,18 @@ use super::{
     ControllerAccountBlock, ControllerAccountState, ControllerAdmissionDenial,
     ControllerAdmissionOutcome, ControllerArtifactChargeOutcome, ControllerReservation,
     ControllerReservationDimension, ControllerReservationId, NestedReservation, checked_add,
+    checked_sub,
 };
 use crate::{AttemptId, CurrencyCode, PersistenceError};
 use milkdrift_capability::{AdmissionBound, CapabilityCategory, InvocationAdmissionEnvelope};
 
 impl ControllerAccountState {
     /// Applies one validated entry operation and returns the independently computed outcome.
+    ///
+    /// # Errors
+    /// Refuses a reservation inconsistent with its account/attempt or already present,
+    /// and arithmetic, revision, encoding or resulting-state validation failures.
+    /// Resource ceilings and unavailable bounds instead return a typed denied outcome.
     pub fn admit(
         &mut self,
         reservation: ControllerReservationId,
@@ -236,6 +242,11 @@ impl ControllerAccountState {
     }
 
     /// Settles exact terminal usage. `None` retains a bounded remainder and blocks admission.
+    ///
+    /// # Errors
+    /// Refuses a missing reservation, arithmetic overflow/underflow, or invalid advanced
+    /// state or encoding. Callers must discard the candidate on error; persistence owns
+    /// atomic publication of successful transitions with their evidence.
     pub fn settle_terminal(
         &mut self,
         reservation: &ControllerReservationId,
@@ -363,6 +374,11 @@ impl ControllerAccountState {
     /// An invocation publication above its exact reservation is not charged. It instead records a
     /// durable contract-violation block so later admission cannot treat the failed publication as
     /// though the adapter had remained within its declared envelope.
+    ///
+    /// # Errors
+    /// Refuses an unreserved charge against a blocked or exhausted account, missing
+    /// reservations, arithmetic failures, and invalid advanced state or encoding.
+    /// An over-reservation publication instead returns a retained contract-violation outcome.
     pub fn charge_artifact(
         &mut self,
         reservation: Option<&ControllerReservationId>,
@@ -426,7 +442,8 @@ impl ControllerAccountState {
                         identity: reservation.as_str().to_owned(),
                     }
                 })?;
-                record.artifact = ControllerReservationDimension::Outstanding(remaining - bytes);
+                record.artifact =
+                    ControllerReservationDimension::Outstanding(checked_sub(remaining, bytes)?);
                 self.outstanding.artifact_bytes = self
                     .outstanding
                     .artifact_bytes

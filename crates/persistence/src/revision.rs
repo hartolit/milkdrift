@@ -108,24 +108,37 @@ pub trait RevisionStore: Send + Sync {
     /// byte-identical canonical content, every parent must already exist, belong to
     /// the same workflow, and have a strictly lower lineage sequence. A reused
     /// identity with different bytes is [`PersistenceError::ImmutableConflict`].
+    ///
+    /// # Errors
+    /// Refuses conflicting identities, missing or invalid ancestry and encoding/integrity
+    /// failures; storage errors may require exact readback to resolve commit uncertainty.
     fn put_revision(
         &self,
         revision: &BlueprintRevision,
     ) -> Result<ImmutableRevisionPut, PersistenceError>;
 
     /// Reads and integrity-verifies one revision, returning absence distinctly.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid content, identity, digest or ancestry evidence.
     fn revision(
         &self,
         revision: &RevisionId,
     ) -> Result<Option<BlueprintRevision>, PersistenceError>;
 
     /// Reads the small immutable summary used for pin/ancestry validation.
+    ///
+    /// # Errors
+    /// Returns storage failures or a summary inconsistent with its immutable revision.
     fn revision_summary(
         &self,
         revision: &RevisionId,
     ) -> Result<Option<RevisionSummary>, PersistenceError>;
 
     /// Finds revisions sharing exact semantic content, up to the caller's bound.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid content-index/summary evidence.
     fn revisions_by_content(
         &self,
         digest: &ContentDigest,
@@ -135,5 +148,8 @@ pub trait RevisionStore: Send + Sync {
     /// Lists a bounded stable identity-ordered page without scanning complete lineage history.
     /// A filtered page may contain no matches while its physical scan cursor advances;
     /// continue until `next` is absent.
+    ///
+    /// # Errors
+    /// Refuses a cursor for another filter and returns storage or revision-index corruption.
     fn revisions(&self, query: &RevisionPageQuery) -> Result<RevisionPage, PersistenceError>;
 }

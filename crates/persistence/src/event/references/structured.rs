@@ -1,13 +1,10 @@
 //! Independent structured event fact validation.
 use super::{
-    super::kind::RunEventKind, super::model::JoinRule, super::model::RunOutcome, ReferenceContext,
+    super::kind::RunEventKind, super::model::JoinRule, super::model::RunOutcome, check_references,
 };
 use crate::PersistenceError;
 
-pub(super) fn validate(
-    event: &RunEventKind,
-    context: &ReferenceContext<'_>,
-) -> Result<(), PersistenceError> {
+pub(super) fn validate(event: &RunEventKind) -> Result<(), PersistenceError> {
     match event {
         RunEventKind::JoinSatisfied {
             rule: JoinRule::Quorum { required: 0 },
@@ -23,10 +20,10 @@ pub(super) fn validate(
             rule,
             ..
         } => {
-            context.check_references("event.branches", branches.len())?;
-            context.check_references("event.retained_branches", retained_branches.len())?;
+            check_references("event.branches", branches.len())?;
+            check_references("event.retained_branches", retained_branches.len())?;
             for branch in branches {
-                context.check_references("event.branch.outputs", branch.outputs.len())?;
+                check_references("event.branch.outputs", branch.outputs.len())?;
                 if branch
                     .outputs
                     .iter()
@@ -66,7 +63,7 @@ pub(super) fn validate(
         }
         RunEventKind::SubworkflowTerminal { outputs, .. }
         | RunEventKind::BranchTerminal { outputs, .. } => {
-            context.check_references("event.outputs", outputs.len())?;
+            check_references("event.outputs", outputs.len())?;
             if outputs
                 .iter()
                 .collect::<std::collections::BTreeSet<_>>()

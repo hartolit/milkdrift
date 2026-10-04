@@ -97,6 +97,11 @@ pub struct PublishedMethod {
 
 impl PublishedMethod {
     /// Validate bounded shape before semantic validation by control and the revision owner.
+    ///
+    /// # Errors
+    /// Refuses unsupported schema, invalid publication/service bounds, reserved descriptor
+    /// extensions, nonlocal or non-tool descriptors, invalid input/output contracts, and
+    /// allowance or derived descriptor encoding/bounds failures.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         if self.schema_version != PUBLISHED_METHOD_SCHEMA_VERSION
             || self.documentation.trim().is_empty()
@@ -183,6 +188,10 @@ impl PublishedMethod {
     }
 
     /// Conservative internal work and public-copy envelope, derived from the immutable method.
+    ///
+    /// # Errors
+    /// Refuses overflow when adding public output bytes to internal artifact allowance
+    /// or an invalid monetary currency bound.
     pub fn admission_envelope(
         &self,
     ) -> Result<milkdrift_capability::InvocationAdmissionEnvelope, PersistenceError> {
@@ -219,22 +228,38 @@ impl PublishedMethod {
     }
 
     /// Ordinary catalog descriptor with the exact derived allowance for remote reservation.
+    ///
+    /// # Errors
+    /// Refuses descriptor serialization/shape failures, an invalid derived admission
+    /// envelope, or a resulting descriptor exceeding extension/schema bounds.
     pub fn capability_descriptor(&self) -> Result<CapabilityDescriptor, PersistenceError> {
         let mut descriptor =
             serde_json::to_value(&self.descriptor).map_err(|error| invalid(&error.to_string()))?;
-        descriptor["extensions"]["org.milkdrift/published-method.v1"] = serde_json::json!({
-            "documentation": self.documentation, "inputs": self.inputs,
-            "outputs": self.outputs.iter().map(|(name, output)| (name, serde_json::json!({
-                "media_type": output.media_type, "maximum_bytes": output.maximum_bytes
-            }))).collect::<BTreeMap<_, _>>()
-        });
-        descriptor["extensions"][milkdrift_capability::PUBLISHED_ALLOWANCE_EXTENSION] =
+        let extensions = descriptor
+            .get_mut("extensions")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| invalid("descriptor extensions must be an object"))?;
+        extensions.insert(
+            "org.milkdrift/published-method.v1".to_owned(),
+            serde_json::json!({
+                "documentation": self.documentation, "inputs": self.inputs,
+                "outputs": self.outputs.iter().map(|(name, output)| (name, serde_json::json!({
+                    "media_type": output.media_type, "maximum_bytes": output.maximum_bytes
+                }))).collect::<BTreeMap<_, _>>()
+            }),
+        );
+        extensions.insert(
+            milkdrift_capability::PUBLISHED_ALLOWANCE_EXTENSION.to_owned(),
             serde_json::to_value(self.admission_envelope()?)
-                .map_err(|error| invalid(&error.to_string()))?;
+                .map_err(|error| invalid(&error.to_string()))?,
+        );
         serde_json::from_value(descriptor).map_err(|error| invalid(&error.to_string()))
     }
 
     /// Canonical implementation digest, independent of catalog health and retirement.
+    ///
+    /// # Errors
+    /// Propagates [`Self::validate`] failures and errors serializing the immutable method.
     pub fn digest(&self) -> Result<String, PersistenceError> {
         self.validate()?;
         let bytes = serde_json::to_vec(self).map_err(|e| invalid(&e.to_string()))?;
@@ -327,6 +352,9 @@ pub struct PublishedInvocationPlan {
 
 impl PublishedInvocationPlan {
     /// The enclosing fact propagated when this invocation's internal work calls another method.
+    ///
+    /// # Errors
+    /// Refuses generation zero or a depth ceiling outside the publication protocol bound.
     pub fn ancestor(&self) -> Result<milkdrift_capability::PublicationAncestor, PersistenceError> {
         milkdrift_capability::PublicationAncestor::new(
             self.capability.clone(),
@@ -343,6 +371,11 @@ impl PublishedInvocationPlan {
     }
 
     /// Checks bounded linkage shape; runtime validates commands before accepting the child.
+    ///
+    /// # Errors
+    /// Refuses invalid allowance or mismatched child/invocation/method bindings, unsupported
+    /// schema, invalid command/service/generation bounds, authority inconsistent with the
+    /// capability selection, denied authority, expired deadline, recursion or excessive ancestry.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         self.allowance.validate()?;
         if self.allowance.controller_run() != &self.child_run
@@ -386,12 +419,18 @@ impl PublishedInvocationPlan {
 /// Read the caller-owned invocation association and its derived pending index.
 pub trait PublishedInvocationStore: Send + Sync {
     /// Verify pending membership during runtime recovery; a missing derived row must not hide work.
+    ///
+    /// # Errors
+    /// Returns storage failures or pending membership inconsistent with authoritative caller facts.
     fn published_local_pending(
         &self,
         source: &PublishedInvocationSource,
     ) -> Result<bool, PersistenceError>;
     /// Page pending local associations by their derived index. The index references journal facts;
     /// it never replaces the attempt's history. The cursor must be a local source returned here.
+    ///
+    /// # Errors
+    /// Refuses nonlocal continuations and returns storage failures or corrupt association/index evidence.
     fn published_local_page(
         &self,
         after: Option<&PublishedInvocationSource>,
@@ -405,6 +444,9 @@ pub trait PublishedInvocationStore: Send + Sync {
     >;
 
     /// Retrieve an association from its authoritative caller record, never by an untrusted child name.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid caller-record association evidence.
     fn published_invocation(
         &self,
         source: &PublishedInvocationSource,
@@ -414,6 +456,10 @@ pub trait PublishedInvocationStore: Send + Sync {
 /// Publication inventory, without a competing workflow or invocation ledger.
 pub trait PublishedMethodStore: PublishedInvocationStore {
     /// Insert an exact validated generation, comparing the previous generation's state revision.
+    ///
+    /// # Errors
+    /// Refuses invalid method/authority, conflicting replay or stale predecessor guards,
+    /// and returns storage or retained inventory corruption.
     fn publish_method(
         &self,
         method: &PublishedMethod,
@@ -422,12 +468,18 @@ pub trait PublishedMethodStore: PublishedInvocationStore {
         request: &crate::IntegrityDigest,
     ) -> Result<PublishedMethodRecord, PersistenceError>;
     /// Read an exact generation, including retired generations.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid retained method/generation evidence.
     fn published_method(
         &self,
         capability: &CapabilityId,
         generation: u64,
     ) -> Result<Option<PublishedMethodRecord>, PersistenceError>;
     /// Page by exact capability/generation key; no lifetime-sized inventory load.
+    ///
+    /// # Errors
+    /// Returns storage failures or corrupt publication inventory records.
     fn published_methods(
         &self,
         after: Option<(&CapabilityId, u64)>,
@@ -435,12 +487,19 @@ pub trait PublishedMethodStore: PublishedInvocationStore {
     ) -> Result<Vec<PublishedMethodRecord>, PersistenceError>;
     /// Page non-retired generations for catalog recovery without scanning historical definitions.
     /// Retired generations needed by accepted work are restored from those exact associations.
+    ///
+    /// # Errors
+    /// Returns storage failures or inconsistent active-generation/index evidence.
     fn active_published_methods(
         &self,
         after: Option<(&CapabilityId, u64)>,
         limit: PageSize,
     ) -> Result<Vec<PublishedMethodRecord>, PersistenceError>;
     /// Close new admission, preserving immutable implementation and accepted work.
+    ///
+    /// # Errors
+    /// Refuses missing generations, invalid authority, replay conflicts or stale version
+    /// guards, and returns storage failures without deleting accepted work.
     fn retire_method(
         &self,
         capability: &CapabilityId,

@@ -14,7 +14,10 @@ fn validate_identity(value: &str, kind: &'static str) -> Result<(), PersistenceE
         });
     }
     if !value.is_ascii()
-        || !value.as_bytes()[0].is_ascii_alphanumeric()
+        || !value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
         || !value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
         })
@@ -115,6 +118,9 @@ impl RunSequence {
     }
 
     /// Returns the next sequence, refusing overflow.
+    ///
+    /// # Errors
+    /// Returns [`PersistenceError::SequenceOverflow`] after the maximum `u64` sequence.
     pub fn next(self) -> Result<Self, PersistenceError> {
         self.0
             .checked_add(1)
@@ -164,6 +170,9 @@ pub struct IntegrityDigest(String);
 
 impl IntegrityDigest {
     /// Parses and validates a canonical digest.
+    ///
+    /// # Errors
+    /// Refuses text other than `b3_` followed by 64 lowercase hexadecimal characters.
     pub fn new(value: impl Into<String>) -> Result<Self, PersistenceError> {
         let value = value.into();
         if !milkdrift_contracts::is_canonical_blake3_digest(&value) {

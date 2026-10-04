@@ -41,6 +41,9 @@ pub struct EventPageQuery {
 
 impl EventPageQuery {
     /// Constructs a query and rejects a cursor for another run or sequence zero.
+    ///
+    /// # Errors
+    /// Returns [`PersistenceError::InvalidCursor`] for a foreign run or zero sequence.
     pub fn new(
         run: RunId,
         cursor: Option<EventCursor>,
@@ -64,6 +67,10 @@ impl EventPageQuery {
     /// of an existing non-empty run. Implementations must use this method even
     /// when callers constructed the public query fields directly, so cursor
     /// ownership and the exact EOF rule cannot diverge between adapters.
+    ///
+    /// # Errors
+    /// Refuses foreign/zero cursors, cursors for absent runs, and sequences past the
+    /// exact representable end of the observed journal.
     pub fn start_sequence(
         &self,
         observed_head: RunSequence,
@@ -213,12 +220,18 @@ pub trait RunQueryStore: Send + Sync {
     /// atomically observed head. In particular, the exact one-past-head cursor
     /// of an existing non-empty run is valid EOF, later cursors are invalid,
     /// and a cursor for an absent run is invalid.
+    ///
+    /// # Errors
+    /// Refuses invalid cursors and returns storage failures or malformed/gapped journal evidence.
     fn events(&self, query: &EventPageQuery) -> Result<EventPage, PersistenceError>;
 
     /// Finds the authoritative receipt event for one stable signal identity.
     ///
     /// Implementations must use a bounded journal-derived identity index so
     /// command planning never scans a run's durable history.
+    ///
+    /// # Errors
+    /// Returns storage failures or a signal index inconsistent with its authoritative event.
     fn signal_receipt(
         &self,
         run: &RunId,
@@ -226,9 +239,15 @@ pub trait RunQueryStore: Send + Sync {
     ) -> Result<Option<RunEventEnvelope>, PersistenceError>;
 
     /// Gets one run summary.
+    ///
+    /// # Errors
+    /// Returns storage failures or summary evidence inconsistent with the authoritative run head.
     fn run_summary(&self, run: &RunId) -> Result<Option<RunSummaryIndex>, PersistenceError>;
 
     /// Lists run summaries with stable identity-based pagination.
+    ///
+    /// # Errors
+    /// Refuses continuations for another filter and returns storage or summary corruption.
     fn run_summaries(
         &self,
         query: &RunSummaryPageQuery,
@@ -239,6 +258,9 @@ pub trait RunQueryStore: Send + Sync {
     /// The cursor is exclusive. Callers performing bounded recurring maintenance
     /// retain the returned cursor and reset to the beginning only after `next` is
     /// absent, so an early run cannot permanently hide later owned work.
+    ///
+    /// # Errors
+    /// Refuses continuations outside nonterminal discovery and returns storage or index corruption.
     fn nonterminal_run_page(
         &self,
         cursor: Option<&RunSummaryCursor>,
@@ -255,6 +277,10 @@ pub trait RunQueryStore: Send + Sync {
     /// runs and all dispatch decisions.
     /// A continuation retains the first page's `eligible_through` boundary and its
     /// exclusive key remains valid if a dispatched anchor row has been removed.
+    ///
+    /// # Errors
+    /// Refuses invalid or differently bounded continuations and returns storage failures
+    /// or inconsistent runnable-head evidence.
     fn runnable_page(
         &self,
         eligible_through: TimestampMillis,
@@ -268,9 +294,15 @@ pub trait RunQueryStore: Send + Sync {
     /// when the returned page reaches that bound. A shorter page is the complete
     /// active set and can be projected into exact run/branch/capability counts without
     /// scanning unrelated run summaries.
+    ///
+    /// # Errors
+    /// Returns storage failures or inconsistent durable lease/index evidence.
     fn active_leases(&self, limit: PageSize) -> Result<ActiveLeaseSnapshot, PersistenceError>;
 
     /// Discovers due timers; firing remains a runtime command/event decision.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid timer/index evidence.
     fn due_timers(
         &self,
         due_through: TimestampMillis,
@@ -278,6 +310,9 @@ pub trait RunQueryStore: Send + Sync {
     ) -> Result<Vec<TimerIndexEntry>, PersistenceError>;
 
     /// Discovers expired leases; recovery classification remains runtime-owned.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid lease/expiry-index evidence.
     fn expired_leases(
         &self,
         expired_through: TimestampMillis,
@@ -295,6 +330,10 @@ pub trait RunQueryStore: Send + Sync {
 /// remains responsible for complete-store physical validation.
 pub trait RunDiscoveryIntegrityStore: Send + Sync {
     /// Validates the complete derived discovery state at an authoritative run head.
+    ///
+    /// # Errors
+    /// Refuses a changed head, differing projected/indexed sets or inconsistent physical
+    /// index pairs, and returns storage failures.
     fn validate_run_discovery(
         &self,
         run: &RunId,
@@ -315,9 +354,15 @@ pub trait RunDiscoveryIntegrityStore: Send + Sync {
 /// read permission before exposing their results.
 pub trait WorkspaceStore: Send + Sync {
     /// Reads the exact durable budget usage used as the next optimistic accounting guard.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid workspace accounting evidence.
     fn workspace_usage(&self, run: &RunId) -> Result<WorkspaceUsage, PersistenceError>;
 
     /// Gets one exact scope declaration.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid scope ownership/parent links.
     fn scope(
         &self,
         run: &RunId,
@@ -325,12 +370,18 @@ pub trait WorkspaceStore: Send + Sync {
     ) -> Result<Option<WorkspaceScope>, PersistenceError>;
 
     /// Gets one exact immutable value version.
+    ///
+    /// # Errors
+    /// Returns storage failures or value identity, content or provenance corruption.
     fn value(
         &self,
         reference: &WorkspaceValueReference,
     ) -> Result<Option<WorkspaceValueEntry>, PersistenceError>;
 
     /// Gets the latest immutable version of one scope-local stream.
+    ///
+    /// # Errors
+    /// Returns storage failures or inconsistent stream-head/value evidence.
     fn latest_value(
         &self,
         scope: &ScopeReference,
@@ -338,6 +389,9 @@ pub trait WorkspaceStore: Send + Sync {
     ) -> Result<Option<WorkspaceValueEntry>, PersistenceError>;
 
     /// Lists a bounded root-to-leaf lineage after validating stored parent links.
+    ///
+    /// # Errors
+    /// Refuses missing, cyclic, foreign or excessive parent chains and returns storage failures.
     fn scope_lineage(&self, leaf: &ScopeReference)
     -> Result<Vec<WorkspaceScope>, PersistenceError>;
 }

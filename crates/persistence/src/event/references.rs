@@ -20,6 +20,10 @@ impl RunEventKind {
     /// requests may carry provider-neutral artifact references, but durable history
     /// requires their media type and exact size so verification and workspace accounting
     /// cannot be bypassed by a direct blueprint artifact binding.
+    ///
+    /// # Errors
+    /// Refuses scheduled artifact references missing exact media type/size or containing
+    /// an invalid workspace artifact identity, digest or media type.
     pub fn required_artifacts(&self) -> Result<Vec<ArtifactReference>, PersistenceError> {
         match self {
             Self::RunTerminal { artifacts, .. } => Ok(artifacts.clone()),
@@ -38,8 +42,8 @@ impl RunEventKind {
             Self::NodeOutputPublished {
                 artifact: Some(reference),
                 ..
-            } => Ok(vec![reference.clone()]),
-            Self::DeterministicOutputPublished {
+            }
+            | Self::DeterministicOutputPublished {
                 artifact: Some(reference),
                 ..
             } => Ok(vec![reference.clone()]),
@@ -90,16 +94,15 @@ impl RunEventKind {
                 ));
             }
         }
-        let context = ReferenceContext { run };
-        lifecycle::validate(self, &context)?;
-        continuation::validate(self, &context)?;
-        execution::validate(self, &context)?;
-        structured::validate(self, &context)?;
-        reconciliation::validate(self, &context)?;
+        lifecycle::validate(self)?;
+        continuation::validate(self)?;
+        execution::validate(self)?;
+        structured::validate(self)?;
+        reconciliation::validate(self)?;
         // Validate provider-neutral artifact references even before a commit request
         // derives its exact ownership/accounting set.
-        let _ = self.required_artifacts()?;
-        context.validate_workspace_run(self)?;
+        self.required_artifacts()?;
+        validate_workspace_run(self, run)?;
         Ok(())
     }
 }
@@ -137,102 +140,90 @@ fn workspace_artifact_reference(
     ))
 }
 
-struct ReferenceContext<'run> {
-    run: &'run RunId,
+fn check_references(location: &'static str, count: usize) -> Result<(), PersistenceError> {
+    if count > MAX_REFERENCES_PER_EVENT {
+        Err(PersistenceError::Bounds {
+            location,
+            reason: format!("at most {MAX_REFERENCES_PER_EVENT} references are allowed"),
+        })
+    } else {
+        Ok(())
+    }
+}
+fn check_evidence(evidence: &[EvidenceReference]) -> Result<(), PersistenceError> {
+    if evidence.len() > MAX_EVIDENCE_REFERENCES {
+        Err(PersistenceError::Bounds {
+            location: "event.evidence",
+            reason: format!("at most {MAX_EVIDENCE_REFERENCES} references are allowed"),
+        })
+    } else if evidence
+        .iter()
+        .map(|item| &item.id)
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        != evidence.len()
+    {
+        Err(PersistenceError::InvalidDocument(
+            "event evidence identities must be distinct".to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
-impl ReferenceContext<'_> {
-    fn check_references(
-        &self,
-        location: &'static str,
-        count: usize,
-    ) -> Result<(), PersistenceError> {
-        if count > MAX_REFERENCES_PER_EVENT {
-            Err(PersistenceError::Bounds {
-                location,
-                reason: format!("at most {MAX_REFERENCES_PER_EVENT} references are allowed"),
-            })
-        } else {
-            Ok(())
+fn validate_workspace_run(event: &RunEventKind, run: &RunId) -> Result<(), PersistenceError> {
+    let value_in_run = |value: &WorkspaceValueReference| value.scope().run() == run;
+    let scope_in_run = |scope: &WorkspaceScope| scope.reference().run() == run;
+    let valid = match event {
+        RunEventKind::RunCreated {
+            root_scope, inputs, ..
+        } => {
+            scope_in_run(root_scope)
+                && root_scope.kind().is_run_root()
+                && inputs.iter().all(value_in_run)
         }
-    }
-    fn check_evidence(&self, evidence: &[EvidenceReference]) -> Result<(), PersistenceError> {
-        if evidence.len() > MAX_EVIDENCE_REFERENCES {
-            Err(PersistenceError::Bounds {
-                location: "event.evidence",
-                reason: format!("at most {MAX_EVIDENCE_REFERENCES} references are allowed"),
-            })
-        } else if evidence
+        RunEventKind::RunTerminal { outputs, .. }
+        | RunEventKind::BranchTerminal { outputs, .. } => outputs.iter().all(value_in_run),
+        RunEventKind::NodeBecameEligible { scope, .. }
+        | RunEventKind::ReconciliationRemediationCreated { scope, .. }
+        | RunEventKind::RemediationWorkCreated { scope, .. } => scope.run() == run,
+        RunEventKind::NodeOutputPublished { value, .. }
+        | RunEventKind::DeterministicOutputPublished { value, .. } => value_in_run(value),
+        RunEventKind::BranchScopeCreated { scope, .. }
+        | RunEventKind::RepeatIterationCreated { scope, .. } => scope_in_run(scope),
+        RunEventKind::JoinSatisfied { branches, .. } => branches
             .iter()
-            .map(|item| &item.id)
-            .collect::<std::collections::BTreeSet<_>>()
-            .len()
-            != evidence.len()
-        {
-            Err(PersistenceError::InvalidDocument(
-                "event evidence identities must be distinct".to_owned(),
-            ))
-        } else {
-            Ok(())
+            .all(|branch| branch.scope.run() == run && branch.outputs.iter().all(value_in_run)),
+        RunEventKind::SubworkflowCreated {
+            child_run,
+            scope,
+            inputs,
+            ..
+        } => child_run != run && scope_in_run(scope) && inputs.iter().all(value_in_run),
+        RunEventKind::SubworkflowTerminal {
+            child_run, outputs, ..
+        } => child_run != run && outputs.iter().all(|value| value.scope().run() == child_run),
+        RunEventKind::SubworkflowOutputImported {
+            child_value,
+            parent_value,
+            ..
+        } => {
+            child_value.scope().run() != run
+                && parent_value.scope().run() == run
+                && child_value.scope().run() != parent_value.scope().run()
         }
-    }
-
-    fn validate_workspace_run(&self, event: &RunEventKind) -> Result<(), PersistenceError> {
-        let run = self.run;
-        let value_in_run = |value: &WorkspaceValueReference| value.scope().run() == run;
-        let scope_in_run = |scope: &WorkspaceScope| scope.reference().run() == run;
-        let valid = match event {
-            RunEventKind::RunCreated {
-                root_scope, inputs, ..
-            } => {
-                scope_in_run(root_scope)
-                    && root_scope.kind().is_run_root()
-                    && inputs.iter().all(value_in_run)
-            }
-            RunEventKind::RunTerminal { outputs, .. } => outputs.iter().all(value_in_run),
-            RunEventKind::NodeBecameEligible { scope, .. } => scope.run() == run,
-            RunEventKind::NodeOutputPublished { value, .. } => value_in_run(value),
-            RunEventKind::DeterministicOutputPublished { value, .. } => value_in_run(value),
-            RunEventKind::BranchScopeCreated { scope, .. }
-            | RunEventKind::RepeatIterationCreated { scope, .. } => scope_in_run(scope),
-            RunEventKind::BranchTerminal { outputs, .. } => outputs.iter().all(value_in_run),
-            RunEventKind::JoinSatisfied { branches, .. } => branches
-                .iter()
-                .all(|branch| branch.scope.run() == run && branch.outputs.iter().all(value_in_run)),
-            RunEventKind::SubworkflowCreated {
-                child_run,
-                scope,
-                inputs,
-                ..
-            } => child_run != run && scope_in_run(scope) && inputs.iter().all(value_in_run),
-            RunEventKind::SubworkflowTerminal {
-                child_run, outputs, ..
-            } => child_run != run && outputs.iter().all(|value| value.scope().run() == child_run),
-            RunEventKind::SubworkflowOutputImported {
-                child_value,
-                parent_value,
-                ..
-            } => {
-                child_value.scope().run() != run
-                    && parent_value.scope().run() == run
-                    && child_value.scope().run() != parent_value.scope().run()
-            }
-            RunEventKind::SubworkflowCancellationRequested { child_run, .. } => child_run != run,
-            RunEventKind::ReconciliationRemediationCreated { scope, .. }
-            | RunEventKind::RemediationWorkCreated { scope, .. } => scope.run() == run,
-            _ => true,
-        };
-        if valid {
-            Ok(())
-        } else {
-            Err(PersistenceError::InvalidDocument(
-                "workspace scopes/value references in an event must belong to its run aggregate"
-                    .to_owned(),
-            ))
-        }
+        RunEventKind::SubworkflowCancellationRequested { child_run, .. } => child_run != run,
+        _ => true,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(PersistenceError::InvalidDocument(
+            "workspace scopes/value references in an event must belong to its run aggregate"
+                .to_owned(),
+        ))
     }
 }
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -288,13 +279,11 @@ mod tests {
             scheduled_with_artifact(Some("application/octet-stream".to_owned()), Some(7))?
                 .required_artifacts()?;
         assert_eq!(artifacts.len(), 1);
-        assert_eq!(artifacts[0].artifact().as_str(), "artifact-source");
-        assert_eq!(artifacts[0].digest().to_hex(), "a".repeat(64));
-        assert_eq!(
-            artifacts[0].media_type().as_str(),
-            "application/octet-stream"
-        );
-        assert_eq!(artifacts[0].size_bytes(), 7);
+        let artifact = artifacts.first().ok_or("missing source artifact")?;
+        assert_eq!(artifact.artifact().as_str(), "artifact-source");
+        assert_eq!(artifact.digest().to_hex(), "a".repeat(64));
+        assert_eq!(artifact.media_type().as_str(), "application/octet-stream");
+        assert_eq!(artifact.size_bytes(), 7);
 
         assert!(
             scheduled_with_artifact(None, Some(7))?
@@ -339,13 +328,14 @@ mod tests {
 
         let artifacts = event.required_artifacts()?;
         assert_eq!(artifacts.len(), 1);
-        assert_eq!(artifacts[0].artifact().as_str(), "artifact-context");
-        assert_eq!(artifacts[0].digest().to_hex(), "b".repeat(64));
+        let artifact = artifacts.first().ok_or("missing context artifact")?;
+        assert_eq!(artifact.artifact().as_str(), "artifact-context");
+        assert_eq!(artifact.digest().to_hex(), "b".repeat(64));
         assert_eq!(
-            artifacts[0].media_type().as_str(),
+            artifact.media_type().as_str(),
             "application/vnd.milkdrift.context-manifest.v2+json"
         );
-        assert_eq!(artifacts[0].size_bytes(), 42);
+        assert_eq!(artifact.size_bytes(), 42);
         Ok(())
     }
 }

@@ -304,9 +304,7 @@ fn atomic_workspace_mutations_exactly_materialize_subworkflow_facts()
             WorkspaceMutation::CreateScope {
                 scope: scope.clone(),
             },
-            WorkspaceMutation::PutValue {
-                entry: input.clone(),
-            },
+            WorkspaceMutation::PutValue { entry: input },
         ],
         Some(accounting),
         Vec::new(),

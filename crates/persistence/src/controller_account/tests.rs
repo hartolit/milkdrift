@@ -100,7 +100,9 @@ fn an_account_refuses_unspecified_units_without_changing_its_allowance() -> Test
             if dimension == "model_token_units")
         );
         assert_eq!(state, before);
-        wire["unit"] = serde_json::json!("bytes");
+        wire.as_object_mut()
+            .ok_or("envelope missing")?
+            .insert("unit".to_owned(), serde_json::json!("bytes"));
         assert!(serde_json::from_value::<InvocationAdmissionEnvelope>(wire).is_err());
     }
     Ok(())
@@ -188,19 +190,25 @@ fn reservation_identity_is_derived_before_account_mutation() -> TestResult {
 fn remaining_allowance_subtracts_every_committed_dimension_once() -> TestResult {
     let mut state = account(3, 4)?;
     let (model, model_attempt) = reservation(&state, "remaining-model")?;
-    let _ = state.admit(
-        model.clone(),
-        model_attempt,
-        CapabilityCategory::Model,
-        &bounded_envelope(3)?,
-    )?;
+    assert!(matches!(
+        state.admit(
+            model.clone(),
+            model_attempt,
+            CapabilityCategory::Model,
+            &bounded_envelope(3)?,
+        )?,
+        ControllerAdmissionOutcome::Reserved { .. }
+    ));
     let (process, process_attempt) = reservation(&state, "remaining-process")?;
-    let _ = state.admit(
-        process,
-        process_attempt,
-        CapabilityCategory::Process,
-        &InvocationAdmissionEnvelope::not_applicable(),
-    )?;
+    assert!(matches!(
+        state.admit(
+            process,
+            process_attempt,
+            CapabilityCategory::Process,
+            &InvocationAdmissionEnvelope::not_applicable(),
+        )?,
+        ControllerAdmissionOutcome::Reserved { .. }
+    ));
     assert_eq!(
         state.remaining_allowance()?,
         Some(ControllerResourceTotals {
@@ -759,7 +767,7 @@ fn artifact_reservation_accepts_exact_boundary_and_refuses_one_more() -> TestRes
 fn controller_artifact_owner_wire_is_strict_and_preserves_run_binding_compatibility() -> TestResult
 {
     let reservation = ControllerReservationId::new("controller-reservation:wire-owner")?;
-    let owner = ControllerArtifactOwner::InvocationReservation(reservation.clone());
+    let owner = ControllerArtifactOwner::InvocationReservation(reservation);
     let encoded = serde_json::to_vec(&owner)?;
     assert_eq!(
         encoded,

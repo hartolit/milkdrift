@@ -10,35 +10,46 @@ pub const APPLICATION_COMMAND_RECEIPT_SCHEMA_VERSION_V1: u32 = 1;
 /// Current durable presentation-layout record schema.
 pub const APPLICATION_LAYOUT_RECORD_SCHEMA_VERSION_V1: u32 = 1;
 /// Maximum canonical result bytes retained in an external receipt.
-pub const MAX_APPLICATION_COMMAND_RESULT_BYTES: usize = 1_310_720;
+const MAX_APPLICATION_COMMAND_RESULT_BYTES: usize = 1_310_720;
 /// Maximum canonical layout bytes retained in one independently addressed record.
-pub const MAX_APPLICATION_LAYOUT_BYTES: usize = 262_144;
+const MAX_APPLICATION_LAYOUT_BYTES: usize = 262_144;
 /// Maximum opaque continuation bytes returned by application-state pages.
-pub const MAX_APPLICATION_CURSOR_BYTES: usize = 1_024;
+const MAX_APPLICATION_CURSOR_BYTES: usize = 1_024;
 
 /// Durable reference to the authoritative effect or read identity of a command.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
-#[allow(missing_docs)] // Variant prose documents each compact effect payload.
 pub enum ApplicationEffectReference {
     /// An immutable semantic revision was validated or stored.
-    Revision { revision: RevisionId },
+    Revision {
+        /// Exact immutable revision that the command addressed.
+        revision: RevisionId,
+    },
     /// A runtime transaction committed through an exact aggregate sequence.
     RunSequence {
+        /// Aggregate owning the committed events.
         run: RunId,
+        /// Durable head after applying the command.
         resulting_sequence: RunSequence,
     },
     /// Presentation-only layout state was committed outside semantic identity.
     Layout {
+        /// Workflow whose presentation changed.
         workflow: WorkflowId,
+        /// Semantic revision associated with the layout.
         revision: RevisionId,
+        /// Optimistic layout generation committed by the command.
         generation: u64,
+        /// Digest of the committed layout bytes.
         digest: IntegrityDigest,
     },
     /// A proposal became discoverable; exact state remains owned by control/runtime facts.
     Proposal {
+        /// Run whose prospective repair was proposed.
         run: RunId,
+        /// Stable proposal discovery identity.
         proposal: String,
+        /// Immutable revision proposed for future execution.
         proposed_revision: RevisionId,
     },
 }
@@ -62,15 +73,19 @@ impl ApplicationEffectReference {
 /// Exact bounded result retained for replay, including intentional deterministic rejection.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "disposition", deny_unknown_fields)]
-#[allow(missing_docs)] // Variant prose documents each exact result payload.
 pub enum ApplicationCommandResult {
     /// The command was accepted; the canonical response is retained exactly.
     Accepted {
+        /// Exact canonical response bytes replayed after a lost reply.
         document: Vec<u8>,
+        /// Authoritative effect or read identity, when applicable.
         effect: Option<ApplicationEffectReference>,
     },
     /// The command was deterministically rejected under the recorded authority/validation basis.
-    Rejected { document: Vec<u8> },
+    Rejected {
+        /// Exact canonical rejection bytes retained for replay.
+        document: Vec<u8>,
+    },
 }
 
 impl ApplicationCommandResult {
@@ -134,7 +149,13 @@ pub struct ApplicationCommandReceipt {
 
 impl ApplicationCommandReceipt {
     /// Constructs and validates one exact external command result.
-    #[allow(clippy::too_many_arguments)] // Durable replay binds actor and exact command to the grant decision, completion times, and immutable result.
+    ///
+    /// # Errors
+    /// Refuses the receipt versions, times, decision digest or result rejected by [`Self::validate`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Durable replay binds actor and exact command to the grant decision, completion times and immutable result"
+    )]
     pub fn new(
         actor: ActorRef,
         command: CommandId,
@@ -167,6 +188,11 @@ impl ApplicationCommandReceipt {
     }
 
     /// Verifies stored receipt invariants after decoding.
+    ///
+    /// # Errors
+    /// Refuses unsupported receipt schema, zero command schema or grant revision,
+    /// completion before creation, a malformed decision digest, an empty or oversized
+    /// result, or invalid layout/proposal effect metadata.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         if self.schema_version != APPLICATION_COMMAND_RECEIPT_SCHEMA_VERSION_V1 {
             return Err(PersistenceError::UnsupportedVersion {
@@ -249,6 +275,9 @@ pub struct ApplicationCursor(Vec<u8>);
 
 impl ApplicationCursor {
     /// Validates bounded non-empty adapter-owned cursor bytes.
+    ///
+    /// # Errors
+    /// Refuses empty cursors and cursors longer than 1,024 bytes.
     pub fn new(value: Vec<u8>) -> Result<Self, PersistenceError> {
         if value.is_empty() || value.len() > MAX_APPLICATION_CURSOR_BYTES {
             return Err(PersistenceError::InvalidCursor(format!(
@@ -340,6 +369,9 @@ pub struct ApplicationLayoutUpdate {
 
 impl ApplicationLayoutUpdate {
     /// Verifies update bounds before adapter entry.
+    ///
+    /// # Errors
+    /// Refuses zero schema or generation, and documents outside 1–262,144 bytes.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         if self.layout_schema_version == 0 || self.generation == 0 {
             return Err(PersistenceError::InvalidDocument(
@@ -374,6 +406,9 @@ pub struct ApplicationLayout {
 
 impl ApplicationLayout {
     /// Constructs a stored record; adapters preserve `created_at` across replacements.
+    ///
+    /// # Errors
+    /// Refuses an invalid update or an update timestamp preceding `created_at`.
     pub fn from_update(
         update: ApplicationLayoutUpdate,
         created_at: TimestampMillis,
@@ -396,6 +431,10 @@ impl ApplicationLayout {
     }
 
     /// Verifies stored layout invariants after decoding.
+    ///
+    /// # Errors
+    /// Refuses unsupported record schema, zero layout schema/generation, reversed
+    /// timestamps, or retained documents outside 1–262,144 bytes.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         if self.schema_version != APPLICATION_LAYOUT_RECORD_SCHEMA_VERSION_V1 {
             return Err(PersistenceError::UnsupportedVersion {
@@ -482,6 +521,10 @@ pub struct ProposalIndexEntry {
 
 impl ProposalIndexEntry {
     /// Verifies the bounded identity fields.
+    ///
+    /// # Errors
+    /// Refuses a proposal identity outside 1–192 portable ASCII bytes or without an
+    /// alphanumeric prefix.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         validate_identity_text(&self.proposal, "proposal_index_identity")
     }
@@ -509,6 +552,10 @@ pub struct ApplicationCommandCommit {
 
 impl ApplicationCommandCommit {
     /// Verifies that receipt references and same-store effects agree exactly.
+    ///
+    /// # Errors
+    /// Refuses invalid receipts, layouts or proposal entries and any disagreement
+    /// between the recorded effect reference and the effect to commit atomically.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         self.receipt.validate()?;
         match (&self.effect, self.receipt.result().effect()) {
@@ -572,6 +619,9 @@ pub enum ApplicationCommandCommitOutcome {
 /// actor/command or redeliver the same commit before deciding what happened.
 pub trait ApplicationCommandStore: Send + Sync {
     /// Reads one exact actor-scoped external receipt.
+    ///
+    /// # Errors
+    /// Returns storage failures or corruption in the retained receipt or tier ownership.
     fn application_command_receipt(
         &self,
         actor: &ActorRef,
@@ -584,21 +634,34 @@ pub trait ApplicationCommandStore: Send + Sync {
     /// layout/proposal-index effect commit together. Runtime effects use a separate
     /// idempotent journal transaction; the application must recover that result if its
     /// receipt was not saved. This port cannot repeat the runtime operation on its own.
+    ///
+    /// # Errors
+    /// Refuses invalid commits, conflicting replay keys or stale effect guards; returns
+    /// storage, corruption and archival-capacity failures. Reread after an ambiguous write.
     fn commit_application_command(
         &self,
         commit: &ApplicationCommandCommit,
     ) -> Result<ApplicationCommandCommitOutcome, PersistenceError>;
     /// Lists receipts in stable bounded key order for administration/recovery.
     /// Pagination spans both tiers; moving a receipt must not change its logical cursor key.
+    ///
+    /// # Errors
+    /// Refuses invalid continuations and returns storage or retained receipt corruption.
     fn application_command_receipts(
         &self,
         query: &ApplicationPageQuery,
     ) -> Result<ApplicationPage<ApplicationCommandReceipt>, PersistenceError>;
     /// Returns exact hot/cold accounting and the most recent successful archival boundary.
+    ///
+    /// # Errors
+    /// Returns storage failures or inconsistent retained accounting/generation evidence.
     fn application_receipt_status(&self) -> Result<ApplicationReceiptStatus, PersistenceError>;
     /// Moves at most the configured batch of oldest complete hot receipts to cold storage.
     /// The supplied archival generation guards the whole move. Preserve receipt bytes,
     /// remove hot ownership, and update counters/generation atomically; do not evict identity.
+    ///
+    /// # Errors
+    /// Refuses stale archival generation and returns storage, capacity or receipt corruption.
     fn archive_application_command_receipts(
         &self,
         request: ApplicationReceiptArchiveRequest,
@@ -608,12 +671,18 @@ pub trait ApplicationCommandStore: Send + Sync {
 /// Narrow independently addressed layout read/list port.
 pub trait ApplicationLayoutStore: Send + Sync {
     /// Reads one exact workflow/revision layout.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid retained layout records.
     fn application_layout(
         &self,
         workflow: &WorkflowId,
         revision: &RevisionId,
     ) -> Result<Option<ApplicationLayout>, PersistenceError>;
     /// Lists layouts in stable bounded key order.
+    ///
+    /// # Errors
+    /// Refuses invalid continuations and returns storage failures or corrupt layout records.
     fn application_layouts(
         &self,
         query: &ApplicationPageQuery,
@@ -627,12 +696,18 @@ pub trait ApplicationLayoutStore: Send + Sync {
 /// decisions. The daemon does not automatically rebuild this index during startup.
 pub trait ProposalIndexStore: Send + Sync {
     /// Lists exact proposal identities for one run without scanning command receipts.
+    ///
+    /// # Errors
+    /// Refuses invalid continuations and returns storage failures or inconsistent discovery records.
     fn proposal_index(
         &self,
         run: &RunId,
         query: &ApplicationPageQuery,
     ) -> Result<ApplicationPage<ProposalIndexEntry>, PersistenceError>;
     /// Validates and reconstructs the derived proposal index from authoritative receipts.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid/conflicting receipt evidence; no proposal is fabricated.
     fn rebuild_proposal_index(&self) -> Result<u64, PersistenceError>;
 }
 
@@ -664,6 +739,10 @@ pub struct SecurityAuditEntry {
 
 impl SecurityAuditEntry {
     /// Verifies fields before append or after decoding.
+    ///
+    /// # Errors
+    /// Refuses zero grant revision, more than 64 reasons, invalid operation/outcome/reason
+    /// identities, or a noncanonical decision digest.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         if self.grant_revision == 0 || self.reason_codes.len() > 64 {
             return Err(PersistenceError::InvalidDocument(
@@ -694,11 +773,17 @@ pub struct SecurityAuditRecord {
 pub trait SecurityAuditStore: Send + Sync {
     /// Appends one decision, atomically evicting only the oldest audit row at its independent
     /// retention bound. Command receipts are never evicted through this port.
+    ///
+    /// # Errors
+    /// Refuses invalid entries and returns storage, sequence overflow or retained audit corruption.
     fn append_security_audit(
         &self,
         entry: &SecurityAuditEntry,
     ) -> Result<SecurityAuditRecord, PersistenceError>;
     /// Lists retained audit rows in stable sequence order.
+    ///
+    /// # Errors
+    /// Refuses invalid continuations and returns storage failures or corrupt audit records.
     fn security_audit(
         &self,
         query: &ApplicationPageQuery,
@@ -709,7 +794,10 @@ fn validate_identity_text(value: &str, location: &'static str) -> Result<(), Per
     if value.is_empty()
         || value.len() > 192
         || !value.is_ascii()
-        || !value.as_bytes()[0].is_ascii_alphanumeric()
+        || !value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
         || !value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
         })

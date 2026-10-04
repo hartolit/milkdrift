@@ -31,7 +31,10 @@ use super::model::{
 /// Closed versioned run facts. Variants describe observations, never requested actions.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
-#[allow(clippy::large_enum_variant)] // Durable facts remain direct typed schema fields.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Durable event variants retain direct typed schema fields without adding allocation to their public construction and matching contract"
+)]
 pub enum RunEventKind {
     /// Internal run accepted the service relationship retained by its invocation owner.
     PublishedRunBound {

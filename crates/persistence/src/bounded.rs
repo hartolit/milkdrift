@@ -45,6 +45,9 @@ pub struct Reason(String);
 
 impl Reason {
     /// Validates a reason.
+    ///
+    /// # Errors
+    /// Refuses empty text, more than [`MAX_REASON_BYTES`] bytes, or control characters.
     pub fn new(value: impl Into<String>) -> Result<Self, PersistenceError> {
         let value = value.into();
         validate_text(&value, "reason", MAX_REASON_BYTES, false)?;
@@ -81,6 +84,9 @@ pub struct BoundedDetail(String);
 
 impl BoundedDetail {
     /// Validates diagnostic text. Empty detail is allowed.
+    ///
+    /// # Errors
+    /// Refuses more than [`MAX_DETAIL_BYTES`] bytes or control characters.
     pub fn new(value: impl Into<String>) -> Result<Self, PersistenceError> {
         let value = value.into();
         validate_text(&value, "detail", MAX_DETAIL_BYTES, true)?;
@@ -111,6 +117,9 @@ pub struct CurrencyCode(String);
 
 impl CurrencyCode {
     /// Validates an uppercase three-letter currency code.
+    ///
+    /// # Errors
+    /// Refuses anything other than exactly three uppercase ASCII letters.
     pub fn new(value: impl Into<String>) -> Result<Self, PersistenceError> {
         let value = value.into();
         if value.len() != 3 || !value.bytes().all(|byte| byte.is_ascii_uppercase()) {
@@ -173,6 +182,9 @@ pub struct PageSize(u32);
 
 impl PageSize {
     /// Constructs a non-zero bounded page size.
+    ///
+    /// # Errors
+    /// Refuses zero or values above [`MAX_PAGE_SIZE`].
     pub fn new(value: u32) -> Result<Self, PersistenceError> {
         if value == 0 || value > MAX_PAGE_SIZE {
             return Err(PersistenceError::Bounds {

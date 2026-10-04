@@ -131,6 +131,11 @@ pub struct ManagedUse {
 
 impl ManagedUse {
     /// Validate the exact accepted identity, finite claims and physical evidence.
+    ///
+    /// # Errors
+    /// Refuses invalid binding or execution identity, zero claims, duplicate or unauthorized
+    /// editing resources, invalid/self parent or child references, and malformed physical
+    /// identity or stop-evidence digest.
     pub fn validate(&self) -> Result<(), crate::PersistenceError> {
         let invalid = || crate::PersistenceError::InvalidDocument("invalid managed use".to_owned());
         self.binding.validate().map_err(|_| invalid())?;

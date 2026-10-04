@@ -48,6 +48,10 @@ pub struct BeginArtifactPublication {
 
 impl BeginArtifactPublication {
     /// Publishes an authenticated peer input against its cumulative quota, before invocation acceptance.
+    ///
+    /// # Errors
+    /// Refuses invalid prior usage or an artifact exceeding the owner's count or byte
+    /// limits; derived accounting must pass [`Self::validate`].
     pub fn for_peer_input(
         publication: ArtifactPublicationId,
         host: milkdrift_capability::PeerId,
@@ -72,6 +76,10 @@ impl BeginArtifactPublication {
         Ok(request)
     }
     /// Publishes client-supplied input against its authenticated owner's cumulative quota.
+    ///
+    /// # Errors
+    /// Refuses invalid prior usage or artifact admission under the supplied workspace
+    /// budget, and inconsistent derived accounting under [`Self::validate`].
     pub fn for_client_input(
         publication: ArtifactPublicationId,
         host: milkdrift_capability::PeerId,
@@ -96,6 +104,10 @@ impl BeginArtifactPublication {
         Ok(request)
     }
     /// Constructs a request and proves its exact accounting transition.
+    ///
+    /// # Errors
+    /// Refuses invalid prior usage, arithmetic overflow, and artifact count, size,
+    /// or total-byte limits exceeded by the metadata.
     pub fn new(
         publication: ArtifactPublicationId,
         run: RunId,
@@ -118,6 +130,10 @@ impl BeginArtifactPublication {
     }
 
     /// Constructs an invocation publication owned by its committed controller reservation.
+    ///
+    /// # Errors
+    /// Propagates workspace admission failures from [`Self::new`]. The store checks the
+    /// committed reservation when publishing; construction does not reserve controller use.
     pub fn for_invocation(
         publication: ArtifactPublicationId,
         run: RunId,
@@ -133,6 +149,10 @@ impl BeginArtifactPublication {
     }
 
     /// Constructs publication against the serving invocation's accepted output allowance.
+    ///
+    /// # Errors
+    /// Refuses workspace admission failures and producer provenance differing from the
+    /// supplied host/invocation, as checked by [`Self::validate`].
     pub fn for_host_invocation(
         publication: ArtifactPublicationId,
         host: milkdrift_capability::PeerId,
@@ -158,6 +178,10 @@ impl BeginArtifactPublication {
     }
 
     /// Constructs a bounded import without creating a workflow accounting domain.
+    ///
+    /// # Errors
+    /// Refuses workspace admission failures or a controller owner other than an optional
+    /// remote invocation reservation for this transfer, as checked by [`Self::validate`].
     pub fn for_transfer(
         publication: ArtifactPublicationId,
         source: milkdrift_capability::PeerId,
@@ -226,6 +250,11 @@ impl BeginArtifactPublication {
     }
 
     /// Revalidates the request's derived accounting transition at a trust boundary.
+    ///
+    /// # Errors
+    /// Refuses incompatible artifact/controller owners, host-invocation producer mismatch,
+    /// invalid prior usage, failed budget admission, or a resulting usage different from
+    /// the exact metadata charge.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         let controller_valid = matches!(
             (&self.owner, &self.controller_owner),
@@ -294,7 +323,10 @@ impl BeginArtifactPublication {
 
 /// Result of beginning a publication session.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(clippy::large_enum_variant)] // Typed immutable metadata avoids a second lossy result shape.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Publication replay returns complete immutable metadata in the existing public result without a separate allocation or lossy projection"
+)]
 pub enum BeginArtifactOutcome {
     /// A temporary bounded stream is ready for sequential chunks.
     Writable,
@@ -434,6 +466,9 @@ pub struct ArtifactReadRequest {
 
 impl ArtifactReadRequest {
     /// Validates a bounded read request.
+    ///
+    /// # Errors
+    /// Refuses byte limits or offsets rejected by [`Self::validate`].
     pub fn new(
         reference: ArtifactReference,
         offset: u64,
@@ -475,6 +510,9 @@ impl ArtifactReadRequest {
     }
 
     /// Revalidates all bounded read facts at an adapter trust boundary.
+    ///
+    /// # Errors
+    /// Refuses a chunk limit outside 1–1,048,576 bytes or an offset beyond the exact size.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         if self.maximum_bytes == 0
             || usize::try_from(self.maximum_bytes)
@@ -531,6 +569,9 @@ pub struct OrphanCleanupCursor {
 
 impl OrphanCleanupCursor {
     /// Constructs a validated exclusive cleanup resume point.
+    ///
+    /// # Errors
+    /// Refuses empty keys or keys above [`MAX_ORPHAN_CLEANUP_CURSOR_KEY_BYTES`].
     pub fn new(
         family: OrphanCleanupFamily,
         after_key: Vec<u8>,
@@ -609,16 +650,27 @@ pub struct OrphanCleanupResult {
 /// not authenticate an actor or evaluate a grant.
 pub trait ArtifactStore: Send + Sync {
     /// Returns committed logical usage for the exact publication owner.
+    ///
+    /// # Errors
+    /// Returns storage failures or corrupt accounting evidence for the owner.
     fn artifact_usage(&self, owner: &ArtifactOwner) -> Result<WorkspaceUsage, PersistenceError>;
 
     /// Begins an idempotent sequential temporary publication and validates its intended
     /// budget transition. Usage is checked again and committed only at publication.
+    ///
+    /// # Errors
+    /// Refuses invalid requests, conflicting publication identities, exhausted budgets
+    /// or unavailable session capacity, and returns storage failures.
     fn begin_publication(
         &self,
         request: &BeginArtifactPublication,
     ) -> Result<BeginArtifactOutcome, PersistenceError>;
 
     /// Appends exactly at `offset`; chunks are bounded and publication cannot exceed size.
+    ///
+    /// # Errors
+    /// Refuses missing/unwritable sessions, nonsequential offsets and chunk/size violations;
+    /// returns storage failures. Recover ambiguous writes by the retained session offset.
     fn write_chunk(
         &self,
         publication: &ArtifactPublicationId,
@@ -630,27 +682,44 @@ pub trait ArtifactStore: Send + Sync {
     /// commits immutable metadata/accounting. A crash before metadata commit can leave
     /// only an unreferenced blob. Success requires the referenced bytes to be present and
     /// verified; later corruption or storage loss must be reported on read.
+    ///
+    /// # Errors
+    /// Refuses missing sessions, size/digest mismatch, stale accounting, exhausted budgets
+    /// or controller contract violations, and returns storage/integrity failures.
     fn commit_publication(
         &self,
         publication: &ArtifactPublicationId,
     ) -> Result<CommitArtifactOutcome, PersistenceError>;
 
     /// Aborts an uncommitted temporary stream. A committed artifact is immutable.
+    ///
+    /// # Errors
+    /// Returns failures removing temporary content or session evidence. An error does
+    /// not prove cleanup completed and cannot authorize removal of committed content.
     fn abort_publication(
         &self,
         publication: &ArtifactPublicationId,
     ) -> Result<(), PersistenceError>;
 
     /// Reads immutable metadata without exposing content.
+    ///
+    /// # Errors
+    /// Returns storage/read failures or corrupt retained metadata.
     fn metadata(&self, artifact: &ArtifactId)
     -> Result<Option<ArtifactMetadata>, PersistenceError>;
 
     /// Proves both immutable metadata and verified content are durably committed.
     /// Journal append uses this exact predicate for every required reference.
+    ///
+    /// # Errors
+    /// Returns storage or verification failures; corruption must not be reported as absence.
     fn is_committed(&self, reference: &ArtifactReference) -> Result<bool, PersistenceError>;
 
     /// Returns whether this run's accounting domain has already admitted the exact
     /// artifact, whether through publication or an earlier journal reference.
+    ///
+    /// # Errors
+    /// Returns storage failures or inconsistent run ownership/reference evidence.
     fn is_referenced_by_run(
         &self,
         run: &RunId,
@@ -658,6 +727,10 @@ pub trait ArtifactStore: Send + Sync {
     ) -> Result<bool, PersistenceError>;
 
     /// Returns a bounded verified chunk. Non-public sensitivity requires `Authorized`.
+    ///
+    /// # Errors
+    /// Refuses invalid ranges, unauthorized sensitivity, missing or mismatched metadata/content,
+    /// and returns storage or digest verification failures.
     fn read_chunk(
         &self,
         request: &ArtifactReadRequest,
@@ -665,6 +738,10 @@ pub trait ArtifactStore: Send + Sync {
 
     /// Deletes only abandoned temporary streams and blobs that have no metadata/event/
     /// workspace references and whose retention policy permits removal.
+    ///
+    /// # Errors
+    /// Refuses invalid cursors or changed age thresholds and returns storage, removal
+    /// or ownership-verification failures. Unproved or retained content must remain.
     fn cleanup_orphans(
         &self,
         request: OrphanCleanupRequest,
@@ -672,6 +749,10 @@ pub trait ArtifactStore: Send + Sync {
 }
 
 /// Applies the default-deny sensitivity rule for an artifact read request.
+///
+/// # Errors
+/// Returns [`PersistenceError::ArtifactAccessDenied`] for non-public sensitivity without
+/// an explicit authorized proof.
 pub fn authorize_artifact_read(
     sensitivity: ArtifactSensitivity,
     authority: &ArtifactReadAuthority,

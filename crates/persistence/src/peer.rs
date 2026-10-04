@@ -597,6 +597,9 @@ pub struct PeerRetentionPage {
 pub trait PeerExecutionStore: Send + Sync {
     /// Bounded physical hot-record scan for accepted work, including requests awaiting entry.
     /// The cursor advances over nonmatching hot records too; archived history is never scanned.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid retained hot records and active-index evidence.
     fn active_serving_page(
         &self,
         after: Option<&PeerExecutionId>,
@@ -604,35 +607,59 @@ pub trait PeerExecutionStore: Send + Sync {
     ) -> Result<(Vec<PeerExecutionRecord>, Option<PeerExecutionId>), PersistenceError>;
 
     /// Binds this store to one installation; a different host must refuse without mutation.
+    ///
+    /// # Errors
+    /// Refuses another retained host identity and returns storage or binding corruption.
     fn bind_serving_host(
         &self,
         host: &milkdrift_capability::PeerId,
     ) -> Result<(), PersistenceError>;
     /// Opens or closes the durable admission/entry gate through one serialized transaction.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid retained admission-gate evidence.
     fn set_peer_admission_open(&self, open: bool) -> Result<(), PersistenceError>;
 
     /// Records or replaces a relationship only at a strictly newer generation; exact replay is safe.
+    ///
+    /// # Errors
+    /// Refuses invalid relationship facts, stale generations or conflicting replay;
+    /// returns storage failures.
     fn configure_peer_relationship(
         &self,
         relationship: &ServingCallerState,
     ) -> Result<(), PersistenceError>;
 
     /// Records the exact currently eligible catalog generation.
+    ///
+    /// # Errors
+    /// Refuses invalid or conflicting catalog/generation evidence and returns storage failures.
     fn publish_peer_catalog(&self, catalog: &ServingCatalogState) -> Result<(), PersistenceError>;
 
     /// Reads the latest durable catalog generation for restart-safe monotonic publication.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid retained catalog evidence for the caller.
     fn peer_catalog(
         &self,
         peer: &milkdrift_peer_protocol::ServingCaller,
     ) -> Result<Option<ServingCatalogState>, PersistenceError>;
 
     /// Atomically checks idempotency, relationship/catalog generations and every capacity counter.
+    ///
+    /// # Errors
+    /// Returns storage or integrity failures preventing a durable admission result.
+    /// Expected admission refusals remain typed outcomes; a failed write may require
+    /// lookup by the exact caller/request key before retrying.
     fn admit_peer_execution(
         &self,
         admission: &PeerAdmission<'_>,
     ) -> Result<PeerAdmissionOutcome, PersistenceError>;
 
     /// Indexed lookup by authenticated owner and idempotency key.
+    ///
+    /// # Errors
+    /// Returns storage failures or inconsistent owner/request indexes and execution evidence.
     fn peer_execution_by_request(
         &self,
         owner: &milkdrift_peer_protocol::ServingCaller,
@@ -640,6 +667,9 @@ pub trait PeerExecutionStore: Send + Sync {
     ) -> Result<Option<PeerExecutionSnapshot>, PersistenceError>;
 
     /// Indexed lookup by execution identity with owner cross-check.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid execution ownership/retained evidence.
     fn peer_execution(
         &self,
         owner: &milkdrift_peer_protocol::ServingCaller,
@@ -647,12 +677,22 @@ pub trait PeerExecutionStore: Send + Sync {
     ) -> Result<Option<PeerExecutionSnapshot>, PersistenceError>;
 
     /// Returns bounded redacted active/hot/tombstone accounting.
+    ///
+    /// # Errors
+    /// Returns storage failures or invalid retained capacity/counter evidence.
     fn peer_execution_status(&self) -> Result<PeerExecutionStatus, PersistenceError>;
 
     /// Verifies counters and every peer ownership/index family without retaining a record catalog.
+    ///
+    /// # Errors
+    /// Returns storage failures or disagreements among records, indexes and accounting.
     fn verify_peer_execution_integrity(&self) -> Result<(), PersistenceError>;
 
     /// Reads a bounded contiguous page without materializing retained history.
+    ///
+    /// # Errors
+    /// Refuses invalid cursor/owner access and returns storage failures or invalid,
+    /// foreign or noncontiguous retained observations.
     fn peer_observations(
         &self,
         owner: &milkdrift_peer_protocol::ServingCaller,
@@ -662,6 +702,10 @@ pub trait PeerExecutionStore: Send + Sync {
     ) -> Result<PeerObservationPage, PersistenceError>;
 
     /// Claims the oldest durable available dispatch through one transaction.
+    ///
+    /// # Errors
+    /// Returns invalid claim-request, storage or queue-integrity failures; absence of
+    /// dispatchable work is a typed claim outcome.
     fn claim_peer_dispatch(
         &self,
         request: &PeerDispatchClaimRequest<'_>,
@@ -671,12 +715,20 @@ pub trait PeerExecutionStore: Send + Sync {
     /// Recheck the exact worker/claim, relationship, admission gate, and supplied authority
     /// in the entry transaction. Once entry is recorded, recovery must never return that
     /// work to automatic dispatch merely because a lease or reply was lost.
+    ///
+    /// # Errors
+    /// Returns storage or integrity failures preventing an entry decision. Gate, claim
+    /// and authority refusals remain typed entry outcomes and do not prove physical entry.
     fn mark_peer_entered(
         &self,
         request: &PeerEntryRequest<'_>,
     ) -> Result<PeerEntryOutcome, PersistenceError>;
 
     /// Releases only an exact pre-entry claim back to the durable queue.
+    ///
+    /// # Errors
+    /// Refuses missing/foreign records, stale worker/claim or recorded entry, and returns
+    /// storage failures. A release cannot erase known entry evidence.
     fn release_peer_claim(
         &self,
         owner: &milkdrift_peer_protocol::ServingCaller,
@@ -687,6 +739,10 @@ pub trait PeerExecutionStore: Send + Sync {
     ) -> Result<PeerExecutionRecord, PersistenceError>;
 
     /// Extends only the exact current claim lease.
+    ///
+    /// # Errors
+    /// Refuses missing/foreign executions, stale claims or invalid lease bounds and
+    /// returns storage failures.
     fn extend_peer_claim(
         &self,
         owner: &milkdrift_peer_protocol::ServingCaller,
@@ -697,6 +753,10 @@ pub trait PeerExecutionStore: Send + Sync {
     ) -> Result<(), PersistenceError>;
 
     /// Persists uncertainty after known entry without fabricating terminal evidence.
+    ///
+    /// # Errors
+    /// Refuses stale/foreign claims, invalid uncertainty facts or incompatible retained
+    /// state, and returns storage failures.
     fn mark_peer_uncertain(
         &self,
         owner: &milkdrift_peer_protocol::ServingCaller,
@@ -708,6 +768,10 @@ pub trait PeerExecutionStore: Send + Sync {
     ) -> Result<PeerExecutionRecord, PersistenceError>;
 
     /// Appends one next semantic observation, with exact replay idempotency.
+    ///
+    /// # Errors
+    /// Refuses invalid/foreign observations, sequence or replay conflicts and closed-history
+    /// writes; returns storage, capacity or retained-history integrity failures.
     fn append_peer_observation(
         &self,
         owner: &milkdrift_peer_protocol::ServingCaller,
@@ -716,6 +780,10 @@ pub trait PeerExecutionStore: Send + Sync {
     ) -> Result<PeerObservationAppend, PersistenceError>;
 
     /// Persists a cancellation request before adapter interaction.
+    ///
+    /// # Errors
+    /// Refuses invalid/foreign requests or conflicting cancellation identity/sequence;
+    /// returns storage failures without implying the adapter stopped.
     fn request_peer_cancellation(
         &self,
         owner: &milkdrift_peer_protocol::ServingCaller,
@@ -724,6 +792,10 @@ pub trait PeerExecutionStore: Send + Sync {
     ) -> Result<PeerExecutionRecord, PersistenceError>;
 
     /// Persists a separate acknowledgement through exact request matching.
+    ///
+    /// # Errors
+    /// Refuses invalid acknowledgements or mismatched retained cancellation requests,
+    /// and returns storage failures without manufacturing terminal evidence.
     fn acknowledge_peer_cancellation(
         &self,
         owner: &milkdrift_peer_protocol::ServingCaller,
@@ -735,6 +807,10 @@ pub trait PeerExecutionStore: Send + Sync {
     /// Use while ordinary admission is closed and the previous workers are gone. Pre-entry
     /// claims may be requeued; known-entered claims become uncertain. Continue while
     /// `more` is true, requiring progress rather than accepting an endless empty page.
+    ///
+    /// # Errors
+    /// Refuses a zero recovery timestamp and returns storage or corrupt claim evidence.
+    /// The caller is responsible for closing admission and stopping previous workers.
     fn recover_peer_claims(
         &self,
         recovered_at_unix_ms: u64,
@@ -745,6 +821,10 @@ pub trait PeerExecutionStore: Send + Sync {
     /// Preserve exact request conflict detection, acceptance, provenance, and final
     /// disposition while retiring detailed observations. Artifact bytes retain their own
     /// ownership and retention policy.
+    ///
+    /// # Errors
+    /// Refuses invalid retention requests and returns storage, capacity or execution/history
+    /// integrity failures; failed archival cannot prove identities were safely retired.
     fn archive_peer_executions(
         &self,
         request: &PeerRetentionRequest,
@@ -752,6 +832,9 @@ pub trait PeerExecutionStore: Send + Sync {
 
     /// Returns the artifact reference from a specific output observation, when present.
     /// Archival retains this lookup through the tombstone after retiring the hot index.
+    ///
+    /// # Errors
+    /// Returns storage failures or inconsistent observation/artifact ownership evidence.
     fn peer_observation_artifact(
         &self,
         execution: &PeerExecutionId,
@@ -762,6 +845,9 @@ pub trait PeerExecutionStore: Send + Sync {
 impl PeerExecutionRecord {
     /// Exact executor-facing identity derived from the accepted host, caller and serving operation.
     /// Resource holds and the serving adapter bridge use this same canonical namespace.
+    ///
+    /// # Errors
+    /// Returns identity serialization failures or refusal of the derived invocation identifier.
     pub fn managed_invocation(
         &self,
     ) -> Result<milkdrift_capability::InvocationId, PersistenceError> {
@@ -775,6 +861,9 @@ impl PeerExecutionRecord {
 
 impl PeerExecutionTombstone {
     /// Same executor-facing identity after detailed serving observations have been archived.
+    ///
+    /// # Errors
+    /// Returns identity serialization failures or refusal of the derived invocation identifier.
     pub fn managed_invocation(
         &self,
     ) -> Result<milkdrift_capability::InvocationId, PersistenceError> {

@@ -1,14 +1,11 @@
 //! Independent reconciliation event fact validation.
 use super::{
     super::MAX_RECONCILIATION_PLAN_ITEMS, super::kind::RunEventKind,
-    super::model::ReconciliationClassification, ReferenceContext,
+    super::model::ReconciliationClassification,
 };
 use crate::PersistenceError;
 
-pub(super) fn validate(
-    event: &RunEventKind,
-    _context: &ReferenceContext<'_>,
-) -> Result<(), PersistenceError> {
+pub(super) fn validate(event: &RunEventKind) -> Result<(), PersistenceError> {
     if let RunEventKind::ReconciliationPlanRecorded { items, .. } = event {
         if items.len() > MAX_RECONCILIATION_PLAN_ITEMS {
             return Err(PersistenceError::Bounds {

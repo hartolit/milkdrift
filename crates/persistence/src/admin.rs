@@ -96,6 +96,9 @@ pub struct IntegrityScanCursor {
 
 impl IntegrityScanCursor {
     /// Constructs a validated exclusive resume point.
+    ///
+    /// # Errors
+    /// Refuses empty keys or keys above [`MAX_INTEGRITY_SCAN_CURSOR_KEY_BYTES`].
     pub fn new(
         family: IntegrityScanFamily,
         after_key: Vec<u8>,
@@ -165,14 +168,25 @@ pub struct IntegrityScanResult {
 /// Implementations report corruption without repairing history or deleting evidence.
 pub trait StorageAdmin: Send + Sync {
     /// Returns physical schema compatibility. Older and future formats are refused.
+    ///
+    /// # Errors
+    /// Returns storage failures or malformed schema metadata that cannot be classified.
     fn schema_info(&self) -> Result<StorageSchemaInfo, PersistenceError>;
 
     /// Returns bounded health information without mutating/repairing durable history.
+    ///
+    /// # Errors
+    /// Returns failures that prevent obtaining a health sample; sampled degradation
+    /// remains explicit in the returned component observations.
     fn health(&self, observed_at: TimestampMillis) -> Result<StorageHealth, PersistenceError>;
 
     /// Performs one bounded page of an explicit, read-only administrative scrub.
     /// The returned cursor resumes the same family and artifact-content verification
     /// mode; callers decide whether to continue.
+    ///
+    /// # Errors
+    /// Refuses invalid cursors or a changed verification mode and returns storage
+    /// failures that prevent scanning. Sampled corruption is retained in the report.
     fn scan_integrity(
         &self,
         request: IntegrityScanRequest,

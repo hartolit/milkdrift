@@ -93,7 +93,9 @@ fn future_and_malformed_versions_fail_before_interpretation()
 -> Result<(), Box<dyn std::error::Error>> {
     let bytes = sample_event(1)?.to_canonical_json()?;
     let mut value: serde_json::Value = serde_json::from_slice(&bytes)?;
-    value["schema_version"] = json!(6);
+    *value
+        .get_mut("schema_version")
+        .ok_or("missing schema version")? = json!(6);
     let future = serde_json::to_vec(&value)?;
     assert!(matches!(
         RunEventEnvelope::from_json(&future),
@@ -104,7 +106,9 @@ fn future_and_malformed_versions_fail_before_interpretation()
         })
     ));
 
-    value["schema_version"] = json!("one");
+    *value
+        .get_mut("schema_version")
+        .ok_or("missing schema version")? = json!("one");
     let malformed = serde_json::to_vec(&value)?;
     assert!(matches!(
         RunEventEnvelope::from_json(&malformed),
@@ -137,7 +141,7 @@ fn command_results_reject_duplicate_json_keys_before_interpretation()
     let run = RunId::new("run-command-result-duplicate")?;
     let command = CommandId::new("command-result-duplicate")?;
     let result = CommandResultDocument::new(
-        command.clone(),
+        command,
         run,
         IntegrityDigest::hash(b"command-result-duplicate"),
         CommandDisposition::Rejected,
@@ -472,7 +476,7 @@ fn deterministic_branch_and_cross_run_subworkflow_output_facts_are_explicit()
             "event-subworkflow-terminal",
             RunEventKind::SubworkflowTerminal {
                 subworkflow: SubworkflowId::new("subworkflow-one")?,
-                child_run: child_run.clone(),
+                child_run,
                 outcome: milkdrift_persistence::RunOutcome::Succeeded,
                 outputs: vec![child_value.clone()],
                 cost_micros: std::collections::BTreeMap::new(),
@@ -693,7 +697,9 @@ fn accepted_agreement_event_preserves_identity_and_refuses_older_schema_meaning(
     assert_eq!(binding.agreement_digest(), format!("b3_{}", "a".repeat(64)));
     for version in [1, 2, 3] {
         let mut value: serde_json::Value = serde_json::from_slice(bytes)?;
-        value["schema_version"] = json!(version);
+        *value
+            .get_mut("schema_version")
+            .ok_or("missing schema version")? = json!(version);
         assert!(
             matches!(RunEventEnvelope::from_json(&serde_json::to_vec(&value)?),
             Err(PersistenceError::InvalidDocument(reason)) if reason.contains("require run-event schema v4"))

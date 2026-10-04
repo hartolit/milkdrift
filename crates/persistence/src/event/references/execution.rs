@@ -1,12 +1,9 @@
 //! Independent execution event fact validation.
-use super::{super::kind::RunEventKind, super::model::NodeOutcome, ReferenceContext};
+use super::{super::kind::RunEventKind, super::model::NodeOutcome};
 use crate::PersistenceError;
 use milkdrift_capability::TerminalStatus;
 
-pub(super) fn validate(
-    event: &RunEventKind,
-    _context: &ReferenceContext<'_>,
-) -> Result<(), PersistenceError> {
+pub(super) fn validate(event: &RunEventKind) -> Result<(), PersistenceError> {
     match event {
         RunEventKind::NodeScheduled {
             invocation,

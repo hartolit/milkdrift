@@ -66,7 +66,9 @@ fn authorization_result_v2_matches_reviewed_golden() -> TestResult {
 fn command_results_refuse_legacy_authorization_decision_meaning() -> TestResult {
     let fixture = include_bytes!("fixtures/command-result-authorized-v2.json");
     let mut legacy: serde_json::Value = serde_json::from_slice(fixture)?;
-    legacy["authorization"]["schema_version"] = serde_json::json!(1);
+    *legacy
+        .pointer_mut("/authorization/schema_version")
+        .ok_or("missing authorization schema")? = serde_json::json!(1);
     assert!(CommandResultDocument::from_json(&serde_json::to_vec(&legacy)?).is_err());
     Ok(())
 }

@@ -3,14 +3,11 @@ use super::{
     super::MAX_REPEAT_CONTINUATION_ADDITIONAL_ITERATIONS, super::MAX_REPEAT_EFFECTIVE_ITERATIONS,
     super::kind::RunEventKind, super::model::ControllerAssessmentOutcome,
     super::model::RepeatContinuationCause, super::model::RepeatContinuationDecision,
-    ReferenceContext,
+    check_evidence,
 };
 use crate::PersistenceError;
 
-pub(super) fn validate(
-    event: &RunEventKind,
-    context: &ReferenceContext<'_>,
-) -> Result<(), PersistenceError> {
+pub(super) fn validate(event: &RunEventKind) -> Result<(), PersistenceError> {
     match event {
         RunEventKind::RepeatContinuationRequested {
             initial_iteration_limit,
@@ -51,7 +48,7 @@ pub(super) fn validate(
             evidence,
             ..
         } => {
-            context.check_evidence(evidence)?;
+            check_evidence(evidence)?;
             let valid = match (outcome, approved_additional_iterations) {
                 (RepeatContinuationDecision::Approved, Some(additional)) => {
                     (1..=MAX_REPEAT_CONTINUATION_ADDITIONAL_ITERATIONS).contains(additional)

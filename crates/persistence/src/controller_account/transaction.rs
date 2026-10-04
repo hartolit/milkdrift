@@ -67,6 +67,10 @@ pub struct ControllerAccountTransaction {
 
 impl ControllerAccountTransaction {
     /// Constructs a bounded transition and its exact replay fingerprint.
+    ///
+    /// # Errors
+    /// Refuses action counts outside 1–256, establishment binding another run, mutations
+    /// spanning multiple accounts, missing or unrelated revision guards, and encoding overflow.
     pub fn new(
         transition: ControllerTransitionId,
         expected_account_revision: Option<(ControllerAccountId, IntegrityDigest)>,
@@ -140,6 +144,9 @@ impl ControllerAccountTransaction {
         })
     }
     /// Recomputes every invariant and the canonical content fingerprint of an untrusted record.
+    ///
+    /// # Errors
+    /// Propagates [`Self::new`] failures and refuses a noncanonical replay fingerprint.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         let rebuilt = Self::new(
             self.transition.clone(),

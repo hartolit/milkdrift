@@ -1,18 +1,15 @@
 //! Independent lifecycle event fact validation.
 use super::{
     super::kind::RunEventKind, super::model::AuthorityDecision, super::model::RunOutcome,
-    ReferenceContext,
+    check_evidence, check_references,
 };
 use crate::PersistenceError;
 
-pub(super) fn validate(
-    event: &RunEventKind,
-    context: &ReferenceContext<'_>,
-) -> Result<(), PersistenceError> {
+pub(super) fn validate(event: &RunEventKind) -> Result<(), PersistenceError> {
     match event {
         RunEventKind::RunCreated { inputs, .. }
         | RunEventKind::SubworkflowCreated { inputs, .. } => {
-            context.check_references("event.inputs", inputs.len())?;
+            check_references("event.inputs", inputs.len())?;
             if inputs
                 .iter()
                 .collect::<std::collections::BTreeSet<_>>()
@@ -27,8 +24,8 @@ pub(super) fn validate(
         RunEventKind::RunTerminal {
             outputs, artifacts, ..
         } => {
-            context.check_references("event.outputs", outputs.len())?;
-            context.check_references("event.artifacts", artifacts.len())?;
+            check_references("event.outputs", outputs.len())?;
+            check_references("event.artifacts", artifacts.len())?;
             if outputs
                 .iter()
                 .collect::<std::collections::BTreeSet<_>>()
@@ -75,9 +72,7 @@ pub(super) fn validate(
         | RunEventKind::RunCancellationRequested { evidence, .. }
         | RunEventKind::ExternalOutcomeUncertain { evidence, .. }
         | RunEventKind::ReconciliationDecisionRecorded { evidence, .. }
-        | RunEventKind::RecoveryDecisionRecorded { evidence, .. } => {
-            context.check_evidence(evidence)?
-        }
+        | RunEventKind::RecoveryDecisionRecorded { evidence, .. } => check_evidence(evidence)?,
         _ => {}
     }
     Ok(())

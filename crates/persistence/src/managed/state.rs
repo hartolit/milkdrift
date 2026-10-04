@@ -32,6 +32,10 @@ pub struct ApprovedSetup {
 
 impl ApprovedSetup {
     /// Validate portable bounds; the platform additionally validates typed mechanism configuration.
+    ///
+    /// # Errors
+    /// Refuses invalid protection, resource/capability counts, mechanism/platform identity
+    /// lengths, recipe/ownership digests, empty or oversized resource identities and duplicate names.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         if let Some(protection) = &self.protection {
             protection.validate()?;
@@ -178,6 +182,11 @@ pub struct InstallationRecord {
 
 impl InstallationRecord {
     /// Validate durable bounds and transition consistency before accepting stored state.
+    ///
+    /// # Errors
+    /// Refuses unsupported schema, zero version, excessive/duplicate or foreign-generation
+    /// uses, invalid setups/observations, open admission without a live settled setup,
+    /// and inconsistent pending transition steps, generation, identity or evidence counts.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         if self.schema_version != MANAGED_SCHEMA_VERSION
             || self.version == 0
@@ -319,6 +328,9 @@ pub struct ResourceReceipt {
 
 impl ManagedObservation {
     /// Verify bounded evidence before it becomes durable inventory.
+    ///
+    /// # Errors
+    /// Refuses a noncanonical digest or summary longer than 512 bytes.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         if !milkdrift_contracts::is_canonical_blake3_digest(&self.digest)
             || self.summary.len() > 512
@@ -345,6 +357,10 @@ pub struct ProtectedDeployment {
 }
 impl ProtectedDeployment {
     /// Validate policy and evidence identities before retaining or recovering configuration.
+    ///
+    /// # Errors
+    /// Refuses invalid policy, agreement digest or evaluation evidence, and evidence
+    /// bound to a different agreement or policy digest.
     pub fn validate(&self) -> Result<(), PersistenceError> {
         self.policy
             .validate()
