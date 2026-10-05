@@ -9,6 +9,10 @@ reuse/copy, publication preparation, evaluation and the independent client bound
 [reproducible evidence](../development/verification-evidence.md#workflow-name-corrections).
 There is no automatic successor assignment.
 
+The active [client workflow corrections](../development/virtual-office/client-workflow-corrections/README.md)
+assignment completes the consolidated review's eight findings and three connected verification
+questions, followed by integrated acceptance. It authorizes no GUI or infrastructure successor.
+
 Svelte remains the first future GUI, and every frontend uses the daemon's public operations.
 GUI implementation needs a separately scoped assignment. Preserve the accepted host,
 managed-resource, protected publication, evaluation and client behavior when planning further work.
