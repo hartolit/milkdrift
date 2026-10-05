@@ -31,7 +31,9 @@ included in the selected CI artifact.
 
 The daemon's maintained [JSON client test](../../apps/daemon/tests/control_plane/independent_client.rs)
 launches the real binary and uses ordinary HTTP payloads to author/save a two-step model workflow,
-upload its brief, start, retrieve the result, restart/replay and copy the definition. All semantic
+discover it with a named-workflow grant, correct a shared input name, remove an unused input,
+clear/reselect output, change its limit and compare the saved revisions. It then
+uploads its brief, starts, retrieves the result, restarts/replays and copies the definition. All semantic
 identities and results come from public responses. It uses no CLI, private definition builder,
 in-process runtime or database access. The external fixture counts model requests, and exact replay
 after restart leaves that count at two. Changed requests conflict and missing inputs refuse.
@@ -53,7 +55,9 @@ authentication/CORS, desktop packaging, real-model quality or physical durabilit
 ## Authored workflow journey
 
 Build `client-workflow-evidence` with the ordinary daemon and CLI binaries. Its controlled mode
-uses the maintained release-notes prompts and two briefs, authors and reopens the definition,
+uses the maintained release-notes prompts and two briefs. Its named-workflow grant discovers
+the saved definition, corrects a shared input name, removes an unused input, clears/reselects
+output, changes the review limit and compares revisions before running. It reopens the definition,
 keeps a meeting-summary workflow independent, downloads accepted results by output name, restarts
 the daemon and replays the saved requests. It edits both an independent copy and a later source
 revision while checking that accepted run pins remain unchanged. A separate run returns an

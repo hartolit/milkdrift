@@ -71,7 +71,10 @@ This document owns current implementation, limitations, exact versions, and qual
   reuse remains available. Concurrent controlled runs retain separate briefs, outputs and pins when
   the copy is edited and saved. A single grant can name the source and destination in a bounded
   exact workflow set, without unrelated workflow access. The [authority guide](../operations/authority.md)
-  explains the required actions, canonical scope and filtered collection reads.
+  explains the required actions and canonical scope. Unfiltered revision discovery merges only
+  permitted workflow ranges, with bounded live pages and authority rechecked on every cursor.
+  Revision comparison reports metadata, interfaces, agreement and graph changes in stable order,
+  with exact truncation and no invented changes for provenance alone.
 - Ordinary run starts accept named immutable artifacts through existing upload and workspace
   admission. The CLI can upload a separate text brief for each run of one saved revision, retain a
   private exact request before submission, and reconnect under the original host/caller/grant.

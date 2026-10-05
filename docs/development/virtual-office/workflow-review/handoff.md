@@ -13,9 +13,14 @@ R2 output/limit checkpoint: `a46b109`. Edits pass four authoring tests, protocol
 documentation and focused Clippy. The output test checks the actual edited wire limit and saved
 reservation envelope, incomplete restart, invalid edits and endpoint-ceiling refusal before HTTP.
 An unknown-field wire regression found and corrected serde's unit-variant permissiveness.
-R3 adds authorized indexed discovery, physical schema 17 and protocol 2.19. Scoped public,
+R3 checkpoint: `533ebbb`. It adds authorized indexed discovery, physical schema 17 and protocol 2.19. Scoped public,
 actual CLI and independent JSON cases pass, as do 86 storage contracts and 13 integrity cases,
 protocol/persistence suites, focused Clippy and eight documentation contracts. A corruption-test
 borrow error and stale physical-version assertions were corrected; earlier logs are retained.
-Next: extend journeys and run section 4 acceptance with downloadable evidence.
+The expanded independent JSON and actual CLI journeys pass with discovery, new edits and revision
+comparison. CLI uses three named workflow scopes and both maintained briefs, with seven total
+controlled model calls including repair. JSON replay leaves two calls. Focused Clippy and eight
+documentation contracts pass. Next: section 4 full acceptance, API inventories and downloadable
+evidence. Pinned external scanner release binaries are installed under the ignored evidence tools
+directory; zizmor's source build refused Rust 1.95, so its verified official release binary is used.
 The newer hosted run documented at baseline remains historical evidence only.

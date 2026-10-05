@@ -78,7 +78,11 @@ pub(super) fn configure(
     let resources = config
         .pointer_mut("/actors/0/authority/resources")
         .ok_or("authority absent")?;
-    replace(resources, "/workflow_run", json!({"type":"any"}))?;
+    replace(
+        resources,
+        "/workflow_run",
+        json!({"type":"workflows","workflows":["release-notes","meeting-summary","independent-notes"]}),
+    )?;
     replace(
         resources,
         "/capability",

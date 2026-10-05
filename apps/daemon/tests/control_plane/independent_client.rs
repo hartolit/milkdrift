@@ -110,11 +110,12 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
     let mut draft = json!({"workflow_id":"release-notes","base_revision":null,"mutations":[]});
     let edits = [
         json!({"type":"rename","name":"Release notes"}),
-        json!({"type":"input","name":"brief"}),
+        json!({"type":"input","name":"breif"}),
+        json!({"type":"input","name":"unused"}),
         json!({"type":"add_model","step":"draft","capability":capability,"prompt":"Draft release notes from the brief.","maximum_output_units":512}),
         json!({"type":"add_model","step":"review","capability":capability,"prompt":"Review the draft against the original brief.","maximum_output_units":512}),
-        json!({"type":"connect","step":"draft","input":"brief","source":{"type":"run_input","name":"brief"}}),
-        json!({"type":"connect","step":"review","input":"brief","source":{"type":"run_input","name":"brief"}}),
+        json!({"type":"connect","step":"draft","input":"brief","source":{"type":"run_input","name":"breif"}}),
+        json!({"type":"connect","step":"review","input":"brief","source":{"type":"run_input","name":"breif"}}),
         json!({"type":"connect","step":"review","input":"draft","source":{"type":"step","step":"draft"}}),
         json!({"type":"output","step":"review","name":"notes"}),
     ];
@@ -144,11 +145,69 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
             json!({"type":"author_blueprint","draft":draft,"edit":null,"save":true}),
         )
         .await?;
+    let original = saved
+        .pointer("/value/revision_id")
+        .and_then(Value::as_str)
+        .ok_or("original revision absent")?
+        .to_owned();
+    let discovered = client.get("v1/revisions?limit=1").await?;
+    assert_eq!(
+        discovered
+            .pointer("/items/0/revision_id")
+            .and_then(Value::as_str),
+        Some(original.as_str())
+    );
+    draft = json!({"workflow_id":"release-notes","base_revision":discovered.pointer("/items/0/revision_id").ok_or("discovered revision absent")?,"mutations":[]});
+    for (index, edit) in [
+        json!({"type":"rename_input","name":"breif","new_name":"brief"}),
+        json!({"type":"remove_input","name":"unused"}),
+        json!({"type":"output_limit","step":"review","maximum_output_units":256}),
+        json!({"type":"clear_output"}),
+        json!({"type":"output","step":"review","name":"notes"}),
+        json!({"type":"rename","name":"Corrected release notes"}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let edited = client
+            .command(
+                &format!("json-correct-{index}"),
+                &json!(original),
+                json!({"type":"author_blueprint","draft":draft,"edit":edit,"save":false}),
+            )
+            .await?;
+        draft = edited
+            .pointer("/value/draft")
+            .ok_or("edited draft absent")?
+            .clone();
+    }
+    let saved = client
+        .command(
+            "json-save-corrected",
+            &json!(original),
+            json!({"type":"author_blueprint","draft":draft,"edit":null,"save":true}),
+        )
+        .await?;
     let revision = saved
         .pointer("/value/revision_id")
         .ok_or("fixture field /value/revision_id absent")?
         .clone();
     let revision_id = revision.as_str().ok_or("saved revision")?;
+    let diff = client
+        .get(&format!("v1/revisions/{original}/diff/{revision_id}"))
+        .await?;
+    assert_eq!(diff.get("truncated"), Some(&json!(false)));
+    let changes = diff
+        .get("changes")
+        .and_then(Value::as_array)
+        .ok_or("changes absent")?;
+    for subject in ["metadata", "input", "node"] {
+        assert!(
+            changes
+                .iter()
+                .any(|change| change.get("subject") == Some(&json!(subject)))
+        );
+    }
     let read = client.get(&format!("v1/revisions/{revision_id}")).await?;
     assert_eq!(
         read.pointer("/summary/workflow_id")
@@ -365,7 +424,7 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
     assert_ne!(copy, revision_id);
     let mut discovered = Vec::new();
     let mut path = "v1/revisions?limit=1".to_owned();
-    for _ in 0..3 {
+    for _ in 0..4 {
         let page = client.get(&path).await?;
         let items = page
             .get("items")
@@ -392,7 +451,7 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
             .append_pair("cursor", cursor);
         path = url.to_string();
     }
-    let mut expected = vec![revision_id.to_owned(), copy.to_owned()];
+    let mut expected = vec![original, revision_id.to_owned(), copy.to_owned()];
     expected.sort();
     assert_eq!(discovered, expected);
     let copy_read = client.get(&format!("v1/revisions/{copy}")).await?;

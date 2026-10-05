@@ -21,7 +21,8 @@ pub(super) fn author(j: &Journey) -> EvidenceResult<String> {
         "--file",
         &file,
     ])?;
-    j.call(&["workflow", "input", &file, "brief"])?;
+    j.call(&["workflow", "input", &file, "breif"])?;
+    j.call(&["workflow", "input", &file, "unused"])?;
     for step in ["draft", "review"] {
         j.call(&[
             "workflow",
@@ -42,7 +43,7 @@ pub(super) fn author(j: &Journey) -> EvidenceResult<String> {
             step,
             "brief",
             "--run-input",
-            "brief",
+            "breif",
         ])?;
     }
     let before = fs::read(&file)?;
@@ -61,9 +62,46 @@ pub(super) fn author(j: &Journey) -> EvidenceResult<String> {
         "draft",
     ])?;
     j.call(&["workflow", "output", &file, "review", "--name", "notes"])?;
+    let original = j.call(&["workflow", "save", &file])?;
+    let original_revision = text(&original, "/value/revision_id")?;
+    let discovered = j.call(&["workflow", "list", "--limit", "1"])?;
+    ensure(
+        text(&discovered, "/value/items/0/revision_id")? == original_revision,
+        "named grant could not discover its saved workflow",
+    )?;
+    let file = j.file("edited.draft.json")?;
+    j.call(&[
+        "workflow",
+        "open",
+        &text(&discovered, "/value/items/0/revision_id")?,
+        "--file",
+        &file,
+    ])?;
+    j.call(&["workflow", "rename-input", &file, "breif", "brief"])?;
+    j.call(&["workflow", "remove-input", &file, "unused"])?;
+    j.call(&["workflow", "output-limit", &file, "review", "768"])?;
+    j.call(&["workflow", "clear-output", &file])?;
+    j.refuse(&["workflow", "save", &file])?;
+    j.call(&["workflow", "output", &file, "review", "--name", "notes"])?;
     j.call(&["workflow", "inspect", &file])?;
     let saved = j.call(&["workflow", "save", &file])?;
     let revision = text(&saved, "/value/revision_id")?;
+    let comparison = j.call(&["blueprint", "diff", &original_revision, &revision])?;
+    let changes = comparison
+        .pointer("/value/changes")
+        .and_then(Value::as_array)
+        .ok_or("diff changes absent")?;
+    ensure(
+        comparison.pointer("/value/truncated") == Some(&json!(false))
+            && changes
+                .iter()
+                .any(|change| change.get("subject") == Some(&json!("input")))
+            && changes
+                .iter()
+                .any(|change| change.get("subject") == Some(&json!("node"))),
+        "edited definition comparison omitted inputs or nodes",
+    )?;
+    j.retain("edited-comparison.json", &comparison)?;
     j.retain("saved-workflow.json", &saved)?;
     // Every CLI command is a separate client process; reopening never depends on client memory.
     let reopened = j.file("reopened.draft.json")?;
@@ -218,14 +256,7 @@ pub(super) fn replay_and_copy(j: &Journey, revision: &str) -> EvidenceResult {
         "harbor",
     ])?;
     let source = j.call(&["workflow", "show", revision])?;
-    j.call(&[
-        "workflow",
-        "list",
-        "--workflow",
-        "release-notes",
-        "--limit",
-        "32",
-    ])?;
+    j.call(&["workflow", "list", "--limit", "32"])?;
     let copied = j.file("copied.draft.json")?;
     j.call(&[
         "workflow",

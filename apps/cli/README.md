@@ -10,7 +10,7 @@ authentication, runs a small workflow, and shows process/model setup. The CLI us
 | Task | Command family |
 | --- | --- |
 | Check connectivity and your grant | `daemon readiness`, `health`, `authority` |
-| Author model steps, prompts and connections | `workflow new`, `models`, `add`, `prompt`, `connect`, `output`, `save`, `open` |
+| Author model steps, prompts and connections | `workflow new`, `models`, `add`, `prompt`, `connect`, `output`, `save`, `open`; `rename-input`, `remove-input`, `clear-output`, `output-limit` correct existing drafts |
 | Create and compare immutable definitions | `blueprint validate`, `import`, `show`, `export`, `list`, `diff` |
 | Turn implementation prompts into a workflow | `sequence validate`, `compile`, `import`, `show`, `status`, `stage`, `remediate` |
 | Start or control work | `run start --request-file FILE`, `reconnect FILE`, `pause`, `resume`, `cancel`, `signal` |
