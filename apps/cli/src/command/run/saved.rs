@@ -49,7 +49,7 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
                 session,
                 &saved.authority.host,
                 &saved.request.command_id,
-                "run-input",
+                super::super::input::UploadOperation::Run,
                 input,
                 &mut names,
             )

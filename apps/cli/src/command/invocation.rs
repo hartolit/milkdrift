@@ -97,7 +97,7 @@ pub(super) async fn execute(
                     session,
                     host,
                     request_id,
-                    "invocation-input",
+                    super::input::UploadOperation::Invocation,
                     input,
                     &mut names,
                 )

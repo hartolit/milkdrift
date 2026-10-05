@@ -50,6 +50,8 @@ mod reuse;
 mod roles;
 #[path = "control_plane/support.rs"]
 mod support;
+#[path = "control_plane/upload_identities.rs"]
+mod upload_identities;
 
 #[path = "control_plane/published.rs"]
 mod published;

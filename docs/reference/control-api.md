@@ -191,6 +191,14 @@ containing that authority and the complete command. Persist it privately before 
 `submit_saved_run` checks the current host/caller/grant and sends that exact command once; application
 receipts remain the sole execution replay owner. The CLI requires a new `--request-file` for start,
 supports `--input NAME=FILE` and `--prepare-only`, and recovers using `run reconnect FILE`.
+New CLI text uploads hash the JSON tuple `["milkdrift.cli.input.v2", operation, command_id,
+position, input_name]`. `operation` is `run-input` or `invocation-input`; these operations have
+separate namespaces, and positions count only the ordered `--input` arguments. JSON field
+boundaries preserve legal punctuation. The same preparation reuses its uploads; changed content
+under the same identity still conflicts. Saved run and invocation requests retain their exact
+artifact references, including references from the earlier delimiter-based encoding. Replaying
+or submitting a saved request does not regenerate upload IDs. An earlier committed upload can
+also be supplied explicitly through `--inputs` when recovering unfinished preparation.
 Start/reconnect `--wait` requires an explicit overall deadline and emits the recoverable identity
 before observation. JSON mode emits one nonfinal `run.prepared` record and one final result/error;
 without waiting, acceptance remains a single final response. Timeout/exit stops the observer;
