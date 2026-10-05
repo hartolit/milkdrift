@@ -149,6 +149,33 @@ async fn final_model_review_repair_preserves_history_context_and_approval_guards
         .as_str()
         .ok_or("proposal digest")?
         .to_owned();
+    let proposed_document = daemon
+        .client
+        .revision(&proposed)
+        .await?
+        .document
+        .ok_or("proposed document")?;
+    let (_, proposed_definition) =
+        BlueprintRevisionDocument::from_json(&serde_json::to_vec(&proposed_document)?)?;
+    for edge in proposed_definition
+        .semantic()
+        .edges()
+        .values()
+        .filter(|edge| edge.target_node().as_str() == "author.repair.done")
+    {
+        let encoded = match edge.kind() {
+            EdgeKind::Data => {
+                r#"["milkdrift.author.edge.v2","data","repair","final_text","author.repair.done","notes"]"#
+            }
+            EdgeKind::Control => {
+                r#"["milkdrift.author.edge.v2","control","author.repair.gate","pass","author.repair.done","in"]"#
+            }
+        };
+        assert_eq!(
+            edge.id().as_str(),
+            format!("author.{}", blake3::hash(encoded.as_bytes()))
+        );
+    }
     assert_eq!(
         submitted
             .pointer("/applied")

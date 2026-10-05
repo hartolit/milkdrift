@@ -5,8 +5,12 @@ use milkdrift_control_protocol::{
 };
 use serde_json::json;
 
+#[path = "authoring/edge_identities.rs"]
+mod edge_identities;
 #[path = "authoring/input_edits.rs"]
 mod input_edits;
+#[path = "authoring/legacy.rs"]
+mod legacy;
 #[path = "authoring/output_edits.rs"]
 mod output_edits;
 

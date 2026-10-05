@@ -213,6 +213,13 @@ selects only `final_text`. `add_model` requires explicit `maximum_output_units`.
 step uses the existing `ModelProse` acceptance gate. The editor refuses definitions outside its
 exact supported shape; `construct_blueprint` remains available for explicit rich mutations.
 
+Legal colon-bearing names retain their spelling through connections and invocation inputs. The
+daemon assigns framed identities to new connections and preserves validated IDs of unchanged
+connections from saved editor definitions. Old and current IDs may coexist in an edited child;
+opening or saving without changes preserves the original revision. Recognition still compares
+every semantic field. [ADR 0050](../decisions/0050-editor-edge-identities.md) owns the encoding and
+narrow compatibility rule.
+
 Replies contain `draft`, `revision_id`, the canonical `document`, and an editor `workflow` view.
 Saving clears pending mutations and advances the returned base. An unchanged save retains the
 same revision. Neither command starts work or adopts a revision into an existing run. The model

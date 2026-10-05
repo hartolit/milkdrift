@@ -13,6 +13,7 @@ use serde_json::json;
 use super::super::{ActorSession, Owner, PublicFailure, invalid, public_persistence};
 use super::definitions::authorize_definition;
 
+mod edge_identity;
 mod edits;
 mod graph;
 mod repair;

@@ -1,0 +1,906 @@
+{
+  "revision": {
+    "author": "human:integration-controller",
+    "content_digest": "b3_22ef6c2e01d1c7a00a92d6a987431d7c01afd320ae0f8093fad1e30990d5ebc8",
+    "id": "rev_1ea128cd02e5808b28d8028faf51b5e46941111ae9dedfc68d55b83588784fde",
+    "parents": [],
+    "reason": "deterministic daemon integration test",
+    "semantic": {
+      "agreement": null,
+      "blueprint": "release-notes",
+      "edges": {
+        "author.03638ad0f45bb2d7d6e960e1ebb2b3f20fe4bfbead5bd469023236dcbfc472d6": {
+          "id": "author.03638ad0f45bb2d7d6e960e1ebb2b3f20fe4bfbead5bd469023236dcbfc472d6",
+          "kind": "data",
+          "source_node": "draft",
+          "source_port": "model_response",
+          "target_node": "author.draft.accept",
+          "target_port": "result"
+        },
+        "author.3360752dda7e49f5e3ba0cf2d567bd5485f99b6247fbae0611f8bb5865cd4994": {
+          "id": "author.3360752dda7e49f5e3ba0cf2d567bd5485f99b6247fbae0611f8bb5865cd4994",
+          "kind": "control",
+          "source_node": "review",
+          "source_port": "out",
+          "target_node": "author.review.accept",
+          "target_port": "in"
+        },
+        "author.36ce4ac476eb596f6fd79fb8025c819a9108391f35a0260e5e813a4a6bc455ef": {
+          "id": "author.36ce4ac476eb596f6fd79fb8025c819a9108391f35a0260e5e813a4a6bc455ef",
+          "kind": "control",
+          "source_node": "author.review.accept",
+          "source_port": "out",
+          "target_node": "author.review.gate",
+          "target_port": "in"
+        },
+        "author.41eaa306945d0dd1473dad2e8610622a4e9c35f7977a8856a7e5ab34199d9370": {
+          "id": "author.41eaa306945d0dd1473dad2e8610622a4e9c35f7977a8856a7e5ab34199d9370",
+          "kind": "control",
+          "source_node": "author.draft.hold",
+          "source_port": "out",
+          "target_node": "author.draft.failed",
+          "target_port": "in"
+        },
+        "author.5e31a8f0deb85ffdcd1b97dbcd52cdd4a64ce3b6436b6f8773c5e91757f279b4": {
+          "id": "author.5e31a8f0deb85ffdcd1b97dbcd52cdd4a64ce3b6436b6f8773c5e91757f279b4",
+          "kind": "data",
+          "source_node": "author.review.accept",
+          "source_port": "accepted_result",
+          "target_node": "author.review.gate",
+          "target_port": "accepted_result"
+        },
+        "author.70d29699ed67cb6fd69a89f883bce0812dc9a3f63de246cf9260020ce613048b": {
+          "id": "author.70d29699ed67cb6fd69a89f883bce0812dc9a3f63de246cf9260020ce613048b",
+          "kind": "control",
+          "source_node": "draft",
+          "source_port": "out",
+          "target_node": "author.draft.accept",
+          "target_port": "in"
+        },
+        "author.77385271da1442df1f85b885977ddc44f0625aede2bd0d2307619184e524f2ee": {
+          "id": "author.77385271da1442df1f85b885977ddc44f0625aede2bd0d2307619184e524f2ee",
+          "kind": "control",
+          "source_node": "author.draft.gate",
+          "source_port": "fail",
+          "target_node": "author.draft.hold",
+          "target_port": "in"
+        },
+        "author.86246e666673502d062344de2cd719619028883f83c7aaa6cb9900f039abfa05": {
+          "id": "author.86246e666673502d062344de2cd719619028883f83c7aaa6cb9900f039abfa05",
+          "kind": "data",
+          "source_node": "draft",
+          "source_port": "final_text",
+          "target_node": "review",
+          "target_port": "draft"
+        },
+        "author.86a44c8a712dd3c6b8e5f32541d2566dc6913a18d46e88227e7d807af0bc814d": {
+          "id": "author.86a44c8a712dd3c6b8e5f32541d2566dc6913a18d46e88227e7d807af0bc814d",
+          "kind": "control",
+          "source_node": "author.draft.accept",
+          "source_port": "out",
+          "target_node": "author.draft.gate",
+          "target_port": "in"
+        },
+        "author.92dd0472fb26556dce4bbd9c94a0f5795eb714cc8372dc3a05d97dc856ef2f3c": {
+          "id": "author.92dd0472fb26556dce4bbd9c94a0f5795eb714cc8372dc3a05d97dc856ef2f3c",
+          "kind": "control",
+          "source_node": "author.review.hold",
+          "source_port": "out",
+          "target_node": "author.review.failed",
+          "target_port": "in"
+        },
+        "author.a15a91fe692d05ff88af9b886c70a3133a78560887d0d93e0974328619553d82": {
+          "id": "author.a15a91fe692d05ff88af9b886c70a3133a78560887d0d93e0974328619553d82",
+          "kind": "control",
+          "source_node": "author.review.gate",
+          "source_port": "pass",
+          "target_node": "author.done",
+          "target_port": "in"
+        },
+        "author.a74cb45fe783d2f5999c4bf8884d5c6dab35c01c46e95e383a1c6971bb0e9e82": {
+          "id": "author.a74cb45fe783d2f5999c4bf8884d5c6dab35c01c46e95e383a1c6971bb0e9e82",
+          "kind": "data",
+          "source_node": "review",
+          "source_port": "model_response",
+          "target_node": "author.review.accept",
+          "target_port": "result"
+        },
+        "author.c2a577e0e7cb0dfbb7fd88dff3319ed41013cdfc42e9c274515cc72f09ac9179": {
+          "id": "author.c2a577e0e7cb0dfbb7fd88dff3319ed41013cdfc42e9c274515cc72f09ac9179",
+          "kind": "data",
+          "source_node": "author.draft.accept",
+          "source_port": "accepted_result",
+          "target_node": "author.draft.gate",
+          "target_port": "accepted_result"
+        },
+        "author.c601245e17f07029f2bad4c1af9e6fcdd1e8f566fe6feed08f3e3e7e468c4f9f": {
+          "id": "author.c601245e17f07029f2bad4c1af9e6fcdd1e8f566fe6feed08f3e3e7e468c4f9f",
+          "kind": "data",
+          "source_node": "review",
+          "source_port": "final_text",
+          "target_node": "author.done",
+          "target_port": "notes"
+        },
+        "author.cda8382304cfd70dc1dffb33fb1237da267211d2218df0e2670b49ead197031d": {
+          "id": "author.cda8382304cfd70dc1dffb33fb1237da267211d2218df0e2670b49ead197031d",
+          "kind": "control",
+          "source_node": "author.review.gate",
+          "source_port": "fail",
+          "target_node": "author.review.hold",
+          "target_port": "in"
+        },
+        "author.e3deb0aa921319d0498d943ce7db17e360c97042109172a1dcffa0a6ee66b684": {
+          "id": "author.e3deb0aa921319d0498d943ce7db17e360c97042109172a1dcffa0a6ee66b684",
+          "kind": "control",
+          "source_node": "author.draft.gate",
+          "source_port": "pass",
+          "target_node": "review",
+          "target_port": "in"
+        }
+      },
+      "interface": {
+        "inputs": {
+          "brief": {
+            "required": true,
+            "schema": {
+              "id": "milkdrift.artifact-reference",
+              "version": 1
+            }
+          }
+        },
+        "outputs": {
+          "notes": {
+            "required": true,
+            "schema": {
+              "id": "milkdrift.artifact-reference",
+              "version": 1
+            }
+          }
+        }
+      },
+      "metadata": {
+        "description": "",
+        "extensions": {},
+        "labels": [],
+        "name": "release-notes"
+      },
+      "nodes": {
+        "author.done": {
+          "control_inputs": [
+            "in"
+          ],
+          "control_outputs": [],
+          "data_inputs": {
+            "notes": {
+              "binding": {
+                "node": "review",
+                "path": [],
+                "port": "final_text",
+                "type": "node_output"
+              },
+              "direction": "Input",
+              "required": true,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            }
+          },
+          "data_outputs": {},
+          "id": "author.done",
+          "kind": {
+            "outcome": "success",
+            "type": "terminal"
+          }
+        },
+        "author.draft.accept": {
+          "control_inputs": [
+            "in"
+          ],
+          "control_outputs": [
+            "out"
+          ],
+          "data_inputs": {
+            "milkdrift.acceptance": {
+              "binding": {
+                "type": "literal",
+                "value": {
+                  "evidence_inputs": [],
+                  "requirement": {
+                    "type": "model_prose"
+                  },
+                  "schema_version": 1
+                }
+              },
+              "direction": "Input",
+              "required": true,
+              "schema": {
+                "id": "milkdrift.result_acceptance",
+                "version": 1
+              }
+            },
+            "result": {
+              "binding": null,
+              "direction": "Input",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            }
+          },
+          "data_outputs": {
+            "acceptance_result": {
+              "binding": null,
+              "direction": "Output",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            },
+            "accepted_result": {
+              "binding": null,
+              "direction": "Output",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            }
+          },
+          "id": "author.draft.accept",
+          "kind": {
+            "config": {
+              "context_policy": {
+                "ancestor_depth": null,
+                "artifact_selector": null,
+                "budget": {
+                  "max_artifact_bytes": 16777216,
+                  "max_bytes": 262144,
+                  "max_items": 64,
+                  "max_model_input_units": null
+                },
+                "exclude_categories": [
+                  "raw_progress",
+                  "tool_trace",
+                  "verbose_command_output",
+                  "prior_prompt"
+                ],
+                "fail_closed": true,
+                "include_categories": [
+                  "direct_input"
+                ],
+                "include_direct_inputs": true,
+                "ordering": "causal_kind_source",
+                "selected_nodes": [],
+                "selected_roles": [],
+                "session": "fresh",
+                "truncation": "omit_oversized"
+              },
+              "requirement": {
+                "cancellation_required": false,
+                "categories": [
+                  {
+                    "identity": "workflow.control",
+                    "type": "custom"
+                  }
+                ],
+                "exact_capability": "milkdrift-workflow-control",
+                "execution_trust": "unspecified",
+                "maximum_side_effect": "read_only",
+                "operation": "workflow.accept_result",
+                "placement": {
+                  "localities": [
+                    "local"
+                  ]
+                },
+                "provider_profile": null,
+                "required_features": [],
+                "streaming": null,
+                "trust_zones": [
+                  "milkdrift-control"
+                ]
+              }
+            },
+            "type": "task"
+          }
+        },
+        "author.draft.failed": {
+          "control_inputs": [
+            "in"
+          ],
+          "control_outputs": [],
+          "data_inputs": {},
+          "data_outputs": {},
+          "id": "author.draft.failed",
+          "kind": {
+            "outcome": "failure",
+            "type": "terminal"
+          }
+        },
+        "author.draft.gate": {
+          "control_inputs": [
+            "in"
+          ],
+          "control_outputs": [
+            "fail",
+            "pass"
+          ],
+          "data_inputs": {
+            "accepted_result": {
+              "binding": {
+                "node": "author.draft.accept",
+                "path": [],
+                "port": "accepted_result",
+                "type": "node_output"
+              },
+              "direction": "Input",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            }
+          },
+          "data_outputs": {},
+          "id": "author.draft.gate",
+          "kind": {
+            "config": {
+              "arms": {
+                "pass": {
+                  "source": {
+                    "node": "author.draft.accept",
+                    "path": [],
+                    "port": "accepted_result",
+                    "type": "node_output"
+                  },
+                  "type": "exists"
+                }
+              },
+              "fallback": "fail"
+            },
+            "type": "branch"
+          }
+        },
+        "author.draft.hold": {
+          "control_inputs": [
+            "in"
+          ],
+          "control_outputs": [
+            "out"
+          ],
+          "data_inputs": {},
+          "data_outputs": {},
+          "id": "author.draft.hold",
+          "kind": {
+            "signal": "workflow.reviewed",
+            "type": "signal_wait"
+          }
+        },
+        "author.review.accept": {
+          "control_inputs": [
+            "in"
+          ],
+          "control_outputs": [
+            "out"
+          ],
+          "data_inputs": {
+            "milkdrift.acceptance": {
+              "binding": {
+                "type": "literal",
+                "value": {
+                  "evidence_inputs": [],
+                  "requirement": {
+                    "type": "model_prose"
+                  },
+                  "schema_version": 1
+                }
+              },
+              "direction": "Input",
+              "required": true,
+              "schema": {
+                "id": "milkdrift.result_acceptance",
+                "version": 1
+              }
+            },
+            "result": {
+              "binding": null,
+              "direction": "Input",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            }
+          },
+          "data_outputs": {
+            "acceptance_result": {
+              "binding": null,
+              "direction": "Output",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            },
+            "accepted_result": {
+              "binding": null,
+              "direction": "Output",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            }
+          },
+          "id": "author.review.accept",
+          "kind": {
+            "config": {
+              "context_policy": {
+                "ancestor_depth": null,
+                "artifact_selector": null,
+                "budget": {
+                  "max_artifact_bytes": 16777216,
+                  "max_bytes": 262144,
+                  "max_items": 64,
+                  "max_model_input_units": null
+                },
+                "exclude_categories": [
+                  "raw_progress",
+                  "tool_trace",
+                  "verbose_command_output",
+                  "prior_prompt"
+                ],
+                "fail_closed": true,
+                "include_categories": [
+                  "direct_input"
+                ],
+                "include_direct_inputs": true,
+                "ordering": "causal_kind_source",
+                "selected_nodes": [],
+                "selected_roles": [],
+                "session": "fresh",
+                "truncation": "omit_oversized"
+              },
+              "requirement": {
+                "cancellation_required": false,
+                "categories": [
+                  {
+                    "identity": "workflow.control",
+                    "type": "custom"
+                  }
+                ],
+                "exact_capability": "milkdrift-workflow-control",
+                "execution_trust": "unspecified",
+                "maximum_side_effect": "read_only",
+                "operation": "workflow.accept_result",
+                "placement": {
+                  "localities": [
+                    "local"
+                  ]
+                },
+                "provider_profile": null,
+                "required_features": [],
+                "streaming": null,
+                "trust_zones": [
+                  "milkdrift-control"
+                ]
+              }
+            },
+            "type": "task"
+          }
+        },
+        "author.review.failed": {
+          "control_inputs": [
+            "in"
+          ],
+          "control_outputs": [],
+          "data_inputs": {},
+          "data_outputs": {},
+          "id": "author.review.failed",
+          "kind": {
+            "outcome": "failure",
+            "type": "terminal"
+          }
+        },
+        "author.review.gate": {
+          "control_inputs": [
+            "in"
+          ],
+          "control_outputs": [
+            "fail",
+            "pass"
+          ],
+          "data_inputs": {
+            "accepted_result": {
+              "binding": {
+                "node": "author.review.accept",
+                "path": [],
+                "port": "accepted_result",
+                "type": "node_output"
+              },
+              "direction": "Input",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            }
+          },
+          "data_outputs": {},
+          "id": "author.review.gate",
+          "kind": {
+            "config": {
+              "arms": {
+                "pass": {
+                  "source": {
+                    "node": "author.review.accept",
+                    "path": [],
+                    "port": "accepted_result",
+                    "type": "node_output"
+                  },
+                  "type": "exists"
+                }
+              },
+              "fallback": "fail"
+            },
+            "type": "branch"
+          }
+        },
+        "author.review.hold": {
+          "control_inputs": [
+            "in"
+          ],
+          "control_outputs": [
+            "out"
+          ],
+          "data_inputs": {},
+          "data_outputs": {},
+          "id": "author.review.hold",
+          "kind": {
+            "signal": "workflow.reviewed",
+            "type": "signal_wait"
+          }
+        },
+        "draft": {
+          "control_inputs": [],
+          "control_outputs": [
+            "out"
+          ],
+          "data_inputs": {
+            "brief": {
+              "binding": {
+                "field": "brief",
+                "type": "workflow_input"
+              },
+              "direction": "Input",
+              "required": true,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            },
+            "milkdrift.model_task": {
+              "binding": {
+                "type": "literal",
+                "value": {
+                  "request": {
+                    "extensions": {},
+                    "maximum_output_units": 512,
+                    "messages": [
+                      {
+                        "parts": [
+                          {
+                            "text": "Draft release notes from the brief.",
+                            "type": "text"
+                          }
+                        ],
+                        "role": "user",
+                        "tool_call_id": null
+                      }
+                    ],
+                    "reasoning": null,
+                    "session": {
+                      "type": "fresh"
+                    },
+                    "streaming": false,
+                    "structured_output": null,
+                    "tools": []
+                  },
+                  "schema_version": 1
+                }
+              },
+              "direction": "Input",
+              "required": true,
+              "schema": {
+                "id": "milkdrift.model-task",
+                "version": 1
+              }
+            }
+          },
+          "data_outputs": {
+            "final_text": {
+              "binding": null,
+              "direction": "Output",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            },
+            "model_response": {
+              "binding": null,
+              "direction": "Output",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            },
+            "provider_metadata": {
+              "binding": null,
+              "direction": "Output",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            },
+            "structured_output": {
+              "binding": null,
+              "direction": "Output",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            },
+            "tool_calls": {
+              "binding": null,
+              "direction": "Output",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            }
+          },
+          "id": "draft",
+          "kind": {
+            "config": {
+              "context_policy": {
+                "ancestor_depth": null,
+                "artifact_selector": null,
+                "budget": {
+                  "max_artifact_bytes": 16777216,
+                  "max_bytes": 262144,
+                  "max_items": 64,
+                  "max_model_input_units": null
+                },
+                "exclude_categories": [
+                  "raw_progress",
+                  "tool_trace",
+                  "verbose_command_output",
+                  "prior_prompt"
+                ],
+                "fail_closed": true,
+                "include_categories": [
+                  "direct_input"
+                ],
+                "include_direct_inputs": true,
+                "ordering": "causal_kind_source",
+                "selected_nodes": [],
+                "selected_roles": [],
+                "session": "fresh",
+                "truncation": "omit_oversized"
+              },
+              "requirement": {
+                "cancellation_required": false,
+                "categories": [
+                  {
+                    "type": "model"
+                  }
+                ],
+                "exact_capability": "writing-model",
+                "execution_trust": "unspecified",
+                "maximum_side_effect": "unknown",
+                "operation": "model.generate",
+                "placement": {
+                  "localities": [
+                    "local"
+                  ]
+                },
+                "provider_profile": "writing-profile",
+                "required_features": [],
+                "streaming": null,
+                "trust_zones": [
+                  "test"
+                ]
+              }
+            },
+            "type": "task"
+          }
+        },
+        "review": {
+          "control_inputs": [
+            "in"
+          ],
+          "control_outputs": [
+            "out"
+          ],
+          "data_inputs": {
+            "brief": {
+              "binding": {
+                "field": "brief",
+                "type": "workflow_input"
+              },
+              "direction": "Input",
+              "required": true,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            },
+            "draft": {
+              "binding": {
+                "node": "draft",
+                "path": [],
+                "port": "final_text",
+                "type": "node_output"
+              },
+              "direction": "Input",
+              "required": true,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            },
+            "milkdrift.model_task": {
+              "binding": {
+                "type": "literal",
+                "value": {
+                  "request": {
+                    "extensions": {},
+                    "maximum_output_units": 512,
+                    "messages": [
+                      {
+                        "parts": [
+                          {
+                            "text": "Review the draft against the original brief.",
+                            "type": "text"
+                          }
+                        ],
+                        "role": "user",
+                        "tool_call_id": null
+                      }
+                    ],
+                    "reasoning": null,
+                    "session": {
+                      "type": "fresh"
+                    },
+                    "streaming": false,
+                    "structured_output": null,
+                    "tools": []
+                  },
+                  "schema_version": 1
+                }
+              },
+              "direction": "Input",
+              "required": true,
+              "schema": {
+                "id": "milkdrift.model-task",
+                "version": 1
+              }
+            }
+          },
+          "data_outputs": {
+            "final_text": {
+              "binding": null,
+              "direction": "Output",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            },
+            "model_response": {
+              "binding": null,
+              "direction": "Output",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            },
+            "provider_metadata": {
+              "binding": null,
+              "direction": "Output",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            },
+            "structured_output": {
+              "binding": null,
+              "direction": "Output",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            },
+            "tool_calls": {
+              "binding": null,
+              "direction": "Output",
+              "required": false,
+              "schema": {
+                "id": "milkdrift.artifact-reference",
+                "version": 1
+              }
+            }
+          },
+          "id": "review",
+          "kind": {
+            "config": {
+              "context_policy": {
+                "ancestor_depth": null,
+                "artifact_selector": null,
+                "budget": {
+                  "max_artifact_bytes": 16777216,
+                  "max_bytes": 262144,
+                  "max_items": 64,
+                  "max_model_input_units": null
+                },
+                "exclude_categories": [
+                  "raw_progress",
+                  "tool_trace",
+                  "verbose_command_output",
+                  "prior_prompt"
+                ],
+                "fail_closed": true,
+                "include_categories": [
+                  "direct_input"
+                ],
+                "include_direct_inputs": true,
+                "ordering": "causal_kind_source",
+                "selected_nodes": [],
+                "selected_roles": [],
+                "session": "fresh",
+                "truncation": "omit_oversized"
+              },
+              "requirement": {
+                "cancellation_required": false,
+                "categories": [
+                  {
+                    "type": "model"
+                  }
+                ],
+                "exact_capability": "writing-model",
+                "execution_trust": "unspecified",
+                "maximum_side_effect": "unknown",
+                "operation": "model.generate",
+                "placement": {
+                  "localities": [
+                    "local"
+                  ]
+                },
+                "provider_profile": "writing-profile",
+                "required_features": [],
+                "streaming": null,
+                "trust_zones": [
+                  "test"
+                ]
+              }
+            },
+            "type": "task"
+          }
+        }
+      },
+      "workflow": "release-notes"
+    },
+    "sequence": 1
+  },
+  "schema_version": 3
+}

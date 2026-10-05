@@ -242,7 +242,7 @@ milkdrift_contracts::deserialize_via!(InputReference, InputReferenceWire, |wire|
 });
 
 impl InputReference {
-    /// Constructs a bounded named input.
+    /// Constructs a bounded named input, preserving blueprint port names including colons.
     ///
     /// # Errors
     /// Rejects an empty, oversized or unsafe ASCII name, or an invalid value reference.
@@ -250,20 +250,12 @@ impl InputReference {
         name: impl Into<String>,
         value: InvocationValueReference,
     ) -> Result<Self, ContractError> {
-        let name = name.into();
-        if name.is_empty()
-            || name.len() > MAX_INPUT_NAME
-            || !name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
-        {
-            return Err(ContractError::Bounds {
-                location: "input.name".to_owned(),
-                reason: format!("must contain 1 to {MAX_INPUT_NAME} safe ASCII bytes"),
-            });
-        }
-        value.validate()?;
-        Ok(Self { name, value })
+        let input = Self {
+            name: name.into(),
+            value,
+        };
+        input.validate()?;
+        Ok(input)
     }
 
     /// Returns the input name.
@@ -281,10 +273,9 @@ impl InputReference {
     fn validate(&self) -> Result<(), ContractError> {
         if self.name.is_empty()
             || self.name.len() > MAX_INPUT_NAME
-            || !self
-                .name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+            || !self.name.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
+            })
         {
             return Err(ContractError::Bounds {
                 location: "input.name".to_owned(),

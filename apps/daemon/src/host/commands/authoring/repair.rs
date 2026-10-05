@@ -6,8 +6,8 @@ use super::{
 };
 use milkdrift_authority::AuthorityOperation;
 use milkdrift_blueprint::{
-    AuthorRef, BindingSource, BlueprintRevision, BlueprintRevisionDocument, DataPort, Edge,
-    EdgeKind, Mutation, MutationBatch, NodeId, PathSelector, PortId,
+    AuthorRef, BindingSource, BlueprintRevision, BlueprintRevisionDocument, DataPort, EdgeKind,
+    Mutation, MutationBatch, NodeId, PathSelector, PortId,
 };
 use milkdrift_control::{
     ClaimedStopCondition, ProposalApplicationPolicy, ProposalId, ProposalProvenance,
@@ -223,18 +223,18 @@ fn build(
     }
     let mut edges = vec![];
     for edge in generated.semantic().edges().values() {
-        edges.push(Edge::new(
-            edge.id().clone(),
+        add_edge(
+            &mut edges,
             edge.kind(),
-            edge.source_node().clone(),
-            edge.source_port().clone(),
+            edge.source_node().as_str(),
+            edge.source_port().as_str(),
             if edge.target_node().as_str() == "author.done" {
-                done.clone()
+                done.as_str()
             } else {
-                edge.target_node().clone()
+                edge.target_node().as_str()
             },
-            edge.target_port().clone(),
-        ));
+            edge.target_port().as_str(),
+        )?;
     }
     add_edge(
         &mut edges,

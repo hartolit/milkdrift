@@ -32,6 +32,7 @@ pub(super) struct ModelWorkflow {
     pub(super) inputs: BTreeSet<String>,
     pub(super) steps: Vec<Step>,
     pub(super) output: Option<(String, String)>,
+    retained_edge_ids: BTreeMap<EdgeId, EdgeId>,
 }
 
 pub(super) fn checked_name(name: &str) -> BuildResult<()> {
@@ -65,12 +66,14 @@ impl ModelWorkflow {
             inputs: BTreeSet::new(),
             steps: vec![],
             output: None,
+            retained_edge_ids: BTreeMap::new(),
         }
     }
 
     pub(super) fn read(revision: &BlueprintRevision) -> BuildResult<Self> {
         let semantic = revision.semantic();
         let mut result = Self::empty(semantic.workflow().as_str());
+        result.retained_edge_ids = super::edge_identity::recognize(semantic.edges().values())?;
         result.name = semantic.metadata().name().to_owned();
         result.inputs = semantic
             .interface()
@@ -345,7 +348,25 @@ impl ModelWorkflow {
             },
         ];
         mutations.extend(nodes.into_iter().map(|node| Mutation::AddNode { node }));
-        mutations.extend(edges.into_iter().map(|edge| Mutation::AddEdge { edge }));
+        mutations.extend(edges.into_iter().map(|edge| {
+            // Retained identities are validated from exact endpoints before reconstruction.
+            // Keeping an unchanged connection avoids hidden no-op migrations and needlessly
+            // exhausting the mutation bound when editing a large old definition.
+            let edge = self.retained_edge_ids.get(edge.id()).map_or_else(
+                || edge.clone(),
+                |id| {
+                    Edge::new(
+                        id.clone(),
+                        edge.kind(),
+                        edge.source_node().clone(),
+                        edge.source_port().clone(),
+                        edge.target_node().clone(),
+                        edge.target_port().clone(),
+                    )
+                },
+            );
+            Mutation::AddEdge { edge }
+        }));
         Ok(BlueprintRevision::genesis(
             workflow,
             MutationBatch::new(mutations)?,
@@ -384,13 +405,8 @@ pub(super) fn add_edge(
     target: &str,
     input: &str,
 ) -> BuildResult<()> {
-    // Edge IDs are implementation details returned with ordinary mutations, never client hashes.
-    let id = format!(
-        "author.{}",
-        blake3::hash(format!("{kind:?}:{source}:{port}:{target}:{input}").as_bytes())
-    );
     edges.push(Edge::new(
-        EdgeId::new(id)?,
+        super::edge_identity::current(kind, source, port, target, input)?,
         kind,
         NodeId::new(source)?,
         PortId::new(port)?,

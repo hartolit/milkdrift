@@ -32,6 +32,10 @@ clients can submit existing mutations through `construct_blueprint`; it validate
 candidate without restricting it to the model editor's shape. Offline `blueprint create` and
 `govern` remain for the existing governed-method bootstrap before a daemon is configured.
 
+[ADR 0050](0050-editor-edge-identities.md) defines framed identities for new connections and exact
+recognition of retained IDs. Unchanged connections preserve their IDs; this keeps old workflows
+editable and no-op saves unchanged without weakening the full semantic comparison.
+
 The CLI draft format is version 1. It stores only the base and mutations, with strict bounded
 reading. Edits hold an OS file lock, check unchanged bytes, and publish a synced temporary file
 by atomic replacement. Create/open refuses an existing destination. An optional edit token guards

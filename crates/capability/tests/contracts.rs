@@ -114,7 +114,7 @@ fn immutable_description_and_mutable_observation_are_distinct()
 #[test]
 fn invocation_inputs_are_references_or_bounded_values() -> Result<(), Box<dyn std::error::Error>> {
     let input = InputReference::new(
-        "prompt",
+        "x:brief",
         InvocationValueReference::Inline {
             value: BoundedJson::new(json!({"text": "hello"}))?,
         },
@@ -131,6 +131,27 @@ fn invocation_inputs_are_references_or_bounded_values() -> Result<(), Box<dyn st
     let document = InvocationRequestDocument::new(request);
     let bytes = document.to_canonical_json()?;
     assert_eq!(InvocationRequestDocument::from_json(&bytes)?, document);
+    assert_eq!(
+        document.body().inputs().first().ok_or("input")?.name(),
+        "x:brief"
+    );
+    for name in [
+        "",
+        "with space",
+        "bad/name",
+        "bad\\name",
+        "brief\n",
+        "bríef",
+        &"x".repeat(129),
+    ] {
+        let value = InvocationValueReference::Inline {
+            value: BoundedJson::new(json!("value"))?,
+        };
+        assert!(InputReference::new(name, value.clone()).is_err());
+        assert!(
+            serde_json::from_value::<InputReference>(json!({"name":name,"value":value})).is_err()
+        );
+    }
     Ok(())
 }
 

@@ -59,3 +59,4 @@ verify it; these decisions do not change current readers, configuration options 
 - [0044 — Public workflow authoring over existing mutations](0044-public-workflow-authoring.md)
 - [0045 — Supplied run inputs and exact client recovery](0045-supplied-run-inputs-and-recovery.md)
 - [0049 — Discover revisions within the authorized workflow collection](0049-authorized-workflow-discovery.md)
+- [0050 — Framed editor edge identities and retained connections](0050-editor-edge-identities.md)
