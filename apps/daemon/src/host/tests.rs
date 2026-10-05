@@ -17,6 +17,8 @@ use crate::config::{
 };
 use milkdrift_control_protocol::TimelineCategory;
 
+mod artifact_visibility;
+
 struct ControlledDaemonClock(AtomicU64);
 
 impl ControlledDaemonClock {

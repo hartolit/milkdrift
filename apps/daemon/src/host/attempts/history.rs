@@ -12,7 +12,7 @@ use super::{LocatedAttempt, Owner};
 use crate::host::{
     PublicFailure, corruption, empty_attempt_read, invalid, not_found, public_attempt_usage,
     public_authority_decision, public_capability_provenance, public_execution_authority,
-    public_invocation_artifact, public_operation_contract, public_persistence, snake_debug,
+    public_operation_contract, public_persistence, snake_debug,
 };
 
 #[cfg(test)]
@@ -27,6 +27,15 @@ struct HistoricalAttemptState {
     remediation: Option<(ReconciliationPlanId, String)>,
     retry_timer: Option<TimerId>,
     located: Option<LocatedAttempt>,
+    context_manifest: Option<milkdrift_capability::ArtifactReference>,
+    outputs: Vec<HistoricalOutput>,
+}
+
+struct HistoricalOutput {
+    name: String,
+    report_sequence: u64,
+    publication_sequence: u64,
+    artifact: milkdrift_workspace::ArtifactReference,
 }
 
 impl HistoricalAttemptState {
@@ -40,6 +49,8 @@ impl HistoricalAttemptState {
             remediation: None,
             retry_timer: None,
             located: None,
+            context_manifest: None,
+            outputs: Vec::new(),
         }
     }
 
@@ -126,12 +137,7 @@ impl HistoricalAttemptState {
                 let mut value = empty_attempt_read(self.attempt.as_str(), "scheduled");
                 value.execution_authority = self.execution_authority.clone();
                 value.invocation_id = Some(invocation.as_str().to_owned());
-                value.context_manifest = request.context_manifest().map(public_invocation_artifact);
-                value.context_access = if value.context_manifest.is_some() {
-                    "metadata_only".to_owned()
-                } else {
-                    "absent".to_owned()
-                };
+                self.context_manifest = request.context_manifest().cloned();
                 self.located = Some(LocatedAttempt {
                     node_id: node.as_str().to_owned(),
                     revision_id,
@@ -248,22 +254,13 @@ impl HistoricalAttemptState {
                 value,
                 artifact: Some(artifact),
                 ..
-            } if attempt == &self.attempt => {
-                if let Some(located) = self.located.as_mut() {
-                    located.value.outputs.push(AttemptOutputRead {
-                        name: value.key().as_str().to_owned(),
-                        report_sequence: Some(*report_sequence),
-                        publication_sequence: event_sequence,
-                        artifact: ArtifactMetadataRead {
-                            artifact_id: artifact.artifact().as_str().to_owned(),
-                            digest: artifact.digest().to_hex(),
-                            size: artifact.size_bytes(),
-                            content_type: artifact.media_type().as_str().to_owned(),
-                            disposition_name: None,
-                            sensitivity: "restricted".to_owned(),
-                        },
-                    });
-                }
+            } if attempt == &self.attempt && self.located.is_some() => {
+                self.outputs.push(HistoricalOutput {
+                    name: value.key().as_str().to_owned(),
+                    report_sequence: *report_sequence,
+                    publication_sequence: event_sequence,
+                    artifact: artifact.clone(),
+                });
             }
             RunEventKind::NodeTerminal {
                 attempt,
@@ -295,14 +292,38 @@ impl HistoricalAttemptState {
         Ok(())
     }
 
-    fn finish(self) -> Result<LocatedAttempt, PublicFailure> {
-        self.located.ok_or_else(not_found)
+    fn finish(
+        self,
+        mut metadata: impl FnMut(&str) -> Result<Option<ArtifactMetadataRead>, PublicFailure>,
+    ) -> Result<LocatedAttempt, PublicFailure> {
+        let mut located = self.located.ok_or_else(not_found)?;
+        if let Some(reference) = self.context_manifest {
+            located.value.context_manifest = metadata(reference.identity())?;
+            located.value.context_access = if located.value.context_manifest.is_some() {
+                "metadata_only"
+            } else {
+                "denied"
+            }
+            .to_owned();
+        }
+        for output in self.outputs {
+            if let Some(artifact) = metadata(output.artifact.artifact().as_str())? {
+                located.value.outputs.push(AttemptOutputRead {
+                    name: output.name,
+                    report_sequence: Some(output.report_sequence),
+                    publication_sequence: output.publication_sequence,
+                    artifact,
+                });
+            }
+        }
+        Ok(located)
     }
 }
 
 impl Owner {
     pub(super) fn historical_attempt_read(
         &self,
+        session: &crate::auth::ActorSession,
         run: &str,
         attempt: &str,
     ) -> Result<LocatedAttempt, PublicFailure> {
@@ -390,7 +411,7 @@ impl Owner {
                 Ok(false)
             },
         )?;
-        state.finish()
+        state.finish(|artifact| self.visible_artifact_metadata(session, artifact))
     }
 }
 

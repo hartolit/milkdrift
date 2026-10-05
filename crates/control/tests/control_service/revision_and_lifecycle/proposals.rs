@@ -39,7 +39,7 @@ fn recovery_proposal_keeps_its_recorded_policy_after_normal_restart() -> TestRes
         )?,
     )?);
     recovery.enable_recovery_controls()?;
-    let service = ControlService::new(store.clone(), recovery.clone(), authority);
+    let service = ControlService::new(store.clone(), store.clone(), recovery.clone(), authority);
     let boundary = recovery.projection(&run)?.sequence();
     let proposal = WorkflowProposalDocument::new(WorkflowProposal::new(
         ProposalId::new("recovery-replay-proposal")?,

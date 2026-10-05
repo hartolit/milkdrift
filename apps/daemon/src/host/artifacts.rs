@@ -13,6 +13,27 @@ use milkdrift_persistence::{
 use milkdrift_workspace::{ArtifactId, ArtifactSensitivity};
 
 impl Owner {
+    /// Embedded views omit inaccessible metadata while preserving authorized run status.
+    pub(super) fn visible_artifact_metadata(
+        &self,
+        session: &ActorSession,
+        artifact: &str,
+    ) -> Result<Option<ArtifactMetadataRead>, PublicFailure> {
+        match self.artifact_metadata(session, artifact) {
+            Ok(metadata) => Ok(Some(metadata)),
+            Err(error)
+                if matches!(
+                    error.code,
+                    milkdrift_control_protocol::ErrorCode::Unauthorized
+                        | milkdrift_control_protocol::ErrorCode::NotFound
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub(super) fn artifact_metadata(
         &self,
         session: &ActorSession,

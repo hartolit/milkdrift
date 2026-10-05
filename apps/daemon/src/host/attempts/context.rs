@@ -6,6 +6,9 @@ use crate::host::{
     ContextManifestRead, ErrorCode, EvidenceId, PublicFailure, RequestedResourceFacts,
     RevisionStore, internal, invalid, not_found, parse_revision_id, public_persistence,
 };
+use milkdrift_model::{ContextEvidenceReference, ContextSource};
+use milkdrift_persistence::WorkspaceStore;
+use milkdrift_workspace::{CausalReference, WorkspaceValueReference};
 
 impl Owner {
     pub(super) fn attach_context(
@@ -23,11 +26,16 @@ impl Owner {
         }
         let artifact = ArtifactId::new(reference.artifact_id.clone())
             .map_err(|error| invalid(&error.to_string()))?;
-        crate::host::artifacts::preauthorize_artifact_identity(
+        if crate::host::artifacts::preauthorize_artifact_identity(
             session,
             &artifact,
             AuthorityOperation::ReadArtifactContent,
-        )?;
+        )
+        .is_err()
+        {
+            located.value.context_access = "metadata_only".to_owned();
+            return Ok(());
+        }
         let metadata = self
             .store
             .metadata(&artifact)
@@ -89,6 +97,38 @@ impl Owner {
                 _ => None,
             })
             .ok_or_else(not_found)?;
+        // A readable manifest does not confer metadata access to its sources.
+        // Keep its exact totals and digest together: suppress enrichment as a unit
+        // rather than inventing a filtered document with the original digest.
+        for entry in manifest.entries() {
+            if !self.context_source_visible(session, entry.source())? {
+                located.value.context_access = "denied".to_owned();
+                return Ok(());
+            }
+            for cause in entry.causal_parents() {
+                if let ContextEvidenceReference::Workspace { reference } = cause
+                    && !self.context_cause_visible(session, reference)?
+                {
+                    located.value.context_access = "denied".to_owned();
+                    return Ok(());
+                }
+            }
+        }
+        for omission in manifest.omissions() {
+            if let Some(source) = &omission.source
+                && !self.context_source_visible(session, source)?
+            {
+                located.value.context_access = "denied".to_owned();
+                return Ok(());
+            }
+        }
+        for source in policy.explicit_evidence() {
+            let source = serde_json::from_str::<ContextSource>(source).map_err(|_| internal())?;
+            if !self.context_source_visible(session, &source)? {
+                located.value.context_access = "denied".to_owned();
+                return Ok(());
+            }
+        }
         const MAX_CONTEXT_READ_ITEMS: usize = 256;
         let truncated = manifest.entries().len() > MAX_CONTEXT_READ_ITEMS
             || manifest.omissions().len() > MAX_CONTEXT_READ_ITEMS;
@@ -116,5 +156,71 @@ impl Owner {
         });
         located.value.context_access = "authorized".to_owned();
         Ok(())
+    }
+
+    fn context_source_visible(
+        &self,
+        session: &ActorSession,
+        source: &ContextSource,
+    ) -> Result<bool, PublicFailure> {
+        let artifact = match source {
+            ContextSource::Artifact { reference } => Some(reference.artifact().as_str()),
+            ContextSource::DirectInput { reference, .. } => {
+                if let Some((identity, version)) = reference.workspace_value() {
+                    let reference: WorkspaceValueReference =
+                        serde_json::from_str(identity).map_err(|_| internal())?;
+                    if version != reference.version().get().to_string() {
+                        return Err(internal());
+                    }
+                    return self.context_workspace_visible(session, &reference);
+                }
+                reference
+                    .artifact()
+                    .map(milkdrift_capability::ArtifactReference::identity)
+            }
+            ContextSource::WorkspaceValue { reference } => {
+                return self.context_workspace_visible(session, reference);
+            }
+            ContextSource::NodeExecution { .. } | ContextSource::Event { .. } => None,
+        };
+        artifact.map_or(Ok(true), |artifact| {
+            self.visible_artifact_metadata(session, artifact)
+                .map(|value| value.is_some())
+        })
+    }
+
+    fn context_workspace_visible(
+        &self,
+        session: &ActorSession,
+        reference: &WorkspaceValueReference,
+    ) -> Result<bool, PublicFailure> {
+        let Some(value) = self.store.value(reference).map_err(public_persistence)? else {
+            return Ok(false);
+        };
+        match value.value().as_artifact() {
+            Some(artifact) => self
+                .visible_artifact_metadata(session, artifact.artifact().as_str())
+                .map(|value| value.is_some()),
+            None => Ok(true),
+        }
+    }
+
+    fn context_cause_visible(
+        &self,
+        session: &ActorSession,
+        cause: &CausalReference,
+    ) -> Result<bool, PublicFailure> {
+        match cause {
+            CausalReference::Artifact { reference } => self
+                .visible_artifact_metadata(session, reference.artifact().as_str())
+                .map(|value| value.is_some()),
+            CausalReference::PeerClaim { reference, .. } => {
+                self.context_cause_visible(session, reference)
+            }
+            CausalReference::WorkspaceValue { reference } => {
+                self.context_workspace_visible(session, reference)
+            }
+            _ => Ok(true),
+        }
     }
 }

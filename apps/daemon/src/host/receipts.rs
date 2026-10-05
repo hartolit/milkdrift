@@ -26,6 +26,18 @@ use serde_json::Value;
 pub(super) fn execute(
     owner: &Owner,
     session: &ActorSession,
+    request: CommandRequest,
+) -> Result<CommandAccepted, PublicFailure> {
+    let result = execute_inner(owner, session, request.clone())?;
+    if result.replayed {
+        owner.authorize_retained_response(session, &request, &result)?;
+    }
+    Ok(result)
+}
+
+fn execute_inner(
+    owner: &Owner,
+    session: &ActorSession,
     mut request: CommandRequest,
 ) -> Result<CommandAccepted, PublicFailure> {
     request.validate().map_err(public_protocol)?;

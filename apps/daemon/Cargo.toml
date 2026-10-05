@@ -48,6 +48,7 @@ tracing-subscriber.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+milkdrift-runtime = { workspace = true, features = ["test-support"] }
 milkdrift-redb-store = { workspace = true, features = ["test-admin"] }
 milkdrift-control-client.workspace = true
 reqwest.workspace = true

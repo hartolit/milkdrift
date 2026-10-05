@@ -47,7 +47,7 @@ impl Owner {
         let ControlResult::RunInspection { value } = result else {
             return Err(internal());
         };
-        public_run(value)
+        public_run(value, self, session)
     }
 
     pub(super) fn node_read(
@@ -83,7 +83,7 @@ impl Owner {
         )?;
         let mut located = match self.current_attempt_read(session, run, attempt)? {
             Some(current) => current,
-            None => self.historical_attempt_read(run, attempt)?,
+            None => self.historical_attempt_read(session, run, attempt)?,
         };
         self.attach_context(session, attempt, &mut located)?;
         self.attach_acceptance(session, &mut located)?;

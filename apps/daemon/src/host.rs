@@ -68,8 +68,8 @@ use read_model::{
     accepted_sequence, bounded, clock_unavailable, corruption, empty_attempt_read, internal,
     invalid, map_resolve, not_found, parse_revision_id, public_attempt_usage,
     public_authority_decision, public_capability_provenance, public_control,
-    public_execution_authority, public_invocation_artifact, public_operation_contract,
-    public_persistence, snake_debug, unauthorized,
+    public_execution_authority, public_operation_contract, public_persistence, snake_debug,
+    unauthorized,
 };
 
 const OWNER_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);

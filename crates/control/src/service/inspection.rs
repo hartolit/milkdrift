@@ -3,8 +3,8 @@ use super::{ControlService, attempt_inspection, status_from_projection};
 use crate::{
     ControlCommandDocument, ControlError, NodeExecutionRead, OptimisticGuard, RunInspection,
 };
-use milkdrift_authority::AuthorityOperation;
-use milkdrift_workspace::RunId;
+use milkdrift_authority::{AuthorityBudget, AuthorityOperation, RequestedResourceFacts};
+use milkdrift_workspace::{ArtifactId, CausalReference, RunId};
 
 impl ControlService {
     pub(super) fn inspect_run_authorized(
@@ -12,7 +12,7 @@ impl ControlService {
         document: &ControlCommandDocument,
         run: &RunId,
     ) -> Result<RunInspection, ControlError> {
-        let value = self.inspect_run(run, document.guard())?;
+        let mut value = self.inspect_run(run, document.guard())?;
         self.authorize_simple(
             document,
             AuthorityOperation::InspectRun,
@@ -34,7 +34,113 @@ impl ControlService {
                 )?;
             }
         }
+        for execution in &mut value.executions {
+            self.filter_outputs(document, &mut execution.outputs)?;
+            if let Some(attempt) = &mut execution.latest_attempt {
+                self.filter_outputs(document, &mut attempt.outputs)?;
+                if let Some(reference) = &attempt.context_manifest {
+                    let artifact = ArtifactId::new(reference.identity().to_owned())
+                        .map_err(|error| ControlError::InvalidContract(error.to_string()))?;
+                    if !self.artifact_metadata_visible(document, &artifact)? {
+                        attempt.context_manifest = None;
+                        attempt.context_manifest_denied = true;
+                    }
+                }
+            }
+        }
         Ok(value)
+    }
+
+    fn filter_outputs(
+        &self,
+        document: &ControlCommandDocument,
+        outputs: &mut Vec<milkdrift_runtime::PublishedNodeOutput>,
+    ) -> Result<(), ControlError> {
+        let mut visible = Vec::with_capacity(outputs.len());
+        for output in outputs.drain(..) {
+            if let Some(reference) = output.artifact()
+                && !self.artifact_metadata_visible(document, reference.artifact())?
+            {
+                continue;
+            }
+            visible.push(output);
+        }
+        *outputs = visible;
+        Ok(())
+    }
+
+    fn authorize_artifact_metadata(
+        &self,
+        document: &ControlCommandDocument,
+        artifact: &ArtifactId,
+    ) -> Result<(), ControlError> {
+        let metadata = self.artifacts.metadata(artifact)?.ok_or_else(|| {
+            ControlError::AuthorizationDenied {
+                reasons: Vec::new(),
+                decision_digest: None,
+            }
+        })?;
+        let mut resources = RequestedResourceFacts::empty();
+        resources.artifact = Some(artifact.clone());
+        resources.artifact_sensitivity = Some(metadata.sensitivity());
+        self.authorize(
+            document,
+            AuthorityOperation::ReadArtifactMetadata,
+            resources,
+            AuthorityBudget::default(),
+        )
+    }
+
+    fn artifact_metadata_visible(
+        &self,
+        document: &ControlCommandDocument,
+        artifact: &ArtifactId,
+    ) -> Result<bool, ControlError> {
+        match self.authorize_artifact_metadata(document, artifact) {
+            Ok(()) => Ok(true),
+            Err(ControlError::AuthorizationDenied { .. }) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub(super) fn authorize_timeline_artifacts(
+        &self,
+        document: &ControlCommandDocument,
+        page: &crate::TimelinePage,
+    ) -> Result<(), ControlError> {
+        // This API returns exact journal facts. Refuse a protected page rather than
+        // editing an event or presenting a filtered sequence as complete history.
+        for event in &page.events {
+            for reference in event.kind().required_artifacts()? {
+                self.authorize_artifact_metadata(document, reference.artifact())?;
+            }
+            if let milkdrift_persistence::RunEventKind::ArtifactPublished { metadata } =
+                event.kind()
+            {
+                for cause in std::iter::once(metadata.provenance().producer())
+                    .chain(metadata.provenance().causes())
+                {
+                    self.authorize_causal_artifact(document, cause)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn authorize_causal_artifact(
+        &self,
+        document: &ControlCommandDocument,
+        cause: &CausalReference,
+    ) -> Result<(), ControlError> {
+        match cause {
+            CausalReference::Artifact { reference } => {
+                self.authorize_artifact_metadata(document, reference.artifact())
+            }
+            CausalReference::PeerClaim { reference, .. } => {
+                self.authorize_causal_artifact(document, reference)
+            }
+            _ => Ok(()),
+        }
     }
 
     pub(super) fn inspect_run(

@@ -42,6 +42,12 @@ package entry point. Consumers otherwise import the canonical owner directly.
 
 ## Surface ownership
 
+`ControlService::new` receives the existing artifact-store port alongside its revision, runtime
+and authority owners so inspection uses stored sensitivity when disclosing references.
+`AttemptInspection::context_manifest_denied` is a workspace read contract consumed by the daemon:
+it distinguishes an inaccessible manifest from an absent one after control inspection filters it.
+Neither change adds a durable format or rewrites retained events or command results.
+
 `WorkflowRunScope::Workflows` and `WorkflowSet` are durable authority schema contracts consumed
 by daemon configuration and protected run/revision reads. The validated set exposes construction
 and read-only identities; the shared bounded decoder remains private. Workflow matching stays

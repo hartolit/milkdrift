@@ -638,7 +638,12 @@ fn services_with_executor_and_revocations(
             RetryPolicy::new(3, vec![ErrorClass::Transport], 100, 10_000, 25)?,
         )?,
     )?);
-    let service = Arc::new(ControlService::new(store, runtime.clone(), authority));
+    let service = Arc::new(ControlService::new(
+        store.clone(),
+        store,
+        runtime.clone(),
+        authority,
+    ));
     runtime.install_controller_lifecycle(service.controller_lifecycle_owner())?;
     runtime.initialize_startup()?;
     let context = ActorAuthorityContext::new(

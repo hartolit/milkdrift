@@ -157,6 +157,8 @@ pub struct AttemptInspection {
     pub entry_authorization: Option<AuthorityDecisionSnapshot>,
     /// Exact immutable context-manifest artifact bound before dispatch.
     pub context_manifest: Option<ArtifactReference>,
+    /// The manifest exists but its metadata is outside the current reader's authority.
+    pub context_manifest_denied: bool,
     /// Frozen side-effect and external-idempotency facts.
     pub side_effect: Option<SideEffectClassification>,
     /// Attempt-owned output and artifact publications.

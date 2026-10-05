@@ -164,8 +164,10 @@ fn original_revision_survives_unrelated_history_and_retry_across_repin() -> Test
             )?)
             .map_err(|error| error.message)?;
     }
-    let full = full.finish().map_err(|error| error.message)?;
-    let anchored = anchored.finish().map_err(|error| error.message)?;
+    let full = full.finish(|_| Ok(None)).map_err(|error| error.message)?;
+    let anchored = anchored
+        .finish(|_| Ok(None))
+        .map_err(|error| error.message)?;
     assert_eq!(full.revision_id, revision('a')?.as_str());
     assert_eq!(full.node_id, "original-task");
     assert_eq!(full.value.terminal.as_deref(), Some("succeeded"));
@@ -303,7 +305,7 @@ fn remediation_attempts_keep_their_creation_revision_after_later_pins() -> TestR
                     },
                 )?)
                 .map_err(|error| error.message)?;
-            let located = state.finish().map_err(|error| error.message)?;
+            let located = state.finish(|_| Ok(None)).map_err(|error| error.message)?;
             assert_eq!(located.node_id, node.as_str());
             assert_eq!(located.revision_id, expected_revision.as_str());
         }

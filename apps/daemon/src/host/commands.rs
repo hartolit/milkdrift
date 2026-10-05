@@ -15,6 +15,68 @@ mod publications;
 mod runs;
 
 impl Owner {
+    pub(super) fn authorize_retained_response(
+        &self,
+        session: &ActorSession,
+        request: &CommandRequest,
+        response: &CommandAccepted,
+    ) -> Result<(), PublicFailure> {
+        // Exact receipt matching binds the immutable grant, but expiry and read
+        // authority still apply to retained server-supplied content. Refusal here
+        // leaves the receipt and the original effect untouched.
+        match &request.command {
+            Command::Learning { .. } => {
+                learning::authorize_retained_response(self, session, request, response)?
+            }
+            Command::AuthorBlueprint { draft, .. } | Command::ConstructBlueprint { draft, .. } => {
+                if let Some(base) = &draft.base_revision {
+                    self.revision(session, base)?;
+                }
+            }
+            Command::CopyBlueprint {
+                source_revision, ..
+            } => {
+                self.revision(session, source_revision)?;
+            }
+            Command::PrepareModelRepair { run_id, .. } => {
+                self.authorize_run_read(
+                    session,
+                    run_id,
+                    milkdrift_authority::AuthorityOperation::Propose,
+                    "replay:model-repair",
+                )?;
+                if let Some(revision) = &request.expected_revision {
+                    self.revision(session, revision)?;
+                }
+            }
+            // These replies contain command/definition identities, caller-supplied
+            // definitions, scalar dispositions or publication contracts, not
+            // discovered artifact metadata or copied artifact content.
+            Command::PrepareMethod { .. }
+            | Command::PublishMethod { .. }
+            | Command::InspectMethod { .. }
+            | Command::ListMethods { .. }
+            | Command::RetireMethod { .. }
+            | Command::ImportBlueprint { .. }
+            | Command::ValidateBlueprint { .. }
+            | Command::ImportPromptSequence { .. }
+            | Command::ValidatePromptSequence { .. }
+            | Command::StartRun { .. }
+            | Command::PauseRun { .. }
+            | Command::ResumeRun { .. }
+            | Command::CancelRun { .. }
+            | Command::SignalRun { .. }
+            | Command::ResolveWork { .. }
+            | Command::InspectController { .. }
+            | Command::ContinueController { .. }
+            | Command::SubmitProposal { .. }
+            | Command::DecideProposal { .. }
+            | Command::ApplyProposal { .. }
+            | Command::PutLayout { .. } => {}
+        }
+        Ok(())
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "this exhaustive match is the single routing map from the public command protocol to focused owners"

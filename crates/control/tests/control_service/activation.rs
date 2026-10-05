@@ -111,7 +111,7 @@ fn accounted_recovery_requires_one_installation_before_admission() -> TestResult
         runtime.controller_account_for_run(&run)?.as_ref(),
         Some(&account)
     );
-    let service = ControlService::new(store, runtime.clone(), authority);
+    let service = ControlService::new(store.clone(), store, runtime.clone(), authority);
     runtime.install_controller_lifecycle(service.controller_lifecycle_owner())?;
     assert!(
         runtime
@@ -173,7 +173,7 @@ fn child_read_authority_does_not_disclose_the_shared_controller_account() -> Tes
         [child_grant],
         BTreeMap::new(),
     )?);
-    let read_service = ControlService::new(store, runtime, authority);
+    let read_service = ControlService::new(store.clone(), store, runtime, authority);
     assert!(matches!(
         read_service.execute(&command(
             "inspect-child-timeline",

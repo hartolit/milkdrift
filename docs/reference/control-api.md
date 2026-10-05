@@ -142,6 +142,12 @@ administration uses the separate routes below. A command envelope has no actor f
 
 For layout writes and proposal discovery, the receipt and same-store application effect commit in one redb transaction. Runtime/control effects retain their existing idempotent transaction as authority. If the daemon crashes after such an effect commits but before its application receipt, redelivery uses the same stable internal command identity, observes runtime replay, and commits the missing external receipt without applying replacement work. Transient storage, overload, unavailable, timeout, uncertain, corruption, and internal failures are not converted into durable rejections.
 
+Replay does not renew permission to read retained server content. Authoring replies derived from
+a saved definition recheck access to that definition; learning replies recheck their retained
+sources, including artifact references and copied history. Revocation or expiry can therefore
+refuse disclosure of an accepted reply. This leaves its immutable receipt and original effect
+unchanged; the refusal does not mean the original command failed or invite a new command identity.
+
 The closed command types are:
 
 | Type | Required body fields | Authority operation | Purpose |
@@ -321,6 +327,14 @@ this same public response, including truncation.
 
 Artifact metadata and content are separately authorized against the exact immutable artifact identity and stored sensitivity before either is disclosed. Content accepts one `Range: bytes=start-end` request and returns 206 with `Content-Type`, `Accept-Ranges: bytes`, `Content-Range`, safe `Content-Disposition: attachment`, and `x-milkdrift-artifact-complete`. A server call returns at most 1 MiB. Input upload uses the bounded publication route described above; artifact access never accepts a server path. Protected metadata/content decisions are retained in the bounded security audit with actor, grant revision/digest, operation, resource digest, decision digest, outcome, and reason codes; raw credentials and content are absent.
 
+The same metadata decision applies when an artifact appears inside a run, node, exact attempt,
+result or streamed status. Inaccessible output references are omitted; the remaining status still
+describes the run. Allowed references report the stored sensitivity. Permission to inspect a run
+does not itself reveal artifact identities, digests, sizes or media types. The workflow-control
+service applies this rule before its inspection adapter can publish a result. Its separate raw
+history API refuses a page containing unauthorized artifact metadata, preserving exact journal
+facts. The daemon's status timeline remains available because it never copies raw event bodies.
+
 ## Read models
 
 External timeline entries use the stable categories `lifecycle`, `execution`, `progress`, `artifact`, `coordination`, `authority`, `recovery`, `reconciliation`, and `uncertainty`. An entry carries the exact durable sequence, timestamp, bounded actor and run/node/attempt/revision references, stable summary, and bounded structured detail. It is deliberately not an internal `RunEventKind` document.
@@ -328,6 +342,14 @@ External timeline entries use the stable categories `lifecycle`, `execution`, `p
 Run models carry aggregate sequence, stable lifecycle, optional terminal outcome, workflow/revision/digest, a compact retained node frontier, and unresolved-uncertainty count. Node models retain the latest attempt identity even after detailed frontier compaction; the exact-attempt route pages authoritative history for that older identity. Attempt models carry immutable attempt state, exact capability/descriptor/provider/peer linkage, optional context-manifest artifact metadata, progress observation/byte counts without content, provider-neutral terminal usage, named immutable output artifact metadata, terminal summary, and uncertainty. `capability_provenance` carries the exact frozen snapshot digest and execution trust class. For a byte-pinned local process it also carries the safe implementation identity, configured/canonical executable path digests, executable content digest and size, complete profile digest, execution-policy digest, and optional package/documentation references; executable paths are never returned. For a model generation it carries the complete non-secret profile digest/revision, protocol family, exact model alias, and redacted endpoint origin without path, query, fragment, credentials, or authorization data.
 
 When a manifest exists, the daemon separately evaluates `read_artifact_content` for that exact restricted artifact. An allowed read verifies its schema, digest, size, and attempt binding, then returns a bounded context object containing the immutable task policy, selected causal/provenance metadata, stable omissions, totals, applied budget, and a truncation flag. A denial sets `context_access` to `denied` and returns neither policy nor entry/omission detail; `metadata_only` means only the compact manifest reference was disclosed. Artifact bytes remain available only through the separately authorized bounded range route. Complete lifetime history remains the paged journal-backed timeline.
+
+Context enrichment also checks artifact references in selected sources, omissions, causal parents
+and explicit evidence selectors. If any is outside the reader's metadata scope, the enrichment is
+withheld as a whole with `context_access: denied`; a permitted manifest reference can remain. This
+keeps the manifest's original digest and totals from being mistaken for a newly filtered document.
+Metadata permission alone exposes no content-derived preview or context enrichment. Invocation
+outputs retain the separate receipt-bound `ReadCapabilityOutput` contract described below; it
+does not grant arbitrary artifact access or internal run inspection.
 
 Exact attempt inspection also exposes `result_acceptance` for the built-in acceptance operation:
 its Boolean decision, closed reason, requirement, finish reason, and checkpoint come only from an

@@ -295,6 +295,16 @@ pub(super) fn execute(
     })
 }
 
+pub(super) fn authorize_retained_response(
+    owner: &Owner,
+    session: &ActorSession,
+    request: &CommandRequest,
+    response: &CommandAccepted,
+) -> Result<(), PublicFailure> {
+    let record: Record = serde_json::from_value(response.value.clone()).map_err(|_| internal())?;
+    authorize_record(owner, session, request, &record)
+}
+
 fn read(owner: &Owner, reference: &LearningReceiptReference) -> Result<Record, PublicFailure> {
     let receipt = owner
         .store

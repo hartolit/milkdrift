@@ -54,6 +54,8 @@ pub(super) fn public_revision_summary(
 
 pub(super) fn public_run(
     value: milkdrift_control::RunInspection,
+    owner: &super::Owner,
+    session: &crate::auth::ActorSession,
 ) -> Result<RunRead, PublicFailure> {
     let (lifecycle, terminal) = match value.lifecycle {
         milkdrift_runtime::RunLifecycle::Uncreated => ("uncreated".to_owned(), None),
@@ -68,18 +70,23 @@ pub(super) fn public_run(
     let nodes = value
         .executions
         .into_iter()
-        .map(|node| NodeRead {
-            execution_id: node.execution.as_str().to_owned(),
-            node_id: node.node.as_str().to_owned(),
-            revision_id: node.revision.as_str().to_owned(),
-            state: snake_debug(&node.state),
-            attempt_count: node.attempt_count,
-            latest_attempt_id: node
-                .latest_attempt_id
-                .map(|value| value.as_str().to_owned()),
-            latest_attempt: node.latest_attempt.map(public_attempt),
+        .map(|node| {
+            Ok(NodeRead {
+                execution_id: node.execution.as_str().to_owned(),
+                node_id: node.node.as_str().to_owned(),
+                revision_id: node.revision.as_str().to_owned(),
+                state: snake_debug(&node.state),
+                attempt_count: node.attempt_count,
+                latest_attempt_id: node
+                    .latest_attempt_id
+                    .map(|value| value.as_str().to_owned()),
+                latest_attempt: node
+                    .latest_attempt
+                    .map(|attempt| public_attempt(attempt, owner, session))
+                    .transpose()?,
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, PublicFailure>>()?;
     let uncertainty_count = u32::try_from(
         nodes
             .iter()
@@ -151,24 +158,12 @@ pub(super) fn empty_attempt_read(attempt: &str, state: &str) -> AttemptRead {
     }
 }
 
-pub(super) fn public_invocation_artifact(
-    artifact: &milkdrift_capability::ArtifactReference,
-) -> ArtifactMetadataRead {
-    ArtifactMetadataRead {
-        artifact_id: artifact.identity().to_owned(),
-        digest: artifact.digest().to_owned(),
-        size: artifact.size_bytes().unwrap_or(0),
-        content_type: artifact
-            .media_type()
-            .unwrap_or("application/octet-stream")
-            .to_owned(),
-        disposition_name: None,
-        sensitivity: "restricted".to_owned(),
-    }
-}
-
-pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> AttemptRead {
-    let has_context_manifest = value.context_manifest.is_some();
+pub(super) fn public_attempt(
+    value: milkdrift_control::AttemptInspection,
+    owner: &super::Owner,
+    session: &crate::auth::ActorSession,
+) -> Result<AttemptRead, PublicFailure> {
+    let has_context_manifest = value.context_manifest.is_some() || value.context_manifest_denied;
     let capability_id = value
         .capability
         .as_ref()
@@ -194,18 +189,37 @@ pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> Att
     let context_manifest = value
         .context_manifest
         .as_ref()
-        .map(public_invocation_artifact);
+        .map(|reference| owner.visible_artifact_metadata(session, reference.identity()))
+        .transpose()?
+        .flatten();
     let progress_observations = u32::try_from(value.progress.len()).unwrap_or(u32::MAX);
     let progress_bytes = value.progress.iter().fold(0_u64, |total, observation| {
         total.saturating_add(u64::try_from(observation.detail().as_str().len()).unwrap_or(u64::MAX))
     });
     let usage = value.usage.as_ref().map(public_attempt_usage);
-    let outputs = value
-        .outputs
-        .iter()
-        .filter_map(public_attempt_output)
-        .collect();
-    AttemptRead {
+    let mut outputs = Vec::new();
+    for output in &value.outputs {
+        if let Some(reference) = output.artifact()
+            && let Some(artifact) =
+                owner.visible_artifact_metadata(session, reference.artifact().as_str())?
+        {
+            outputs.push(milkdrift_control_protocol::AttemptOutputRead {
+                name: output.value().key().as_str().to_owned(),
+                report_sequence: output.report_sequence(),
+                publication_sequence: output.sequence().get(),
+                artifact,
+            });
+        }
+    }
+    let context_access = if context_manifest.is_some() {
+        "metadata_only"
+    } else if has_context_manifest {
+        "denied"
+    } else {
+        "absent"
+    }
+    .to_owned();
+    Ok(AttemptRead {
         attempt_id: value.attempt.as_str().to_owned(),
         invocation_id: value
             .invocation
@@ -244,11 +258,7 @@ pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> Att
             .map(|peer| peer.as_str().to_owned()),
         context_manifest,
         context: None,
-        context_access: if has_context_manifest {
-            "metadata_only".to_owned()
-        } else {
-            "absent".to_owned()
-        },
+        context_access,
         progress_observations,
         progress_bytes,
         usage,
@@ -268,7 +278,7 @@ pub(super) fn public_attempt(value: milkdrift_control::AttemptInspection) -> Att
         uncertain: value.external_outcome.is_some(),
         result_acceptance: None,
         model_generation: None,
-    }
+    })
 }
 
 pub(super) fn public_operation_contract(
@@ -304,25 +314,6 @@ pub(super) fn public_attempt_usage(
             .as_ref()
             .map(|cost| cost.currency.as_str().to_owned()),
     }
-}
-
-pub(super) fn public_attempt_output(
-    output: &milkdrift_runtime::PublishedNodeOutput,
-) -> Option<milkdrift_control_protocol::AttemptOutputRead> {
-    let artifact = output.artifact()?;
-    Some(milkdrift_control_protocol::AttemptOutputRead {
-        name: output.value().key().as_str().to_owned(),
-        report_sequence: output.report_sequence(),
-        publication_sequence: output.sequence().get(),
-        artifact: ArtifactMetadataRead {
-            artifact_id: artifact.artifact().as_str().to_owned(),
-            digest: artifact.digest().to_hex(),
-            size: artifact.size_bytes(),
-            content_type: artifact.media_type().as_str().to_owned(),
-            disposition_name: None,
-            sensitivity: "restricted".to_owned(),
-        },
-    })
 }
 
 pub(super) fn public_execution_authority(

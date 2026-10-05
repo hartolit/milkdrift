@@ -11,7 +11,7 @@ use milkdrift_authority::{
 use milkdrift_blueprint::{AuthorRef, BlueprintRevision, NodeKind, ReducerStrategy, RevisionId};
 use milkdrift_capability::CapabilityRequirement;
 use milkdrift_persistence::{
-    AuthorityDecision, CommandDisposition, CommandId, EventCursor, EventPageQuery,
+    ArtifactStore, AuthorityDecision, CommandDisposition, CommandId, EventCursor, EventPageQuery,
     EvidenceReference, PageSize, Reason, ReconciliationDecisionId, ReconciliationId,
     ReconciliationPolicy, RepeatContinuationDecision, RevisionStore, RunSequence,
 };
@@ -34,22 +34,25 @@ mod inspection;
 /// recover errors using the original identities rather than assuming all steps rolled back.
 pub struct ControlService {
     revisions: Arc<dyn RevisionStore>,
+    artifacts: Arc<dyn ArtifactStore>,
     runtime: Arc<RuntimeService>,
     authority: Arc<dyn AuthorityEvaluator>,
     controller: Arc<ControllerLifecycleOwner>,
 }
 
 impl ControlService {
-    /// Constructs a service over the same revision, runtime, and authority owners used elsewhere.
+    /// Uses the existing revision, artifact, runtime and authority owners for commands and reads.
     #[must_use]
     pub fn new(
         revisions: Arc<dyn RevisionStore>,
+        artifacts: Arc<dyn ArtifactStore>,
         runtime: Arc<RuntimeService>,
         authority: Arc<dyn AuthorityEvaluator>,
     ) -> Self {
         let controller = Arc::new(ControllerLifecycleOwner::new(revisions.clone()));
         Self {
             revisions,
+            artifacts,
             runtime,
             authority,
             controller,
@@ -119,9 +122,9 @@ impl ControlService {
                     run_value.workflow.as_ref(),
                     Some(run),
                 )?;
-                Ok(ControlResult::Timeline {
-                    value: self.timeline(run, *after, *limit)?,
-                })
+                let value = self.timeline(run, *after, *limit)?;
+                self.authorize_timeline_artifacts(document, &value)?;
+                Ok(ControlResult::Timeline { value })
             }
             ControlCommand::InspectController {
                 run,
@@ -1119,6 +1122,7 @@ fn attempt_inspection(
             .request()
             .and_then(|request| request.context_manifest())
             .cloned(),
+        context_manifest_denied: false,
         side_effect: attempt.side_effect().cloned(),
         outputs: attempt.outputs().to_vec(),
         progress: attempt.progress().to_vec(),

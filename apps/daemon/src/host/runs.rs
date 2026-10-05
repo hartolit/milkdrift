@@ -1,17 +1,17 @@
 //! Authorized bounded run collection and timeline read-model ownership.
 
 use super::{
-    Owner, PublicFailure, read_model::internal, read_model::invalid, read_model::not_found,
-    read_model::parse_run_state, read_model::public_persistence, read_model::public_protocol,
+    Owner, PublicFailure, read_model::invalid, read_model::parse_run_state,
+    read_model::public_control, read_model::public_persistence, read_model::public_protocol,
     read_model::public_timeline, read_model::unauthorized,
 };
 use crate::auth::ActorSession;
 use milkdrift_authority::{AuthorityOperation, RequestedResourceFacts, WorkflowRunScope};
 use milkdrift_blueprint::WorkflowId;
-use milkdrift_control::{ControlCommand, ControlResult};
-use milkdrift_control_protocol::{Cursor, ErrorCode, Page, RunRead, TimelineEntry};
+use milkdrift_control_protocol::{Cursor, Page, RunRead, TimelineEntry};
 use milkdrift_persistence::{
-    PageSize, RunQueryStore, RunSequence, RunSummaryCursor, RunSummaryFilter, RunSummaryPageQuery,
+    EventCursor, EventPageQuery, PageSize, RunQueryStore, RunSequence, RunSummaryCursor,
+    RunSummaryFilter, RunSummaryPageQuery,
 };
 use milkdrift_workspace::RunId;
 
@@ -170,29 +170,30 @@ impl Owner {
             })
             .transpose()?
             .unwrap_or(1);
-        let result = match self.inspect_control(
-            session,
-            ControlCommand::InspectTimeline {
-                run: run_id,
-                after: Some(RunSequence::new(next_sequence)),
-                limit: PageSize::new(limit).map_err(public_persistence)?,
-            },
-            None,
-            "timeline",
-        ) {
-            Err(error) if error.code == ErrorCode::Unauthorized => return Err(not_found()),
-            result => result?,
-        };
-        let ControlResult::Timeline { value } = result else {
-            return Err(internal());
-        };
+        // The public timeline contains status facts only. Raw control history has
+        // separate artifact checks because it returns complete journal envelopes.
+        let value = self
+            .workflow()?
+            .runtime
+            .history_page(
+                &EventPageQuery::new(
+                    run_id.clone(),
+                    Some(EventCursor {
+                        run: run_id,
+                        next_sequence: RunSequence::new(next_sequence),
+                    }),
+                    PageSize::new(limit).map_err(public_persistence)?,
+                )
+                .map_err(public_persistence)?,
+            )
+            .map_err(|error| public_control(milkdrift_control::ControlError::Runtime(error)))?;
         let items = value.events.iter().map(public_timeline).collect::<Vec<_>>();
         let next_cursor = value
-            .next_sequence
-            .map(|sequence| {
+            .next
+            .map(|cursor| {
                 Cursor::new_bound(
                     &feed,
-                    sequence.get().saturating_sub(1),
+                    cursor.next_sequence.get().saturating_sub(1),
                     binding.clone(),
                     decision.digest(),
                     session.cursor_key(),

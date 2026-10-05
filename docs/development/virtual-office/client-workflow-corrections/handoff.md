@@ -4,14 +4,13 @@ Starting branch `main`, commit `9ec53ab0c2433efef52174f7a9b9d6e37ed07b1b`, tree
 `2d548f34193eafa5dd4ce8496ba23827b559d643`; working tree clean. The previous naming correction is
 closed and remains preserved. No current assignment competes for these files.
 
-The supplied executable assignment is retained in ignored evidence output. Its referenced
-`review-baseline/review.md` and `review-baseline/source-evidence.md` were not present beside the
-prompt, in the repository, prompt project or downloaded project archive. Their location has been
-requested; the detailed assignment permits tracing the reported cases meanwhile.
+The supplied executable assignment and supporting review are retained in ignored evidence output.
+The user supplied `review-baseline/` in `/home/hartolit/Projects/tools/milkdrift-prompts/`; the
+review has been read in full and its numbered excerpts are being checked with each current owner.
 
 | Item | Current disposition, owners and required evidence |
 | --- | --- |
-| F3 | In progress: daemon artifact metadata owner already authorizes identity and stored sensitivity; run and historical-attempt projections bypass it and fabricate sensitivity. Trace context, results, streams, direct/control responses and exact replay; add complete serialized response regressions for restricted grants. |
+| F3 | Implemented in the artifact-permission checkpoint: current and historical daemon projections use the authorized metadata owner and actual stored sensitivity; control inspection filters references and refuses protected raw-history pages; context checks direct, workspace and causal references before enrichment; retained learning/definition replies recheck read authority without rewriting receipts. `artifact_visibility` regressions cover no artifact access, metadata only, one output, public-only access, nested context and revoked/expired replay. Broader daemon tests: 41 library + 57 control-plane passed; control service: 49 passed, 2 existing manual longevity tests ignored. Focused Clippy, 8 documentation checks, formatting and diff checks passed. Baseline regression at `9ec53ab` fails with `artifact identity leaked`. Logs and iteration limits: `target/client-workflow-corrections/f3-*`; control API inventories: `target/public-api/client-workflow-corrections/`. Final full-system acceptance remains pending. |
 | F1 | Pending: daemon authoring/edit selections and CLI saved drafts; retained unavailable selections must be repairable without authorizing forged selections. |
 | F2 | Pending: shared CLI upload identity framing for run/invocation and retained request recovery; exact delimiter counterexample and retry/conflict regressions. |
 | F5 | Pending: control-client URL construction and actual daemon decoding, raw cursor identity, slash/percent/dot names through all read/stream consumers. |
@@ -26,5 +25,7 @@ requested; the detailed assignment permits tracing the reported cases meanwhile.
 | Integration | Full section-10 gate and combined journey remain required. No new acceptance claimed. |
 | Structure/docs | Remove superseded helpers as their consumers migrate; update canonical explanations and check links. |
 
-Planned commit order is in the [assignment](README.md). Next: finish F3 trace and public-path
-regression, implement the shared permission rule, run focused checks and commit before F1.
+Planned commit order is in the [assignment](README.md). Next: F1, retained unavailable-model
+selections and acceptance requirements through the daemon editor and CLI. Invocation output
+identities keep their existing receipt-bound `ReadCapabilityOutput` permission, separate from
+arbitrary artifact and internal run access; its existing regression passed with the daemon suite.

@@ -177,6 +177,7 @@ fn fixture_with_service_scope(
     )?);
     let control = Arc::new(ControlService::new(
         store.clone(),
+        store.clone(),
         runtime.clone(),
         evaluator.clone(),
     ));
