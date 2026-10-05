@@ -18,6 +18,7 @@ use crate::config::{
 use milkdrift_control_protocol::TimelineCategory;
 
 mod artifact_visibility;
+mod unavailable_models;
 
 struct ControlledDaemonClock(AtomicU64);
 
@@ -58,6 +59,15 @@ fn owner_test_config_with_interval(
     request_queue: u32,
     maintenance_interval_ms: u64,
 ) -> Result<crate::DaemonPlan, ConfigError> {
+    owner_test_document(root, token, request_queue, maintenance_interval_ms).validate(root)
+}
+
+fn owner_test_document(
+    root: &std::path::Path,
+    token: &std::path::Path,
+    request_queue: u32,
+    maintenance_interval_ms: u64,
+) -> DaemonConfig {
     DaemonConfig {
         schema_version: crate::DAEMON_CONFIG_SCHEMA_VERSION,
         role: milkdrift_control_protocol::HostRole::WorkflowEnabled,
@@ -95,7 +105,6 @@ fn owner_test_config_with_interval(
         },
         security_audit_record_bound: 100,
     }
-    .validate(root)
 }
 
 #[test]

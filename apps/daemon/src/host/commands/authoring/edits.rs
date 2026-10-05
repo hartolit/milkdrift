@@ -4,9 +4,16 @@ use super::{
 };
 use milkdrift_blueprint::{BindingSource, FieldId, PortId};
 use milkdrift_capability::{CapabilityRequirement, OperationId, PlacementRequirement};
-use milkdrift_control_protocol::{BlueprintEdit, ModelInputSource};
+use milkdrift_control_protocol::{BlueprintEdit, ErrorCode, ModelInputSource};
 use milkdrift_model::{ContentPart, Message, MessageRole, ModelTaskRequest, SessionSelection};
 use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(serde::Serialize)]
+pub(super) struct SelectionDiagnostic {
+    step: String,
+    selection: &'static str,
+    message: &'static str,
+}
 
 fn selection(
     owner: &Owner,
@@ -79,26 +86,64 @@ impl ModelWorkflow {
         &self,
         owner: &Owner,
         session: &ActorSession,
-    ) -> Result<(), PublicFailure> {
+        retained: Option<&Self>,
+    ) -> Result<Vec<SelectionDiagnostic>, PublicFailure> {
+        let mut diagnostics = Vec::new();
         for step in &self.steps {
+            let original =
+                retained.and_then(|model| model.steps.iter().find(|old| old.id == step.id));
             let id = step
                 .requirement
                 .exact_capability()
                 .ok_or_else(|| super::invalid("model selection must be explicit"))?;
-            if selection(owner, session, id.as_str(), "model.generate")? != step.requirement
-                || selection(
-                    owner,
-                    session,
+            for (kind, capability, operation, requirement, previous) in [
+                (
+                    "model",
+                    id.as_str(),
+                    "model.generate",
+                    &step.requirement,
+                    original.map(|old| &old.requirement),
+                ),
+                (
+                    "acceptance",
                     "milkdrift-workflow-control",
                     "workflow.accept_result",
-                )? != step.acceptance_requirement
-            {
-                return Err(super::invalid(
-                    "selected model profile changed; explicitly select the model again",
-                ));
+                    &step.acceptance_requirement,
+                    original.map(|old| &old.acceptance_requirement),
+                ),
+            ] {
+                let (failure, message) = match selection(owner, session, capability, operation) {
+                    Ok(current) if &current == requirement => continue,
+                    Ok(_) => (
+                        super::invalid(
+                            "selected capability requirements changed; explicitly select the model again",
+                        ),
+                        "Saved requirements no longer match a permitted current capability; select the model again.",
+                    ),
+                    Err(error) => (
+                        error,
+                        "Saved selection is unavailable in the permitted catalogue; select an available model.",
+                    ),
+                };
+                // Only the authorized immutable base proves retained provenance. A
+                // pending mutation or a new step cannot claim an unavailable selection
+                // merely by copying a capability identity from another step.
+                if previous != Some(requirement)
+                    || !matches!(
+                        failure.code,
+                        ErrorCode::InvalidInput | ErrorCode::Unauthorized | ErrorCode::NotFound
+                    )
+                {
+                    return Err(failure);
+                }
+                diagnostics.push(SelectionDiagnostic {
+                    step: step.id.clone(),
+                    selection: kind,
+                    message,
+                });
             }
         }
-        Ok(())
+        Ok(diagnostics)
     }
     fn step_mut(&mut self, id: &str) -> BuildResult<&mut Step> {
         self.steps

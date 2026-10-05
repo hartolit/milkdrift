@@ -11,7 +11,7 @@ review has been read in full and its numbered excerpts are being checked with ea
 | Item | Current disposition, owners and required evidence |
 | --- | --- |
 | F3 | Implemented in the artifact-permission checkpoint: current and historical daemon projections use the authorized metadata owner and actual stored sensitivity; control inspection filters references and refuses protected raw-history pages; context checks direct, workspace and causal references before enrichment; retained learning/definition replies recheck read authority without rewriting receipts. `artifact_visibility` regressions cover no artifact access, metadata only, one output, public-only access, nested context and revoked/expired replay. Broader daemon tests: 41 library + 57 control-plane passed; control service: 49 passed, 2 existing manual longevity tests ignored. Focused Clippy, 8 documentation checks, formatting and diff checks passed. Baseline regression at `9ec53ab` fails with `artifact identity leaked`. Logs and iteration limits: `target/client-workflow-corrections/f3-*`; control API inventories: `target/public-api/client-workflow-corrections/`. Final full-system acceptance remains pending. |
-| F1 | Pending: daemon authoring/edit selections and CLI saved drafts; retained unavailable selections must be repairable without authorizing forged selections. |
+| F1 | Implemented: authoring compares each exact step requirement against the authorized immutable base. Unchanged unavailable model/acceptance selections remain editable with diagnostics; pending/new selections still require the permitted current catalogue. Four public API/actual CLI regressions cover removed models, material changes, descriptor-only changes, stale acceptance, partial saves, hidden/forged replacements, B execution and unchanged prior history. A private host fixture drains a real generation and repairs both steps through HTTP/CLI. Ten authoring integration tests and the drain test passed; warning-denying daemon Clippy and 8 documentation checks passed. Existing runtime admission is preserved: unavailable exact requirements queue with zero admitted attempts, including after a repaired child runs; no fallback. A user clarification about start-time refusal is still pending. Logs: `target/client-workflow-corrections/f1-*`, including failed fixture iterations (draft-envelope decoding, terminal-vs-queued assumption, and the observer's separate save permission). |
 | F2 | Pending: shared CLI upload identity framing for run/invocation and retained request recovery; exact delimiter counterexample and retry/conflict regressions. |
 | F5 | Pending: control-client URL construction and actual daemon decoding, raw cursor identity, slash/percent/dot names through all read/stream consumers. |
 | F4 | Pending: shared output staging/publication and draft reads/locks/replacement; deterministic competing-writer and cleanup tests. |
@@ -25,7 +25,9 @@ review has been read in full and its numbered excerpts are being checked with ea
 | Integration | Full section-10 gate and combined journey remain required. No new acceptance claimed. |
 | Structure/docs | Remove superseded helpers as their consumers migrate; update canonical explanations and check links. |
 
-Planned commit order is in the [assignment](README.md). Next: F1, retained unavailable-model
-selections and acceptance requirements through the daemon editor and CLI. Invocation output
+Planned commit order is in the [assignment](README.md). Next: F2, shared upload identity encoding
+and exact saved-reference compatibility through both CLI consumers. Invocation output
 identities keep their existing receipt-bound `ReadCapabilityOutput` permission, separate from
 arbitrary artifact and internal run access; its existing regression passed with the daemon suite.
+
+F3 checkpoint: `dd1fb6e` (full commit/tree recorded in ignored `f3-commit.txt`).

@@ -214,6 +214,18 @@ selected output. `output_limit {step, maximum_output_units}` updates the existin
 through its validation owner. Catalogue authority is rechecked during editing; endpoint limits,
 execution authority and exact request reservations are checked by the existing preparation/entry
 owners when running. A valid edit is not a promise of available capacity or budget.
+Opening or saving an authorized retained definition does not require its original model or
+acceptance selections to remain available. The `workflow` view returns `selections_resolved`
+and per-step `selection_diagnostics`, so callers can explain what needs repair. Unchanged
+requirements are recognized only against the same step in the authorized immutable base;
+new or changed selections must match the permitted current catalogue. Missing, hidden,
+draining and materially changed selections can therefore be repaired one step at a time,
+including saving a partially repaired child. A descriptor revision alone does not invalidate
+otherwise identical matching requirements. Selecting a model refreshes both its model and
+acceptance requirements. These diagnostics neither expose hidden catalogue entries nor
+reserve execution capacity. Start still records durable run intent; unavailable exact
+requirements prevent attempt admission and leave work queued. Editing another revision
+does not change that run's requirements or substitute a fallback model.
 A connection selects a declared `run_input` or an earlier `step`; the latter
 selects only `final_text`. `add_model` requires explicit `maximum_output_units`. Each generated
 step uses the existing `ModelProse` acceptance gate. The editor refuses definitions outside its

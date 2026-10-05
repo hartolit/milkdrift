@@ -188,9 +188,12 @@ pub(super) fn execute(
     if let Some(edit) = edit {
         model.edit(owner, session, edit).map_err(failure)?;
     }
-    // Recheck every selected model, including mutations supplied without an editor gesture.
-    // Missing and hidden capabilities have the same diagnostic.
-    model.authorize_models(owner, session)?;
+    let retained = base
+        .as_ref()
+        .map(ModelWorkflow::read)
+        .transpose()
+        .map_err(failure)?;
+    let diagnostics = model.authorize_models(owner, session, retained.as_ref())?;
     if save {
         model.complete().map_err(failure)?;
     }
@@ -212,7 +215,7 @@ pub(super) fn execute(
             .map_err(failure)?,
     };
     let revision = candidate(&pending, base.as_ref(), session, &request.reason)?;
-    let view = model.view();
+    let view = model.view(&diagnostics);
     finish(owner, session, request, pending, revision, save, view)
 }
 

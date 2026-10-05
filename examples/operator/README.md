@@ -333,6 +333,13 @@ successful edit is retained in the draft file, including a draft with no steps o
 output. `workflow inspect FILE` reopens that unfinished work; `workflow save FILE` refuses until
 a model step and final output are present. Clearing the output does not disconnect step consumers.
 
+If a saved model or its acceptance capability is unavailable, `open` and `inspect` show selection
+diagnostics. Replace each affected step with `workflow model FILE STEP CAPABILITY`; a partial
+repair can be saved and reopened. Only requirements retained in the authorized saved definition
+receive this treatment. New selections must be permitted and available. Starting an unresolved
+definition can leave a queued run with no admitted attempt; it does not choose a fallback.
+Repairing the draft changes future starts, not an older run's definition.
+
 `workflow output-limit FILE STEP 1024` changes that step's output allowance while retaining its
 prompt, model and connections. It validates the model request and rechecks the permitted model
 selection. Execution still checks the selected endpoint and available budget; reservations derive

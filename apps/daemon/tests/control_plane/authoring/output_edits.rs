@@ -24,7 +24,18 @@ async fn incomplete_draft_reopens_and_output_limit_reaches_request_and_admission
             for (id, units) in [("zero", 0), ("too-large", u64::MAX)] {
                 assert!(author(&daemon.client, &original, id, Some(BlueprintEdit::OutputLimit { step: "only".into(), maximum_output_units: units }), false).await.is_err());
             }
-            assert!(author(&client(&daemon.endpoint, OBSERVER_TOKEN)?, &original, "denied-limit", Some(BlueprintEdit::OutputLimit { step: "only".into(), maximum_output_units: 256 }), false).await.is_err());
+            // Definition access permits an edit with retained hidden selections;
+            // saving and execution still require their own operation authority.
+            let observer = client(&daemon.endpoint, OBSERVER_TOKEN)?;
+            let hidden_edit = author(&observer, &original, "retained-limit", Some(BlueprintEdit::OutputLimit { step: "only".into(), maximum_output_units: 256 }), false).await?;
+            assert_eq!(hidden_edit.value.pointer("/workflow/selections_resolved"), Some(&json!(false)));
+            let hidden_draft = draft(&hidden_edit)?;
+            assert!(author(&observer, &hidden_draft, "denied-save", None, true).await.is_err());
+            assert!(observer.submit(&request("denied-edited-start", Some(0), Command::StartRun {
+                run_id: "denied-edited-start".into(), workflow_id: "output-edit".into(),
+                revision_id: original_id.into(), inputs: vec![],
+            })).await.is_err());
+            assert!(daemon.client.run("denied-edited-start").await.is_err());
             let adjusted = author(&daemon.client, &original, "adjust-only", Some(BlueprintEdit::OutputLimit { step: "only".into(), maximum_output_units: 256 }), false).await?;
             let mut expected = saved.value.get("workflow").ok_or("view absent")?.clone();
             *expected.pointer_mut("/steps/0/maximum_output_units").ok_or("limit absent")? = json!(256);

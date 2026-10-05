@@ -175,8 +175,8 @@ impl ModelWorkflow {
         Ok(())
     }
 
-    pub(super) fn view(&self) -> Value {
-        json!({"name":self.name,"inputs":self.inputs,"output":self.output,"steps":self.steps.iter().map(|step| json!({"step":step.id,"capability":step.requirement.exact_capability(),"provider_profile":step.requirement.provider_profile_ref(),"prompt":prompt(&step.request).ok(),"maximum_output_units":step.request.maximum_output_units(),"inputs":step.inputs})).collect::<Vec<_>>()})
+    pub(super) fn view(&self, diagnostics: &[super::edits::SelectionDiagnostic]) -> Value {
+        json!({"name":self.name,"inputs":self.inputs,"output":self.output,"selections_resolved":diagnostics.is_empty(),"selection_diagnostics":diagnostics,"steps":self.steps.iter().map(|step| json!({"step":step.id,"capability":step.requirement.exact_capability(),"provider_profile":step.requirement.provider_profile_ref(),"prompt":prompt(&step.request).ok(),"maximum_output_units":step.request.maximum_output_units(),"inputs":step.inputs})).collect::<Vec<_>>()})
     }
 
     pub(super) fn build(

@@ -13,6 +13,8 @@ mod input_edits;
 mod legacy;
 #[path = "authoring/output_edits.rs"]
 mod output_edits;
+#[path = "authoring/unavailable.rs"]
+mod unavailable;
 
 async fn author(
     client: &ControlClient,
