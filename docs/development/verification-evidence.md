@@ -90,6 +90,63 @@ The runner does not configure or stop attached servers. Live mode omits syntheti
 review the two retained text files separately for usefulness. Product completeness checks require
 nonempty final prose and `stop`, and do not establish editorial correctness or useful learning.
 
+## Workflow review corrections
+
+The delivered `milkdrift-workflow-review-4b1bab5.tar.gz` archive binds the corrected executable
+commit `4b1bab54c8ac4a9f3b600ba443624ee2df4630c3` and tree
+`c72a7a468c2930f1db3fcfe5daeab4e0e5e956a9` to a clean working tree, Rust 1.95.0 and Linux x86-64.
+Its manifest, exact command records, return codes and `SHA256SUMS` make the evidence reviewable
+outside ignored `target/`. Verify the extracted files with `sha256sum --check SHA256SUMS`.
+`closeout.json` and `closeout.diff` identify the later documentation-only commit separately.
+Private stores, credentials, daemon configurations and raw daemon logs are excluded; the retained
+journey transcript and output texts use the maintained controlled briefs.
+
+Build the daemon, CLI, process test helper and the four evidence/helper binaries described above
+and in the actual-binary lane. Preserve those binaries before other Cargo builds and retain their
+hashes. The final records use `target/workflow-review/acceptance-2` with two build jobs and ordinary
+parallel test execution. The central commands are:
+
+```sh
+cargo strict-checks --probe-tools --output target/workflow-review/acceptance-2/probes
+cargo strict-checks --output target/workflow-review/acceptance-2/strict \
+  --secret-base 853a6f93b66049e32fcefbb56b21a6d67441c997
+cargo test --locked --workspace --all-features --no-fail-fast -j 2
+cargo test --locked --workspace --all-features -j 2 -- --list
+```
+
+The explicit secret base covers changed current content across the entire correction range,
+including nonignored untracked files, rather than only the last checkpoint. It is not a claim to
+scan every historical Git blob. Installed scanners match CI's pinned versions and pass their
+valid/invalid probes. Run API inventories after documentation generation finishes: overlapping
+commands can remove a temporary rustdoc JSON file before the inventory reader consumes it.
+The archive preserves that failed tooling attempt and the successful sequential inventories.
+
+All 33 static checks pass; the sixteen probe records contain thirteen passes and three expected
+refusals. Workspace execution passes 1,129 distinct tests with zero failures and eight opt-in cases
+ignored; discovery lists 1,137. The secret-provider environment test executes itself once in a
+child process, adding one passing summary to the raw log without adding a discovered test.
+The eight ignored names and reasons remain explicit in the archive. Twenty-four doctests, thirty
+repository contracts and all 51 control-plane tests are included in those totals.
+
+Headless operation, controlled model behavior, controller qualification and the expanded authored
+journey all pass on preserved binaries from that same commit. They run separately from the full
+runtime suite. The journey retains seven model calls across two briefs and prospective repair;
+the independent JSON client's restart/replay retains two calls. No extra work is admitted by
+replaying the saved requests. Four libraries' default/all-feature API inventories retain the
+intended external edit contracts and bounded persistence query; storage indexes remain private.
+
+The first integrated attempt at `50fa5e3` passed the static gate and application scenarios but
+failed two physical-membership assertions that still expected 78 tables. Schema 17 has 79 after
+the workflow index. Updating that independent expectation preserves deletion, wrong-type and
+extra-table refusals; focused checks and the full gate then pass at `4b1bab5`. Earlier fixture,
+compiler and tool-install attempts remain packaged alongside the final result. The one-slot
+input-edit fixture timeout is not evidence of a runtime saturation fix: its three overlapping
+runs now use three advertised fixture slots.
+
+No push or hosted CI run was performed for this source. Attached models, fresh UM790/Podman
+qualification, power-loss behavior and editorial model quality remain separate evidence lanes.
+The older acceptance record below describes its own source and is not reused as a pass here.
+
 ## Client workflow acceptance
 
 The correction record is under ignored `target/client-workflow-corrections/`, on Linux x86-64

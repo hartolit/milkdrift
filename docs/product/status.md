@@ -274,7 +274,25 @@ values; repository contracts check the version cells against source.
 
 ## Current validation/evidence snapshot
 
-Local integrated acceptance passes at executable source `199d1a5` with Rust 1.95.0 on Linux x86-64:
+Workflow-review corrections pass fresh local acceptance at executable source
+`4b1bab54c8ac4a9f3b600ba443624ee2df4630c3` with Rust 1.95.0 on Linux x86-64. The clean-source
+run passes 1,129 distinct tests, including 24 doctests and 30 repository contracts, with eight
+opt-in tests ignored. Discovery lists all 1,137 cases. One secret-provider test also executes in
+a child process, so raw passing-summary totals include one additional execution. All 51 public
+control-plane tests pass. The 33 static checks, sixteen scanner-probe outcomes, default/all-feature
+API inventories for four affected libraries and four preserved-binary application scenarios pass.
+
+The public comparison covers saved semantics with exact truncation. Ordinary input/output/limit
+edits and scoped revision discovery work through the daemon, actual CLI and independent JSON
+client. The authored journey uses a named-workflow grant, edits and compares revisions, runs both
+maintained briefs, reconnects and repairs with exactly seven controlled model calls. The delivered
+`milkdrift-workflow-review-4b1bab5.tar.gz` archive retains the exact source/tree, commands, binary
+hashes, raw results and earlier failed attempts, including the corrected physical-table-count
+assertions. [Workflow review evidence](../development/verification-evidence.md#workflow-review-corrections)
+explains reproduction and counting. This is local software evidence; no new hosted run, attached
+model observation or UM790/Podman campaign is claimed. Final closeout changes documentation only.
+
+Earlier local integrated acceptance passed at executable source `199d1a5` with Rust 1.95.0 on Linux x86-64:
 1,119 tests, including 24 doctests and 30 repository contracts, with eight opt-in tests ignored
 by the ordinary command. The control-plane target passes all 45 tests in ordinary parallel
 execution, including both reviewed cases. Test discovery also passes. All 33 entries in the
