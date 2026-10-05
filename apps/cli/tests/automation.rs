@@ -15,6 +15,9 @@ use std::{
 };
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+#[path = "automation/upload_preparation.rs"]
+mod upload_preparation;
+
 struct ChildOwner(Child);
 impl ChildOwner {
     fn wait_until(&mut self, maximum: Duration) -> std::io::Result<std::process::ExitStatus> {

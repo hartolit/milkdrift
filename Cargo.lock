@@ -1033,6 +1033,7 @@ dependencies = [
  "milkdrift-control-protocol",
  "milkdrift-peer-protocol",
  "milkdrift-prompt-sequence",
+ "milkdrift-workspace",
  "rustix",
  "serde",
  "serde_json",

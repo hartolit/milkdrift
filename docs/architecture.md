@@ -114,7 +114,9 @@ control protocol ← control client ← CLI                         ↑
 
 The diagram shows dependency layers, not every Cargo edge. Daemon explicitly composes concrete
 storage, secret, process/model/peer adapters. The CLI consumes control-client, control-protocol,
-capability and serving wire documents from peer-protocol, plus prompt-sequence for local authoring.
+capability and serving wire documents from peer-protocol, plus blueprint/prompt-sequence for local
+authoring. Local upload preflight uses workspace's validated run/artifact IDs and their bounds,
+so the CLI does not copy the identity rules. That contract dependency grants no workspace access.
 It neither constructs runtime services nor opens storage. HTTP, database, OS, provider, and async types stay outside
 semantic contracts. No UI or local inference package exists. Exact manifest boundaries are checked
 by `tools/evidence/tests/repository_contracts.rs`.

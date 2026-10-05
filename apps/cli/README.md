@@ -45,8 +45,16 @@ request and command ID. Commands are sent once even when an error carries `retry
 
 For run starts, choose an explicit new `--request-file` and recover with `run reconnect FILE`.
 The client saves the exact start before sending it and checks the original host/caller/grant before
-replay. `--input NAME=FILE` uploads frozen text; `--prepare-only` stops after saving. Keep the private
+replay. `--input NAME=FILE` uploads checked text; `--prepare-only` stops after saving. Keep the private
 record while the result is uncertain, then remove it deliberately; there is no automatic archive.
+Run and invocation preparation check all local inputs before uploads. Files are bounded and
+checked again for changes before sending. Retain the flushed `input.uploading` and `input.uploaded`
+records privately: they carry the exact upload identities and returned artifact references if a
+later step fails. Repeat unfinished preparation with the same identity, input order and original
+bytes; already committed artifacts remain retained and consume quota. Use an explicit command ID
+when preparing a run so a lost output stream does not also lose its generated identity. Once a
+complete request file exists, use that file for recovery. The [control API](../../docs/reference/control-api.md)
+describes partial preparation and interruption limits.
 For other lost command replies, retain the same ID and complete request: changed reason, guards,
 evidence, or document bytes can conflict. Commands that construct a proposal from fresh reads,
 such as `sequence remediate`, need the [recovery guidance](../../docs/guides/headless-dogfood.md#failure-and-remediation)

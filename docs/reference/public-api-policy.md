@@ -221,3 +221,9 @@ are not exported. Historical evidence is retained under the existing exact-versi
 `PeerExecutionStore::active_serving_page` is a bounded workspace adapter port consumed by serving
 continuation maintenance and publication recovery/retirement. It includes queued accepted requests
 without child links, so adapters cannot disappear before those requests reach entry.
+
+`WorkflowInterface::MAX_FIELDS`, `InvocationRequest::MAX_INPUTS` and
+`InputReference::validate_name` expose existing domain bounds to CLI preparation before it uploads
+input bytes. They are workspace domain contracts shared with the validating constructors, not
+independent client policy. The CLI also uses the workspace's validated run/artifact identities;
+remote authority, declared workflow fields and capability admission remain daemon decisions.

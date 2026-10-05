@@ -10,7 +10,6 @@ use crate::{
     OperationId, ProviderProfileRef, SideEffectClass, bounded::validate_extensions,
 };
 
-const MAX_INPUTS: usize = 256;
 const MAX_INPUT_NAME: usize = 128;
 /// Maximum encoded bytes of one opaque durable value/artifact reference.
 pub const MAX_DURABLE_REFERENCE_BYTES: usize = 1_024;
@@ -271,9 +270,18 @@ impl InputReference {
     }
 
     fn validate(&self) -> Result<(), ContractError> {
-        if self.name.is_empty()
-            || self.name.len() > MAX_INPUT_NAME
-            || !self.name.bytes().all(|byte| {
+        Self::validate_name(&self.name)?;
+        self.value.validate()
+    }
+
+    /// Checks an input name before its value is available, for example before uploading bytes.
+    ///
+    /// # Errors
+    /// Rejects empty, oversized or unsafe ASCII names under the same rule as [`Self::new`].
+    pub fn validate_name(name: &str) -> Result<(), ContractError> {
+        if name.is_empty()
+            || name.len() > MAX_INPUT_NAME
+            || !name.bytes().all(|byte| {
                 byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
             })
         {
@@ -282,7 +290,7 @@ impl InputReference {
                 reason: format!("must contain 1 to {MAX_INPUT_NAME} safe ASCII bytes"),
             });
         }
-        self.value.validate()
+        Ok(())
     }
 }
 
@@ -342,6 +350,9 @@ impl<'de> Deserialize<'de> for InvocationRequest {
 }
 
 impl InvocationRequest {
+    /// Maximum named input references, including any later context inputs.
+    pub const MAX_INPUTS: usize = 256;
+
     /// Constructs a completely validated invocation request.
     ///
     /// # Errors
@@ -356,10 +367,10 @@ impl InvocationRequest {
         inputs: Vec<InputReference>,
         extensions: BTreeMap<ExtensionKey, BoundedJson>,
     ) -> Result<Self, ContractError> {
-        if inputs.len() > MAX_INPUTS {
+        if inputs.len() > Self::MAX_INPUTS {
             return Err(ContractError::Bounds {
                 location: "invocation.inputs".to_owned(),
-                reason: format!("at most {MAX_INPUTS} inputs are allowed"),
+                reason: format!("at most {} inputs are allowed", Self::MAX_INPUTS),
             });
         }
         let mut names = std::collections::BTreeSet::new();
@@ -449,10 +460,10 @@ impl InvocationRequest {
         reference: ArtifactReference,
         context_inputs: Vec<InputReference>,
     ) -> Result<Self, ContractError> {
-        if self.inputs.len().saturating_add(context_inputs.len()) > MAX_INPUTS {
+        if self.inputs.len().saturating_add(context_inputs.len()) > Self::MAX_INPUTS {
             return Err(ContractError::Bounds {
                 location: "invocation.inputs".to_owned(),
-                reason: format!("at most {MAX_INPUTS} inputs are allowed"),
+                reason: format!("at most {} inputs are allowed", Self::MAX_INPUTS),
             });
         }
         let mut names = self
@@ -725,10 +736,13 @@ impl InvocationTerminal {
     }
 
     fn validate(&self) -> Result<(), ContractError> {
-        if self.outputs.len() > MAX_INPUTS {
+        if self.outputs.len() > InvocationRequest::MAX_INPUTS {
             return Err(ContractError::Bounds {
                 location: "terminal.outputs".to_owned(),
-                reason: format!("at most {MAX_INPUTS} output references are allowed"),
+                reason: format!(
+                    "at most {} output references are allowed",
+                    InvocationRequest::MAX_INPUTS
+                ),
             });
         }
         for output in &self.outputs {

@@ -21,6 +21,7 @@ milkdrift-authority.workspace = true
 milkdrift-control-protocol.workspace = true
 milkdrift-peer-protocol.workspace = true
 milkdrift-prompt-sequence.workspace = true
+milkdrift-workspace.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

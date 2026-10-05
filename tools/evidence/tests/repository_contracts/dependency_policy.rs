@@ -29,7 +29,9 @@ fn internal_edges(owner: &str) -> Option<&'static str> {
         "peer-protocol" => "authority capability contracts workspace",
         "control-client" => "capability control-protocol peer-protocol",
         "cli" => {
-            "authority blueprint capability control-client control-protocol peer-protocol prompt-sequence"
+            // Workspace contributes validated identity contracts for local upload preflight.
+            // Runtime services and concrete stores/adapters remain forbidden to clients.
+            "authority blueprint capability control-client control-protocol peer-protocol prompt-sequence workspace"
         }
         "local-process" => "authority capability capability-host contracts workspace",
         "model-provider" => "authority capability capability-host contracts model workspace",

@@ -75,6 +75,12 @@ pub(super) async fn execute(
             let invalid = |error: &dyn std::fmt::Display| CliError::Invalid(error.to_string());
             let mut destination = crate::output::PendingFile::create(output)?;
             let outcome = async {
+                let host_id = PeerId::new(host).map_err(|error| invalid(&error))?;
+                let request_identity =
+                    PeerRequestId::new(request_id).map_err(|error| invalid(&error))?;
+                let capability_id =
+                    CapabilityId::new(capability).map_err(|error| invalid(&error))?;
+                let operation_id = OperationId::new(operation).map_err(|error| invalid(&error))?;
                 let mut inputs: Vec<InputReference> = match inputs {
                     Some(inputs) => serde_json::from_value(
                         session
@@ -88,21 +94,47 @@ pub(super) async fn execute(
                     .map_err(|error| invalid(&error))?,
                     None => Vec::new(),
                 };
-                let mut names: std::collections::BTreeSet<String> =
+                let names: std::collections::BTreeSet<String> =
                     inputs.iter().map(|input| input.name().to_owned()).collect();
                 if names.len() != inputs.len() {
                     return Err(CliError::Invalid("input names must be distinct".into()));
                 }
-                for (name, artifact) in super::input::upload_text(
+                let text_inputs = super::input::TextInputs::preflight(
                     session,
-                    host,
-                    request_id,
                     super::input::UploadOperation::Invocation,
                     input,
-                    &mut names,
+                    names,
                 )
-                .await?
-                {
+                .await?;
+                let mut draft = milkdrift_peer_protocol::DirectInvocationDraft {
+                    host: host_id,
+                    request_id: request_identity,
+                    capability: capability_id,
+                    operation: operation_id,
+                    inputs: inputs.clone(),
+                    limits: None,
+                };
+                // Reserve bounded metadata for each upload in the actual request shape.
+                // This is encoding admission only; the daemon still owns selection and authority.
+                for name in text_inputs.names() {
+                    draft.inputs.push(
+                        InputReference::new(
+                            name,
+                            InvocationValueReference::Artifact {
+                                reference: milkdrift_capability::ArtifactReference::new(
+                                    "x".repeat(milkdrift_workspace::MAX_EXTENDED_ID_BYTES),
+                                    "0".repeat(64),
+                                    Some("text/plain".into()),
+                                    Some(milkdrift_control_protocol::MAX_INPUT_UPLOAD_BYTES as u64),
+                                )
+                                .map_err(|error| invalid(&error))?,
+                            },
+                        )
+                        .map_err(|error| invalid(&error))?,
+                    );
+                }
+                milkdrift_control_protocol::encode_json(&draft).map_err(|error| invalid(&error))?;
+                for (name, artifact) in text_inputs.upload(session, host, request_id).await? {
                     let reference = milkdrift_capability::ArtifactReference::new(
                         artifact.artifact_id,
                         artifact.digest,
@@ -115,19 +147,10 @@ pub(super) async fn execute(
                             .map_err(|error| invalid(&error))?,
                     );
                 }
-                let request = client
-                    .prepare_invocation(&milkdrift_peer_protocol::DirectInvocationDraft {
-                        host: PeerId::new(host).map_err(|error| invalid(&error))?,
-                        request_id: PeerRequestId::new(request_id)
-                            .map_err(|error| invalid(&error))?,
-                        capability: CapabilityId::new(capability)
-                            .map_err(|error| invalid(&error))?,
-                        operation: OperationId::new(operation).map_err(|error| invalid(&error))?,
-                        inputs,
-                        limits: None,
-                    })
-                    .await?;
-                let bytes = serde_json::to_vec_pretty(&request).map_err(|error| invalid(&error))?;
+                draft.inputs = inputs;
+                let request = client.prepare_invocation(&draft).await?;
+                let bytes = milkdrift_control_protocol::encode_json(&request)
+                    .map_err(|error| invalid(&error))?;
                 use std::io::Write as _;
                 destination
                     .write_all(&bytes)

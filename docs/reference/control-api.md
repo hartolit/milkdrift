@@ -124,8 +124,9 @@ An uncertain status is never represented as successful completion.
 `POST /v1/artifact-inputs` accepts `InputUploadRequest`: explicit host, stable upload ID, media type,
 sensitivity, canonical digest and base64 content, limited to 512 KiB decoded bytes.
 The server supplies client provenance and a host/actor accounting owner. Verified publication is
-atomic, exact upload replay returns the same artifact and changed bytes conflict. Interrupted
-uploads are reclaimed before startup opens admission; per-actor cumulative quotas survive restart.
+atomic, exact upload replay returns the same artifact and changed bytes conflict. Abandoned
+writable publications are reclaimed before startup opens admission. Already committed uploads
+remain retained, even if local preparation later fails; per-actor cumulative quotas survive restart.
 The ordinary artifact metadata/range routes download both inputs and outputs.
 
 `GET /v1/runs/{run}/result` returns `RunResultRead`: a compact frontier enriched with separately
@@ -221,8 +222,28 @@ under the same identity still conflicts. Saved run and invocation requests retai
 artifact references, including references from the earlier delimiter-based encoding. Replaying
 or submitting a saved request does not regenerate upload IDs. An earlier committed upload can
 also be supplied explicitly through `--inputs` when recovering unfinished preparation.
+Both CLI preparation commands validate local identities, duplicate names, input counts, referenced
+documents, output paths and all text files before uploading. They use the owning domain's name and
+count limits and read at most 512 KiB per text input. Preflight retains digests and at most one stdin
+value, rather than collecting all file contents. Files are read again just before upload; missing
+files or changed digests refuse further preparation. The caller must preserve original bytes,
+including stdin, for recovery. This check does not freeze another writer's file.
+
+For each upload, the CLI flushes a nonfinal `input.uploading` record containing host, preparation
+identity, ordered position, input name, upload ID, digest and recovery guidance before sending it.
+A successful reply adds `input.uploaded` with the authorized artifact metadata. Retain this output
+privately: a later upload/read failure, deadline, cancellation or request-file publication conflict
+does not remove committed artifacts or release their cumulative quota. The last pending upload can
+have committed even without a reply. Repeat unfinished preparation with the original host, actor,
+identity, input order and bytes to reuse the exact uploads; a new identity allocates new artifacts.
+Run records expose generated command IDs as well. Lost progress output plus a lost generated ID
+can prevent automatic recovery; use an explicit ID and retain the output for interrupted work.
+If the complete request file exists, inspect it and use normal exact saved-request recovery.
+Repreparing an invocation is safe only before submission; it does not recover an accepted call.
+Local staging cleanup is bounded by the preparation's files and never collects committed uploads.
 Start/reconnect `--wait` requires an explicit overall deadline and emits the recoverable identity
-before observation. JSON mode emits one nonfinal `run.prepared` record and one final result/error;
+before observation. In addition to input progress, JSON mode emits one nonfinal `run.prepared`
+record and one final result/error;
 without waiting, acceptance remains a single final response. Timeout/exit stops the observer;
 cancellation stays a separate command with its existing uncertain-effect semantics.
 This record has no credentials and creates no model selection earlier than runtime dispatch.

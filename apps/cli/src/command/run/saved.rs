@@ -21,6 +21,11 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
         } => {
             // Prepare a private temporary file before uploading or submitting anything.
             let destination = file::PendingRequest::new(request_file)?;
+            let invalid = |error: &dyn std::fmt::Display| CliError::Invalid(error.to_string());
+            milkdrift_workspace::RunId::new(run).map_err(|error| invalid(&error))?;
+            milkdrift_blueprint::WorkflowId::new(workflow).map_err(|error| invalid(&error))?;
+            serde_json::from_value::<milkdrift_blueprint::RevisionId>(json!(revision))
+                .map_err(|error| invalid(&error))?;
             let mut supplied: Vec<RunInput> = match inputs {
                 Some(path) => serde_json::from_value(
                     session
@@ -30,30 +35,44 @@ pub(super) async fn execute(session: &CliSession, command: &RunCommand) -> Resul
                 .map_err(|error| CliError::Invalid(error.to_string()))?,
                 None => Vec::new(),
             };
+            let names: std::collections::BTreeSet<String> =
+                supplied.iter().map(|input| input.name.clone()).collect();
+            if names.len() != supplied.len() {
+                return Err(CliError::Invalid("run input names must be distinct".into()));
+            }
+            for input in &supplied {
+                milkdrift_workspace::ArtifactId::new(&input.artifact_id)
+                    .map_err(|error| invalid(&error))?;
+            }
+            let text_inputs = super::super::input::TextInputs::preflight(
+                session,
+                super::super::input::UploadOperation::Run,
+                input,
+                names,
+            )
+            .await?;
             let request = session.command_request_with_revision(
                 Command::StartRun {
                     run_id: run.clone(),
                     workflow_id: workflow.clone(),
                     revision_id: revision.clone(),
-                    inputs: vec![],
+                    inputs: supplied.clone(),
                 },
                 revision,
             )?;
             let mut saved = session.client().prepare_run(request).await?;
-            let mut names: std::collections::BTreeSet<String> =
-                supplied.iter().map(|input| input.name.clone()).collect();
-            if names.len() != supplied.len() {
-                return Err(CliError::Invalid("run input names must be distinct".into()));
+            // Reserve the owning artifact ID bound in the complete recovery document,
+            // before any upload can make this preparation durable remotely.
+            if let Command::StartRun { inputs, .. } = &mut saved.request.command {
+                inputs.extend(text_inputs.names().map(|name| RunInput {
+                    name: name.into(),
+                    artifact_id: "x".repeat(milkdrift_workspace::MAX_EXTENDED_ID_BYTES),
+                }));
             }
-            for (name, artifact) in super::super::input::upload_text(
-                session,
-                &saved.authority.host,
-                &saved.request.command_id,
-                super::super::input::UploadOperation::Run,
-                input,
-                &mut names,
-            )
-            .await?
+            saved.validate()?;
+            for (name, artifact) in text_inputs
+                .upload(session, &saved.authority.host, &saved.request.command_id)
+                .await?
             {
                 supplied.push(RunInput {
                     name,

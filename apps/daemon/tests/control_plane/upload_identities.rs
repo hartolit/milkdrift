@@ -32,7 +32,7 @@ fn prepare(
             "start",
             "prepared-run",
             "release-notes",
-            "unused-preparation-revision",
+            "rev_0000000000000000000000000000000000000000000000000000000000000000",
             "--request-file",
             path,
             "--prepare-only",
@@ -86,6 +86,30 @@ async fn case(invocation: bool) -> TestResult {
             assert_eq!(first, reference(&directory, "retry.json", invocation, 0)?);
             assert_eq!(daemon.client.artifact_range(&first, 0, 11).await?.bytes, b"first upload");
             assert_eq!(daemon.client.artifact_range(&second, 0, 15).await?.bytes, b"different upload");
+            // Force the second upload to conflict after the first has committed.
+            // The exact retry must reuse both durable artifacts, not allocate replacements.
+            let namespace = if invocation { "invocation-input" } else { "run-input" };
+            let framed = serde_json::to_vec(&("milkdrift.cli.input.v2", namespace, "partial", 1, "second"))?;
+            let retained_second = daemon.client.upload_input(&InputUploadRequest::from_content(
+                "host:local".into(), format!("{namespace}:{}", blake3::hash(&framed)),
+                "text/plain".into(), "restricted".into(), b"original second",
+            )?).await?;
+            let (ok, message) = prepare(daemon, &directory, invocation, "partial", "partial.json", &["first=one.txt", "second=two.txt"])?;
+            assert!(!ok, "{message}");
+            assert!(!directory.path().join("partial.json").exists());
+            let records = message.lines().map(serde_json::from_str::<Value>).collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(records.last().and_then(|value| value.pointer("/error/daemon_code")), Some(&serde_json::json!("conflict")));
+            let committed = records.iter().filter(|value| value.get("type").and_then(Value::as_str) == Some("input.uploaded")).collect::<Vec<_>>();
+            assert_eq!(committed.len(), 1);
+            let retained_first = committed.first().and_then(|value| value.pointer("/value/artifact/artifact_id")).and_then(Value::as_str).ok_or("retained first reference")?;
+            assert_eq!(daemon.client.artifact_range(retained_first, 0, 11).await?.bytes, b"first upload");
+            fs::write(directory.path().join("two.txt"), b"original second")?;
+            let (ok, message) = prepare(daemon, &directory, invocation, "partial", "partial.json", &["first=one.txt", "second=two.txt"])?;
+            assert!(ok, "{message}");
+            assert_eq!(reference(&directory, "partial.json", invocation, 0)?, retained_first);
+            assert_eq!(reference(&directory, "partial.json", invocation, 1)?, retained_second.artifact_id);
+            assert_eq!(daemon.client.artifact_metadata(&retained_second.artifact_id).await?, retained_second);
+
             fs::write(directory.path().join("one.txt"), b"changed upload")?;
             let (ok, message) = prepare(daemon, &directory, invocation, "x", "conflict.json", &["z:1:y=one.txt"])?;
             assert!(!ok && message.contains("conflict"), "{message}");

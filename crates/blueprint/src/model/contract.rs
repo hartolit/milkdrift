@@ -8,7 +8,6 @@ use crate::{FieldId, NodeId, PathSelector, PortId, WorkflowId};
 
 use super::ModelError;
 
-const MAX_INTERFACE_FIELDS: usize = 256;
 const MAX_METADATA_ENTRIES: usize = 64;
 
 /// Names the value contract used to connect ports and workflow interfaces.
@@ -128,6 +127,9 @@ milkdrift_contracts::deserialize_via!(WorkflowInterface, WorkflowInterfaceWire, 
 ));
 
 impl WorkflowInterface {
+    /// Maximum named inputs or outputs in one workflow interface.
+    pub const MAX_FIELDS: usize = 256;
+
     /// Constructs a bounded workflow interface.
     ///
     /// # Errors
@@ -138,10 +140,13 @@ impl WorkflowInterface {
     ) -> Result<Self, ModelError> {
         let inputs = collect_interface_fields("interface.inputs", inputs)?;
         let outputs = collect_interface_fields("interface.outputs", outputs)?;
-        if inputs.len() > MAX_INTERFACE_FIELDS || outputs.len() > MAX_INTERFACE_FIELDS {
+        if inputs.len() > Self::MAX_FIELDS || outputs.len() > Self::MAX_FIELDS {
             return Err(ModelError::new(
                 "interface",
-                format!("at most {MAX_INTERFACE_FIELDS} inputs and outputs are allowed"),
+                format!(
+                    "at most {} inputs and outputs are allowed",
+                    Self::MAX_FIELDS
+                ),
             ));
         }
         Ok(Self { inputs, outputs })
@@ -172,10 +177,13 @@ fn collect_interface_fields(
                 format!("duplicate interface field `{field}`"),
             ));
         }
-        if collected.len() > MAX_INTERFACE_FIELDS {
+        if collected.len() > WorkflowInterface::MAX_FIELDS {
             return Err(ModelError::new(
                 location,
-                format!("at most {MAX_INTERFACE_FIELDS} fields are allowed"),
+                format!(
+                    "at most {} fields are allowed",
+                    WorkflowInterface::MAX_FIELDS
+                ),
             ));
         }
     }
