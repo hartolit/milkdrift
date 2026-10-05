@@ -23,4 +23,11 @@ controlled model calls including repair. JSON replay leaves two calls. Focused C
 documentation contracts pass. Next: section 4 full acceptance, API inventories and downloadable
 evidence. Pinned external scanner release binaries are installed under the ignored evidence tools
 directory; zizmor's source build refused Rust 1.95, so its verified official release binary is used.
+Full acceptance at `50fa5e3` passed 33 static checks, 16 scanner probes, all API inventories,
+discovery and four actual-binary scenarios. Workspace execution passed 1,128 tests and failed two
+physical-membership assertions that still expected 78 tables instead of 79 after the new index;
+eight opt-in cases were ignored. The independent count is corrected to 79, preserving deletion,
+wrong-type and unexpected-table refusals. Focused schema tests pass. Repeat the complete gate and
+application scenarios on the new committed source before closure. All first-run records remain in
+`target/workflow-review/acceptance-1`; the delivered package must retain its failure.
 The newer hosted run documented at baseline remains historical evidence only.
