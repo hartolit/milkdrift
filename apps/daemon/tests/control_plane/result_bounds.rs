@@ -151,13 +151,48 @@ async fn combined_result_omits_large_detail_but_keeps_exact_navigation_and_outpu
             },
         ))
         .await?;
-    let state = wait_for_run(
-        &daemon.client,
-        "aggregate",
-        Duration::from_secs(60),
-        |run| run.terminal.is_some(),
-    )
-    .await?;
+    let timeout = Duration::from_secs(60);
+    let snapshot = super::diagnostics::FailureSnapshot::new(timeout);
+    // Poll the durable terminal index while execution is pending. A full run read
+    // repeatedly authorizes every accumulated artifact; that work obscures this
+    // fixture's purpose, which is to inspect the complete result after execution.
+    let state = tokio::time::timeout(timeout, async {
+        loop {
+            let page = daemon
+                .client
+                .runs(
+                    Some("terminal"),
+                    Some("aggregate-bound"),
+                    &PageRequest {
+                        limit: 1,
+                        cursor: None,
+                    },
+                )
+                .await?;
+            if let Some(state) = page.items.into_iter().find(|run| run.run_id == "aggregate") {
+                return Ok::<_, ClientError>(state);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await;
+    let state = match state {
+        Ok(state) => state?,
+        Err(_) => {
+            let fixture_requests = model.requests.lock().map_err(|_| "requests lock")?.len();
+            return Err(snapshot
+                .capture(
+                    &daemon.client,
+                    Some("aggregate"),
+                    Some("aggregate-bound"),
+                    None,
+                    Some(fixture_requests),
+                    "aggregate run did not reach its indexed terminal before the deadline",
+                )
+                .await
+                .into());
+        }
+    };
     assert_eq!(
         state.terminal.as_deref(),
         Some("succeeded"),
