@@ -274,6 +274,16 @@ values; repository contracts check the version cells against source.
 
 ## Current validation/evidence snapshot
 
+The subsequent [client workflow verification review](../development/verification-evidence.md#client-workflow-verification-review)
+found no further demonstrated defect in the seven assigned boundaries. It verified the original
+source, binary hashes and passing/failed raw evidence for the unchanged executable checkpoint.
+No executable, test or CI behavior changed. Hosted run 218 attempt 1 never acquired a runner;
+attempt 2 passed at `306bbae`, tree `4a33623771fe7a330fe7dfe561c0f2f543d0dd9d`, including
+static checks, workspace tests/discovery, the authored journey and CI application scenarios.
+The new verification archive includes the reviewed local evidence, failed iterations and downloaded
+hosted evidence. Later closure changes documentation only; the existing opt-in and physical
+qualification exclusions below remain.
+
 The consolidated client workflow corrections pass local acceptance at executable source
 `5c9301e055a87db46b879108ae5312b5fd334d62` with Rust 1.95.0 on Linux x86-64. All eight findings
 and three verification questions are settled: artifact-authorized inspection, unavailable-model

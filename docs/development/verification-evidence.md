@@ -94,6 +94,48 @@ The runner does not configure or stop attached servers. Live mode omits syntheti
 review the two retained text files separately for usefulness. Product completeness checks require
 nonempty final prose and `stop`, and do not establish editorial correctness or useful learning.
 
+## Client workflow verification review
+
+The subsequent bounded source review of `9ec53ab..5c9301e` found no further demonstrated code or
+test defect in artifact visibility, unavailable-model editing, upload preparation/identity,
+resource URLs, file lifecycle, document bounds/conflicts or streaming/error semantics. Accepted
+naming and repair compatibility, frozen fixtures and exact saved replay remain unchanged.
+This review changed documentation and evidence only; it did not change executables, tests or CI.
+
+Both previously named Downloads archives were absent. Their retained packaged contents passed
+all original checksums; the source archive matched `git archive --prefix=milkdrift/ 5c9301e`
+byte for byte, and all seven preserved binary hashes still matched. The unchanged executable
+acceptance below was inspected and reused under the verification policy. Counts were recalculated
+from raw workspace/discovery output, and selected regressions were matched to both, including
+`tests::authored_workflow_runs_both_briefs_replays_copies_and_repairs`. The journey already runs
+in the workspace suite; no additional CI job is needed.
+
+The new `milkdrift-client-workflow-verification-306bbae.tar.gz` export retains a central
+command/result manifest, exact reproduction instructions, source/diff identities, original passing
+and failed logs, discovery, strict/probe reports, API inventories, four application reports and
+the bounded review. It preserves original provenance: most local command wall-clock timestamps
+were not recorded and remain unknown; strict reports retain actual durations. It is evidence
+review by the producing agent, not independently witnessed reproduction. The export excludes
+private assignments, credentials, runtime configuration/stores and raw child logs. Its explicit
+allowlist, redacted scan, extraction checks and delivered-copy verification are recorded in the
+manifest; verify extracted files with `sha256sum --check SHA256SUMS`.
+
+[Quality run 218](https://github.com/hartolit/milkdrift/actions/runs/37366339476) attempt 1 at
+`306bbae` failed before execution: job `111952343067` was cancelled with no assigned runner or
+steps. Its annotation reports failed hosted runner acquisition; the public page also reports an
+internal server error, correlation `f6df20f1-5086-4947-ad50-e1e54361122d`. The refreshed log
+endpoint returns an empty ZIP and there are no artifacts. This identifies no failing Rust test;
+the deeper service cause is unestablished. One rerun was requested on the same revision without
+a push. Attempt 2, job `112025746679`, passed on 6 October 2026 Copenhagen time at
+`306bbae8da446a1dde8ab7a0d0c4cd0f8df0b67a`, tree
+`4a33623771fe7a330fe7dfe561c0f2f543d0dd9d`: setup, all 33 static checks, workspace tests,
+discovery, application build and the headless, controlled-model and controller scenarios.
+The authored journey also passed inside the workspace suite. The failure-only diagnostic upload
+was correctly skipped. Downloaded artifact `11380661703` (`strict-static-Linux`) matched GitHub's
+SHA-256 digest and expires at `2026-10-19T23:39:46Z`; its reports and selected command output are
+included in the local archive. Runner environment/setup dumps are excluded. Attempt 1 remains a
+failure before execution; successful local evidence and attempt 2 do not rewrite that record.
+
 ## Consolidated client workflow corrections
 
 The finite F1–F8 and V1–V3 correction pass is accepted at executable source
