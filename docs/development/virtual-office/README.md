@@ -9,7 +9,8 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-No current sprints.
+The finite [client workflow verification](client-workflow-verification/README.md) assignment owns
+CI diagnosis, the remaining bounded source review and delivery of inspectable verification evidence.
 
 The [roadmap](../../product/roadmap.md) owns unfinished work; unrelated whiteboard topics remain separate.
 
