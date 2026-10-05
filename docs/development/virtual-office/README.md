@@ -9,7 +9,8 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-No active sprints.
+The [workflow name correction](workflow-name-corrections/README.md) owns the finite connection-ID
+and repair-input fixes, supported saved-definition compatibility and final integrated checks.
 The [roadmap](../../product/roadmap.md) owns unfinished work; unrelated whiteboard topics remain separate.
 
 ## Prepared assignments
