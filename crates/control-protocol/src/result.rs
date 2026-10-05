@@ -14,7 +14,9 @@ pub struct RunResultRead {
     pub workflow_name: Option<String>,
     /// Saved lineage version, independent of the run sequence.
     pub version: Option<u64>,
-    /// This view omitted frontier nodes or terminal outputs to stay within its bounds.
+    /// This view omitted frontier nodes, terminal outputs or nested attempt detail to stay
+    /// within its item and complete-response bounds. Exact node/attempt identities remain
+    /// available for separate reads when their detail is omitted.
     pub truncated: bool,
     /// Only outputs recorded by a successful workflow terminal, never an intermediate draft.
     pub outputs: Vec<RunOutputRead>,

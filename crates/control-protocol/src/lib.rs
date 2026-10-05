@@ -72,6 +72,8 @@ const LAYOUT_SCHEMA_VERSION: u32 = 1;
 const AUTHENTICATED_CURSOR_SCHEMA_VERSION: u8 = 2;
 /// Maximum JSON request or response envelope size.
 pub const MAX_DOCUMENT_BYTES: usize = 1_310_720;
+/// Maximum printable ASCII bytes in the HTTP correlation identity.
+pub const MAX_REQUEST_ID_BYTES: usize = 128;
 /// Maximum returned items in a single page.
 pub const MAX_PAGE_ITEMS: u32 = 1_024;
 /// Maximum reason length in UTF-8 bytes.
@@ -696,6 +698,11 @@ pub struct Page<T> {
 /// Rejects byte/structure bounds, malformed JSON, duplicate fields, and typed decoding failures.
 /// Callers must separately run any semantic validation required by the decoded type.
 pub fn decode_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ProtocolError> {
+    let value = checked_json_value(bytes)?;
+    serde_json::from_value(value).map_err(|error| ProtocolError::InvalidJson(error.to_string()))
+}
+
+fn checked_json_value(bytes: &[u8]) -> Result<Value, ProtocolError> {
     if bytes.len() > MAX_DOCUMENT_BYTES {
         return Err(ProtocolError::Bounds(format!(
             "document exceeds {MAX_DOCUMENT_BYTES} bytes"
@@ -707,23 +714,37 @@ pub fn decode_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ProtocolError
         .map_err(|error| ProtocolError::InvalidJson(error.to_string()))?;
     validate_json_value(&value, JSON_LIMITS)
         .map_err(|error| ProtocolError::Bounds(format!("{error:?}")))?;
-    serde_json::from_value(value).map_err(|error| ProtocolError::InvalidJson(error.to_string()))
+    Ok(value)
 }
 
-/// Encodes one protocol JSON document within the global byte bound.
+/// Encodes one protocol JSON document within the same byte and structure bounds as its reader.
 ///
 /// # Errors
-/// Returns serialization errors or rejects an encoded document above `MAX_DOCUMENT_BYTES`.
+/// Returns serialization errors or rejects byte, nesting, string or container overflow.
 /// This helper does not validate the value's semantic contract.
 pub fn encode_json<T: Serialize>(value: &T) -> Result<Vec<u8>, ProtocolError> {
     let bytes =
         serde_json::to_vec(value).map_err(|error| ProtocolError::InvalidJson(error.to_string()))?;
-    if bytes.len() > MAX_DOCUMENT_BYTES {
-        return Err(ProtocolError::Bounds(format!(
-            "document exceeds {MAX_DOCUMENT_BYTES} bytes"
-        )));
-    }
+    checked_json_value(&bytes)?;
     Ok(bytes)
+}
+
+/// Checks whether a value fits a complete response for every permitted HTTP request identity.
+///
+/// Mutation owners use this before changing durable state. The actual transport must still
+/// encode its complete envelope. Printable ASCII quotes/backslashes take at most two JSON
+/// bytes each, so the correlation identity here covers the worst permitted escaping.
+///
+/// # Errors
+/// Rejects any complete envelope the normal protocol reader could not decode within its bounds.
+/// The value's semantic validation remains with its owner.
+pub fn validate_response_capacity<T: Serialize>(value: &T) -> Result<(), ProtocolError> {
+    encode_json(&ResponseEnvelope {
+        protocol: ProtocolVersion::CURRENT,
+        request_id: "\"".repeat(MAX_REQUEST_ID_BYTES),
+        value,
+    })?;
+    Ok(())
 }
 
 fn validate_identifier(

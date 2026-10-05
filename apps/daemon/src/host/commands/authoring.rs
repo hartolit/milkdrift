@@ -7,10 +7,9 @@ use milkdrift_blueprint::{
 use milkdrift_control_protocol::{
     BlueprintDraft, BlueprintEdit, CommandAccepted, CommandRequest, ErrorCode,
 };
-use milkdrift_persistence::RevisionStore;
 use serde_json::json;
 
-use super::super::{ActorSession, Owner, PublicFailure, invalid, public_persistence};
+use super::super::{ActorSession, Owner, PublicFailure, invalid};
 use super::definitions::authorize_definition;
 
 mod edge_identity;
@@ -19,6 +18,9 @@ mod graph;
 mod repair;
 use graph::ModelWorkflow;
 pub(super) use repair::prepare as repair;
+
+#[cfg(test)]
+mod limits;
 
 type BuildResult<T> = Result<T, Box<dyn std::error::Error>>;
 fn failure(error: impl std::fmt::Display) -> PublicFailure {
@@ -236,8 +238,23 @@ fn finish(
         store,
         "command:author-blueprint",
     )?;
+    let result = result(request, &mut draft, &revision, store, view)?;
+    super::super::receipts::preflight_result(&result)?;
+    if store {
+        super::definitions::retain_revision(owner, &revision, &decision)?;
+    }
+    Ok(result)
+}
+
+fn result(
+    request: &CommandRequest,
+    draft: &mut BlueprintDraft,
+    revision: &BlueprintRevision,
+    store: bool,
+    view: serde_json::Value,
+) -> Result<CommandAccepted, PublicFailure> {
     let document: serde_json::Value = serde_json::from_slice(
-        &BlueprintRevisionDocument::new(&revision)
+        &BlueprintRevisionDocument::new(revision)
             .to_canonical_json()
             .map_err(failure)?,
     )
@@ -246,7 +263,7 @@ fn finish(
         draft.base_revision = Some(revision.id().to_string());
         draft.mutations.clear();
     }
-    let result = CommandAccepted {
+    Ok(CommandAccepted {
         command_id: request.command_id.clone(),
         replayed: false,
         resulting_sequence: None,
@@ -257,15 +274,5 @@ fn finish(
         }
         .to_owned(),
         value: json!({"draft":draft, "revision_id":revision.id(), "document":document, "workflow":view}),
-    };
-    // Refuse an oversized reply before storing anything; it must fit the normal public reader.
-    milkdrift_control_protocol::encode_json(&result).map_err(failure)?;
-    if store {
-        owner
-            .store
-            .put_revision(&revision)
-            .map_err(public_persistence)?;
-        owner.record_security_decision(&decision)?;
-    }
-    Ok(result)
+    })
 }

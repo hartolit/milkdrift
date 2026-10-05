@@ -106,7 +106,11 @@ impl ApplicationCommandResult {
         }
     }
 
-    fn validate(&self) -> Result<(), PersistenceError> {
+    /// Checks the exact result bytes and optional effect reference before a producer commits work.
+    ///
+    /// # Errors
+    /// Refuses an empty or oversized result document or an invalid effect reference.
+    pub fn validate(&self) -> Result<(), PersistenceError> {
         if self.document().is_empty()
             || self.document().len() > MAX_APPLICATION_COMMAND_RESULT_BYTES
         {

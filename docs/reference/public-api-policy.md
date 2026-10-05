@@ -42,6 +42,12 @@ package entry point. Consumers otherwise import the canonical owner directly.
 
 ## Surface ownership
 
+`validate_response_capacity` and `MAX_REQUEST_ID_BYTES` are protocol contracts consumed by daemon
+mutation admission, aggregate read construction and HTTP correlation validation. They use the
+existing envelope and reader limits, without introducing HTTP types into the pure protocol crate.
+`ApplicationCommandResult::validate` exposes the persistence owner's existing result bound to
+producers before they change definitions. It adds no format or alternate receipt owner.
+
 `ControlService::new` receives the existing artifact-store port alongside its revision, runtime
 and authority owners so inspection uses stored sensitivity when disclosing references.
 `AttemptInspection::context_manifest_denied` is a workspace read contract consumed by the daemon:

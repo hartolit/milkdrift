@@ -42,6 +42,8 @@ mod process_cleanup;
 mod repair;
 #[path = "control_plane/resources.rs"]
 mod resources;
+#[path = "control_plane/result_bounds.rs"]
+mod result_bounds;
 #[path = "control_plane/results.rs"]
 mod results;
 #[path = "control_plane/reuse.rs"]

@@ -96,7 +96,7 @@ pub(super) fn request_id(state: &AppState, headers: &HeaderMap) -> String {
         .and_then(|value| value.to_str().ok())
         .filter(|value| {
             !value.is_empty()
-                && value.len() <= 128
+                && value.len() <= milkdrift_control_protocol::MAX_REQUEST_ID_BYTES
                 && value.is_ascii()
                 && !value.bytes().any(|byte| byte.is_ascii_control())
         })

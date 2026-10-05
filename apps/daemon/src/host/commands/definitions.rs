@@ -30,23 +30,9 @@ pub(super) fn blueprint(
             "command:validate-blueprint"
         },
     )?;
-    let replayed = if store {
-        matches!(
-            owner
-                .store
-                .put_revision(&revision)
-                .map_err(public_persistence)?,
-            milkdrift_persistence::ImmutableRevisionPut::AlreadyPresent
-        )
-    } else {
-        false
-    };
-    if store {
-        owner.record_security_decision(&decision)?;
-    }
-    Ok(CommandAccepted {
+    let mut result = CommandAccepted {
         command_id: request.command_id.clone(),
-        replayed,
+        replayed: false,
         resulting_sequence: None,
         result_type: if store {
             "blueprint_imported"
@@ -66,7 +52,12 @@ pub(super) fn blueprint(
                 "semantic_digest": revision.content_digest().as_str(),
             })
         },
-    })
+    };
+    super::super::receipts::preflight_result(&result)?;
+    if store {
+        result.replayed = retain_revision(owner, &revision, &decision)?;
+    }
+    Ok(result)
 }
 
 pub(super) fn prompt_sequence(
@@ -97,23 +88,9 @@ pub(super) fn prompt_sequence(
             "command:validate-prompt-sequence"
         },
     )?;
-    let replayed = if store {
-        matches!(
-            owner
-                .store
-                .put_revision(revision)
-                .map_err(public_persistence)?,
-            milkdrift_persistence::ImmutableRevisionPut::AlreadyPresent
-        )
-    } else {
-        false
-    };
-    if store {
-        owner.record_security_decision(&decision)?;
-    }
-    Ok(CommandAccepted {
+    let mut result = CommandAccepted {
         command_id: request.command_id.clone(),
-        replayed,
+        replayed: false,
         resulting_sequence: None,
         result_type: if store {
             "prompt_sequence_imported"
@@ -131,7 +108,31 @@ pub(super) fn prompt_sequence(
             "repository_profile_digest": compiled.repository_profile_digest(),
             "stages": compiled.stages(),
         }),
-    })
+    };
+    super::super::receipts::preflight_result(&result)?;
+    if store {
+        result.replayed = retain_revision(owner, revision, &decision)?;
+    }
+    Ok(result)
+}
+
+pub(super) fn retain_revision(
+    owner: &Owner,
+    revision: &milkdrift_blueprint::BlueprintRevision,
+    decision: &milkdrift_authority::AuthorityDecisionSnapshot,
+) -> Result<bool, PublicFailure> {
+    let outcome = owner
+        .store
+        .put_revision(revision)
+        .map_err(public_persistence)
+        .map_err(super::super::receipts::unretained_outcome)?;
+    owner
+        .record_security_decision(decision)
+        .map_err(super::super::receipts::unretained_outcome)?;
+    Ok(matches!(
+        outcome,
+        milkdrift_persistence::ImmutableRevisionPut::AlreadyPresent
+    ))
 }
 
 pub(super) fn authorize_definition(

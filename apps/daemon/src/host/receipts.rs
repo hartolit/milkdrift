@@ -63,20 +63,21 @@ fn execute_inner(
     match owner.execute_new_command(session, &request) {
         Ok(result) => {
             let (effect_reference, effect) =
-                application_effect(session, &request, &result, created_at)?;
-            let document = serde_json::to_vec(&StoredApplicationResult::Accepted(result.clone()))
-                .map_err(|_| internal())?;
+                application_effect(session, &request, &result, created_at)
+                    .map_err(unretained_outcome)?;
+            let document = preflight_result(&result).map_err(unretained_outcome)?;
             let receipt = application_receipt(
                 session,
-                command.clone(),
-                digest.clone(),
+                command,
+                digest,
                 created_at,
                 created_at,
                 ApplicationCommandResult::Accepted {
                     document,
                     effect: effect_reference,
                 },
-            )?;
+            )
+            .map_err(unretained_outcome)?;
             match owner
                 .store
                 .commit_application_command(&ApplicationCommandCommit { receipt, effect })
@@ -86,12 +87,9 @@ fn execute_inner(
                     stored_application_result(&existing)
                 }
                 Err(error) => {
-                    let failure = public_persistence(error);
-                    if receipt_rejection(&failure) {
-                        persist_rejection(owner, session, command, digest, created_at, failure)
-                    } else {
-                        Err(failure)
-                    }
+                    // A successful producer may already have changed another durable
+                    // owner. Never replace a failed receipt commit with a rejection.
+                    Err(unretained_outcome(public_persistence(error)))
                 }
             }
         }
@@ -165,6 +163,49 @@ pub(super) fn command_fingerprint(
 enum StoredApplicationResult {
     Accepted(CommandAccepted),
     Rejected(PublicFailure),
+}
+
+/// Admit all representations before a definition producer changes storage. Replay sets
+/// `replayed` to true, which is one byte shorter than the initial false value.
+pub(super) fn preflight_result(result: &CommandAccepted) -> Result<Vec<u8>, PublicFailure> {
+    milkdrift_control_protocol::validate_response_capacity(result)
+        .map_err(result_capacity_failure)?;
+    let document =
+        milkdrift_control_protocol::encode_json(&StoredApplicationResult::Accepted(result.clone()))
+            .map_err(result_capacity_failure)?;
+    ApplicationCommandResult::Accepted {
+        document: document.clone(),
+        effect: None,
+    }
+    .validate()
+    .map_err(public_persistence)?;
+    Ok(document)
+}
+
+fn result_capacity_failure(error: milkdrift_control_protocol::ProtocolError) -> PublicFailure {
+    match error {
+        milkdrift_control_protocol::ProtocolError::Bounds(_) => invalid(&format!(
+            "complete command result exceeds its response or receipt capacity: {}",
+            bounded(&error.to_string())
+        )),
+        _ => public_protocol(error),
+    }
+}
+
+pub(super) fn unretained_outcome(failure: PublicFailure) -> PublicFailure {
+    let mut uncertain = PublicFailure::new(
+        ErrorCode::Uncertain,
+        "command work may have committed but its complete result could not be retained; inspect the target and recover with the exact original request",
+        false,
+    );
+    uncertain.details.insert(
+        "cause_code".into(),
+        serde_json::to_value(failure.code)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "internal".into()),
+    );
+    uncertain
 }
 
 fn application_receipt(

@@ -33,11 +33,6 @@ impl Owner {
         read.nodes
             .sort_by_key(|node| node.state.starts_with("terminal"));
         read.nodes.truncate(FRONTIER_ITEMS);
-        for node in &mut read.nodes {
-            if let Some(attempt) = &node.latest_attempt_id {
-                node.latest_attempt = optional(self.attempt_read(session, run, attempt))?;
-            }
-        }
         let definition = read
             .revision_id
             .as_ref()
@@ -177,7 +172,7 @@ impl Owner {
                 actions.push("start_linked_run".into());
             }
         }
-        Ok(RunResultRead {
+        let mut result = RunResultRead {
             run: read,
             workflow_name,
             version,
@@ -185,6 +180,52 @@ impl Owner {
             outputs,
             outputs_restricted,
             actions,
-        })
+        };
+        // Establish a small navigable view before adding individually bounded, but possibly
+        // large, attempt/context records. Admission covers the complete HTTP envelope.
+        for node in &mut result.run.nodes {
+            node.latest_attempt = None;
+        }
+        milkdrift_control_protocol::validate_response_capacity(&result)
+            .map_err(super::read_model::public_protocol)?;
+        for index in 0..result.run.nodes.len() {
+            let Some(attempt) = result
+                .run
+                .nodes
+                .get(index)
+                .and_then(|node| node.latest_attempt_id.clone())
+            else {
+                continue;
+            };
+            let detail = optional(self.attempt_read(session, run, &attempt))?;
+            admit_attempt(&mut result, index, detail)?;
+        }
+        Ok(result)
     }
+}
+
+fn admit_attempt(
+    result: &mut RunResultRead,
+    index: usize,
+    detail: Option<milkdrift_control_protocol::AttemptRead>,
+) -> Result<(), PublicFailure> {
+    result
+        .run
+        .nodes
+        .get_mut(index)
+        .ok_or_else(internal)?
+        .latest_attempt = detail;
+    if let Err(error) = milkdrift_control_protocol::validate_response_capacity(result) {
+        if !matches!(error, milkdrift_control_protocol::ProtocolError::Bounds(_)) {
+            return Err(super::read_model::public_protocol(error));
+        }
+        result
+            .run
+            .nodes
+            .get_mut(index)
+            .ok_or_else(internal)?
+            .latest_attempt = None;
+        result.truncated = true;
+    }
+    Ok(())
 }

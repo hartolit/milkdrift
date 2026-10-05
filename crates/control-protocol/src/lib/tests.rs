@@ -1,6 +1,23 @@
 use super::*;
 
 #[test]
+fn response_admission_and_encoding_obey_the_normal_reader_structure_limits()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut value = serde_json::json!("escaped\"\\\n text");
+    for _ in 0..JSON_LIMITS.maximum_depth {
+        value = serde_json::json!([value]);
+    }
+    // A raw value at the depth ceiling fits; adding a response envelope does not.
+    let bytes = encode_json(&value)?;
+    assert_eq!(decode_json::<Value>(&bytes)?, value);
+    assert!(validate_response_capacity(&value).is_err());
+    let too_deep = serde_json::json!([value]);
+    assert!(decode_json::<Value>(&serde_json::to_vec(&too_deep)?).is_err());
+    assert!(encode_json(&too_deep).is_err());
+    Ok(())
+}
+
+#[test]
 fn semantic_comparison_wire_preserves_categories_and_truncation()
 -> Result<(), Box<dyn std::error::Error>> {
     let bytes = br#"{"from_revision":"from","to_revision":"to","changes":[{"change":"changed","subject":"metadata","identity":"description","detail":null},{"change":"removed","subject":"input","identity":"brief","detail":null},{"change":"added","subject":"agreement","identity":null,"detail":null}],"truncated":true}"#;

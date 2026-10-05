@@ -269,6 +269,19 @@ reselection. Separate drafts may create branches from the same immutable parent.
 [ADR 0044](../decisions/0044-public-workflow-authoring.md) and the
 [authoring recipe](../../examples/operator/README.md#author-a-model-workflow).
 
+Before storing a definition, authoring, construction, copying and imports check the complete
+accepted result in both its durable receipt wrapper and its HTTP response envelope. Admission
+includes the maximum permitted request ID and JSON escaping, and uses the reader's byte and
+structure bounds. A result that cannot fit is refused before a new revision is stored; required
+definition data is never truncated. Initial success and exact replay therefore fit the same
+supported reader. The transport still checks its actual envelope independently.
+
+Capacity admission does not guarantee that later storage succeeds. If writing a revision, its
+audit decision or the accepted command receipt fails after work may have committed, the daemon
+returns `uncertain`, without recording a false rejection. Inspect the target and recover with the
+exact original request and authority basis; do not submit a replacement command ID to guess at
+the outcome.
+
 Controller commands use the installed lifecycle when the daemon explicitly enables it. Startup
 defaults to disabled; see [activation and recovery](../operations/daemon.md#controller-activation).
 
@@ -364,6 +377,14 @@ history API refuses a page containing unauthorized artifact metadata, preserving
 facts. The daemon's status timeline remains available because it never copies raw event bodies.
 
 ## Read models
+
+The combined run-result view limits the frontier and terminal outputs to 32 each and text previews
+to 4,096 bytes. It also checks the complete response as it adds authorized attempt/context detail.
+When that detail would exceed the response's byte or structure bound, the node keeps its execution
+and latest-attempt identities, omits `latest_attempt`, and the result sets `truncated: true`.
+Use the exact node/attempt reads and separately authorized artifact ranges for the omitted detail.
+An absent nested attempt is not evidence that it never ran. Permission filtering occurs before
+this capacity decision, and output previews retain their separate content authorization.
 
 External timeline entries use the stable categories `lifecycle`, `execution`, `progress`, `artifact`, `coordination`, `authority`, `recovery`, `reconciliation`, and `uncertainty`. An entry carries the exact durable sequence, timestamp, bounded actor and run/node/attempt/revision references, stable summary, and bounded structured detail. It is deliberately not an internal `RunEventKind` document.
 
