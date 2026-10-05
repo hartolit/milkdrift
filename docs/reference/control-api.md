@@ -220,6 +220,13 @@ opening or saving without changes preserves the original revision. Recognition s
 every semantic field. [ADR 0050](../decisions/0050-editor-edge-identities.md) owns the encoding and
 narrow compatibility rule.
 
+`prepare_model_repair` copies the failed step's workflow-input bindings under their original
+names and supplies the selected rejected response separately as `milkdrift.failed_result`.
+Ordinary connection edits reserve `milkdrift.` names. If an explicit/imported definition already
+occupies the repair evidence name, preparation refuses without changing the run or a binding.
+Old saved proposals retain their original mutations and names on replay. Preparation never
+approves, adopts or executes the proposed repair.
+
 Replies contain `draft`, `revision_id`, the canonical `document`, and an editor `workflow` view.
 Saving clears pending mutations and advances the returned base. An unchanged save retains the
 same revision. Neither command starts work or adopts a revision into an existing run. The model

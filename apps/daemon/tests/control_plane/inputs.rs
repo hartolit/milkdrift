@@ -13,6 +13,21 @@ pub(super) async fn workflow_with_draft(
     client: &ControlClient,
     draft_step: &str,
 ) -> TestResult<String> {
+    workflow_with_names(client, draft_step, "brief").await
+}
+
+pub(super) async fn workflow_with_review_input(
+    client: &ControlClient,
+    input: &str,
+) -> TestResult<String> {
+    workflow_with_names(client, "draft", input).await
+}
+
+async fn workflow_with_names(
+    client: &ControlClient,
+    draft_step: &str,
+    review_input: &str,
+) -> TestResult<String> {
     let mut draft = BlueprintDraft {
         workflow_id: "release-notes".into(),
         base_revision: None,
@@ -43,7 +58,7 @@ pub(super) async fn workflow_with_draft(
         },
         BlueprintEdit::Connect {
             step: "review".into(),
-            input: "brief".into(),
+            input: review_input.into(),
             source: ModelInputSource::RunInput {
                 name: "brief".into(),
             },

@@ -19,6 +19,9 @@ use milkdrift_runtime::{NodeExecutionState, RunLifecycle};
 use milkdrift_workspace::RunId;
 use serde_json::json;
 
+// Ordinary connections reserve milkdrift.; user ports such as failed_result remain unchanged.
+const FAILED_RESULT_INPUT: &str = "milkdrift.failed_result";
+
 pub(in crate::host::commands) fn prepare(
     owner: &Owner,
     session: &ActorSession,
@@ -138,6 +141,13 @@ fn build(
         .last()
         .filter(|step| step.id == repair.failed_step)
         .ok_or("repair convenience supports the final model step only")?;
+    // Explicit/imported mutations can predate or bypass the editor's reserved-name guard.
+    // Refuse that conflict before copying inputs; never replace retained user content.
+    if failed.inputs.contains_key(FAILED_RESULT_INPUT) {
+        return Err(
+            format!("repair evidence input {FAILED_RESULT_INPUT} is already occupied").into(),
+        );
+    }
     let (_, output) = original
         .output
         .as_ref()
@@ -204,7 +214,7 @@ fn build(
             node = node
                 .with_control_input(PortId::new("in")?)?
                 .with_data_input(
-                    PortId::new("failed_result")?,
+                    PortId::new(FAILED_RESULT_INPUT)?,
                     DataPort::input(
                         artifact()?,
                         true,
@@ -250,7 +260,7 @@ fn build(
         &failed.id,
         "model_response",
         &repair.repair_step,
-        "failed_result",
+        FAILED_RESULT_INPUT,
     )?;
     operations.extend(edges.into_iter().map(|edge| Mutation::AddEdge { edge }));
     let mutation = MutationBatch::new(operations)?;

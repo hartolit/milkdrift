@@ -21,6 +21,15 @@ not an automatic repair policy. Existing control admission, protected agreements
 runtime reconciliation remain authoritative. Proposal reads expose the recorded reconciliation
 items and current sequence so clients can show impact before deciding or applying.
 
+New repairs bind rejected response evidence under `milkdrift.failed_result`, in the editor's
+reserved input namespace. Copied workflow-input bindings keep their original names, including
+the legal user port `failed_result`. Explicit/imported definitions may already occupy the reserved
+name; preparation refuses that conflict without altering either input or run state. One private
+repair constant owns the generated port, binding and edge target. Existing saved proposals and
+repairs keep their old identities and `failed_result` evidence binding; replay consumes retained
+mutations and receipts, never a newly generated repair. Each replacement still needs separate
+approval/application and its own completeness check.
+
 This coordinated wire revision requires current clients and daemon together. Durable blueprint,
 proposal, run history and artifact formats are unchanged. Existing receipts retain exact replay
 under their supported request version; an older public envelope is refused at negotiation.
