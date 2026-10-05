@@ -38,6 +38,7 @@ use url::Url;
 
 mod invocation;
 mod saved_run;
+mod sse;
 pub use saved_run::SavedRunRequest;
 
 /// Default maximum artifact range materialized by one client call.
@@ -663,6 +664,8 @@ impl ControlClient {
     /// The resume cursor advances on decoding, not on durable consumer acknowledgement.
     /// A nonretryable API error or malformed frame ends the stream. Dropping it stops local
     /// observation without cancelling work on the daemon. Heartbeat comments are ignored.
+    /// CRLF, LF and CR lines are accepted. An incomplete event at EOF is discarded before
+    /// reconnecting from the last valid observation; it never advances the resume cursor.
     /// Run feeds use `v1/runs/{raw_run_identity}/stream`: the identity remains raw here,
     /// including slashes, and is encoded once for transport. Cursors bind that raw identity.
     pub fn subscribe(
@@ -709,7 +712,7 @@ impl ControlClient {
                     }
                 };
                 let mut bytes = response.bytes_stream();
-                let mut buffer = Vec::new();
+                let mut decoder = sse::Decoder::default();
                 let mut reconnect = false;
                 while let Some(chunk) = bytes.next().await {
                     let chunk = match chunk {
@@ -720,15 +723,8 @@ impl ControlClient {
                             break;
                         }
                     };
-                    if buffer.len().saturating_add(chunk.len()) > milkdrift_control_protocol::MAX_DOCUMENT_BYTES * 2 {
-                        yield Err(ClientError::Stream("SSE frame exceeds client bound".to_owned()));
-                        return;
-                    }
-                    buffer.extend_from_slice(&chunk);
-                    while let Some(boundary) = find_sse_boundary(&buffer) {
-                        let frame = buffer.drain(..boundary).collect::<Vec<_>>();
-                        drain_sse_boundary(&mut buffer);
-                        match parse_sse_data(&frame) {
+                    for byte in chunk {
+                        match decoder.push(byte) {
                             Ok(None) => {}
                             Ok(Some(observation)) => {
                                 if observation.feed != feed {
@@ -756,10 +752,6 @@ impl ControlClient {
                     }
                 }
                 if !reconnect {
-                    if !buffer.is_empty() {
-                        yield Err(ClientError::Stream("server truncated an observation frame".to_owned()));
-                        return;
-                    }
                     yield Err(ClientError::Transport("server closed the observation stream".to_owned()));
                 }
                 tokio::time::sleep(client.config.retry_delay).await;
@@ -969,44 +961,6 @@ fn push_cursor(path: &mut String, cursor: Option<&Cursor>) {
     }
 }
 
-fn find_sse_boundary(bytes: &[u8]) -> Option<usize> {
-    bytes
-        .windows(2)
-        .position(|window| window == b"\n\n")
-        .or_else(|| bytes.windows(4).position(|window| window == b"\r\n\r\n"))
-}
-
-fn drain_sse_boundary(bytes: &mut Vec<u8>) {
-    if bytes.starts_with(b"\r\n\r\n") {
-        bytes.drain(..4);
-    } else if bytes.starts_with(b"\n\n") {
-        bytes.drain(..2);
-    }
-}
-
-fn parse_sse_data(frame: &[u8]) -> Result<Option<ObservationEnvelope>, ClientError> {
-    let text = std::str::from_utf8(frame)
-        .map_err(|_| ClientError::Stream("SSE frame is not UTF-8".to_owned()))?;
-    let mut data = String::new();
-    for line in text.lines() {
-        if line.starts_with(':') {
-            continue;
-        }
-        if let Some(value) = line.strip_prefix("data:") {
-            if !data.is_empty() {
-                data.push('\n');
-            }
-            data.push_str(value.strip_prefix(' ').unwrap_or(value));
-        }
-    }
-    if data.is_empty() {
-        return Ok(None);
-    }
-    let envelope: ObservationEnvelope = decode_json(data.as_bytes())?;
-    envelope.protocol.negotiate()?;
-    Ok(Some(envelope))
-}
-
 /// Maps a client result into coarse categories useful to CLI exit-code policy.
 #[must_use]
 pub fn status_class(error: &ClientError) -> Option<StatusCode> {
@@ -1034,8 +988,6 @@ pub fn status_class(error: &ClientError) -> Option<StatusCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use milkdrift_control_protocol::{Observation, ProtocolVersion, TimelineCategory};
-    use serde_json::Value;
 
     #[test]
     fn resource_segments_preserve_data_and_stream_cursors_use_raw_names()
@@ -1077,54 +1029,6 @@ mod tests {
             credential,
         )?;
         assert!(!format!("{client:?}").contains("top-secret-value"));
-        Ok(())
-    }
-
-    #[test]
-    fn sse_parser_ignores_heartbeats_and_reads_external_envelopes()
-    -> Result<(), Box<dyn std::error::Error>> {
-        assert!(
-            parse_sse_data(b": heartbeat")
-                .map_err(|error| error.to_string())?
-                .is_none()
-        );
-        let mut observation = ObservationEnvelope {
-            protocol: ProtocolVersion::CURRENT,
-            cursor: Cursor::new("run:test", 1)?,
-            observed_at_ms: 1,
-            feed: "run:test".to_owned(),
-            observation: Observation::Timeline(TimelineEntry {
-                sequence: 1,
-                timestamp_ms: 1,
-                category: TimelineCategory::Lifecycle,
-                actor: "human:test".to_owned(),
-                run_id: "test".to_owned(),
-                node_id: None,
-                attempt_id: None,
-                revision_id: None,
-                summary: "created".to_owned(),
-                detail: Value::Null,
-            }),
-        };
-        let frame = format!("data: {}", serde_json::to_string(&observation)?);
-        assert_eq!(
-            parse_sse_data(frame.as_bytes()).map_err(|error| error.to_string())?,
-            Some(observation.clone())
-        );
-        for minor in [
-            0,
-            ProtocolVersion::CURRENT.minor - 1,
-            ProtocolVersion::CURRENT.minor + 1,
-        ] {
-            observation.protocol.minor = minor;
-            let frame = format!("data: {}", serde_json::to_string(&observation)?);
-            assert!(matches!(
-                parse_sse_data(frame.as_bytes()),
-                Err(ClientError::Protocol(
-                    ProtocolError::UnsupportedMinor { .. }
-                ))
-            ));
-        }
         Ok(())
     }
 }

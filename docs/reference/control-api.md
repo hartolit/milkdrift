@@ -443,6 +443,16 @@ limit, handles `resync_required` by refreshing the view, and decides how to hand
 The cursor advances when decoded, not when the consumer persists its item. Reconnect never submits
 or replays a command.
 
+Event framing follows the [WHATWG line and data-field rules](https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream):
+CRLF, LF and CR end lines; the earliest blank line completes an event; repeated `data` fields
+join with newlines; one initial UTF-8 BOM is ignored. Network chunk boundaries have no meaning.
+An incomplete event at EOF is discarded before reconnecting. The client additionally requires
+strict UTF-8 and a valid bounded JSON observation, and ends on a malformed complete event.
+Empty/comment-only blocks carry no observation; an empty `data` event fails JSON decoding.
+SSE `id` and `retry` fields do not override the authenticated envelope cursor or client retry
+policy. Cursor advancement requires a valid envelope, matching feed and cursor, and a newer
+position. Each event's buffer is bounded independently, even when one chunk holds many events.
+
 The CLI's `run timeline --follow` first reads a timeline page, then starts a fresh run stream.
 Its `--cursor` applies to that page; a `timeline:{run}` continuation cannot resume `run:{run}`.
 The fresh stream starts with the current run view and observes only later events. It does not
@@ -510,8 +520,9 @@ Followed run, capability and health feeds emit JSON Lines with `final:false` for
 reconnect transitions, and exactly one `final:true` failure record on deadline, authority loss,
 nonretryable protocol failure or Ctrl-C. `status` is `success`, `reconnecting` or `failure`.
 `--max-reconnects` (default 5, maximum 100) bounds retries across the command. Noninteractive follow
-requires `--timeout-secs`; interactive follow may last until Ctrl-C. A truncated SSE frame is a
-protocol failure, and a closed stream consumes the reconnect budget. Pages never auto-drain.
+requires `--timeout-secs`; interactive follow may last until Ctrl-C. A malformed complete SSE
+event is a protocol failure. EOF discards pending event data and consumes the reconnect budget.
+Pages never auto-drain.
 
 High-risk commands require interactive `yes` or `--yes`; JSON and redirected execution require
 `--yes`. Confirmation input is bounded by the command deadline. Local sequence compilation,

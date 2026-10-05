@@ -51,8 +51,11 @@ consumer resuming after its own restart must save a cursor only after handling i
 `ResyncRequired` as a request for a fresh authorized view, then subscribe without a cursor.
 The client suppresses duplicate or older positions within a subscription. Both `ResyncRequired`
 and `StreamClosing` end the subscription after their notice; the caller decides whether to reopen.
-Malformed/truncated frames and nonretryable API errors end the subscription. Dropping the stream
-stops local observation; it does not cancel a run.
+Malformed complete events and nonretryable API errors end the subscription. An incomplete event
+at EOF is discarded, then the connection resumes from the last valid observation. The decoder
+accepts CRLF, LF and CR lines in order, including line endings and UTF-8 split between chunks;
+each event has its own buffer bound. Comments never advance the cursor. Dropping the stream stops
+local observation; it does not cancel a run.
 
 The [crate API](src/lib.rs) owns defaults and individual method behavior. The
 [control reference](../../docs/reference/control-api.md) owns exact feeds and error categories;
