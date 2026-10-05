@@ -204,6 +204,14 @@ before observation. JSON mode emits one nonfinal `run.prepared` record and one f
 without waiting, acceptance remains a single final response. Timeout/exit stops the observer;
 cancellation stays a separate command with its existing uncertain-effect semantics.
 This record has no credentials and creates no model selection earlier than runtime dispatch.
+Resource identities in URLs are single percent-encoded path segments. Encode a raw identity
+once, including embedded slashes and literal percent signs; the daemon decodes the matched
+segment once before its domain reader validates the name. Embedded `.`/`..` and repeated
+separators in legal names remain data. Standalone `.`/`..` and percent-bearing run/artifact names
+are not accepted by the current domain validators. JSON requests and stored names are unchanged.
+The Rust client's run subscription argument embeds the raw run identity in
+`v1/runs/{raw_run_identity}/stream`; transport encoding is internal. Cursor resource bindings
+also use the raw name, so a cursor cannot be reused for an encoded spelling or another run.
 Control protocol versions still require a coordinated upgrade. Direct invocation documents retain
 their existing version, saved request identity, replay and conflict semantics.
 

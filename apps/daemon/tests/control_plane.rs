@@ -52,6 +52,8 @@ mod roles;
 mod support;
 #[path = "control_plane/upload_identities.rs"]
 mod upload_identities;
+#[path = "control_plane/url_identities.rs"]
+mod url_identities;
 
 #[path = "control_plane/published.rs"]
 mod published;

@@ -663,6 +663,8 @@ impl ControlClient {
     /// The resume cursor advances on decoding, not on durable consumer acknowledgement.
     /// A nonretryable API error or malformed frame ends the stream. Dropping it stops local
     /// observation without cancelling work on the daemon. Heartbeat comments are ignored.
+    /// Run feeds use `v1/runs/{raw_run_identity}/stream`: the identity remains raw here,
+    /// including slashes, and is encoded once for transport. Cursors bind that raw identity.
     pub fn subscribe(
         &self,
         feed_path: impl Into<String>,
@@ -671,14 +673,11 @@ impl ControlClient {
         let client = self.clone();
         let feed_path = feed_path.into();
         Box::pin(async_stream::stream! {
-            if let Err(error) = validate_feed_path(&feed_path) {
-                yield Err(error);
-                return;
-            }
+            let (feed_path, feed) = match observation_route(&feed_path) {
+                Ok(route) => route,
+                Err(error) => { yield Err(error); return; }
+            };
             let mut resume = cursor;
-            let feed = if feed_path == "v1/stream/health" { "daemon-health".to_owned() }
-                else if feed_path == "v1/stream/capabilities" { "capability-health".to_owned() }
-                else { format!("run:{}", feed_path.trim_start_matches("v1/runs/").trim_end_matches("/stream")) };
             let mut position = match resume.as_ref().map(|cursor| cursor.position_for(&feed)).transpose() {
                 Ok(position) => position,
                 Err(error) => { yield Err(error.into()); return; }
@@ -906,29 +905,45 @@ fn redacted_transport(error: reqwest::Error) -> ClientError {
 
 fn path_segment(value: &str) -> Result<String, ClientError> {
     if value.is_empty()
+        || matches!(value, "." | "..")
         || value.len() > 256
         || !value.is_ascii()
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+        || !value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/' | b'%')
+        })
     {
         return Err(ClientError::Configuration(
             "resource identity is not a safe path segment".to_owned(),
         ));
     }
-    Ok(value.to_owned())
+    // Push the raw identity as one segment. In particular a slash is data and
+    // a literal percent sequence must survive the server's single decoding pass.
+    // Standalone dot segments cannot be carried by WHATWG URLs; domain identities
+    // already require an initial alphanumeric character and never admit those.
+    let mut encoded = Url::parse("http://localhost/")
+        .map_err(|_| ClientError::Configuration("invalid identity encoder base".into()))?;
+    encoded
+        .path_segments_mut()
+        .map_err(|()| ClientError::Configuration("invalid identity encoder path".into()))?
+        .push(value);
+    Ok(encoded.path().trim_start_matches('/').to_owned())
 }
 
-fn validate_feed_path(path: &str) -> Result<(), ClientError> {
-    if matches!(path, "v1/stream/health" | "v1/stream/capabilities") {
-        return Ok(());
+fn observation_route(path: &str) -> Result<(String, String), ClientError> {
+    if path == "v1/stream/health" {
+        return Ok((path.into(), "daemon-health".into()));
+    }
+    if path == "v1/stream/capabilities" {
+        return Ok((path.into(), "capability-health".into()));
     }
     if let Some(run) = path
         .strip_prefix("v1/runs/")
         .and_then(|path| path.strip_suffix("/stream"))
     {
-        path_segment(run)?;
-        return Ok(());
+        return Ok((
+            format!("v1/runs/{}/stream", path_segment(run)?),
+            format!("run:{run}"),
+        ));
     }
     Err(ClientError::Configuration(
         "unsupported observation feed".to_owned(),
@@ -1021,6 +1036,37 @@ mod tests {
     use super::*;
     use milkdrift_control_protocol::{Observation, ProtocolVersion, TimelineCategory};
     use serde_json::Value;
+
+    #[test]
+    fn resource_segments_preserve_data_and_stream_cursors_use_raw_names()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let endpoint = Url::parse("http://127.0.0.1:9734/prefix/")?;
+        for (raw, encoded) in [
+            ("team/build-1", "team%2Fbuild-1"),
+            ("team/../build/./", "team%2F..%2Fbuild%2F.%2F"),
+            ("team//build", "team%2F%2Fbuild"),
+            ("team%2Fbuild", "team%252Fbuild"),
+            ("team:._-9", "team:._-9"),
+        ] {
+            assert_eq!(path_segment(raw)?, encoded);
+            let path = format!("v1/runs/{raw}/stream");
+            let (route, feed) = observation_route(&path)?;
+            assert_eq!(feed, format!("run:{raw}"));
+            assert_eq!(
+                endpoint.join(&route)?.path(),
+                format!("/prefix/v1/runs/{encoded}/stream")
+            );
+            let cursor = Cursor::new(&feed, 7)?;
+            assert_eq!(cursor.position_for(&feed)?, 7);
+            if raw != encoded {
+                assert!(cursor.position_for(&format!("run:{encoded}")).is_err());
+            }
+        }
+        for invalid in ["", ".", "..", "a?x=1", "a#fragment", "a&b", "a\n"] {
+            assert!(path_segment(invalid).is_err());
+        }
+        Ok(())
+    }
 
     #[test]
     fn credential_and_client_debug_are_redacted() -> Result<(), Box<dyn std::error::Error>> {
