@@ -18,7 +18,7 @@ mod scheduler;
 mod snapshots;
 mod workspace;
 
-/// Persisted phase tags. Their values and ordering are integrity-cursor schema v2.
+/// Persisted phase tags. Their values and ordering are integrity-cursor schema v4.
 /// Moving a phase requires an explicit cursor-version decision.
 pub(super) mod phase {
     pub(super) const HEADS: u8 = 0;
@@ -82,6 +82,7 @@ pub(super) mod phase {
     pub(super) const MANAGED_ACTIVE_INSTALLATIONS: u8 = 58;
     pub(super) const MANAGED_PENDING_EVALUATIONS: u8 = 59;
     pub(super) const PUBLISHED_ACTIVE_METHODS: u8 = 60;
+    pub(super) const REVISION_WORKFLOWS: u8 = 61;
 }
 
 /// Shared state for one ordered scan page. Domain modules own tables and validation.
@@ -348,5 +349,6 @@ pub(crate) fn scan_index_integrity(
     managed::scan(&mut context)?;
     published::scan(&mut context)?;
     managed::scan_active(&mut context)?;
-    published::scan_active(&mut context)
+    published::scan_active(&mut context)?;
+    revisions::scan_workflows(&mut context)
 }

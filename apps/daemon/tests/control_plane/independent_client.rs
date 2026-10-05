@@ -363,6 +363,38 @@ async fn json_client_authors_runs_recovers_downloads_and_copies_without_private_
         .as_str()
         .ok_or("copy revision")?;
     assert_ne!(copy, revision_id);
+    let mut discovered = Vec::new();
+    let mut path = "v1/revisions?limit=1".to_owned();
+    for _ in 0..3 {
+        let page = client.get(&path).await?;
+        let items = page
+            .get("items")
+            .and_then(Value::as_array)
+            .ok_or("revision items absent")?;
+        for item in items {
+            assert!(matches!(
+                item.get("workflow_id").and_then(Value::as_str),
+                Some("release-notes" | "independent-notes")
+            ));
+            discovered.push(
+                item.get("revision_id")
+                    .and_then(Value::as_str)
+                    .ok_or("revision absent")?
+                    .to_owned(),
+            );
+        }
+        let Some(cursor) = page.get("next_cursor").and_then(Value::as_str) else {
+            break;
+        };
+        let mut url = endpoint.join("v1/revisions")?;
+        url.query_pairs_mut()
+            .append_pair("limit", "1")
+            .append_pair("cursor", cursor);
+        path = url.to_string();
+    }
+    let mut expected = vec![revision_id.to_owned(), copy.to_owned()];
+    expected.sort();
+    assert_eq!(discovered, expected);
     let copy_read = client.get(&format!("v1/revisions/{copy}")).await?;
     assert_eq!(
         copy_read

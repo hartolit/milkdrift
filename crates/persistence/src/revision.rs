@@ -29,8 +29,9 @@ pub struct RevisionSummary {
 /// Stable revision-list filter.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RevisionFilter {
-    /// Optional exact workflow lineage.
-    pub workflow: Option<WorkflowId>,
+    /// Optional bounded selection of exact workflow lineages. `None` selects all workflows.
+    /// Callers authorize this collection before querying; the store reads only its index ranges.
+    pub workflows: Option<milkdrift_authority::WorkflowSet>,
 }
 
 /// Exclusive physical resume point bound to one exact revision filter.
@@ -50,7 +51,7 @@ impl RevisionCursor {
         }
     }
 
-    /// Last physically scanned revision identity.
+    /// Last returned revision identity in the selected collection.
     #[must_use]
     pub const fn after_revision(&self) -> &RevisionId {
         &self.after_revision
@@ -70,7 +71,8 @@ pub struct RevisionPageQuery {
     pub filter: RevisionFilter,
     /// Optional exclusive continuation.
     pub cursor: Option<RevisionCursor>,
-    /// Maximum physical rows scanned and returned.
+    /// Maximum returned revisions. A scoped merge reads at most this many rows plus one index
+    /// head for each selected workflow; it never scans excluded workflow definitions.
     pub limit: PageSize,
 }
 
@@ -79,7 +81,7 @@ pub struct RevisionPageQuery {
 pub struct RevisionPage {
     /// Matching revision summaries.
     pub revisions: Vec<RevisionSummary>,
-    /// Advancing continuation, absent when fewer than the scan limit existed.
+    /// Advancing continuation. A full final page may require one empty read to observe the end.
     pub next: Option<RevisionCursor>,
 }
 
@@ -145,9 +147,9 @@ pub trait RevisionStore: Send + Sync {
         limit: PageSize,
     ) -> Result<Vec<RevisionSummary>, PersistenceError>;
 
-    /// Lists a bounded stable identity-ordered page without scanning complete lineage history.
-    /// A filtered page may contain no matches while its physical scan cursor advances;
-    /// continue until `next` is absent.
+    /// Lists a bounded live identity-ordered page from the selected workflows' indexes.
+    /// Continue until `next` is absent. Insertions behind an existing cursor are not revisited;
+    /// this is not a snapshot of the collection across calls.
     ///
     /// # Errors
     /// Refuses a cursor for another filter and returns storage or revision-index corruption.

@@ -93,6 +93,10 @@ Only the daemon interprets editor gestures, builds existing blueprint/model valu
 revision identities. Its supported-shape recognizer and graph construction remain private; no
 new blueprint executor, mutable draft store, or production test helper is exported.
 
+`RevisionFilter.workflows` is a workspace query contract consumed by daemon and redb. It uses the
+authority owner's bounded `WorkflowSet` so the store restricts discovery before reading definitions.
+The daemon still evaluates inspection authority; the private workflow index grants no access.
+
 The [architecture package map](../architecture.md#owners-and-dependency-direction) identifies each
 production consumer boundary. Public semantic documents, adapter ports, and application entry
 points must meet the classification above; private provider payloads, storage rows, daemon routes,

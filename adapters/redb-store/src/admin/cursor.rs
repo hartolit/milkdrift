@@ -14,7 +14,7 @@ use super::{
     TIMER_ENTRIES, TIMER_INDEX, VALUES, WORKSPACE_BUDGETS, WORKSPACE_USAGE, WORKSPACE_VALUE_HEADS,
     error, integrity::scan_index_integrity,
 };
-const INTEGRITY_CURSOR_VERSION: u8 = 3;
+const INTEGRITY_CURSOR_VERSION: u8 = 4;
 const INTEGRITY_CURSOR_PREFIX_BYTES: usize = 33;
 
 #[cfg(test)]
@@ -191,7 +191,7 @@ pub(crate) fn index_cursor_position(
             "index integrity cursor has no phase".to_owned(),
         ));
     };
-    if phase > 60 || key.is_empty() {
+    if phase > 61 || key.is_empty() {
         return Err(PersistenceError::InvalidCursor(
             "index integrity cursor has an unknown phase or empty key".to_owned(),
         ));
@@ -641,6 +641,7 @@ pub(crate) fn index_integrity_cursor_exists(
             .get(string_key()?)
             .map_err(error::redb)
             .map(|row| row.is_some()),
+        61 => binary_cursor_exists(read, crate::schema::REVISIONS_BY_WORKFLOW, key),
         _ => Err(PersistenceError::InvalidCursor(
             "index integrity cursor has an unknown phase".to_owned(),
         )),

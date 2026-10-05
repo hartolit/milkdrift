@@ -95,7 +95,7 @@ async fn named_copy_cli_refuses_missing_scopes_actions_and_hidden_workflows() ->
                 assert!(!error.to_string().contains(&secret_revision));
                 assert!(daemon.client.revisions(Some("b"), &page).await?.items.is_empty());
             }
-            assert!(daemon.client.revisions(None, &page).await.is_err());
+            assert_eq!(daemon.client.revisions(None, &page).await?.items.len(), 1);
             assert!(daemon.client.runs(None, None, &page).await.is_err());
             assert!(daemon.client.revisions(Some("c"), &page).await.is_err());
             assert!(daemon.client.revision(&secret_revision).await.is_err());
@@ -109,6 +109,12 @@ async fn named_copy_cli_refuses_missing_scopes_actions_and_hidden_workflows() ->
             ])?;
             let revision = value.get("revision_id").and_then(serde_json::Value::as_str).ok_or("copy absent")?.to_owned();
             assert_eq!(daemon.client.revisions(Some("b"), &page).await?.items.len(), 1);
+            let discovered = cli_ok(daemon, &directory, "discover-named-cli", &[
+                "workflow", "list", "--limit", "10"
+            ])?;
+            let items = discovered.get("items").and_then(serde_json::Value::as_array).ok_or("revision page absent")?;
+            assert_eq!(items.len(), 2);
+            assert!(items.iter().all(|item| matches!(item.get("workflow_id").and_then(serde_json::Value::as_str), Some("a" | "b"))));
             assert!(daemon.client.runs(None, Some("b"), &page).await?.items.is_empty());
             assert!(daemon.client.revision(&revision).await?.reason.contains(&source));
             copied = Some(revision);

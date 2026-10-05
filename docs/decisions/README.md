@@ -58,3 +58,4 @@ verify it; these decisions do not change current readers, configuration options 
 - [0043 — Completed history releases active host capacity](0043-active-capacity-and-retained-history.md)
 - [0044 — Public workflow authoring over existing mutations](0044-public-workflow-authoring.md)
 - [0045 — Supplied run inputs and exact client recovery](0045-supplied-run-inputs-and-recovery.md)
+- [0049 — Discover revisions within the authorized workflow collection](0049-authorized-workflow-discovery.md)

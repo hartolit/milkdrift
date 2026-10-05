@@ -36,8 +36,9 @@ workflows = ["release-notes", "independent-notes"]
 The set limits the grant's existing actions equally to every named workflow. It does not give
 different actions to different workflows, add capability permissions, or combine separate grants.
 Copy still needs source revision inspection and destination import authority in that one grant.
-It cannot read or create unrelated workflows. Run and revision listings require an explicit
-`--workflow` filter with this scope, so pagination never exposes unrelated identifiers.
+It cannot read or create unrelated workflows. Revision listings discover only the named workflows,
+checking the current grant on every page; an explicit `--workflow` filter must name a permitted
+workflow. Run listings still require that filter. A run-only grant cannot discover definitions.
 
 The authority owner accepts 1..=128 unique workflow identities, each subject to the existing
 128-byte identity grammar. Writers sort them lexically; empty, duplicate, oversized, invalid and

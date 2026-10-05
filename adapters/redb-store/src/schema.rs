@@ -1,6 +1,6 @@
 use redb::TableDefinition;
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 16;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 17;
 pub(crate) const SCHEMA_VERSION_KEY: &str = "storage_schema_version";
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION: u64 = 20;
 pub(crate) const INTERNAL_DOCUMENT_FORMAT_VERSION_KEY: &str = "internal_document_format_version";
@@ -75,6 +75,7 @@ SERVING_HOST_IDENTITY: &'static str, &'static str = "milkdrift.v1.serving.host_i
 // Authoritative immutable revision documents plus a derived and verifiable digest index.
 REVISIONS: &'static str, &'static [u8] = "milkdrift.v1.revisions.by_id";
 REVISIONS_BY_DIGEST: &'static [u8], &'static [u8] = "milkdrift.v1.revisions.by_digest_and_id";
+REVISIONS_BY_WORKFLOW: &'static [u8], &'static [u8] = "milkdrift.v1.revisions.by_workflow_and_id";
 // Authoritative journal aggregates, immutable events, cumulative chain checkpoints,
 // chain heads, and atomically accepted command results.
 RUN_HEADS: &'static str, u64 = "milkdrift.v1.runs.heads";

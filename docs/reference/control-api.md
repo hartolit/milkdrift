@@ -1,4 +1,4 @@
-# Local control API 2.18
+# Local control API 2.19
 
 The `learning` command body accepts an operation document owned by
 `milkdrift_control::learning::LearningRequest`: `select`, `select_sources`, `declare`, `candidate`, `compare`,
@@ -37,10 +37,10 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":18}}
+{"protocol":{"major":2,"minor":19}}
 ```
 
-Version 2.18 is required on both sides. Older and newer major/minor versions are refused with
+Version 2.19 is required on both sides. Older and newer major/minor versions are refused with
 `unsupported_version`; update the client and daemon together. There is no protocol downgrade.
 Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
@@ -48,7 +48,7 @@ the negotiated envelope version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 18},
+  "protocol": {"major": 2, "minor": 19},
   "request_id": "req-1",
   "value": {}
 }
@@ -62,7 +62,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 18},
+  "protocol": {"major": 2, "minor": 19},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -128,7 +128,7 @@ administration uses the separate routes below. A command envelope has no actor f
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 18},
+  "protocol": {"major": 2, "minor": 19},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -285,6 +285,14 @@ Every route is authenticated and authority-filtered. List queries constrain or f
 | `GET /v1/artifacts/{artifact}` | Safe digest, size, media type, disposition name, and sensitivity; never a server path. |
 | `GET /v1/artifacts/{artifact}/content` | One verified explicit byte range under artifact-read authority. |
 | `GET /v1/layouts/{workflow}/{revision}` | Exact independent layout document. |
+
+Revision listings retain global revision-identity order. An unfiltered named-workflow grant
+discovers only its permitted workflows; explicit filters require the same inspection authority.
+The store merges those bounded workflow index ranges before reading definitions, with at most a
+page of results plus one index head per selected workflow. Cursors bind the requested filter and
+current actor/grant, including revocation state, and every page rechecks authority. Pages are live,
+not snapshots: insertions behind a cursor are not revisited. A full final page can require an
+additional empty read; clients continue until `next_cursor` is absent.
 
 Revision comparison requires inspect permission on both revisions in one workflow. It reports
 saved semantic changes in this order: blueprint identity; metadata name, description and labels;

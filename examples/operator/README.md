@@ -348,11 +348,12 @@ no longer require that field. Existing runs and uploaded artifacts remain retain
 
 Find and reuse saved definitions through bounded version pages. `show` returns the declared
 inputs and outputs without execution values. A run always names one exact revision; there is no
-implicit mutable preferred-version pointer. Following an empty filtered page's `next_cursor` may
-be necessary because each page scans only a bounded number of stored definitions.
+implicit mutable preferred-version pointer. Listing without a filter discovers revisions from
+all workflows your grant permits. Follow `next_cursor` until absent: a full final page may need
+one empty read to observe the end. Pages are live; later insertions behind a cursor are not revisited.
 
 ```sh
-milkdrift workflow list --workflow release-notes --limit 32
+milkdrift workflow list --limit 32
 milkdrift workflow show REVISION
 milkdrift --command-id copy-notes-1 workflow copy REVISION independent-notes \
   --name "Independent release notes" --file independent.draft.json

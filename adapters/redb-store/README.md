@@ -64,6 +64,9 @@ observed time across restart; it cannot establish elapsed downtime independently
 ## Read and verify
 
 Queries verify record checksums, identities, and the relationships needed for their result.
+Revision discovery merges only the selected workflows' index ranges before reading definitions.
+The caller authorizes that bounded collection; the index neither grants access nor duplicates
+immutable definition authority. Its rows commit with revisions and participate in integrity scans.
 Run discovery uses derived indexes checked against journal facts; an empty or corrupt index
 cannot be substituted for known active work. Snapshots are optional verified replay shortcuts.
 Their journal-prefix and append-time commitments must agree before runtime can use them.

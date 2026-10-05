@@ -160,12 +160,12 @@ values; repository contracts check the version cells against source.
 | Authority grant / authorization decision | 4 / 2 | Earlier grants refused. |
 | Authorized-command wrapper / command result | 1 / 2 | Result v1 reads only closed internal records. |
 | Projection snapshot envelope / runtime payload | 2 / 6 | Old/invalid optional checkpoints replay from journal. |
-| Administrative integrity cursor | 3 | Exact supported cursor. |
+| Administrative integrity cursor | 4 | Exact supported cursor. |
 | Peer hot record / compact tombstone | 5 / 3 | Exact current caller/origin meaning; older records refuse. |
-| Redb internal document format / physical schema | 20 / 16 | Older/future stores refused; no migration. |
+| Redb internal document format / physical schema | 20 / 17 | Older/future stores refused; no migration. |
 | Application command receipt / layout record | 1 / 1 | Exact supported contracts. |
 | Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
-| External control / authenticated cursor | 2.18 / 2 | Only the exact current protocol and cursor forms are accepted. |
+| External control / authenticated cursor | 2.19 / 2 | Only the exact current protocol and cursor forms are accepted. |
 | Peer protocol and catalog messages | 1.5 | Earlier minors refused. |
 | Daemon configuration | 13 | TOML; JSON and earlier versions refused. |
 | Managed resource request / inventory | 3 | Exact schema, bounded typed recipe references, preserved receipts and guarded transitions. |

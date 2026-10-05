@@ -74,44 +74,55 @@ impl Owner {
             .map(|value| WorkflowId::new(value.to_owned()))
             .transpose()
             .map_err(|error| invalid(&error.to_string()))?;
-        let workflow_id = match &session.grant.resources().workflow_run {
-            WorkflowRunScope::Any => requested_workflow,
-            WorkflowRunScope::Workflows { workflows } => {
-                let requested = requested_workflow.ok_or_else(|| {
-                    invalid("a named-workflow grant requires an explicit workflow filter")
-                })?;
-                if !workflows.values().contains(&requested) {
-                    return Err(unauthorized());
-                }
-                Some(requested)
+        let workflows = if let Some(requested) = requested_workflow {
+            Some(
+                milkdrift_authority::WorkflowSet::new([requested])
+                    .map_err(|error| invalid(&error.to_string()))?,
+            )
+        } else {
+            match &session.grant.resources().workflow_run {
+                WorkflowRunScope::Any => None,
+                WorkflowRunScope::Workflows { workflows } => Some(workflows.clone()),
+                WorkflowRunScope::Workflow { workflow } => Some(
+                    milkdrift_authority::WorkflowSet::new([workflow.clone()])
+                        .map_err(|error| invalid(&error.to_string()))?,
+                ),
+                WorkflowRunScope::Run { .. } => return Err(unauthorized()),
             }
-            WorkflowRunScope::Workflow { workflow: allowed } => {
-                if requested_workflow
-                    .as_ref()
-                    .is_some_and(|value| value != allowed)
-                {
-                    return Err(unauthorized());
-                }
-                Some(allowed.clone())
-            }
-            WorkflowRunScope::Run { .. } => return Err(unauthorized()),
         };
-        let feed = format!(
-            "revisions:{}",
-            workflow_id.as_ref().map_or("*", WorkflowId::as_str)
-        );
-        let mut resources = RequestedResourceFacts::empty();
-        resources.workflow = workflow_id.clone();
-        let decision = self.authorize(
-            session,
-            AuthorityOperation::InspectRevision,
-            resources,
-            "read:revisions",
-        )?;
+        // A run grant never grants general definition discovery, even with a supplied filter.
+        if matches!(
+            session.grant.resources().workflow_run,
+            WorkflowRunScope::Run { .. }
+        ) {
+            return Err(unauthorized());
+        }
+        let limit = PageSize::new(limit).map_err(public_persistence)?;
+        let authorize = |workflow| {
+            let mut resources = RequestedResourceFacts::empty();
+            resources.workflow = workflow;
+            self.authorize(
+                session,
+                AuthorityOperation::InspectRevision,
+                resources,
+                "read:revisions",
+            )
+        };
+        let decision = if let Some(workflows) = &workflows {
+            let mut decisions = workflows
+                .values()
+                .iter()
+                .map(|id| authorize(Some(id.clone())));
+            let first = decisions.next().ok_or_else(internal)??;
+            decisions.try_fold(first, |_, next| next)?
+        } else {
+            authorize(None)?
+        };
+        // The raw filter distinguishes discovery from an explicit workflow request. Exact grant
+        // contents in the binding supply the authorized set, without growing the cursor per ID.
+        let feed = format!("revisions:{}", workflow.unwrap_or("*"));
         let binding = session.cursor_binding(&feed);
-        let filter = RevisionFilter {
-            workflow: workflow_id,
-        };
+        let filter = RevisionFilter { workflows };
         let internal_cursor = cursor
             .map(|cursor| {
                 cursor
@@ -127,7 +138,7 @@ impl Owner {
             .revisions(&RevisionPageQuery {
                 filter,
                 cursor: internal_cursor,
-                limit: PageSize::new(limit).map_err(public_persistence)?,
+                limit,
             })
             .map_err(public_persistence)?;
         let next_cursor = page

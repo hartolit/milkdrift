@@ -18,7 +18,7 @@ use redb::ReadableTable;
 use crate::{
     RedbStore, codec, error,
     fault::FaultPoint,
-    schema::{REVISIONS, REVISIONS_BY_DIGEST},
+    schema::{REVISIONS, REVISIONS_BY_DIGEST, REVISIONS_BY_WORKFLOW},
 };
 
 impl RevisionStore for RedbStore {
@@ -41,6 +41,10 @@ impl RevisionStore for RedbStore {
         let summary = RevisionSummary::from(revision);
         let summary_bytes = crate::json::encode(&summary_wire(&summary), "revision summary")?;
         let digest_key = codec::pair(revision.content_digest().as_str(), revision.id().as_str())?;
+        let workflow_key = codec::pair(
+            revision.semantic().workflow().as_str(),
+            revision.id().as_str(),
+        )?;
 
         let write = self.database().begin_write().map_err(error::redb)?;
         if let Some(existing) = validated_revision_by_id_in_transaction(&write, revision.id())? {
@@ -97,6 +101,20 @@ impl RevisionStore for RedbStore {
             }
         }
 
+        {
+            let mut by_workflow = write
+                .open_table(REVISIONS_BY_WORKFLOW)
+                .map_err(error::redb)?;
+            if by_workflow
+                .insert(workflow_key.as_slice(), summary_bytes.as_slice())
+                .map_err(error::redb)?
+                .is_some()
+            {
+                return Err(error::corruption(
+                    "revision workflow insert replaced an existing index row",
+                ));
+            }
+        }
         self.faults.check(FaultPoint::BeforeRevisionCommit)?;
         write.commit().map_err(error::redb)?;
         self.faults.check(FaultPoint::AfterRevisionCommit)?;
@@ -110,7 +128,10 @@ impl RevisionStore for RedbStore {
         let read = self.database().begin_read().map_err(error::redb)?;
         let revisions = read.open_table(REVISIONS).map_err(error::redb)?;
         let by_digest = read.open_table(REVISIONS_BY_DIGEST).map_err(error::redb)?;
-        validated_revision_by_id(&revisions, &by_digest, revision)
+        let by_workflow = read
+            .open_table(REVISIONS_BY_WORKFLOW)
+            .map_err(error::redb)?;
+        validated_revision_by_id(&revisions, &by_digest, &by_workflow, revision)
     }
 
     fn revision_summary(
@@ -128,6 +149,9 @@ impl RevisionStore for RedbStore {
         let read = self.database().begin_read().map_err(error::redb)?;
         let table = read.open_table(REVISIONS_BY_DIGEST).map_err(error::redb)?;
         let revisions = read.open_table(REVISIONS).map_err(error::redb)?;
+        let by_workflow = read
+            .open_table(REVISIONS_BY_WORKFLOW)
+            .map_err(error::redb)?;
         let prefix = codec::component(digest.as_str())?;
         let end = codec::prefix_end(prefix.clone()).ok_or_else(|| PersistenceError::Bounds {
             location: "revision_content_prefix",
@@ -168,6 +192,7 @@ impl RevisionStore for RedbStore {
                     "revision digest index disagrees with authoritative revision bytes",
                 ));
             }
+            validate_workflow_index(&by_workflow, &summary)?;
             summaries.push(summary);
         }
         Ok(summaries)
@@ -186,46 +211,75 @@ impl RevisionStore for RedbStore {
         let read = self.database().begin_read().map_err(error::redb)?;
         let revisions = read.open_table(REVISIONS).map_err(error::redb)?;
         let by_digest = read.open_table(REVISIONS_BY_DIGEST).map_err(error::redb)?;
+        let by_workflow = read
+            .open_table(REVISIONS_BY_WORKFLOW)
+            .map_err(error::redb)?;
         let start = query
             .cursor
             .as_ref()
             .map(|cursor| cursor.after_revision().as_str());
-        let rows = match start {
-            Some(after) => revisions
-                .range::<&str>((Bound::Excluded(after), Bound::Unbounded))
-                .map_err(error::redb)?,
-            None => revisions.iter().map_err(error::redb)?,
-        };
         let limit = usize::try_from(query.limit.get()).map_err(|_| PersistenceError::Bounds {
             location: "revision_page_size",
             reason: "cannot be represented on this platform".to_owned(),
         })?;
-        let mut result = Vec::with_capacity(limit);
-        let mut last_scanned = None;
-        let mut scanned = 0_usize;
-        for row in rows.take(limit) {
-            let (key, _bytes) = row.map_err(error::redb)?;
-            let revision_id: RevisionId = serde_json::from_value(serde_json::Value::String(
-                key.value().to_owned(),
-            ))
-            .map_err(|cause| {
-                error::corruption(format!("revision table contains invalid identity: {cause}"))
-            })?;
-            let revision = validated_revision_by_id(&revisions, &by_digest, &revision_id)?
-                .ok_or_else(|| error::corruption("revision disappeared during read transaction"))?;
-            scanned += 1;
-            last_scanned = Some(revision_id);
-            if query
-                .filter
-                .workflow
-                .as_ref()
-                .is_none_or(|workflow| revision.semantic().workflow() == workflow)
-            {
-                result.push(RevisionSummary::from(&revision));
-            }
-        }
-        let next = if scanned == limit {
-            last_scanned.map(|revision| RevisionCursor::new(revision, query.filter.clone()))
+        let result = if let Some(workflows) = &query.filter.workflows {
+            scoped_summaries(&by_workflow, workflows, start, limit)?
+                .into_iter()
+                .map(|summary| {
+                    if revisions
+                        .get(summary.revision.as_str())
+                        .map_err(error::redb)?
+                        .is_none()
+                    {
+                        return Err(error::corruption(
+                            "workflow index points to an absent revision",
+                        ));
+                    }
+                    let revision = validated_revision_by_id(
+                        &revisions,
+                        &by_digest,
+                        &by_workflow,
+                        &summary.revision,
+                    )?
+                    .ok_or_else(|| {
+                        error::corruption("workflow index points to an absent revision")
+                    })?;
+                    if RevisionSummary::from(&revision) != summary {
+                        return Err(error::corruption(
+                            "workflow index disagrees with its revision",
+                        ));
+                    }
+                    Ok(summary)
+                })
+                .collect::<Result<Vec<_>, PersistenceError>>()?
+        } else {
+            let rows = match start {
+                Some(after) => revisions
+                    .range::<&str>((Bound::Excluded(after), Bound::Unbounded))
+                    .map_err(error::redb)?,
+                None => revisions.iter().map_err(error::redb)?,
+            };
+            rows.take(limit)
+                .map(|row| {
+                    let (key, _) = row.map_err(error::redb)?;
+                    let id: RevisionId =
+                        serde_json::from_value(serde_json::Value::String(key.value().to_owned()))
+                            .map_err(|cause| {
+                            error::corruption(format!("invalid revision identity: {cause}"))
+                        })?;
+                    let revision =
+                        validated_revision_by_id(&revisions, &by_digest, &by_workflow, &id)?
+                            .ok_or_else(|| {
+                                error::corruption("revision disappeared during read transaction")
+                            })?;
+                    Ok(RevisionSummary::from(&revision))
+                })
+                .collect::<Result<Vec<_>, PersistenceError>>()?
+        };
+        let next = if result.len() == limit {
+            result
+                .last()
+                .map(|summary| RevisionCursor::new(summary.revision.clone(), query.filter.clone()))
         } else {
             None
         };
@@ -242,17 +296,22 @@ fn validated_revision_by_id_in_transaction(
 ) -> Result<Option<BlueprintRevision>, PersistenceError> {
     let revisions = write.open_table(REVISIONS).map_err(error::redb)?;
     let by_digest = write.open_table(REVISIONS_BY_DIGEST).map_err(error::redb)?;
-    validated_revision_by_id(&revisions, &by_digest, revision)
+    let by_workflow = write
+        .open_table(REVISIONS_BY_WORKFLOW)
+        .map_err(error::redb)?;
+    validated_revision_by_id(&revisions, &by_digest, &by_workflow, revision)
 }
 
-fn validated_revision_by_id<R, I>(
+fn validated_revision_by_id<R, I, W>(
     revisions: &R,
     by_digest: &I,
+    by_workflow: &W,
     revision: &RevisionId,
 ) -> Result<Option<BlueprintRevision>, PersistenceError>
 where
     R: ReadableTable<&'static str, &'static [u8]>,
     I: ReadableTable<&'static [u8], &'static [u8]>,
+    W: ReadableTable<&'static [u8], &'static [u8]>,
 {
     let Some(bytes) = revisions.get(revision.as_str()).map_err(error::redb)? else {
         for row in by_digest.iter().map_err(error::redb)? {
@@ -290,7 +349,97 @@ where
             "revision digest index disagrees with authoritative revision bytes",
         ));
     }
+    validate_workflow_index(by_workflow, &RevisionSummary::from(&stored))?;
     Ok(Some(stored))
+}
+
+fn validate_workflow_index(
+    table: &impl ReadableTable<&'static [u8], &'static [u8]>,
+    summary: &RevisionSummary,
+) -> Result<(), PersistenceError> {
+    let key = codec::pair(summary.workflow.as_str(), summary.revision.as_str())?;
+    let row = table
+        .get(key.as_slice())
+        .map_err(error::redb)?
+        .ok_or_else(|| error::corruption("revision is absent from its workflow index"))?;
+    if decode_summary(row.value())? != *summary {
+        return Err(error::corruption(
+            "workflow index disagrees with authoritative revision",
+        ));
+    }
+    Ok(())
+}
+
+fn scoped_summaries(
+    table: &impl ReadableTable<&'static [u8], &'static [u8]>,
+    workflows: &milkdrift_authority::WorkflowSet,
+    after: Option<&str>,
+    limit: usize,
+) -> Result<Vec<RevisionSummary>, PersistenceError> {
+    // Keep one index head per permitted workflow and merge by revision identity. There is no
+    // scan through hidden definitions, per-caller cache, or cursor-sized copy of the result set.
+    let mut readers = workflows
+        .values()
+        .iter()
+        .map(|workflow| {
+            let prefix = codec::component(workflow.as_str())?;
+            let end = codec::prefix_end(prefix.clone())
+                .ok_or_else(|| error::corruption("workflow index prefix has no end"))?;
+            let start = match after {
+                Some(after) => Bound::Excluded(codec::pair(workflow.as_str(), after)?),
+                None => Bound::Included(prefix),
+            };
+            let rows = table
+                .range::<&[u8]>((
+                    start.as_ref().map(Vec::as_slice),
+                    Bound::Excluded(end.as_slice()),
+                ))
+                .map_err(error::redb)?;
+            Ok(rows.map(move |row| {
+                let (key, bytes) = row.map_err(error::redb)?;
+                let summary = decode_summary(bytes.value())?;
+                let expected = codec::pair(workflow.as_str(), summary.revision.as_str())?;
+                if &summary.workflow != workflow || key.value() != expected.as_slice() {
+                    return Err(error::corruption(
+                        "workflow index key disagrees with its summary",
+                    ));
+                }
+                Ok(summary)
+            }))
+        })
+        .collect::<Result<Vec<_>, PersistenceError>>()?;
+    let mut heads = std::collections::BTreeMap::new();
+    for (index, reader) in readers.iter_mut().enumerate() {
+        if let Some(summary) = reader.next().transpose()?
+            && heads
+                .insert(summary.revision.clone(), (index, summary))
+                .is_some()
+        {
+            return Err(error::corruption(
+                "revision appears in multiple workflow ranges",
+            ));
+        }
+    }
+    let mut result = Vec::with_capacity(limit);
+    while result.len() < limit {
+        let Some((_, (index, summary))) = heads.pop_first() else {
+            break;
+        };
+        result.push(summary);
+        let reader = readers
+            .get_mut(index)
+            .ok_or_else(|| error::corruption("workflow merge lost its reader"))?;
+        if let Some(summary) = reader.next().transpose()?
+            && heads
+                .insert(summary.revision.clone(), (index, summary))
+                .is_some()
+        {
+            return Err(error::corruption(
+                "revision appears in multiple workflow ranges",
+            ));
+        }
+    }
+    Ok(result)
 }
 
 #[derive(serde::Serialize)]

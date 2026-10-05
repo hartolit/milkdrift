@@ -18,6 +18,8 @@ mod fault_reopen;
 mod journal_workspace;
 #[path = "contracts/managed.rs"]
 mod managed;
+#[path = "contracts/revision_discovery.rs"]
+mod revision_discovery;
 
 use std::sync::Arc;
 
