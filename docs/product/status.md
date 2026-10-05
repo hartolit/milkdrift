@@ -274,7 +274,25 @@ values; repository contracts check the version cells against source.
 
 ## Current validation/evidence snapshot
 
-Workflow naming corrections pass local acceptance at executable source
+The consolidated client workflow corrections pass local acceptance at executable source
+`5c9301e055a87db46b879108ae5312b5fd334d62` with Rust 1.95.0 on Linux x86-64. All eight findings
+and three verification questions are settled: artifact-authorized inspection, unavailable-model
+editing, framed upload identities, legal URL names, file publication, complete size admission,
+bounded aggregate results, event framing, error meaning and recoverable upload preparation.
+Unavailable exact requirements preserve queued intent with zero admitted attempts; repair creates
+a new revision. Stable parent paths and cooperating draft writers remain explicit file preconditions.
+
+The clean-source run passes 1,174 distinct tests, including 24 doctests, 30 repository contracts
+and all 66 public control-plane tests, with zero failures and eight existing opt-in cases ignored.
+Discovery lists 1,182. All 33 strict checks, sixteen tool-probe outcomes and four preserved-binary
+application scenarios pass. The combined journey records nine controlled model calls and verifies
+partial model repair, exact request replay, permission-filtered results, protected exports and
+unchanged history. [Consolidated correction evidence](../development/verification-evidence.md#consolidated-client-workflow-corrections)
+records the checkpoints, commands, failed iterations, limits and delivered archive. Later closeout
+changes documentation only. This adds local software evidence, not hosted CI, attached-model
+quality, new UM790/Podman or cross-platform filesystem qualification.
+
+Earlier workflow naming corrections passed local acceptance at executable source
 `98b664f1fb12d0b17dd28ab8f53903da5f8a4b95` with Rust 1.95.0 on Linux x86-64. Distinct connections
 with colon-bearing names now retain separate identities and deliver the intended inputs. A user
 input named `failed_result` remains separate from generated repair evidence. Supported saved

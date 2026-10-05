@@ -6,12 +6,8 @@ The ordinary CLI workflow route is implemented through shared public daemon oper
 authoring, supplied inputs, exact request recovery, result inspection, supported prospective repair,
 reuse/copy, publication preparation, evaluation and the independent client boundary. Its
 [acceptance and limits](status.md#current-validationevidence-snapshot) are recorded with the
-[reproducible evidence](../development/verification-evidence.md#workflow-name-corrections).
+[reproducible evidence](../development/verification-evidence.md#consolidated-client-workflow-corrections).
 There is no automatic successor assignment.
-
-The active [client workflow corrections](../development/virtual-office/client-workflow-corrections/README.md)
-assignment completes the consolidated review's eight findings and three connected verification
-questions, followed by integrated acceptance. It authorizes no GUI or infrastructure successor.
 
 Svelte remains the first future GUI, and every frontend uses the daemon's public operations.
 GUI implementation needs a separately scoped assignment. Preserve the accepted host,

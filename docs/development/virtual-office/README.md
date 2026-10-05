@@ -9,8 +9,7 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-The [client workflow corrections](client-workflow-corrections/README.md) assignment owns the
-finite permission, editing, identity, file, size, framing, error and preparation-recovery fixes.
+No current sprints.
 
 The [roadmap](../../product/roadmap.md) owns unfinished work; unrelated whiteboard topics remain separate.
 

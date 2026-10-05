@@ -94,6 +94,75 @@ The runner does not configure or stop attached servers. Live mode omits syntheti
 review the two retained text files separately for usefulness. Product completeness checks require
 nonempty final prose and `stop`, and do not establish editorial correctness or useful learning.
 
+## Consolidated client workflow corrections
+
+The finite F1–F8 and V1–V3 correction pass is accepted at executable source
+`5c9301e055a87db46b879108ae5312b5fd334d62`, tree
+`67caa3a83ee1b3b07d22acf617560b9dd97c0bfd`, against baseline
+`9ec53ab0c2433efef52174f7a9b9d6e37ed07b1b`. The clean Linux x86-64 run uses Rust 1.95.0.
+The delivered `milkdrift-client-workflow-corrections-5c9301e.tar.gz` retains the source,
+diff, checkpoint list, completed handoff, exact commands, exit codes, API inventories, binary
+hashes, reports and failed iterations. Its `closeout.json` identifies the later documentation-only
+commit. Verify extracted files with `sha256sum --check SHA256SUMS`. Runtime credentials,
+configurations, stores and raw daemon logs are excluded; the seven application/helper binaries
+remain preserved locally with their hashes in the archive.
+
+| Finding | Corrected boundary and executed regression evidence | Checkpoint |
+| --- | --- | --- |
+| F3 | Run inspection previously copied artifact metadata after only run authorization. Shared control/daemon readers now use stored sensitivity and current artifact authority, including nested context, streams and retained replies. `artifact_visibility` tests cover denied, metadata-only, selected-output and public-only grants plus revoked/expired replay; the baseline regression reproduced disclosure. | `dd1fb6e` |
+| F1 | Authoring previously required every retained model selection to match the current catalogue. Exact unchanged requirements from an authorized immutable base now remain editable with diagnostics; replacements require current permission and availability. `authoring::unavailable` and the drained-generation regression cover partial saves, stale acceptance, forged choices, replacement execution and unchanged history. | `aac1abd` |
+| F2 | Delimiter-concatenated upload identities could collide. Both CLI consumers now hash a versioned, namespace-separated tuple. Unit counterexamples and `upload_identities` cover distinct fields, exact retries, content conflicts and unchanged legacy saved requests. | `a7b2211` |
+| F5 | Legal resource names were interpolated into URL structure. The shared client encodes each raw identity as one segment, while cursors retain raw feed identity. `url_identities` exercises reads, downloads, waits, saved replay, reconnect and wrong-resource refusal. | `19d8e18` |
+| F4 / V3 | Final-name writes and cleanup could overwrite or remove another writer's file. Shared private staging now publishes without clobbering; opened-record checks and locks protect cooperating draft editors. File lifecycle unit tests and actual CLI races cover files, directories, symlinks, truncation, timeout, digest failure and post-publication uncertainty. | `9a35f9a` |
+| F6 / V1 | Definition admission checked an inner value rather than complete response/receipt bounds; aggregate reads could overflow despite individually readable attempts. Shared preflight precedes definition writes, and bounded results retain navigation/output previews while omitting excess detail. `authoring::limits` covers legal boundary documents, escaped content, real HTTP/replay and storage faults. `result_bounds` executes six admitted contexts whose combined view exceeds the protocol limit. | `4f3ef27` |
+| F7 | Delimiter preference and chunk buffering could misorder or reject valid alternative event framing. The incremental decoder and subscription tests cover CRLF/LF/CR, split UTF-8/BOM, multiline data, incomplete EOF, cursor advancement and refusal. Ordinary daemon streams also pass; this does not establish a prior outage of their LF framing. | `6b2d0a8` |
+| F8 | HTTP status classification and CLI meaning diverged. The protocol owns the exhaustive mapping; uncertainty retains its code, retryability and exact-request recovery guidance. The actual server/client matrix covers all twelve codes and both retry flags; CLI fixtures prove one submission. F6 separately tests real uncertainty producers. | `e406e01` |
+| V2 | Uploads could precede discovery of a later local preparation error, without enough recovery information. Both CLI consumers preflight all bounded input documents and emit flushed pending/committed upload records. `upload_preparation` and actual daemon recovery tests cover zero-upload refusals, later file changes, partial commits, conflicts, lost replies and retained exact identities. | `b9d05e5` |
+
+Unavailable exact model requirements preserve durable queued intent with zero admitted attempts;
+there is no fallback model. Repair creates a new immutable revision. File publication requires a
+stable operator-controlled parent namespace; deliberate draft replacement requires cooperating
+writers and is not compare-and-swap. Upload recovery requires retained original bytes and command
+identity; committed uploads remain charged, and lost progress plus a lost generated identity can
+strand preparation. [The control contract](../reference/control-api.md) owns these operational limits.
+
+Final records are under `target/client-workflow-corrections/acceptance-5c9301e/`. The central
+commands use two build jobs and ordinary parallel test execution, with pinned scanners on `PATH`:
+
+```sh
+CARGO_BUILD_JOBS=2 cargo strict-checks \
+  --output target/client-workflow-corrections/acceptance-5c9301e/strict \
+  --secret-base 9ec53ab0c2433efef52174f7a9b9d6e37ed07b1b
+cargo test --locked --workspace --all-features --no-fail-fast -j 2
+cargo test --locked --workspace --all-features -j 2 -- --list
+```
+
+All 33 strict checks pass. The same pinned tool installation passed sixteen probes: thirteen
+passes and three expected refusals of synthetic violations. Workspace execution passes 1,174
+distinct tests, zero failures and eight existing opt-in cases ignored; discovery lists 1,182.
+Totals include 24 doctests, 30 repository contracts and all 66 public control-plane tests. Raw
+summary totals contain one additional execution of the secret-provider environment test in a
+child process. The archive records that counting rule and each ignored name/reason: four release
+longevity cases, three physical Podman cases and one expensive storage-boundary case.
+
+Headless operations, controlled model behavior, controller qualification and the authored workflow
+journey pass separately on binaries preserved before workspace testing. The combined journey
+(`4d24e74`) removes the original model across restart, repairs its retained workflow in parts,
+supplies input for a slash-containing run, saves/submits/replays its request, checks a reader denied
+artifact metadata and exports verified output without replacing a competing file. It records
+exactly nine controlled provider calls, successful cleanup and unchanged original revision/history.
+Default/all-feature API inventories were reviewed for the affected boundaries; supported durable
+formats, frozen naming fixtures, old references and exact replay remain unchanged.
+
+Earlier final runs are preserved as failed evidence. At `4d24e74`, stale layout writes incorrectly
+became uncertain, and three fixtures expected pre-correction CLI/recovery projections. `a96b9cf`
+restores atomic layout conflicts and tests their durable replay, input progress and both recovery
+permission cases. Its workspace run then exposed excessive full-read polling in the aggregate
+fixture. `5c9301e` waits through the durable terminal index while retaining all payloads, assertions
+and the 60-second deadline. Complete strict and workspace evidence was re-established after both
+corrections. No hosted CI, attached-model quality, new UM790/Podman campaign, cross-platform file
+guarantee or power-loss qualification is claimed by this local software acceptance.
+
 ## Workflow name corrections
 
 The delivered `milkdrift-workflow-name-corrections-98b664f.tar.gz` archive records the clean baseline
