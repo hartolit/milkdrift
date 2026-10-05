@@ -1,4 +1,5 @@
 //! Retain an ordinary authored workflow journey through actual daemon and CLI binaries.
+mod corrections;
 mod fixture;
 mod journey;
 mod setup;
@@ -116,7 +117,7 @@ fn run(args: Arguments) -> EvidenceResult {
     } else {
         None
     };
-    let (runner, config) = setup::configure(
+    let (runner, mut config) = setup::configure(
         &root,
         &daemon,
         cli,
@@ -135,6 +136,11 @@ fn run(args: Arguments) -> EvidenceResult {
         journey::replay_and_copy(&journey, &revision)?;
         if fixture.is_some() {
             journey::repair(&journey, &revision)?;
+            child.terminate()?;
+            config = corrections::replace_model(&config)?;
+            child = start_daemon(&daemon, &config)?;
+            wait_for_readiness(&journey.cli, &mut child)?;
+            corrections::journey(&journey, &revision)?;
         }
         Ok(())
     })();
@@ -143,7 +149,7 @@ fn run(args: Arguments) -> EvidenceResult {
     let count = fixture.as_ref().map(fixture::Model::count);
     let count_result = count.map_or(Ok(()), |count| {
         ensure(
-            count == 7,
+            count == 9,
             "replay or repair made an unexpected provider entry",
         )
     });

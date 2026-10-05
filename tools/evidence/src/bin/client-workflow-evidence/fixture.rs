@@ -74,6 +74,18 @@ impl Model {
                     "Repaired complete notes from the original Harbor brief and selected failed result.",
                     "stop",
                 ),
+                7 => (
+                    "Harbor Host 1.4",
+                    "Lantern Rally",
+                    "Replacement model draft from the original Harbor brief.",
+                    "stop",
+                ),
+                8 => (
+                    "Harbor Host 1.4",
+                    "Lantern Rally",
+                    "Replacement model completed the repaired Harbor workflow.",
+                    "stop",
+                ),
                 _ => return Err(std::io::Error::other("unexpected extra model request")),
             };
             if !request.contains(brief) || request.contains(excluded) {
@@ -120,6 +132,6 @@ impl Model {
 
     pub(super) fn finish(&mut self) -> EvidenceResult {
         self.server.finish()?;
-        ensure(self.count() <= 7, "fixture request budget exceeded")
+        ensure(self.count() <= 9, "fixture request budget exceeded")
     }
 }

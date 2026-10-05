@@ -87,7 +87,7 @@ pub(super) fn configure(
         resources,
         "/capability",
         json!({"type":"allow","maximum_side_effect":"unknown",
-        "identities":{"type":"only","values":["operator-model","milkdrift-workflow-control"]},
+        "identities":{"type":"only","values":["operator-model","replacement-model","milkdrift-workflow-control"]},
         "categories":{"type":"any"},"operations":{"type":"only","values":["model.generate","workflow.accept_result"]},
         "provider_profiles":{"type":"any"},"trust_zones":{"type":"only","values":zones},
         "execution_trust_classes":{"type":"any"},"localities":{"type":"any"},"peers":{"type":"any"}}),
@@ -117,6 +117,35 @@ pub(super) fn configure(
         "/adapters",
         json!({"process_profiles":[],"model_profiles":[{"capability_id":"operator-model","profile":profile_path}]}),
     )?;
+    if model.is_some() {
+        let mut reader = config.pointer("/actors/0").ok_or("actor absent")?.clone();
+        replace(&mut reader, "/credential_ref", json!("credential:reader"))?;
+        replace(&mut reader, "/actor", json!("human:reader"))?;
+        replace(&mut reader, "/grant_id", json!("grant:reader"))?;
+        replace(&mut reader, "/preset", json!("observer"))?;
+        replace(
+            &mut reader,
+            "/authority/resources/artifacts",
+            json!({"type":"deny_all"}),
+        )?;
+        config
+            .get_mut("actors")
+            .and_then(Value::as_array_mut)
+            .ok_or("actors absent")?
+            .push(reader);
+        config
+            .get_mut("secret_sources")
+            .and_then(Value::as_object_mut)
+            .ok_or("secrets absent")?
+            .insert(
+                "credential:reader".into(),
+                json!({"type":"file","path":"reader.token"}),
+            );
+        write_private(
+            &root.join("reader.token"),
+            b"client-workflow-reader-fixture",
+        )?;
+    }
     let path = write_private(
         &root.join("daemon.toml"),
         toml::to_string_pretty(&config)?.as_bytes(),

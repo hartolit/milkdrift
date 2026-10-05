@@ -62,8 +62,12 @@ keeps a meeting-summary workflow independent, downloads accepted results by outp
 the daemon and replays the saved requests. It edits both an independent copy and a later source
 revision while checking that accepted run pins remain unchanged. A separate run returns an
 incomplete review, then uses ordinary pause, proposal, approval, application, signal and resume
-commands to add a required repair check. The endpoint independently counts seven calls, checks
-brief/draft selection and rejects unrelated earlier draft content in repair context.
+commands to add a required repair check. Controlled mode then restarts with the original model
+removed, opens its retained definition, saves a partial repair and replaces both selections.
+It prepares inputs for a slash-containing run, submits and replays the exact saved request,
+checks a reader denied artifact metadata, and verifies both output digest and no-clobber export.
+The original revision and completed history remain unchanged. The endpoint independently counts
+nine calls, checks brief/draft selection and rejects unrelated earlier draft content in repair context.
 
 ```sh
 cargo build -p milkdrift-daemon --bin milkdrift-daemon -p milkdrift-cli --bin milkdrift \
