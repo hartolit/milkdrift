@@ -328,6 +328,15 @@ changes a model; no unavailable choice is silently substituted. `workflow discon
 INPUT` removes a connection. `workflow move FILE STEP --before OTHER` changes order, and omitting
 `--before` moves the step to the end. A reorder that puts a source after its consumer refuses.
 `workflow remove FILE STEP` refuses while another step or the selected output still uses it.
+Use `workflow clear-output FILE` to clear the selection before replacing its only step. Each
+successful edit is retained in the draft file, including a draft with no steps or no selected
+output. `workflow inspect FILE` reopens that unfinished work; `workflow save FILE` refuses until
+a model step and final output are present. Clearing the output does not disconnect step consumers.
+
+`workflow output-limit FILE STEP 1024` changes that step's output allowance while retaining its
+prompt, model and connections. It validates the model request and rechecks the permitted model
+selection. Execution still checks the selected endpoint and available budget; reservations derive
+from the edited request at preparation, and old saved versions and accepted runs keep their limits.
 
 Correct a declared input with `workflow rename-input FILE breif brief`. The daemon changes that
 declaration and every reference to it together; prompts, step port names and final-output names

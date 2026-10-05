@@ -350,6 +350,73 @@ async fn actual_cli_authors_prompts_connections_and_guarded_files() -> TestResul
         None,
     )?;
     cli_ok(&daemon, &directory, &["save", "meeting.json"], None)?;
+    cli_ok(&daemon, &directory, &["clear-output", "meeting.json"], None)?;
+    cli_ok(
+        &daemon,
+        &directory,
+        &["remove", "meeting.json", "summarize"],
+        None,
+    )?;
+    let incomplete = fs::read(directory.path().join("meeting.json"))?;
+    assert!(
+        !cli(&daemon, &directory, &["save", "meeting.json"], None)?
+            .status
+            .success()
+    );
+    assert_eq!(fs::read(directory.path().join("meeting.json"))?, incomplete);
+    let reopened = cli_ok(&daemon, &directory, &["inspect", "meeting.json"], None)?;
+    assert_eq!(
+        reopened.pointer("/workflow/steps"),
+        Some(&serde_json::json!([]))
+    );
+    cli_ok(
+        &daemon,
+        &directory,
+        &[
+            "add",
+            "meeting.json",
+            "replacement",
+            "--model",
+            "writing-model",
+            "--prompt",
+            "-",
+            "--maximum-output-units",
+            "512",
+        ],
+        Some("Summarize only the supplied brief."),
+    )?;
+    let adjusted = cli_ok(
+        &daemon,
+        &directory,
+        &["output-limit", "meeting.json", "replacement", "256"],
+        None,
+    )?;
+    assert_eq!(
+        adjusted.pointer("/workflow/steps/0/maximum_output_units"),
+        Some(&serde_json::json!(256))
+    );
+    let before_invalid = fs::read(directory.path().join("meeting.json"))?;
+    assert!(
+        !cli(
+            &daemon,
+            &directory,
+            &["output-limit", "meeting.json", "replacement", "0"],
+            None
+        )?
+        .status
+        .success()
+    );
+    assert_eq!(
+        fs::read(directory.path().join("meeting.json"))?,
+        before_invalid
+    );
+    cli_ok(
+        &daemon,
+        &directory,
+        &["output", "meeting.json", "replacement"],
+        None,
+    )?;
+    cli_ok(&daemon, &directory, &["save", "meeting.json"], None)?;
     assert!(
         daemon
             .client

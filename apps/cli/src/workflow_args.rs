@@ -68,6 +68,12 @@ pub(crate) enum WorkflowCommand {
         #[arg(long)]
         prompt: PathBuf,
     },
+    /// Change an existing model step's per-invocation output allowance.
+    OutputLimit {
+        file: PathBuf,
+        step: String,
+        maximum_output_units: u64,
+    },
     /// Explicitly change the selected model.
     Model {
         file: PathBuf,
@@ -111,6 +117,8 @@ pub(crate) enum WorkflowCommand {
         #[arg(long, default_value = "result")]
         name: String,
     },
+    /// Clear the final-output selection; the incomplete draft can be continued but not saved.
+    ClearOutput { file: PathBuf },
     /// Remove an unused step. Connected or selected output steps must be disconnected first.
     Remove { file: PathBuf, step: String },
     /// Move a step before another, or to the end when --before is absent.

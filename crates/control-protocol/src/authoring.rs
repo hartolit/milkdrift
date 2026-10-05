@@ -78,6 +78,13 @@ pub enum BlueprintEdit {
         /// Replacement instruction.
         prompt: String,
     },
+    /// Change an existing step's request allowance without replacing its identity or bindings.
+    OutputLimit {
+        /// Existing model step identity.
+        step: String,
+        /// Inclusive provider-unit allowance, validated by the model request owner.
+        maximum_output_units: u64,
+    },
     /// Select an exact permitted model capability for one existing step.
     Model {
         /// Existing model step identity.
@@ -126,6 +133,9 @@ pub enum BlueprintEdit {
         /// Workflow output interface field name.
         name: String,
     },
+    /// Clear the selected final output. The draft remains editable but cannot be saved until
+    /// a model step's output is selected again. Clearing an absent selection is unchanged.
+    ClearOutput {},
     /// Remove an unused step after disconnecting its consumers and output selection.
     Remove {
         /// Existing step identity to remove.

@@ -46,6 +46,11 @@ removal. It retains the same draft, mutation, storage and receipt owners; earlie
 remain explicitly refused. Rename updates only workflow-input bindings. Removal never implicitly
 disconnects a consumer or deletes an uploaded artifact.
 
+Protocol 2.18 adds output clearing and existing-step output-limit editing through the same owner.
+An incomplete editor graph is a retained client draft; the existing complete-save check stays in
+place. Model request construction owns the unit range, and existing adapter preparation and
+accounting derive admission from that exact request. No separate editable reservation is stored.
+
 Clients and daemons upgrade together; earlier control minor versions are refused. Blueprint,
 model, result-acceptance and storage formats do not change. Public authoring tests cover independent
 workflows, exact reopen/replay, parent preservation, invalid connections/order, missing or hidden

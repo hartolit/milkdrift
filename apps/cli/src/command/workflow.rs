@@ -136,6 +136,7 @@ fn path(command: &WorkflowCommand) -> Result<&Path, CliError> {
         | WorkflowCommand::Inspect { file }
         | WorkflowCommand::Add { file, .. }
         | WorkflowCommand::Prompt { file, .. }
+        | WorkflowCommand::OutputLimit { file, .. }
         | WorkflowCommand::Model { file, .. }
         | WorkflowCommand::Input { file, .. }
         | WorkflowCommand::RemoveInput { file, .. }
@@ -143,6 +144,7 @@ fn path(command: &WorkflowCommand) -> Result<&Path, CliError> {
         | WorkflowCommand::Connect { file, .. }
         | WorkflowCommand::Disconnect { file, .. }
         | WorkflowCommand::Output { file, .. }
+        | WorkflowCommand::ClearOutput { file }
         | WorkflowCommand::Remove { file, .. }
         | WorkflowCommand::Move { file, .. }
         | WorkflowCommand::Rename { file, .. }
@@ -187,6 +189,14 @@ async fn edit(
             step: step.clone(),
             prompt: text(session, prompt).await?,
         },
+        WorkflowCommand::OutputLimit {
+            step,
+            maximum_output_units,
+            ..
+        } => BlueprintEdit::OutputLimit {
+            step: step.clone(),
+            maximum_output_units: *maximum_output_units,
+        },
         WorkflowCommand::Model { step, model, .. } => BlueprintEdit::Model {
             step: step.clone(),
             capability: model.clone(),
@@ -226,6 +236,7 @@ async fn edit(
             step: step.clone(),
             name: name.clone(),
         },
+        WorkflowCommand::ClearOutput { .. } => BlueprintEdit::ClearOutput {},
         WorkflowCommand::Remove { step, .. } => BlueprintEdit::Remove { step: step.clone() },
         WorkflowCommand::Move { step, before, .. } => BlueprintEdit::Move {
             step: step.clone(),

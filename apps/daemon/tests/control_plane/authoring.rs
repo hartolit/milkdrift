@@ -7,6 +7,8 @@ use serde_json::json;
 
 #[path = "authoring/input_edits.rs"]
 mod input_edits;
+#[path = "authoring/output_edits.rs"]
+mod output_edits;
 
 async fn author(
     client: &ControlClient,

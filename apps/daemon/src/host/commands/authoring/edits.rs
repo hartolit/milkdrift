@@ -144,6 +144,14 @@ impl ModelWorkflow {
                 let step = self.step_mut(step)?;
                 step.request = request(prompt, step.request.maximum_output_units())?;
             }
+            BlueprintEdit::OutputLimit {
+                step,
+                maximum_output_units,
+            } => {
+                let step = self.step_mut(step)?;
+                step.request =
+                    request(super::graph::prompt(&step.request)?, *maximum_output_units)?;
+            }
             BlueprintEdit::Model { step, capability } => {
                 let requirement = selection(owner, session, capability, "model.generate")
                     .map_err(|error| error.message)?;
@@ -237,6 +245,7 @@ impl ModelWorkflow {
                 FieldId::new(name)?;
                 self.output = Some((step.clone(), name.clone()));
             }
+            BlueprintEdit::ClearOutput {} => self.output = None,
             BlueprintEdit::Remove { step } => {
                 self.step_mut(step)?;
                 if self.output.as_ref().is_some_and(|(selected, _)| selected == step) || self.steps.iter().any(|value| value.inputs.values().any(|binding| matches!(binding, BindingSource::NodeOutput { node, .. } if node.as_str() == step))) {

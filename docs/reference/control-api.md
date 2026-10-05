@@ -1,4 +1,4 @@
-# Local control API 2.17
+# Local control API 2.18
 
 The `learning` command body accepts an operation document owned by
 `milkdrift_control::learning::LearningRequest`: `select`, `select_sources`, `declare`, `candidate`, `compare`,
@@ -37,10 +37,10 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":17}}
+{"protocol":{"major":2,"minor":18}}
 ```
 
-Version 2.17 is required on both sides. Older and newer major/minor versions are refused with
+Version 2.18 is required on both sides. Older and newer major/minor versions are refused with
 `unsupported_version`; update the client and daemon together. There is no protocol downgrade.
 Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
@@ -48,7 +48,7 @@ the negotiated envelope version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 17},
+  "protocol": {"major": 2, "minor": 18},
   "request_id": "req-1",
   "value": {}
 }
@@ -62,7 +62,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 17},
+  "protocol": {"major": 2, "minor": 18},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -128,7 +128,7 @@ administration uses the separate routes below. A command envelope has no actor f
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 17},
+  "protocol": {"major": 2, "minor": 18},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -196,12 +196,18 @@ their existing version, saved request identity, replay and conflict semantics.
 Authoring `draft` contains `workflow_id`, nullable `base_revision`, and `mutations` using the
 existing blueprint mutation wire form. `expected_revision` must equal the base and
 `expected_sequence` must be absent. `author_blueprint` accepts `rename`, `add_model`, `prompt`,
-`model`, `input`, `remove_input`, `rename_input`, `connect`, `disconnect`, `output`, `remove`,
+`model`, `output_limit`, `input`, `remove_input`, `rename_input`, `connect`, `disconnect`, `output`, `clear_output`, `remove`,
 and `move` gestures, defined by `BlueprintEdit`. `rename_input {name, new_name}` atomically
 renames a declared input and its workflow-input bindings, leaving other strings intact. An
 existing same-name source is a no-op; missing sources, invalid names and collisions refuse.
 `remove_input {name}` requires an unused declaration and identifies connected step ports on
 refusal. These edits do not delete uploaded artifacts or change accepted runs.
+`clear_output` removes the final-output selection (including an already absent selection).
+Incomplete drafts may be retained and reopened; ordinary save still requires a model step and
+selected output. `output_limit {step, maximum_output_units}` updates the existing model request
+through its validation owner. Catalogue authority is rechecked during editing; endpoint limits,
+execution authority and exact request reservations are checked by the existing preparation/entry
+owners when running. A valid edit is not a promise of available capacity or budget.
 A connection selects a declared `run_input` or an earlier `step`; the latter
 selects only `final_text`. `add_model` requires explicit `maximum_output_units`. Each generated
 step uses the existing `ModelProse` acceptance gate. The editor refuses definitions outside its
