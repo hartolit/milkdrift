@@ -9,8 +9,9 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-No active sprints. The [roadmap](../../product/roadmap.md) owns unfinished work; unrelated whiteboard
-topics remain separate.
+[Workflow review corrections](workflow-review/README.md) implements the assigned comparison,
+ordinary editing and authorized discovery fixes, then retains current acceptance evidence.
+The [roadmap](../../product/roadmap.md) owns unfinished work; unrelated whiteboard topics remain separate.
 
 ## Prepared assignments
 

@@ -2,6 +2,12 @@
 
 Ordered unfinished work; [status](status.md) owns implementation and evidence facts.
 
+The active [workflow review assignment](../development/virtual-office/workflow-review/README.md)
+finishes semantic revision comparison, ordinary input/output/limit editing and discovery under
+named-workflow grants, then verifies the corrected executable source and delivers its evidence.
+Its sections 1–3 use focused checkpoints; section 4 owns integrated acceptance. No successor work
+is authorized by completion.
+
 The ordinary CLI workflow route is implemented through shared public daemon operations: setup,
 authoring, supplied inputs, exact request recovery, result inspection, supported prospective repair,
 reuse/copy, publication preparation, evaluation and the independent client boundary. Its
