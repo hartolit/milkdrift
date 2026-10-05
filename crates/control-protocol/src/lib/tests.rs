@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn semantic_comparison_wire_preserves_categories_and_truncation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let bytes = br#"{"from_revision":"from","to_revision":"to","changes":[{"change":"changed","subject":"metadata","identity":"description","detail":null},{"change":"removed","subject":"input","identity":"brief","detail":null},{"change":"added","subject":"agreement","identity":null,"detail":null}],"truncated":true}"#;
+    let value: RevisionDiffRead = decode_json(bytes)?;
+    assert!(value.truncated);
+    assert_eq!(value.changes.len(), 3);
+    assert_eq!(
+        serde_json::from_slice::<Value>(bytes)?,
+        serde_json::to_value(&value)?
+    );
+    assert_eq!(
+        decode_json::<RevisionDiffRead>(&encode_json(&value)?)?,
+        value
+    );
+    Ok(())
+}
+
+#[test]
 fn start_inputs_use_named_artifacts_and_preserve_empty_request_encoding()
 -> Result<(), Box<dyn std::error::Error>> {
     let old_shape = serde_json::json!({"type":"start_run", "run_id":"run", "workflow_id":"workflow", "revision_id":"revision"});

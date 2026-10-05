@@ -6,6 +6,8 @@ mod authoring;
 mod authoring_cli;
 #[path = "control_plane/binary.rs"]
 mod binary;
+#[path = "control_plane/comparison.rs"]
+mod comparison;
 #[path = "control_plane/control_workflows.rs"]
 mod control_workflows;
 #[path = "control_plane/copy_authority.rs"]

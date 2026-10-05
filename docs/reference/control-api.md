@@ -275,6 +275,15 @@ Every route is authenticated and authority-filtered. List queries constrain or f
 | `GET /v1/artifacts/{artifact}/content` | One verified explicit byte range under artifact-read authority. |
 | `GET /v1/layouts/{workflow}/{revision}` | Exact independent layout document. |
 
+Revision comparison requires inspect permission on both revisions in one workflow. It reports
+saved semantic changes in this order: blueprint identity; metadata name, description and labels;
+extensions; inputs; outputs; agreement; nodes; edges. Maps use lexical identity order. Entries
+identify `added`, `removed` or `changed` subjects without including field contents (`detail` is
+null). Authorship, reason and parent ancestry are provenance, so different revision IDs may have
+an empty semantic comparison. The protocol's page-item ceiling also bounds comparison entries;
+`truncated` is true only when at least one further change was omitted. `blueprint diff` displays
+this same public response, including truncation.
+
 `limit` defaults to 100 and must be within the protocol page bound. A page contains `items`, optional `next_cursor`, and optional feed-head `observed_cursor`. Clients must request subsequent pages explicitly; the client library never auto-loads a complete run lifetime.
 
 Artifact metadata and content are separately authorized against the exact immutable artifact identity and stored sensitivity before either is disclosed. Content accepts one `Range: bytes=start-end` request and returns 206 with `Content-Type`, `Accept-Ranges: bytes`, `Content-Range`, safe `Content-Disposition: attachment`, and `x-milkdrift-artifact-complete`. A server call returns at most 1 MiB. Input upload uses the bounded publication route described above; artifact access never accepts a server path. Protected metadata/content decisions are retained in the bounded security audit with actor, grant revision/digest, operation, resource digest, decision digest, outcome, and reason codes; raw credentials and content are absent.

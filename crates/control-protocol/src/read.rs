@@ -166,7 +166,8 @@ pub struct WorkflowFieldRead {
     pub required: bool,
 }
 
-/// Structured bounded semantic difference.
+/// Structured semantic difference, bounded by [`crate::MAX_PAGE_ITEMS`].
+/// Authorship, reason and revision ancestry do not count as semantic changes.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RevisionDiffRead {
@@ -186,11 +187,11 @@ pub struct RevisionDiffRead {
 pub struct RevisionChange {
     /// Added, removed, or changed.
     pub change: String,
-    /// Node, edge, interface, or metadata.
+    /// `blueprint`, `metadata`, `extension`, `input`, `output`, `agreement`, `node`, or `edge`.
     pub subject: String,
-    /// Stable semantic identity where applicable.
+    /// Metadata field, extension key, interface field or graph identity where applicable.
     pub identity: Option<String>,
-    /// Bounded structured summary.
+    /// Reserved structured detail; currently null so summaries do not disclose field contents.
     pub detail: Value,
 }
 

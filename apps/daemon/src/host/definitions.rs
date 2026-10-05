@@ -1,9 +1,9 @@
 //! Authorized immutable workflow/revision lineage read-model ownership.
 
 use super::{
-    Owner, PublicFailure, read_model::diff_keys, read_model::internal, read_model::invalid,
-    read_model::not_found, read_model::parse_revision_id, read_model::public_persistence,
-    read_model::public_protocol, read_model::public_revision_summary, read_model::unauthorized,
+    Owner, PublicFailure, read_model::internal, read_model::invalid, read_model::not_found,
+    read_model::parse_revision_id, read_model::public_persistence, read_model::public_protocol,
+    read_model::public_revision_summary, read_model::unauthorized,
 };
 use crate::auth::ActorSession;
 use milkdrift_authority::{AuthorityOperation, RequestedResourceFacts, WorkflowRunScope};
@@ -15,6 +15,8 @@ use milkdrift_control_protocol::{
 use milkdrift_persistence::{
     PageSize, RevisionCursor, RevisionFilter, RevisionPageQuery, RevisionStore,
 };
+
+mod comparison;
 
 impl Owner {
     pub(super) fn revision(
@@ -170,21 +172,12 @@ impl Owner {
             .revision(&parse_revision_id(to)?)
             .map_err(public_persistence)?
             .ok_or_else(not_found)?;
-        let mut changes = Vec::new();
-        diff_keys(
-            "node",
-            left_revision.semantic().nodes(),
-            right_revision.semantic().nodes(),
-            &mut changes,
-        );
-        diff_keys(
-            "edge",
-            left_revision.semantic().edges(),
-            right_revision.semantic().edges(),
-            &mut changes,
-        );
-        let truncated = changes.len() > 1_024;
-        changes.truncate(1_024);
+        let mut difference =
+            comparison::changes(left_revision.semantic(), right_revision.semantic());
+        let limit =
+            usize::try_from(milkdrift_control_protocol::MAX_PAGE_ITEMS).map_err(|_| internal())?;
+        let changes = difference.by_ref().take(limit).collect();
+        let truncated = difference.next().is_some();
         Ok(RevisionDiffRead {
             from_revision: from.to_owned(),
             to_revision: to.to_owned(),

@@ -4,13 +4,12 @@ use milkdrift_blueprint::RevisionId;
 use milkdrift_control::ControlError;
 use milkdrift_control_protocol::{
     ArtifactMetadataRead, AttemptRead, CapabilityOperationRead, CommandAccepted, CommandRequest,
-    ErrorCode, NodeRead, ResolveAction, RevisionChange, RevisionSummary as PublicRevisionSummary,
-    RunRead, TimelineCategory, TimelineEntry,
+    ErrorCode, NodeRead, ResolveAction, RevisionSummary as PublicRevisionSummary, RunRead,
+    TimelineCategory, TimelineEntry,
 };
 use milkdrift_persistence::{IndexedRunState, PersistenceError};
 use milkdrift_runtime::ExternalWorkAction;
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, collections::BTreeSet};
 
 pub(super) fn accepted_sequence(
     request: &CommandRequest,
@@ -579,31 +578,6 @@ pub(super) fn public_artifact_metadata(
         content_type: value.reference().media_type().as_str().to_owned(),
         disposition_name: None,
         sensitivity: snake_debug(&value.sensitivity()),
-    }
-}
-
-pub(super) fn diff_keys<K, V>(
-    subject: &str,
-    left: &BTreeMap<K, V>,
-    right: &BTreeMap<K, V>,
-    output: &mut Vec<RevisionChange>,
-) where
-    K: Ord + ToString,
-    V: PartialEq,
-{
-    for key in left.keys().chain(right.keys()).collect::<BTreeSet<_>>() {
-        let change = match (left.get(key), right.get(key)) {
-            (None, Some(_)) => "added",
-            (Some(_), None) => "removed",
-            (Some(left), Some(right)) if left != right => "changed",
-            _ => continue,
-        };
-        output.push(RevisionChange {
-            change: change.to_owned(),
-            subject: subject.to_owned(),
-            identity: Some(key.to_string()),
-            detail: Value::Null,
-        });
     }
 }
 
