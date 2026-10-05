@@ -138,6 +138,8 @@ fn path(command: &WorkflowCommand) -> Result<&Path, CliError> {
         | WorkflowCommand::Prompt { file, .. }
         | WorkflowCommand::Model { file, .. }
         | WorkflowCommand::Input { file, .. }
+        | WorkflowCommand::RemoveInput { file, .. }
+        | WorkflowCommand::RenameInput { file, .. }
         | WorkflowCommand::Connect { file, .. }
         | WorkflowCommand::Disconnect { file, .. }
         | WorkflowCommand::Output { file, .. }
@@ -190,6 +192,13 @@ async fn edit(
             capability: model.clone(),
         },
         WorkflowCommand::Input { name, .. } => BlueprintEdit::Input { name: name.clone() },
+        WorkflowCommand::RemoveInput { name, .. } => {
+            BlueprintEdit::RemoveInput { name: name.clone() }
+        }
+        WorkflowCommand::RenameInput { name, new_name, .. } => BlueprintEdit::RenameInput {
+            name: name.clone(),
+            new_name: new_name.clone(),
+        },
         WorkflowCommand::Connect {
             step,
             input,

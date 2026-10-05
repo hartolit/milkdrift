@@ -164,6 +164,47 @@ impl ModelWorkflow {
                     return Err("run input already declared".into());
                 }
             }
+            BlueprintEdit::RemoveInput { name } => {
+                if !self.inputs.contains(name) {
+                    return Err("run input is not declared".into());
+                }
+                let connections: Vec<_> = self.steps.iter().flat_map(|step| {
+                    step.inputs.iter()
+                        .filter(|(_, source)| matches!(source, BindingSource::WorkflowInput { field } if field.as_str() == name))
+                        .map(|(port, _)| format!("{}/{port}", step.id))
+                }).collect();
+                if !connections.is_empty() {
+                    return Err(format!(
+                        "run input {name} is still connected; disconnect {} before removing it",
+                        connections.join(", ")
+                    )
+                    .into());
+                }
+                self.inputs.remove(name);
+            }
+            BlueprintEdit::RenameInput { name, new_name } => {
+                let destination = FieldId::new(new_name)?;
+                if !self.inputs.contains(name) {
+                    return Err("run input is not declared".into());
+                }
+                if name == new_name {
+                    return Ok(());
+                }
+                if self.inputs.contains(new_name) {
+                    return Err("destination run input already declared".into());
+                }
+                self.inputs.remove(name);
+                self.inputs.insert(new_name.clone());
+                for step in &mut self.steps {
+                    for source in step.inputs.values_mut() {
+                        if let BindingSource::WorkflowInput { field } = source
+                            && field.as_str() == name
+                        {
+                            *field = destination.clone();
+                        }
+                    }
+                }
+            }
             BlueprintEdit::Connect {
                 step,
                 input,

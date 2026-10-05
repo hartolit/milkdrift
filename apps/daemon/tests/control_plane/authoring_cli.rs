@@ -81,7 +81,7 @@ async fn actual_cli_authors_prompts_connections_and_guarded_files() -> TestResul
         ],
         None,
     )?;
-    cli_ok(&daemon, &directory, &["input", "notes.json", "brief"], None)?;
+    cli_ok(&daemon, &directory, &["input", "notes.json", "breif"], None)?;
     assert!(
         !cli(
             &daemon,
@@ -154,7 +154,7 @@ async fn actual_cli_authors_prompts_connections_and_guarded_files() -> TestResul
                 step,
                 "brief",
                 "--run-input",
-                "brief",
+                "breif",
             ],
             None,
         )?;
@@ -178,6 +178,12 @@ async fn actual_cli_authors_prompts_connections_and_guarded_files() -> TestResul
         &["output", "notes.json", "review", "--name", "notes"],
         None,
     )?;
+    cli_ok(
+        &daemon,
+        &directory,
+        &["input", "notes.json", "occupied"],
+        None,
+    )?;
     let before = fs::read(directory.path().join("notes.json"))?;
     for arguments in [
         vec![
@@ -190,6 +196,9 @@ async fn actual_cli_authors_prompts_connections_and_guarded_files() -> TestResul
         ],
         vec!["move", "notes.json", "review", "--before", "draft"],
         vec!["model", "notes.json", "review", "hidden-model"],
+        vec!["remove-input", "notes.json", "breif"],
+        vec!["rename-input", "notes.json", "breif", "occupied"],
+        vec!["rename-input", "notes.json", "breif", "invalid name"],
         vec![
             "connect",
             "notes.json",
@@ -201,6 +210,24 @@ async fn actual_cli_authors_prompts_connections_and_guarded_files() -> TestResul
     ] {
         assert!(!cli(&daemon, &directory, &arguments, None)?.status.success());
         assert_eq!(fs::read(directory.path().join("notes.json"))?, before);
+    }
+    cli_ok(
+        &daemon,
+        &directory,
+        &["remove-input", "notes.json", "occupied"],
+        None,
+    )?;
+    let renamed = cli_ok(
+        &daemon,
+        &directory,
+        &["rename-input", "notes.json", "breif", "brief"],
+        None,
+    )?;
+    for index in [0, 1] {
+        assert_eq!(
+            renamed.pointer(&format!("/workflow/steps/{index}/inputs/brief/field")),
+            Some(&serde_json::json!("brief"))
+        );
     }
     let saved = cli_ok(&daemon, &directory, &["save", "notes.json"], None)?;
     let revision = saved

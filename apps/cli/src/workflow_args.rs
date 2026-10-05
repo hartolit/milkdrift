@@ -76,6 +76,14 @@ pub(crate) enum WorkflowCommand {
     },
     /// Declare a required per-run input without supplying its value.
     Input { file: PathBuf, name: String },
+    /// Remove a declared input after disconnecting every consumer.
+    RemoveInput { file: PathBuf, name: String },
+    /// Rename a declared input and all its bindings; step ports and prompts stay unchanged.
+    RenameInput {
+        file: PathBuf,
+        name: String,
+        new_name: String,
+    },
     /// Bind a named step input to a run input or an earlier step's final text.
     Connect {
         file: PathBuf,

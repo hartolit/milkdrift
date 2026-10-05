@@ -329,6 +329,14 @@ INPUT` removes a connection. `workflow move FILE STEP --before OTHER` changes or
 `--before` moves the step to the end. A reorder that puts a source after its consumer refuses.
 `workflow remove FILE STEP` refuses while another step or the selected output still uses it.
 
+Correct a declared input with `workflow rename-input FILE breif brief`. The daemon changes that
+declaration and every reference to it together; prompts, step port names and final-output names
+stay as written. Renaming an existing input to itself leaves it unchanged. An absent source,
+invalid destination or collision refuses the edit and leaves the local draft intact.
+`workflow remove-input FILE NAME` removes an unused declaration; if it is connected, the refusal
+identifies the step/input connections to disconnect first. Saving the removal means later runs
+no longer require that field. Existing runs and uploaded artifacts remain retained.
+
 Find and reuse saved definitions through bounded version pages. `show` returns the declared
 inputs and outputs without execution values. A run always names one exact revision; there is no
 implicit mutable preferred-version pointer. Following an empty filtered page's `next_cursor` may

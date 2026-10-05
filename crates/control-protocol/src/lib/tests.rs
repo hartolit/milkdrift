@@ -51,7 +51,7 @@ fn start_inputs_use_named_artifacts_and_preserve_empty_request_encoding()
 #[test]
 fn authoring_wire_uses_explicit_sources_and_rejects_unknown_fields()
 -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = br#"{"protocol":{"major":2,"minor":16},"command_id":"edit-1","expected_sequence":null,"expected_revision":null,"reason":"Connect the brief","evidence":[],"command":{"type":"author_blueprint","draft":{"workflow_id":"release-notes","base_revision":null,"mutations":[]},"edit":{"type":"connect","step":"review","input":"brief","source":{"type":"run_input","name":"brief"}},"save":false}}"#;
+    let bytes = br#"{"protocol":{"major":2,"minor":17},"command_id":"edit-1","expected_sequence":null,"expected_revision":null,"reason":"Connect the brief","evidence":[],"command":{"type":"author_blueprint","draft":{"workflow_id":"release-notes","base_revision":null,"mutations":[]},"edit":{"type":"connect","step":"review","input":"brief","source":{"type":"run_input","name":"brief"}},"save":false}}"#;
     let request: CommandRequest = decode_json(bytes)?;
     request.validate()?;
     assert_eq!(
@@ -82,6 +82,25 @@ fn authoring_wire_uses_explicit_sources_and_rejects_unknown_fields()
             serde_json::json!({"type":"all_history"}),
         );
     assert!(decode_json::<CommandRequest>(&serde_json::to_vec(&value)?).is_err());
+    Ok(())
+}
+
+#[test]
+fn declared_input_edits_roundtrip_and_refuse_ambiguous_fields()
+-> Result<(), Box<dyn std::error::Error>> {
+    for value in [
+        serde_json::json!({"type":"rename_input", "name":"breif", "new_name":"brief"}),
+        serde_json::json!({"type":"remove_input", "name":"unused"}),
+    ] {
+        let edit: BlueprintEdit = decode_json(&serde_json::to_vec(&value)?)?;
+        assert_eq!(serde_json::to_value(edit)?, value);
+        let mut invalid = value;
+        invalid
+            .as_object_mut()
+            .ok_or("object absent")?
+            .insert("disconnect_consumers".into(), Value::Bool(true));
+        assert!(decode_json::<BlueprintEdit>(&serde_json::to_vec(&invalid)?).is_err());
+    }
     Ok(())
 }
 

@@ -90,6 +90,19 @@ pub enum BlueprintEdit {
         /// New workflow interface field name.
         name: String,
     },
+    /// Remove an unused declaration. Connected inputs refuse without disconnecting consumers.
+    RemoveInput {
+        /// Existing workflow input name.
+        name: String,
+    },
+    /// Rename a declaration and only its workflow-input references atomically.
+    /// An existing source renamed to itself is unchanged; an absent source still refuses.
+    RenameInput {
+        /// Existing workflow input name.
+        name: String,
+        /// Valid distinct destination, or the same name for an unchanged draft.
+        new_name: String,
+    },
     /// Bind a named step input to one explicit source.
     Connect {
         /// Receiving model step identity.

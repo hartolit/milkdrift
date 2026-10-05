@@ -57,7 +57,9 @@ This document owns current implementation, limitations, exact versions, and qual
 - Ordinary `workflow` commands create independent model workflows, edit prompts from files/stdin,
   connect named inputs and selected earlier results, choose an accepted final output, and save or
   reopen exact revisions through public daemon authoring. Draft files retain only base references
-  and pending blueprint mutations, with guarded atomic replacement. Editing a saved version creates
+  and pending blueprint mutations, with guarded atomic replacement. Declared inputs can be renamed
+  with every workflow-input binding, or removed after consumers are disconnected. Refused edits
+  preserve the draft; removal preserves uploaded artifacts and old run inputs. Editing a saved version creates
   a child without changing old definitions or runs. The [operator recipe](../../examples/operator/README.md#author-a-model-workflow)
   explains the supported model editor and its explicit refusal of richer definitions.
   Saved-version discovery exposes declared inputs and outputs. Independent copies preserve the graph
@@ -160,7 +162,7 @@ values; repository contracts check the version cells against source.
 | Redb internal document format / physical schema | 20 / 16 | Older/future stores refused; no migration. |
 | Application command receipt / layout record | 1 / 1 | Exact supported contracts. |
 | Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
-| External control / authenticated cursor | 2.16 / 2 | Only the exact current protocol and cursor forms are accepted. |
+| External control / authenticated cursor | 2.17 / 2 | Only the exact current protocol and cursor forms are accepted. |
 | Peer protocol and catalog messages | 1.5 | Earlier minors refused. |
 | Daemon configuration | 13 | TOML; JSON and earlier versions refused. |
 | Managed resource request / inventory | 3 | Exact schema, bounded typed recipe references, preserved receipts and guarded transitions. |

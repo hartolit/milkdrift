@@ -41,6 +41,11 @@ returns its base exactly. Saving changes creates a child and never changes a run
 
 ## Compatibility and evidence
 
+Control protocol 2.17 extends ordinary edits with atomic declared-input rename and unused-input
+removal. It retains the same draft, mutation, storage and receipt owners; earlier control versions
+remain explicitly refused. Rename updates only workflow-input bindings. Removal never implicitly
+disconnects a consumer or deletes an uploaded artifact.
+
 Clients and daemons upgrade together; earlier control minor versions are refused. Blueprint,
 model, result-acceptance and storage formats do not change. Public authoring tests cover independent
 workflows, exact reopen/replay, parent preservation, invalid connections/order, missing or hidden

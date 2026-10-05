@@ -5,6 +5,9 @@ use milkdrift_control_protocol::{
 };
 use serde_json::json;
 
+#[path = "authoring/input_edits.rs"]
+mod input_edits;
+
 async fn author(
     client: &ControlClient,
     draft: &BlueprintDraft,
