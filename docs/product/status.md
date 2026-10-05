@@ -274,7 +274,25 @@ values; repository contracts check the version cells against source.
 
 ## Current validation/evidence snapshot
 
-Workflow-review corrections pass fresh local acceptance at executable source
+Workflow naming corrections pass local acceptance at executable source
+`98b664f1fb12d0b17dd28ab8f53903da5f8a4b95` with Rust 1.95.0 on Linux x86-64. Distinct connections
+with colon-bearing names now retain separate identities and deliver the intended inputs. A user
+input named `failed_result` remains separate from generated repair evidence. Supported saved
+definitions preserve unchanged connection IDs, no-op saves, old revisions and exact replay;
+new connections use the framed encoding in [ADR 0050](../decisions/0050-editor-edge-identities.md).
+
+The clean-source run passes 1,136 distinct tests with zero failures and eight existing opt-in
+tests ignored; discovery lists 1,144. These totals include 24 doctests, 30 repository contracts
+and all 56 public control-plane tests. All 33 static checks, sixteen scanner-probe outcomes,
+default/all-feature API inventories for the two affected packages, and four preserved-binary
+application scenarios pass. The authored journey makes exactly seven controlled model calls.
+[Workflow naming evidence](../development/verification-evidence.md#workflow-name-corrections)
+records commands, counting, compatibility fixtures and the delivered
+`milkdrift-workflow-name-corrections-98b664f.tar.gz` archive. Later closeout changes documentation
+only. This acceptance adds local software evidence; it does not add a hosted CI run, attached-model
+qualification or an UM790/Podman campaign.
+
+Earlier workflow-review corrections passed local acceptance at executable source
 `4b1bab54c8ac4a9f3b600ba443624ee2df4630c3` with Rust 1.95.0 on Linux x86-64. The clean-source
 run passes 1,129 distinct tests, including 24 doctests and 30 repository contracts, with eight
 opt-in tests ignored. Discovery lists all 1,137 cases. One secret-provider test also executes in

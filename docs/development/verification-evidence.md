@@ -90,6 +90,69 @@ The runner does not configure or stop attached servers. Live mode omits syntheti
 review the two retained text files separately for usefulness. Product completeness checks require
 nonempty final prose and `stop`, and do not establish editorial correctness or useful learning.
 
+## Workflow name corrections
+
+The delivered `milkdrift-workflow-name-corrections-98b664f.tar.gz` archive records the clean baseline
+`c1c3d046c845c7763bd24162141fb3855518360e` and tested executable commit
+`98b664f1fb12d0b17dd28ab8f53903da5f8a4b95`, tree
+`1beda103dc0d8f01027b1a47cd72f05b2e5d7dbf`. Its manifest, command records, exit codes, binary hashes
+and raw check output bind the results to Rust 1.95.0 on Linux x86-64. `closeout.json` and
+`closeout.diff` identify the later documentation-only commit. Verify extracted files with
+`sha256sum --check SHA256SUMS`. Private stores, credentials, daemon configurations and raw daemon
+logs are excluded. Large application binaries remain preserved locally; their hashes and build
+command are included so a reviewer can identify the exact bytes used.
+
+The public collision regression authors `draft/final_text → review/x:brief` and
+`draft/final_text → review:x/brief`, then saves, reopens and executes both bindings against a
+controlled endpoint. It initially reproduced duplicate connection IDs. Actual execution also
+exposed invocation input validation rejecting legal colons, so the capability reader now accepts
+the same port spelling. Independent encoding cases cover field boundaries, kind tags and limits.
+The [frozen fixtures](../../apps/daemon/tests/fixtures/authoring/README.md) were captured before
+changing either writer. They pin old definitions and repair mutations independently of the new
+encoding. The reader preserves validated IDs for unchanged connections and compares the entire
+reconstructed definition; edits assign framed IDs to new connections without migrating old
+revisions or hiding a migration in a no-op save. [ADR 0050](../decisions/0050-editor-edge-identities.md)
+owns that compatibility decision.
+
+The repair regression first reproduced a duplicate input when a user port was named
+`failed_result`. Successful requests now deliver that authorized brief and the selected rejected
+response under distinct labels. Ordinary repair, retained old repair mutations, reserved-name
+refusals and imported conflicts are covered alongside approval, stale-version, authority,
+failed-history and fresh-acceptance checks. Stored prepare, submit and apply requests replay after
+restart without another model call. Read, preview, save, copy, comparison and repair consumers
+were checked for competing writers; generated repair retargeting uses the same framed identity
+rule as ordinary new connections.
+
+Build and preserve the seven application/helper binaries used by the actual-binary lanes before
+other Cargo builds. Final records use `target/workflow-name-corrections/final-98b664f` with two
+build jobs and ordinary parallel test execution. The central commands are:
+
+```sh
+cargo strict-checks --probe-tools --output target/workflow-name-corrections/final-98b664f/probes
+cargo strict-checks --output target/workflow-name-corrections/final-98b664f/strict \
+  --secret-base c1c3d046c845c7763bd24162141fb3855518360e
+cargo test --locked --workspace --all-features --no-fail-fast -j 2
+cargo test --locked --workspace --all-features -j 2 -- --list
+```
+
+All 33 static checks pass. Sixteen probe outcomes comprise thirteen passes and three expected
+refusals of synthetic violations. The secret scan covers changed current content across the
+whole correction range, not every historical Git blob. Workspace execution passes 1,136 distinct
+tests, zero failures and eight existing opt-in cases ignored; discovery lists 1,144. The count
+includes 24 doctests, 30 repository contracts and all 56 control-plane tests. One secret-provider
+test also runs itself in a child process, adding one passing summary without another discovered
+case. The archive retains the counting rule and each ignored name and reason: four release-mode
+longevity cases, three physical Podman cases and one expensive storage-boundary case.
+
+Headless operations, controlled model behavior, controller qualification and the authored workflow
+journey pass separately on the preserved binaries from the tested commit. The journey reports
+seven controlled requests, successful restart/replay and cleanup, with no live-model requests.
+Capability and daemon default/all-feature API inventories pass sequentially after documentation
+generation; private helpers add no public items or signatures. The colon-bearing input change is
+an additive reader contract, not a new schema version. No hosted CI, external-model quality,
+UM790/Podman or power-loss qualification is claimed by these runs. The older records below retain
+their own sources and are not reused as passes for this correction.
+
 ## Workflow review corrections
 
 The delivered `milkdrift-workflow-review-4b1bab5.tar.gz` archive binds the corrected executable
