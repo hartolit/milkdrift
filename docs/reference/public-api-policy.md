@@ -42,6 +42,10 @@ package entry point. Consumers otherwise import the canonical owner directly.
 
 ## Surface ownership
 
+`ErrorCode::http_status_code` is a pure protocol contract consumed by daemon HTTP responses and
+client error classification. The exhaustive numeric mapping has no HTTP library dependency;
+transport-specific boundary responses and explicit retryability remain with their existing owners.
+
 `validate_response_capacity` and `MAX_REQUEST_ID_BYTES` are protocol contracts consumed by daemon
 mutation admission, aggregate read construction and HTTP correlation validation. They use the
 existing envelope and reader limits, without introducing HTTP types into the pure protocol crate.

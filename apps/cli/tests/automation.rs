@@ -258,6 +258,15 @@ fn invoke(
     arguments: &[&str],
     keep_stdin_open: bool,
 ) -> TestResult<(i32, Vec<Value>, String)> {
+    invoke_mode(endpoint, arguments, keep_stdin_open, true)
+}
+
+fn invoke_mode(
+    endpoint: &str,
+    arguments: &[&str],
+    keep_stdin_open: bool,
+    json_output: bool,
+) -> TestResult<(i32, Vec<Value>, String)> {
     let root = tempfile::tempdir()?;
     let stdout = root.path().join("stdout");
     let stderr = root.path().join("stderr");
@@ -266,13 +275,8 @@ fn invoke(
             .env_remove("MILKDRIFT_TOKEN_FILE")
             .env_remove("MILKDRIFT_TOKEN_ENV")
             .env("MILKDRIFT_TOKEN", "private-fixture-token-do-not-echo")
-            .args([
-                "--endpoint",
-                endpoint,
-                "--json",
-                "--command-id",
-                "command-fixture",
-            ])
+            .args(["--endpoint", endpoint, "--command-id", "command-fixture"])
+            .args(json_output.then_some("--json"))
             .args(arguments)
             .stdin(if keep_stdin_open {
                 Stdio::piped()
@@ -294,21 +298,122 @@ fn invoke(
     let output = std::fs::read_to_string(stdout)?;
     let errors = std::fs::read_to_string(stderr)?;
     assert!(!output.contains("private-fixture-token-do-not-echo"));
-    let records = output
-        .lines()
-        .map(|line| {
-            assert!(!line.chars().any(char::is_control));
-            let value: Value = serde_json::from_str(line)?;
-            assert_eq!(
-                value
-                    .pointer("/schema_version")
-                    .ok_or("missing fixture field")?,
-                2
-            );
-            Ok(value)
-        })
-        .collect::<TestResult<Vec<_>>>()?;
+    assert!(!errors.contains("private-fixture-token-do-not-echo"));
+    let records = if json_output {
+        output
+            .lines()
+            .map(|line| {
+                assert!(!line.chars().any(char::is_control));
+                let value: Value = serde_json::from_str(line)?;
+                assert_eq!(
+                    value
+                        .pointer("/schema_version")
+                        .ok_or("missing fixture field")?,
+                    2
+                );
+                Ok(value)
+            })
+            .collect::<TestResult<Vec<_>>>()?
+    } else {
+        vec![]
+    };
     Ok((status.code().ok_or("exit code absent")?, records, errors))
+}
+
+#[test]
+fn uncertain_commands_preserve_unknown_outcomes_and_never_resubmit() -> TestResult {
+    use std::sync::atomic::AtomicUsize;
+    let arguments = [
+        "--yes",
+        "--timeout-secs",
+        "3",
+        "--expected-sequence",
+        "10",
+        "run",
+        "pause",
+        "run-one",
+    ];
+    for retryable in [false, true] {
+        let error = json!({"protocol":ProtocolVersion::CURRENT,"request_id":"unknown-result","code":"uncertain","message":"private-fixture-token-do-not-echo","retryable":retryable,"details":{}});
+        let requests = Arc::new(AtomicUsize::new(0));
+        let observed = requests.clone();
+        let server = Server::with_response_hook(
+            vec![negotiation(), http(409, error.to_string())],
+            move |_| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        )?;
+        let (exit, records, stderr) = server.invoke(&arguments, false)?;
+        assert_eq!(exit, 4);
+        assert!(stderr.is_empty());
+        let final_record = records.last().ok_or("final error")?;
+        assert_eq!(final_record.pointer("/final"), Some(&json!(true)));
+        assert_eq!(
+            final_record.pointer("/command_id"),
+            Some(&json!("command-fixture"))
+        );
+        for field in ["classification", "code", "daemon_code"] {
+            assert_eq!(
+                final_record.pointer(&format!("/error/{field}")),
+                Some(&json!("uncertain"))
+            );
+        }
+        assert_eq!(
+            final_record.pointer("/error/retryable"),
+            Some(&json!(retryable))
+        );
+        let detail = final_record
+            .pointer("/error/detail")
+            .and_then(Value::as_str)
+            .ok_or("recovery guidance")?;
+        assert!(
+            detail.contains("outcome is unknown")
+                && detail.contains("exact original request and command ID")
+        );
+        assert!(!detail.contains("refused") && !detail.contains("stopped"));
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            2,
+            "one negotiation and one command submission"
+        );
+    }
+    let requests = Arc::new(AtomicUsize::new(0));
+    let observed = requests.clone();
+    let malformed = Server::with_response_hook(
+        vec![negotiation(), http(409, "not an error envelope".into())],
+        move |_| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+    )?;
+    let (exit, records, _) = malformed.invoke(&arguments, false)?;
+    assert_eq!(exit, 5);
+    assert_eq!(
+        records
+            .last()
+            .and_then(|record| record.pointer("/error/daemon_code")),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        records
+            .last()
+            .and_then(|record| record.pointer("/error/classification")),
+        Some(&json!("unavailable"))
+    );
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
+
+    let error = json!({"protocol":ProtocolVersion::CURRENT,"request_id":null,"code":"uncertain","message":"unconfirmed receipt","retryable":false,"details":{}});
+    let mut human = Server::new(vec![negotiation(), http(409, error.to_string())])?;
+    let (exit, _, stderr) = invoke_mode(&human.endpoint, &arguments, false, false)?;
+    human.finish()?;
+    assert_eq!(exit, 4);
+    assert!(
+        stderr.contains("outcome is unknown")
+            && stderr.contains("exact original request and command ID")
+    );
+    assert!(!stderr.contains("refused") && !stderr.contains("stopped"));
+    Ok(())
 }
 
 #[test]

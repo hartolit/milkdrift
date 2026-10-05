@@ -131,18 +131,8 @@ pub(super) fn success<T: serde::Serialize>(
 }
 
 pub(super) fn owner_error(error: PublicFailure, request_id: String) -> ApiError {
-    let status = match error.code {
-        ErrorCode::Unauthenticated => StatusCode::UNAUTHORIZED,
-        ErrorCode::Unauthorized => StatusCode::FORBIDDEN,
-        ErrorCode::InvalidInput => StatusCode::BAD_REQUEST,
-        ErrorCode::Conflict | ErrorCode::Uncertain => StatusCode::CONFLICT,
-        ErrorCode::NotFound => StatusCode::NOT_FOUND,
-        ErrorCode::Overload => StatusCode::TOO_MANY_REQUESTS,
-        ErrorCode::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
-        ErrorCode::UnsupportedVersion => StatusCode::UPGRADE_REQUIRED,
-        ErrorCode::Timeout => StatusCode::GATEWAY_TIMEOUT,
-        ErrorCode::Corruption | ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-    };
+    let status = StatusCode::from_u16(error.code.http_status_code())
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let mut envelope = ErrorEnvelope::new(error.code, error.message, error.retryable);
     envelope.request_id = Some(request_id);
     envelope.details = error.details;

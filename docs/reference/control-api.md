@@ -71,7 +71,29 @@ Errors are configuration-independent and never contain tokens, headers, environm
 }
 ```
 
-Stable codes are `unauthenticated`, `unauthorized`, `invalid_input`, `conflict`, `not_found`, `overload`, `unavailable`, `corruption`, `uncertain`, `unsupported_version`, `timeout`, and `internal`. Principal HTTP mappings are 401, 403, 400, 409, 404, 429, 503, 500, 409, 426, 504, and 500 respectively. Bounds failures may use 413. Retryability is explicit; conflict and authorization failures are not made retryable.
+The protocol owns one exhaustive principal status mapping, used by both daemon and client.
+Transport-specific bounds failures may use 413. Retryability remains an explicit envelope fact;
+neither the status nor a retryable flag causes the client to resubmit a command.
+
+| Code | HTTP | CLI exit | Meaning |
+| --- | --- | --- | --- |
+| `unauthenticated` | 401 | 3 | Authentication is absent or invalid. |
+| `unauthorized` | 403 | 3 | Authority does not permit this operation or disclosure. |
+| `invalid_input` | 400 | 7 | The daemon rejected the request contract. |
+| `conflict` | 409 | 4 | Exact command identity, guards or policy conflict. |
+| `not_found` | 404 | 6 | The permitted resource was not found. |
+| `overload` | 429 | 5 if retryable, otherwise 7 | A bounded queue or output limit was exceeded. |
+| `unavailable` | 503 | 5 if retryable, otherwise 7 | A required service is unavailable. |
+| `corruption` | 500 | 7 | Durable integrity verification failed. |
+| `uncertain` | 409 | 4 | The operation's durable or external outcome is unknown. |
+| `unsupported_version` | 426 | 7 | The requested protocol or operation is unsupported. |
+| `timeout` | 504 | 5 if retryable, otherwise 7 | A daemon deadline elapsed. |
+| `internal` | 500 | 7 | The daemon could not establish a reliable result. |
+
+For `uncertain`, inspect retained evidence and recover with the exact original request, command ID
+and authority basis. A new ID can express duplicate work. An error response or nonzero CLI exit
+does not establish that external work stopped. Typed uncertain run/invocation states remain their
+own read contracts; they are not automatically converted to this HTTP error.
 
 ## Commands
 
@@ -488,8 +510,8 @@ typed success result, or the complete run read for failed terminal waits. `error
 otherwise it carries stable classification/code, nullable daemon code and retryability, and bounded
 detail. Retryability is unknown (null) after a client deadline or cancellation.
 
-Classifications are `invalid_input`, `authorization`, `conflict`, `unavailable`, `not_found`,
-`daemon_api`, `failed_terminal`, `internal_client`, `timeout`, and `cancelled`.
+Classifications are `invalid_input`, `authorization`, `conflict`, `uncertain`, `unavailable`, `not_found`,
+`daemon_api`, `failed_terminal`, `invocation_failed`, `internal_client`, `timeout`, and `cancelled`.
 JSON failure diagnostics do not go to stderr. Revision show/status omits document bodies; explicit
 `blueprint export --output FILE` writes the canonical document for inspection. `show --document`
 is raw document output only outside JSON mode. Artifact content goes only to an explicit file.
@@ -499,7 +521,7 @@ is raw document output only outside JSON mode. Artifact content goes only to an 
 | 0 | Successful operation/read, including inspection of a failed run. |
 | 2 | Invalid input/configuration, missing explicit wait/follow deadline, or missing confirmation. |
 | 3 | Authentication or authority failure. |
-| 4 | Optimistic/idempotency conflict. |
+| 4 | Optimistic/idempotency conflict or an explicitly uncertain operation outcome; inspect the error code. |
 | 5 | Retryable overload, endpoint timeout, unavailability or transport failure. |
 | 6 | Not found. |
 | 7 | Other public daemon API failure. |

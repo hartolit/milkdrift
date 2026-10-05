@@ -38,6 +38,11 @@ inspection and artifact download expose the supporting evidence. Failed or cance
 remain failure exits even when selected by the wait filter. Ctrl-C or an expired CLI deadline
 ends the local request/observation and does not itself cancel the workflow.
 
+An `uncertain` daemon error returns exit 4 with a distinct `uncertain` classification and the
+original daemon code in JSON. Its recovery message means the outcome is unknown, not that the
+work stopped or was refused. Inspect retained evidence and recover using the exact original
+request and command ID. Commands are sent once even when an error carries `retryable: true`.
+
 For run starts, choose an explicit new `--request-file` and recover with `run reconnect FILE`.
 The client saves the exact start before sending it and checks the original host/caller/grant before
 replay. `--input NAME=FILE` uploads frozen text; `--prepare-only` stops after saving. Keep the private

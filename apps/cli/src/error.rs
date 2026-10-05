@@ -127,12 +127,23 @@ fn emit_error(
                 "conflict",
                 "exact command, revision, sequence or runtime policy conflict",
             ),
+            ErrorCode::Uncertain => (
+                "uncertain",
+                "operation outcome is unknown; inspect retained evidence and recover with the exact original request and command ID",
+            ),
             ErrorCode::NotFound => ("not_found", "resource not found"),
             ErrorCode::Overload | ErrorCode::Unavailable | ErrorCode::Timeout => (
                 "unavailable",
                 "control endpoint unavailable; submitted work may still be running",
             ),
-            _ => ("daemon_api", "daemon refused the operation"),
+            ErrorCode::InvalidInput | ErrorCode::UnsupportedVersion => (
+                "daemon_api",
+                "daemon rejected the request contract or protocol version",
+            ),
+            ErrorCode::Corruption | ErrorCode::Internal => (
+                "daemon_api",
+                "daemon could not establish a reliable result; inspect retained evidence before recovery",
+            ),
         },
     };
     if !json {
@@ -183,10 +194,22 @@ mod tests {
         assert_eq!(exit_code(&CliError::Deadline), 10);
         assert_eq!(exit_code(&CliError::Cancelled), 130);
         for (code, retry, exit) in [
+            (ErrorCode::Unauthenticated, false, 3),
             (ErrorCode::Unauthorized, false, 3),
             (ErrorCode::Conflict, false, 4),
+            (ErrorCode::Uncertain, false, 4),
+            (ErrorCode::Uncertain, true, 4),
             (ErrorCode::Overload, true, 5),
+            (ErrorCode::Overload, false, 7),
+            (ErrorCode::Unavailable, true, 5),
+            (ErrorCode::Unavailable, false, 7),
+            (ErrorCode::Timeout, true, 5),
+            (ErrorCode::Timeout, false, 7),
+            (ErrorCode::NotFound, false, 6),
             (ErrorCode::InvalidInput, false, 7),
+            (ErrorCode::UnsupportedVersion, false, 7),
+            (ErrorCode::Corruption, false, 7),
+            (ErrorCode::Internal, false, 7),
         ] {
             assert_eq!(
                 exit_code(&CliError::Client(ClientError::Api(ErrorEnvelope::new(

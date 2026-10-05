@@ -199,7 +199,7 @@ pub enum ErrorCode {
     Unavailable,
     /// Durable state failed integrity verification.
     Corruption,
-    /// External side-effect truth is deliberately unresolved.
+    /// The operation's durable or external outcome remains unresolved.
     Uncertain,
     /// The requested protocol or operation is unsupported.
     UnsupportedVersion,
@@ -207,6 +207,27 @@ pub enum ErrorCode {
     Timeout,
     /// An internal failure occurred; the public diagnostic remains redacted.
     Internal,
+}
+
+impl ErrorCode {
+    /// Principal HTTP status for this public failure, shared by server and client classification.
+    /// A transport may use a more specific boundary status, such as 413 for request bytes.
+    /// Retryability remains an explicit envelope fact; this mapping never authorizes a retry.
+    #[must_use]
+    pub const fn http_status_code(self) -> u16 {
+        match self {
+            Self::Unauthenticated => 401,
+            Self::Unauthorized => 403,
+            Self::InvalidInput => 400,
+            Self::Conflict | Self::Uncertain => 409,
+            Self::NotFound => 404,
+            Self::Overload => 429,
+            Self::Unavailable => 503,
+            Self::UnsupportedVersion => 426,
+            Self::Timeout => 504,
+            Self::Corruption | Self::Internal => 500,
+        }
+    }
 }
 
 /// Bounded redacted public error body.

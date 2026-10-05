@@ -961,26 +961,15 @@ fn push_cursor(path: &mut String, cursor: Option<&Cursor>) {
     }
 }
 
-/// Maps a client result into coarse categories useful to CLI exit-code policy.
+/// Returns the protocol's principal HTTP status for a received structured API error.
+/// Local configuration, transport and decoding failures have no daemon status classification.
 #[must_use]
 pub fn status_class(error: &ClientError) -> Option<StatusCode> {
     match error {
-        ClientError::Api(error) => Some(match error.code {
-            milkdrift_control_protocol::ErrorCode::Unauthenticated => StatusCode::UNAUTHORIZED,
-            milkdrift_control_protocol::ErrorCode::Unauthorized => StatusCode::FORBIDDEN,
-            milkdrift_control_protocol::ErrorCode::InvalidInput => StatusCode::BAD_REQUEST,
-            milkdrift_control_protocol::ErrorCode::Conflict => StatusCode::CONFLICT,
-            milkdrift_control_protocol::ErrorCode::NotFound => StatusCode::NOT_FOUND,
-            milkdrift_control_protocol::ErrorCode::Overload => StatusCode::TOO_MANY_REQUESTS,
-            milkdrift_control_protocol::ErrorCode::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
-            milkdrift_control_protocol::ErrorCode::UnsupportedVersion => {
-                StatusCode::UPGRADE_REQUIRED
-            }
-            milkdrift_control_protocol::ErrorCode::Timeout => StatusCode::GATEWAY_TIMEOUT,
-            milkdrift_control_protocol::ErrorCode::Corruption
-            | milkdrift_control_protocol::ErrorCode::Uncertain
-            | milkdrift_control_protocol::ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-        }),
+        ClientError::Api(error) => Some(
+            StatusCode::from_u16(error.code.http_status_code())
+                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        ),
         _ => None,
     }
 }
