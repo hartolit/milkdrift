@@ -81,6 +81,8 @@ async fn actual_cli_authors_prompts_connections_and_guarded_files() -> TestResul
         ],
         None,
     )?;
+    // Intentionally misspelled: the rename-input check below must correct `breif` to `brief`
+    // in the declaration and both steps' bindings.
     cli_ok(&daemon, &directory, &["input", "notes.json", "breif"], None)?;
     assert!(
         !cli(
