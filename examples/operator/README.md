@@ -293,6 +293,9 @@ request files are never overwritten. For already uploaded inputs or other suppor
 Starts and reconnects return acceptance by default. Add `--wait` with an explicit `--timeout-secs`
 to observe completion. Before waiting, the CLI prints the recovery file, command and run identity;
 JSON mode emits a `run.prepared` record with `final: false`, followed by one final outcome.
+Text uploads also emit nonfinal `input.uploading` and `input.uploaded` records. Retain them for
+partial-preparation recovery and select the record with `final: true` for the command outcome;
+the complete stdout stream can contain several JSON lines.
 Closing the client or reaching its deadline ends observation while daemon work continues.
 Cancellation is a separate `run cancel` request, and its acceptance does not prove external work
 has stopped. Reconnect leaves usage accounting, uncertain effects and accepted child runs intact.

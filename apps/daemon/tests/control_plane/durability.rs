@@ -169,17 +169,20 @@ async fn layout_is_optimistic_restart_durable_and_semantically_inert() -> TestRe
             },
         ))
         .await;
-    assert!(matches!(
-        first_conflict,
-        Err(ClientError::Api(error)) if error.code == ErrorCode::Conflict
-    ));
+    assert!(
+        matches!(
+            &first_conflict,
+            Err(ClientError::Api(error)) if error.code == ErrorCode::Conflict
+        ),
+        "{first_conflict:?}"
+    );
     assert!(matches!(
         daemon
             .client
             .submit(&request(
                 "layout-stale",
                 None,
-                Command::PutLayout { layout: stale },
+                Command::PutLayout { layout: stale.clone() },
             ))
             .await,
         Err(ClientError::Api(error)) if error.code == ErrorCode::Conflict
@@ -201,6 +204,11 @@ async fn layout_is_optimistic_restart_durable_and_semantically_inert() -> TestRe
     daemon.stop().await?;
 
     let restarted = start(config, CONTROLLER_TOKEN).await?;
+    assert!(
+        matches!(restarted.client.submit(&request("layout-stale", None,
+        Command::PutLayout { layout: stale })).await,
+        Err(ClientError::Api(error)) if error.code == ErrorCode::Conflict)
+    );
     assert_eq!(
         restarted.client.layout("golden", &revision_id).await?.nodes,
         layout.nodes

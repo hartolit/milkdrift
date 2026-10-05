@@ -25,8 +25,8 @@ review has been read in full and its numbered excerpts are being checked with ea
 | Integration | The maintained actual-binary journey now additionally removes the original model across restart, opens and partially saves its retained workflow, repairs both selections, uploads input for a slash-containing run, saves/submits/replays its exact request, checks artifact-denied reader results and digest-verified/no-clobber exports, and preserves original revision/history. Its focused regression passes with exactly nine controlled provider requests; evidence-tool Clippy and eight documentation checks pass. Fixture iterations corrected use of a create-only helper for configuration replacement and comparison of changing authority-bound page cursors rather than immutable event items. Full section-10 gate and separately retained application runs remain required. No full acceptance claimed. |
 | Structure/docs | Remove superseded helpers as their consumers migrate; update canonical explanations and check links. |
 
-Planned commit order is in the [assignment](README.md). Next: the combined correction journey
-and the sole final acceptance stage. The linked
+Planned commit order is in the [assignment](README.md). Next: repeat final acceptance on the
+corrected executable source, then run the four separately retained application scenarios. The linked
 WHATWG event-stream specification has been checked for F7 (CRLF/LF/CR, BOM, ordered lines,
 multiline data and discard of incomplete EOF). Invocation output
 identities keep their existing receipt-bound `ReadCapabilityOutput` permission, separate from
@@ -41,3 +41,19 @@ F6/V1 checkpoint: `4f3ef27` (full commit/tree recorded in ignored `f6-commit.txt
 F7 checkpoint: `6b2d0a8` (full commit/tree recorded in ignored `f7-commit.txt`).
 F8 checkpoint: `e406e01` (full commit/tree recorded in ignored `f8-commit.txt`).
 V2 checkpoint: `b9d05e5` (full commit/tree recorded in ignored `v2-commit.txt`).
+Combined journey checkpoint: `4d24e74`.
+
+The first final run at `4d24e745c241e5e4285bf3d3ff190d5292cb2944` passed all 33 strict checks
+and 16 tool probes (13 passed, three expected refusals), but the complete workspace run found
+four failures. The layout guard had incorrectly inherited unknown-outcome handling despite its
+atomic precommit refusal; its correction restores durable conflict replay, including after
+restart, while the real revision/receipt failure regression still proves uncertainty. Two
+CLI input fixtures now read the added progress records and check pending/committed upload
+identity against the retained request. The recovery-mode fixture now tests both denied artifact
+metadata and permitted metadata with withheld content, preserving the stronger permission rule.
+Focused checks pass: layout (one), actual CLI inputs (two), recovery (one exercising both grants),
+real storage uncertainty (one), warning-denying daemon/runtime Clippy and eight documentation
+contracts. Logs, failed workspace evidence and the first frozen binary hashes remain in
+`target/client-workflow-corrections/acceptance-4d24e74/`. No acceptance is claimed for that source.
+An earlier strict invocation refused an already existing output directory before checking;
+subsequent invocations use unique directories and preserve the old evidence.

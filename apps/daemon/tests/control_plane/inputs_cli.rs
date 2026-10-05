@@ -91,10 +91,28 @@ fn success(output: &std::process::Output) -> TestResult<Value> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    Ok(serde_json::from_slice::<Value>(&output.stdout)?
+    Ok(records(output)?
+        .last()
+        .ok_or("final response absent")?
         .pointer("/value")
         .ok_or("response field absent")?
         .clone())
+}
+
+fn records(output: &std::process::Output) -> TestResult<Vec<Value>> {
+    let records = std::str::from_utf8(&output.stdout)?
+        .lines()
+        .map(serde_json::from_str::<Value>)
+        .collect::<Result<Vec<_>, _>>()?;
+    assert!(!records.is_empty() && records.len() <= 32);
+    for (index, record) in records.iter().enumerate() {
+        assert_eq!(record.get("schema_version"), Some(&serde_json::json!(2)));
+        assert_eq!(
+            record.get("final"),
+            Some(&serde_json::json!(index + 1 == records.len()))
+        );
+    }
+    Ok(records)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -358,14 +376,34 @@ async fn actual_cli_lost_start_reply_and_wait_deadline_recover_without_reexecuti
         proxy.accepted.load(std::sync::atomic::Ordering::SeqCst),
         "client left before daemon accepted start"
     );
-    let records: Vec<Value> = std::str::from_utf8(&lost.stdout)?
-        .lines()
-        .map(serde_json::from_str)
-        .collect::<Result<_, _>>()?;
-    assert_eq!(records.len(), 2);
+    let records = records(&lost)?;
+    assert_eq!(records.len(), 4);
+    assert_eq!(
+        records.first().and_then(|record| record.get("type")),
+        Some(&serde_json::json!("input.uploading"))
+    );
+    assert_eq!(
+        records.get(1).and_then(|record| record.get("type")),
+        Some(&serde_json::json!("input.uploaded"))
+    );
+    let saved: Value = serde_json::from_slice(&fs::read(directory.path().join("lost.json"))?)?;
+    assert_eq!(
+        records
+            .get(1)
+            .and_then(|record| record.pointer("/value/artifact/artifact_id")),
+        saved.pointer("/request/command/inputs/0/artifact_id")
+    );
     assert_eq!(
         records
             .first()
+            .and_then(|record| record.pointer("/value/upload_id")),
+        records
+            .get(1)
+            .and_then(|record| record.pointer("/value/upload_id"))
+    );
+    assert_eq!(
+        records
+            .get(2)
             .ok_or("record absent")?
             .pointer("/type")
             .ok_or("response field absent")?,
@@ -373,7 +411,7 @@ async fn actual_cli_lost_start_reply_and_wait_deadline_recover_without_reexecuti
     );
     assert_eq!(
         records
-            .first()
+            .get(2)
             .ok_or("record absent")?
             .pointer("/final")
             .ok_or("response field absent")?,
@@ -381,7 +419,7 @@ async fn actual_cli_lost_start_reply_and_wait_deadline_recover_without_reexecuti
     );
     assert_eq!(
         records
-            .first()
+            .get(2)
             .ok_or("record absent")?
             .pointer("/value/command_id")
             .ok_or("response field absent")?,
@@ -389,7 +427,7 @@ async fn actual_cli_lost_start_reply_and_wait_deadline_recover_without_reexecuti
     );
     assert_eq!(
         records
-            .get(1)
+            .get(3)
             .ok_or("record absent")?
             .pointer("/error/classification")
             .ok_or("response field absent")?,
@@ -397,7 +435,7 @@ async fn actual_cli_lost_start_reply_and_wait_deadline_recover_without_reexecuti
     );
     assert_eq!(
         records
-            .get(1)
+            .get(3)
             .ok_or("record absent")?
             .pointer("/final")
             .ok_or("response field absent")?,

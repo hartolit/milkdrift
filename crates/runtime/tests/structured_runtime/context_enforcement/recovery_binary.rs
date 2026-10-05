@@ -100,6 +100,13 @@ async fn launch(config: &Path, endpoint: &url::Url) -> TestResult<(ProcessGuard,
 #[tokio::test]
 async fn recovery_binary_authorizes_reviews_replays_and_applies_repair_without_execution()
 -> TestResult {
+    for metadata_allowed in [false, true] {
+        recovery_case(metadata_allowed).await?;
+    }
+    Ok(())
+}
+
+async fn recovery_case(metadata_allowed: bool) -> TestResult {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/operator/daemon.toml");
     let text = fs::read_to_string(source)?
         .replace("operator-starter", "context-enforcement")
@@ -124,6 +131,14 @@ async fn recovery_binary_authorizes_reviews_replays_and_applies_repair_without_e
         .replace(
             "type = \"only\"\nvalues = [\"local-process\"]",
             "type = \"any\"",
+        )
+        .replace(
+            "[actors.authority.resources.artifacts]\ntype = \"deny_all\"",
+            if metadata_allowed {
+                "[actors.authority.resources.artifacts]\ntype = \"allow\"\nsensitivities = [\"public\", \"internal\", \"restricted\"]\n[actors.authority.resources.artifacts.identities]\ntype = \"any\""
+            } else {
+                "[actors.authority.resources.artifacts]\ntype = \"deny_all\""
+            },
         );
     let configuration: toml::Value = toml::from_str(&text)?;
     let configured = configuration
@@ -216,7 +231,17 @@ async fn recovery_binary_authorizes_reviews_replays_and_applies_repair_without_e
     let (mut process, client) = launch(&config, &endpoint).await?;
     assert_eq!(client.run(run.as_str()).await?.sequence, sequence.get());
     let read = client.attempt(run.as_str(), &attempt).await?;
-    assert_eq!(read.context_access, "recovery_redacted");
+    // Recovery still withholds content. A run read alone must not disclose even
+    // the manifest reference when this caller's artifact scope denies metadata.
+    assert_eq!(
+        read.context_access,
+        if metadata_allowed {
+            "recovery_redacted"
+        } else {
+            "denied"
+        }
+    );
+    assert_eq!(read.context_manifest.is_some(), metadata_allowed);
     assert!(read.context.is_none());
     let unauthenticated = ControlClient::new(
         ClientConfig::new(endpoint.clone()),

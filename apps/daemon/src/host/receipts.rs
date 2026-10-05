@@ -78,13 +78,26 @@ fn execute_inner(
                 },
             )
             .map_err(unretained_outcome)?;
-            match owner
-                .store
-                .commit_application_command(&ApplicationCommandCommit { receipt, effect })
-            {
+            let commit = ApplicationCommandCommit { receipt, effect };
+            match owner.store.commit_application_command(&commit) {
                 Ok(ApplicationCommandCommitOutcome::Committed) => Ok(result),
                 Ok(ApplicationCommandCommitOutcome::Replayed(existing)) => {
                     stored_application_result(&existing)
+                }
+                Err(error @ milkdrift_persistence::PersistenceError::ImmutableConflict { .. })
+                    if matches!(&commit.effect, ApplicationCommandEffect::PutLayout(_)) =>
+                {
+                    // Layout and receipt share one atomic transaction. A stale layout
+                    // guard refuses that transaction before either can commit; unlike
+                    // a producer with prior durable work, this is a confirmed refusal.
+                    persist_rejection(
+                        owner,
+                        session,
+                        commit.receipt.command().clone(),
+                        commit.receipt.command_digest().clone(),
+                        created_at,
+                        public_persistence(error),
+                    )
                 }
                 Err(error) => {
                     // A successful producer may already have changed another durable
