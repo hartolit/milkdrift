@@ -18,11 +18,13 @@ pub(crate) enum CliError {
     InvocationFailed(Box<Value>),
     #[error("internal CLI failure: {0}")]
     Internal(String),
-    #[error("incomplete output cleanup unconfirmed: {operation}; cleanup: {cleanup:?}")]
+    #[error("private output staging cleanup unconfirmed: {operation}; cleanup: {cleanup:?}")]
     OutputCleanup {
         operation: Box<CliError>,
         cleanup: std::io::ErrorKind,
     },
+    #[error("output published, but directory durability is unconfirmed: {operation}")]
+    OutputPublished { operation: Box<CliError> },
     #[error(
         "command deadline or polling/reconnect bound reached; submitted work may still be running"
     )]
@@ -41,7 +43,9 @@ pub(crate) fn exit_code(error: &CliError) -> u8 {
     match error {
         CliError::Invalid(_) | CliError::Client(ClientError::Configuration(_)) => 2,
         CliError::NotFound(_) => 6,
-        CliError::Internal(_) | CliError::OutputCleanup { .. } => 9,
+        CliError::Internal(_)
+        | CliError::OutputCleanup { .. }
+        | CliError::OutputPublished { .. } => 9,
         CliError::FailedTask(_) | CliError::InvocationFailed(_) => 8,
         CliError::Deadline => 10,
         CliError::Cancelled => 130,
@@ -101,7 +105,11 @@ fn emit_error(
         ),
         CliError::OutputCleanup { .. } => (
             "internal_client",
-            "incomplete output cleanup could not be confirmed; the destination may remain",
+            "private output staging cleanup could not be confirmed; inspect retained staging before removal",
+        ),
+        CliError::OutputPublished { .. } => (
+            "internal_client",
+            "output was published, but directory durability is unconfirmed; inspect the destination before retrying",
         ),
         CliError::Internal(_)
         | CliError::Client(ClientError::Protocol(_) | ClientError::Stream(_)) => {

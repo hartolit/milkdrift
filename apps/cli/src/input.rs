@@ -6,6 +6,52 @@ use std::{
     path::Path,
 };
 
+/// Open an operator-owned record without following a substituted link. Validate
+/// the handle before reading or locking it; a prior pathname check is insufficient.
+pub(crate) fn open_regular(path: &Path, options: &mut fs::OpenOptions) -> io::Result<fs::File> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600).custom_flags(
+            (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK)
+                .bits()
+                .cast_signed(),
+        );
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(path)?;
+    let opened = file.metadata()?;
+    let named = fs::symlink_metadata(path)?;
+    if !opened.is_file() || !named.is_file() || named.file_type().is_symlink() {
+        return Err(io::Error::other(
+            "record must be a regular file, not a link",
+        ));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if opened.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            || named.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        {
+            return Err(io::Error::other("record must not be a reparse point"));
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if opened.dev() != named.dev() || opened.ino() != named.ino() {
+            return Err(io::Error::other("record changed while opening"));
+        }
+    }
+    Ok(file)
+}
+
 pub(crate) async fn read_bounded(
     path: &Path,
     maximum: usize,

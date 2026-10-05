@@ -74,6 +74,13 @@ struct Server {
 
 impl Server {
     fn new(responses: Vec<String>) -> TestResult<Self> {
+        Self::with_response_hook(responses, |_| Ok(()))
+    }
+
+    fn with_response_hook(
+        responses: Vec<String>,
+        mut before_response: impl FnMut(usize) -> std::io::Result<()> + Send + 'static,
+    ) -> TestResult<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         listener.set_nonblocking(true)?;
         let endpoint = format!("http://{}/", listener.local_addr()?);
@@ -81,6 +88,7 @@ impl Server {
         let stopped = stop.clone();
         let worker = thread::spawn(move || {
             let mut responses = responses.into_iter();
+            let mut response_index = 0;
             'connections: while !stopped.load(Ordering::SeqCst) {
                 let (mut stream, _) = match listener.accept() {
                     Ok(connection) => connection,
@@ -127,6 +135,8 @@ impl Server {
                         }
                     }
                 }
+                before_response(response_index)?;
+                response_index += 1;
                 if let Some(response) = responses.next() {
                     stream.write_all(response.as_bytes())?;
                 } else {
@@ -631,6 +641,7 @@ fn artifact_download_verifies_ranges_digest_and_preserves_existing_files() -> Te
     for (body, range, succeeds) in [
         (bytes, "bytes 0-13/14", true),
         ("changed notes!", "bytes 0-13/14", false),
+        ("short", "bytes 0-13/14", false),
         (bytes, "bytes 1-14/15", false),
         (bytes, "invalid", false),
     ] {
@@ -743,6 +754,93 @@ fn result_download_reports_one_final_outcome_after_verification() -> TestResult 
             );
             assert_eq!(std::fs::read_to_string(&path)?, body);
             std::fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn artifact_download_never_removes_a_competing_destination() -> TestResult {
+    for replacement in ["file", "directory", "symlink"] {
+        #[cfg(not(unix))]
+        if replacement == "symlink" {
+            continue;
+        }
+        for outcome in ["complete", "digest", "truncated", "timeout"] {
+            let root = tempfile::tempdir()?;
+            let path = root.path().join("result");
+            let target = root.path().join("unrelated");
+            std::fs::write(&target, b"unrelated writer")?;
+            let bytes = "complete notes";
+            let metadata = json!({"artifact_id":"notes", "digest":blake3::hash(bytes.as_bytes()).to_hex().to_string(), "size":bytes.len(), "content_type":"text/plain", "disposition_name":null, "sensitivity":"restricted"});
+            let body = match outcome {
+                "digest" => "changed notes!",
+                "truncated" => "short",
+                _ => bytes,
+            };
+            let mut responses = vec![negotiation(), response(metadata)];
+            if outcome != "timeout" {
+                responses.push(format!("HTTP/1.1 206 Partial Content\r\nContent-Type: text/plain\r\nContent-Range: bytes 0-13/14\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()));
+            }
+            let destination = path.clone();
+            #[cfg(unix)]
+            let other = target.clone();
+            let server = Server::with_response_hook(responses, move |index| {
+                if index == 2 {
+                    // The content request follows staging creation. Replace the
+                    // final name before sending bytes or letting the deadline fire.
+                    assert!(!destination.exists());
+                    match replacement {
+                        "file" => std::fs::write(&destination, b"unrelated writer")?,
+                        "directory" => {
+                            std::fs::create_dir(&destination)?;
+                            std::fs::write(destination.join("keep"), b"unrelated writer")?;
+                        }
+                        #[cfg(unix)]
+                        "symlink" => std::os::unix::fs::symlink(&other, &destination)?,
+                        _ => return Err(std::io::Error::other("unknown fixture replacement")),
+                    }
+                }
+                Ok(())
+            })?;
+            let (exit, records, _) = server.invoke(
+                &[
+                    "--timeout-secs",
+                    "1",
+                    "artifact",
+                    "get",
+                    "notes",
+                    "--output",
+                    path.to_str().ok_or("path")?,
+                ],
+                false,
+            )?;
+            assert_ne!(
+                exit, 0,
+                "{replacement}/{outcome} reported successful publication"
+            );
+            assert_eq!(
+                records
+                    .iter()
+                    .filter(|record| record.get("final") == Some(&Value::Bool(true)))
+                    .count(),
+                1
+            );
+            let data = if replacement == "directory" {
+                path.join("keep")
+            } else {
+                path.clone()
+            };
+            assert_eq!(std::fs::read(data)?, b"unrelated writer");
+            assert_eq!(std::fs::read(target)?, b"unrelated writer");
+            if replacement == "symlink" {
+                assert!(std::fs::symlink_metadata(&path)?.file_type().is_symlink());
+            }
+            assert_eq!(
+                std::fs::read_dir(root.path())?.count(),
+                2,
+                "staging remained after {outcome}"
+            );
         }
     }
     Ok(())

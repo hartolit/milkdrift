@@ -2,68 +2,28 @@
 use crate::error::CliError;
 use milkdrift_control_client::SavedRunRequest;
 use milkdrift_control_protocol::{MAX_DOCUMENT_BYTES, decode_json, encode_json};
-use std::{
-    fs,
-    io::{Read as _, Write as _},
-    path::{Path, PathBuf},
-};
+use std::{fs, io::Read as _, path::Path};
 
 pub(super) struct PendingRequest {
-    temp: tempfile::NamedTempFile,
-    path: PathBuf,
+    output: crate::output::PendingFile,
 }
 
 impl PendingRequest {
     pub(super) fn new(path: &Path) -> Result<Self, CliError> {
-        if path == Path::new("-")
-            || path.file_name().is_none()
-            || fs::symlink_metadata(path).is_ok()
-        {
-            return Err(CliError::Invalid(
-                "request file must be a new explicit destination".into(),
-            ));
-        }
-        let parent = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        let temp = tempfile::NamedTempFile::new_in(parent).map_err(io_error)?;
         Ok(Self {
-            temp,
-            path: path.to_owned(),
+            output: crate::output::PendingFile::create(path)?,
         })
     }
 
-    pub(super) fn commit(mut self, saved: &SavedRunRequest) -> Result<(), CliError> {
+    pub(super) fn commit(self, saved: &SavedRunRequest) -> Result<(), CliError> {
         let bytes = encode_json(saved).map_err(|error| CliError::Invalid(error.to_string()))?;
-        self.temp.write_all(&bytes).map_err(io_error)?;
-        self.temp.as_file().sync_all().map_err(io_error)?;
-        self.temp
-            .persist_noclobber(&self.path)
-            .map_err(|error| io_error(error.error))?;
-        #[cfg(unix)]
-        {
-            let parent = self
-                .path
-                .parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-                .unwrap_or(Path::new("."));
-            fs::File::open(parent)
-                .and_then(|file| file.sync_all())
-                .map_err(io_error)?;
-        }
-        Ok(())
+        self.output.write_complete(&bytes)
     }
 }
 
 pub(super) fn read(path: &Path) -> Result<SavedRunRequest, CliError> {
-    let before = fs::symlink_metadata(path).map_err(io_error)?;
-    if !before.is_file() {
-        return Err(CliError::Invalid(
-            "request file must be a regular file, not a link".into(),
-        ));
-    }
-    let file = fs::File::open(path).map_err(io_error)?;
+    let file =
+        crate::input::open_regular(path, fs::OpenOptions::new().read(true)).map_err(io_error)?;
     let metadata = file.metadata().map_err(io_error)?;
     if !metadata.is_file() || metadata.len() > MAX_DOCUMENT_BYTES as u64 {
         return Err(CliError::Invalid(
@@ -73,10 +33,7 @@ pub(super) fn read(path: &Path) -> Result<SavedRunRequest, CliError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
-        if metadata.mode() & 0o077 != 0
-            || before.dev() != metadata.dev()
-            || before.ino() != metadata.ino()
-        {
+        if metadata.mode() & 0o077 != 0 {
             return Err(CliError::Invalid(
                 "request file must be private and unchanged while opening".into(),
             ));

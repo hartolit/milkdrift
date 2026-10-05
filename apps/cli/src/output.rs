@@ -6,27 +6,78 @@ use serde_json::{Value, json};
 
 use crate::{Cli, error::CliError};
 
-/// Owns a new output until commit or explicit cleanup; Drop only covers interruption.
+#[cfg(test)]
+#[path = "output/files_tests.rs"]
+mod files_tests;
+
+pub(crate) fn staging_directory(parent: &std::path::Path) -> std::io::Result<tempfile::TempDir> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".milkdrift-output-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        builder.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    builder.tempdir_in(parent)
+}
+
+pub(crate) fn finish_staging<T>(
+    staging: tempfile::TempDir,
+    outcome: Result<T, CliError>,
+) -> Result<T, CliError> {
+    match (outcome, staging.close()) {
+        (outcome, Ok(())) => outcome,
+        (outcome, Err(error)) => Err(CliError::OutputCleanup {
+            operation: Box::new(outcome.err().unwrap_or_else(|| {
+                CliError::Internal("output published; staging cleanup failed".into())
+            })),
+            cleanup: error.kind(),
+        }),
+    }
+}
+
+/// Verifies in private staging, then publishes a complete create-only output.
 ///
 /// Artifact callers verify size and digest before committing; export callers finish encoding.
-/// The destination is visible while being written, so this is cleanup ownership, not an atomic
-/// rename or a guarantee of cleanup after forced process termination.
+/// The parent and private staging directory must remain under the operator's control. Other
+/// writers may compete for the final name: publication never clobbers it and cleanup never
+/// unlinks it. Success describes publication, not what another writer does afterward.
 pub(crate) struct PendingFile {
-    file: Option<std::fs::File>,
+    file: Option<tempfile::NamedTempFile>,
+    staging: Option<tempfile::TempDir>,
     path: std::path::PathBuf,
+    published: bool,
+    committed: bool,
     finished: bool,
 }
 
 impl PendingFile {
     pub(crate) fn create(path: &std::path::Path) -> Result<Self, CliError> {
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            options.mode(0o600);
+        if path == std::path::Path::new("-") || path.file_name().is_none() {
+            return Err(CliError::Invalid(
+                "output requires an explicit file name".into(),
+            ));
         }
-        let file = options.open(path).map_err(|error| {
+        match std::fs::symlink_metadata(path) {
+            Ok(_) => {
+                return Err(CliError::Invalid(
+                    "output destination already exists".into(),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."))
+            .canonicalize()?;
+        let path = parent.join(
+            path.file_name()
+                .ok_or_else(|| CliError::Invalid("output requires a file name".into()))?,
+        );
+        let staging = staging_directory(&parent)?;
+        let file = tempfile::NamedTempFile::new_in(staging.path()).map_err(|error| {
             CliError::Invalid(format!(
                 "output must be a new writable file: {:?}",
                 error.kind()
@@ -34,18 +85,53 @@ impl PendingFile {
         })?;
         Ok(Self {
             file: Some(file),
-            path: path.to_owned(),
+            staging: Some(staging),
+            path,
+            published: false,
+            committed: false,
             finished: false,
         })
     }
 
     pub(crate) fn commit(&mut self) -> std::io::Result<()> {
+        self.commit_with(std::fs::File::sync_all, |parent| {
+            #[cfg(unix)]
+            std::fs::File::open(parent)?.sync_all()?;
+            #[cfg(not(unix))]
+            let _ = parent;
+            Ok(())
+        })
+    }
+
+    // Keep the two durability boundaries injectable for deterministic failure tests.
+    fn commit_with(
+        &mut self,
+        sync_file: impl FnOnce(&std::fs::File) -> std::io::Result<()>,
+        sync_parent: impl FnOnce(&std::path::Path) -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
         let file = self
             .file
             .as_ref()
             .ok_or_else(|| std::io::Error::other("output already closed"))?;
-        file.sync_all()?;
-        self.finished = true;
+        sync_file(file.as_file())?;
+        let file = self
+            .file
+            .take()
+            .ok_or_else(|| std::io::Error::other("output already closed"))?;
+        match file.persist_noclobber(&self.path) {
+            Ok(file) => drop(file),
+            Err(error) => {
+                self.file = Some(error.file);
+                return Err(error.error);
+            }
+        }
+        self.published = true;
+        sync_parent(
+            self.path
+                .parent()
+                .ok_or_else(|| std::io::Error::other("output parent absent"))?,
+        )?;
+        self.committed = true;
         Ok(())
     }
 
@@ -61,29 +147,39 @@ impl PendingFile {
     }
 
     pub(crate) fn finish<T>(mut self, outcome: Result<T, CliError>) -> Result<T, CliError> {
-        if self.finished {
-            return outcome;
-        }
-        let operation = outcome
-            .err()
-            .unwrap_or_else(|| CliError::Internal("output was not committed".into()));
-        match self.abort() {
-            Ok(()) => Err(operation),
-            Err(error) => Err(CliError::OutputCleanup {
-                operation: Box::new(operation),
+        let outcome = match outcome {
+            Ok(value) if self.committed => Ok(value),
+            Ok(_) => Err(CliError::Internal("output was not committed".into())),
+            Err(error) if self.published && !self.committed => Err(CliError::OutputPublished {
+                operation: Box::new(error),
+            }),
+            Err(error) => Err(error),
+        };
+        match (outcome, self.abort()) {
+            (outcome, Ok(())) => outcome,
+            (outcome, Err(error)) => Err(CliError::OutputCleanup {
+                operation: Box::new(outcome.err().unwrap_or_else(|| {
+                    CliError::Internal("output published; staging cleanup failed".into())
+                })),
                 cleanup: error.kind(),
             }),
         }
     }
 
     fn abort(&mut self) -> std::io::Result<()> {
-        drop(self.file.take());
         // An explicit failure must remain visible; Drop must not silently retry it afterward.
         self.finished = true;
-        match std::fs::remove_file(&self.path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            result => result,
-        }
+        let file = self
+            .file
+            .take()
+            .map(tempfile::NamedTempFile::close)
+            .transpose();
+        let directory = self
+            .staging
+            .take()
+            .map(tempfile::TempDir::close)
+            .transpose();
+        file.and(directory).map(|_| ())
     }
 }
 
@@ -104,7 +200,6 @@ impl std::io::Write for PendingFile {
 
 impl Drop for PendingFile {
     fn drop(&mut self) {
-        drop(self.file.take());
         if !self.finished
             && let Err(error) = self.abort()
         {
@@ -114,7 +209,7 @@ impl Drop for PendingFile {
             )]
             {
                 eprintln!(
-                    "milkdrift: incomplete output cleanup unconfirmed ({:?}); destination may remain",
+                    "milkdrift: private output staging cleanup unconfirmed ({:?}); staging may remain",
                     error.kind()
                 );
             }
@@ -341,11 +436,17 @@ mod tests {
         let output = directory.path().join("artifact");
         let mut pending = PendingFile::create(&output)?;
         pending.write_all(b"partial")?;
-        // Replace the destination with a directory so file removal deterministically fails.
-        // Close the descriptor first so this fault is also valid on Windows.
+        // Inject a failure only in owned staging, after closing the descriptor so
+        // this is also valid on Windows. Never manipulate the final destination.
         drop(pending.file.take());
-        std::fs::remove_file(&output)?;
-        std::fs::create_dir(&output)?;
+        let staging = pending
+            .staging
+            .as_ref()
+            .ok_or("staging absent")?
+            .path()
+            .to_owned();
+        std::fs::remove_dir(&staging)?;
+        std::fs::write(&staging, b"owned cleanup fault")?;
         let error = pending
             .finish::<()>(Err(CliError::Deadline))
             .err()
@@ -355,7 +456,8 @@ mod tests {
             return Err("cleanup uncertainty was discarded".into());
         };
         assert!(matches!(*operation, CliError::Deadline));
-        assert!(output.is_dir());
+        assert!(!output.exists());
+        assert_eq!(std::fs::read(&staging)?, b"owned cleanup fault");
         Ok(())
     }
 

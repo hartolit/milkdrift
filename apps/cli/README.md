@@ -50,17 +50,28 @@ belong to different feeds. A following timeline can therefore repeat facts from 
 
 Artifact downloads and blueprint/sequence exports require a new destination file. The artifact
 command assembles bounded ranges and verifies size and digest before committing its output.
-Normal failure removes an uncommitted output; removal failure returns exit 9 and reports that the
-destination may remain, while retaining the original error internally. Cancellation and unwinding
-attempt removal and report any failure on stderr. Forced termination cannot guarantee cleanup.
-Existing files are never replaced.
+Writes use a private staging directory beside the destination. Publication refuses an existing
+file, directory or symlink; failure and cancellation clean only staging, so another writer's
+destination survives. Saved run and invocation requests, exports and downloads use the same
+create-only owner. On Unix, staging directories are `0700`, files are `0600`, and publication
+synchronizes the parent directory. A later directory-sync failure reports that publication
+occurred but durability is unconfirmed. Cleanup failure returns exit 9 and preserves the original
+error; interruption attempts staging cleanup, while forced termination may leave staging behind.
+The operator must keep the parent path (including aliases used to reach it), its ancestors and
+private staging under stable control.
+Other writers may compete for the final name. Success means the verified bytes were published at
+that operation; a writer with filesystem access may change them afterward.
 Output and diagnostic write failures return exit 9, including a closed stdout pipe. If the error
 channel itself fails, the exit remains nonzero even though no failure envelope can be delivered.
 
 The [model workflow recipe](../../examples/operator/README.md#author-a-model-workflow) uses a local
 draft of pending mutations. `workflow` commands send editing gestures to the daemon; they do not
 calculate graph identities or call models. Draft edits lock the file and atomically replace it
-only after the reply and an unchanged-byte check. `--expected-edit TOKEN` additionally guards the
+only after the reply and an unchanged-byte check. Reads and locks reject substituted symlinks and
+validate the opened handle before use. The lock serializes cooperating Milkdrift editors. External
+writers must respect the same lock or remain quiescent until the edit finishes: the last byte check
+and replacement are separate operations, not an atomic compare-and-swap against arbitrary writers.
+Detected stale bytes refuse replacement. `--expected-edit TOKEN` additionally guards the
 version inspected by a script or another session. `save` stores a new immutable revision;
 `open` reopens an exact revision into a new file. Unsupported rich definitions refuse editing.
 

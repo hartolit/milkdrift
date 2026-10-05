@@ -495,8 +495,13 @@ protocol failure, and a closed stream consumes the reconnect budget. Pages never
 High-risk commands require interactive `yes` or `--yes`; JSON and redirected execution require
 `--yes`. Confirmation input is bounded by the command deadline. Local sequence compilation,
 help and version require no endpoint or credential. Safe-query retry belongs to the control client;
-mutations are never retried implicitly. Partial create-new output files are removed on failure,
-timeout and cancellation.
+mutations are never retried implicitly. Create-only exports, downloads and saved requests stage
+privately and publish only complete verified bytes without clobbering a competing destination.
+Failure, timeout and cancellation clean staging, never the final pathname. Directory-sync failure
+after publication reports unconfirmed durability; cleanup failure preserves the primary error.
+Forced termination can leave staging. The [CLI file contract](../../apps/cli/README.md) explains
+parent-directory trust, publication-time guarantees and the distinct cooperating-lock requirement
+for deliberate draft replacement.
 
 ### CLI operation disposition
 
