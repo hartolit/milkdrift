@@ -1,4 +1,4 @@
-# Local control API 2.19
+# Local control API 2.20
 
 The `learning` command body accepts an operation document owned by
 `milkdrift_control::learning::LearningRequest`: `select`, `select_sources`, `declare`, `candidate`, `compare`,
@@ -37,10 +37,10 @@ The daemon serves HTTP/1 on a configured loopback address. Non-loopback plaintex
 Clients negotiate with `POST /v1/version`:
 
 ```json
-{"protocol":{"major":2,"minor":19}}
+{"protocol":{"major":2,"minor":20}}
 ```
 
-Version 2.19 is required on both sides. Older and newer major/minor versions are refused with
+Version 2.20 is required on both sides. Older and newer major/minor versions are refused with
 `unsupported_version`; update the client and daemon together. There is no protocol downgrade.
 Attempt and capability read fields are specified
 under [read models](#read-models). The authenticated `/v1/...` route namespace is independent of
@@ -48,7 +48,7 @@ the negotiated envelope version. JSON success bodies use:
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 19},
+  "protocol": {"major": 2, "minor": 20},
   "request_id": "req-1",
   "value": {}
 }
@@ -62,7 +62,7 @@ Errors are configuration-independent and never contain tokens, headers, environm
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 19},
+  "protocol": {"major": 2, "minor": 20},
   "request_id": "req-1",
   "code": "conflict",
   "message": "bounded redacted description",
@@ -151,7 +151,7 @@ administration uses the separate routes below. A command envelope has no actor f
 
 ```json
 {
-  "protocol": {"major": 2, "minor": 19},
+  "protocol": {"major": 2, "minor": 20},
   "command_id": "operator-stable-id",
   "expected_sequence": null,
   "expected_revision": null,
@@ -467,10 +467,32 @@ Cursors are opaque bounded Base64url schema-2 values. They bind an exact feed an
 The daemon exposes:
 
 - `GET /v1/runs/{run}/stream?cursor=…` for projected timeline and compact status updates on feed `run:{run}`.
-- `GET /v1/stream/capabilities?cursor=…` for a bounded retained window of capability generation/health snapshots on feed `capability-health`.
+- `GET /v1/stream/capabilities?cursor=…` for complete authorized catalogue snapshots on feed `capability-health`.
 - `GET /v1/stream/health?cursor=…` for coarse daemon health on feed `daemon-health`.
 
-SSE `data` values are `ObservationEnvelope` documents with protocol, cursor, observation time, feed, and one closed external observation: `timeline`, `run_status`, `capability`, `daemon_health`, `stream_closing`, or `resync_required`. Capability feed windows are partitioned by the complete actor, grant identity/revision/digest and resource/filter binding. A restricted reader cannot receive observations cached for a broader grant. Each window retains at most 256 observations and 1,310,720 encoded payload bytes; an older continuation receives `resync_required`. The daemon retains at most 256 windows, matching its immutable configured actor limit. Windows end with that daemon instance; credential rotation under the same grant reuses its window without adding retained state.
+SSE `data` values are `ObservationEnvelope` documents with protocol, cursor, observation time, feed,
+and one closed external observation: `timeline`, `run_status`, `capability_snapshot`, `daemon_health`,
+`stream_closing`, or `resync_required`. Each `capability_snapshot` value is the complete currently
+authorized array of `CapabilityRead` records. Replace the previous catalogue with it; an empty array
+removes every previous entry. Identity plus generation distinguishes retained generations. A draining
+or noncurrent generation remains present until the registry actually removes it. Omission from a
+later snapshot unambiguously removes it without disclosing a hidden identity in a removal notice.
+
+A cursor-free capability subscription starts with only the latest complete snapshot, including an
+empty catalogue. A valid reconnect replays complete snapshots after the cursor within the retained
+window. The daemon polls current registry state; intermediate changes between polls are not a
+durable lifecycle audit. Capability feed windows are partitioned by the complete actor, grant
+identity/revision/digest and resource/filter binding. A restricted reader cannot receive observations
+cached for a broader grant. Each window retains at most 256 snapshots and 1,310,720 encoded catalogue
+bytes; an older continuation receives `resync_required`. A snapshot that exceeds the document or
+envelope bounds also ends with `resync_required`, never a partial catalogue. The daemon retains at
+most 256 windows, matching its immutable configured actor limit. Windows end with that daemon
+instance; credential rotation under the same grant reuses its window without adding retained state.
+
+Protocol 2.20 replaces the former single-entry `capability` observation. Daemon and clients must
+upgrade together; older observation variants and protocol minors are refused. Cursor schema 2 and
+all durable storage formats remain unchanged. [ADR 0050](../decisions/0050-live-capability-snapshots.md)
+records this compatibility decision.
 
 Run-feed positions interleave durable timeline sequence (`2 × sequence`) and its following compact status (`2 × sequence + 1`). Transport heartbeats are SSE comments and are never durable events. Server generators and owner calls are bounded; backpressure retains no unbounded per-client event queue. Authentication and exact authority are reevaluated on every bounded polling cycle. Rotation, revocation, narrowing, draining, invalid history, or authorization change stops future disclosure and closes the feed with an authorization closing/resync item where possible; already delivered history is not rewritten.
 

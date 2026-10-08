@@ -195,7 +195,10 @@ async fn daemon_stream_reconnect_auth_rotation_and_shutdown() -> TestResult {
         .map_err(|_| "timed out waiting for the capability observation")?
         .ok_or("capability stream closed before its first observation")??;
     assert_eq!(capability.feed, "capability-health");
-    assert!(matches!(capability.observation, Observation::Capability(_)));
+    assert!(matches!(
+        capability.observation,
+        Observation::CapabilitySnapshot(_)
+    ));
     drop(capabilities);
 
     let mut health = daemon.client.subscribe("v1/stream/health", None);

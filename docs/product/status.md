@@ -99,6 +99,12 @@ This document owns current implementation, limitations, exact versions, and qual
   published-call preparation now uses the serving owner for selection, profile, idempotency and
   deadline, with unchanged acceptance/replay owners. These focused checks do not establish browser
   authentication, CORS, packaging or general real-model quality.
+- Live capability subscriptions publish complete authorized catalogue snapshots, including empty
+  sets, under control protocol 2.20. Retention is bounded by actor count, snapshot count and encoded
+  bytes. Exact authority bindings isolate subscribers and close on credential reassignment. Health
+  and capability cursors resynchronize after daemon restart; durable run streams keep their existing
+  continuation. The [control contract](../reference/control-api.md#cursors-and-sse) describes replacement,
+  replay and overflow behavior. These feeds poll current state rather than retain a lifecycle audit.
 - Causal context uses bounded historical discovery, explicit branch/join/subworkflow visibility,
   exact provenance, authority/sensitivity checks, deterministic budgets and omissions, and
   selected-only materialization. Required-evidence checks continue after selection stops, and
@@ -168,7 +174,7 @@ values; repository contracts check the version cells against source.
 | Redb internal document format / physical schema | 20 / 17 | Older/future stores refused; no migration. |
 | Application command receipt / layout record | 1 / 1 | Exact supported contracts. |
 | Local-process profile / host materialization | 2 / 1 | Process v1 refused. |
-| External control / authenticated cursor | 2.19 / 2 | Only the exact current protocol and cursor forms are accepted. |
+| External control / authenticated cursor | 2.20 / 2 | Only the exact current protocol and cursor forms are accepted. |
 | Peer protocol and catalog messages | 1.5 | Earlier minors refused. |
 | Daemon configuration | 13 | TOML; JSON and earlier versions refused. |
 | Managed resource request / inventory | 3 | Exact schema, bounded typed recipe references, preserved receipts and guarded transitions. |

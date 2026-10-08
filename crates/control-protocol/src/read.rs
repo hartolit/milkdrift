@@ -751,8 +751,9 @@ pub enum Observation {
     Timeline(TimelineEntry),
     /// Compact current run state.
     RunStatus(RunRead),
-    /// Capability generation/health change.
-    Capability(CapabilityRead),
+    /// Complete current authorized capability catalogue. Replace the previous set, including
+    /// on an empty snapshot; identity and generation together distinguish retained generations.
+    CapabilitySnapshot(Vec<CapabilityRead>),
     /// Daemon lifecycle/health change.
     DaemonHealth(HealthRead),
     /// Server is shutting down this stream.

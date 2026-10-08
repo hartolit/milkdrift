@@ -14,9 +14,9 @@ async fn next(stream: &mut Subscription) -> TestResult<ObservationEnvelope> {
         .map_err(Into::into)
 }
 
-fn capability(observation: ObservationEnvelope) -> TestResult<CapabilityRead> {
+fn catalogue(observation: ObservationEnvelope) -> TestResult<Vec<CapabilityRead>> {
     match observation.observation {
-        Observation::Capability(value) => Ok(value),
+        Observation::CapabilitySnapshot(values) => Ok(values),
         other => Err(format!("expected capability, got {other:?}").into()),
     }
 }
@@ -68,14 +68,8 @@ async fn capability_streams_isolate_authority_in_both_subscription_orders() -> T
         };
         let broad_cursor = broad_first_event.cursor.clone();
         let narrow_cursor = narrow_first_event.cursor.clone();
-        assert_eq!(
-            capability(narrow_first_event)?,
-            narrow_catalogue.first().ok_or("narrow absent")?.clone()
-        );
-        let broad_values = vec![
-            capability(broad_first_event)?,
-            capability(next(&mut broad_stream).await?)?,
-        ];
+        assert_eq!(catalogue(narrow_first_event)?, narrow_catalogue);
+        let broad_values = catalogue(broad_first_event)?;
         assert_eq!(broad_values, broad_catalogue);
         assert!(
             tokio::time::timeout(Duration::from_millis(650), narrow_stream.next())
@@ -90,12 +84,10 @@ async fn capability_streams_isolate_authority_in_both_subscription_orders() -> T
             .subscribe("v1/stream/capabilities", Some(broad_cursor.clone()));
         let mut narrow_resumed =
             narrow.subscribe("v1/stream/capabilities", Some(narrow_cursor.clone()));
-        assert_eq!(
-            capability(next(&mut broad_resumed).await?)?,
-            broad_catalogue
-                .get(1)
-                .ok_or("second capability absent")?
-                .clone()
+        assert!(
+            tokio::time::timeout(Duration::from_millis(650), broad_resumed.next())
+                .await
+                .is_err()
         );
         assert!(
             tokio::time::timeout(Duration::from_millis(650), narrow_resumed.next())
@@ -122,10 +114,7 @@ async fn capability_streams_isolate_authority_in_both_subscription_orders() -> T
             Observation::ResyncRequired { .. }
         ));
         let mut fresh = rotated.subscribe("v1/stream/capabilities", None);
-        assert_eq!(
-            capability(next(&mut fresh).await?)?.capability_id,
-            "golden-local-process"
-        );
+        assert_eq!(catalogue(next(&mut fresh).await?)?, narrow_catalogue);
         drop((
             broad_resumed,
             narrow_resumed,
@@ -146,7 +135,10 @@ async fn capability_stream_closes_when_credential_moves_to_another_actor() -> Te
     let narrow = client(&daemon.endpoint, OBSERVER_TOKEN)?;
     let mut stream = narrow.subscribe("v1/stream/capabilities", None);
     assert_eq!(
-        capability(next(&mut stream).await?)?.capability_id,
+        catalogue(next(&mut stream).await?)?
+            .first()
+            .ok_or("snapshot empty")?
+            .capability_id,
         "golden-local-process"
     );
     write_secret(
@@ -212,10 +204,7 @@ async fn process_local_stream_cursors_resynchronize_after_restart_but_run_cursor
         fresh.cursor.position_for("capability-health")?,
         capability_cursor.position_for("capability-health")?
     );
-    assert_eq!(
-        capability(next(&mut fresh_capabilities).await?)?.capability_id,
-        "milkdrift-workflow-control"
-    );
+    assert_eq!(catalogue(fresh)?, daemon.client.capabilities().await?);
     for (path, cursor) in [
         ("v1/stream/health", health_cursor),
         ("v1/stream/capabilities", capability_cursor),

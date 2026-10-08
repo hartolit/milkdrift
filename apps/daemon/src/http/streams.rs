@@ -28,8 +28,36 @@ mod tests;
 struct CapabilityFeed {
     last_snapshot_digest: Option<String>,
     next_position: u64,
-    entries: VecDeque<(u64, CapabilityRead, usize)>,
+    entries: VecDeque<(u64, Vec<CapabilityRead>, usize)>,
     retained_bytes: usize,
+}
+
+impl CapabilityFeed {
+    fn after(&self, position: u64) -> Option<Vec<(u64, Vec<CapabilityRead>)>> {
+        let latest = self.next_position.saturating_sub(1);
+        let oldest = self
+            .entries
+            .front()
+            .map_or(self.next_position, |(entry, _, _)| *entry);
+        if position > latest || (position != 0 && position.saturating_add(1) < oldest) {
+            return None;
+        }
+        // A fresh reader needs only the authoritative present. Reconnects replay whole snapshots
+        // after their acknowledged position; no client-side merge or inferred removal is needed.
+        Some(
+            self.entries
+                .iter()
+                .filter(|(entry, _, _)| {
+                    if position == 0 {
+                        *entry == latest
+                    } else {
+                        *entry > position
+                    }
+                })
+                .map(|(position, values, _)| (*position, values.clone()))
+                .collect(),
+        )
+    }
 }
 
 /// Grants are immutable for one daemon lifetime. Retain at most one window per configured
@@ -271,34 +299,24 @@ pub(super) async fn capability_stream(
                 Ok(values) => values,
                 _ => break,
             };
-            let (resync, entries) = {
+            let entries = {
                 let mut capability_feeds = state.capability_feeds.lock().await;
                 let Some(capability_feed) = capability_feeds.get(binding) else { break; };
-                record_capability_snapshot(capability_feed, &capabilities);
-                let latest = capability_feed.next_position.saturating_sub(1);
-                let oldest = capability_feed
-                    .entries
-                    .front()
-                    .map_or(capability_feed.next_position, |(entry, _, _)| *entry);
-                let resync = position > latest
-                    || (position != 0 && position.saturating_add(1) < oldest);
-                let entries = capability_feed
-                    .entries
-                    .iter()
-                    .filter(|(entry, _, _)| *entry > position)
-                    .map(|(position, value, _)| (*position, value.clone()))
-                    .collect::<Vec<_>>();
-                (resync, entries)
+                record_capability_snapshot(capability_feed, &capabilities)
+                    .ok().and_then(|()| capability_feed.after(position))
             };
-            if resync {
-                if let Ok(event) = observation_event(&state.host, &feed, position.saturating_add(1), Observation::ResyncRequired { reason: "capability cursor is outside the retained health window".to_owned() }, &session, &decision).await {
+            let Some(entries) = entries else {
+                if let Ok(event) = observation_event(&state.host, &feed, position.saturating_add(1), Observation::ResyncRequired { reason: "capability snapshot or cursor is outside the retained stream bounds".to_owned() }, &session, &decision).await {
                     yield Ok(event);
                 }
                 break;
-            }
-            for (entry_position, capability) in entries {
+            };
+            for (entry_position, capabilities) in entries {
                 position = entry_position;
-                let Ok(event) = observation_event(&state.host, &feed, position, Observation::Capability(capability), &session, &decision).await else {
+                let Ok(event) = observation_event(&state.host, &feed, position, Observation::CapabilitySnapshot(capabilities), &session, &decision).await else {
+                    if let Ok(event) = observation_event(&state.host, &feed, position, Observation::ResyncRequired { reason: "capability snapshot exceeds the observation envelope bounds".to_owned() }, &session, &decision).await {
+                        yield Ok(event);
+                    }
                     break 'events;
                 };
                 yield Ok(event);
@@ -313,31 +331,28 @@ pub(super) async fn capability_stream(
     ))
 }
 
-fn record_capability_snapshot(feed: &mut CapabilityFeed, capabilities: &[CapabilityRead]) {
-    let Ok(bytes) = milkdrift_control_protocol::encode_json(&capabilities) else {
-        return;
-    };
+fn record_capability_snapshot(
+    feed: &mut CapabilityFeed,
+    capabilities: &[CapabilityRead],
+) -> Result<(), ()> {
+    let bytes = milkdrift_control_protocol::encode_json(&capabilities).map_err(|_| ())?;
     let digest = blake3::hash(&bytes).to_hex().to_string();
     if feed.last_snapshot_digest.as_deref() == Some(&digest) {
-        return;
+        return Ok(());
     }
+    let position = feed.next_position;
+    let next_position = position.checked_add(1).ok_or(())?;
     feed.last_snapshot_digest = Some(digest);
-    for capability in capabilities {
-        let position = feed.next_position;
-        feed.next_position = feed.next_position.saturating_add(1);
-        let Ok(bytes) = milkdrift_control_protocol::encode_json(capability) else {
-            return;
-        };
-        feed.retained_bytes += bytes.len();
-        feed.entries
-            .push_back((position, capability.clone(), bytes.len()));
-        while feed.entries.len() > CAPABILITY_FEED_ITEMS || feed.retained_bytes > MAX_DOCUMENT_BYTES
-        {
-            if let Some((_, _, bytes)) = feed.entries.pop_front() {
-                feed.retained_bytes -= bytes;
-            }
+    feed.next_position = next_position;
+    feed.retained_bytes += bytes.len();
+    feed.entries
+        .push_back((position, capabilities.to_vec(), bytes.len()));
+    while feed.entries.len() > CAPABILITY_FEED_ITEMS || feed.retained_bytes > MAX_DOCUMENT_BYTES {
+        if let Some((_, _, bytes)) = feed.entries.pop_front() {
+            feed.retained_bytes -= bytes;
         }
     }
+    Ok(())
 }
 
 pub(super) async fn health_stream(

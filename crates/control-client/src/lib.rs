@@ -668,6 +668,8 @@ impl ControlClient {
     /// reconnecting from the last valid observation; it never advances the resume cursor.
     /// Run feeds use `v1/runs/{raw_run_identity}/stream`: the identity remains raw here,
     /// including slashes, and is encoded once for transport. Cursors bind that raw identity.
+    /// Capability snapshots replace the consumer's complete catalogue, including empty sets.
+    /// Health and capability cursors require a fresh subscription after daemon restart.
     pub fn subscribe(
         &self,
         feed_path: impl Into<String>,

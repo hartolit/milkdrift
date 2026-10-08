@@ -18,6 +18,7 @@ use crate::config::{
 use milkdrift_control_protocol::TimelineCategory;
 
 mod artifact_visibility;
+mod live_streams;
 mod unavailable_models;
 
 struct ControlledDaemonClock(AtomicU64);

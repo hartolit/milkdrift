@@ -7,7 +7,9 @@ use std::{collections::BTreeSet, path::Path};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn profile(address: SocketAddr) -> TestResult<milkdrift_model_provider::EndpointProfile> {
+pub(super) fn profile(
+    address: SocketAddr,
+) -> TestResult<milkdrift_model_provider::EndpointProfile> {
     use milkdrift_model_provider::{
         AuthMode, BillingTerms, EndpointLimits, EndpointProfile, ModelFeature, ModelTokenLimits,
         ProviderProtocol, ProxyPolicy, RedirectPolicy, TlsPolicy,

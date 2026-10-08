@@ -1,6 +1,41 @@
 use super::*;
 
 #[test]
+fn capability_snapshots_have_one_closed_complete_set_wire_shape()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = include_str!("../../tests/fixtures/capability-snapshot-v2.20.json").trim_end();
+    let observation: Observation = decode_json(fixture.as_bytes())?;
+    assert_eq!(String::from_utf8(encode_json(&observation)?)?, fixture);
+    let Observation::CapabilitySnapshot(values) = observation else {
+        return Err("wrong fixture variant".into());
+    };
+    assert_eq!(values.len(), 2);
+    assert_eq!(values.first().ok_or("old absent")?.generation, 1);
+    assert_eq!(values.get(1).ok_or("new absent")?.generation, 2);
+    assert_eq!(
+        encode_json(&Observation::CapabilitySnapshot(vec![]))?,
+        br#"{"type":"capability_snapshot","value":[]}"#
+    );
+    for invalid in [
+        fixture.replace("capability_snapshot", "capability"),
+        fixture.replacen("\"type\":", "\"partial\":true,\"type\":", 1),
+        fixture.replacen("\"generation\":1", "\"generation\":1,\"removed\":true", 1),
+        "{\"type\":\"capability_snapshot\",\"value\":null}".into(),
+    ] {
+        assert!(decode_json::<Observation>(invalid.as_bytes()).is_err());
+    }
+    assert!(
+        ProtocolVersion {
+            major: 2,
+            minor: 19
+        }
+        .negotiate()
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
 fn response_admission_and_encoding_obey_the_normal_reader_structure_limits()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut value = serde_json::json!("escaped\"\\\n text");
@@ -68,7 +103,7 @@ fn start_inputs_use_named_artifacts_and_preserve_empty_request_encoding()
 #[test]
 fn authoring_wire_uses_explicit_sources_and_rejects_unknown_fields()
 -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = br#"{"protocol":{"major":2,"minor":19},"command_id":"edit-1","expected_sequence":null,"expected_revision":null,"reason":"Connect the brief","evidence":[],"command":{"type":"author_blueprint","draft":{"workflow_id":"release-notes","base_revision":null,"mutations":[]},"edit":{"type":"connect","step":"review","input":"brief","source":{"type":"run_input","name":"brief"}},"save":false}}"#;
+    let bytes = br#"{"protocol":{"major":2,"minor":20},"command_id":"edit-1","expected_sequence":null,"expected_revision":null,"reason":"Connect the brief","evidence":[],"command":{"type":"author_blueprint","draft":{"workflow_id":"release-notes","base_revision":null,"mutations":[]},"edit":{"type":"connect","step":"review","input":"brief","source":{"type":"run_input","name":"brief"}},"save":false}}"#;
     let request: CommandRequest = decode_json(bytes)?;
     request.validate()?;
     assert_eq!(

@@ -42,6 +42,11 @@ package entry point. Consumers otherwise import the canonical owner directly.
 
 ## Surface ownership
 
+`Observation::CapabilitySnapshot` is an external product wire contract consumed by independent
+live clients. Its complete authorized array replaces the old single-entry observation under control
+protocol 2.20, so clients can remove vanished generations without inferring daemon state. The daemon
+owns filtering, snapshot retention and restart-bound cursor checks; no client registry is added.
+
 `ErrorCode::http_status_code` is a pure protocol contract consumed by daemon HTTP responses and
 client error classification. The exhaustive numeric mapping has no HTTP library dependency;
 transport-specific boundary responses and explicit retryability remain with their existing owners.

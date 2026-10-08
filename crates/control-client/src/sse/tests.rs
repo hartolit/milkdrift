@@ -16,6 +16,53 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+#[tokio::test]
+async fn capability_snapshot_reconnect_preserves_replacement_and_empty_set() -> TestResult {
+    let mut first = observation(1)?;
+    first.feed = "capability-health".into();
+    first.cursor = Cursor::new(&first.feed, 1)?;
+    first.observation = milkdrift_control_protocol::decode_json(include_bytes!(
+        "../../../control-protocol/tests/fixtures/capability-snapshot-v2.20.json"
+    ))?;
+    let mut empty = first.clone();
+    empty.cursor = Cursor::new(&empty.feed, 2)?;
+    empty.observation = Observation::CapabilitySnapshot(vec![]);
+    let mut closing = empty.clone();
+    closing.observation = Observation::ResyncRequired {
+        reason: "window expired".into(),
+    };
+    let (client, _, server) = fixture(vec![
+        frame(&first, "\n")?,
+        format!(
+            "{}{}{}",
+            frame(&first, "\n")?,
+            frame(&empty, "\n")?,
+            frame(&closing, "\n")?
+        ),
+    ])
+    .await?;
+    let mut stream = client.subscribe("v1/stream/capabilities", None);
+    assert_eq!(stream.next().await.ok_or("snapshot missing")??, first);
+    assert!(matches!(
+        stream.next().await.ok_or("disconnect missing")?,
+        Err(ClientError::Transport(_))
+    ));
+    assert_eq!(stream.next().await.ok_or("empty snapshot missing")??, empty);
+    assert_eq!(stream.next().await.ok_or("resync missing")??, closing);
+    assert!(stream.next().await.is_none());
+    let paths = server
+        .await?
+        .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+    assert_eq!(paths.len(), 2);
+    assert!(
+        paths
+            .get(1)
+            .ok_or("reconnect absent")?
+            .contains(first.cursor.as_str())
+    );
+    Ok(())
+}
+
 fn observation(position: u64) -> TestResult<ObservationEnvelope> {
     Ok(ObservationEnvelope {
         protocol: ProtocolVersion::CURRENT,

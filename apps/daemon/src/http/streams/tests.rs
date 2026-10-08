@@ -81,17 +81,38 @@ fn capability_window_bounds_both_items_and_encoded_bytes() -> Result<(), Box<dyn
     };
     for generation in 1..=300 {
         value.generation = generation;
-        record_capability_snapshot(&mut feed, &[value.clone()]);
+        record_capability_snapshot(&mut feed, &[value.clone()]).map_err(|()| "snapshot refused")?;
     }
     assert_eq!(feed.entries.len(), CAPABILITY_FEED_ITEMS);
+    assert!(feed.after(1).is_none());
+    assert_eq!(
+        feed.after(0).ok_or("fresh snapshot absent")?,
+        vec![(300, vec![value.clone()])]
+    );
+    assert_eq!(
+        feed.after(299).ok_or("replay absent")?,
+        vec![(300, vec![value.clone()])]
+    );
     value.trust_zones = vec!["x".repeat(8_000); 16];
     for generation in 301..=320 {
         value.generation = generation;
-        record_capability_snapshot(&mut feed, &[value.clone()]);
+        record_capability_snapshot(&mut feed, &[value.clone()]).map_err(|()| "snapshot refused")?;
         assert!(feed.retained_bytes <= MAX_DOCUMENT_BYTES);
     }
     assert!(feed.entries.len() < CAPABILITY_FEED_ITEMS);
     assert_eq!(feed.next_position, 321);
+    assert!(feed.after(300).is_none());
+    value.trust_zones = vec!["x".repeat(8_000); 200];
+    assert!(record_capability_snapshot(&mut feed, &[value]).is_err());
+    assert_eq!(
+        feed.next_position, 321,
+        "refused snapshots cannot move the cursor"
+    );
+    record_capability_snapshot(&mut feed, &[]).map_err(|()| "empty snapshot refused")?;
+    assert_eq!(
+        feed.after(320).ok_or("empty snapshot absent")?,
+        vec![(321, vec![])]
+    );
     assert_eq!(
         feed.retained_bytes,
         feed.entries.iter().map(|(_, _, size)| size).sum::<usize>()
