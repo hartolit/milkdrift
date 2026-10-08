@@ -731,8 +731,10 @@ async fn scoped_read_matrix_and_continuations_fail_closed() -> TestResult {
     assert!(matches!(
         tokio::time::timeout(Duration::from_secs(3), reconnect.next())
             .await?
-            .ok_or("narrowed stream ended without a typed error")?,
-        Err(ClientError::Api(error)) if error.code == ErrorCode::InvalidInput
+            .ok_or("narrowed stream ended without a resync observation")??
+            .observation,
+        Observation::ResyncRequired { .. }
     ));
+    assert!(reconnect.next().await.is_none());
     restarted.stop().await
 }

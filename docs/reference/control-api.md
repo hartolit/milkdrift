@@ -462,7 +462,7 @@ observed consumption. These artifact facts stay tied to the generation used by t
 ## Cursors and SSE
 
 
-Cursors are opaque bounded Base64url schema-2 values. They bind an exact feed and position/key to the authenticated actor, grant identity/revision/digest, authority decision, and a domain-separated digest of the complete resource/filter scope. A credential-derived keyed MAC prevents modification or reuse after credential rotation. A malformed, stale, cross-actor, cross-grant, cross-resource, or cross-filter cursor fails as bounded `invalid_input`; a broader replacement grant does not reinterpret an old continuation. Clients must store only a successfully observed cursor and resume after it.
+Cursors are opaque bounded Base64url schema-2 values. They bind an exact feed and position/key to the authenticated actor, grant identity/revision/digest, authority decision, and a domain-separated digest of the complete resource/filter scope. A credential-derived keyed MAC prevents modification or reuse after credential rotation. A malformed, stale, cross-actor, cross-grant, cross-resource, or cross-filter cursor fails as bounded `invalid_input`, except for the process-local feeds described below; a broader replacement grant does not reinterpret an old continuation. Clients must store only a successfully observed cursor and resume after it.
 
 The daemon exposes:
 
@@ -482,6 +482,14 @@ a fresh authorized subscription or page read.
 
 An open stream keeps its initial authority binding. If file-based credential rotation maps its
 bearer value to a different actor or grant, the stream closes instead of adopting that authority.
+
+Health and capability cursors also bind a random daemon incarnation in their scope. Their
+in-memory counters can restart at the same number, but an earlier cursor cannot acquire that
+number's new meaning. After ordinary authentication and subscription authorization, any cursor
+that fails this complete binding check receives one `resync_required` and the stream ends before
+disclosing a health or capability payload. Subscribe again without a cursor. This also handles
+credential/grant changes and unsupported old cursor bindings without a retry loop. Run and
+timeline cursors retain their durable-history binding and remain resumable after restart.
 
 `milkdrift-control-client::subscribe` reconnects retryable transport failures with its last decoded
 cursor and yields errors between connections. Its consumer owns the overall deadline and retry

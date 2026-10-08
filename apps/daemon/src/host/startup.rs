@@ -70,6 +70,10 @@ impl DaemonHost {
         clock: Arc<dyn DaemonClockSource>,
         recovery_controls: bool,
     ) -> Result<Self, HostError> {
+        let mut stream_incarnation = [0; 32];
+        getrandom::fill(&mut stream_incarnation).map_err(|error| {
+            HostError::Startup(format!("stream incarnation unavailable: {error}"))
+        })?;
         let DaemonPlanParts {
             role,
             host_id,
@@ -181,6 +185,7 @@ impl DaemonHost {
                 peer: peer_runtime,
                 managed,
             })) => Ok(Self {
+                stream_incarnation,
                 managed: managed.as_ref().map(Arc::downgrade),
                 sender,
                 health,

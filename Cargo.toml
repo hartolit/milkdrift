@@ -41,6 +41,7 @@ axum = { version = "0.8.9", features = ["json", "tokio", "http1"] }
 async-stream = "0.3.6"
 clap = { version = "4.6.6", features = ["derive", "env"] }
 futures-util = "0.3.31"
+getrandom = "0.4.3"
 milkdrift-authority = { version = "=0.1.0", path = "crates/authority" }
 milkdrift-blueprint = { version = "=0.1.0", path = "crates/blueprint" }
 milkdrift-capability = { version = "=0.1.0", path = "crates/capability" }
