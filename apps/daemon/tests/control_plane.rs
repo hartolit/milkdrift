@@ -50,6 +50,8 @@ mod results;
 mod reuse;
 #[path = "control_plane/roles.rs"]
 mod roles;
+#[path = "control_plane/streams.rs"]
+mod streams;
 #[path = "control_plane/support.rs"]
 mod support;
 #[path = "control_plane/upload_identities.rs"]

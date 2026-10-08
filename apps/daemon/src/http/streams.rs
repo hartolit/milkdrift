@@ -1,7 +1,7 @@
 //! Poll authorized read models and frame them as resumable SSE observations.
 //!
 //! Each poll rechecks credentials and authority. Timeline and run-stream cursors use distinct
-//! feeds; capability observations retain only a bounded window per authority scope. Closing a
+//! feeds; capability observations retain only a bounded window per exact authority. Closing a
 //! connection ends disclosure, not the underlying run or invocation.
 use super::{
     ApiError, AppState, CAPABILITY_FEED_ITEMS, ListQuery, STREAM_PAGE_ITEMS, authenticate,
@@ -15,16 +15,48 @@ use axum::{
 };
 use futures_util::Stream;
 use milkdrift_control_protocol::{
-    CapabilityRead, Cursor, ErrorCode, Observation, ObservationEnvelope, ProtocolVersion,
+    CapabilityRead, Cursor, CursorBinding, ErrorCode, MAX_DOCUMENT_BYTES, Observation,
+    ObservationEnvelope, ProtocolVersion,
 };
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
 use tracing::{info, warn};
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Default)]
-pub(super) struct CapabilityFeed {
+struct CapabilityFeed {
     last_snapshot_digest: Option<String>,
     next_position: u64,
-    entries: VecDeque<(u64, CapabilityRead)>,
+    entries: VecDeque<(u64, CapabilityRead, usize)>,
+    retained_bytes: usize,
+}
+
+/// Grants are immutable for one daemon lifetime. Retain at most one window per configured
+/// authority, even across credential rotations; never evict and reuse its sequence numbers.
+#[derive(Default)]
+pub(super) struct CapabilityFeeds(Vec<(CursorBinding, CapabilityFeed)>);
+
+impl CapabilityFeeds {
+    fn get(&mut self, binding: CursorBinding) -> Option<&mut CapabilityFeed> {
+        let index = match self.0.iter().position(|(key, _)| key == &binding) {
+            Some(index) => index,
+            None => {
+                if self.0.len() >= crate::config::MAX_ACTOR_BINDINGS {
+                    return None;
+                }
+                self.0.push((
+                    binding,
+                    CapabilityFeed {
+                        next_position: 1,
+                        ..CapabilityFeed::default()
+                    },
+                ));
+                self.0.len() - 1
+            }
+        };
+        self.0.get_mut(index).map(|(_, feed)| feed)
+    }
 }
 
 pub(super) async fn run_stream(
@@ -63,7 +95,8 @@ pub(super) async fn run_stream(
     let output = stream! {
         let mut establish = true;
         'events: loop {
-            let Some(current_session) = state.host.authenticate_header(Some(&bearer)) else {
+            let Some(current_session) = state.host.authenticate_header(Some(&bearer))
+                .filter(|session| session.cursor_binding(&feed) == initial_binding) else {
                 if let Ok(event) = observation_event(&state.host, &feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision).await {
                     yield Ok(event);
                 }
@@ -205,7 +238,8 @@ pub(super) async fn capability_stream(
     );
     let output = stream! {
         'events: loop {
-            let Some(session) = state.host.authenticate_header(Some(&bearer)) else {
+            let Some(session) = state.host.authenticate_header(Some(&bearer))
+                .filter(|session| session.cursor_binding(&feed) == initial_binding) else {
                 if let Ok(event) = observation_event(&state.host, &feed, position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision).await {
                     yield Ok(event);
                 }
@@ -233,25 +267,20 @@ pub(super) async fn capability_stream(
             };
             let (resync, entries) = {
                 let mut capability_feeds = state.capability_feeds.lock().await;
-                let capability_feed = capability_feeds
-                    .entry(binding.scope_digest.clone())
-                    .or_insert_with(|| CapabilityFeed {
-                        next_position: 1,
-                        ..CapabilityFeed::default()
-                    });
+                let Some(capability_feed) = capability_feeds.get(binding) else { break; };
                 record_capability_snapshot(capability_feed, &capabilities);
                 let latest = capability_feed.next_position.saturating_sub(1);
                 let oldest = capability_feed
                     .entries
                     .front()
-                    .map_or(capability_feed.next_position, |(entry, _)| *entry);
+                    .map_or(capability_feed.next_position, |(entry, _, _)| *entry);
                 let resync = position > latest
                     || (position != 0 && position.saturating_add(1) < oldest);
                 let entries = capability_feed
                     .entries
                     .iter()
-                    .filter(|(entry, _)| *entry > position)
-                    .cloned()
+                    .filter(|(entry, _, _)| *entry > position)
+                    .map(|(position, value, _)| (*position, value.clone()))
                     .collect::<Vec<_>>();
                 (resync, entries)
             };
@@ -290,9 +319,17 @@ fn record_capability_snapshot(feed: &mut CapabilityFeed, capabilities: &[Capabil
     for capability in capabilities {
         let position = feed.next_position;
         feed.next_position = feed.next_position.saturating_add(1);
-        feed.entries.push_back((position, capability.clone()));
-        while feed.entries.len() > CAPABILITY_FEED_ITEMS {
-            feed.entries.pop_front();
+        let Ok(bytes) = milkdrift_control_protocol::encode_json(capability) else {
+            return;
+        };
+        feed.retained_bytes += bytes.len();
+        feed.entries
+            .push_back((position, capability.clone(), bytes.len()));
+        while feed.entries.len() > CAPABILITY_FEED_ITEMS || feed.retained_bytes > MAX_DOCUMENT_BYTES
+        {
+            if let Some((_, _, bytes)) = feed.entries.pop_front() {
+                feed.retained_bytes -= bytes;
+            }
         }
     }
 }
@@ -330,7 +367,8 @@ pub(super) async fn health_stream(
     );
     let output = stream! {
         'events: loop {
-            let Some(session) = state.host.authenticate_header(Some(&bearer)) else {
+            let Some(session) = state.host.authenticate_header(Some(&bearer))
+                .filter(|session| session.cursor_binding(&feed) == initial_binding) else {
                 if let Ok(event) = observation_event(&state.host, &feed, position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision).await {
                     yield Ok(event);
                 }

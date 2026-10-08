@@ -470,7 +470,7 @@ The daemon exposes:
 - `GET /v1/stream/capabilities?cursor=…` for a bounded retained window of capability generation/health snapshots on feed `capability-health`.
 - `GET /v1/stream/health?cursor=…` for coarse daemon health on feed `daemon-health`.
 
-SSE `data` values are `ObservationEnvelope` documents with protocol, cursor, observation time, feed, and one closed external observation: `timeline`, `run_status`, `capability`, `daemon_health`, `stream_closing`, or `resync_required`. Capability feed snapshots and retention windows are partitioned by authority-scope digest, so hidden generations cannot affect another actor's counts, ordering, or cursors. The feed retains the latest 256 observations per scope; an older continuation receives `resync_required`.
+SSE `data` values are `ObservationEnvelope` documents with protocol, cursor, observation time, feed, and one closed external observation: `timeline`, `run_status`, `capability`, `daemon_health`, `stream_closing`, or `resync_required`. Capability feed windows are partitioned by the complete actor, grant identity/revision/digest and resource/filter binding. A restricted reader cannot receive observations cached for a broader grant. Each window retains at most 256 observations and 1,310,720 encoded payload bytes; an older continuation receives `resync_required`. The daemon retains at most 256 windows, matching its immutable configured actor limit. Windows end with that daemon instance; credential rotation under the same grant reuses its window without adding retained state.
 
 Run-feed positions interleave durable timeline sequence (`2 × sequence`) and its following compact status (`2 × sequence + 1`). Transport heartbeats are SSE comments and are never durable events. Server generators and owner calls are bounded; backpressure retains no unbounded per-client event queue. Authentication and exact authority are reevaluated on every bounded polling cycle. Rotation, revocation, narrowing, draining, invalid history, or authorization change stops future disclosure and closes the feed with an authorization closing/resync item where possible; already delivered history is not rewritten.
 
@@ -479,6 +479,9 @@ feed/filter identity and the immutable grant digest bind the scope; stream-to-pa
 uses that same construction. Reaching the journal head waits for later events without changing
 the continuation position. A cursor rejected after an implementation or authority change requires
 a fresh authorized subscription or page read.
+
+An open stream keeps its initial authority binding. If file-based credential rotation maps its
+bearer value to a different actor or grant, the stream closes instead of adopting that authority.
 
 `milkdrift-control-client::subscribe` reconnects retryable transport failures with its last decoded
 cursor and yields errors between connections. Its consumer owns the overall deadline and retry

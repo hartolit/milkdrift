@@ -18,9 +18,9 @@ use artifacts::{artifact_content, artifact_metadata};
 mod streams;
 use reads::ListQuery;
 use response::ApiError;
-use streams::{CapabilityFeed, capability_stream, health_stream, run_stream};
+use streams::{CapabilityFeeds, capability_stream, health_stream, run_stream};
 
-use std::{collections::BTreeMap, future::Future, sync::Arc, sync::atomic::AtomicU64};
+use std::{future::Future, sync::Arc, sync::atomic::AtomicU64};
 
 use axum::{Router, extract::DefaultBodyLimit, routing::get, routing::post};
 use milkdrift_authority::AuthorityOperation;
@@ -92,7 +92,7 @@ macro_rules! authorized_routes {
 struct AppState {
     host: DaemonHost,
     request_sequence: Arc<AtomicU64>,
-    capability_feeds: Arc<tokio::sync::Mutex<BTreeMap<String, CapabilityFeed>>>,
+    capability_feeds: Arc<tokio::sync::Mutex<CapabilityFeeds>>,
     serving_requests: Arc<tokio::sync::Semaphore>,
 }
 
@@ -102,7 +102,7 @@ pub(crate) fn router(host: DaemonHost) -> Router {
     let state = AppState {
         host,
         request_sequence: Arc::new(AtomicU64::new(1)),
-        capability_feeds: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
+        capability_feeds: Arc::new(tokio::sync::Mutex::new(CapabilityFeeds::default())),
         serving_requests: Arc::new(tokio::sync::Semaphore::new(256)),
     };
     let router = authorized_routes! { Router::new();

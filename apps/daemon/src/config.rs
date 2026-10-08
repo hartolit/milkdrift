@@ -20,6 +20,8 @@ use thiserror::Error;
 /// Current daemon configuration document version.
 pub const DAEMON_CONFIG_SCHEMA_VERSION: u32 = 13;
 
+pub(crate) const MAX_ACTOR_BINDINGS: usize = 256;
+
 /// Configuration load or deterministic validation failure.
 #[derive(Debug, Error)]
 pub enum ConfigError {
