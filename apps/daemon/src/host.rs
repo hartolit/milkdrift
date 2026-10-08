@@ -131,7 +131,6 @@ pub struct DaemonHost {
     revoked_peers: Arc<Mutex<BTreeSet<PeerId>>>,
     clock: DurableClock,
     managed: Option<Weak<managed::ManagedHost>>,
-    stream_incarnation: [u8; 32],
 }
 
 impl std::fmt::Debug for DaemonHost {
@@ -145,10 +144,6 @@ impl std::fmt::Debug for DaemonHost {
 }
 
 impl DaemonHost {
-    pub(crate) const fn stream_incarnation(&self) -> &[u8; 32] {
-        &self.stream_incarnation
-    }
-
     pub(crate) async fn now(&self) -> Result<u64, PublicFailure> {
         let clock = self.clock.clone();
         tokio::task::spawn_blocking(move || clock.now())

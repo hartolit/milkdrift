@@ -11,10 +11,11 @@ This fixes the earlier addition-only stream, which could leave removed capabilit
 
 The daemon retains bounded snapshots under the complete cursor authority binding. It rechecks
 authentication and authorization on every poll and closes when an open subscription's binding
-changes. Health and capability cursors also bind a random daemon incarnation, so a number reused
+changes. Health and capability cursors also bind a random HTTP feed incarnation, so a number reused
 after restart cannot refer to an old observation. Failed process-local continuation checks emit
 `resync_required` before any catalogue or health disclosure. Durable run/timeline cursors keep
-their existing restart meaning.
+their existing restart meaning. The incarnation belongs to the HTTP state that owns retention;
+separate HTTP servers over one host have separate continuation domains as well.
 
 ## Consequences and compatibility
 

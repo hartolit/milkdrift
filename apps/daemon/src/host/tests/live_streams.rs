@@ -260,3 +260,77 @@ async fn capability_stream_removal_converges_with_fresh_and_reconnected_clients(
     stopped?;
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn capability_cursor_cannot_attach_to_another_http_feed_on_the_same_host() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let token = root.path().join("token");
+    fs::write(&token, "http-feed-token")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&token, fs::Permissions::from_mode(0o600))?;
+    }
+    let host = DaemonHost::start(owner_test_config(root.path(), &token, 32)?)?;
+    let mut servers = Vec::new();
+    let mut clients = Vec::new();
+    for _ in 0..2 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let endpoint = url::Url::parse(&format!("http://{}/", listener.local_addr()?))?;
+        let (shutdown, stop) = tokio::sync::oneshot::channel();
+        let router = crate::http::router(host.clone())?;
+        let serving = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .with_graceful_shutdown(async {
+                    let _closed = stop.await;
+                })
+                .await
+        });
+        servers.push((shutdown, serving));
+        clients.push(ControlClient::new(
+            ClientConfig::new(endpoint),
+            BearerCredential::new("http-feed-token")?,
+        )?);
+    }
+    let result: TestResult = async {
+        let mut first = clients
+            .first()
+            .ok_or("first server absent")?
+            .subscribe("v1/stream/capabilities", None);
+        let old = tokio::time::timeout(Duration::from_secs(5), first.next())
+            .await?
+            .ok_or("first observation absent")??;
+        let second_client = clients.get(1).ok_or("second server absent")?;
+        let mut second = second_client.subscribe("v1/stream/capabilities", None);
+        let new = tokio::time::timeout(Duration::from_secs(5), second.next())
+            .await?
+            .ok_or("second observation absent")??;
+        assert_eq!(
+            old.cursor.position_for("capability-health")?,
+            new.cursor.position_for("capability-health")?
+        );
+        let mut resumed = second_client.subscribe("v1/stream/capabilities", Some(old.cursor));
+        let event = tokio::time::timeout(Duration::from_secs(2), resumed.next())
+            .await
+            .map_err(|_| "cursor silently attached to a different retained feed")?
+            .ok_or("missing resync")??;
+        assert!(matches!(
+            event.observation,
+            Observation::ResyncRequired { .. }
+        ));
+        Ok(())
+    }
+    .await;
+    let mut tasks = Vec::new();
+    for (shutdown, serving) in servers {
+        shutdown
+            .send(())
+            .map_err(|()| "server shutdown receiver lost")?;
+        tasks.push(serving);
+    }
+    for task in tasks {
+        task.await??;
+    }
+    host.shutdown().await?;
+    result
+}

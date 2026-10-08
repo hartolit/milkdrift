@@ -93,13 +93,18 @@ struct AppState {
     host: DaemonHost,
     request_sequence: Arc<AtomicU64>,
     capability_feeds: Arc<tokio::sync::Mutex<CapabilityFeeds>>,
+    stream_incarnation: [u8; 32],
     serving_requests: Arc<tokio::sync::Semaphore>,
 }
 
 /// Builds the bounded control router. CORS is intentionally absent.
-pub(crate) fn router(host: DaemonHost) -> Router {
+pub(crate) fn router(host: DaemonHost) -> Result<Router, HostError> {
+    let mut stream_incarnation = [0; 32];
+    getrandom::fill(&mut stream_incarnation)
+        .map_err(|error| HostError::Startup(format!("stream incarnation unavailable: {error}")))?;
     let peer_service = host.peer_service();
     let state = AppState {
+        stream_incarnation,
         host,
         request_sequence: Arc::new(AtomicU64::new(1)),
         capability_feeds: Arc::new(tokio::sync::Mutex::new(CapabilityFeeds::default())),
@@ -156,11 +161,11 @@ pub(crate) fn router(host: DaemonHost) -> Router {
                 .layer(TraceLayer::new_for_http()),
         )
         .with_state(state);
-    if let Some(service) = peer_service {
+    Ok(if let Some(service) = peer_service {
         router.merge(milkdrift_peer_http::peer_router(service))
     } else {
         router
-    }
+    })
 }
 
 /// Serves until `shutdown` resolves, then closes admission, drains the host, and joins it.
@@ -179,6 +184,15 @@ where
     let address = listener
         .local_addr()
         .map_err(|error| HostError::Startup(error.to_string()))?;
+    let router = match router(host.clone()) {
+        Ok(router) => router,
+        Err(error) => {
+            host.shutdown()
+                .await
+                .map_err(|cleanup| HostError::Startup(format!("{error}; {cleanup}")))?;
+            return Err(error);
+        }
+    };
     info!(%address, phase = "listening", "daemon control listener ready");
     let shutdown_host = host.clone();
     let (shutdown_result, shutdown_observed) = tokio::sync::oneshot::channel();
@@ -192,7 +206,7 @@ where
             tracing::debug!("host shutdown finished after the HTTP caller stopped waiting");
         }
     };
-    axum::serve(listener, router(host))
+    axum::serve(listener, router)
         .with_graceful_shutdown(graceful)
         .await
         .map_err(|error| HostError::Startup(error.to_string()))?;

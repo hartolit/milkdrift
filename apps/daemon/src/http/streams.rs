@@ -7,7 +7,7 @@ use super::{
     ApiError, AppState, CAPABILITY_FEED_ITEMS, ListQuery, STREAM_PAGE_ITEMS, authenticate,
     bearer_header, owner_error, protocol_error,
 };
-use crate::{DaemonHost, auth::ActorSession, host::StreamAuthority};
+use crate::{auth::ActorSession, host::StreamAuthority};
 use async_stream::stream;
 use axum::{
     extract::Path, extract::Query, extract::State, http::HeaderMap, response::Sse,
@@ -125,7 +125,7 @@ pub(super) async fn run_stream(
         'events: loop {
             let Some(current_session) = state.host.authenticate_header(Some(&bearer))
                 .filter(|session| session.cursor_binding(&feed) == initial_binding) else {
-                if let Ok(event) = observation_event(&state.host, &feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision).await {
+                if let Ok(event) = observation_event(&state, &feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision).await {
                     yield Ok(event);
                 }
                 break;
@@ -141,7 +141,7 @@ pub(super) async fn run_stream(
                 Err(_) => break,
             };
             if state.host.health().draining {
-                if let Ok(event) = observation_event(&state.host, &feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "daemon is draining".to_owned() }, &session, &decision).await {
+                if let Ok(event) = observation_event(&state, &feed, stream_position.saturating_add(1), Observation::StreamClosing { reason: "daemon is draining".to_owned() }, &session, &decision).await {
                     yield Ok(event);
                 }
                 break;
@@ -153,14 +153,14 @@ pub(super) async fn run_stream(
                     Err(_) => break,
                 };
                 if stream_position / 2 > status.sequence {
-                    if let Ok(event) = observation_event(&state.host, &feed, stream_position, Observation::ResyncRequired { reason: "run cursor is ahead of the retained run head".to_owned() }, &session, &decision).await {
+                    if let Ok(event) = observation_event(&state, &feed, stream_position, Observation::ResyncRequired { reason: "run cursor is ahead of the retained run head".to_owned() }, &session, &decision).await {
                         yield Ok(event);
                     }
                     break;
                 }
                 if stream_position == 0 {
                     stream_position = status.sequence.saturating_mul(2).saturating_add(1);
-                    let Ok(event) = observation_event(&state.host, &feed, stream_position, Observation::RunStatus(status), &session, &decision).await else { break; };
+                    let Ok(event) = observation_event(&state, &feed, stream_position, Observation::RunStatus(status), &session, &decision).await else { break; };
                     yield Ok(event);
                 }
             }
@@ -169,7 +169,7 @@ pub(super) async fn run_stream(
                 match state.host.run(session.clone(), run.clone()).await {
                     Ok(status) => {
                         stream_position = stream_position.saturating_add(1);
-                        let Ok(event) = observation_event(&state.host, &feed, stream_position, Observation::RunStatus(status), &session, &decision).await else {
+                        let Ok(event) = observation_event(&state, &feed, stream_position, Observation::RunStatus(status), &session, &decision).await else {
                             break 'events;
                         };
                         yield Ok(event);
@@ -199,7 +199,7 @@ pub(super) async fn run_stream(
                 Ok(page) if !page.items.is_empty() => {
                     for entry in page.items {
                         stream_position = entry.sequence.saturating_mul(2);
-                        let Ok(event) = observation_event(&state.host, &feed, stream_position, Observation::Timeline(entry), &session, &decision).await else {
+                        let Ok(event) = observation_event(&state, &feed, stream_position, Observation::Timeline(entry), &session, &decision).await else {
                             break 'events;
                         };
                         yield Ok(event);
@@ -207,7 +207,7 @@ pub(super) async fn run_stream(
                     match state.host.run(session.clone(), run.clone()).await {
                         Ok(status) => {
                             stream_position = stream_position.saturating_add(1);
-                            let Ok(event) = observation_event(&state.host, &feed, stream_position, Observation::RunStatus(status), &session, &decision).await else {
+                            let Ok(event) = observation_event(&state, &feed, stream_position, Observation::RunStatus(status), &session, &decision).await else {
                                 break 'events;
                             };
                             yield Ok(event);
@@ -218,7 +218,7 @@ pub(super) async fn run_stream(
                 Ok(_) => tokio::time::sleep(Duration::from_millis(250)).await,
                 Err(error) => {
                     let reason = if error.code == ErrorCode::Unauthorized { "authorization changed" } else { "timeline cursor must be resynchronized" };
-                    if let Ok(event) = observation_event(&state.host, &feed, stream_position.saturating_add(1), Observation::ResyncRequired { reason: reason.to_owned() }, &session, &decision).await {
+                    if let Ok(event) = observation_event(&state, &feed, stream_position.saturating_add(1), Observation::ResyncRequired { reason: reason.to_owned() }, &session, &decision).await {
                         yield Ok(event);
                     }
                     break;
@@ -249,7 +249,7 @@ pub(super) async fn capability_stream(
         &request_id,
     )
     .await?;
-    let initial_binding = stream_binding(&state.host, &initial_session, &feed);
+    let initial_binding = stream_binding(&state, &initial_session, &feed);
     let resume = query
         .cursor
         .as_ref()
@@ -266,15 +266,15 @@ pub(super) async fn capability_stream(
     );
     let output = stream! {
         if resync {
-            if let Ok(event) = observation_event(&state.host, &feed, 0, Observation::ResyncRequired { reason: "process-local cursor does not belong to this daemon and authority; subscribe without a cursor".to_owned() }, &initial_session, &initial_decision).await {
+            if let Ok(event) = observation_event(&state, &feed, 0, Observation::ResyncRequired { reason: "process-local cursor does not belong to this daemon and authority; subscribe without a cursor".to_owned() }, &initial_session, &initial_decision).await {
                 yield Ok(event);
             }
             return;
         }
         'events: loop {
             let Some(session) = state.host.authenticate_header(Some(&bearer))
-                .filter(|session| stream_binding(&state.host, session, &feed) == initial_binding) else {
-                if let Ok(event) = observation_event(&state.host, &feed, position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision).await {
+                .filter(|session| stream_binding(&state, session, &feed) == initial_binding) else {
+                if let Ok(event) = observation_event(&state, &feed, position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision).await {
                     yield Ok(event);
                 }
                 break;
@@ -288,9 +288,9 @@ pub(super) async fn capability_stream(
                 Ok(decision) => decision,
                 Err(_) => break,
             };
-            let binding = stream_binding(&state.host, &session, &feed);
+            let binding = stream_binding(&state, &session, &feed);
             if state.host.health().draining {
-                if let Ok(event) = observation_event(&state.host, &feed, position.saturating_add(1), Observation::StreamClosing { reason: "daemon is draining".to_owned() }, &session, &decision).await {
+                if let Ok(event) = observation_event(&state, &feed, position.saturating_add(1), Observation::StreamClosing { reason: "daemon is draining".to_owned() }, &session, &decision).await {
                     yield Ok(event);
                 }
                 break;
@@ -306,15 +306,15 @@ pub(super) async fn capability_stream(
                     .ok().and_then(|()| capability_feed.after(position))
             };
             let Some(entries) = entries else {
-                if let Ok(event) = observation_event(&state.host, &feed, position.saturating_add(1), Observation::ResyncRequired { reason: "capability snapshot or cursor is outside the retained stream bounds".to_owned() }, &session, &decision).await {
+                if let Ok(event) = observation_event(&state, &feed, position.saturating_add(1), Observation::ResyncRequired { reason: "capability snapshot or cursor is outside the retained stream bounds".to_owned() }, &session, &decision).await {
                     yield Ok(event);
                 }
                 break;
             };
             for (entry_position, capabilities) in entries {
                 position = entry_position;
-                let Ok(event) = observation_event(&state.host, &feed, position, Observation::CapabilitySnapshot(capabilities), &session, &decision).await else {
-                    if let Ok(event) = observation_event(&state.host, &feed, position, Observation::ResyncRequired { reason: "capability snapshot exceeds the observation envelope bounds".to_owned() }, &session, &decision).await {
+                let Ok(event) = observation_event(&state, &feed, position, Observation::CapabilitySnapshot(capabilities), &session, &decision).await else {
+                    if let Ok(event) = observation_event(&state, &feed, position, Observation::ResyncRequired { reason: "capability snapshot exceeds the observation envelope bounds".to_owned() }, &session, &decision).await {
                         yield Ok(event);
                     }
                     break 'events;
@@ -371,7 +371,7 @@ pub(super) async fn health_stream(
         &request_id,
     )
     .await?;
-    let initial_binding = stream_binding(&state.host, &initial_session, &feed);
+    let initial_binding = stream_binding(&state, &initial_session, &feed);
     let resume = query
         .cursor
         .as_ref()
@@ -388,15 +388,15 @@ pub(super) async fn health_stream(
     );
     let output = stream! {
         if resync {
-            if let Ok(event) = observation_event(&state.host, &feed, 0, Observation::ResyncRequired { reason: "process-local cursor does not belong to this daemon and authority; subscribe without a cursor".to_owned() }, &initial_session, &initial_decision).await {
+            if let Ok(event) = observation_event(&state, &feed, 0, Observation::ResyncRequired { reason: "process-local cursor does not belong to this daemon and authority; subscribe without a cursor".to_owned() }, &initial_session, &initial_decision).await {
                 yield Ok(event);
             }
             return;
         }
         'events: loop {
             let Some(session) = state.host.authenticate_header(Some(&bearer))
-                .filter(|session| stream_binding(&state.host, session, &feed) == initial_binding) else {
-                if let Ok(event) = observation_event(&state.host, &feed, position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision).await {
+                .filter(|session| stream_binding(&state, session, &feed) == initial_binding) else {
+                if let Ok(event) = observation_event(&state, &feed, position.saturating_add(1), Observation::StreamClosing { reason: "authorization was revoked or rotated".to_owned() }, &initial_session, &initial_decision).await {
                     yield Ok(event);
                 }
                 break;
@@ -413,7 +413,7 @@ pub(super) async fn health_stream(
             let (generation, health) = state.host.health_snapshot();
             if generation > position {
                 position = generation;
-                let Ok(event) = observation_event(&state.host, &feed, position, Observation::DaemonHealth(health.clone()), &session, &decision).await else {
+                let Ok(event) = observation_event(&state, &feed, position, Observation::DaemonHealth(health.clone()), &session, &decision).await else {
                     break 'events;
                 };
                 yield Ok(event);
@@ -446,14 +446,14 @@ async fn stream_authority(
 }
 
 async fn observation_event(
-    host: &DaemonHost,
+    state: &AppState,
     feed: &str,
     position: u64,
     observation: Observation,
     session: &ActorSession,
     decision_digest: &str,
 ) -> Result<Event, ()> {
-    let observed_at_ms = host.now().await.map_err(|error| {
+    let observed_at_ms = state.host.now().await.map_err(|error| {
         warn!(
             outcome = "closed",
             code = "observation_clock_unavailable",
@@ -464,7 +464,7 @@ async fn observation_event(
     let cursor = Cursor::new_bound(
         feed,
         position,
-        stream_binding(host, session, feed),
+        stream_binding(state, session, feed),
         decision_digest,
         session.cursor_key(),
     )
@@ -485,13 +485,13 @@ async fn observation_event(
         .data(data))
 }
 
-fn stream_binding(host: &DaemonHost, session: &ActorSession, feed: &str) -> CursorBinding {
+fn stream_binding(state: &AppState, session: &ActorSession, feed: &str) -> CursorBinding {
     if matches!(feed, "daemon-health" | "capability-health") {
         // A new incarnation changes the MAC-bound scope even if counters restart at the same
         // value. Durable run and timeline feeds deliberately retain their ordinary binding.
         session.cursor_binding(&format!(
             "{feed}:{}",
-            blake3::Hash::from(*host.stream_incarnation())
+            blake3::Hash::from(state.stream_incarnation)
         ))
     } else {
         session.cursor_binding(feed)

@@ -505,13 +505,15 @@ a fresh authorized subscription or page read.
 An open stream keeps its initial authority binding. If file-based credential rotation maps its
 bearer value to a different actor or grant, the stream closes instead of adopting that authority.
 
-Health and capability cursors also bind a random daemon incarnation in their scope. Their
+Health and capability cursors also bind a random HTTP feed incarnation in their scope. Their
 in-memory counters can restart at the same number, but an earlier cursor cannot acquire that
 number's new meaning. After ordinary authentication and subscription authorization, any cursor
 that fails this complete binding check receives one `resync_required` and the stream ends before
 disclosing a health or capability payload. Subscribe again without a cursor. This also handles
 credential/grant changes and unsupported old cursor bindings without a retry loop. Run and
 timeline cursors retain their durable-history binding and remain resumable after restart.
+The incarnation is created with the retained HTTP feed state, so even separate HTTP servers
+sharing one host cannot silently reuse each other's capability positions.
 
 `milkdrift-control-client::subscribe` reconnects retryable transport failures with its last decoded
 cursor and yields errors between connections. Its consumer owns the overall deadline and retry
