@@ -57,6 +57,10 @@ accepts CRLF, LF and CR lines in order, including line endings and UTF-8 split b
 each event has its own buffer bound. Comments never advance the cursor. Dropping the stream stops
 local observation; it does not cancel a run.
 
+On `CapabilitySnapshot`, replace the complete displayed catalogue, including when the array is
+empty. The daemon filters and bounds these snapshots. Health and capability cursors require
+resynchronization after the daemon's HTTP feed restarts; durable run cursors can resume history.
+
 The [crate API](src/lib.rs) owns defaults and individual method behavior. The
 [control reference](../../docs/reference/control-api.md) owns exact feeds and error categories;
 the [CLI guide](../../apps/cli/README.md) shows the operator-facing use of the same calls.

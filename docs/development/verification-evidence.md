@@ -7,6 +7,68 @@ lanes below exercise application use, mutation sensitivity, sustained load, and 
 The [evidence package guide](../../tools/evidence/README.md) compares the tools and their entry points.
 [Status](../product/status.md#current-validationevidence-snapshot) owns the latest executed state.
 
+## Live client streams
+
+The bounded correction starts at `991d21a319fe76d6078c2d64f0db4a51c09bfe8b` and reaches executable
+source `18db4b2`. Control protocol 2.20 replaces single-capability observations with complete
+authorized snapshots; cursor schema 2 and durable formats remain unchanged. The
+[control contract](../reference/control-api.md#cursors-and-sse) owns client behavior and bounds,
+and [ADR 0050](../decisions/0050-live-capability-snapshots.md) owns the compatibility decision.
+
+| Correction | Executed focused evidence | Checkpoint |
+| --- | --- | --- |
+| Exact authority isolation | Broad-first and narrow-first concurrent subscriptions, reconnect, credential rotation and actor reassignment through the production HTTP/client boundary. Private tests vary every binding field and exhaust the actor, observation and encoded-byte bounds. Both disclosure regressions fail against the starting implementation. | `3059745` |
+| Process-local restart | Clean same-store reopen rejects both health and capability cursors within five seconds. The old health position exceeds the new generation; the old capability position fits the new range. Fresh subscriptions and durable run continuation pass. The old health implementation accepts the unrelated position. | `4e3c1db` |
+| Catalogue replacement | Real registry drain/removal and replacement through the daemon owner; independent clients converge before/after reconnect and on an empty set. A restricted subscriber receives no hidden retirement. The pre-fix client retains the removed generation and fails its deadline. Golden/closed-shape protocol and SSE reconnect tests cover complete and empty snapshots. | `e3adddf` |
+| Retained feed lifetime | Two HTTP routers over one host have distinct cursor domains. The pre-fix same-number continuation silently waits in the other window; the corrected route immediately resynchronizes. | `18db4b2` |
+
+Raw focused results and failing reproductions are retained under `target/live-stream-corrections/`.
+Each of the first three checkpoints passed the all-feature control-protocol/control-client suites,
+daemon control-plane suite (68, then 69, then 69 tests), affected daemon unit tests and warning-denying
+Clippy. The feed-lifetime follow-up passed both production lifecycle tests and all five stream-filtered
+control-plane cases. Test-list output and the final workspace discovery establish the selected filters.
+Eight documentation contracts passed with the new protocol reference and version table.
+
+The integrated gate at `18db4b24aa1113f1bf0606edda889ca6a3c5ec1d` passed on Linux x86-64 with
+Rust 1.95.0 and the ordinary unoptimized/debug-information profile: all 33 strict checks,
+1,160 unit/integration tests and 24 doctests, with zero failures. The eight existing manual
+longevity/Podman tests remain ignored. All 30 repository contracts passed, and full workspace
+discovery includes every new regression. Strict reports are under `target/strict-gate/`; workspace,
+discovery and build logs are `target/live-stream-corrections/final-*.log`. The strict runner used
+the existing pinned scanners from `target/workflow-review/tools/bin` and scanned changes from the
+starting commit. The supplied untracked assignment was preserved; tracked executable source was
+committed. Later changes only explain the verified behavior and evidence.
+
+```sh
+cargo build -p milkdrift-daemon --bin milkdrift-daemon -p milkdrift-cli --bin milkdrift \
+  -p milkdrift-local-process --bin milkdrift-process-test-helper
+CARGO_BUILD_JOBS=2 cargo strict-checks --output target/strict-gate \
+  --secret-base 991d21a319fe76d6078c2d64f0db4a51c09bfe8b
+cargo test --workspace --all-features --no-fail-fast -j 2
+cargo test --workspace --all-features -j 2 -- --list
+```
+
+After the gate, rebuilt ordinary daemon/CLI binaries passed a standalone authored-workflow journey.
+`target/live-stream-corrections/client-journey/report.json` records success, clean daemon/fixture
+shutdown and exactly nine controlled model requests across execution, restart/replay and repair.
+The separate actual-daemon independent JSON-client test also passed after that run. Final
+documentation-only changes passed all eight documentation contracts again. This rerun uses the
+maintained Rust driver, without a live model profile:
+
+```sh
+cargo build -p milkdrift-daemon --bin milkdrift-daemon -p milkdrift-cli --bin milkdrift \
+  -p milkdrift-evidence --bin client-workflow-evidence
+target/debug/client-workflow-evidence --daemon target/debug/milkdrift-daemon \
+  --cli target/debug/milkdrift --output target/live-stream-corrections/client-journey
+cargo test -p milkdrift-daemon --test control_plane independent_client::
+```
+
+Default and all-feature API inventories for daemon, control-protocol and control-client are under
+`target/public-api/live-stream-*`. Their feature pairs match. Review against the starting source finds
+only the intentional `Observation::Capability` to `CapabilitySnapshot(Vec<CapabilityRead>)` change;
+daemon and client exports are unchanged. Polling is not a lossless lifecycle audit. These local Linux
+checks do not qualify browser authentication, Svelte, live providers, hardware or other OS execution.
+
 ## Independent workflow client
 
 Control-plane failure collection uses the same public read authority as the failing test. It

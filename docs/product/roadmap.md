@@ -9,6 +9,9 @@ reuse/copy, publication preparation, evaluation and the independent client bound
 [reproducible evidence](../development/verification-evidence.md#client-workflow-verification-review).
 There is no automatic successor assignment.
 
+The live-client corrections have their own [stream contract](../reference/control-api.md#cursors-and-sse)
+and [verification evidence](../development/verification-evidence.md#live-client-streams).
+
 Svelte remains the first future GUI, and every frontend uses the daemon's public operations.
 GUI implementation needs a separately scoped assignment. Preserve the accepted host,
 managed-resource, protected publication, evaluation and client behavior when planning further work.

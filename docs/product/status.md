@@ -280,6 +280,19 @@ values; repository contracts check the version cells against source.
 
 ## Current validation/evidence snapshot
 
+The live-client stream corrections pass at executable source `18db4b2` on Linux x86-64/Rust 1.95.0:
+all 33 strict checks, 1,160 unit/integration tests and 24 doctests, with eight existing manual or
+environment-specific tests still ignored. The ordinary unoptimized profile retains debug information
+and assertions. Production HTTP/client regressions cover concurrent authority isolation in both
+subscription orders, credential reassignment, bounded retention, restart with reused cursor numbers,
+durable run continuation, real generation drain/removal/replacement and empty-catalogue convergence.
+Two HTTP feeds sharing a host cannot reinterpret each other's cursor. Control protocol 2.20 requires
+coordinated client/daemon upgrade; cursor and durable storage versions are unchanged. The
+[stream evidence](../development/verification-evidence.md#live-client-streams) records checkpoints,
+failing reproductions, commands and qualification limits. A standalone actual daemon/CLI journey
+after the gate also passes with exactly nine controlled model calls and clean shutdown. This is
+headless client evidence; no GUI or browser qualification is claimed.
+
 The subsequent [client workflow verification review](../development/verification-evidence.md#client-workflow-verification-review)
 found no further demonstrated defect in the seven assigned boundaries. It verified the original
 source, binary hashes and passing/failed raw evidence for the unchanged executable checkpoint.
