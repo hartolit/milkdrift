@@ -1,6 +1,61 @@
 # Which notation truthfully explains executable work?
 
-## Current decision — N1, revision 2, selected for planning
+## Current decision — N1, revision 3, selected for planning
+
+The reopened comparison selects canonical structured program source, with stable identities,
+explicit ordered Conditional clauses/results, Parallel completion/results, Sequence, bounded
+Repeat, fixed pinned Call, Await, Return and ordinary external Task leaves. The graph and accessible
+outline edit that one source through the daemon; the runtime uses one checked derived execution
+plan. This replaces the old paired Branch/ExclusiveMerge recommendation. The reviewed current
+profile is [NP3](../../../milkdrift-remedial-planning-v3/deliverables/notation-profile.md), and
+[Delta's full comparison](../../../milkdrift-remedial-planning-v3/working/structure-comparison.md)
+owns the equal packets, source traces, owner changes, active-frontier rules and strongest dissent.
+Implementation remains unauthorized pending the user's review.
+
+The change followed actual criticism of selection, not just consistency checking. Delta initially
+recommended the complete smaller graph correction after comparing it with an actual region source
+and BPMN execution basis. Elin pointed out that the graph's claimed ancestor-data advantage was
+already represented in R, while ChoiceDraft plus inferred membership was an implicit region language.
+Delta accepted that counterexample and revised the recommendation. The source now owns the structure
+that people and models edit; generated ports/edges are plan details. The original recommendation
+and critique remain in the comparison and the historical N1/r2 below.
+
+UML ConditionalNode's clause ordering and matching clause-result pins contribute executable meaning,
+not only shapes. Explicit total order, bounded pure conditions, required-result failure and retained
+physical-effect obligations are deliberate Milkdrift restrictions/departures. A full BPMN token
+basis was considered with error handling, multiple arrivals, data association, calls and instance
+migration. It is not selected absent a concrete interchange/multiple-token requirement. No standards
+conformance or model-authoring advantage is claimed.
+
+The [priority observation](../../../milkdrift-remedial-planning-v3/working/priority-runtime-evidence.md)
+adds executed production-runtime evidence: with both guards true, assigning the preferred destination
+port `a` selects it; swapping only the destination-associated IDs to `z` makes cautious repair win.
+NP3 therefore makes business precedence a semantic vector order independent of identifiers. Old
+revisions retain their exact lexical order and accepted selections through versioned lowering.
+
+The execution plan explicitly supports legacy graph activation; legacy execution does not depend
+on proving region decomposition. Existing immutable revisions, receipts and active/uncertain
+occurrences remain readable/executable with original facts. Conversion to new editable source is
+a distinct bounded operation that must establish equivalent control/data/ownership meaning; live
+adoption additionally binds exact active frontier correspondence and stale guards. A failed conversion
+returns a precise refusal, not a lossy diagram or new interpretation of accepted history.
+
+The consequential compatibility tradeoff remains explicit: no complete proof establishes that every
+accepted old graph can become editable region source. An unsupported conversion preserves continued
+execution, inspection, exact replay and reuse but refuses the new-source edit. It offers continue-old
+or create-new-from-selected-evidence, not a permanent hidden legacy graph writer. If unrestricted
+editing of every old accepted graph is mandatory, M is the stronger compatibility choice until such
+a proof exists. This is the strongest dissent to R and must remain visible in the decision brief.
+
+Source/lowering/runtime/public authoring must be completed before the first real Svelte authoring
+checkpoint. The implementation agent must not be asked again to choose paired nodes versus regions.
+General agent-session dynamic child selection is a separate current review; NP3's Call remains fixed
+until that review establishes and selects any additional binding contract.
+
+## Historical decision — N1, revision 2
+
+The following preserves the superseded selection and its actual debate. It is no longer the current
+implementation recommendation.
 
 Rowan selects the reviewed activity-diagram foundation over one daemon-owned executable model,
 using UML Activity conventions for task/typed data/choice/parallel/call structure, with explicit

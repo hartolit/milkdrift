@@ -5,6 +5,21 @@ approved G1/P2/A1/N1/F1 for V03/V07/V09/V11/V12, plus R-A03. Read [shared contex
 agreement/reconciliation/controller/account owners, managed resource/store/platform owners and
 published-child quiescence/claim tests. Existing protected verification and accounting stay enforced.
 
+Implement the concrete ownership corrections from
+[execution reconstruction](../../working/execution-reconstruction.md). Move acquire/link/transfer/
+quiesce/return/release policy from redb's managed modules into pure `persistence::managed` transitions
+over exact accepted lineage/basis/cancellation/claim evidence. Redb reads those facts and validates
+guards/applies output in the same transaction; no caller-supplied authorization Booleans or separate
+fact-cache transaction. Keep host platform driving, resource inventory, physical fencing and existing
+atomic storage ports. Delete the moved policy bodies from redb, with no second valid transition path.
+
+Converge direct and peer fresh admission in one private host path after distinct authentication,
+replay-disclosure and rate checks. Preserve identity, exact original basis and caller-specific
+contracts. Add capability-owned typed checked descriptor extension reconstruction; migrate publication
+and managed-model producers together and remove JSON object-field mutation. Peer remapping retains its
+legitimate foreign-resource/identity/operation-scope transformation. Prove canonical bytes/digests and
+exact retained replay unchanged; these extractions should not create a durable generation by themselves.
+
 Implement complete prospective-change interactions: proposal/evidence/base/sequence, impact review,
 required approval, apply, rejection and meaningful conflict. Show completed occurrences under their
 original revision and proposed future work separately. Support useful preauthorized investigation
@@ -14,8 +29,9 @@ generation and tool environment remains explicit. Do not introduce a global stat
 
 Expose controller allowance, outstanding unknown reservations, stop/checkpoint and permitted future
 action through existing reads/commands. A child/revision/retry cannot reset inherited accounts.
-If the current public contract cannot express a legitimate chosen interaction, remedy its actual
-owner and all consumers; never compute permission/risk/adoption eligibility in TypeScript.
+Use the P04 commitment and ordinary run/account projections for their distinct scopes; never compute
+permission/risk/adoption eligibility in TypeScript. A changed obligation is a new authorized boundary,
+not an automatic commitment policy edit or a richer source form escaping an inherited agreement.
 
 Close R-A03: bounded authorized installation and approved recipe discovery with safe metadata,
 cursor scope/revalidation and truthful empty/denied/missing state. Trace persistence pages and
@@ -36,9 +52,9 @@ or wait with an inspectable blocker; an uncertain child retains the hold after c
 Other unrelated resources remain usable. Any implementation fix belongs to the actual claim/entry
 owner, not a UI timeout or second scheduler.
 
-Also compose P04's selected choice with an inner FirstSuccess/quorum and entered uncertain losing
+Also compose P01's Conditional with an inner FirstSuccess/quorum and entered uncertain losing
 writer (C07-03). Shared nonconflicting review may become eligible once from the selected result;
-maintenance and premature editing transfer still refuse. Restart between selection/result/merge
+maintenance and premature editing transfer still refuse. Restart between selection/result completion
 commit must preserve both the allowed progress and the unresolved obligation. Future unentered
 review repair remains possible under the governing agreement; arm switching and consumed-output
 rewrites do not. Carry this integrated oracle through P08/P09.
@@ -54,6 +70,7 @@ Run focused authority/control, structured reconciliation, context and managed pu
 resource discovery/protocol pagination checks; protected managed adapter tests and real workbench
 compound tests. Physical Linux verification is a distinct lane with its actual prerequisites;
 no general OS/GPU claim follows. Record unavailable physical proof and block only dependent claims.
-Commit public discovery with consumers, complete interactions, then composed-lifetime repairs.
+Commit complete pure-policy extraction with its transaction consumers, serving/descriptor convergence,
+public discovery with consumers, complete interactions, then composed-lifetime repairs.
 Preserve resource/receipt versions or give explicit migration/refusal and rollback treatment before
 writing new data. Stop with useful progress and required refusals established together.

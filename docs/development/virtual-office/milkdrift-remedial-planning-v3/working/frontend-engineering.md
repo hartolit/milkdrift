@@ -1,5 +1,14 @@
 # Frontend engineering proposal
 
+**Historical F2/r3 technical annotations.** The current
+[F1/r4 and F2/r4 interface contract](../deliverables/production-interface.md) governs canonical NP3
+source, WorkCommitment, U17 knowledge assessment and changed delivery order. P01 is the full source
+owner; browser foundation, package verification/locking and the first connected app are P02;
+ongoing work is P04, knowledge P07 and combined use P08. Preserve the compatible narrow frontend
+owners, custody, exact wire/recovery, bounded streams/storage and testing details below. Old package
+versions are candidates to verify, not compatibility evidence. Old graph/finite-planner/learning
+contracts and phase numbers must not create parallel owners or override r4.
+
 Author Bram; F2/r3, 2026-10-10. This is the technical consumer of
 [production interface F1/r3](production-interface.md), [architecture A1/r3](architecture-and-federation.md)
 and [notation NP2/N1/r2](notation-profile.md), following their actual review. It specifies future

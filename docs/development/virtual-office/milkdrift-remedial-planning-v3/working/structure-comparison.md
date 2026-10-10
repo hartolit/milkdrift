@@ -514,6 +514,49 @@ It cannot contain a second ChoiceDraft/Parallel compiler inside the response par
 admission binds actor, evidence, exact target and authority through control. The public assistance
 result remains a normal validated proposal, not a privileged write to program structure.
 
+The later [U18 instruction](../intent-source-excerpts.md#u18--bounded-automatic-reconsideration-within-ongoing-work)
+requires bounded automatic reconsideration as a product capability; it explicitly does not approve
+a session owner or architecture. Elin consequently developed C's continuous work-session alternative.
+Delta compared its strongest ordinary-root competitor rather than treating current primitive gaps
+as a proof that the application owner must exist.
+
+The full root competitor is a fixed supervisory program with independent work and supervisor
+branches. It needs an asynchronous `StartOwnedChild` which freezes an admitted target and inherits
+the account, returns an exact child handle, and keeps child lifetime attached to the enclosing root
+after the start action itself completes. `ObserveOwnedChild`/`AwaitOwnedChild` must distinguish a
+nonterminal checkpoint, pause, result availability and terminal drain. A bounded supervisor loop
+reads selected criticism and the exact child frontier, admits a revision, then uses ordinary target
+commands. It must carry immutable evidence/state to the next round and retain all outstanding owned
+children through cancellation/restart. The root definition can remain fixed while revising work
+children, avoiding the self-staling proposal against the supervisor's own advancing sequence.
+
+This is a credible single-runtime design. A dynamic target on today's synchronous Call alone is
+insufficient: the child handle/result cannot reach the next action while a paused child is still
+active. Publishing it early changes data readiness; returning the start action early changes
+structured ownership and active-state retirement. Keeping the work in a parallel sibling allows
+the supervisor to run, but does not itself define the handle, exact observation delivery or final
+join/account/cancellation contract. The full root therefore needs genuine new public runtime
+semantics rather than a compiler wrapper around the existing pinned Repeat and terminal-returning
+Subworkflow.
+
+For U18's bounded ongoing commitment Delta favors Elin's concrete `control::session` placement:
+append-only next-action intent, immutable policy and exact runtime associations belong to the
+commitment; scheduling, attempt outcome, effects and resource holds remain with their current
+owners. The session's account origin/binding must be explicit and atomic, not an arbitrary CreateRun
+with a copied account ID. The application continuation can react to an independently paused target
+without pretending the target returned. This does add a coordination state machine, and its phases
+are not a second source of run success. The selected region source keeps fixed pinned Call; no
+unselected dynamic-call/async-child primitive is smuggled into NP3.
+
+The strongest dissent is programmability: the root competitor makes the supervisor itself an
+ordinary reusable/evaluable method. A closed session policy is application semantics, not the same
+thing. If users require replacing the session control algorithm by editing arbitrary workflow
+structure, that requirement would favor the full-root implementation and its explicit asynchronous
+child contracts. U18 requires bounded automatic assessment with preserved authority/continuity; it
+does not by itself require that further metaprogramming surface. C's model and method choices still
+use canonical source and ordinary admission. Session phase must never decide task eligibility,
+erase an uncertain child or bypass the result/effect owners in order to appear simpler.
+
 Faris's unified-invocation alternative is orthogonal to source structure: a Conditional selects which
 task becomes eligible; it does not own the external invocation's accepted/physical outcome. Moving
 every local attempt to host would add a report-consumption transaction regardless of whether source
@@ -602,6 +645,76 @@ evidence: select M or first establish a complete conversion proof. Delta recomme
 explicit refusal/continue-old-or-create-new behavior. This is a concrete user-visible tradeoff, not
 a permission to let implementers invent migration semantics later.
 
+**Concrete protected legacy target.** An old accepted parent `P0` has a protected pinned Call to
+`H0`. Its inherited child run has completed investigation `I` and is paused before repair `A`.
+The proposed next action is to add a reviewer/Conditional around pending `A`. Even if `H0` has an
+equivalent region conversion `H1`, conversion creates source, not authority: direct adoption into
+that inherited child remains refused under `check_inherited_agreement_adaptation`. The parent's
+new region source must preserve its accepted pin to `H0`; changing the active Call to `H1` would
+also change protected/entered structure and refuses. An update cannot quietly call this a Task
+replacement merely because lowering ultimately contains tasks. The user can resume the old
+child unchanged, or explicitly authorize a distinct new agreement/run that references `H1` and
+selected evidence from `I`. Earlier effects, holds, reservations and the old run are still owned;
+no copied result proves them settled. If a commitment admits the new run, its ordinary accepted
+association consumes that commitment's remaining account, rather than adopting the old entered
+run into a fresh allowance. Conversion success therefore does not imply active-edit support.
+This is a modeled upgrade/refusal trace grounded in the existing protected-adoption rules, not
+an executed conversion or a promise to preserve arbitrary legacy edits.
+
+That example retains a refusal which already exists; it does not demonstrate that previously
+supported edits survive. P01 has a positive compatibility obligation as well as negative cases.
+The minimum supported corpus is current finite model-editor output, prompt-sequence output,
+managed protected root methods with their permitted Task-only prospective investigation/repair,
+and existing fork/join/parallel and pinned-call examples. Their currently supported operations
+must remain usable through the new source owner. An implementation cannot satisfy migration by
+refusing conversion for every member of those families. The exhaustive set of arbitrary valid
+hand-authored graphs remains the separate consequential compatibility question; a finite passing
+corpus must not be labeled a whole-language conversion proof.
+
+**Old agreements need an actual representation adapter.** Current
+[`protected_digest`](../../../../../crates/blueprint/src/agreement.rs) hashes workflow/blueprint
+identities, metadata, interface, full noneditable nodes and all boundary-crossing edges, including
+their old identities and port/binding structure. Equivalent runtime activation alone cannot keep
+that v1 fingerprint valid. Place a versioned pure `LegacyAgreementView` producer in
+`blueprint::agreement::legacy_v1`, alongside the v1 validator. Its inputs are the current checked
+program/ExecutionPlan, exact immutable origin revision and bounded stable conversion correspondence
+from source elements/plan entries/value links to legacy node/edge/port identities. Conversion owns
+that correspondence; clients cannot submit an authoritative digest or an unchecked mapping.
+
+The producer reconstructs the v1 semantic view from **current** source/plan meaning. It verifies a
+complete mapping of protected nodes and crossing edges, exact configs/inputs/results/interfaces,
+and no extra activation or data bypass before serialization in the original v1 shape/order. It may
+read old identity/material from the origin to reconstruct wire spelling, but may not copy the old
+protected nodes while ignoring changes in their mapped current source. Every relevant current plan
+entry/link must be accounted for; a new boundary or capability cannot disappear merely because
+the map predates it. Editable Task entries project their actual current `TaskConfig` and identities.
+Then the original agreement identity, protected fingerprint, prefix/count/requirement checks and
+cumulative revision rules apply. An inability to produce this complete exact view refuses conversion
+or adoption; agreement identity is never recomputed to bless changed protected facts.
+
+The conversion's origin and stable correspondence are provenance for this derived compatibility
+view, not a second editable or persisted graph. The v1 view is ephemeral, cannot be saved as a new
+source, and creates no alternate graph writer/scheduler. Runtime/control/publication call one
+blueprint agreement-validation entry point dispatching by recorded agreement/source version.
+New native program agreements use a new version with explicit stable region/element obligations;
+converting a method does not silently upgrade its accepted old agreement to that new format.
+Inherited-child origin checks, maximum adoptions and final effect-policy checks remain with their
+existing runtime/host owners.
+
+**Positive protected root trace.** Start an old governed root with `repair.begin` accepted,
+`repair.end` pending, fixed acceptance/verifier/effect nodes outside the allowed `repair.` prefix,
+and fixed crossing edges. In the supported converted source, insert a permitted ordinary
+`repair.investigate` task between those two tasks and replace only the pending repair instructions;
+preserve endpoint identities, crossing edges and accepted outputs. The derived v1 view must pass
+the same unchanged agreement, while prospective reconciliation preserves the completed occurrence
+and admits only the pending change under exact sequence guards. Restart must retain that adoption,
+account, holds and remaining revision ceiling. Changing the verifier, effect policy, boundary edge
+or protected Call must still fail. This is the semantics of the existing useful root repair tested
+in `blueprint/tests/agreements.rs::useful_investigation_and_repair_preserve_the_agreement_and_roundtrip`,
+extended to the proposed conversion/runtime path. It is required future evidence, not an executed
+test result. If the adapter cannot satisfy that positive case, the selected source implementation
+is incomplete for this corpus; blanket refusal is not a passing outcome.
+
 **Usable intermediate units.** First replace repeated graph traversal with the checked plan while
 old source remains the only writer; prove old revisions and active histories unchanged. Then add
 the complete program source/reader/compiler, full public edit operations and refusal-preserving
@@ -618,6 +731,12 @@ compliance has been observed. The remaining old-graph conversion limit is materi
 hidden behind the fact that all eight designed examples have a region representation.
 
 ## Discriminating observations and verification
+
+The coordinator subsequently ran Delta's standalone priority diagnostic through production runtime
+and redb. Swapping the two true arms' destination-associated port IDs changes the selected destination;
+the [exact source, command, hashes and output](priority-runtime-evidence.md) preserve that observation.
+This changes the first probe below from proposed observation to executed evidence. It does not execute
+any proposed region/ordered-vector behavior or establish frontend/model authoring quality.
 
 No Cargo was run by Delta; the coordinator owns authorized focused observations and documentation
 contracts. This document's packets are non-executable design notation. Useful safe probes are:

@@ -1,5 +1,14 @@
 # Production interface proposal
 
+**Historical F1/r3 build annotations.** The current
+[F1/r4 and F2/r4 interface contract](../deliverables/production-interface.md) supersedes graph-source
+and R-C01 reconvergence authoring, finite R-FE02 planning, method-only learning, and old phase
+assignments below. Current source is NP3; ongoing work is WorkCommitment; U17 permits evaluated
+nonexecutable knowledge. P01 delivers the full source owner, P02 includes browser foundation and
+the early connected application, P04 ongoing work, P07 knowledge and P08 combined use. Retain
+compatible layout, resource/public-invocation, custody, recovery and accessibility detail below;
+do not implement the superseded remedies as additional owners.
+
 Author Bram; F1/r3, 2026-10-10. This is a build specification and conditional recommendation under
 [G1/P1](vision-baseline.md), following the independent [BP1 position](product-position-bram.md),
 actual cross-examination and [product alternatives](product-alternatives.md). It is not an

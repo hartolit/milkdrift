@@ -1,4 +1,27 @@
-# Combined review and resolution — RR1
+# Combined review and resolution — reopened RR2
+
+Rowan-20261010 coordinates this addition. The `ff818e5` RR1 record below is preserved as historical
+exposure, including its insufficient decision to defer the planner-consumer investigation. Current
+source comparisons and decisions are linked from [review/evidence](../deliverables/review-and-evidence.md).
+
+| Actual reopened challenge | Change to the selected proposal | Reread and limit |
+| --- | --- | --- |
+| Critique: family coverage and behavior are not design justification | Audited all 24 actual packages before deeper work; recorded prior B/M/I/U and completed unequal scoped comparisons. | Dossier links actual source/history/consumers and four reports; unexamined platform/parser/fairness edges inherit no approval. |
+| Elin challenged Delta's graph advantage | Cross-sequence data references already work in stronger R; corrected graph compound authoring recreates an inferred region language. Delta changed M→R/NP3. | Actual exchange preserved in both reports; no authoring-quality measurement claimed. Migration/legacy-edit dissent remains consequential. |
+| Missing general agent consumer, driver-supplied orchestration | Whole-workspace production search and driver trace establish the gap. Approved U18 replaces finite B ceiling; strongest root alternative requires asynchronous owned-child/nonterminal semantics. Select WorkCommitment within control/controller, ordinary runtime execution. | Elin, Delta and Faris worked and reread alternative placements. Atomic association, origin establishment, authority and exact recovery specified, not merely a new table. |
+| U17 exceeds managed method evaluation | Knowledge selection and promotion source require method/resource/run facts. Closed knowledge/executable subject and controlled/retrospective assessment replace universal restriction within shared learning owner. | User explicitly allows honest self-review and nonexecutable knowledge; protected verifier/publication rules remain separate. |
+| Faris: policy is in storage mechanism | Move managed transition policy to pure persistence domain with redb transaction-local exact evidence; converge fresh admission and descriptor construction. | Unified invocation service developed on same lost-reply/lost-stop case; distinct facts positively justify retained owners. |
+| Rowan: R-A05 confused current reads and retained admin snapshots | Preserve historical command receipts; current management query derives per-record authorized view; public invocation uses existing filtered catalog. | Actual publications source and application receipt distinction inspected; no new public catalog authority. |
+| Faris/Elin: local stop cannot synchronously fence accepted B work | Owner-local durable entry fence traverses local publication ancestry; already-admitted physical effects and remote acceptance retain cancellation/uncertainty. | P04/adoption/P09 and A1/P2/F1 revised and reread; exact A-after-B-acceptance race added. |
+| Elin/Delta: policy changes and one-subject assessment were still vague | Specify AmendCommitmentPolicy successor/carry-forward/generation with fixed ceilings; typed SingleSubject/Paired verdicts and finite comparison/dispute rules. | Primary agency contract and program updated; no budget top-up or general equivalence oracle implied. |
+| Faris/Elin/Delta: legacy execution is not unrestricted future repair | Expose conversion-gated edit loss to user; mandatory positive model/importer/protected-root/parallel/call corpus and exact LegacyAgreementView prevent refusal-all loophole. | Writer transition requires user's compatibility disposition. Existing inherited-child refusal is not presented as a new regression. |
+| Faris: same-binary reopen is not upgrade; knowledge evidence can be misused at promotion | Add actual old-store suspended-parent/entered-child/account/receipt fixture and wrong evidence-variant qualification oracle. | Final program reread supports ownership contract, future executable proof remains required. |
+
+The [program review](program-review.md) records the final actual transfer read and exact remaining
+conditions. U17/U18 are approved behavior; source/commitment/evidence implementation is proposed.
+No reviewer count, document length or agreement grants implementation approval.
+
+## Preserved combined review — RR1 at ff818e5
 
 Rowan-20261010 coordinates this record and authored the product synthesis/program; this is not
 independent endorsement of that work. Separate first positions were recorded by

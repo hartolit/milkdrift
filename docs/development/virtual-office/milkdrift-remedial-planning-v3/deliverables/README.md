@@ -1,14 +1,15 @@
 # Milkdrift planning proposal for review
 
-**Reopened:** the user did not accept the previous planning completion or authorize this program.
-The [follow-up critique](../reopened-critique.md) now governs deeper comparative investigation.
-The documents below preserve the `ff818e5` candidate until the reopened findings revise it; selection
-labels are provisional, not conclusions the investigation must defend. Current work and exact
-continuation are in the [handoff](../handoff.md).
+**Revised after the reopened investigation:** the user did not accept `ff818e5` as completion.
+The [follow-up critique](../reopened-critique.md) led to the deeper comparisons and changed proposal
+below. U17/U18 approve product directions; architecture and implementation remain for review. The
+legacy-editing compatibility preference is explicitly pending unless the [handoff](../handoff.md)
+records a later user decision. The source writer transition cannot proceed on silence.
 
-The v3 planning sprint investigated the existing product and its source intent, compared alternatives,
-ran isolated observations, and revised the proposal through actual opposing reviews. These documents
-propose a target and complete implementation sequence. They do not authorize or claim implementation.
+The reopened work audited 24 packages at stated depth, investigated source/relationships/history,
+worked concrete competing designs, ran an isolated runtime discriminator and changed recommendations
+through opposing reviews. These documents propose a target and implementation sequence with the
+stated compatibility condition. They do not authorize or claim implementation.
 
 Start with the [decision brief](decision-brief.md). It distinguishes verified strengths, selected
 planning improvements, tradeoffs requiring your decision and remaining proof. The other documents

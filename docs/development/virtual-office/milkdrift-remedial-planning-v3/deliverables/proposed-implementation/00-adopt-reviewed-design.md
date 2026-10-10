@@ -8,7 +8,9 @@ Read [shared context](context.md) and the full decision brief/review resolution 
 Inspect Git status/HEAD/recent changes, actual source/constants/readers/tests/manifests and other
 active assignments. Reconcile source drift against the planning baseline; rerun only observations
 whose meaning changed. Preserve user edits. Record exactly which choices were approved, rejected or
-conditional. Do not mark B1–B5 approved because the user approved an independent first slice.
+conditional. U17/U18 already approve product directions, not commitment placement or structured-source
+implementation. Resolve the explicitly presented legacy-editing compatibility choice before assigning
+the writer transition. Do not mark excluded extensions approved because a first slice is assigned.
 
 Adopt enduring purpose into `docs/product/vision.md`: explain outcomes and remove accidental
 screen/headless-first prescriptions as governing intent. Architecture owns executable responsibilities,
@@ -28,7 +30,10 @@ Correct the confirmed architecture prose drift: current `JoinPolicy::Any` accept
 loser quiescence. Check `try_satisfy_join` and its tests before editing the canonical explanation.
 This correction describes existing behavior and does not authorize changing the policies.
 
-Write the concrete transition inventory for chosen changes: current supported blueprints/mutations,
+Verify the concrete transition contract already selected in the adoption plan and NP3, including
+LegacyAgreementView, positive conversion corpus, unproved-edit refusal, commitment-origin accounts,
+policy successor/carry-forward and historical protected-learning profile. Foundational owners are not
+new implementation discovery assignments. Inventory exact current blueprints/mutations,
 commands/receipts, optional snapshots, layouts, run/event records, active/uncertain work, current CLI
 and peer consumers. Do not promise a whole-store migration that has no reader/rollback design.
 Record which owners are unchanged. Inventory is an adoption input, not a new permanent status page.

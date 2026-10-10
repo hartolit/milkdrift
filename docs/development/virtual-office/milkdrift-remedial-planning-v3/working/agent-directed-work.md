@@ -6,6 +6,14 @@ implementation. It uses the supplied reopening request, original selected
 reviewer's recommendation was read before this initial position was recorded. Source inspection
 is evidence of current behavior; the proposed operations below are modeled, not executed.
 
+**Current disposition after review:** U17/U18 supersede the initial finite ceiling and overly
+restrictive evaluation assumptions preserved below. Automatic bounded ongoing work and honestly
+labeled human knowledge assessment are approved product directions, not production authorization.
+The recommendation is canonical structured method source plus a continuous `WorkCommitment`
+coordination owner within the existing control/controller responsibility. The complete C design
+and its final refinements below own that recommendation; “session” is its earlier working name.
+Knowledge need not be an executable method. No positive evaluation itself adopts or publishes it.
+
 ## Initial position before comparative review
 
 Milkdrift has a strong admission and durable execution substrate, but the current product does not
@@ -184,7 +192,7 @@ reconsideration under one project budget is the product promise. It is more than
 UI: it needs an owner for session transition receipts, lifetime, budget inheritance and in-flight
 reconciliation. Simply adding a mutable “current plan” table is not that design.
 
-**Selection: B, with an explicit finite boundary.** Milkdrift should own a complete assistance
+**Initial selection: B, superseded by U18 and the C review below.** Milkdrift should own a complete assistance
 round now; it should not advertise that as a general autonomous project session. It delivers
 the required goal and criticism actions without introducing a second scheduler or requiring the
 client to construct model provenance. S28's human can initiate “reconsider after this criticism”
@@ -314,6 +322,10 @@ bytes; the other says exactly why this attempt selected or omitted them. The con
 must derive those facts from their owners rather than copy editable authority into a new packet.
 
 ## Evaluated lessons: avoid turning Slotbook into the general product
+
+This initial scope comparison preceded U17. Its diagnosis of current restrictions remains; the
+final U17 disposition below replaces its narrower assumptions about reviewer independence,
+predeclaration and knowledge being an executable method.
 
 The implemented [learning declaration](../../../../../crates/control/src/learning.rs) requires
 agreement/policy/verifier digests, exact protected check names, separate managed workspaces and
@@ -496,3 +508,452 @@ construction plus whole-graph validation and a derived ownership index. Both sti
 capability schemas, explicit context, preserved evidence and a fresh-context packet. Assistance
 must provide a canonical editable **method** view; generated plumbing is not a sufficient
 goal-to-plan interface.
+
+## C developed fully: continuous bounded work, without another task scheduler
+
+The coordinator challenged B's finite scope; the user subsequently approved continuous authorized
+coordination in U18. The initial selection above remains as a record of that narrower
+interpretation. This section supplies the stronger C as an implementable alternative, including
+why “just compile it into the existing root” is not yet a complete answer. It is a modeled design,
+not a claim that the current product has these operations.
+
+The useful additional outcome is concrete: after the independent critic reports the bad premise,
+Milkdrift pauses affected future work, starts a fresh planning context, admits a revision, resumes
+permitted work and later evaluates the lesson, without a human manually starting each new round.
+The human still owns the goal, authority, cumulative allowance, required independence, acceptance
+obligations and any changed agreement. These choices are fixed in an immutable
+`WorkSessionPolicy`, not repeatedly reinterpreted from a chat transcript.
+
+### Compare the two plausible session state placements
+
+| Placement | Complete mechanism | Consequence |
+| --- | --- | --- |
+| Ordinary root orchestration run | A root Repeat/Parallel method owns the account; planner/critic/work children inherit it. Dynamic admitted-method selection must bind an exact child revision before creation. Explicit loop-carried state and nonterminal checkpoint/monitor behavior let a coordinator act while a work child is paused. | One runtime history is attractive, but those last operations do not exist in today's pinned, terminal-returning Call contract. A new dynamic Call plus asynchronous child-monitor/ownership rule would be real additional runtime semantics. It is not enough to draw a Repeat around existing tasks. |
+| Control-owned session with exact runtime associations | Control owns accepted next-work decisions and bounded pending actions. Runtime owns every accepted work/model run and all task scheduling, attempts, effects and recovery. Persistence atomically validates account associations when a session action creates a run. | Adds a real application coordination record but does not duplicate task lifecycle. Can react to a paused or running work run using public owner facts; avoids forcing an artificial never-ending workflow around the user's methods. |
+
+The limitation of the first route is source-backed. Current
+[subworkflow driving](../../../../../crates/runtime/src/engine/structured/subworkflow.rs) starts
+an exact pinned child from a parent execution and imports its outputs on terminal observation.
+A paused child remains active; it does not return a next-round result. Current
+[repeat driving](../../../../../crates/runtime/src/engine/structured/repeat.rs) consumes a fixed
+pinned body and its completion/condition. A planner revising its own root also observes a sequence
+that its own output then advances. A carefully designed future root method can solve these, but
+it needs exact new semantics; claiming it uses only current primitives hides the design work.
+
+For C, recommend the **control-owned session**. This is not a general competing scheduler:
+`SessionOwner` decides which already-authorized method/analysis should be requested next; runtime
+alone decides when each method's nodes and external operations enter. There is a new coordination
+state machine, and it must earn its cost by eliminating external-driver stage tracking and by
+giving continuous intent, interruption and a total allowance one durable owner. It should replace
+evidence-driver orchestration, not coexist with an undocumented client supervisor.
+
+### Types, public operations and ownership
+
+`control::session` owns `WorkSessionPolicy`, `SessionIntent`, `SessionDecision`, packet preparation,
+response admission and a pure `plan_session_transition`. The policy fixes goal/input artifacts,
+allowed methods/capability envelopes, mutable target set, permitted proposal/application risk,
+critic independence rule, result obligations, model selection, maximum rounds/rejections/time,
+maximum concurrent work, cumulative resource budget, interruption policy and stop/escalation
+rules. It permits a narrowed successor request; changing the accepted goal/obligations or widening
+authority/budget requires a separate authorized policy decision with its own provenance.
+
+Public operations are `CreateWorkSession`, `SubmitCriticism`, `AnswerClarification`,
+`PauseWorkSession`, `ResumeWorkSession`, `CancelWorkSession` and `InspectWorkSession`. Candidate
+approval/application and uncertain-work resolution retain their ordinary operations; session
+actions reference those receipts. `CreateWorkSession` takes the reviewable prepared intent/policy
+and exact command identity. The response returns session, policy, account and accepted action
+references; it never treats an absent model result as an empty plan. `SubmitCriticism` and
+`AnswerClarification` bind exact selected artifacts and an expected session version. An answer
+also binds the outstanding question identity, so answering one round cannot release another.
+
+Persistence owns `SessionActionRecord` and a `SessionExecutionAssociation` contract. Session
+actions are append-only accepted facts, grouped by session sequence, with ordinary application
+command receipts for exact replay. A bounded projection/index may retain current pending actions
+and question; it is rebuildable from those records. It stores artifact/run/command references,
+not copies of run events, capability status, model text or execution outcomes. `SessionOwner`
+uses a narrow session journal port implemented by redb; daemon authenticates requests and
+composes a bounded continuation driver in its existing owner queue.
+
+The projected phases are `NeedsDecision`, `Planning`, `Working`, `AwaitingAnswer`,
+`AwaitingApproval`, `Paused`, `Stopping`, `Completed` and `Stopped`. `Working` contains a bounded
+set of accepted work associations and pending criticism references; their actual lifecycle is
+read from runtime. Phase changes are not evidence that an invocation succeeded. `Stopping`
+remains distinct from `Stopped` while cancellation, account reservations or uncertain effects
+remain unresolved. The policy can explicitly allow further authorized resolution operations,
+without reopening ordinary new work.
+
+The model returns one bounded `SessionDecision`:
+
+- `Clarify` with a question and the exact ambiguity blocking the next action;
+- `ProposeMethod` or `ProposeRevision` with canonical structured method edits, selected citations,
+  rationale and declared affected work;
+- `RequestWork` or `RequestCriticism` naming an admitted method/revision and exact input mapping;
+- `Conclude` with result/evidence references, or `Escalate` with the unmet authority/obligation.
+
+These are requests to control, not executable commands. The owner binds actor, model invocation,
+profile, response and context manifest; validates citations against the selected packet; validates
+method edits through blueprint; and evaluates the corresponding existing authority operations.
+It can reject a forbidden decision without asking another model to “explain why it was safe.”
+Critic identity is selected by the accepted independence policy, never by a candidate's assertion
+that its own output is independent. Result obligations are checked against accepted output and
+verification facts before `Conclude` can become completion.
+
+### One cumulative account, with a real origin
+
+Do not manufacture a terminal-only controller run merely to obtain a session account. Current
+[account declarations](../../../../../crates/persistence/src/controller_account.rs) already
+distinguish controller occurrences and published invocations, but retain a mandatory controller
+run and optional origin fields. Replace the new-write origin shape with a closed
+`ExecutionAccountOrigin::{ControllerOccurrence, PublishedInvocation, WorkSession}`. A session
+origin binds session ID and immutable policy digest, with no invented run identity. The existing
+resource totals, reservation IDs, admission/settlement/byte-charge transitions and conservative
+unknown-use behavior remain one implementation. The name can become `ExecutionAccount` as all
+consumers migrate; a public alias must not preserve two editable owners.
+
+Every planning, criticism, target and evaluation run admitted by this session binds that account
+and a frozen authority basis before it can start. Descendant workflows inherit both as they do
+now. A independently published restricted method still uses its own service authority and
+internal allowance; the caller's session retains its invocation reservation and attributable
+outer usage under the existing serving contract. Do not claim the caller can inspect or directly
+control its internal account. Unknown charges remain reserved; retries, fresh contexts, a new
+method revision and daemon restart cannot establish another session allowance.
+
+`SessionExecutionAssociation` names session/action/policy/account, child run and exact revision,
+canonical inputs, caller authority decision and derived create/start command IDs. It is created
+only from an accepted session action. A caller cannot bind an arbitrary run by supplying an
+account ID or `is_child` flag. Before runtime accepts creation, the journal transaction rechecks
+that exact accepted action, unconsumed association, account origin, authority containment and
+session cancellation/deadline. It commits run creation and `BindRun` together. The session's
+active-run association is the accepted action reference; no copied run status is committed there.
+
+### Atomic handshakes and recovery
+
+| Boundary | Accepted state and crash behavior |
+| --- | --- |
+| Create session | One application transaction commits canonical command receipt, immutable policy, account establishment and first pending action. If account establishment cannot commit atomically, no session is accepted. A lost reply replays this result. |
+| Decide to invoke model/work | A session transition records the complete packet/input digest, exact run identity/revision and deterministic create/start keys before any runtime call. This is intent, not proof of external entry. Capacity/round bounds include pending actions. |
+| Create/start run | Runtime creation and account binding commit under the exact accepted association. Start uses its stable ordinary command key and existing authority/requirement checks. Crash between create and start leaves a recoverable unstarted run, never an unaccounted model call. |
+| Observe result | Driver reads the accepted output/attempt/manifest from its owning run. It records one consumption keyed by action and output digest. Missing or conflicting terminal evidence leaves the action unresolved; it does not issue another model call. |
+| Submit proposal | Session first records the exact proposal command/digest. Ordinary control/runtime receipt is authoritative. If proposal commits and response/result publication fails, recovery queries/replays that same command and derives the same session result. It never substitutes a newly generated proposal. |
+| Apply/resume | Separate accepted action references exact proposal, plan, approval and apply/resume command keys. Current revocation and target guards are rechecked. A stale target produces retained refusal and a newly budgeted planning round only if policy permits. |
+| Criticism during work | Authenticated operation or a declared critic output records the criticism artifact once. Preauthorized pause is an ordinary target command; only after its result and current target frontier are known is a new packet prepared. Already entered work remains owned and may become uncertain. |
+| Clarification | A durable question stops dependent new work. An exact authenticated answer appends a new fact. Restart neither fabricates an answer nor times out into permission. A deadline can stop the session under policy. |
+| Stop/cancel | Session closes new action admission before requesting ordinary run cancellation. It retains active work references and reservations until their owners establish settlement or an authorized resolution. Inspect distinguishes stopped coordination from unsettled external work. |
+
+The driver processes bounded pages of pending session actions on the existing daemon maintenance/
+continuation path; it never runs provider calls inline or keeps an unbounded callback queue.
+Waiting/notification loss changes observation latency, not accepted transition identity. Source
+selection and current read authority are checked anew for a new planning packet. A model retry
+for the same entered attempt uses the frozen selection; a new round with new evidence has a new
+packet and consumes the same remaining session allowance.
+
+### S28 through this C
+
+Create records `G0/R0`, obligations, independent critic actor and total budget. The first planning
+run returns a canonical structured investigation method. Control admits it; runtime starts the
+associated work run under the session account. Independent analysts use branch-isolated context;
+the configured critic receives only explicitly exported results. Its declared criticism output
+or `SubmitCriticism` triggers the policy's pause action. The session records that the startup-only
+premise was challenged, selects `I1/C1` and current pending/active target facts, and starts a fresh
+planning run. The model proposes a future probe and regression check. Control validates the
+structured source and ordinary proposal, requires approval where policy demands it, then applies
+and resumes through the exact target commands. Old evidence remains unchanged.
+
+If the requested edit crosses a protected agreement boundary, the session enters escalation and
+cannot authorize itself to change the agreement. If a remote operation is uncertain, it requests
+or waits for ordinary authorized resolution instead of creating a replacement call. Resource
+editing holds remain with the actual active work. After accepted implementation/verification,
+an independent evaluation declaration reserves role slots before lesson generation; it does not
+pretend to know the eventual candidate revision or attempt IDs. Later accepted bindings fill those
+slots with exact candidate/run/attempt facts. Evaluation results and any lesson approval then
+become selected artifacts for a later session under its own read authority.
+
+### Adoption and tests specific to C
+
+Implement C's session contract, account-origin transition and association handshake together before
+allowing any session-driven external entry. First expose a usable explicitly stepped session that
+retains state through public commands; then enable the same bounded continuation driver, without
+adding a second execution path. Migrate generic assistance-round preparation/admission into session
+actions, so B becomes a one-round policy of C rather than a permanently competing orchestration
+implementation. Remove evidence-driver phase/provenance/retry bookkeeping once the product owns
+it; retain independent counters, faults and assertions.
+
+Historical controller/publication accounts keep exact old identity/digest/replay readers and lower
+to the corresponding closed origin; their accepted declarations are not rewritten. New sessions
+start only under the new contract. Existing unrelated or uncertain runs are not automatically
+attached to a session; observing their evidence is permitted separately, while taking control and
+accounting ownership needs an explicit supported association decision. The initial scope should
+refuse adoption of already-entered independent work into a fresh allowance, because doing so could
+drop its unknown liabilities. A session may still propose a revision to such a target under its
+own authority, clearly retaining the target's separate account.
+
+Fault tests must stop after each table row's commit and before the next, reopen the daemon and
+assert one account, one accepted model/work run, one proposal and unchanged external invocation
+count. Exercise criticism while a child is running, criticism while paused, lost proposal reporting,
+revoked source/actor authority, duplicate/conflicting answers, exhausted round and account bounds,
+unknown remote usage, and cancellation with a retained editing hold. Tests must independently
+inspect the actual runtime/account/serving owners instead of trusting a session phase string.
+
+C is now concrete enough to compare. U18 approves its continuous-work outcome; the following
+disposition selects C's concrete ownership for the revised planning recommendation, subject to
+final user review. It does not authorize production implementation or require automatic acceptance
+of every proposal, generic statistical evaluation or privilege bypass.
+
+## U18 disposition: one continuous work commitment in the existing controller owner
+
+U18 resolves the product scope: manual reinitiation remains an operating choice, but cannot be
+Milkdrift's capability ceiling. Rename C's public concept and operations to `WorkCommitment`,
+`WorkCommitmentPolicy`, `CreateWorkCommitment`, `InspectWorkCommitment`, and corresponding
+pause/resume/cancel/criticism/answer commands. Locate the coordinator at
+`control::controller::commitment`, with packet/admission helpers in the same control owner.
+Do not add a parallel generic `control::session` framework. The earlier C names describe the
+same candidate, not a second implementation to retain.
+
+The distinct durable fact is the accepted ongoing goal, permitted next-action policy and total
+allowance **before any method exists and across several method revisions/runs**. It cannot be
+identified with one immutable method, one execution run, one attempt or one published service.
+It may be represented by existing runtime ownership if the necessary asynchronous supervision
+semantics are added; the product distinction alone does not prove a new database table necessary.
+The selected physical representation is a narrow persistence commitment journal and account
+origin, because the strongest runtime-root alternative changes more core lifetime semantics.
+
+Delta's cross-review identified the complete root alternative, rather than declaring it impossible:
+`StartOwnedChild` freezes an admitted method/account and returns a handle while the root retains
+the child's lifetime; `Observe/AwaitOwnedChild` exposes checkpoint/terminal facts; a parallel
+supervisor consumes criticism with explicit loop-carried evidence; root cancellation/drain keeps
+the child owned after the start action has returned. This shares runtime and could make the
+supervisory algorithm an ordinary reusable method. It also introduces asynchronous child escape,
+checkpoint visibility and cancellation ownership into the core structured-concurrency model.
+Dynamic `CallTarget::AdmittedPlanResult` alone addresses only the pin, not those relationships.
+
+The selected commitment owner instead names accepted actions and exact associated runs, while
+runtime retains all task/result/lifetime truth. Its advantage is the locus of change: a new
+criticism policy changes the control-owned next-action contract and planning method, without
+teaching every Call/Parallel/Repeat consumer a new asynchronous lifetime. The cost is that the
+coordination policy is not itself an arbitrary editable workflow. Its planner/critic/evaluation
+methods are ordinary reusable methods; the closed coordination policy defines when and under what
+authority those methods may be requested. If users need arbitrary user-authored asynchronous
+supervision itself, the root alternative becomes valuable and should be reconsidered openly.
+
+`ControllerLifecycleOwner` remains the bounded-repeat/account assessment adapter. Existing
+controller-wrapper definitions continue with their recorded semantics and ordinary authored
+repeat use. New product continuous-work requests use the commitment coordinator; do not silently
+install another wrapper loop around it. One-round/manual assistance is a policy of this owner,
+not a second orchestrator. Shared account admission/settlement stays with persistence/runtime.
+The new closed origin is `ExecutionAccountOrigin::WorkCommitment`; old controller/publication
+origins preserve exact readers and historical digests.
+
+Criticism triggers **assessment**, not automatic acceptance or necessarily pause/repair. The
+policy may continue unaffected work while assessing a critique, or pause a named potentially
+affected frontier before the model reads it. The assessed outcomes include retaining the original
+conclusion with reasons, further investigation, prospective revision, escalation and stopping.
+An equivalent canonical method/plan plus no new selected evidence counts toward a finite
+`maximum_no_progress_rounds`; rejecting a critique with a new reason is retained evidence, not
+proof of progress. The owner checks a declared progress rule against accepted artifact/revision/
+outcome identities, never a model's “I made progress” Boolean. All attempts consume the same
+remaining commitment allowance.
+
+The control-owned no-progress comparator uses a bounded structural normal form: preserve ordered
+sequence/clauses, task configuration, typed value references and exact external pins; alpha-normalize
+generated internal identities consistently and omit layout, timestamps and explanatory reason text.
+Evidence novelty uses the policy's finite accepted roles plus content/accepted-observation outcome
+keys, not a new artifact/request ID. Duplicate observations or freshly phrased reasoning alone do
+not reset the counter. This is a declared mechanical proxy, not a proof that arbitrary methods are
+semantically equivalent or that new evidence is true. Original absolute round/time/allowance limits
+apply regardless of the proxy's result. Test identifier-only rewrites, timestamp-only evidence and
+new reasoning with unchanged accepted observations against the unchanged-work counter.
+
+Faris's source review adds three necessary account/authority details. Current account
+`Establish` requires `bind_run == controller_run`; therefore add an explicit commitment-origin
+establishment transition with no fabricated run, not just another enum field. A new
+`WorkCommitmentAuthorityBasis` freezes actor, grant, policy and revocation facts; the existing
+`ExecutionAuthorityBasis` remains per actual associated workflow/run. Each association obtains
+the ordinary fresh start decision and cannot gain read/control of arbitrary runs merely by
+holding a commitment handle. Authority gains explicit commitment scopes/operations. Old grant
+schemas have no such scope and cannot silently authorize new commitment mutation through a
+historical wildcard; new grants must opt into the new versioned scope.
+
+Current `ControllerLifecycleOwner::assess` specially accepts an inherited published-invocation
+account only when its whole budget fits the inner marked controller's limits. Extend that exact
+rule to commitment-origin accounts. Otherwise refuse local association before start; do not
+pretend a new inner marker creates an independent allowance. The existing published-service route
+may use its separately declared internal allowance and caller reservation under its own contract.
+Generated commitment analysis/work methods use ordinary methods, not duplicate controller markers.
+General hierarchical budget slicing is not introduced by this plan.
+
+Two corrections make C's recovery/enforcement contract complete. First, every pending action
+retains the **exact canonical internal create/start/proposal/apply command material**, including
+generated source, inputs, expected guards and authority, as bounded immutable artifacts or record
+fields before effects. IDs and packet digests alone are insufficient: a changed compiler after
+restart must not reconstruct a different request under the old identity. Runtime receipt replay
+still owns any command-specific delivery-time normalization; commitment recovery does not invent
+a new one. This follows the [application receipt comparison](application-reconstruction.md).
+
+Second, commitment pause/cancellation/deadline is enforced at owner-local final entry, not only
+by a driver that may be asleep. A persistence-owned admission gate bound to the account origin records
+`Open`, `Paused` or `Closed` plus immutable deadline/policy facts. Commitment transition and gate
+change commit together. Runtime/host final-entry transactions read this gate and trusted boundary
+time alongside the existing reservation transition. Paused/closed/expired commitments cannot
+admit a new local capability entry governed by that commitment. The entry transaction traverses
+actual accepted local publication/child ancestry; a separate immediate publication account must
+not hide a local controlling commitment. A durably admitted effect may physically begin after
+closure and remains subject to ordinary cancellation/uncertainty. A remote or published invocation already
+accepted by another owner B has its own admission/account authority: closing A's commitment does
+not synchronously fence B. If cancellation is delayed, B may still admit its child until B's own
+cancellation, deadline or current-authority rule prevents entry. A retains the attributable outer
+reservation and uncertainty; no new remote fence protocol is implied. Terminal reporting, artifact
+settlement and authorized uncertainty resolution continue. Resume requires current authority and
+remaining allowance; cancellation does not reopen. Pure gate decisions live beside existing
+account transitions, while redb reads and checks the actual durable association/gate in the same
+transaction. No caller-supplied Boolean can substitute for these facts. Pausing an affected target
+run for criticism is a separate operation and can leave the commitment's planning admission open.
+
+`AmendCommitmentPolicy` takes exact expected commitment sequence and policy version, an immutable
+successor policy, and bounded explicit carry-forward action IDs/digests with their current frontier
+evidence. Its authenticated authorization is separate from planner-result admission; the closed
+planner decision enum cannot amend its own policy. Acceptance atomically pauses owner-local
+admission at a new gate generation and retains the successor and affected-action disposition.
+Each carried action preserves its original exact command, authority basis, obligations and target;
+the successor adds a current restriction/authorization check, not rewritten history. Actions whose
+unentered future work is affected remain held or receive an exact ordinary cancellation/proposal;
+they need a newly accepted action before replanning or continuation. Already-entered effects keep
+their actual obligations and uncertainty. A changed protected agreement needs a separately accepted
+agreement and new run; this operation cannot weaken it in place.
+
+Before reopening admission, control validates every listed carry-forward against current rights,
+the successor policy and whole-allowance containment. It cannot carry an old run into broader
+authority. A newly permitted scope can authorize a fresh future run with its own ordinary execution
+basis under the same commitment account, leaving prior runs and liabilities intact. No automatic
+rebase of a saved command or target follows from a policy change. An answer received for an earlier
+question/version remains attached to that question and is not silently accepted for its successor.
+
+The commitment's original aggregate cost, entry/round and time ceilings remain fixed for its
+lifetime. Successor policy can impose a stricter future stop without refunding settled or reserved
+usage; it cannot raise the original ceilings, reset elapsed time/rounds or discard unknown usage.
+Budget top-up is excluded from this implementation contract. After exhaustion an authorized person
+may explicitly create distinct new work and allowance, with the old stopped commitment and its
+unsettled liabilities shown; the product must not present that as continuation on the original
+budget. This fixed-ceiling choice meets U18's prospective requirements changes without inventing an
+account-amendment transition or a hidden reset.
+
+The public continuation/account view must distinguish pending decisions, eligible future work,
+active associated runs, outstanding questions/approvals, exhausted/no-progress stops and unresolved
+effects. It may derive these views from their owners. It must not persist another mutable copy of
+each run's status. A fresh context can therefore resume the commitment from owned facts rather
+than reconstructing a remembered supervisor conversation.
+
+## U17 disposition: evaluated knowledge without invented executable methods
+
+The earlier paired-result proposal was too restrictive. U17 explicitly permits author self-review
+when labeled, retrospective assessment when labeled, and useful knowledge that has no executable
+method. It requires reasoning, limitations and counterevidence. This changes the representation;
+making `LearningDeclaration`'s existing method/resource fields nullable would obscure the distinct
+finite claims and weaken protected publication.
+
+The actual current selection owner confirms that this is more than renaming a comparison.
+`select` in [daemon learning](../../../../../apps/daemon/src/host/commands/learning.rs) requires
+one to eight exact run pages, resolves `selection.method`, requires an existing nonremoved managed
+installation and authorizes `resource.inspect` through capability administration. Supersession
+must preserve the workspace; changing the applicable method requires a retained `Promotion`
+receipt. Approval also accepts only `Promotion` with an eligible method comparison.
+[Promotion handling](../../../../../apps/daemon/src/host/commands/learning/promotion.rs) is actual
+publication through `PublishedWorkflowService`, with an exact service template/generation and
+separate publication authorization. Thus a legitimate research artifact with no run pages or
+managed installation cannot enter this current knowledge selection, and a knowledge-only approval
+cannot be represented by its current approval field. These are source-established restrictions,
+not assumptions based on the Slotbook example. Keep their protected-profile meanings while
+replacing their claim to be the universal knowledge contract.
+
+Keep `control::learning` as the one evidence-selection/comparison/adoption application owner.
+Use ordinary immutable artifacts and existing authenticated application receipts. Introduce a
+closed `LearningSubject::{Knowledge, ExecutableMethod}` in new declaration/assessment documents:
+
+- `Knowledge` binds exact artifact/version references for a lesson, explanation, decision or
+  method description, its source inputs and applicability. Baseline/candidate outputs may be
+  compared, or one result assessed against a stated criterion. No workflow identity, managed
+  resource, deployment target or service generation is fabricated.
+- `ExecutableMethod` binds exact canonical method revisions and evaluated invocation/run/output
+  facts. The existing protected-publication profile retains required agreement, verifier, target,
+  candidate-byte, resource isolation and repair-count obligations as a closed subvariant.
+
+A `KnowledgeItemDocument` is an immutable artifact containing the bounded claim, applicability,
+reasoning/source references, limitations and counterevidence. It is not a new mutable knowledge
+database or a replacement for ordinary files. An item may point to a selected managed working
+area/export when that is its real origin; unmanaged research artifacts remain first-class inputs.
+`SelectSources` resolves authorized artifact identities and exact source pages for either subject.
+It no longer requires `method` and `workspace` merely to select nonexecutable knowledge. Actual
+resource associations retain their generation/read checks. Source selection remains separate from
+an assertion that a lesson is correct or approved.
+
+New `AssessmentDeclaration` names subject/role slots, criterion/rubric artifact, allowed reviewer
+policy, evidence kind and comparison rule. Its basis is closed:
+`Controlled { accepted_declaration, reserved_slots }` or
+`Retrospective { assessed_sources, criteria_recorded_at }`. A controlled claim binds the criterion
+before comparison; a held-out executable experiment additionally retains its existing stronger
+pre-generation isolation requirements. Role slots, not unknown future candidate/attempt IDs, are
+reserved before generation. Later authorized binding records exact candidate/version/output facts.
+A retrospective record never acquires controlled status merely because its author calls it a test.
+
+`RecordAssessment` binds exact inputs, compared versions/outputs, criterion, authenticated reviewer
+and grant, judgment, reasoning, limitations and counterevidence. Reviewer relationship records
+authorship and known participation/source relationships; unknown independence remains unknown.
+Self-review is allowed unless the declaration explicitly requires a distinct/independent reviewer.
+Agreement between several reviewers does not prove independence. The owner derives known author
+relationships from retained provenance and retains declared/unknown relationships separately; it
+must not fabricate stronger assurance than those facts establish.
+
+The reopened transfer read found that “one result assessed against a criterion” did not yet choose
+its judgment shape. Close that handoff explicitly: `AssessmentShape::SingleSubject` names one
+exact subject/result role and accepts `MeetsCriterion`, `DoesNotMeetCriterion` or `Inconclusive`;
+`AssessmentShape::Paired` names exact baseline/candidate and input roles and accepts `Better`,
+`Equivalent`, `Worse` or `Inconclusive`. These are authenticated reviewer judgments under the
+stated criterion, not assertions of objective verification. Each declaration selects the finite
+rule `NamedReviewer` or `PairedNoRegression`, fixing its required reviewer/case slots. The latter
+requires no worse declared case and at least one better case; it makes no statistical claim.
+Missing/unknown required evidence yields `Inconclusive`; incompatible bindings are refused before
+comparison. Contradictory required judgments produce `Disputed`, retaining the exact differences
+rather than manufacturing consensus or picking the latest favorable reply. A declaration whose
+required reviewer slots are not compatible with its finite rule is rejected at declaration time.
+
+Evidence kinds remain `HumanJudgment`, `AgentJudgment` and `AutomatedVerification` with their
+actual producer contracts. A favorable human judgment means that reviewer preferred/accepted the
+exact result under the stated criteria. It is not a machine-check pass, statistical superiority or
+universal improvement. The existing private trusted-verifier journal remains the owner of protected
+effect checks; uploaded assessments cannot impersonate it. Mandatory technical checks remain
+mandatory even if every reviewer prefers the candidate.
+`ActorRef` itself is only an authenticated identity, not a human/AI classification
+([authority identity](../../../../../crates/authority/src/identity.rs)). Human-review attribution
+is an explicit authenticated reviewer attestation. Configured model-review attribution links the
+verified producing invocation, profile and context; protected automated verification links the
+trusted verifier journal. Do not imply a bearer token or an uploaded label proves a human's nature
+or a model's actual execution. Known producer evidence and declared/unknown relationships remain
+separate in the public view.
+
+`Compare` derives the declared finite conclusion from exact assessment/run/verifier receipts. It
+retains disagreement, failure, missing evidence and inconclusive outcomes. A simple declared
+judgment rule can recognize an authorized preference or paired no-regression criterion; the owner
+does not parse free prose into a score. `ApproveKnowledgeForReuse` is a separate authorized receipt
+binding an exact item/version, supporting assessments, applicability and limitations. It makes
+that item eligible for explicit selected reuse; it does not mutate existing runs, replace the
+current method or grant publication rights. Method selection/adoption and publication remain
+their ordinary separate operations. Automated approval is not inferred from favorable evaluation.
+An approval may preserve an explicitly bounded negative, disputed or retrospective finding as
+useful guidance, caution or an open question, with its reuse purpose and rationale recorded. It
+cannot relabel the underlying verdict as favorable or remove contrary evidence from its basis.
+
+Extend existing `LearningRequest` with these closed subject/declaration/assessment/knowledge-
+approval variants and keep the protected method operations under their explicit profile. Move
+domain orchestration from daemon learning handlers into the control owner as already proposed;
+daemon continues authentication/wire/receipt adaptation. Historical v1 declarations/comparisons
+retain exact protected-profile meaning and replay bytes. New writers emit the new versioned forms;
+no old negative result becomes a new positive knowledge approval during migration. The source
+selector's old method/publication fields lower only for historical records, not as hidden defaults
+for new knowledge items.
+
+Acceptance cases now include: author self-review visibly labeled; a declaration requiring an
+independent reviewer refusing that same actor; a retrospective preference staying retrospective;
+two agreeing reviewers with shared sources retaining that relationship; a negative assessment
+remaining discoverable; a favorable knowledge judgment failing to authorize a protected effect;
+and a selected approved lesson entering a later commitment's fresh-context packet with its
+limitations and counterevidence still attached. These test the user's actual evidence semantics,
+not an invented requirement that all knowledge become executable or statistically qualified.

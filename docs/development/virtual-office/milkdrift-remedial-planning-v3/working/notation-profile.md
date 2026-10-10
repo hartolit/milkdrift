@@ -1,4 +1,9 @@
-# Production notation proposal
+# Historical production notation proposal — NP2
+
+NP2 is preserved as the earlier recommendation and debate record. The reopened comparison selected
+[NP3](../deliverables/notation-profile.md) under [N1/r3](../../whiteboard/discussions/implementation/executable-notation.md),
+with canonical region source and one checked execution plan. The paired-node implementation choice
+below is superseded; its tested current facts and behavioral criticism remain evidence.
 
 Profile revision NP2, 2026-10-10, authored by Ada after actual Bram/Cyra critique and AR1. Selection and dissent belong to
 [N1](../../whiteboard/discussions/implementation/executable-notation.md); this file specifies its

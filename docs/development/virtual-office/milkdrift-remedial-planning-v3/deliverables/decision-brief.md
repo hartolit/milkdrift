@@ -1,99 +1,123 @@
-# Decision brief
+# Revised decision brief — after the reopened investigation
 
-Milkdrift should let a person or authorized agent turn an evolving goal into useful, inspectable
-work: combine external capabilities, retain accepted evidence, change future work deliberately,
-reuse successful methods, and continue across independent owners and interruptions. The selected
-user excerpts support those outcomes. They do not make every current crate, graph shape, headless
-restriction or publication mechanism an enduring requirement. The complete original conversation
-and earlier v1/v2 review packages were unavailable; that limits certainty about earlier preferences.
+Milkdrift should become a durable environment for **bounded ongoing work**: a goal can lead to a
+plan, execution, review, reconsideration and permitted continuation, while people can inspect,
+intervene and change future requirements. Useful learning includes precisely described human
+judgment about knowledge, not only mechanically verified executable methods. The user approved
+those two product directions in [U17/U18](../intent-source-excerpts.md). They did not approve the
+architecture below or authorize production implementation.
 
-The recommendation is **intent-led authoring over one daemon-owned execution meaning**, with
-specific semantic and public-interface repairs. Save an immutable method, run it with different
-inputs, inspect why a result was accepted, and change future work through the same command path
-whether the actor is a human, model or service. The interface offers complete meaningful edits and
-an equally capable graph and outline. It does not turn every internal enum into a compulsory user
-step, or make arbitrary prose the scheduler.
+The revised recommendation is a substantial reconstruction of authored methods and continuous
+control, with targeted consolidation of existing owners. It is no longer the earlier proposal to
+retain the graph, add an exclusive merge and put a Svelte interface over it. The earlier packet and
+commits remain historical evidence; the [reopening critique](../reopened-critique.md) explains why
+that recommendation was not sufficiently earned.
 
-## What is worth retaining, and why
+## What the deeper work changed
 
-Controlled current-build observations establish useful public author/run/result/recovery journeys,
-direct work without synthetic workflows, two-owner delegation, restricted service invocation,
-exact publication recovery and managed child editing/uncertainty. These preserve real abilities:
+| Earlier assumption or omission | Finding and concrete consequence |
+| --- | --- |
+| A coverage row and passing behavior supported broad retention | The retrospective audit found 24 packages but uneven design depth. Four source/history/consumer comparisons now cover them at stated depth; remaining parser/platform/whole-graph proof limits are explicit in the [dossier](../working/system-dossier.md). |
+| A graph with better construction was the least disruptive adequate answer | The strongest structured alternative supports the same typed cross-sequence references and prospective edits. Graph compound operations would recreate a region language and then infer its ownership from edges. Select immutable structured source, lowered to one checked execution plan; preserve old graph semantics through its versioned reader. |
+| Identifier order could simply be shown in the editor | A real runtime/redb probe confirmed that swapping only branch-port IDs changes the chosen action when both conditions hold. New source has semantic clause order independent of identifiers; historical ordering and accepted choices remain exact. |
+| Controllers/evidence drivers demonstrated a product goal-to-plan path | The production parser verifies already supplied learning candidates; it does not initiate general planning. Drivers supply workflow construction, provenance and stage coordination. Product-owned packet preparation, model-response admission and durable ongoing control must replace those responsibilities. |
+| One reliable planning round was a sufficient ceiling | U18 explicitly requires bounded automatic reconsideration. A control-owned work commitment coordinates accepted next-work decisions across ordinary runs, with one cumulative account and exact action/run associations. Manual mode remains supported by that owner. |
+| Evaluated reuse meant protected publication repair | Current declarations require managed targets, agreement/verifier facts and repair-reduction measures. U17 requires evaluated knowledge as well. Extend shared evidence/learning ownership with typed subjects, controlled versus retrospective basis, honest reviewer relationships and separate reuse approval. Human assessment cannot replace mandatory verification or publication authority. |
+| Existing storage and application boundaries only needed frontend exposure | Managed-use transition policy lives in redb; descriptor producers perform JSON field surgery; fresh direct/peer admission repeats checks; external reducers duplicate a restricted task path. Move/consolidate those concrete responsibilities and remove superseded paths. |
+| A publication listing was simply an incorrectly filtered read | Existing commands retain administrative snapshots. Keep exact historical replay; use current authorized read projections for management and the existing filtered capability catalog for invocation. Do not weaken an admin contract to simulate service discovery. |
 
-- A saved definition can be reused with different inputs without rewriting earlier results.
-- Direct execution and execution-only hosts remain useful without publishing a workflow first.
-- A service caller can receive the permitted result without reading or editing its private method.
-- A changed plan does not erase accepted work; a lost reply does not justify a duplicate effect.
-- A child can make progress with an existing managed working area, while uncertain physical writers
-  continue to block unsafe maintenance.
+## Selected architecture and the strongest alternative
 
-These are reasons to retain their owners, not immunity from replacement. The alternative must
-preserve or explicitly negotiate these outcomes and the meaning of currently accepted data.
+**Canonical structured methods.** Blueprint owns stable-ID Sequence, Conditional, Parallel, Repeat,
+Call, Task, Await and Return source, explicit inputs/results, complete edits and lowering. Runtime
+owns occurrences, activation, effects and prospective adoption. A graph and outline project one
+source. Legacy graphs compile with their exact old activation rules into the same execution-plan
+boundary; they need not falsely become region trees. Unsupported conversion to editable new source
+refuses precisely, while old accepted work remains inspectable and executable. New writers do not
+keep emitting the old language. Where equivalence cannot be proved, this also removes otherwise-valid
+legacy prospective edits/repairs after the writer switch; continued execution is not equivalent editing
+support. The migration preference is explicitly with the user for decision. If unrestricted existing
+repair is required, hold the writer switch and revisit this selection or prove the required conversion;
+do not make implementation agents invent a second permanent writer.
 
-## Changes selected for planning
+The corrected-graph alternative was worked on the same D1–D8 packet and remains the strongest
+migration-risk objection. Delta initially preferred it, then changed selection after Elin showed
+its claimed data-flow advantage did not distinguish it from regions. A substantive UML structured
+activity basis supplies clauses/results/containment; a BPMN token basis was also worked through.
+Full interchange and model-authoring superiority are not established. See the
+[comparison](../working/structure-comparison.md) and [NP3 contract](notation-profile.md).
 
-| Change | User gain | Evidence and obligation |
-| --- | --- | --- |
-| Real independent Svelte client | Connect several owners and complete work without hidden native helpers | The present cross-origin browser route failed. Add opt-in exact-origin CORS, authenticated fetch streams and operator HTTPS; prove actual browser behavior. |
-| Complete compound authoring | Express structured work through graph, outline or an authorized planner | Current public construction supports much more than the narrow model editor. Complete consumers; add owner-side rules only where clients would otherwise duplicate semantics. |
-| Bounded exclusive-choice continuation | Choose one arm and continue once in the same scope | A Rust construction probe confirms current shared reconvergence refuses. Add selected output/provenance rules and recovery/reconciliation without inventing a child scope. |
-| Honest reuse/service discovery | Choose a local pin, eligible copy, direct call or public service for its actual consequence | A readable remote revision is not a local pin, and an agreement can prevent copying. Common discovery is proposed; separate committing actions remain essential. |
-| Missing authorized discovery and relationships | Find managed resources/studies and inspect service internals only when separately permitted | Add bounded reads at current owners, audit mixed-visibility method discovery, and preserve private metadata under revocation. |
-| Durable exact browser recovery | Recover submitted work after a lost reply/reload | Require explicit personal-profile storage or successful exact export before sending; no persistent bearer tokens or silent eviction of pending work. |
+**One ongoing work commitment, ordinary execution.** Extend control's controller/application
+responsibility to own accepted goal/policy, selected evidence, decisions, questions, pending actions
+and exact run associations. Runtime remains the sole task/effect scheduler. A commitment exists
+before its first generated method and can span several immutable methods/runs, so it is not merely
+another name for a workflow revision or attempt. Every admitted planning, criticism, work and
+assessment run admitted locally as commitment work binds the same accepted account before start.
+An independently published service retains its internal account; the caller retains the outer
+reservation/attributable usage and cannot claim private-account control. New contexts, revisions,
+retries and restarts do not reset it. Criticism triggers assessment; retaining the original plan,
+further investigation, revision, escalation and stopping are all legal outcomes.
 
-The notation borrows precise UML Activity principles and familiar shapes with declared Milkdrift
-extensions. It is not a claim of UML/BPMN conformance, interchange or better model performance.
-Join completion, selected output, run completion and physical quiescence remain different facts.
+The strongest alternative is an authored root supervisor with asynchronous owned children,
+nonterminal observations, loop-carried intent and cancellation/drain obligations. It would make the
+supervisory algorithm reusable workflow source, an attractive property. Current pinned terminal-
+returning calls and bounded repeats do not provide that complete contract. Adding those semantics
+moves coordination into core activation and structured lifetime rules. The selected commitment
+adds durable application intent and guarded associations instead, leaving actual task/result/resource
+facts with their existing owners. This is a deliberate tradeoff, not an assertion that another
+state machine is free. The [agency comparison](../working/agent-directed-work.md) specifies both
+placements, current source limitations, exact handshakes and S28 recovery.
 
-## Strong alternatives and objections
+**Shared evidence, distinct claims.** Knowledge can be evaluated without being an executable method.
+Assessment records keep exact subjects/versions/inputs/outputs, criteria, timing, reviewer authority,
+reasoning, limitations and counterevidence. Author relationships are visible; independence is enforced
+only where the declared criterion requires it. Controlled and retrospective assessment have different
+basis labels. Reuse approval binds applicability and selected evidence; executable qualification and
+publication retain their stronger separate contracts. The existing protected repair profile survives
+as a closed profile, not a set of optional fields that human review can bypass.
 
-Canonical structured regions could make complete edits simpler and prevent invalid half-graphs.
-A declared executable standard subset could provide meaningful external interchange. A complete
-current-semantics interface could minimize migration. All received substantive consideration;
-none was rejected merely because current code already exists. The selected approach wins provisionally
-because the evidence identifies bounded missing contracts and valuable existing behavior. Reverse it
-if full authoring still requires hidden child workflows, repeated client compilers or growing special
-cases. The paired choice representation is recommended; an alternative representation requires the
-same complete behavior/migration review, not silent expansion into an engine rewrite.
+**Retained execution boundaries, corrected responsibility.** A local run acceptance, a remote serving
+acceptance, a physical installation and cumulative usage are different facts. The unified invocation
+service alternative can preserve them only by adding atomic runtime-to-invocation association and
+result consumption for every local task. It does not remove remote, child, resource or grant obligations.
+Retain these boundaries, move pure managed transition policy into persistence, converge private fresh
+serving admission and replace descriptor JSON mutation with typed construction. Publication composition
+stays in control; ordinary reuse, direct operations and execution-only hosts remain real paths. See
+[execution reconstruction](../working/execution-reconstruction.md).
 
-Bram still prefers direct context-specific routes over a shared chooser. Distinct committing actions
-resolved the semantic conflict, but no human study settled comprehension. Same-origin fixed-target
-hosting remains a strong deployment alternative to daemon CORS. The selected route may demand more
-operator setup and expose more owner/authority concepts than the intended user finds acceptable.
-The first running-product review must be able to reopen these decisions, including backend choices.
+**A real standalone Svelte client.** Retain the reviewed browser deployment, exact-number transport,
+explicit personal-profile request custody, bounded streams/storage and operation-specific recovery.
+The client consumes complete source/commitment/evidence operations. It does not become another
+semantic compiler, supervisor or authority owner. Existing importer dialects and independent JSON/CLI
+clients use the same application owners. [Application reconstruction](../working/application-reconstruction.md)
+explains the concrete deletions and why wire, receipt, configuration and importer boundaries remain.
 
-No useful current behavior is selected for deletion. New obligations are substantial: a maintained
-frontend and browser matrix, explicit storage custody, owner-side authoring completeness, supported
-schema transition, additional read contracts and integrated acceptance. Session-only unsaved drafts
-can still be lost; personal-browser storage is unencrypted and is not protection against another
-user of the same profile. Browser access does not solve permanent owner loss or migrate its work.
+## Evidence and practical limits
 
-## Decisions needed from the user
+The prior E01–E07 observations remain useful under their original limits, including negative browser
+E04. The new [priority diagnostic](../working/priority-runtime-evidence.md) executed production runtime
+and redb in isolated temporary stores with no external tasks. All new architectural alternatives and
+S28 traces are modeled designs. There was no prototype frontend, paid provider call, live deployment,
+production edit or execution of the proposed program. No measured authoring-success, full standard
+interchange, new hardware or full-system qualification is claimed.
 
-The planning recommendation is coherent under the following choices; none has been user-approved:
+The deeper review does not pretend every implementation line was compared. It concentrates on
+consequential ownership and gives narrower adapter/mechanism reviews with explicit limits. Missing
+original transcripts and v1/v2 review sources remain missing. Fresh reviewers' independent initial
+positions and actual changes after criticism are preserved; reviewer count is not evidence of truth.
 
-1. Adopt the outcome-focused purpose and targeted-remedy direction, or choose the region/standard
-   replacement for further design before its dependent implementation. Preserve restricted services,
-   direct work, live adaptation, managed tools and evaluated reuse as explicit outcomes.
-2. Choose the initial deployment audience: independently hosted static client with configured daemon
-   origins and operator HTTPS (recommended), or fixed same-origin hosting. Actual supported environments
-   must pass JSON, stream/recovery and artifact acceptance; current evidence qualifies neither new route.
-3. Accept F1's explicit custody choice: trusted personal browser with bounded private IndexedDB, or
-   session drafts plus exact export before submission. Stronger encryption, persistent credentials or
-   shared-device custody needs a separate design, not an implicit security promise.
-4. Accept the proposed scope boundaries, or make a branch required: direct third-host relay/workflow
-   migration; active release from management; standard interchange/core replacement; stronger browser
-   custody; broader platform/network qualification. Each has a precise prerequisite in the program.
-5. Authorize a finite implementation scope after review. The proposed complete program includes actual
-   human review after the first working journey and again after compound work; its P09 final gate is
-   a proposed multi-phase schedule that P00 must formally register.
+## Implementation and review boundary
 
-What becomes usable first is a retained production client: connect to real owners, author a small
-workflow, submit different inputs, observe outcomes and recover exact requests. Advanced work remains
-fully assigned afterward, with explicit human checkpoints. A polished mockup or an indefinitely
-headless backend rewrite cannot satisfy this sequence.
+The [adoption plan](adoption-plan.md) specifies complete source, control, evidence and execution units,
+legacy readers, active/uncertain work and rollback. The [revised program](proposed-implementation/README.md)
+moves the complete source/runtime/public-authoring boundary ahead of the first real Svelte checkpoint,
+adds product-owned ongoing work, and replaces vague discovery instructions with explicit contracts.
+Early and combined human reviews remain required. They test the proposed product; they do not defer
+these foundational decisions to implementation agents.
 
-The proposal is ready for this review, not an unconditional implementation approval. New runtime
-semantics, successful browser deployment, complete goal planning, human usability, upgrades and the
-full S28 iterative project are still acceptance obligations. See [review evidence](review-and-evidence.md)
-and the [complete program](proposed-implementation/README.md) for their owners and proof.
+U17/U18 are approved product direction. Structured source, commitment placement, evidence contracts,
+browser deployment/custody and the implementation sequence remain **planning recommendations for
+user review**. No required foundational decision is delegated as “investigate whether this exists.”
+Optional direct relay/owner migration, active service detachment, standards interchange and broader
+platform/custody promises remain excluded extensions with explicit reasons, not unfinished required
+architecture hidden in the program. Stop here for review before production implementation.

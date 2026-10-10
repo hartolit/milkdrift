@@ -1,13 +1,22 @@
 # Execution, federation and the browser client
 
-**Proposal:** retain the daemon owners that already distinguish a workflow, an accepted operation
-and a surviving managed installation. Complete the public inspection routes and build the Svelte
-client against them. Start with explicitly configured cross-origin bearer fetch; remote deployment
-uses an operator HTTPS proxy to the daemon's loopback listener. This is A1/r3, selected for planning
-under G1/r1 and P1/r2 after joint criticism and final source correction. It awaits user decision
-and implementation evidence. It does not
-claim that the current daemon works from an independently hosted browser: the actual E04 probe
-failed its authenticated cross-origin reads and stream request.
+**Proposal:** retain separate owners for workflow execution, accepted serving operations and
+surviving managed installations because their accepted facts and lifetimes differ. Move managed-use
+policy out of the redb mechanism, consolidate repeated serving admission and descriptor construction,
+and add a control-owned commitment for bounded automatic ongoing work. Complete public inspection
+and build the Svelte client against those shared routes. This is **A1/r4**, the reopened planning
+selection by Faris-20261010 and Rowan-20261010 after independent execution/application reconstruction
+and adversarial review. The user approved the continuous-work behavior in U18, not this architecture
+or production changes. The previous browser choice remains: explicitly configured cross-origin
+bearer fetch, with an operator HTTPS proxy for remote deployment to the daemon's loopback listener.
+The actual E04 probe failed authenticated cross-origin reads and the stream request; this is still
+a proposed browser route requiring qualification.
+
+The new [execution reconstruction](../working/execution-reconstruction.md) and
+[application reconstruction](../working/application-reconstruction.md) supersede earlier blanket
+retention claims and the earlier R-A05 interpretation. They compare actual current source, a
+complete smaller correction and stronger ownership alternatives. Inspected tests support specific
+recovery boundaries; they do not establish every package or the whole proposed browser/session journey.
 
 ## What connecting and running mean
 
@@ -31,6 +40,7 @@ automatic rebase or new head-locking API.
 | Make an independent copy | The accepting owner creates a new workflow identity with provenance | No run state or authority is copied. An identity-bound governing agreement can refuse copying. |
 | Call a published service | Public invocation plus exact internal association; internal execution uses configured service authority | Invoke-only callers receive declared outputs without internal graph access. Retirement refuses new calls while preserving accepted ones. |
 | Manage an installation | Its managed owner retains intent, generation, editing claims and lifetime holds | Installation life can exceed a call. Cancellation or a terminal run does not prove a physical writer stopped. |
+| Continue bounded ongoing work | Control owns accepted goal/policy, next-work decisions and exact run associations; runtime owns the associated executions and persistence their cumulative account | Criticism can trigger reconsideration while target work is paused. New rounds retain prior evidence, authority bounds and consumed or uncertain allowance. |
 
 Shared discovery may show these useful choices together, but the committing action must explain
 which of them it will perform. A generic “Use” action cannot promise identical editing/control.
@@ -58,17 +68,90 @@ This composition has source and focused test support, including legitimate child
 retained holds, but the complete multi-owner browser journey remains an implementation gate.
 
 Continuous agent work uses the same scoped commands. Failed verification stays in history;
-prospective repair changes future work under the governing constraints. Children inherit their
-account and restrictions, while service calls use explicit bounded allowances. Waiting for a human
-and reconnecting after interruption must recover the same run. A new request label is not a way to
-reset inherited obligations. The broader research/critic/coordinator/lesson process still needs its
-own proved routes; these mechanisms alone do not establish the full S28 scenario.
+prospective repair changes future work under the governing constraints. The selected control
+`WorkCommitmentOwner` in `control::controller::commitment` accepts a durable work policy and exact
+pending actions, prepares bounded planning
+packets, authenticates model proposals, and advances only actions permitted by that policy and
+current authority. Runtime executes ordinary methods for planning, work, criticism and evaluation.
+The session reads their results; it does not copy task state or decide that an uncertain external
+operation succeeded. One-round manual assistance remains a policy of the same owner.
+
+This choice follows a concrete comparison. Today's child Call returns its outputs at terminal
+completion, and controller checkpoints occur between iterations. A dynamic child target would
+solve selected-revision binding but would not let an enclosing root react to criticism while a
+child remains paused. A complete root-workflow alternative needs new nonterminal child handles,
+observation and concurrent continuation semantics. Its single history/account is attractive;
+the selected control owner instead gives the continuous commitment a distinct lifetime without
+adding those ordinary workflow primitives solely for S28. It is a real new orchestration state
+machine, whose purpose is deciding whole activities; runtime retains execution scheduling.
+
+Session creation must retain the exact policy, account, first action and external receipt before
+effects. Each planned run records its exact revision/inputs and command material before creation;
+runtime creation binds it atomically to the accepted association and originating account. A crash
+between create and start recovers that same unstarted run. Proposal acceptance followed by lost
+reporting recovers the same proposal instead of rerunning the model. A durable commitment admission
+fence blocks new local start and entry admission after pause/stop acceptance. An entry admitted
+before the fence may physically begin afterward and remains subject to ordinary cancellation.
+Local publication
+ancestry also carries this check even when the service has its own account. Across a peer boundary,
+B owns its accepted request: it may still enter before A's exact cancellation reaches it. A retains
+the outbound cancellation and unknown reservation; B enforces its own accepted cancellation,
+deadline and current rights. No distributed instantaneous stop is promised. Already entered work
+and physical holds remain with their actual owners. Grant revocation is rechecked at the relevant
+action and disclosure boundaries.
+
+Accounts gain a closed work-session origin with no invented originating run. Existing reserve,
+settle and unknown-use transitions remain shared, so new rounds, children and restart cannot reset
+the allowance. Session authority has its own explicit scope; associated runs still receive their
+ordinary exact execution basis. An association grants no implicit approval, artifact-read or
+publication rights. Existing marked controller methods may inherit the session account only when
+the whole originating allowance fits their declared limits; otherwise local association refuses
+before start and an existing published service can retain its bounded internal allowance. This
+does not promise a new hierarchy of mutable subbudgets. Waiting for a human retains the exact
+question/action identity. The full research/critic/reconsideration journey remains a required
+implementation test, not an outcome established by these source traces.
 
 Closing a tab or aborting a fetch stops observation, not accepted work. Logging out clears the
 active token and authorized view caches. Forgetting a connection changes client configuration.
 Revocation changes rights. Cancellation is a separate server command whose receipt is not proof
 of physical stop. The frontend must explain each result and preserve explicit recovery records
 without presenting them as an execution ledger.
+
+## Responsibility changes selected in the reopened review
+
+The demanding direct/workflow/private-service/resource scenario does not favor one universal
+invocation journal. A direct request at B, A's workflow attempt, B's accepted serving operation,
+the private child and an installation's surviving editing hold answer different recovery and
+authority questions. Combining their storage cannot erase those distinctions. Publication stays
+in control composition: it resolves exact service authority, public contracts and private run
+association, while host owns serving acceptance and runtime owns child execution. Moving it
+wholesale into either runtime or host would place one of those responsibilities across the wrong
+dependency boundary.
+
+The review does select concrete changes to those retained owners:
+
+| Change | Producer and consumer responsibility | Consequence |
+| --- | --- | --- |
+| Managed-use transition policy | `persistence::managed::transition` validates bounded lineage/quiescence evidence and plans the installation/use change; redb loads actual facts and validates/writes under its existing atomic guards | Remove domain policy from redb execution/acquisition/transfer/quiesce/release helpers without moving physical evidence or introducing another resource journal |
+| Fresh serving admission | Private capability-host `FreshServingAdmission` handles common descriptor/generation/operation/deadline admission after direct or peer authentication/replay handling | One common new-entry rule, while original-grant replay, current disclosure and peer-specific checks remain explicit |
+| Descriptor extension construction | Capability owns a checked construction API, consumed by publication and managed-model descriptor producers | Delete JSON object surgery; keep peer descriptor remapping where local identity/trust/resource facts really differ |
+| Application/control composition | Blueprint owns complete source editing/lowering; control owns response admission, evaluation and ongoing-work decisions; daemon owns transport, composition and exact external receipts | Remove private daemon semantic helpers and external-driver stage bookkeeping after all ordinary consumers migrate |
+
+Managed transfer still requires evidence of the exact accepted parent/child relationship and
+physical stop or justified non-entry. The new pure policy takes those typed facts, not booleans
+such as `authorized` or `is_child`; redb remains responsible for their transactionally consistent
+origin. A complete change includes refusal paths and all producer/consumer contracts, not merely
+moving function bodies. The long-term test case is an operation that claims two working areas:
+one policy owner must define independent per-resource handoff and writer exclusion, while storage
+preserves each claim's evidence. That future feature is a comparison of maintenance cost, not
+newly authorized implementation scope.
+
+Keep exact external command receipts alongside runtime semantic retry receipts. The first binds
+the original actor, grant and full wire envelope to a response; the second binds the runtime's
+retry meaning, which can omit delivery/planning fields. Removing either silently weakens its
+promise. Their acceptance can have separate commit boundaries, so compound session operations
+must retain exact internal command material and associations before effects rather than depend
+only on the final HTTP response receipt.
 
 ## Browser delivery and local data
 
@@ -126,14 +209,21 @@ or an assumed cure for browser restrictions.
   inspect/action routes work only when the client already knows the identifier.
 - **R-A04:** safe forward navigation from a service invocation to its real internal run/definition
   only for independently authorized readers. Invoke-only behavior must stay opaque.
-- **R-A05:** a focused mixed-publication, narrow-grant list probe before choosing a pagination
-  remedy. Source raises a progress concern; it is not an established failing behavior.
+- **R-A05, corrected:** preserve receipt-bound administrative `ListMethods`/`InspectMethod`
+  snapshots and the existing filtered invoke-capability catalog. Add a distinct current management
+  query over the publication owner, checked per record with a bounded scan and opaque scoped cursor.
+  Unauthorized records disclose no names/counts; empty pages retain truthful continuation. The old
+  suggestion to filter the snapshot command as if it were invoke-only discovery was a contract error.
 - **R-A06/R-A07:** correct misleading pin/copy/role/relay claims; decide whether release-management
   is required before adding a new managed lifecycle operation.
 
-Richer structured authoring, same-scope exclusive merge and learning discovery have their own
-03/05/06 owners. A child workflow cannot invisibly stand in for a merge because it adds identity,
-context and authority boundaries. A shared diagram does not justify a uniform backend ledger.
+The reopened source, agent-directed-work and application investigations define richer authoring,
+same-scope result selection, knowledge evaluation and session integration. A child workflow cannot
+invisibly stand in for a merge because it adds identity, context and authority boundaries. A shared
+diagram does not justify a uniform backend ledger. U17's human-reviewed knowledge can be approved
+as a scoped reusable lesson without becoming an executable method; protected qualification retains
+its separate technical obligations. Review identity, relationship, exact evidence and whether
+criteria were predeclared remain visible rather than being inferred from agreement or actor count.
 
 The implementation gate must exercise a real static build against two daemons: negotiation,
 scoped reads, a controlled mutation, exact lost-reply recovery after reload, bounded SSE resync,
@@ -141,17 +231,25 @@ changed host/grant, forbidden origin and continued use of the second connection 
 failure. Current actual native journeys establish useful ordinary/direct/delegated/publication
 behavior. The browser probe establishes a missing route. Neither substitutes for that future gate.
 
-Prefer additions that do not change durable execution facts. Any migration must retain exact
-requests, uncertain effects, artifacts, publication associations and managed holds. Rollback is
-safe only when the older readers accept all written facts and still preserve replay; restoring an
-old database while an external effect survives can duplicate work. Role removal cannot abandon
-active obligations. Frontend rollback must preserve or safely export newer unresolved local records.
+The pure managed-policy/admission/descriptor corrections should preserve current semantic bytes;
+prove that against readers and fixtures. The session/account/authority additions and canonical
+source replacement do need explicit versioned contracts. Keep old exact requests, origin digests,
+uncertain effects, artifacts, publication associations and managed holds. New session origins must
+be refused by old writers; never retrofit unrelated entered work into a fresh allowance. Active
+legacy runs continue through their exact old plan reader unless a prospective conversion proves
+its identity and obligation mapping. Rollback is safe only when the older readers accept all
+written facts and still preserve replay; restoring an old database while an external effect survives
+can duplicate work. Role removal cannot abandon active obligations. Frontend rollback must preserve
+or safely export newer unresolved local records.
 
 The choice should reverse if browser deployment tests favor a same-origin route for the intended
 users, if human use repeatedly misinterprets common discovery, or if a fully traced structural
 alternative materially improves progress and recovery. Those changes reopen their dependent
 product, notation and implementation decisions. The
-[detailed architecture proposal](../working/architecture-and-federation.md) owns the source-owner
-inventory and compound traces; the [observations](../working/observations.md) state exactly what
-was executed, and the [whiteboard decision](../../whiteboard/discussions/architecture/owners-and-browser.md)
-records current authorship, alternatives and unresolved objections.
+[earlier architecture proposal](../working/architecture-and-federation.md) retains the detailed
+browser and compound-trace evidence. The reopened [execution](../working/execution-reconstruction.md),
+[application](../working/application-reconstruction.md) and
+[agent-directed work](../working/agent-directed-work.md) comparisons own the changed responsibility
+recommendations; the [observations](../working/observations.md) state exactly what was executed.
+The [whiteboard decision](../../whiteboard/discussions/architecture/owners-and-browser.md)
+records current authorship, alternatives and preserved dissent.

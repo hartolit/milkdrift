@@ -1,47 +1,82 @@
-# P07 — Make retained evidence improve future methods honestly
+# P07 — Knowledge assessment, reusable evidence and executable qualification
 
-Owner: learning/context/publication integration engineer and workbench consumer. Requires P06 and
-G1/V10 plus approved A1/F1; read [shared context](context.md), learning declaration/comparison owners,
-selected knowledge/context/artifact readers and publication promotion. Historical live evaluation
-was inconclusive; implementation must not fabricate an improvement to demonstrate its mechanism.
+Owner: existing control learning/knowledge family, workspace/persistence evidence contracts, daemon
+projection and client interaction. Requires P06, approved U17 and reviewed P2/A1 evidence contract.
+Read [shared context](context.md), [agency/knowledge investigation](../../working/agent-directed-work.md)
+and [product model](../product-model-and-value.md). No new parallel learning engine is authorized.
 
-Implement selection of authorized exact evidence, knowledge entry/current version, inspectable
-omissions, candidate proposal, fixed comparison declaration, evaluation inspection and explicit
-promotion/rejection. Trace public commands first; no new “learning engine” or client score authority.
-The original failed run remains history, the candidate becomes a new definition, and promotion
-changes future selection only. Private selected context cannot become a service input merely because
-the actor can read it locally; identify destination and transfer/public disclosure rights.
+Implement the closed distinction between knowledge subjects and executable methods. A research finding,
+architectural lesson or planning approach can be an immutable KnowledgeItem artifact with version,
+applicability and provenance; it need not invent a workflow, run, managed target or publication. Executable
+qualification retains exact method/revision and any applicable protected verifier/target obligations.
+Extend existing selection/declaration/comparison/approval owners rather than adding a second knowledge DB.
 
-Own R-FE01: source-audit then implement the missing bounded authorized discovery of retained learning
-receipts/studies through the existing learning/control/read/protocol owner. Detail-by-known-ID is
-insufficient after a fresh-browser connection. Follow current page/cursor/permission conventions;
-filter before disclosure and avoid leaking denied identifiers, counts or titles. Adopt protocol,
-HTTP/native client/CLI/workbench consumers and fixtures together. Test a fresh authorized client
-finding a completed and inconclusive study, empty/denied/mixed visibility, pagination bounds,
-authority changes, daemon restart and exact detail linkage. Do not use IndexedDB as the durable
-study catalogue or introduce a parallel learning store.
+Remove compulsory method/live-managed-workspace/run-page requirements for ordinary selected knowledge.
+Source variants may name authorized artifacts, exact accepted run evidence and optional exact managed
+resource relationships. Every included source retains its true owner/read checks and bounded selection;
+private source selection is not automatic export authority. A managed source still needs its actual
+installation/generation checks. Context retains source/omission and frozen-attempt rules.
 
-The declaration fixes held-out cases, worker/target generations, output/check meaning, thresholds
-and limits before candidate selection. Expose missing usage/verifier/public completion as missing,
-not zero. Retain negative and inconclusive results and the reason eligibility fails. Bound evidence
-and comparison pages; the finite event-read limit remains visible rather than silently truncating
-a claimed complete evaluation. An extension to that bound needs owner/evidence work, not a client loop.
+Assessment basis is explicit: Controlled fixes criteria/input slots before comparison; Retrospective
+records when criteria and judgment were adopted and cannot advertise a predeclared experiment. Slot binding
+is an accepted operation: generated candidate revisions/run/attempt IDs are bound when they exist, not
+magically required before generation. Freeze subjects, exact inputs/versions/outputs, rubric/criteria and
+relevant action associations before deriving a controlled result. Reject conflicting or ineligible bindings.
 
-Exercise one useful proposed change and an adversarial candidate that weakens acceptance, reuses
-training/source inputs as held-out evidence or changes output identity. Controlled fixtures test
-the mechanism; live model ingenuity is a separate authorized exercise with prompt/model/settings/
-corrections preserved. Promotion requires current authority and may be refused even after an eligible
-comparison. Two product variants share immutable lessons but retain independent mutable files,
-inputs, verification and accepted pins. Tool activation does not silently promote a workflow.
+Record a judgment as a separately authorized receipt binding exact subjects/output digests, criteria,
+reviewer actor/authority, reasoning, limitations and counterevidence. `AssessmentShape::SingleSubject`
+uses `MeetsCriterion/DoesNotMeetCriterion/Inconclusive`; `Paired` uses
+`Better/Equivalent/Worse/Inconclusive`. These are attributed judgments, not universal truths.
+The declaration fixes required role/case slots and a closed NamedReviewer or PairedNoRegression rule.
+The latter requires no worse declared case and at least one better case. Compare retains every required
+judgment; contradictory required verdicts produce Disputed, absent requirements Inconclusive and malformed
+bindings refuse. Reuse approval can explicitly accept bounded disputed/retrospective evidence with
+rationale/limits; it cannot turn it into a favorable qualification. Label human versus configured agent judgment versus
+automated verification. Self-review is allowed and visible. Enforce independence only when the declaration
+requires it; multiple agreeing reviewers do not automatically count as independent corroboration. Missing
+facts or a stale/different criterion remain refused/inconclusive as specified, never silently favorable.
 
-Acceptance: graph/list/agent proposal show the same selected candidate and exact evidence; an
-unauthorized/private artifact is not disclosed in omission metadata; no improvement remains an
-acceptable completed study; lost comparison/promotion reply and restart recover exact result;
-current selection can change while old calls stay pinned. Include S24 privacy and S28 lesson reuse.
+Authentication establishes actor/grant, not biological human identity. HumanJudgment carries the
+authenticated reviewer's explicit attestation; AgentJudgment links its verified producing invocation/
+context; AutomatedVerification links the applicable trusted verifier evidence. Preserve declared/known/
+unknown authorship relationships without inventing independent or human provenance from an actor name.
 
-Run focused learning/control publication/context/artifact tests and the maintained finite fixture
-reader/application lane where applicable; add actual-daemon workbench selection/comparison/promotion
-tests. Check protocol/readers/fixtures and CLI still use one owner. Commit evidence-selection/read
-contract changes with consumers, then complete study interaction, then negative/recovery corrections.
-Stop with truthful study results and independent variants; no blanket better-method or model-quality
-claim, new provider family or paid experiment is included.
+Keep the existing protected-publication repair-reduction profile closed with all original resource,
+verifier, returned-product, held-out and regression checks. Human evidence does not waive mandatory tests,
+protected effects, security checks or method qualification. No generic plugin scoring registry is needed.
+A finite favorable assessment claims only its declared cases/criteria/reviewer basis, not universal quality.
+
+Implement separate `ApproveKnowledgeForReuse` (or exact reviewed equivalent) binding knowledge version,
+assessment references, applicability, authority and supersession relationship. It does not mutate an old
+assessment, replace current execution, automatically select the lesson everywhere or acquire publication
+rights. Future packets select eligible knowledge under current read authority and expose its basis.
+Method adoption and publication promotion consume their own stronger qualified evidence and permissions.
+Remove existing compulsory publication-Promotion coupling for ordinary knowledge approval/supersession.
+
+## Data, complete consumers and checks
+
+Old learning declarations/comparisons/promotions keep exact bytes/digests/replay and map explicitly to the
+protected profile. Never convert old promotion into broader knowledge or executable qualification. New
+closed subject/basis records use versioned readers; new clients refuse unknown semantics. Existing accepted
+runs, uncertain effects, resources and accounts do not change ownership. Assessment work inside a commitment
+uses its accepted cumulative account; outside work exposes its separately authorized allowance.
+
+Migrate daemon-specific general learning orchestration to shared control owners; keep daemon auth/wire/
+receipts. CLI, independent JSON, Svelte and the maintained evidence driver use these same operations.
+Svelte shows selected sources, criteria timing, subject type, reviewer relationship, limitations and
+counterevidence before assessment/reuse decisions. Negative and inconclusive outcomes stay inspectable;
+no success-only lesson feed. A user may review their own analysis without falsely earning independence.
+
+Prove an architectural lesson with no workflow/resource, a retrospective self-review, a controlled paired
+knowledge comparison, an independent agent assessment with conflicting counterevidence, and the original
+protected method comparison. Mutate input/version/output/rubric/actor/slot/authority and inspect truthful
+refusal or changed bounded result. Verify no automatic execution/adoption/publication, no private-source
+leak, exact reply-loss/restart, wrong-subject misuse, supersession history and unchanged mandatory verifier
+refusals. Attempt to supply approved retrospective self-review as Promote/AutoPromote protected-method
+qualification; the owner must reject the wrong evidence variant while allowing it as selected guidance.
+Labels alone do not enforce these distinctions: inspect actual owner inputs and accepted receipts.
+
+Run focused knowledge/learning/proposal/context/workspace/protocol/daemon tests, golden readers/replay and
+actual browser interaction/static/docs checks. P09 owns final full gate. Commit complete shared contracts
+and consumers regularly, deleting old mandatory couplings once historical readers preserve their exact
+scope. Usable result includes meaningful evaluated knowledge and still independently qualified methods.

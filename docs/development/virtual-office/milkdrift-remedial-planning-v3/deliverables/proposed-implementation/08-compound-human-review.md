@@ -4,10 +4,17 @@ Owner: implementation coordinator, actual user and independent challenger. Requi
 selected branch; read [shared context](context.md), current decisions and first user-review changes.
 Do not substitute separate successful menu demos for the combined scenario.
 
+Finish every advanced graph/outline and machine-input interaction promised by NP3/F1, including full
+structured editing, selected results/outcomes, targeted waits, legacy conversion refusal, commitment
+policy/evidence/actions and knowledge assessment. P02's explicitly limited editor is not the final
+product. Exercise source/layout/reopen/independent-client round trips before asking the user to judge it.
+
 Use a disposable repository and controlled external effects to enact S28: fragmented brief, shared
 but bounded source context, independent analyses with retained disagreements, coordinator proposal,
 new counterexample, prospective plan revision, implementation/verification failure, another session's
-resume and a lesson evaluated on a distinct case. This task must use Milkdrift's real public
+resume and a lesson evaluated on a distinct case. The independent critic must trigger automatic
+assessment under the same commitment; include accepting the original plan, further investigation,
+revision and no-progress stop variations. This task must use Milkdrift's real public
 orchestration and retained Svelte interface. External agents may perform their capabilities; they
 must not silently do all coordination while Milkdrift merely records a success string.
 

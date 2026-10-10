@@ -248,3 +248,140 @@ implementation/human-use pass and no authorization to start P00 from this review
 broad design round is needed for the findings above. Actual browser qualification, new merge
 semantics/reader transition, full S28 and authentic human checkpoints remain assigned proof, not
 hidden omissions or completed work.
+
+## Reopened independent transfer review
+
+Elin-20261010, actual agent `/root/agency_elin`, 2026-10-10. This is a new review of the reopened
+program, not an amendment of Cyra's historical verdict above. I authored the agency/knowledge
+reconstruction and challenged Delta's initial graph preference; I did not author Rowan's revised
+decision brief, application reconstruction or P01/P02/P04/P07. Thus this is an adversarial transfer
+read by a contributing domain reviewer, not a wholly independent architecture endorsement.
+
+Read: the revised [brief](../deliverables/decision-brief.md),
+[application reconstruction](application-reconstruction.md),
+[P01](../deliverables/proposed-implementation/01-structured-source-and-shared-authoring.md),
+[P02](../deliverables/proposed-implementation/02-first-connected-workflow.md),
+[P04](../deliverables/proposed-implementation/04-ongoing-work-and-response-admission.md) and
+[P07](../deliverables/proposed-implementation/07-knowledge-and-evaluated-reuse.md), followed by
+NP3/Delta's exact compatibility clauses, adoption, U17/U18 and the affected source types. Earlier
+source/history depth and limits remain in [my investigation](agent-directed-work.md); this pass
+did not repeat the whole repository audit. I ran no Cargo, model call, browser journey or new
+runtime probe. The traces below are design counterexamples and assigned acceptance oracles.
+
+### Findings and exact corrections
+
+| ID | Counterexample or missing decision | Required contract and disposition |
+| --- | --- | --- |
+| **PR-E1** | A commitment closes after B accepted a serving invocation but before B creates/enters its private child. A→B cancellation is lost. “Fence every descendant entry” would falsely claim A can stop B's independent acceptance. | Owner-local entry acceptance atomically checks the gate, including actual local publication ancestry. An effect durably admitted before closure may physically begin later. Across a Serving boundary B checks its own accepted cancellation/deadline/current authority; A retains its outer reservation/uncertainty. Root and Faris independently found the same race. **Resolved in plan:** reread P04's durable-control paragraph and explicit race test plus adoption; agency/P2/product text corrected too. No distributed stop primitive is silently added. |
+| **PR-E2** | A single architectural lesson has no baseline executable method. P07's first wording said “or the reviewed noncomparative assessment contract,” but no verdict/aggregation contract had been selected. | Choose `AssessmentShape::{SingleSubject,Paired}`. Single uses `MeetsCriterion/DoesNotMeetCriterion/Inconclusive`; paired uses `Better/Equivalent/Worse/Inconclusive`. Declaration fixes reviewer/case roles and `NamedReviewer` or `PairedNoRegression`; contradictory required judgments yield `Disputed`, missing evidence `Inconclusive`, malformed bindings refuse. These are attributed judgments. **Resolved in plan:** root accepted and P07 now states the types/rules; agency/P2/product contain the same distinction. Approval may preserve a bounded disputed/negative lesson for a stated reuse purpose without relabeling the verdict. |
+| **PR-E3** | An authorized person changes future requirements while old exact actions/runs already exist. A generic policy edit can accidentally widen their authority, overwrite commands, reset budget or leave revoked future actions executing. | `AmendCommitmentPolicy` guards exact commitment sequence/policy, accepts an immutable successor and explicit action/digest/frontier carry list, and pauses local admission atomically at a new generation. Current rights/containment checks precede reopening. Unaffected actions retain original authority/commands plus successor restrictions; affected future work is held/cancelled and replanned. Wider authority needs a fresh ordinary run basis. Entered effects remain governed by old facts. Original cost/entry/round/time ceilings remain fixed; no top-up or reset. **Resolved in plan:** root selected fixed ceilings, P04 and agency/P2/product now state this contract. |
+| **PR-E4** | A valid old active graph cannot convert to structured source. Continued execution is preserved, but removal of the graph writer can remove an otherwise valid Task-only future edit. Also, “refuse unproved conversion” alone permits refusing every old fixture. | Make the editing loss an explicit migration choice. Require positive conversion/allowed repair of maintained model-editor, prompt-sequence, ordinary parallel/call and protected-root fixtures before switching writers, plus a negative unconvertible active case. Do not keep an undisclosed second writer. **Transfer gap corrected:** P01 now names the positive corpus and holds the switch on failure; the brief plainly states the editing loss. Root has put the consequential compatibility choice to the user. Until that answer is recorded, this is a visible planning decision, not completed approval or an implementer-selected workaround. |
+| **PR-E5** | Treating every controlled knowledge comparison as a pre-generation held-out executable experiment would exclude comparing two existing architectural artifacts under a declared rubric. | U17 requires criteria before comparison. New knowledge declarations freeze criteria/role slots before assessment and bind exact existing/generated artifacts; only the protected executable profile requires its stronger pre-generation isolation. Retrospective judgment keeps its true timing. **Resolved in plan:** reread adoption's corrected distinction against U17; P07 retains the stronger protected profile separately. |
+| **PR-E6** | An authenticated `ActorRef` does not prove whether a human or model produced a judgment. A client-supplied `HumanJudgment` label could otherwise be misrepresented as verified producer evidence. | Human attribution is an authenticated reviewer attestation, not a biological identity proof. Configured agent attribution links the verified producing invocation/profile/context; protected verification links its trusted journal. Known, declared and unknown relationships stay distinguishable. **Resolved in plan:** final P07 paragraph explicitly states these producer contracts; agency source records the actual `ActorRef` limitation. |
+| **PR-E7** | A planner emits the same work with fresh element IDs or adds a timestamp/new prose artifact each round. Byte/new-artifact identity alone must not satisfy “meaningful progress.” | Control compares a bounded normal form of ordered structure/configuration/value references, alpha-normalizing generated identities and excluding layout/reasons/timestamps. Evidence novelty uses declared finite roles/content/accepted-observation outcome keys. Duplicate observations and newly phrased reasons do not automatically count. Absolute rounds/time/account limits remain. **Resolved in plan:** final P04 and agency/P2 state this mechanical proxy, explicitly without a universal method-equivalence or truth claim. |
+
+### S28 through the selected combination
+
+1. **Accept the ongoing work before a generated method exists.** Exact goal/source selection,
+   allowed scope/actions, approval policy and finite ceilings enter `WorkCommitment` with its
+   account and first pending action atomically. Explicit versioned commitment authority prevents
+   an old wildcard grant from silently authorizing a new control family. Frozen commitment basis
+   is not a fabricated `ExecutionAuthorityBasis` with an invented root run.
+2. **Make and use a real method.** Control prepares the bounded provenance-bearing packet from
+   actual allowed sources/catalog/frontier/remaining allowance. A normal planning run is created
+   and account-bound in the same transaction, then started by its exact retained command. Actual
+   model output/context/invocation are authenticated. Blueprint validates/lowers the complete new
+   structured source; control saves it, obtains ordinary required approval, then associates real
+   work under the same account. No evidence driver supplies the accepted mutation or provenance.
+3. **Assess criticism while work is nonterminal.** The commitment observes actual owner facts and
+   may pause the affected target without closing its own planning gate. A fresh context receives
+   exact earlier evidence, dissent and allowed prospective frontier. The outcome may retain the
+   original result, investigate, revise, escalate or stop. A critic assertion is retained as an
+   assertion; it does not become an instruction or accepted success/failure truth.
+4. **Apply only permitted future change.** Completed investigation, accepted selected arm and
+   consumed values remain fixed. Blueprint/control/reconciliation use one checked plan and exact
+   current sequence. Compatible pending work may change; a concurrently changed target yields
+   a retained stale refusal. An inherited governed child or proposed structural agreement change
+   cannot use the ordinary Task-prefix adaptation grant. Separate authorized agreement/new work
+   or escalation is the real route; an approval overlay cannot make it legal retroactively.
+5. **Recover the actual accepted action.** Persist exact create/start/propose/apply/resume material
+   before calling its owner. If the proposal committed but reporting failed, recover its same
+   receipt; do not call the model again or compile different bytes under the old key. All planner,
+   critic and ordinary local work consumes the commitment account. Published/private work keeps
+   its actual service account and attributable outer reservation, not fictitious access to a
+   private balance. Existing independently entered work cannot be swept into a fresh allowance.
+6. **Intervene and stop honestly.** Policy successors use PR-E3's exact action disposition and
+   original ceilings. Closing the local gate does not erase an admitted local effect or B's
+   accepted serving operation. Retain holds/unknown usage and expose the actual owner resolution
+   path. No-progress/round/time exhaustion produces an explicit stop/escalation with unsettled
+   work visible. It does not synthesize a successful conclusion or recharge a new session.
+
+This route favors the selected control commitment over the complete authored-root alternative for
+the current outcome: a paused target need not complete before criticism can be assessed. The root
+alternative is possible, but needs asynchronous owned children, nonterminal observation, supervisor
+continuation and cancellation/drain lifetime semantics. Its advantage—authoring/evaluating the
+supervisor itself as ordinary source—remains real. The selected policy is closed; claiming arbitrary
+editable coordination algorithms would reopen this comparison.
+
+### Knowledge without an executable method
+
+Take exact architecture artifacts A and B and their stated constraint inputs. `SelectSources` checks
+their real artifact/read authority without a fabricated method, run-page or managed installation.
+For a single retrospective self-review, record exact A, criterion timing, authenticated reviewer
+attestation, author relationship, judgment, reasoning, limits and counterevidence. For a controlled
+paired comparison, declare rubric/roles/rule before judging A versus B and bind their actual bytes;
+the records need not pretend the designs were generated after the declaration. A distinct model
+review links its actual invocation and selected context. Conflicting required judgments remain
+disputed. `ApproveKnowledgeForReuse` records the permitted reuse purpose/applicability and selected
+assessments separately; a later packet selects it under current rights and retains its limitations.
+
+This requires the new closed contract because current
+[KnowledgeSelection](../../../../../crates/control/src/learning/request.rs) unconditionally names
+`method`, managed `workspace` and pages, while its approval/supersession is a publication-promotion
+receipt. The old protected profile must retain those original meanings. The new route cannot be
+implemented by making protected verifier/target fields optional or by declaring “human reviewed”
+where trusted automated evidence was required. No automatic method replacement or publication
+follows from knowledge assessment, including a favorable one.
+
+### Unconvertible active legacy target
+
+Let old revision H0 be accepted with completed I, an active/uncertain writer W and a pending task T.
+The converter cannot demonstrate the required control/data/ownership correspondence. It returns
+an element-specific refusal and creates no fictional structured successor or completed region.
+The old plan/history still supports inspection, normal execution, cancellation, reporting and
+authorized uncertainty resolution. An ordinary new structured method may select permitted I's
+evidence, but its new run cannot inherit H0's completed occurrence, W's physical claim or an
+unaccounted allowance. If a protected caller pins H0, that pin and inherited agreement still hold;
+neither conversion nor new-source shape grants child adoption or retargeting authority.
+
+With the proposed writer removal, an otherwise legal new legacy edit of T may cease to be offered.
+That is a consequential compatibility cost, not a “precise refusal” that preserves every existing
+capability. PR-E4 exposes it to the user and requires successful supported positive conversions.
+If unrestricted existing repair is required, do not dispatch P01 on the present choice: hold the
+writer switch and prove the necessary conversion or revise the representation/transition decision.
+An implementation agent must not discover this policy only after deleting the old writer.
+
+### Verification and transfer disposition
+
+The new read confirms useful complete ownership rather than merely agreeing with labels: blueprint
+owns source/conversion, control owns authenticated construction/admission/commitment and shared
+learning, runtime owns scheduling/effects, persistence owns account/gate atomic guards, and daemon
+owns transport/composition/external receipts. P02 consumes those contracts and has no independent
+semantic compiler. Exact replay remains operation-specific; saving source is not starting work.
+
+PR-E1–7 produced concrete program corrections or a clearly exposed user compatibility decision.
+The final reread verified P04's remote boundary, exact policy amendment/fixed ceilings and finite
+progress proxy; P07's judgment shapes/conflict rule and producer attribution; P01's required positive
+conversion corpus and negative active case; the brief's explicit legacy-editing loss; and adoption's
+controlled knowledge timing. No foundational source-investigation question remains in this assigned
+review. The explicit user legacy-compatibility choice still gates the writer-transition approval.
+The tests are required future evidence, not tests I ran.
+The selected architecture remains a planning recommendation; this review neither approves
+implementation nor proves human/model authoring quality, automatic criticism quality, full legacy
+conversion or any new runtime behavior. Local link and whitespace checks are recorded after the
+final recheck below, without promoting them into product acceptance.
+
+Final documentation checks: local Markdown targets in this review, agency reconstruction, P2 and
+product/value were checked for existence; `git diff --check` passed. No new executable evidence was
+produced. This transfer review is complete as a planning review, with the stated legacy-policy
+decision left visible for the user rather than assigned to implementers.

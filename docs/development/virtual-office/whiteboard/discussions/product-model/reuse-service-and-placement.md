@@ -1,6 +1,34 @@
 # How should reusable work, services and execution location relate?
 
-## Current decision — P1, revision 2
+## Current assessment — P1, revision 3
+
+Rowan-20261010, actual coordinator `/root`, 2026-10-10. The reopened source/ownership comparison
+retains revision 2's distinct committing actions for positive reasons, not because its menu already
+exists. [Faris's same-case comparison](../../../milkdrift-remedial-planning-v3/working/execution-reconstruction.md)
+shows that same-authority revision reuse, a restricted private service and direct independent work
+have different accepted facts and disclosure. A unified invocation service does not remove those
+differences; universal publication would add a service authority relationship to work that needs none.
+
+Use the existing filtered invocation catalog for service discovery. ListMethods/InspectMethod retain
+their exact administrative snapshot contracts; a separate bounded current management projection checks
+per-record administration rights. A derived invocation/internal-run relationship requires independent
+internal read permission. The root [application trace](../../../milkdrift-remedial-planning-v3/working/application-reconstruction.md)
+corrects the previous claim that a mixed administrative list was simply a broken invoke-only catalog.
+
+Canonical structured methods still pin exact calls at their actual owner; a readable remote definition
+is not automatically local. A work commitment can start same-authority work at its supported owner or
+select a granted remote capability. It cannot infer peer trust from a client connection, adopt an
+already entered remote liability into a new account or turn a private service into an editable child.
+Its pause/cancel gate controls new local durable entry acceptance; already accepted remote work may
+continue until that owner observes cancellation. Keep its outer reservation and uncertainty visible.
+
+The earlier common-discovery versus distinct-route disagreement remains unresolved as a usability
+preference, to test with the real client. It does not leave the backend action contracts unsettled.
+The new source conversion-gated editing limit is a separate explicit user decision, not a reason to
+drop reuse/copy/service authority distinctions. No relay, owner migration or universal publication
+was inferred from U17/U18. This remains a planning recommendation, not implementation approval.
+
+## Preserved P1, revision 2 and its review grounds
 
 Rowan-20261010 selects shared discovery with **distinct committing actions** as a planning
 candidate: use an exact workflow reference on its owning workflow daemon; make an independent

@@ -1,64 +1,67 @@
-# Proposed implementation program — not assigned
+# Revised implementation program — proposed, not assigned
 
-The user reopened the underlying investigation after `ff818e5`. This program is a provisional
-candidate to revise or replace, not a constraint on the investigation or authority to execute.
-Foundational questions must be resolved in planning; previous implementation-stage discovery
-instructions do not transfer that responsibility. See the [current handoff](../../handoff.md).
+This program replaces the `ff818e5` candidate after the
+[reopened investigation](../../reopened-critique.md). U17/U18 approve product directions; neither
+those answers nor this document authorizes production work. Read the [decision brief](../decision-brief.md),
+[adoption plan](../adoption-plan.md) and [shared execution context](context.md). The foundational
+architecture is specified in planning. Implementers inspect current consumers and source drift;
+they do not decide whether a planner, canonical source or knowledge evaluation belongs in Milkdrift.
 
-This is the unexecuted route from the inspected Rust product to a real standalone Svelte product.
-The user must first review the planning decisions and authorize a bounded implementation scope.
-Listing a prompt here does not activate it. [Shared execution context](context.md) supplies the
-source, decision and verification rules every prompt requires.
-
-| Assignment | Complete responsibility | Prerequisites | Usable result and focused verification |
+| Assignment | Complete responsibility | Prerequisite | Usable result and decisive proof |
 | --- | --- | --- | --- |
-| [P00](00-adopt-reviewed-design.md) | Adopt approved decisions/practice and reconcile source | User decision on this proposal | Canonical intent/architecture/roadmap accurately authorize work; documentation contracts. |
-| [P01](01-browser-and-production-foundation.md) | Real browser transport and retained Svelte foundation | P00, selected A1/F1 deployment | Two real authorized owners reachable, identity/session/stream boundaries; HTTP/config/browser contract checks. |
-| [P02](02-first-connected-workflow.md) | First real author/input/run/result/recovery journey | P01 | Maintained UI used with actual daemon, different briefs and lost replies; focused real-daemon browser tests. |
-| [P03](03-first-human-review.md) | User critique and resulting corrections | P02, actual user participation | Product/architecture feedback addressed, dependencies reopened where needed; affected checks. |
-| [P04](04-structured-authoring-and-notation.md) | Complete structured authoring, notation and choice continuation | P03, reviewed P2/N1; R-C01 decision | Same semantics through graph/list/agent/daemon; structured/reconciliation/round-trip cases. |
-| [P05](05-reuse-services-and-independent-owners.md) | Reuse, restricted services, direct work and multiple owners | P04 and P1/A1 | Real author and invoke-only journeys; service relation/discovery remedies; peer/replay/privacy checks. |
-| [P06](06-adaptation-and-managed-work.md) | Adaptation, tools/resources and composed lifetimes | P05 | Legitimate child progress plus protected-effect and maintenance refusals; managed/authority/recovery checks. |
-| [P07](07-knowledge-and-evaluated-reuse.md) | Selected knowledge, evaluation and prospective promotion | P06 | Negative/inconclusive/eligible outcomes, private evidence and independent variants; learning/context tests. |
-| [P08](08-compound-human-review.md) | Demanding combined work and actual user critique | P07, actual user participation | S21/S26/S28 together, counterexamples repaired and decisions rechecked. |
-| [P09](09-final-full-system-test-and-repair.md) | Final full-system test, repair and acceptance | P08 and all selected branch work | Integrated current Rust/frontend gates and real journeys; accurate canonical evidence. |
+| [P00](00-adopt-reviewed-design.md) | Adopt only user-approved directions/architecture/practices and register finite authorization | User review and implementation assignment | Accurate canonical intent, architecture, status and roadmap; no implementation claim. |
+| [P01](01-structured-source-and-shared-authoring.md) | Canonical structured source, one checked plan, complete runtime/result/repair support, shared public authoring and legacy transition | P00, approved P2/N1 | CLI/independent clients author and execute the new source; D1–D8 and exact old meaning; superseded writers/external reducer path removed. |
+| [P02](02-first-connected-workflow.md) | Browser transport, maintained standalone Svelte foundation and complete first author/input/run/result/recovery journey | P01, approved A1/F1/F2 | Actual two-owner browser use, graph/outline parity, new source plus legacy inspection, exact lost-reply recovery. |
+| [P03](03-first-human-review.md) | Actual early human use and resulting corrections | P02, real user participation | Product and source-authoring feedback repaired without treating architecture as permanently immune. |
+| [P04](04-ongoing-work-and-response-admission.md) | Work commitment, cumulative account association, source packet/model admission and bounded automatic reconsideration | P03; U18 and approved ownership | New goal and S28 criticism handled without driver orchestration; restart, no-progress, pause/cancel and scope limits through public clients. |
+| [P05](05-reuse-services-and-independent-owners.md) | Complete reuse/service/direct/placement UI and current authorized management reads | P04 | Actual private/restricted/direct/remote cases, one-worker continuation and exact authority distinctions. |
+| [P06](06-adaptation-and-managed-work.md) | Managed transition extraction, serving/descriptor consolidation, complete adaptation/resources interaction | P05 | Atomic managed policy preserved, one fresh admission path, typed descriptors; active/uncertain writer and protected-agreement cases. |
+| [P07](07-knowledge-and-evaluated-reuse.md) | Shared knowledge assessment, controlled/retrospective evidence, reuse approval and retained protected method qualification | P06; U17 | Research lesson without executable method, honest self/independent review, negative/inconclusive results, separate adoption/publication. |
+| [P08](08-compound-human-review.md) | Complete advanced interaction and actual demanding combined-work human review | P07, real user participation | S21/S26/S28 with resource/remote/privacy/reconsideration/knowledge variations; unfinished advanced views are blockers. |
+| [P09](09-final-full-system-test-and-repair.md) | Full current Rust/frontend gate and final integrated acceptance/repair | P08 and all assigned scope | Current supported upgrade/recovery and public journeys; accurate evidence and remaining qualification limits. |
 
-These are coherent boundaries, not a limit on justified repairs. Each author fixes its own discovered
-defects; P09 is not a backlog for known failures. P01/P02 deliver retained production code early,
-then P03 can reopen backend/product decisions. Advanced capabilities remain assigned through
-P04–P08, rather than disappearing behind “first version.”
+The source/runtime/public-authoring boundary now precedes early frontend use. P02 folds the previous
+browser-foundation and first-workflow responsibilities into one complete product slice. P04 is no
+longer an invitation to investigate a missing goal-plan consumer or postpone choosing a source
+representation. P07 no longer forces knowledge through managed-method repair. Numbering remains a
+navigation convenience: P00 may split an owned unit into explicitly dependent execution assignments
+without changing its contract or leaving half a boundary accepted. There is no fixed prompt budget.
 
-The explicitly proposed multi-phase schedule assigns the full local Rust gate and integrated
-frontend/application acceptance to **P09**. Before implementation, P00 must register that schedule
-under the [workflow policy](../../../../workflow.md#explicit-multi-phase-sprint-schedule). Earlier
-prompts run focused behavior/static/docs checks and report limits; they are not full-system
-acceptance. CI protections remain enabled throughout.
+P03 and P08 require real human participation. They can reopen a decision on new evidence, but they
+are not substitutes for the completed architectural comparison. Earlier phases implement their
+full refusal/recovery/consumer boundary; later phases add independently complete product capability.
+P09 is the named final full-system gate under the proposed multi-phase schedule. P00 must register
+that schedule under the workflow policy before executable work; CI stays enabled throughout.
 
-## Conditional branches and exact decisions
+## Excluded extensions, with precise consequences
 
-| Branch | Question and current consequence | Work needed before implementation can be ready |
-| --- | --- | --- |
-| B1 Cross-owner relay/migration | Does the user need a direct client at execution-only C to relay into B, or workflow-owner migration? Neither is inferred from multiple connections. Existing client→B and A-workflow→B remain usable. | Identify caller/origin, privacy and recovery promise; run exact current route; compare direct connection, explicit transfer and relay. Add complete owner/authority/account/retirement tests before selecting new semantics. No ready relay/migration task is claimed. |
-| B2 Release from management | Is preserving files on removal sufficient, or must an active service become independently administered? Current code has no detach action. | Decide active-use fencing, configuration/secret/supervisor transfer, drift, rollback and operator responsibilities; require a real-host plan. P06 exposes actual lifecycle but cannot pretend detach exists. |
-| B3 Standard interchange/core replacement | Is tested UML/BPMN import/export or canonical regions worth the migration cost? Principles-based notation alone does not answer this. | Choose concrete external artifacts and required semantic subset; test round trip, unsupported constructs and current-data transition. Reopen P2/N1/P04 rather than add a second compiler. |
-| B4 Stronger credential/private-record custody | Is persistent login, encrypted shared-device storage or cross-device recovery required beyond F1's explicit personal-profile IndexedDB or export-before-send choice? | Select custody/key/revocation/clearing and operator responsibilities. P01/P02 already require exact request durability before submission without stored bearer tokens; they cannot promise protection from other users of the same browser profile or automatic recovery on another device. |
-| B5 Broader network/platform qualification | Which remote HTTPS/overlay/browser and later desktop environments should be supported beyond the initial verified lane? | Supply controlled endpoints and certificate/network setup, run auth/stream/recovery/download tests; no blanket compatibility claim from loopback Chromium. |
+- **Third-host direct relay and workflow-owner migration:** multiple connections do not imply either.
+  Direct client-to-B and A-workflow-to-B capability invocation remain supported. Exact method pinning
+  occurs at its owner or after permitted transfer/import; same-authority work can be started at B.
+  No new invocation service or hidden publication is introduced merely for geography.
+- **Active release from management:** existing preserve/remove/attach behavior remains. Transferring
+  a live supervisor, secrets, claims and administration to an operator needs its own product contract;
+  no proposed button pretends the current detach operation exists.
+- **UML/BPMN interchange:** structured source is selected now. Tested external-model import/export
+  is a separate unsupported extension; standards-inspired semantics do not claim interchange.
+- **Stronger custody/broader environments:** persistent credentials, shared-device encrypted storage,
+  cross-device recovery and additional browsers/platforms require their own scoped product/proof.
+  The selected browser lane and explicit request-custody choices remain complete requirements.
 
-Conditional branches are not an indefinite backlog for currently working outcomes. They name
-unapproved additions or a broader promise whose need/proof is unresolved. If user review makes
-one a required outcome, finish its bounded design and insert complete assignments before P09;
-the selected program cannot be declared complete while that requirement is only this table.
+These are excluded additional promises, not unresolved architecture required by U17/U18. If user
+review adds one, finish its design before inserting its implementation; do not let it silently
+redefine a ready phase. Old B3's canonical-representation decision is no longer a conditional branch.
 
-## Outcome and reverse audit
+## Coverage and deletion audit
 
-V01 → P01–P03; V02 → P02/P04/P08; V03 → P04/P06/P08; V04/V05 → P04/P05;
-V06/V08 → P01/P05; V07 → P06; V09 → P04/P06; V10 → P07/P08; V11 → every boundary,
-especially P01/P05/P06; V12 → P02/P05/P06/P09. S01–S30 remain in the
-[dossier](../../working/system-dossier.md). R-A01/02 → P01/P02; R-A03 → P06;
-R-A04/05/06 → P05; R-C01 and R-FE02 → P04; R-FE01 → P07.
-B2 corresponds to R-A07, not an already approved remedy.
+S01–S30 remain in the [dossier](../../working/system-dossier.md). P01 owns structure, values, waits,
+legacy conversion and prospective frontier. P02/P03 own first real use; P04 owns S05/S26/S28 automatic
+continuity; P05/P06 own authority, direct/peer/publication and physical lifetime; P07 owns knowledge
+and executable evaluation; P08 combines them. P09 verifies the whole approved result.
 
-Every new backend responsibility therefore has a user action and proof destination. No generic
-framework, new provider family, second scheduler, inference engine or unrelated cleanup is planned.
-Root-cause remedies are public browser support, complete semantic authoring, exact owner-qualified
-views and missing authorized discovery/relationships, rather than new names over hidden private paths.
+Concrete superseded paths to remove are assigned, not left as a general audit: daemon private
+ModelWorkflow/new graph writer and operation-only external reducer in P01; driver stage/provenance
+orchestration in P04; duplicate fresh serving decisions, redb managed policy and descriptor JSON field
+mutation in P06; compulsory method/publication coupling for knowledge assessment in P07. Preserve
+closed old readers and exact receipts where they own supported history. There is one new source
+writer, one execution engine, one account transition owner and one shared evidence/learning family.

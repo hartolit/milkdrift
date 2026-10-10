@@ -1,6 +1,94 @@
 # How should the production workbench connect, explain work and retain recovery?
 
-## Current recommendation — F1, revision 3, selected for planning
+## Current recommendation — F1/r4 and F2/r4, selected for planning
+
+Delta-20261010 revises the retained standalone Svelte workbench around
+[NP3 canonical structured source](../../../milkdrift-remedial-planning-v3/deliverables/notation-profile.md),
+[WorkCommitment and evaluated knowledge](../../../milkdrift-remedial-planning-v3/working/agent-directed-work.md#u18-disposition-one-continuous-work-commitment-in-the-existing-controller-owner),
+and [U17/U18](../../../milkdrift-remedial-planning-v3/intent-source-excerpts.md#u17--human-reviewed-knowledge-and-precise-evidence).
+The [r4 interface contract](../../../milkdrift-remedial-planning-v3/deliverables/production-interface.md)
+and [revised practice proposal](../../../milkdrift-remedial-planning-v3/deliverables/frontend-practice-proposal.md)
+govern changed interactions. The detailed r3 working files below retain useful technical annotations
+but are historical wherever they conflict. User approval concerns product outcomes, not these
+architectural mechanisms, implementation authorization or a completed usability result.
+
+The person starts with a goal, inputs, outcomes, permissions, budget and acceptance/intervention
+policy. Internal ports/account IDs are inspectable consequences rather than prerequisites. Work,
+Operations, Resources and Improve remain useful connected destinations with explicit owner/actor
+context. Shared discovery does not erase distinct reference/copy/public-invocation meanings or
+expose a private service implementation.
+
+Canonical `WorkflowProgram` source is authored through the same public structural/value operations
+from diagrams, outline/forms, Rust/API and agents. Control/data lines project source; the client
+does not retain a second compiler or editable execution graph. Ordered Conditional clauses and
+result mappings replace the r3 graph reconvergence remedy. Parallel completion, usable results
+and unsettled effects have separate visible states. Complete P01 source/validation/runtime/legacy
+and public-authoring work precedes the first connected Svelte P02 slice; browser foundation is
+folded into P02. Its real human checkpoint remains early. P04 adds ongoing commitment control,
+P07 knowledge assessment/reuse and P08 the combined experience.
+
+Legacy immutable graphs continue with exact historical meaning, including identifier-determined
+priority. An explicit checked conversion creates new region source only when correspondence is
+established. Unsupported crossings/results/ownership produce a precise refusal, not a lossy save.
+Unconvertible revisions stay readable, executable, replayable and reusable; the selected design
+does **not** promise unrestricted editing of every historical graph. A paused-run conversion or
+repair also preserves completed facts, selected clauses, active governing plans and unresolved
+effects, with exact frontier guards. This compatibility cost must remain visible at decision time.
+
+P01 must also pass a positive supported corpus: current model-editor/prompt-sequence outputs,
+parallel/pinned calls and permitted protected-root Task-only repair. Blanket refusal is not a
+migration strategy. Blueprint's derived versioned legacy agreement view must preserve the original
+fingerprint/scope obligations while permitting those edits; the current client displays both that
+positive result and precise protected/incompatible refusals.
+
+`control::controller::commitment` is the proposed owner of ongoing accepted goals and next-action
+intent. Runtime owns each associated execution. Public WorkCommitment operations create, inspect,
+receive criticism/answers, pause/resume/cancel and link ordinary proposal/adoption decisions. The
+browser projects reasoning, evidence, dissent, cumulative reservations/usage, pending questions and
+stopping reasons without running the supervisor. Criticism requests assessment; justified retention
+of the original result and stopping are valid outcomes. Paused/closed/expired commitment admission
+is enforced for local associated entry at the proposed durable final-entry gate. Already admitted
+remote work follows its separate cancellation/uncertainty contract; a local pause does not prove
+physical stop. Entered effects and settlement remain visible.
+
+Improve accepts nonexecutable knowledge through the shared learning owner as well as executable
+method qualification. Controlled versus retrospective basis, author review and known/unknown
+independence are explicit. Human/agent judgments do not impersonate automated verification.
+Negative/inconclusive evidence remains discoverable. Approval for selected knowledge reuse is a
+separate action from evaluation, method adoption and publication; no invented workflow/resource is
+required merely to assess a design lesson.
+
+F2 retains its valuable deployment/custody/recovery contract: static client, approved CSP endpoints,
+exact daemon CORS origins/TLS, bearer only in tab memory, explicit unencrypted personal-profile
+IndexedDB or session/export retention, exact requests frozen before effects, protected pending
+records with reserved control capacity, lossless integers and bounded/resumable streams. Changed
+authority invalidates views and quarantines original records; each operation retains its actual
+replay contract. The detailed browser/fixture/accessibility requirements below remain. Exact
+package compatibility and release topology are tested and locked in P02; old version suggestions
+are not a compatibility result. Current E04 is negative browser evidence only.
+
+### Changed position, strongest alternatives and remaining proof
+
+The initial paired Branch/ExclusiveMerge source recommendation failed to justify why its compound
+authoring source should be discarded in favor of derived edges. Delta accepted Elin's critique and
+selected canonical regions, preserving the smaller graph correction as the strongest alternative
+when unrestricted graph editing matters. This is a source/operation judgment, not proof that an
+LLM authors regions more reliably or that a particular diagram library renders them well.
+
+The finite goal-planning remedy also failed to meet U18's ongoing continuity. Elin's developed
+WorkCommitment proposal is adopted here in place of a second browser/daemon recipe. A fully
+asynchronous runtime-root supervisor could make coordination itself reusable/editable, but needs
+nonterminal child observation and lifetime ownership beyond dynamic Call. The selected closed
+commitment policy does not promise that programmability. Source Call remains pinned.
+
+For deployment/custody, fixed-target same-origin proxy and session/export as the ordinary mode
+remain serious alternatives. For interaction, object-led navigation, plain Svelte+Vite and another
+renderer can win if actual connected/accessible use disproves the current choices. P02 must test
+setup, retained-data choice, reload/logout, quota and unknown responses with the actual user;
+later compound use must test private services, repair, independent criticism, resources, uncertainty
+and adverse assessment together. No browser implementation or human-use pass was performed for r4.
+
+## Historical recommendation — F1/r3 and F2/r3
 
 Bram-20261010 recommends the intent-led production interface and engineering contract in
 [F1/r3](../../../milkdrift-remedial-planning-v3/working/production-interface.md) and

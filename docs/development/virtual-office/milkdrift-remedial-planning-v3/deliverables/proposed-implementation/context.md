@@ -14,14 +14,24 @@ and the current decisions G1/P1/P2/A1/N1/F1 through the planning context. Record
 revision of each required premise in the implementation handoff. A changed premise reopens only
 dependent choices; no stale phase label overrides it.
 
-The reviewed planning revision set is **G1/r1, P1/r2, P2/r2, A1/r3, N1/r2 (NP2), F1/r3 and
-F2/r3**. Each prompt's named decision refers to this exact set unless P00 records a later reviewed
+The reopened planning revision set is **G1/r2, P1/r3, P2/r3, A1/r4, N1/r3 (NP3), F1/r4 and
+F2/r4**. U17/U18 approve product directions, not these implementation decisions. The migration
+editing preference is explicitly presented to the user; P00 must record its disposition before
+assigning the new writer. Each prompt's named decision refers to this set unless P00 records a later reviewed
 and user-approved replacement. G1 owns purpose; P1 reuse/service/placement; P2 authoring/control;
-A1 execution/browser ownership; N1 notation/choice semantics; F1 interactions/custody; F2 frontend
+A1 execution/browser/commitment ownership; N1 canonical structured source/notation; F1 interactions/custody; F2 frontend
 engineering. The [decision brief](../decision-brief.md), [adoption plan](../adoption-plan.md) and
 [review record](../../working/review-resolution.md) explain their approval conditions and revisions.
 Selection for planning is not authorization. Every implementation handoff must distinguish the
 user's actual approved subset from the full proposed table.
+
+Read the actual reopened comparisons: [structure](../../working/structure-comparison.md),
+[agency and knowledge](../../working/agent-directed-work.md),
+[execution/resources](../../working/execution-reconstruction.md) and
+[application construction](../../working/application-reconstruction.md). The earlier graph correction,
+manual assistance ceiling and method-only knowledge model are superseded. P01 now owns the full
+source/runtime/public-authoring boundary; P02 owns browser/first product, P04 ongoing commitment and
+P07 shared knowledge/evaluation. Earlier exposure/review records retain their historical numbering.
 
 The product separates saved definition, accepted execution and authority. These are selected
 planning foundations because they preserve useful outcomes, not an instruction never to question

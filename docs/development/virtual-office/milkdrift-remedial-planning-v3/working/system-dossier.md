@@ -13,8 +13,8 @@ examined (sometimes executed); **M** means mapped with source references but wit
 design alternatives; **I** means mainly inherited canonical/historical evidence; **U** marks a
 consequential relationship not resolved. These labels describe the cited scope, not every line in
 the package. None of the old tests makes an adjacent unreviewed relationship approved. The current
-investigation will add its substantive comparison and disposition to each row, not overwrite this
-honest starting point.
+investigation's completed comparisons are linked below. This table preserves the honest starting
+point; its final column records the actual division of investigation, not a completion claim.
 
 | Workspace package / source | Responsibility, neighboring owners and important consumers | Prior depth and unresolved relationship | Reopened investigation |
 | --- | --- | --- | --- |
@@ -49,6 +49,44 @@ agent orchestration, evaluation breadth and whether storage/application boundari
 right place. Narrow adapters can receive lighter review when their source has one external-mechanism
 purpose and multiple concrete consumers; their platform/quality claims remain limited to retained
 evidence. Broad source coverage does not claim every platform implementation has been requalified.
+
+## Reopened coverage and dispositions
+
+Four substantive investigations cover the 24 actual packages and their consequential relationships.
+Each includes source/consumer/history anchors, independent outcomes, compared alternatives, concrete
+changes and limits. Their package-level tables refine this audit rather than giving blanket approval:
+
+| Completed investigation | Package coverage joined here | Comparative depth and resulting direction |
+| --- | --- | --- |
+| [Structure and prospective change](structure-comparison.md) | blueprint; runtime activation/reconciliation; workspace/control/persistence consumers | Concrete current child-choice graph, complete corrected graph, canonical regions and actual BPMN subset on D1–D8. After constructive challenge, select canonical structured source lowered to one checked execution plan. Preserve legacy graph meaning; no asserted universal conversion. Remove operation-only external reducer path in favor of ordinary Task plus explicit collection. |
+| [Agency, context and learning](agent-directed-work.md) | control; runtime context/controller; workspace; model; evidence; adaptive-slotbook and daemon learning | Actual producer search establishes missing general planner and managed-publication-only evaluation. External driver, finite round and continuous bounded control compared; U17/U18 resolve product scope, not architecture. Full root-run versus control-owned commitment comparison and shared knowledge-evidence reconstruction supply the selected implementation boundary. |
+| [Execution/resource reconstruction](execution-reconstruction.md) | capability, capability-host, authority, persistence, peer-protocol, model; local-process, model-provider, managed-linux, peer-http, redb-store, local-secret | Same lost-reply/lost-stop/revocation/restart case through current, complete correction and unified invocation service. Retain distinct accepted facts; move managed transition policy out of storage mechanism, converge fresh serving admission and use typed descriptor construction. |
+| [Application reconstruction](application-reconstruction.md) | daemon, cli, control-protocol, control-client, prompt-sequence, contracts; evidence/example relationships | Current raw/template authoring versus shared graph builder versus structured source; exact application/runtime receipt purposes; configuration and contract alternatives. Move pure semantic construction to blueprint and authenticated orchestration to control; preserve independent wire/client/importer boundaries. Correct the old publication-list finding's contract mismatch. |
+
+This completes broad package coverage at deliberately unequal depth. Deep comparative review is
+concentrated where choosing another representation or owner changes the product: source structure,
+prospective repair, ongoing work, evaluation, entry/accounts/resources, public construction and
+recovery. Small mechanism packages receive lighter source/consumer review because their alternatives
+either put ambient effects into core or repeat one real shared mechanism. Their platform behavior
+is not newly qualified by that conclusion.
+
+Specific limits remain: no proof every currently accepted graph decomposes into regions; no measured
+human/model authoring advantage; no new live provider/hardware/platform qualification; no complete
+audit of every authority-fact producer, parser path, storage scanner or fairness/overload edge. These
+do not inherit an overall passing grade. The selected compatibility rule supports old graph execution
+without requiring that proof and refuses unsupported source conversion. Existing evidence continues
+to own physical/platform claims. No newly uncovered issue is called a runtime bug merely because a
+modeled contract is more useful.
+
+New executed evidence is the [priority runtime diagnostic](priority-runtime-evidence.md): two true
+guards, fixed destinations and swapped port IDs change the actual selected business route. That
+supports explicit semantic ordering and exact preservation of legacy ordering. It does not execute
+any proposed structured source or continuous-work design. E01–E07 remain the original observations.
+
+The earlier scenario table below is retained as the `ff818e5` exposure record. Its provisional
+R-C01/P2/NP2 and missing-orchestration claims are superseded by the linked reopened investigations
+and current deliverables; it must not be used to reinstate a graph-only implementation or manual
+reinitiation ceiling. S01–S30 are still required outcome coverage in the revised program.
 
 ## Earlier dossier at ff818e5 — preserved provisional analysis
 

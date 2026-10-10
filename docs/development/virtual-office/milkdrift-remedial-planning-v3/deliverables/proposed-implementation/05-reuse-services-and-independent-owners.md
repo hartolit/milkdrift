@@ -1,6 +1,6 @@
 # P05 — Reuse and operate work across independent authorities
 
-Owner: public service/reuse boundary engineer and workbench consumer. Requires P04, P1/r2 and
+Owner: public service/reuse boundary engineer and workbench consumer. Requires P04, P1/r3 and
 approved A1/F1/N1 for V04–V06/V08/V11/V12. Read [shared context](context.md), source traces for
 subworkflow/copy/publication/direct/peer operations, `SavedRunRequest`, serving catalog/acceptance,
 control publication and their real consumers/tests. Retain P1's independent dissent about discovery.
@@ -14,12 +14,14 @@ destination, rights and daemon validation. No generic call registry or global me
 
 Implement publication preparation/review/publish/inspect/generation/retire and invoke-only public
 call/result workflows. Show current generation versus accepted pin and private internals versus
-public contract. Close R-A04 with a bounded authorized association read only if source still lacks
-the needed public invocation→internal run/revision relationship. The owner derives it from existing
-association records; unauthorized callers receive no hidden identifiers. No browser joins private
-ledgers. Audit R-A05 using a mixed-visibility publication inventory and narrow grant; establish the
-expected disclosure/progress behavior before implementing filtered owner-side pagination if needed.
-It is a source concern, not a proven defect to “fix” by widening authorization.
+public contract. Close R-A04 with a bounded authorized invocation→internal run/revision association
+read derived from the existing publication association. Existing run `published_source` is the
+reverse view, not a complete caller-to-internal discovery operation. Require independently granted
+internal read permission; unauthorized callers receive no hidden identifiers or existence hints.
+No browser joins private ledgers. The reopened R-A05 finding is a contract distinction: retain exact
+ListMethods/InspectMethod administrative snapshot receipts, add current per-record-authorized bounded
+management queries with opaque scoped cursors/truthful continuation, and use the existing filtered
+capability catalog for invocation. Do not weaken administration rights to simulate public discovery.
 
 Internal IDs, titles and relationship metadata remain private even when attached to a public call.
 On grant/session change clear them from authorized views and reject late old-session replies;
@@ -36,7 +38,7 @@ bytes; do not blanket-ban permitted direct replay or generalize it to workflow c
 A workflow at A may select exact granted peer operations at B through existing placement, with
 the original workflow account/provenance. Merely adding B to the client creates no peer relationship.
 Expose a useful boundary error, not automatic trust/setup or unsafe failover. No direct C→B relay
-or workflow migration is included without B1's separate decision.
+or workflow migration is included; these remain separately scoped excluded extensions.
 
 Exercise three real owner identities, two workflows named release, same owner at two addresses,
 different actors/grants, replacement host at old address, stale generation and revoked rights.

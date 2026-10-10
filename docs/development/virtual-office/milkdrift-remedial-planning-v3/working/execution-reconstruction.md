@@ -579,3 +579,332 @@ selection and the four loss boundaries above. The ordinary-result evaluation pro
 direction with five concrete contract corrections, not an already complete reuse of current learning.
 None of these observations requires another global invocation ledger or moving publication/resource
 ownership. No fresh runtime/provider experiment was performed for this criticism.
+
+### Reconsidered selection after U17/U18 and the complete C comparison
+
+Faris-20261010, `/root/execution_faris`, after reading the user's exact
+[U17/U18 directions](../intent-source-excerpts.md#u17--human-reviewed-knowledge-and-precise-evidence),
+Elin's completed C and Rowan's [application reconstruction](application-reconstruction.md).
+This changes the conditional root-run preference above. The earlier position remains visible so
+that the objection and the evidence that changed it are not rewritten as prior consensus.
+
+**Select C with a control-owned `SessionOwner`.** The user selected bounded automatic ongoing
+work, not this owner. My architectural reason is the missing independent lifetime of accepted
+next-work intent: a commitment must retain criticism and decide permitted future actions while
+its current work run is running, paused, being reconciled or already terminal. The session
+record owns that intent and its exact pending commands. Runtime still owns each run, its nodes,
+attempts, waits, effects and historical results. This is a new bounded orchestration state
+machine; describing it as having no orchestration or scheduling responsibility would obscure
+its actual cost. It schedules whole authorized activities, while runtime schedules their execution.
+
+The strongest alternative remains one ordinary root run. Its real advantages are an existing
+durable identity, signals, inherited account, parent cancellation and fewer new storage contracts.
+However, [`observe_child_terminal`](../../../../../crates/runtime/src/engine/structured/subworkflow.rs)
+returns immediately for nonterminal children and imports outputs only from terminal evidence.
+[`create_repeat_iteration`](../../../../../crates/runtime/src/engine/structured/repeat.rs) invokes
+the controller lifecycle at activation/cycle entry; its human checkpoint follows a completed
+true-condition frontier. This is not a callback when a live child reaches a pause or receives
+criticism. An enclosing Parallel can keep a separate critic active, but does not itself expose the
+new child's exact handle, nonterminal evidence contract or a durable join-free next-round state.
+
+Delta's `CallTarget::AdmittedPlanResult` would correctly resolve a validated selected revision,
+freeze its receipt/authority/interface at child acceptance and never resolve a different target
+on retry. It does **not** close that nonterminal coordination gap. Full root-C additionally needs
+an early child handle, scoped active-child observation, a coordinator continuation while the
+child remains active, and cancellation/reconciliation rules for both branches. General asynchronous
+child handles can be worthwhile in a future workflow language, but S28 does not independently
+justify adding that new ordinary workflow semantic alongside dynamic call and the source migration.
+Do not include dynamic Call merely to keep session accounting attached to a synthetic root.
+
+Under selected C, the critic's declared output or authenticated `SubmitCriticism` references exact
+evidence and target associations. The session can request an ordinary pause and observe the
+resulting target frontier without waiting for the target to become terminal. It then prepares
+a fresh, bounded planning packet. Criticism is an attributed claim; it does not directly edit
+the method or satisfy an approval. Resuming, prospective adoption, retries and resolution of
+uncertain work remain ordinary authorized operations. A revoked target-read permission can
+block the packet even when the caller may still inspect the session's own accepted intent.
+
+The selected boundary requires these concrete additions; they are part of C, not work for an
+implementation agent to discover:
+
+| Owner | Required accepted contract | What remains elsewhere |
+| --- | --- | --- |
+| `control::session` | Immutable policy, exact accepted decisions/pending commands, bounded phase projection and pure `plan_session_transition`; one-round assistance is a policy of this owner | No provider execution, node lifecycle, copied run status or physical-stop judgment |
+| `authority` | Session identity scope and closed operations for create/read/criticism/answer/pause/resume/cancel/policy amendment, plus a frozen session actor/grant basis | Each target read, proposal, approval, run start and capability entry still evaluates its actual existing operation and resource facts |
+| `persistence::session` | Bounded `SessionActionRecord`, exact `SessionExecutionAssociation`, accepted policy/admission generation and journal/receipt port | No second model transcript, artifact store or invocation ledger |
+| `persistence::controller_account` with renamed new contract | Closed `ExecutionAccountOrigin::{ControllerOccurrence, PublishedInvocation, WorkSession}`, session establishment without a pretend run, unchanged reserve/settle/unknown-use algebra | Session rounds do not reset or privately estimate consumed allowance |
+| runtime plus redb atomic commit | Exact association-backed run creation/account binding, normal run execution basis and current session admission fence before start/entry | Control cannot append arbitrary `BindRun`, task or attempt facts |
+| daemon | Authentication/wire DTO translation, external exact receipts, bounded continuation pages and current authorized projections | Browser/evidence drivers no longer own stage/retry/proposal tracking |
+
+The authority addition is necessary. Current
+[`ExecutionAuthorityBasis`](../../../../../crates/authority/src/model/execution.rs) requires a
+real workflow/root run/revision and derives from an accepted start decision. Do not weaken that
+contract to encode an invented session run. `SessionAuthorityBasis` retains the creator's exact
+actor/grant/policy basis and the accepted policy envelope. Every associated run obtains its own
+normal start decision under that basis, narrowed by the session policy and checked against current
+revocation. Association gives neither the observer nor the session actor implicit run/artifact
+read, approval or publication permission. Versioned grant readers must not turn a missing session
+scope in an old grant into newly granted control over sessions.
+
+The account change is more than an enum rename. Current
+[`ControllerAccountTransaction`](../../../../../crates/persistence/src/controller_account/transaction.rs)
+requires establishment to bind the declaration's originating `RunId`. Current
+[redb validation](../../../../../adapters/redb-store/src/controller_account/validation.rs)
+matches inherited bindings exactly to `SubworkflowCreated` events. Preserve those old checks.
+Add one typed session establishment path and one association-backed creation path: a session
+creation transaction retains policy, external receipt, account and first action together;
+runtime creation validates the exact accepted action/association and atomically writes run creation,
+the session association provenance and its existing account binding. Start accepts the ordinary
+run execution basis under its own current authority decision. A caller-supplied account ID or
+boolean `is_child` cannot authorize this path. The unstarted run after a crash is recoverable
+from those exact facts; no subsequent client checkpoint is needed.
+
+Cancellation needs an admission fence, not merely eventual fan-out. Session pause/stop commits a
+new closed admission generation before scheduling ordinary pauses/cancels. Each session-associated
+start and external entry checks that current durable gate in its owning acceptance transaction;
+otherwise `create -> session cancel -> delayed start` could admit fresh work. Descendants find
+the originating session through their exact account/association chain. Accepted external work,
+including remote service work, remains accepted and may remain uncertain. Resolution and terminal
+settlement stay admissible under their separate authority; `Stopping` is not proof of physical stop.
+An action selected before the fence but not entered remains pending/refused according to its exact
+accepted command, never regenerated as a new request behind the operator's stop.
+
+There is also a finite controller-composition limit. Current
+[`ControllerLifecycleOwner::assess`](../../../../../crates/control/src/controller/lifecycle.rs)
+accepts another origin only for a published invocation whose whole allowance fits the marked
+controller's budget. Otherwise it refuses a conflicting originating declaration. Extend that
+existing inherited-origin rule to `WorkSession` only when its whole allowance fits the marked
+method's limits. Refuse a non-fitting local association before start; the existing published
+service route can provide its declared bounded internal allowance while retaining the caller's
+outer reservation. Ordinary session-authored methods need no controller marker merely to obtain
+an account. Do not silently add hierarchical mutable budgets or reset the session account to run
+such a method. Preserve the limitation visibly until a separate complete suballowance design earns
+its cost. Independent cycle/proposal limits remain restrictions of the marked method.
+
+The initial session policy fixes the originating budget. A separately authorized future
+requirement change can narrow permitted work while retaining prior usage and reservations. A
+budget increase would require an explicit account-amendment contract preserving those totals;
+creating another allowance under the same label is not that contract. It is not needed to deliver
+the bounded U18 journey and is not silently authorized by `ResumeWorkSession`.
+
+### Application receipts and supported-state consequences
+
+Rowan's receipt finding survives adversarial review. The daemon binds the exact external actor,
+grant and canonical envelope to a response, including refusals and administrative snapshots.
+Runtime semantic retry identity deliberately omits certain delivery/planning fields so its own
+replanning can proceed. These are different promises, not duplicate authority over one fact.
+Keep both. Exact deterministic IDs alone do not close partial commit gaps if recovery reconstructs
+different command meaning; C retains complete prepared command material before invoking its owner.
+After proposal acceptance and report loss, replay/query the same proposal and publish the same
+derived result. Never regenerate the model response to repair a missing application receipt.
+
+R-A05 also changes: `ListMethods` and `InspectMethod` are retained administrative snapshot commands,
+not the invoke-only catalog. The proposed universal filter remedy was based on the wrong contract.
+Retain those historical commands. Current management uses a new bounded per-record authorized
+publication query with an opaque scoped cursor; invoke-only discovery continues through the
+existing filtered capability catalog. The query projects `PublishedMethodStore`; it does not own
+another publication list. No source-only pagination suspicion is an executed failure.
+
+Adopt C and its account/authority/association readers together before permitting session-driven
+entry. Keep exact old account/declaration/receipt bytes, original digest domains and replay readers;
+project their origins without rewriting accepted records. New origins and admission fences require
+a supported store generation that old writers refuse. Existing unrelated/uncertain runs are not
+retrofitted into a new allowance. Preserve them with their own authority, liabilities and managed
+holds; selected evidence may inform a new session under current read rights. Rollback must not
+restore a pre-session database while effects accepted under the newer store survive. The canonical
+region-source migration is separate: retaining old lowered plans does not by itself retain new
+session associations, and old active plans need not be converted merely to observe their evidence.
+
+### U17 corrects the earlier evaluation restrictions
+
+The user's approved direction is broader than the proposed `PairedResultJudgment` executable
+profile and than my earlier insistence on distinct proposer/evaluator authority. A knowledge
+comparison may reference exact research inputs and outputs without inventing candidate runs or
+executable method versions. Self-review is valid attributed evidence with that relationship
+visible. Retrospective criteria are also valid, labeled as retrospective; neither deserves the
+controlled/independent label merely because a receipt exists.
+
+Retain shared exact evidence identity, judgment receipts, explicit supersession and separate
+adoption authority. Add closed subject/basis distinctions for knowledge evidence versus executable
+qualification, criteria timing and reviewer relationship. Require candidate/attempt slots and
+effect isolation only where the claimed experiment actually executes those slots; do not impose
+them on an architectural lesson. Required technical verification and protected publication checks
+retain their existing force. Existing protected learning remains a supported profile. Knowledge
+approval can make an exact scoped lesson selectable without turning it into a published method.
+
+This completed comparison selects a new application owner for a demonstrated missing lifetime,
+while continuing to reject a universal invocation ledger. The two conclusions are consistent:
+the former owns new continuous intent; the latter would mostly relocate already owned execution
+facts. No source inspection here qualifies the future crash/authority tests as already passing.
+
+## Faris final counterexample review of the combined program
+
+Faris-20261010, `/root/execution_faris`, 2026-10-10. I read the revised
+[decision brief](../deliverables/decision-brief.md), [adoption plan](../deliverables/adoption-plan.md)
+and proposed [P01](../deliverables/proposed-implementation/01-structured-source-and-shared-authoring.md),
+[P04](../deliverables/proposed-implementation/04-ongoing-work-and-response-admission.md),
+[P05](../deliverables/proposed-implementation/05-reuse-services-and-independent-owners.md),
+[P06](../deliverables/proposed-implementation/06-adaptation-and-managed-work.md) and
+[P07](../deliverables/proposed-implementation/07-knowledge-and-evaluated-reuse.md). This review
+combines their contracts, rather than treating agreement between documents as behavioral proof.
+The final selected name is `control::controller::commitment::WorkCommitmentOwner`, with
+`WorkCommitment` and `ExecutionAccountOrigin::WorkCommitment`. The earlier session names above
+record the evolution of the same candidate; they do not authorize a parallel `control::session`
+implementation. I normalized the selected name in A1 and the execution deliverable.
+
+### F-C1 — local cancellation cannot revoke an already accepted remote operation instantly
+
+Counterexample: a commitment at A invokes a published method at B. B durably accepts, but has not
+yet created/entered its private child. A closes the commitment gate, requests exact cancellation
+and loses that request or its acknowledgment. B still has an accepted uncancelled operation, a
+valid deadline and current caller/service rights. It may legitimately create and enter its child
+after A's stop was accepted. A's durable gate cannot be read atomically inside B's transaction.
+
+This follows concrete source. Runtime's
+[`published_entry_allowed`](../../../../../crates/runtime/src/engine/effects/published.rs)
+walks local publication ancestors, but hands a `Serving` boundary to the serving owner's policy.
+The host's [publication gate](../../../../../crates/capability-host/src/serving/published.rs)
+checks B's own exact association, serving phase/cancellation, deadlines and caller authority.
+The [control continuation](../../../../../crates/control/src/published.rs) creates or cancels the
+private child from those accepted facts. The [peer adapter](../../../../../adapters/peer-http/src/remote.rs)
+returns an acknowledgment with neither acceptance nor terminal proof when cancel transport fails.
+Nothing in these sources supplies distributed instantaneous commitment revocation.
+
+Even locally, the fence linearizes durable entry admission, not the instant a process performs its
+first physical effect. The [serving worker](../../../../../crates/capability-host/src/serving/worker.rs)
+commits `mark_peer_entered` before invoking the prepared adapter. An effect admitted before gate
+closure may physically begin afterward; it is already accepted work with the ordinary cancellation
+and uncertainty obligations. The new gate must refuse fresh durable entry acceptance after closure,
+not advertise absence of all later physical activity.
+
+**Disposition:** scope the new gate to owner-local starts and entries, including locally reachable
+publication ancestors even if the service has its own account. Checking only the immediate account
+origin would miss that local published case. At the peer boundary retain ordinary exact outbound
+cancellation and unknown usage until B's durable facts resolve them. B must refuse future child
+entry once its own cancellation/deadline/current-rights boundary says so, without rewriting an
+entry that already happened. A stopped coordinator may therefore still display accepted remote
+work, unsettled reservations and managed holds. This is a material product limit to disclose, not
+a reason to add an unreviewed distributed transaction or silently retry elsewhere.
+
+I sent this counterexample to Rowan and Elin. Rowan accepted it and revised P04/adoption; I reread
+their owner-local/remote-cancel clauses and corrected A1/execution-deliverable blanket wording.
+The discriminating implementation oracle has two ordered runs: cancellation retained at B before
+child entry must prevent that entry; cancellation lost after B acceptance may allow it, while A
+retains uncertainty and sends no replacement. Add a same-daemon nested publication whose immediate
+service account differs from the commitment to prove local ancestor gating. Existing cancellation
+or reply-loss tests alone do not establish this combination.
+
+### F-C2 — unproved legacy conversion can remove useful future repair
+
+Counterexample: an accepted legacy graph contains an uncertain active child and still has a
+legitimate Task-only future repair under its governing agreement. The new converter cannot prove
+that graph/frontier corresponds to editable structured source. Continuing the exact old plan
+preserves execution, but it does not create a writer capable of saving the desired successor.
+With the selected removal of new legacy graph writing, that repair must refuse even if it would
+have been representable by today's old graph mutation API.
+
+Delta's [final conversion contract](structure-comparison.md) states this limitation explicitly;
+P01's one-plan legacy reader does not disprove it. P06's promise of complete prospective repair
+must be read within that supported conversion boundary. A new method selecting old evidence is
+not continuation of the old run, does not inherit control over its uncertain child and cannot evade
+an identity-bound protected agreement. No claim that an arbitrary new start is an equivalent repair
+is acceptable.
+
+**Disposition:** retain the selected refusal/continue-old-or-explicit-new-work design, but expose
+loss of arbitrary editing/prospective repair for unconvertible legacy runs in the brief and adoption
+decision. This is a compatibility tradeoff for the user to approve, not a defect to hand P06 as
+permission to restore a hidden legacy writer. If preserving every current graph's future editing
+is a mandatory requirement, the structured-source-only selection needs a complete conversion proof
+or must give way to the corrected-graph alternative. I sent this consequence to Rowan after reading
+the new adoption plan. I then reread the brief's added explicit loss of legacy edits/repairs and
+requirement to hold the writer switch if unrestricted existing repair is required. Those clauses
+address the architectural choice without pretending the user has approved that tradeoff.
+
+The implementation oracle must use an actually accepted legacy graph and active history for which
+conversion is deliberately unproved, including an unsettled obligation. Assert preserved old
+execution/inspect/replay/cancellation/resolution, precise conversion/repair refusal, and separately
+authorized evidence selection. A toy invalid graph rejected by the old validator proves nothing
+about this supported-state tradeoff. No fresh conversion experiment was performed here.
+
+### F-C3 — reusable human evidence must not become protected qualification through a common receipt
+
+Counterexample: the author retrospectively reviews an architectural lesson, records a favorable
+judgment and receives authorized knowledge-reuse approval. A later commitment selects that lesson
+and submits its receipt as the comparison supporting protected method promotion. The selected
+knowledge contract permits the first actions; it must reject the final misuse despite favorable
+wording, exact hashes and legitimate review authority.
+
+P07's closed `Knowledge`/`ExecutableMethod` subjects and retained protected profile are the correct
+boundary. The current [`LearningReceiptReference`](../../../../../crates/control/src/learning.rs)
+identifies actor/command, not receipt kind. Current
+[manual promotion](../../../../../apps/daemon/src/host/commands/learning.rs) and
+[automatic promotion](../../../../../apps/daemon/src/host/commands/learning/promotion.rs)
+therefore pattern-match actual retained comparison/policy records and bind the declaration,
+candidate, agreement and publication facts. The new common learning owner must retain equally
+strict subject/profile matching; a generic `Eligible` outcome or a frontend label is insufficient.
+
+**Disposition:** no additional evidence engine or blanket independence restriction is needed.
+Keep knowledge selectable as guidance with self-review/retrospective labels, reasoning, limitations
+and counterevidence. Refuse its receipt at protected qualification/promotion inputs before changing
+a service generation. A new explicit protected comparison still requires its own original
+verifier/target/held-out/returned-product facts and publication authority. Ordinary independent
+publication routes retain their actual authority/agreement obligations; knowledge reuse approval
+is neither a substitute for those obligations nor a new blanket prohibition on publication.
+
+The required cross-owner oracle feeds the approved knowledge receipt to both manual and policy-
+authorized promotion, and to the verifier-evidence consumer, then observes unchanged publication
+and protected state. Selecting it in a planning packet must still succeed under read authority.
+P07 already requires wrong-subject misuse and mandatory-verifier refusals; I sent the concrete
+receipt cases to Rowan. This is an adequate selected contract needing implementation proof, not
+a discovered current bypass.
+
+One wording correction was also sent: U17 requires criteria before comparison for a controlled
+knowledge judgment. The stronger executable held-out profile fixes inputs/criteria before proposal
+generation. Adoption's initial universal “before outcomes” wording would wrongly impose the latter
+on comparison of existing knowledge artifacts. I reread Rowan's correction distinguishing those
+two timing contracts and explicitly permitting comparison of existing design artifacts.
+
+### F-C4 — upgrading an old account must preserve a suspended child's exact settlement path
+
+Counterexample: an old supported store has a parent use in `Suspended`, an entered child with lost
+stop proof, original claim/generation numbers, a publication association, an unknown account
+reservation and a saved handoff receipt. Upgrade changes source lowering, account-origin shape
+and the location of managed transition policy together. Reopening successfully is insufficient
+if any conversion re-identifies the child/account, releases the hold, loses its no-entry parent
+evidence, recomputes old receipt digests, or makes the legitimate return operation unreadable.
+
+Current [`managed::transfer`](../../../../../adapters/redb-store/src/managed/uses.rs) requires exact
+claims, generation and accepted lineage, child quiescence and current authority; a cancelled parent
+cannot resume editing. A wrapper's `NoExternalEntry` evidence is preserved on return rather than
+manufacturing a new physical epoch. Current
+[lost-stop recovery tests](../../../../../crates/control/tests/control_service/published/managed.rs)
+compare retained uses exactly across cancel/reopen and require later explicit resolution. They
+exercise the same code generation on both sides, so they are not upgrade evidence.
+
+**Disposition:** the chosen versioned readers and old-origin preservation can handle this case;
+it does not require a global invocation ledger or conversion of the active graph into regions.
+Migration preserves original declaration identity/digest, run binding, reservations, association,
+claim numbers and accepted receipts. New settlement consumes that same reservation, and managed
+return follows the same accepted child. Closing admission for orderly upgrade must not itself
+rewrite installation lifecycle facts or require a fabricated terminal outcome. A new commitment
+may read allowed evidence but cannot absorb those liabilities into a fresh allowance.
+
+Require an actual old-generation fixture upgraded by the new supported reader/writer: unsafe return
+and maintenance still refuse; new admissions do not reuse the old allowance; exact original request
+replay returns its retained result; valid later stop evidence permits the supported return/settlement
+without another external entry. An old writer refuses the new generation and rollback does not
+restore a pre-effect backup. I sent this concrete extension to Rowan for the final adoption/gate
+oracle. No new versioned upgrade or physical-stop test was executed during this review.
+
+I then reread the revised [P09](../deliverables/proposed-implementation/09-final-full-system-test-and-repair.md)
+acceptance clauses. They now require the old-store suspended-child/account/receipt fixture, explicitly
+reject same-binary reopen as upgrade proof, exercise lost peer cancellation and locally admitted
+effects starting after the fence, and reject knowledge evidence as protected qualification while
+preserving guidance use. This resolves the program-assignment gaps identified here; it does not
+turn those future tests into evidence already obtained. The three edited documents pass local-link
+target and diff-whitespace checks. No Cargo command or production change was made by this reviewer.
+
+The four cases leave two material tradeoffs visible: a stopped local commitment does not instantly
+stop a remote accepted operation, and unproved legacy conversion cannot preserve arbitrary future
+editing once the old writer is removed. The knowledge and suspended-child cases have concrete owner
+contracts and require combined tests; they do not reveal a further foundational owner needing invention.

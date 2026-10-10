@@ -1,6 +1,7 @@
 # Frontend practice — proposal for adoption
 
-This proposed practice is authored by Bram, revision FP1, 2026-10-10. Its intended canonical home
+This proposed practice began with Bram's FP1 and is revised by Delta for F1/r4 and F2/r4,
+2026-10-10. Its intended canonical home
 after P00 adoption is `docs/development/practices/frontend.md`, selected through the existing
 practice guide. That canonical file and selector have not been edited in this planning assignment.
 The adopter must adjust relative links for that home. Product scope, architecture and verification
@@ -26,6 +27,66 @@ results and persistence. It must not acquire a second workflow compiler, permiss
 execution ledger, service scheduler or canonical hash implementation. Form validation may improve
 feedback; the owning public operation still validates and refuses. A compound interaction must
 produce the same accepted meaning through graph, outline, API/CLI and agent consumers.
+
+Begin ordinary interaction with goals, inputs, expected outcomes, permissions, budgets and acceptance
+criteria. Generated port IDs, account bindings and request mechanics belong in an inspector when
+they explain a decision; they are not prerequisites for expressing intent. Names and plain-language
+defaults must correspond to exact public semantics, not replace required authority or bounds.
+
+## Edit one canonical source and preserve historical meaning
+
+The selected NP3 source is a structured `WorkflowProgram`; the execution plan and diagram are
+derived views. Diagram, accessible outline, forms and machine consumers submit the same complete
+owner-validated structural/value edit operations. The browser may keep unfinished draft input and
+layout. It must not persist a second executable edge model, infer missing runtime semantics or
+silently repair the daemon's returned document. Conditional order is explicit semantic priority,
+distinct from stable identity; one typed value source must not require the person to maintain a
+duplicate data edge. Parallel completion, result availability and unsettled effects remain distinct.
+
+Read legacy graph revisions under their exact historical semantics. Conversion is an explicit
+owner operation creating a new revision, with origin and semantic correspondence. Show precise
+unsupported control/data/ownership relationships and retain the old source when conversion refuses.
+Do not drop unknown constructs, reinterpret old identifier-based priority or make a lossy save
+look like a harmless format upgrade. The selected migration does not promise every accepted old
+graph can become editable regions: execution, inspection, exact replay and authorized reuse remain
+available while unsupported edits refuse. Reopen the source decision if unrestricted old graph
+editing is a required product capability.
+
+Separate successful source validation from permission to adopt it into an active run. Prospective
+adoption preserves completed evidence, selected clauses and active/uncertain occurrences under their
+governing plans. Show the exact affected pending frontier, current guard and required approvals;
+refuse active reparenting, changed consumed inputs or incompatible result/protected contracts.
+Pause does not prove external work stopped. Valid immutable sibling saves are not automatically
+conflicts; actual stale run/layout/envelope guards retain their distinct meaning.
+
+## Make ongoing control and evidence inspectable
+
+Consume the selected WorkCommitment owner through ordinary public create, inspect, criticism,
+answer, pause/resume/cancel and authorized proposal operations. The UI must remain a client when
+the tab closes: it owns no reconsideration loop, task scheduler, account establishment or result
+ledger. A commitment projection links accepted coordination facts and associated runs; it does not
+copy their lifecycle into a new client truth. Distinguish current reasoning and claims from accepted
+evidence, pending decisions from entered effects, and stopped coordination from unsettled work.
+
+Criticism triggers assessment under the accepted policy. Present retaining the original conclusion,
+further investigation, prospective revision, escalation and stopping as legitimate outcomes.
+Expose cumulative limits, reserved/uncertain consumption, progress-rule stops and questions that
+need a precise answer. A newly generated plan, run, retry or context does not create new allowance.
+Give pause and cancellation a usable recovery path even under ordinary storage pressure; their
+truth comes from the owner's final-entry and settlement facts, not a locally disabled button.
+
+Knowledge assessment need not start from an executable method or managed resource. Keep exact
+sources/versions/outputs, criteria, reviewer identity and authority, judgment, reasons, limitations
+and counterevidence visible. Distinguish human/agent judgments from automated verification; label
+retrospective assessment and author self-review honestly. Known participation/shared sources and
+unknown independence remain visible. Do not turn multiple agreeing reviewers into an independence
+claim or a favorable judgment into a passed mandatory check. Preserve negative and inconclusive
+outcomes in discovery and fresh-context selection.
+
+Keep evaluation, approval for selected knowledge reuse, executable-method adoption and publication
+separate actions with their own authority and exact receipts. An approved lesson remains bounded
+by its applicability and evidence. The browser must not silently replace a method, reinterpret an
+old protected learning record or manufacture trusted verification from an uploaded assessment.
 
 Use existing meaningful public operations before adding endpoints. If the operation is missing,
 define its owner, inputs, current authority checks, durable effects, bounds, idempotency, errors
@@ -179,6 +240,13 @@ second usable owner while another fails. Visual snapshots and automated accessib
 supplement keyboard, pointer and screen-reader review; they do not prove semantic behavior or
 human comprehension. Sanitize diagnostic traces and explicitly protect any private evidence lane.
 
+Include canonical source reload through diagram/outline/API, ID renaming without choice-priority
+change, precise legacy conversion refusal and positive pending-work repair. Ongoing-work tests
+must include rejected criticism with retained reasons, an authorized revision, no-progress stop,
+restart without a duplicate model call, and pause/cancel while effects remain unsettled. Knowledge
+tests need a nonexecutable item, retrospective and controlled bases, allowed self-review, a refused
+independence requirement, and favorable evaluation that confers no publication authority.
+
 Measure graph/history workloads, request/subscription counts, bytes, memory and interaction latency
 on named devices/browsers. Set explicit bounded operating policy and truthful overflow behavior.
 Virtualization may limit rendered elements without dropping semantic objects from a saved draft.
@@ -190,6 +258,11 @@ Classify feedback before repair: presentation friction, missing public behavior,
 assumption or model/provider limitation. Reopen affected decisions when warranted. Follow the
 workflow's focused/full-gate policy and report actual limits; passing mocked browser tests or
 writing a plan does not establish production acceptance.
+
+For the present proposed program, full source ownership is P01; the first connected Svelte slice
+and browser foundation are P02, followed by its real human checkpoint. Ongoing commitment control
+is P04, knowledge assessment is P07 and the combined experience is P08. These phase assignments
+belong to that program and should be omitted when this reusable practice is adopted canonically.
 
 The maintained package README teaches setup, supported deployment/browser matrix, credential
 provisioning, private retention/recovery, normal commands and troubleshooting. Canonical product,

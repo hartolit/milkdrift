@@ -1,89 +1,133 @@
-# Remediation and adoption plan
+# Reconstruction and adoption plan
 
-This is the transition to the selected planning design, not a production assignment. P00 first
-records actual user choices, reinspects source and registers finite work. The inspected production
-baseline is `908e7893f5dadb84d12712573c8daaa946829e39`, equivalent in production bytes to archive
-`c016cd3c33aea074c37a8b461047caaa9392a72d`. No current source has been replaced by this sprint.
+This specifies complete proposed changes after the deeper review. It is not production authorization.
+The investigated production baseline remains `908e7893f5dadb84d12712573c8daaa946829e39`, identical in
+production bytes to archive `c016cd3`. Current source, constants/readers and actual consumers must be
+checked at implementation time for drift; the owner/meaning choices below are already made for planning.
+The user has approved [U17/U18](../intent-source-excerpts.md) product behavior, not this implementation.
 
-## Complete boundaries and usable interim states
+## Complete units, concrete removal and usable results
 
-| Remedy / owner | Producers and consumers that move together | Transition and evidence |
+| Unit / owner | Exact change and consumers | Usable result, compatibility and proof |
 | --- | --- | --- |
-| R-A01 browser admission | Existing daemon HTTP/config compilation, operator example/reference, auth/stream/artifact routes; Rust native clients preserved; workbench fetch consumer added | Default disabled exact-origin allowlist. Keep loopback ownership and authenticated requests. Operator-hosted static app allows its configured endpoint set through CSP; HTTPS proxy remains operator-owned. P01 must prove release configuration and real browser JSON/SSE/download/recovery. |
-| R-A02 identity/recovery | Existing AuthorityRead and exact operation owners; frontend transport/session/private records; no new host identity service | Bearers memory-only. Explicit personal-profile bounded IndexedDB or export-before-send. Exact numeric tokens and bytes survive. New host/grant quarantines old records; operation-specific authorized recovery never silently rebinds them. Version local records separately and preserve export on failed migration. |
-| R-C01 complete exclusive continuation | Blueprint model/validation/mutations/constructors/canonical readers, runtime occurrence/event/reconciliation owner, protocol/client/CLI/agent/workbench, fixtures/examples/docs | One selected arm, explicit normal exit and selected output boundary, no hidden child scope. Preserve internal future repair and unresolved obligations. Current shared control reconvergence refuses, so no existing accepted merge behavior is being reinterpreted. P04 owns the full boundary and its consumers. |
-| Complete semantic authoring / R-FE02 | Existing public construct/edit/proposal/control and authorized external capability path, maintained Rust planner consumer if absent, graph/outline/machine input | Reuse current owners; remove superseded narrow-only helpers or make them explicit thin projections. Reject unsupported semantics without stripping them. Different goals and rejected/malformed candidates exercise one daemon interpretation. P02 ordinary retained slice extends in P04. |
-| R-A03 resource discovery | Managed persistence/config/authorized control reads, bounded protocol query, native client/CLI/workbench | Derive from existing installation/approved recipe owners; scan and output bounded, cursor authority scoped, unknown remainder truthful. No parallel catalogue. Positive nested progress and refused unsafe maintenance in P06. |
-| R-A04 private service relationship | Existing control/publication association, authorized read projection, protocol/native/workbench consumers | Derive invocation→internal run/definition only under independent internal read permission. No duplicate durable mapping. Clear private IDs/titles on permission loss; public result still works. P05. |
-| R-A05 mixed method inventory audit | Current ListMethods/publication read owner and pagination consumers | Source suggests one denied row may abort permitted progress. Establish intended disclosure and a mixed-grant reproducer first; retain correct current behavior or fix filtering at owner, never widen permission. P05. |
-| R-A06 truthful roles and reuse | Role checks, local revision resolver, copy agreement validation, direct/peer origin contracts and their interface/docs | Preserve local pin eligibility, governed copy refusal, direct work and actual delegation. Remove claims implying arbitrary direct third-host relay or safe role removal with live obligations. P05. |
-| R-FE01 learning discovery | Existing durable learning command receipt/control read owner, protocol/native/CLI/workbench | Bounded authorized exact receipt references plus permitted summaries; existing Inspect remains detail authority. Fresh-browser failed/inconclusive study discovery, mixed rights, restart/pagination proof in P07. No browser study store. |
-| Frontend engineering | `apps/workbench`, source-controlled package/lock/config/scripts/CI and real Rust daemon fixture harness | Static SvelteKit/Svelte/TypeScript with graph renderer as replaceable presentation; equal accessible outline. Pin compatible versions at execution, qualify lossless JSON. P01 begins retained production code; P03/P08 require actual human critique. |
+| Canonical method source — blueprint/runtime (P01) | Add structured WorkflowProgram and complete ProgramEditBatch, explicit clause order/results/Parallel exports/waits; one ExecutionPlan used by runtime, context, reconciliation, authority/risk, publication and inspection. Historical graph reader lowers directly to that plan. | Full CLI/JSON structured method execution and future repair before frontend gestures. Preserve old bytes/order/occurrence pins. New source-only writing; unproved legacy conversion refuses without losing old execution. D1–D8, old graph and active-frontier fault cases. |
+| One external task — blueprint/runtime/control (P01) | Ordinary TaskConfig plus bounded explicit/join collection sources replaces operation-only capability reducer. Migrate dispatch/authority/support/state/reducer and control policy/service/publication consumers, new writers, fixtures and examples. | Full profile/placement/context for a judge; exact selected outcomes/refs remain. Delete special external reducer entry paths. Legacy lowering preserves old invocation identity, source ordering and default requirement/context without inventing missing outcomes. |
+| Shared source construction — blueprint/control/daemon (P01) | Pure edits/lowering belong in blueprint; authorized application operations in control. Replace daemon private ModelWorkflow new writer/shape recognizer, migrate wire DTOs, CLI, model conveniences and prompt-sequence output. | One authoring route for all clients. Keep useful input dialect and shared compiler; exact immutable siblings remain legal. No frontend compiler or alternate legacy writer. |
+| Real browser/client (P02/P03) | Existing HTTP/config owner adds exact opt-in origins; standalone apps/workbench uses release CSP endpoint policy, lossless numbers, bounded authenticated streams and exact request custody. | First actual source/input/run/result/recovery journey; real early user review. Keep memory-only tokens, explicit personal-profile IDB or export-before-send and reserved control capacity; supported local-record migration cannot discard unknown requests. |
+| Ongoing commitment — existing control/controller family (P04) | WorkCommitment policy/action/question/evidence owner, shared packet/model admission, exact accepted action/run associations; explicit authority scope, account-origin establishment and final-entry fence. Runtime owns all execution. | Product new-goal and criticism→assessment→continue/stop without external orchestration. Manual mode shares owner. Delete driver common orchestration/provenance construction. Exact canonical commands and underlying receipts recover each gap. |
+| Current discovery/relationships — existing read owners (P05/P06) | Derived authorized invocation/internal-run relationship; current publication management reads distinct from retained admin snapshots and invocation catalog; installation/approved-recipe pages from existing store/config. | Useful permission-filtered progress, truthful scoped cursors and no private IDs/counts. No parallel catalogs or durable relationship copies. Existing receipts/reverse published_source remain exact. |
+| Managed rule ownership — persistence/redb/host (P06) | Pure managed acquire/entry/quiesce/handoff/return/release decisions move to persistence::managed. Redb supplies exact accepted facts and applies changes under one transaction's guards. | Same supported records and physical obligations. Delete moved redb policy bodies. Prove forged/stale facts refuse, faults preserve atomicity, one-worker child progress and unsettled writer exclusion. No mandatory data migration for moving code. |
+| Serving and descriptors — capability/host/control/adapters (P06) | Common fresh direct/peer admission after distinct auth/replay/rate checks; checked typed descriptor extension reconstruction migrates publication and managed model producers. | Preserve caller distinctions and canonical descriptor bytes/digests; remove repeated fresh rules and JSON field surgery. Remote descriptor mapping keeps its real scope transformation. |
+| Knowledge/evaluation — existing control learning/knowledge, workspace/persistence (P07) | Closed Knowledge versus ExecutableMethod subjects, exact KnowledgeItem provenance, Controlled/Retrospective assessment basis, accepted slot bindings, typed judgment evidence and separate reuse approval. | Research/architectural lesson without fake method/resource; self-review visible, required independence enforced, negative/inconclusive retained. Remove mandatory managed/method/publication coupling from ordinary knowledge, not protected-method verification. Old records map only to their exact protected profile. |
+| Complete interaction and evidence (P08/P09) | Full NP3 graph/outline/machine round trips plus commitment, resource, service and knowledge interaction; actual combined human review, final full gate. | S21/S26/S28 and all S01–S30 outcomes covered. No deferred 'advanced' editing hole or provider/platform quality claim unsupported by actual environment. |
 
-Before/after states are deliberately useful. P01 connects actual owners but does not claim authoring.
-P02 completes the ordinary current-schema workflow and recovery; it refuses editing unsupported
-advanced forms without deleting them. P03 can change product/architecture premises. P04 completes
-all selected structured authoring before its notation is advertised. P05 adds full reuse/service/
-independent-owner actions; P06 adds adaptation/resources; P07 completes evidence-led improvement.
-P08 combines them in demanding work and obtains another real user decision. P09 accepts the final
-integrated executable state. Known defects are fixed in their own boundary, not deferred to P09.
+The source boundary deliberately precedes the first new frontend slice. The browser checkpoint still
+comes before automatic coordination, resource consolidation and broad knowledge assessment. Human
+feedback can reopen a choice on new evidence; it does not substitute for the comparison completed here.
+Each unit includes production consumers/refusals/evidence and removes superseded owning paths when its
+replacement is complete. P09 is not a backlog for known failing intermediate work.
 
-## Current data, active work and rollback
+## Source and active-work compatibility
 
-Current owning constants/readers/golden fixtures determine supported versions; the inspected wire
-protocol is 2.20 and the current blueprint form is v3. Recheck them before coding. A proposed change
-does not automatically require every version to advance. Conversely, a public enum/shape change
-cannot be hidden under an unchanged exact contract. Inventory definitions/mutations, receipts,
-layouts, optional snapshots, journal events, artifact references and peer/client DTOs at the actual
-changed boundary. Keep one current writer and execution meaning; retain historical readers only
-for supported facts and replay obligations, without a second permanent engine.
+Immutable legacy definitions and new structured definitions have one current checked-plan consumer.
+An old graph need not decompose into regions merely to execute. Its version-specific reader preserves
+all-predecessor/join rules, lexical branch order, outputs/context and protected meanings. New source
+uses explicit order/containment/results. Historical events are never synthesized to make old runs look
+as though they used new regions.
 
-For R-C01, retain old immutable revisions with their exact identities and old semantics. New
-choice/output evidence is recorded only for new occurrences that actually produce it. Do not
-convert a historical Branch into a merge or invent a selection event. Compatibility of active
-work is decided from governing revision/accepted obligations, not today's screen layout. If a
-safe reader cannot preserve a supported state, choose an explicit drain/refusal or reviewed
-conversion before enabling the new writer. Old clients/binaries must visibly reject new unsupported
-forms; updated daemon, CLI and workbench adopt the contract together.
+Editable conversion is a separate proved operation. It returns source plus source-to-old/plan mapping
+only when ordering, activation, visibility, result signatures and agreement identity correspond. For
+live prospective adoption it additionally maps accepted prefix, selected clauses, running/uncertain
+occurrences and pending frontier. A refusal identifies the noncorresponding elements. Old work remains
+inspectable/executable/reusable; an authorized new method can select retained evidence, but it is not
+presented as conversion of that live work. This is a material supported-editing limit, accepted as the
+planning tradeoff rather than hidden in an implementation audit.
 
-Exact replay binds requests to durable results, including archived records. No migration changes
-accepted request bytes or uses a new ID to resolve uncertainty. Runtime, serving and managed stores
-retain their distinct accepted facts. A lease, unknown reservation, child hold or entered physical
-writer cannot vanish because a client upgraded or a backup was restored. Grant changes affect
-current disclosure separately from original acceptance; workflow and direct-serving recovery follow
-their actual different owner rules.
+Old capability reducers lower to one Task plan with their historical source collection/default contract.
+Do not insert a second durable task into existing history or turn a protected reducer into an editable
+Task merely because the new source kind has that name. Unstarted successor normalization and agreement
+changes use the ordinary prospective/authorization boundary. Legacy source editing is not retained as
+an alternative new writer; exact old receipt replay remains available without constructing new old data.
 
-Create verified pre-upgrade backups and refuse incompatible older readers. A rollback is safe only
-when the old binary can read retained data and every effect/obligation accepted since the checkpoint
-is accounted for. Restoring files alone cannot undo external effects. Unsupported rollback therefore
-refuses with an explicit operator recovery path. Do not retain indefinite obsolete encodings merely
-because this is prerelease software; do preserve the currently supported facts the product promises.
+Version public/durable shapes at their actual owners and coordinate daemon, CLI, independent clients
+and workbench. Old clients visibly refuse unsupported semantics. Keep old layout decorations distinct
+from semantic conversion; preserve or explicitly discard only optional rebuildable caches/snapshots,
+never accepted events, artifact references or request results. Current supported legacy state remains
+readable; this proposal makes no migration promise for previously unsupported pre-release generations.
 
-## Canonical adoption and removal audit
+## Commitment accounts, authority and recovery
 
-P00 changes canonical vision only for approved enduring outcomes; architecture owns executable
-responsibilities; durable decisions go to appropriate ADRs; status/evidence continue to report actual
-implemented behavior. Roadmap and office authorize only the accepted finite scope. Promote the
-frontend practice and selector entry after review. Canonical architecture must correct its current
-“any successful” join wording: source distinguishes Any completion and FirstSuccess. This correction
-does not require runtime changes. Keep the planning/dissent context until review and promotion finish.
+Commitment identity differs from a method, run, occurrence, attempt and publication: it owns the accepted
+ongoing intent before and across those executions. Extend the existing controller application family
+with that missing owner; do not create a second task scheduler or a global conversation-memory database.
+An exact closed account origin distinguishes controller occurrence, published invocation and commitment.
+Commitment establishment creates an account without a fictitious originating RunId. Existing arithmetic,
+reservations, settlement, unknown usage and byte charges retain one owner.
 
-Every implementing prompt searches actual consumers, examples, fixtures and docs for superseded
-construction helpers, duplicate semantic compilers, private UI shortcuts, stale API shapes and false
-role/deployment claims. Remove or narrow competing paths when the complete replacement is usable.
-A renamed façade with a second writer underneath is not adoption. Native CLI/API/agents remain
-first-class consumers of the same scoped owner, not an old implementation left behind the UI.
+One transaction accepts the commitment policy/first action, account establishment and external receipt.
+A later run-creation transaction checks exact accepted action/association/authority/account/fence and
+commits creation plus BindRun. Persist complete canonical internal commands before submission. Start,
+proposal, apply/resume and cancellation use ordinary durable owner receipts; lost reporting recovers the
+same action without another model invocation. Control records consumed exact results, not copied run
+status. Pause/cancel/deadline fences must be checked atomically with owner-local durable entry acceptance,
+including every actual local published ancestor even where the immediate account is different. An
+effect admitted before closure may physically begin afterward; ordinary cancellation/uncertainty still
+owns it. The gate must not rely only on the continuation driver. It cannot prevent B's
+already accepted operation from entering while cancellation from A is delayed/lost. B enforces its own
+recorded cancellation/deadline/current authority. A sends the exact ordinary cancellation and retains
+the remote operation, attributable reservation and uncertainty until durable evidence resolves them.
+Test A stopping after B acceptance but before its child entry; do not promise a distributed stop fence.
 
-## Conditional work and acceptance
+Existing marked controller methods can inherit the commitment account only when its entire allowance
+fits their declared ceiling; otherwise local composition refuses before start. Do not invent a partial
+balance/reset to make it fit. Existing bounded publication composition remains available under its own
+service authority and separate attributable caller charge. Unrelated already-entered runs cannot be
+adopted into a new allowance; their evidence or prospective revision can be considered with separately
+shown existing ownership. Old accounts/receipts are not rewritten into commitments.
 
-Direct third-host relay/owner migration, active detach from management, standard interchange/core
-replacement, stronger browser custody and broader platform qualification remain explicit B1–B5
-branches. They are not implemented features or an unowned backlog for retained outcomes. If review
-makes one mandatory, finish its design and insert a complete assignment before final acceptance.
+User scope/requirements changes are explicit authorized prospective policy decisions. The controller
+cannot grant itself authority, weaken success obligations or accept criticism as fact. A new grant or
+policy version never retargets an old accepted action. `AmendCommitmentPolicy` atomically pauses local
+admission at a new generation and retains an immutable successor with exact carry-forward action/frontier
+references. Current rights and containment must pass before reopening; affected future work stays held
+for fresh action/proposal, and old authority/entered effects remain unchanged. Original aggregate ceilings
+remain fixed; this contract has no budget top-up. Equivalent-plan/evidence no-progress ceilings,
+clarification and escalations stop dependent work without inventing permission. Outstanding uncertainty
+and resource holds survive stopping coordination.
 
-The [implementation program](proposed-implementation/README.md) supplies each prompt's source,
-required decisions, exact boundary, positive/refusal/recovery cases, migration and focused checks.
-P09 is the named proposed final full-system Rust/frontend/application gate; P00 must register that
-multi-phase schedule before executable work. Earlier focused passes cannot claim full acceptance.
-Physical hardware, real remote deployment, model quality and user usability each require their own
-actual evidence. No push, live deployment or paid provider use follows automatically from this plan.
+## Knowledge data and claims
+
+Preserve exact old learning declaration/comparison/promotion receipts. Their supported reader maps them
+only to the protected-method profile, without changing bytes/digest or retroactively inferring broader
+knowledge approval. New KnowledgeItem and assessment records are versioned and bounded. Criteria timing,
+subject versions, selected inputs/outputs, role bindings, reviewer relationships, reasoning, limitations
+and counterevidence remain inspectable accepted evidence.
+
+Controlled assessments fix roles/inputs/criteria before comparison and bind generated IDs when they
+exist. Two already-existing design artifacts can be compared under such a declared rubric; stronger
+pre-generation/held-out isolation applies only where the chosen executable profile requires it.
+Retrospective reviews record their later basis honestly. Human preference cannot be converted into
+an automated verification pass. Knowledge approval makes specified evidence eligible for declared future
+use; it does not alter a current run, select it everywhere, qualify a protected effect or publish a method.
+The same learning/control family owns selection/assessment/approval, avoiding a parallel engine.
+
+## Upgrade, rollback and canonical adoption
+
+Before enabling a new writer, close admission and use supported orderly shutdown/reopen and verified
+backup/version gates in an isolated upgrade rehearsal. Preserve unsettled obligations; do not require
+an unknown physical effect to be falsely terminal. Old binaries refuse incompatible new generations.
+Rollback requires both readable retained data and explicit accounting for every effect accepted after
+the backup. Restoring files cannot undo remote calls, release editing holds or reset consumed allowance.
+When rollback cannot meet those conditions, refuse and retain the newer store for authorized recovery.
+
+P00 adopts only the reviewed/approved intent, architecture and durable decisions into their canonical
+owners; status/evidence continue to describe what currently runs. The roadmap/office register finite
+execution and P09's named final full-system gate. Promote the frontend practice through the selector.
+Correct existing Any/FirstSuccess/All prose drift from source without changing its behavior. Keep useful
+planning checkpoints/dissent until actual review/adoption is complete.
+
+No additional discovery phase must decide whether the selected features exist or where their primary
+owner belongs. Implementers still inspect exact current constants/readers/callers, choose local factoring
+and repair newly discovered defects. Direct relay/owner migration, active management release, standards
+interchange, stronger custody and broader platforms remain excluded extensions. No production changes,
+prototype, live deployment, paid calls, pushing or execution of this program occurred in planning.

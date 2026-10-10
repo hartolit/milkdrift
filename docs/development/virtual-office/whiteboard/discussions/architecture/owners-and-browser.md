@@ -1,13 +1,19 @@
 # Which owners and browser route should the independent client use?
 
-## Current technical selection — A1, revision 3, selected for planning
+## Current technical selection — A1, revision 4, selected for planning
 
-Cyra-20261010 proposes retaining definition/runtime, serving-invocation and managed-resource
-owners while adding bounded public discovery/authorized relationship reads and an explicit browser
-transport. This is the selected planning recommendation under [G1/r1](../vision/remedial-purpose.md) and
-[P1/r2](../product-model/reuse-service-and-placement.md), revised after actual 05/06 responses and
-the 07 challenge and actual dependent rereads, selected by Rowan-20261010. It awaits user decision. No
-implementation or canonical architecture change is authorized by this topic.
+Faris-20261010 and Rowan-20261010 revise the earlier retention recommendation after the reopened
+execution/application investigation. Retain runtime, serving and managed-resource facts with
+their distinct owners; move managed-use domain transitions out of redb, consolidate common fresh
+serving admission and checked descriptor construction, and retain publication in control
+composition. Add a control-owned continuous work commitment whose exact associated runs still
+use runtime, normal authority and one cumulative account. Complete public discovery/current
+relationship reads and the browser transport. This is the planning recommendation after
+[U17/U18](../../../milkdrift-remedial-planning-v3/intent-source-excerpts.md#u17--human-reviewed-knowledge-and-precise-evidence),
+which approve human-reviewed knowledge and bounded automatic work behavior, not these owners or
+production implementation. A1/r3 and its original G1/P1 dependencies remain historical context;
+the reopened investigation must update downstream planning before claiming integrated acceptance.
+No implementation or canonical architecture change is authorized by this topic.
 
 The initial browser candidate is an operator/user-hosted static Svelte client with an approved
 daemon endpoint set, per-connection bearer fetch, and strict opt-in exact-origin daemon CORS.
@@ -16,9 +22,11 @@ loopback listener. It requires successful browser acceptance; current E04 proves
 cross-origin path fails. Same-origin fixed-target proxying is the strongest smaller alternative
 where users own the hosting. A broker or native wrapper has no presumed role in first delivery.
 
-The [architecture proposal](../../../milkdrift-remedial-planning-v3/working/architecture-and-federation.md)
-owns the detailed responsibility/lifetime matrix, S21/S22/S26/S27 traces, browser constraints,
-R-A01–R-A07 source-owner remedies and migration/rollback analysis. The
+The [earlier architecture proposal](../../../milkdrift-remedial-planning-v3/working/architecture-and-federation.md)
+retains the detailed responsibility/lifetime matrix, S21/S22/S26/S27 traces and browser constraints.
+The reopened [execution reconstruction](../../../milkdrift-remedial-planning-v3/working/execution-reconstruction.md)
+and [application reconstruction](../../../milkdrift-remedial-planning-v3/working/application-reconstruction.md)
+own the changed responsibility decisions and corrected R-A05 contract. The
 [behavior dossier](../../../milkdrift-remedial-planning-v3/working/behavior-evidence.md) and
 [executed observations](../../../milkdrift-remedial-planning-v3/working/observations.md) separate
 source support from actual probes. The review-facing
@@ -46,6 +54,56 @@ delegation and direct client→B remain useful routes. R-A06 requires correcting
 new relay needs concrete reachability demand and a full origin/authority/account/recovery design.
 Likewise, a child-workflow workaround for exclusive branch merge adds semantic boundaries and
 cannot substitute invisibly for the same-scope product choice in 03/05.
+
+The reconstructed alternatives identify changes inside retained boundaries. Put pure managed-use
+transitions in `persistence::managed::transition`, consuming bounded typed accepted lineage and
+quiescence evidence. Redb still loads authoritative facts, enforces atomic guards and writes receipts,
+records and indexes. Move common new serving admission behind a private host helper after the
+distinct direct/peer authentication and replay paths. Capability supplies checked descriptor
+extension construction to publication and managed-model producers, replacing JSON object surgery;
+peer identity/trust remapping remains meaningful. These are complete owned corrections with
+consumer/refusal/compatibility obligations, not a claim that the old decomposition was already ideal.
+
+For continuous work, an ordinary root has genuine advantages: one existing identity, signals,
+account inheritance and cancellation. Faris initially preferred that form of C. Elin's source
+challenge changed the comparison: Call exports terminal outputs and current controller assessment
+occurs between iterations. A dynamic admitted-method target does not let that root respond while
+the child remains paused. Full root-C also requires early child handles, nonterminal observation
+and concurrent coordinator continuation. Select `control::controller::commitment::WorkCommitmentOwner`
+for the new accepted
+goal/policy/next-action lifetime. It schedules whole authorized activities and records their exact
+pending commands; runtime retains every task, attempt and execution lifecycle. The session is not
+another invocation ledger and cannot infer a stopped resource from a phase label.
+
+This selection includes session authority scope, an immutable actor/grant basis, a closed account
+origin with no invented run, exact action-backed atomic run/account association, and a durable
+admission fence against new local start/entry acceptance after stop. A previously admitted effect
+may still physically begin afterward; cancellation does not manufacture stop proof. Local publication ancestry must
+carry that gate despite separate service accounts. A peer already accepted by B may still enter
+before A's cancellation reaches B; B enforces its own cancellation/deadline/current-rights facts,
+while A retains the unknown reservation and exact pending cancellation. This is not an instantaneous
+distributed stop. Old per-run authority bases
+remain real run facts and current revocation still applies. Existing controller-marked methods
+may reuse that account only when its entire allowance fits their limits; otherwise the direct
+local association refuses before start and the existing bounded published-service route remains
+available. No new hierarchical subbudget implementation is implicitly promised. The
+[agent-directed comparison](../../../milkdrift-remedial-planning-v3/working/agent-directed-work.md)
+and Faris's attributed cross-review specify pending-action/proposal recovery and supported-state
+adoption. One-round assistance becomes a finite policy of this same owner.
+
+External application receipts also stay. They bind the exact original actor/grant/wire envelope
+and response; runtime receipts bind its semantic retry intent, which deliberately differs for
+certain delivery/planning fields. A universal command journal would couple every owner to wire
+compatibility and still need compound continuation. Current compound operations can commit before
+the outer receipt, so the session must retain exact prepared command material and associations
+before effects, not reconstruct a different request after a lost reply.
+
+**R-A05 is corrected, not confirmed.** `ListMethods`/`InspectMethod` retain administrative snapshots
+under administration authority. Invoke-only clients already use a different filtered capability
+catalog. Keep those snapshot/replay contracts and add a bounded current management query over the
+publication owner, checking each record with an opaque scoped cursor and truthful empty-page
+continuation. No unauthorized names/counts are exposed. The old universal list-filter proposal
+conflated these consumers; it is not an established failing behavior to fix by changing old commands.
 
 ## Review, disagreement and reversal
 
@@ -101,6 +159,38 @@ now preserves this supported ancestry, explicit revision selection and true base
 Rowan selected A1/r3 with F1/F2/r3 and corrected P02/P04/adoption descriptions. No new mutable-head
 API or current behavior change follows from correcting the plan. Earlier review revisions remain
 recorded as history; the final program recheck includes both sibling-save progress and real refusal.
+
+2026-10-10 — Revision 4: Faris-20261010, actual agent `/root/execution_faris`, independently
+reconstructed authority/capability/host/persistence and six adapter packages at explicitly stated
+depth before reading fresh reviewers' judgments. The fixed direct/workflow/private-publication/
+editing-child/lost-stop/revocation/restart scenario did not justify a universal invocation ledger.
+It did expose misplaced pure managed-use policy and repeated admission/descriptor construction.
+Publication's public caller/private service boundary is a positive reason for its control
+placement, not an argument from the old ADR alone. No new Cargo or paid/live experiment was run
+by this reviewer.
+
+In attributed cross-review, Faris challenged finite assistance B as insufficient for U15/U16;
+U18 then explicitly selected automatic bounded continuation. Faris's stronger root-C candidate
+was challenged by Elin-20261010 using actual nonterminal child behavior. Faris changed selection
+to control-owned C and added account establishment, per-run authority, stop-fence and existing
+controller-budget composition requirements. The preserved root-C dissent matters: asynchronous
+child ownership might later prove valuable across ordinary workflows, in which case that
+broader evidence could reverse this placement. The current decision does not assert that such
+primitives are inherently wrong or that root-C would be impossible.
+
+Rowan-20261010's application reconstruction separately corrected R-A05 and established the
+distinct external-envelope/runtime-semantic receipt promises. Faris reviewed those findings
+against their source contracts and incorporated them here. U17 also supersedes the earlier
+evaluator-separation restriction: knowledge judgments may be retrospective or self-review when
+labeled honestly, with exact evidence and explicit adoption. They need not qualify an executable
+method. This is approved product meaning, not proof that the new evidence routes already work.
+
+The supporting browser/deployment/recovery clauses and A1/r1–r3 criticism remain. A1/r4 does not
+borrow their native journey evidence as qualification of its new session owner. New account and
+authority origins need versioned readers, exact old receipts/digests and old-writer refusal.
+Unrelated entered or uncertain runs cannot be reattached to a fresh allowance; observations can
+inform a new commitment without transferring their effects or control. Canonical source migration
+is a separate contract and cannot serve as proof of session-store compatibility.
 
 Strongest unresolved objection: the preferred client may expose the complexity correctly but still
 make users misjudge control, or demand more operator setup than a fixed same-origin deployment.
