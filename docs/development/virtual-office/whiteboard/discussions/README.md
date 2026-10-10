@@ -10,3 +10,8 @@ A defect is not required. Start with a paragraph or these optional prompts; omit
 Put the next useful step and other planning fields only in the [overview](../README.md#overview).
 Add alternatives, a current technical assessment, and substantive dated contributions as the
 discussion develops. Preserve relevant disagreement; a preferred option is not implementation approval.
+
+The v3 planning review organizes consequential questions by [vision](vision/README.md),
+[product meaning](product-model/README.md), [architecture](architecture/README.md), and
+[implementation mechanism](implementation/README.md). These are navigation layers, not teams or
+new authorities. Existing topics remain at their current paths unless their investigation needs a move.

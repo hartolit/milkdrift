@@ -9,7 +9,10 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-No current sprints.
+[Remedial planning v3](milkdrift-remedial-planning-v3/README.md) is assigned through 00–08,
+including justified review iterations, under the 2026-10-10 user request. Scope is investigation,
+planning and office records; stop for review before production implementation. The
+[handoff](milkdrift-remedial-planning-v3/handoff.md) owns coverage and actual assignments.
 
 The [roadmap](../../product/roadmap.md) owns unfinished work; unrelated whiteboard topics remain separate.
 
