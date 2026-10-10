@@ -26,7 +26,8 @@ Actual cross-review changed the recommendation:
 
 - Delta's initial corrected-graph preference changed to structured source after Elin showed that its
   alleged data-reference advantage was supported by the stronger region alternative. The migration-
-  risk objection remains, including refused future repairs where old conversion cannot be proved.
+  risk objection remains. U19 then rejected the conversion-gated edit loss; actual native repair and
+  source-state analysis changed the proposal to structured defaults plus supported graph authoring.
 - Elin's finite-round preference was insufficient after the user approved U18. Faris and Delta developed
   the strongest root-supervisor alternative, including asynchronous child ownership and nonterminal
   observation. The final commitment placement follows that comparison, not a presumption that a new
@@ -40,6 +41,12 @@ Actual cross-review changed the recommendation:
 - Transfer review closed missing exact contracts for single-subject judgments, prospective commitment
   policy amendments, unchanged cumulative ceilings, bounded no-progress comparison and versioned old
   agreement validation. Those choices are now in the owner specifications and program.
+- U19 separated equivalent conversion from live adoption. The isolated runtime accepted a pending-task
+  repair while preserving an active wait and unrelated nonnested graph structure. Graph-native
+  create/import/copy/edit remain in the shared owner; no new eligibility registry was justified.
+- Combined review rejected a special compatibility-only Parallel mode, an unnecessary knowledge-selection
+  approval gate and mandatory learning qualification for ordinary method adoption. It also preserved
+  old convenience compilation across the revision-committed/outer-receipt-missing retry window.
 
 The [review-resolution record](../working/review-resolution.md),
 [program transfer review](../working/program-review.md) and attributed comparison contributions
@@ -60,6 +67,15 @@ Both predicates were true; destinations stayed fixed; swapping only port identif
 actual selected business route. The exact Rust source, manifest, command, versions, hashes and output
 are retained. It establishes legacy lexical priority and motivates explicit new-source order; it is
 not a user/model authoring experiment or execution of the new representation.
+
+The [compatibility diagnostic](../working/compatibility-runtime-evidence.md) used the same production
+runtime/redb with isolated stores. Proper nested joins and a joinless fork completed; crossed All
+was still running with no pending successors after 32 deterministic ticks; crossed Any raised a real
+InvalidHistory cancellation-owner error. Those accepted definitions do not prove useful irreducible
+expressiveness. In a separate paused run, native pending-task repair succeeded while preserving the
+active wait's identity and unrelated crossed structure, with no external task entered. Earlier harness
+attempts and the corrected final source are distinguished. Diagnostic completion is not a whole-system
+pass; the observed runtime error remains a finding, not hidden by the executable's final exit status.
 
 All alternative representations, continuous-work handshakes and prospective knowledge shapes are
 modeled proposals. No production Rust/schema/config change, prototype/frontend implementation, live
@@ -89,11 +105,12 @@ P00 proposes their adoption only after review.
 ## What remains uncertain or requires review
 
 The user has approved human-reviewed knowledge evidence and bounded automatic ongoing work as product
-behavior. Specific architecture remains a planning recommendation. Legacy editing compatibility has
-been presented as a consequential preference: an unproved conversion can preserve old execution and
-recovery while refusing formerly valid future edits. P01 must prove the promised positive corpus and
-cannot claim success by refusing every conversion. The current handoff records the user's disposition
-or keeps that writer transition explicitly blocked; silence is not approval.
+behavior. U19 also requires verified conversions without automatically losing existing legitimate
+repair. Specific architecture remains a planning recommendation. The final migration proposal meets
+that constraint by retaining supported versioned graph operations in the same owner/engine; optional
+equivalent conversion and live prospective adoption have separate proofs. P01 must prove the positive
+conversion and native-repair corpus. No graph-writer retirement is authorized by this program and no
+known unavoidable loss is hidden for an implementation agent to approve.
 
 Missing original transcripts/v1-v2 records remain unavailable. There is no exhaustive proof that every
 accepted legacy graph decomposes, no measured human/model authoring advantage, no full standards

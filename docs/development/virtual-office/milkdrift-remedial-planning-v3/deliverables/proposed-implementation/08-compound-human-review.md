@@ -4,8 +4,9 @@ Owner: implementation coordinator, actual user and independent challenger. Requi
 selected branch; read [shared context](context.md), current decisions and first user-review changes.
 Do not substitute separate successful menu demos for the combined scenario.
 
-Finish every advanced graph/outline and machine-input interaction promised by NP3/F1, including full
-structured editing, selected results/outcomes, targeted waits, legacy conversion refusal, commitment
+Finish every advanced graph/outline and machine-input interaction promised by NP4/F1, including full
+structured editing, selected results/outcomes, targeted waits, legacy conversion refusal with native
+repair still available, commitment
 policy/evidence/actions and knowledge assessment. P02's explicitly limited editor is not the final
 product. Exercise source/layout/reopen/independent-client round trips before asking the user to judge it.
 

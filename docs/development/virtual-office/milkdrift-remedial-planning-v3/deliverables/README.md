@@ -2,14 +2,14 @@
 
 **Revised after the reopened investigation:** the user did not accept `ff818e5` as completion.
 The [follow-up critique](../reopened-critique.md) led to the deeper comparisons and changed proposal
-below. U17/U18 approve product directions; architecture and implementation remain for review. The
-legacy-editing compatibility preference is explicitly pending unless the [handoff](../handoff.md)
-records a later user decision. The source writer transition cannot proceed on silence.
+below. U17/U18 approve product directions and U19 requires preserving legitimate existing adaptability;
+architecture and implementation remain for review. The conversion-gated graph-edit loss is withdrawn.
+The revised proposal retains versioned graph authoring/repair in the same semantic owner and engine.
 
 The reopened work audited 24 packages at stated depth, investigated source/relationships/history,
-worked concrete competing designs, ran an isolated runtime discriminator and changed recommendations
+worked concrete competing designs, ran isolated priority and compatibility runtime diagnostics, and changed recommendations
 through opposing reviews. These documents propose a target and implementation sequence with the
-stated compatibility condition. They do not authorize or claim implementation.
+stated compatibility contract. They do not authorize or claim implementation.
 
 Start with the [decision brief](decision-brief.md). It distinguishes verified strengths, selected
 planning improvements, tradeoffs requiring your decision and remaining proof. The other documents

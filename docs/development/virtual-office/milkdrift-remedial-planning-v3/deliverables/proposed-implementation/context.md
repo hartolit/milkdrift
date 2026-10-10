@@ -14,10 +14,11 @@ and the current decisions G1/P1/P2/A1/N1/F1 through the planning context. Record
 revision of each required premise in the implementation handoff. A changed premise reopens only
 dependent choices; no stale phase label overrides it.
 
-The reopened planning revision set is **G1/r2, P1/r3, P2/r3, A1/r4, N1/r3 (NP3), F1/r4 and
-F2/r4**. U17/U18 approve product directions, not these implementation decisions. The migration
-editing preference is explicitly presented to the user; P00 must record its disposition before
-assigning the new writer. Each prompt's named decision refers to this set unless P00 records a later reviewed
+The reopened planning revision set is **G1/r2, P1/r3, P2/r4, A1/r5, N1/r4 (NP4), F1/r5 and
+F2/r5**. U17/U18 approve product directions and U19 preserves legitimate prospective adaptability;
+these implementation decisions remain proposed. The rejected conversion-gated graph-edit loss is
+replaced by explicit versioned graph support in the shared owner. Each prompt's named decision refers
+to this set unless P00 records a later reviewed
 and user-approved replacement. G1 owns purpose; P1 reuse/service/placement; P2 authoring/control;
 A1 execution/browser/commitment ownership; N1 canonical structured source/notation; F1 interactions/custody; F2 frontend
 engineering. The [decision brief](../decision-brief.md), [adoption plan](../adoption-plan.md) and
@@ -52,9 +53,11 @@ and report mismatch before commands. Keep existing accepted requests byte-bound 
 Do not rewrite history or assign an unknown effect a new request ID. Definition revisions are
 immutable, including the exact bytes and identities referenced by active work.
 
-One current writer and one semantic owner remain. Necessary historical readers may preserve
-currently supported old facts without becoming a second execution engine or an old writer.
-If a conversion cannot preserve meaning, refuse or explicitly drain before the new writer.
+One semantic owner accepts versioned graph and structured source, with exactly one source per
+immutable revision. Both lower to the same checked plan and runtime. Retain supported graph writes;
+conversion is optional and verified, live reconciliation is a separate state-dependent proof.
+A refused conversion must not strand otherwise valid native future repair. Drain/cancel is not
+equivalent to repair. Graph retirement requires a later reviewed migration, not an implicit cutoff.
 An older binary must not open a new incompatible store; rollback uses a guarded pre-upgrade backup
 only after accounting for work accepted since that backup. Restoring old data cannot erase real
 external effects. Retain operator decisions and exact evidence before any irreversible transition.

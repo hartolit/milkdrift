@@ -796,6 +796,9 @@ or reply-loss tests alone do not establish this combination.
 
 ### F-C2 — unproved legacy conversion can remove useful future repair
 
+This records the pre-U19 counterexample and response. The later U19 section supersedes the
+writer-removal selection: NP4 preserves the versioned graph-native edit path instead.
+
 Counterexample: an accepted legacy graph contains an uncertain active child and still has a
 legitimate Task-only future repair under its governing agreement. The new converter cannot prove
 that graph/frontier corresponds to editable structured source. Continuing the exact old plan
@@ -908,3 +911,339 @@ The four cases leave two material tradeoffs visible: a stopped local commitment 
 stop a remote accepted operation, and unproved legacy conversion cannot preserve arbitrary future
 editing once the old writer is removed. The knowledge and suspended-child cases have concrete owner
 contracts and require combined tests; they do not reveal a further foundational owner needing invention.
+
+## Faris U19 reconstruction: preserve graph-native repair under one owner
+
+Faris-20261010, `/root/execution_faris`, 2026-10-10, after the user's exact
+[U19](../intent-source-excerpts.md#u19--preserve-legitimate-adaptability-while-choosing-migration).
+U19 rejects automatic withdrawal of existing repair and authorizes investigating a bounded graph
+maintenance path. It supersedes my earlier proposed removal of every graph writer at the source
+switch. That earlier rule confused a preferred new authoring representation with a requirement
+for only one serialization writer. Two version-specific encoders under blueprint are not two
+semantic authorities when each immutable revision has one source and both use one checked-plan,
+runtime, reconciliation and history owner.
+
+**Recommendation, revised after Rowan's challenge:** select the NP4 typed source family with
+`Program` as the default for new convenience authoring, and preserve the existing explicit versioned
+`GraphNative` construct/genesis, import, copy and edit APIs. Both belong to blueprint and use the
+same runtime and reconciliation. Conversion is an available verified operation, not a prerequisite
+for a legitimate graph repair. This preserves inactive reusable definitions and ordinary graph
+creation/import as well as active recovery. Cancellation or a separate run is not an equivalent
+substitute for a repair that the current owners permit.
+
+My first U19 draft proposed a local admission epoch, maintenance eligibility inherited by graph
+descendants and special existing-graph import intent. Rowan challenged the need for those new
+facts. I withdraw them: they enforced my earlier preference for program-only genesis without a
+technical repair requirement or user mandate. Explicit versioned graph APIs already bound their
+vocabulary, operation size, identity and authority. Retaining them is simpler and preserves more
+useful behavior. This is an actual change in my recommendation, not evidence that the earlier
+single-writer premise was adequate.
+
+### Current sources establish an ordinary graph repair route
+
+[`BlueprintRevision::revise`](../../../../../crates/blueprint/src/revision.rs) applies one bounded
+`MutationBatch` to an exact immutable base, validates the completed candidate and creates a new
+identity. The original revision and its semantics do not change. The
+[v3 mutation vocabulary](../../../../../crates/blueprint/src/mutation.rs) includes node/edge
+addition/replacement/removal, interface/metadata, exact child-pin upgrades and deliberate merge
+parents. Its 512-operation bound and final validation already support coherent compound changes.
+This is a graph-native versioned compiler, not a scheduler or mutable definition table.
+
+[`ControlService::submit`](../../../../../crates/control/src/service.rs) verifies actor, exact
+proposal/base/digest/observed sequence; resolves the stored base; builds the graph successor;
+assesses controller policy, authority and risk; retains the immutable candidate; and requests
+ordinary runtime reconciliation. Offline proposals use `ProposeOffline`, with their existing
+controller-policy restriction. Save is not live adoption. Approval and application recheck their
+own conditions, and resume is a separate ordinary run action. The fact that candidate retention
+can precede the outer response remains an exact-command recovery concern, not a reason to turn
+maintenance into a direct store mutation from the UI.
+
+[`plan_revision_adoption`](../../../../../crates/runtime/src/engine/reconciliation.rs) takes the
+current run, requested revision and actual history. The
+[reconciliation matrix](../../../../../crates/runtime/src/reconciliation.rs) distinguishes pending,
+active, completed and uncertain occurrences with their scopes and dependencies. Unchanged work
+is preserved; pending work can change; changes to completed/uncertain effects and started descendants
+receive their existing restricted classifications. `FinishCurrentThenAdopt` can use a changed
+active definition on its next invocation while retaining the current occurrence; safe restart
+requires the actual existing cancellation/effect conditions. Refactoring to a checked plan must
+preserve those decisions, not replace them with “old source cannot be converted.”
+
+The [governed repair test](../../../../../crates/control/tests/control_service/agreements.rs)
+already submits a compound graph change: it replaces an editable task, adds an investigation task
+and rewires internal edges, preserves the agreement, applies through control, reopens the store
+and replays without another adaptation. It also refuses removal of the accepted agreement and
+an exhausted revision budget. Another test refuses indirect child adaptation under an inherited
+agreement after reopen. These tests have a stronger product oracle than “the old document can be
+read”: legitimate prospective work still changes and prohibited bypass still fails. I read their
+source; I did not run them or establish the new engine's compatibility.
+
+### Representation and live adoption are different proof obligations
+
+An operation advertised as unchanged **definition conversion** must prove that the resulting
+program preserves the original supported control/data meaning, lexical choices, contexts,
+interfaces, agreement and independent invocation behavior. A live run additionally needs exact
+accepted-frontier correspondence. That is correctly stronger than merely finding similar nodes.
+
+A **prospective revision**, however, intentionally changes future behavior. It need not prove
+the whole successor equivalent to its predecessor. It must preserve accepted facts and satisfy
+the current reconciliation, authority and agreement rules at the exact run sequence. A graph-native
+task repair needs neither region decomposition nor an all-future-runs equivalence proof. A proposed
+graph-to-program successor may likewise be considered as an intentional revision when its actual
+accepted frontier can be proved compatible; do not label that conversion or silently weaken the
+old reconciliation classifications to make it pass. When such cross-format compatibility is not
+established, the complete graph-native path remains available.
+
+There is no requirement to replay old history into a new source tree. Each accepted occurrence
+retains its governing source revision and source-to-plan identity. Graph-to-graph repair can use
+the exact existing configuration/dependency fingerprints. Cross-format adoption requires an explicit
+owner-verified correspondence, not a model-supplied “same node” claim. The common runtime may have
+old and new immutable plans pinned to different occurrences of one run; that is existing prospective
+history semantics, not two competing current definitions.
+
+### One source owner, two bounded source forms
+
+Blueprint owns the closed `WorkflowSource::{Program, GraphNative}` family, with an explicit
+source/schema version and corresponding owner-validated edit form. One revision contains exactly
+one source form. Graph-v3 retains the original constructor/validator/canonical encoder and lowers
+into the same checked `ExecutionPlan`; Program uses the new pure editor/lowerer. A program
+revision cannot acquire a separately editable stored graph projection, and a graph revision cannot
+acquire a separately editable region tree. Layout remains presentation.
+
+Use the existing blueprint module boundary, with private version-specific implementation, rather
+than a generic compatibility framework or new legacy engine. Runtime/reconciliation consume the
+common checked plan, stable element identity and exact source fingerprint/correspondence facts.
+Authority, risk, context, agreement and publication checks use the same owning services. They may
+have explicit version-reader logic where old contracts differ; they must not acquire separate
+graph-specific authority or outcome ledgers.
+
+The final-entry, managed claim, publication association and account code remains shared. A legacy
+external reducer can retain its v3 source encoding and supported edits while lowering to the same
+ordinary Task execution. Therefore P01's former “delete every capability-reducer writer” instruction
+must narrow to new structured authoring and duplicate execution paths: retain required v3 source
+codec/mutation compatibility. No old producer may bypass shared admission because it is legacy.
+
+### Exact versioned writers, ancestry and reuse
+
+The useful bound is the supported source vocabulary and current operation limits. There is no
+admission-date cutoff, global grandfather catalogue, new eligibility fact or special import-intent
+gate. Retain the complete graph-v3 mutation vocabulary under its existing permissions; arbitrarily
+restricting compatibility to `ReplaceNode` would withdraw the tested investigate-and-rewire repair.
+Freeze graph-v3 semantics rather than expanding it with every new Program feature. Program-only
+features can be used through ordinary exact compatible calls where that meets the actual need;
+do not disguise an unsuitable child-workflow boundary as equivalent graph behavior.
+
+Existing immutable bytes, digests, ancestry and exact compiler semantics remain untouched. An
+explicit source family/version selects one constructor, editor and lowerer, not a separate
+authority path. New convenience operations may default to Program; an already supported versioned
+graph command continues to mean graph even with no base. No new registry is needed to distinguish
+these two requests. All descendants and independent copies remain supported under the same
+contract as their roots; a conversion on one branch does not freeze its graph siblings.
+
+| Producer/action under NP4 | Exact supported behavior |
+| --- | --- |
+| New Program convenience creation | Emit Program through a versioned shared blueprint constructor; graph and outline consume its one authoritative source. Do not reinterpret an old graph command as this new operation. |
+| Explicit versioned graph construct/genesis, including old convenience commands | Retain exact graph-v3 semantics and current bounds, even without an existing base or historical age claim. Move private daemon compilation into shared blueprint helpers without removing its supported behavior. |
+| Graph successor from an exact retained graph base | Apply the complete v3 batch through blueprint; same workflow identity; create an immutable v3 successor. Siblings remain valid; no fictitious latest-head lock. |
+| Graph merge | Require the exact selected base and retained parents in the same workflow, with current ancestry/sequence/risk checks. Do not infer the selected base from sorted parent order. |
+| Import of a supported graph or its missing ancestors | Preserve exact validated bytes through the current import operation, `ImportBlueprint` authority and ancestry checks. Local upgrade date or an unverifiable creation date adds no new refusal. |
+| Explicit independent graph copy | Preserve supported graph semantics under the current copy operation and its copy provenance. Authorize the target workflow separately. Identity-bound agreement-copy refusal remains; no run, account or mutable resource is copied. |
+| Graph reused by exact pin, run start or published generation | Keep the exact immutable revision without conversion. New invocations obtain ordinary current authority and appropriate accounts. |
+| Explicit verified conversion or intentional program successor | Create a new program revision with exact provenance. Definition-conversion equivalence and live-adoption compatibility remain separate checks. Existing graph siblings are not frozen by the conversion of one branch. |
+| Program shown through a graph projection | Layout and derived execution edges are not editable GraphNative source. Cross-family transformation is a deliberate validated owner operation; no hidden reverse conversion. |
+
+This preserves a finite versioned language, not a fixed finite population of documents. Existing
+graph creation/import/copy can continue producing definitions. If that ongoing maintenance cost
+outweighs Program's benefits, reconsider corrected graph as the common authoring architecture;
+do not make the comparison favorable by silently removing useful graph clients or future repair.
+
+### All writers and ordinary consumers must cross that boundary
+
+Current [`authoring::candidate`](../../../../../apps/daemon/src/host/commands/authoring.rs) selects
+`genesis` versus `revise` from the draft base. Generic construct/save accepts full mutations, while
+the private `ModelWorkflow` helper recognizes one narrower graph shape. Current
+[definition import](../../../../../apps/daemon/src/host/commands/definitions.rs) and control proposal
+both eventually call [`RevisionStore::put_revision`](../../../../../crates/persistence/src/revision.rs).
+The [redb implementation](../../../../../adapters/redb-store/src/revision.rs) atomically validates
+same-workflow/lower-sequence parents and inserts canonical bytes plus indexes. These are the actual
+producer/consumer points, not just a frontend switch.
+
+Concretely, extend blueprint's source and edit contracts with explicit family/version dispatch,
+and keep one immutable store contract for the resulting revisions. The store continues its exact
+canonical identity and retained-parent checks; it does not gain a migration-eligibility gate.
+Pure constructors remain useful offline and are not authority boundaries. Daemon imports,
+authoring, control proposals, copies and maintained tools use the shared helpers and current
+authorizing operation; a direct store insertion is not an alternative public control path.
+Already-present identical bytes retain their original identity rather than being re-enrolled or
+rehashed. Consumers must distinguish the exact candidate base from a sorted ancestry list.
+
+Control owns prepare/edit/save/propose/approve/apply/resume for both source forms. A WorkCommitment
+packet identifies the target's exact source version and supplies its applicable mutation contract.
+It can request a graph-native repair when conversion is unavailable; the same response-provenance
+admission authenticates the result. It cannot rewrite an old target as program source because that
+is the format the planner prefers. CLI, independent JSON and Svelte must expose graph maintenance
+as actual useful editing/proposal work with the same diagnostics. The existing complete graph
+mutation route must not become a hidden emergency command accessible only to bespoke agents.
+
+The daemon's old private semantic compiler should still move to blueprint. An existing finite
+model-step convenience delegates to version-specific blueprint helpers for its original v3 command
+or base, and new Program operations use Program helpers; this is a client convenience, not another
+owner. Keep the exact old recognizer's accepted shapes and refusals. Graph read
+models show the real old branch order, input dependencies and accepted occurrences. They must not
+display a false editable region decomposition for an unconverted graph. A graph and outline can
+project different source forms without treating their layout as a conversion proof.
+
+One concrete audit item must accompany graph merge maintenance: `BlueprintRevision::revise` sorts
+merge parents, whereas current `ControlService::apply_proposal` obtains a delta base from
+`candidate.parents().first()`. The selected maintenance path must take its exact base from the
+accepted proposal/reconciliation facts, not lexical parent order. I have not demonstrated an
+executed exploit or declared every current merge defective; the inspected consumers plainly do
+not make “first parent” equivalent to “selected base.” This is a bounded source/consumer correction
+to resolve in the common owner, not a justification for dropping graph merges without analysis.
+
+### Required five-category behavior matrix
+
+These categories overlap: a protected workflow can also contain uncertain work, and a reusable
+definition can have closed historical runs. All applicable rows apply; none grants new authority.
+
+| Existing state | Execution, inspection and reuse | Editing and prospective repair | Recovery, conversion and retirement |
+| --- | --- | --- | --- |
+| **Closed historical revisions** | Original immutable bytes and completed history remain inspectable/replayable. The exact definition remains reusable under current authority. A historical run is never made active by editing. | The historical revision stays immutable. An authorized graph successor may branch from that exact base; the original events do not change. | No conversion rewrites original identities or results. Historical readers/receipts survive any later writer retirement. A closed run alone does not prove its definition has no reusable consumers. |
+| **Reusable inactive definitions** | Exact graph can start a new run, be pinned, copied where currently allowed, or support an authorized published generation. No active run or migration eligibility is required. | Ordinary offline graph edit/save/proposal retains full currently allowed mutation semantics and applicable policy restrictions. Conversion is optional. Successors and explicit copies remain maintained. | Inactivity does not retire support. Any future withdrawal requires replacement/conversion or explicit approval of the lost use, addressing usable definitions and affected consumers; exact readers/replay remain. |
+| **Active runs with unentered future work** | Current run/history/accepted choices/account remain the same. Existing future invocation semantics use the governing revision until ordinary adoption. | Graph-native successor and current proposal/reconciliation can add, remove or replace permitted unentered work. No whole-graph conversion proof is required. Apply/resume still uses exact guards, approval where required and current authority. | Interrupted save/propose/apply/resume recovers exact commands/candidate/plan. If conversion is attempted, prove definition or intentional-change claim and the actual frontier separately. Refused conversion does not remove graph repair. |
+| **Active runs with started or uncertain effects** | Started occurrences retain their original revision, invocation/claim identity, physical holds and unknown reservations. Nonconflicting future work may remain useful. | Keep current classification of unchanged, changed-active, completed/uncertain and dependency-affected work. A compatible graph repair to unaffected future nodes can proceed where those owners permit it. Never reparent/retry/erase uncertainty by conversion or rewriting the source. | Existing resolution, cancellation, safe restart or remediation remain their explicit operations. An unsafe proposed repair refuses with the actual affected execution/obligation and legitimate available controls. Cancel/new-work is not presented as equivalent repair. Writer removal cannot strand a live supported repair/resolution dependency. |
+| **Governed/protected workflows** | Accepted agreement identity, required verifier/target, source pins and public-service boundary survive either source form. | Apply the original agreement's actual permitted task-region changes and revision budget, including compound graph rewiring inside that region. Structural/envelope/agreement weakening and indirect child adoption retain their present refusals. New source does not grant broader adaptation. | Conversion must preserve or explicitly bridge the exact versioned agreement check, including its graph-derived protected digest; logical similarity does not recreate its identity. If that cannot be proved, graph repair remains available within the old agreement. Any changed agreement requires its existing separately authorized boundary. |
+
+The agreement row matters technically. The
+[current protected digest](../../../../../crates/blueprint/src/agreement.rs) binds workflow,
+blueprint, metadata, interface, protected nodes and edges crossing the editable boundary. Region
+syntax is not interchangeable with those bytes. Keep the version-specific checker against the
+accepted governing source and exact binding; converting visual structure cannot re-seal an agreement
+as if it were unchanged. An inherited child still cannot directly adopt a new revision when the
+accepted enclosing agreement forbids it, even though graph editing itself remains supported.
+
+### Supported lifecycle and any later retirement
+
+The selected lifecycle now is simple: both source families remain supported. Graph-v3's feature
+vocabulary is frozen, while its existing creation, editing, recovery and reuse operations remain
+available. There is no newly authoritative per-lineage support status, retirement command or
+admission index in this design. That extra machinery would not make a single semantic owner more
+single; it would add storage and policy merely to enforce a source preference.
+
+Removing graph-v3 writers would be a later explicit supported-release decision with a concrete
+replacement and adoption procedure. The review must account for closed history, reusable definitions,
+their copies/descendants, accepted proposals and exact requests, active/paused/created runs,
+uncertain effects, account/resource obligations, child pins and publication generations. It must
+also state what happens to existing external clients, old imports and restored backups. A local
+zero-active-run count establishes none of those conditions. Since retained graph create/import
+remain available, a finite inventory today is not proof of future absence either.
+
+Deletion is justified only when a supported replacement preserves the required edits/recovery/reuse,
+or the relevant capability loss is explicitly approved with those consequences and affected
+consumers made concrete. A usable inactive definition cannot silently become archival evidence.
+An active or uncertain run cannot be stranded by withdrawing a still-promised repair operation.
+Retiring a published generation does not discharge its accepted child calls. If a future release
+chooses to stop accepting new graph work, that is its own visible compatibility change, not a
+consequence inferred from Program being the default.
+
+Original decoders, exact identities and receipt replay, agreement checking and old-plan lowering
+have their own obligations even after a future writer removal. Any replacement or retirement must
+recover a candidate already committed before its outer receipt and preserve old accepted command
+meaning. Readers cannot simply be deleted with an editor. Rollback must not let an old writer
+open new facts it cannot interpret; restoring old data cannot erase surviving external effects.
+No retirement or capability withdrawal is authorized by U19 or this recommendation.
+
+### Compare costs and select the next design boundary
+
+| Alternative | Benefit and cost under the same old active/reusable workload | My disposition |
+| --- | --- | --- |
+| Prove complete conversion before removing graph edits | One new editable source form and no maintained v3 mutator afterward. Requires proof for the actual supported graph population plus distinct live-frontier/agreement compatibility; today that proof is absent. A failure need not invalidate all verified conversions. | Pursue conversion where it can be proved. It cannot presently be the condition for all legitimate repair. |
+| Program default plus versioned GraphNative support in blueprint/control | Preserves existing construct/import/copy, compound repair and reuse through current owners. Retains v3 validation/mutation/encoder and source-specific UI/proposal readers; both lowerers must satisfy one plan/reconciliation contract. No migration eligibility registry is needed. | Preferred NP4 while the substantive new-source comparison remains favorable. It has real ongoing source-tooling cost, substantially narrower than a second scheduler or ledger. |
+| Corrected graph as canonical authoring for everyone | Preserves all current graph editing without conversion pressure and reduces simultaneous source tooling. Keeps authorable edges/ports, structured-constructor lowering and ownership reconstruction; richer choice/result boundaries still require real semantics. | Strong fallback if actual current structures require repeated source escape hatches, per-feature duplicate reconciliation, or disproportionate permanent maintenance. U19 requires keeping this alternative open on that evidence. |
+
+A realistic future policy change tests the distinction. If an external task adds a new final-entry
+authority requirement, both source forms should expose it through the same Task/checked-plan
+contract and share one admission implementation. The v3 encoder may need a version-specific
+diagnostic if its frozen document cannot represent a genuinely new configuration; old existing
+behavior and legitimate old edits still remain. If every such change instead needs separate task
+semantics, authority logic or reconciliation matrices, the compatibility design has failed its
+one-owner criterion and the source choice should reopen. A field decoder or pure lowering branch
+alone is not that failure.
+
+Required discriminating implementation evidence follows the five rows: offline reusable graph
+repair with no run; the actual compound governed task/edge repair; an unconvertible accepted graph
+with safe pending repair; a retained started/uncertain sibling whose claims and account stay exact;
+explicit graph genesis and import after local upgrade; legitimate copy plus agreement-copy refusal;
+successor-of-successor and same-base sibling edits; merge with lexical first parent different from
+selected base; old convenience compilation and exact command recovery across the default change.
+Every safe repair must run through public control, not direct test-store insertion. Compare the
+new common plan's decisions to the existing v3 behavior with independently stated outcomes.
+
+For command recovery, retain current
+[external receipt lookup before new execution](../../../../../apps/daemon/src/host/receipts.rs).
+An old accepted graph creation/repair command must replay its old result after the new-source
+default changes. A fresh supported graph-genesis command remains allowed under its existing
+authority and validation. Persist exact proposal/candidate material and internal command identities
+before effects at compound boundaries, and recover the same immutable candidate if revision storage
+committed before the outer receipt. Keeping the old command's deterministic compiler matters even
+when that outer receipt is absent: silently changing its output to Program could create another
+candidate from the same request. New defaults require a distinguishable versioned operation;
+moving the old helper out of daemon must preserve its old shapes, bytes and refusal semantics.
+Never turn a missing response into an apparently confirmed refusal. Graph compatibility does not
+weaken operation-specific authority/disclosure rules.
+
+This is a grounded recommendation to retain graph-native maintenance, not approval to implement
+it or proof that the future source plan already satisfies it. The current source establishes the
+existing edit/reconciliation/agreement mechanisms and their useful tests; the new typed source and
+common-plan contracts above are proposed design. No Cargo, production, schema or live-state change
+was made.
+
+### Final U19 source and program reread
+
+Faris-20261010, `/root/execution_faris`, 2026-10-10, independently reread current
+[P01](../deliverables/proposed-implementation/01-structured-source-and-shared-authoring.md),
+[P04](../deliverables/proposed-implementation/04-ongoing-work-and-response-admission.md),
+[P07](../deliverables/proposed-implementation/07-knowledge-and-evaluated-reuse.md),
+[adoption](../deliverables/adoption-plan.md) and the completed
+[NP4](../deliverables/notation-profile.md), including the native `ProgramAgreement` v2 scope
+added after Elin's challenge. I found no additional foundational blocker in their combination.
+This is source/design review, not implementation qualification or a claim of total conversion.
+
+- **One plan must not erase source identity.** I reread the domain-separated raw node and incident-edge
+  fingerprints in [`blueprint::document`](../../../../../crates/blueprint/src/document.rs), and
+  their comparisons in [`runtime::reconciliation`](../../../../../crates/runtime/src/reconciliation.rs).
+  A normalized legacy reducer's ordinary Task plan cannot replace its original configuration hash,
+  become v1-editable merely by changing kind, or alter its historical dependency ordering. P04 now
+  explicitly retains those source-specific facts; P01/adoption preserve their original bytes and
+  occurrence identities. Pure versioned fingerprint/correspondence production feeding one decision
+  owner is compatible with one runtime; separately implementing its decision rules would not be.
+- **Replay requires the old producer as well as the old receipt reader.** I reread
+  [`authoring::candidate`](../../../../../apps/daemon/src/host/commands/authoring.rs) and
+  [`receipts::execute_inner`](../../../../../apps/daemon/src/host/receipts.rs). Native construction
+  is deterministic, while an effect can precede its application receipt. P01 and NP4 now require
+  exact old command-version compilation and a distinguishable new default operation, so that gap
+  cannot silently switch a retry from graph to Program. The explicit selected-base correction
+  also addresses the inspected sorted-merge-parent consumer; a common plan alone would not.
+- **Protected source correspondence does not confer authority.** The original
+  [`agreement` checker](../../../../../crates/blueprint/src/agreement.rs) seals protected graph
+  structure and forbids changing the agreement during an accepted run. NP4 keeps direct v1 checking
+  for native graphs and requires a complete current-source-derived `LegacyAgreementView` for a
+  converted v1 method, rather than pasted protected facts. New v2 seals an outer source skeleton
+  plus stable Task-only Sequence scopes and their input/output contracts. Editable result mappings
+  do not make output correctness trusted; verifiers/effects stay protected and runtime preserves
+  already accepted results. Existing v1 fragments need not fit v2's narrower scope to remain usable.
+  I also reread control's old/new requirement and bounded pinned-body traversal: migration must
+  retain those authority checks for either family, not authorize only newly visible Task nodes.
+- **Ordinary adoption and protected qualification remain different.** Current
+  [`learning` promotion](../../../../../apps/daemon/src/host/commands/learning.rs) requires an exact
+  eligible comparison/declaration/candidate/agreement/publication match and publication authority;
+  ordinary proposal/application uses its own control gates. P07 now preserves that distinction,
+  rejects approved retrospective self-review as protected Promote/AutoPromote evidence, and allows
+  the same item as honestly labeled selected guidance. It does not impose learning qualification
+  on every ordinary method revision. No permissive source-family or knowledge shortcut remains in
+  the reviewed selected contract.
+
+The remaining burden is concrete implementation evidence already assigned to these phases: both
+native and converted positive protected repair, original hash/replay fixtures, same-authority denied
+cases, completed/uncertain occurrence preservation and owner-level wrong-evidence refusal. The native
+v2 obligation choice is now specified rather than left to a later implementation agent. I made no
+Cargo, prototype, production, schema or live-state change during this final check.

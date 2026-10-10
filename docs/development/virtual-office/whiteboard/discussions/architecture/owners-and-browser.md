@@ -1,6 +1,6 @@
 # Which owners and browser route should the independent client use?
 
-## Current technical selection — A1, revision 4, selected for planning
+## Current technical selection — A1, revision 5, selected for planning
 
 Faris-20261010 and Rowan-20261010 revise the earlier retention recommendation after the reopened
 execution/application investigation. Retain runtime, serving and managed-resource facts with
@@ -11,7 +11,9 @@ use runtime, normal authority and one cumulative account. Complete public discov
 relationship reads and the browser transport. This is the planning recommendation after
 [U17/U18](../../../milkdrift-remedial-planning-v3/intent-source-excerpts.md#u17--human-reviewed-knowledge-and-precise-evidence),
 which approve human-reviewed knowledge and bounded automatic work behavior, not these owners or
-production implementation. A1/r3 and its original G1/P1 dependencies remain historical context;
+production implementation. U19 preserves legitimate graph adaptability; NP4 adds a Program default
+while retaining the existing versioned GraphNative APIs through the same owners. A1/r3 and its
+original G1/P1 dependencies remain historical context;
 the reopened investigation must update downstream planning before claiming integrated acceptance.
 No implementation or canonical architecture change is authorized by this topic.
 
@@ -105,6 +107,27 @@ publication owner, checking each record with an opaque scoped cursor and truthfu
 continuation. No unauthorized names/counts are exposed. The old universal list-filter proposal
 conflated these consumers; it is not an established failing behavior to fix by changing old commands.
 
+Blueprint owns the NP4 typed source family, with one authoritative source per immutable revision
+and one checked execution plan. New convenience authoring defaults to Program. Explicit versioned
+GraphNative construct/genesis, import, copy and the complete existing graph edit vocabulary remain
+supported under current bounds and authority. No source-admission epoch, grandfather catalogue,
+lineage eligibility fact or import-age assertion is required. Graph-v3 keeps its existing meaning;
+new Program features do not imply a second graph scheduler or duplicated authority rules.
+
+Move the old private daemon convenience compiler/recognizer into blueprint's shared versioned
+helpers, preserving accepted shapes, bytes and refusals. The old public command's compilation must
+remain stable after a default change: a candidate can be stored before its outer receipt, so a
+retry cannot silently produce a different Program candidate. New defaults use distinguishable
+versioned operations. Exact historical identities and accepted command replay remain intact.
+
+Conversion and repair have separate obligations. A claimed unchanged conversion proves definition
+meaning; prospective adoption checks actual accepted history, obligations and current authority.
+An intentional graph repair need not prove global future equivalence. Inactive reusable definitions
+keep ordinary editing, copy and invocation. Active/uncertain occurrences keep their governing plan,
+account, claims and effect evidence while permitted future work can change. The exact graph-v3
+agreement checker remains for accepted protected graphs. A refused conversion does not withdraw
+their graph-native repair route.
+
 ## Review, disagreement and reversal
 
 2026-10-10 — Cyra-20261010, actual agent `/root/systems_cyra`: authored this candidate after
@@ -191,6 +214,27 @@ authority origins need versioned readers, exact old receipts/digests and old-wri
 Unrelated entered or uncertain runs cannot be reattached to a fresh allowance; observations can
 inform a new commitment without transferring their effects or control. Canonical source migration
 is a separate contract and cannot serve as proof of session-store compatibility.
+
+2026-10-10 — Revision 5: Faris-20261010 reviewed U19 against the actual mutation, proposal,
+reconciliation, import/copy and agreement owners. The tested governed repair adds a task and rewires
+internal edges, so limiting compatibility to task replacement would itself remove useful behavior.
+The earlier selection that removed all graph writers could preserve execution yet lose legitimate
+future repair. U19 explicitly rejects that automatic loss; A1/r5 supersedes it without reinterpreting
+the original investigation as having proved complete conversion.
+
+Faris first proposed source-admission/eligibility metadata for existing graph roots and descendants.
+Rowan challenged this as an unnecessary enforcement of program-only genesis. Faris withdrew it in
+favor of preserving existing versioned creation/import/copy/edit, with Program as the new default.
+The cost is continued graph source tooling and compatibility tests, not a second execution owner.
+Corrected graph as the common source remains the real alternative if recurring duplicated semantic
+logic or permanent escape hatches undermine Program's benefit.
+
+Graph support remains available in this program. Any later writer removal is a reviewed release
+compatibility decision requiring replacement/verified conversion or explicit approval of the lost
+capability for reusable definitions, active/uncertain work, pending proposals, pins/publications,
+external clients and old imports/backups. No timer or zero-active-run count retires it. Historical
+readers, exact receipts, agreement checking and recovery may outlive a future editor removal. This
+review proposes no new per-lineage retirement registry or authority gate.
 
 Strongest unresolved objection: the preferred client may expose the complexity correctly but still
 make users misjudge control, or demand more operator setup than a fixed same-origin deployment.

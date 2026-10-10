@@ -35,22 +35,30 @@ defaults must correspond to exact public semantics, not replace required authori
 
 ## Edit one canonical source and preserve historical meaning
 
-The selected NP3 source is a structured `WorkflowProgram`; the execution plan and diagram are
-derived views. Diagram, accessible outline, forms and machine consumers submit the same complete
-owner-validated structural/value edit operations. The browser may keep unfinished draft input and
-layout. It must not persist a second executable edge model, infer missing runtime semantics or
-silently repair the daemon's returned document. Conditional order is explicit semantic priority,
-distinct from stable identity; one typed value source must not require the person to maintain a
-duplicate data edge. Parallel completion, result availability and unsettled effects remain distinct.
+The selected NP4 source is a typed family with structured `Program` as the new convenience default
+and explicitly versioned `GraphNative` support. Each immutable revision has one authoritative
+source; both lower through blueprint to one checked execution plan and use the same runtime and
+reconciliation. Diagram, accessible outline, forms and machine consumers submit the appropriate
+complete owner-validated edit operations. Existing graph construct/genesis, import, copy and edit
+APIs retain their bounded semantics, with no upgrade-age cutoff or migration eligibility registry.
+Their convenience compiler/recognizer moves into shared blueprint helpers, preserving old accepted
+shapes and refusals. An old command version must not silently compile to the new source family.
 
-Read legacy graph revisions under their exact historical semantics. Conversion is an explicit
-owner operation creating a new revision, with origin and semantic correspondence. Show precise
-unsupported control/data/ownership relationships and retain the old source when conversion refuses.
-Do not drop unknown constructs, reinterpret old identifier-based priority or make a lossy save
-look like a harmless format upgrade. The selected migration does not promise every accepted old
-graph can become editable regions: execution, inspection, exact replay and authorized reuse remain
-available while unsupported edits refuse. Reopen the source decision if unrestricted old graph
-editing is a required product capability.
+The browser may keep unfinished draft input and layout, but no second editable representation of
+one revision. A Program diagram is derived; GraphNative edits address its actual graph source.
+Neither may infer missing semantics or silently repair the daemon's returned document. Program
+conditional order is explicit priority distinct from identity; graph-v3 retains its exact old order.
+Program's typed value source does not require duplicate data-edge maintenance. Parallel completion,
+result availability and unsettled effects remain distinct in either view.
+
+Conversion is an explicit owner operation creating a new revision with origin and semantic
+correspondence. Show precise unsupported relationships and keep the supported graph-native
+edit/proposal path available when conversion refuses. Do not drop unknown constructs, reinterpret
+old identifier-based priority or make a lossy save look like a harmless format upgrade. Graph-v3
+retains its complete existing edit vocabulary, including inactive reusable definitions and
+compound governed repairs; it need not acquire every new Program feature. Source equivalence is
+required for a claimed unchanged conversion, while an intentional future-work revision has the
+separate live-adoption obligations below. A cancelled run plus new work is not equivalent repair.
 
 Separate successful source validation from permission to adopt it into an active run. Prospective
 adoption preserves completed evidence, selected clauses and active/uncertain occurrences under their
@@ -240,8 +248,10 @@ second usable owner while another fails. Visual snapshots and automated accessib
 supplement keyboard, pointer and screen-reader review; they do not prove semantic behavior or
 human comprehension. Sanitize diagnostic traces and explicitly protect any private evidence lane.
 
-Include canonical source reload through diagram/outline/API, ID renaming without choice-priority
-change, precise legacy conversion refusal and positive pending-work repair. Ongoing-work tests
+Include typed source reload through diagram/outline/API, Program ID renaming without choice-priority
+change, exact old graph semantics, versioned graph creation/import/copy/edit, precise conversion
+refusal with positive pending-work repair, and unchanged old-command recovery after default changes.
+Ongoing-work tests
 must include rejected criticism with retained reasons, an authorized revision, no-progress stop,
 restart without a duplicate model call, and pause/cancel while effects remain unsettled. Knowledge
 tests need a nonexecutable item, retrospective and controlled bases, allowed self-review, a refused

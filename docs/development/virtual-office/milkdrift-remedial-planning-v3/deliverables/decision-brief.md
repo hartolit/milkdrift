@@ -1,5 +1,11 @@
 # Revised decision brief — after the reopened investigation
 
+**U19 correction:** verified conversion is required when converting, but conversion is no longer a
+prerequisite for existing graph-native editing and repair. The proposal retains that versioned source
+family within the same blueprint owner and runtime. The conversion-gated editing loss proposed at
+`816874c` is withdrawn. U19's source and live-state investigation is recorded in the structure,
+agency and execution comparisons; see the [adoption matrix](adoption-plan.md).
+
 Milkdrift should become a durable environment for **bounded ongoing work**: a goal can lead to a
 plan, execution, review, reconsideration and permitted continuation, while people can inspect,
 intervene and change future requirements. Useful learning includes precisely described human
@@ -18,7 +24,8 @@ that recommendation was not sufficiently earned.
 | Earlier assumption or omission | Finding and concrete consequence |
 | --- | --- |
 | A coverage row and passing behavior supported broad retention | The retrospective audit found 24 packages but uneven design depth. Four source/history/consumer comparisons now cover them at stated depth; remaining parser/platform/whole-graph proof limits are explicit in the [dossier](../working/system-dossier.md). |
-| A graph with better construction was the least disruptive adequate answer | The strongest structured alternative supports the same typed cross-sequence references and prospective edits. Graph compound operations would recreate a region language and then infer its ownership from edges. Select immutable structured source, lowered to one checked execution plan; preserve old graph semantics through its versioned reader. |
+| A graph with better construction was the least disruptive adequate answer | The strongest structured alternative supports the same typed cross-sequence references and prospective edits. Graph compound operations would recreate a region language and then infer its ownership from edges. Select structured source as the default for new authoring, with a supported versioned graph source family; both lower through one semantic owner to one execution plan. |
+| Exact old execution was sufficient migration compatibility | U19 correctly distinguishes execution from adaptability. Existing reconciliation already admits changed pending work while preserving entered occurrences. Retain graph-native create/import/copy/edit/repair; whole-definition conversion is optional, and live adoption has a separate compatibility proof. No new eligibility registry or forced conversion grants permission to edit. |
 | Identifier order could simply be shown in the editor | A real runtime/redb probe confirmed that swapping only branch-port IDs changes the chosen action when both conditions hold. New source has semantic clause order independent of identifiers; historical ordering and accepted choices remain exact. |
 | Controllers/evidence drivers demonstrated a product goal-to-plan path | The production parser verifies already supplied learning candidates; it does not initiate general planning. Drivers supply workflow construction, provenance and stage coordination. Product-owned packet preparation, model-response admission and durable ongoing control must replace those responsibilities. |
 | One reliable planning round was a sufficient ceiling | U18 explicitly requires bounded automatic reconsideration. A control-owned work commitment coordinates accepted next-work decisions across ordinary runs, with one cumulative account and exact action/run associations. Manual mode remains supported by that owner. |
@@ -28,24 +35,36 @@ that recommendation was not sufficiently earned.
 
 ## Selected architecture and the strongest alternative
 
-**Canonical structured methods.** Blueprint owns stable-ID Sequence, Conditional, Parallel, Repeat,
+**Structured methods and supported graph source.** Blueprint owns stable-ID Sequence, Conditional, Parallel, Repeat,
 Call, Task, Await and Return source, explicit inputs/results, complete edits and lowering. Runtime
 owns occurrences, activation, effects and prospective adoption. A graph and outline project one
-source. Legacy graphs compile with their exact old activation rules into the same execution-plan
-boundary; they need not falsely become region trees. Unsupported conversion to editable new source
-refuses precisely, while old accepted work remains inspectable and executable. New writers do not
-keep emitting the old language. Where equivalence cannot be proved, this also removes otherwise-valid
-legacy prospective edits/repairs after the writer switch; continued execution is not equivalent editing
-support. The migration preference is explicitly with the user for decision. If unrestricted existing
-repair is required, hold the writer switch and revisit this selection or prove the required conversion;
-do not make implementation agents invent a second permanent writer.
+source. Each immutable revision has exactly one authored source family: structured program or supported
+graph version. Graphs compile with their exact activation rules into the same execution-plan boundary;
+they need not falsely become region trees. Existing versioned graph construction, import, eligible copy
+and mutation remain explicit supported operations, using the same control authority, runtime,
+reconciliation and history. The graph vocabulary is maintained at its existing contract; new convenience
+authoring defaults to structured source. This costs two source validators/lowerers and compatibility
+tests, but adds no second scheduler, writable execution plan or duplicated runtime facts.
+
+Conversion proves unchanged definition meaning. Prospective adoption proves that a changed successor
+respects the actual accepted prefix, active/uncertain occurrences, agreements and future frontier.
+These are separate operations: a valid pending-task graph repair does not need an unrelated crossing
+subgraph converted. A cross-family successor may change future work if its unchanged accepted facts
+and obligations correspond; it need not be wholly equivalent to its predecessor. Unsupported conversion
+refuses with the native repair route still available. Cancellation and separate new work are recovery
+options, not substitutes for repair. No graph-source retirement is part of this program; a later removal
+requires evidence of repair/reuse coverage and explicit review of any remaining loss.
 
 The corrected-graph alternative was worked on the same D1–D8 packet and remains the strongest
 migration-risk objection. Delta initially preferred it, then changed selection after Elin showed
 its claimed data-flow advantage did not distinguish it from regions. A substantive UML structured
 activity basis supplies clauses/results/containment; a BPMN token basis was also worked through.
 Full interchange and model-authoring superiority are not established. See the
-[comparison](../working/structure-comparison.md) and [NP3 contract](notation-profile.md).
+[comparison](../working/structure-comparison.md) and [notation contract](notation-profile.md). U19 also
+reopened the choice against corrected graph M. Retaining M everywhere would avoid a second source
+lowerer and migration, but preserves inferred structural ownership and duplicated data-edge declarations.
+The hybrid pays an explicit compatibility cost for direct structural editing without removing current
+adaptability. It is not selected because every accepted graph has been proved region-representable.
 
 **One ongoing work commitment, ordinary execution.** Extend control's controller/application
 responsibility to own accepted goal/policy, selected evidence, decisions, questions, pending actions
@@ -72,7 +91,9 @@ placements, current source limitations, exact handshakes and S28 recovery.
 Assessment records keep exact subjects/versions/inputs/outputs, criteria, timing, reviewer authority,
 reasoning, limitations and counterevidence. Author relationships are visible; independence is enforced
 only where the declared criterion requires it. Controlled and retrospective assessment have different
-basis labels. Reuse approval binds applicability and selected evidence; executable qualification and
+basis labels. Reuse approval binds applicability and selected evidence; unapproved or negative sources
+remain selectable with their actual status. Ordinary method adoption keeps its authority/risk/agreement/
+reconciliation gates without mandatory learning qualification. Protected executable qualification and
 publication retain their stronger separate contracts. The existing protected repair profile survives
 as a closed profile, not a set of optional fields that human review can bypass.
 
@@ -96,7 +117,11 @@ explains the concrete deletions and why wire, receipt, configuration and importe
 
 The prior E01–E07 observations remain useful under their original limits, including negative browser
 E04. The new [priority diagnostic](../working/priority-runtime-evidence.md) executed production runtime
-and redb in isolated temporary stores with no external tasks. All new architectural alternatives and
+and redb in isolated temporary stores with no external tasks. A second
+[compatibility diagnostic](../working/compatibility-runtime-evidence.md) demonstrated native pending
+repair beside unconvertible topology while preserving an active occurrence; it also exposed a crossed-
+join stall and a cancellation-history error, recorded as limitations requiring owned repair. No useful
+non-region expressiveness is claimed from those failing shapes. All new architectural alternatives and
 S28 traces are modeled designs. There was no prototype frontend, paid provider call, live deployment,
 production edit or execution of the proposed program. No measured authoring-success, full standard
 interchange, new hardware or full-system qualification is claimed.

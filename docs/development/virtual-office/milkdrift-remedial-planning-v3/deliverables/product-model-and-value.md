@@ -3,10 +3,13 @@
 The reviewed purpose is ongoing useful work with explicit authority, evidence and future change.
 The source is the user's [selected original excerpts](../intent-source-excerpts.md), with origin,
 standing and uncertainty tracked separately in the [intent register](../working/intent-register.md).
-G1/r2, P1/r3 and P2/r3 own the selected planning interpretations. U17/U18 explicitly approve
+G1/r2, P1/r3 and revised P2/r4 own the planning interpretations. U17/U18 explicitly approve
 bounded automatic reconsideration and precisely labeled human-reviewed knowledge evidence; the
 proposed architecture and implementation program still require review. Current vision and accepted
-ADRs are implementation evidence and prior judgments, not independent user endorsements.
+ADRs are implementation evidence and prior judgments, not independent user endorsements. U19
+rejects automatic loss of legitimate prospective repair through conversion gating. P2/r4 therefore
+recommends structured authoring defaults plus graph-native support under one owner, pending the
+coordinator's final diagnostic synthesis; it does not claim a source-only writer transition is approved.
 
 ## Objects and relationships a user needs
 
@@ -15,7 +18,7 @@ ADRs are implementation evidence and prior judgments, not independent user endor
 | Connection / owner | A route authenticated as a specific host, actor and grant; each owner retains its own work | A connection does not join a cluster, establish peer trust or combine permissions. |
 | Goal / draft | Editable intent and a reviewable human/agent candidate | Prose or local draft state has no authority to execute. |
 | Work commitment | One accepted ongoing goal, permitted coordination policy, cumulative allowance and traceable evidence across planning and work runs | Criticism triggers assessment; it does not automatically change the plan, grant authority or reset the budget. |
-| Method / saved revision | Immutable reusable structured definition with exact inputs, outputs and constraints; one checked plan supplies execution and diagram views | Saving does not start work; editing creates a new revision; generated wiring is not another editable source. |
+| Method / saved revision | Immutable reusable definition with one authoritative source form, exact inputs/outputs and constraints; graph-native or structured source lowers to one checked plan | Saving does not start work; editing creates a new revision; a structured program's generated wiring is not another editable source. |
 | Run / attempt / result | Accepted work, individual effect progress, and selected accepted evidence | Accepted, succeeded, verified and physically stopped are not synonyms. |
 | Future change / proposal | A guarded prospective decision against the observed run and governing agreement | It cannot rewrite past evidence, switch an entered effect or lower protected acceptance silently. |
 | Local call / eligible copy | Exact child pin at the workflow owner, or an independently editable revision where constraints permit | Remote readability alone allows neither local resolution nor removing identity-bound agreements. |
@@ -39,6 +42,18 @@ not an assumed remembered conversation. A critical review can lead to further in
 retaining the original conclusion, revising permitted future work, escalation or stopping. A
 finite no-progress rule prevents endless equivalent plans.
 
+Control allocates bounded workflow identities while preparing the commitment and shows what each
+slot is for. The user reviews purpose/scope rather than entering identifiers. Ordinary grants must
+cover the actual definition/run operations, even before definitions exist; missing permissions are
+reported explicitly. Accepted slots and maximum associated-run count remain bounded, revisions reuse
+their lineage and no slot resets allowance. Commitment control authority does not imply workflow rights.
+
+Repair follows the target's actual source family. A commitment can propose a native graph successor
+for an existing run when structured conversion is unproved, through the same authenticated proposal,
+agreement and per-occurrence reconciliation path. It keeps completed evidence, unchanged entered
+or uncertain work, resource claims and the same account. It cannot treat cancellation or a fresh
+run as equivalent to a legitimate future edit merely to simplify the representation transition.
+
 An authorized policy amendment creates an immutable successor against exact current policy/action
 guards, pauses local admission and names which unaffected actions may continue under their original
 authority. Affected future work is held and replanned; entered effects retain their obligations.
@@ -54,13 +69,17 @@ judgments remain disputed. Negative/inconclusive results remain visible and may 
 limited caution or open question, without becoming favorable verification. Mandatory technical checks
 and protected-effect policies keep their own evidence owners. Evaluation alone changes neither
 the selected executable method nor a publication nor existing work.
+Approval qualifies an explicit approved-for-reuse claim; it does not prohibit selecting authorized
+unapproved, negative or disputed evidence. Ordinary future-method adoption retains its normal
+authority/risk/agreement/reconciliation gates rather than acquiring a mandatory learning study.
+Protected qualification and publication promotion keep their own stronger operation-specific rules.
 
 ## Forward value account
 
 | Seed / requested value | Current evidence and selected improvement | Assignment |
 | --- | --- | --- |
 | V01 Practical human interface | Current native journeys work; real browser transport and first production workflow missing | P01–P03 |
-| V02 Human and agent authoring | Generic proposals exist; canonical structured source and product-owned goal/criticism packets replace private graph assembly and evidence-driver orchestration | P01/P02/P04/P08 |
+| V02 Human and agent authoring | Structured authoring defaults and supported native graph edits share blueprint/control and one checked plan; product goal/criticism packets replace private compilation and driver orchestration | P01/P02/P04/P08 |
 | V03 Continuing adaptation | Add a bounded ongoing commitment across revisions/runs, ordinary prospective commands and one cumulative account; existing controller limits alone do not supply the supervisor | P04/P06/P08 |
 | V04 Easy reuse | Immutable references/copies useful but not universally interchangeable | P01/P05 |
 | V05 Restricted callable workflows | Publication protects internals and retains accepted invocations; add qualified relationship view | P05 |
@@ -83,8 +102,12 @@ The reopened [structural comparison](../working/structure-comparison.md) worked 
 child-choice encoding, corrected graph, canonical regions and a substantive BPMN subset through the
 same authoring/change packet. The initial corrected-graph recommendation changed after independent
 criticism: its claimed data-reference advantage was also expressible in regions, while compound
-graph editors reconstructed the very structure authors needed. Canonical structured source is now
-selected, with one checked execution plan and exact historical interpretation. This is not a claim
+graph editors reconstructed the very structure authors needed. U19 requires a further correction:
+explicit structured source may improve new construction without becoming a prerequisite for every
+existing repair. Direct runtime source proves safe prospective changes need not preserve an identical
+whole definition. P2/r4 recommends structured defaults plus native graph create/import/successor/copy
+support in the same owner, with one checked execution plan and exact historical interpretation.
+The coordinator's concrete topology diagnostic remains part of the final comparison. This is not a claim
 that models are automatically better at UML or that full standard interchange is implemented.
 
 The [agent-directed comparison](../working/agent-directed-work.md) resolved the missing current
@@ -104,9 +127,11 @@ It retains the protected-publication profile intact and avoids a generic scoring
 
 The selected change replaces incomplete presentation/construction assumptions, not durable truth.
 Layout stays presentation; unsupported semantics are refused rather than flattened. Historical
-blueprint identities remain readable with their old meaning, while one current writer/runtime owns
-new definitions. Exact requests, pending work, resource obligations and closed history survive or
-receive an explicit supported drain/refusal path. An old binary cannot be promised safe rollback
+blueprint identities remain readable with their old meaning; each new revision has one canonical
+source form and the shared owner lowers it for the same runtime. Exact requests, legitimate future
+edits, pending work, resource obligations and closed history retain their owners. Equivalent conversion
+and compatible prospective adoption are distinct checks. A conversion refusal cannot silently remove
+native repair. An old binary cannot be promised safe rollback
 after a new writer has accepted effects or data it cannot read.
 
 The bounded choice remedy requires one selected arm, explicit normal exit, declared selected output
@@ -116,7 +141,13 @@ holds/uncertainty. Failed/cancelled arms do not activate a fallback automaticall
 future repair remains possible; switching the recorded selection or rewriting consumed data refuses.
 This is a proposed new contract, not a fact established by existing tests.
 
-The main risks are a supported graph that cannot convert without losing a required edit, a
+Retaining two source forms costs pure validator/lowerer and public-editor/test maintenance; it is
+not cost-free merely because the engine is shared. Corrected graph alone remains the alternative
+if structured source adds extensive exceptions without improving complete authoring. No graph writer
+is removed in this proposed program. A later retirement needs proof for active/uncertain and reusable
+definitions' needed operations, supported client migration and explicit approval of any residual loss.
+
+The main risks are a shared plan that accidentally narrows a supported native graph edit, a
 coordination policy that grows into another task scheduler, or a knowledge approval that quietly
 acquires execution authority. Test those boundaries directly. Source, state ownership, supported
 data, adoption and deletion obligations are specified in the linked comparisons. No real frontend

@@ -1,12 +1,12 @@
 # How should the production workbench connect, explain work and retain recovery?
 
-## Current recommendation — F1/r4 and F2/r4, selected for planning
+## Current recommendation — F1/r5 and F2/r5, selected for planning
 
 Delta-20261010 revises the retained standalone Svelte workbench around
-[NP3 canonical structured source](../../../milkdrift-remedial-planning-v3/deliverables/notation-profile.md),
+[NP4 structured and graph-native source](../../../milkdrift-remedial-planning-v3/deliverables/notation-profile.md),
 [WorkCommitment and evaluated knowledge](../../../milkdrift-remedial-planning-v3/working/agent-directed-work.md#u18-disposition-one-continuous-work-commitment-in-the-existing-controller-owner),
 and [U17/U18](../../../milkdrift-remedial-planning-v3/intent-source-excerpts.md#u17--human-reviewed-knowledge-and-precise-evidence).
-The [r4 interface contract](../../../milkdrift-remedial-planning-v3/deliverables/production-interface.md)
+The [r5 interface contract](../../../milkdrift-remedial-planning-v3/deliverables/production-interface.md)
 and [revised practice proposal](../../../milkdrift-remedial-planning-v3/deliverables/frontend-practice-proposal.md)
 govern changed interactions. The detailed r3 working files below retain useful technical annotations
 but are historical wherever they conflict. User approval concerns product outcomes, not these
@@ -18,7 +18,7 @@ Operations, Resources and Improve remain useful connected destinations with expl
 context. Shared discovery does not erase distinct reference/copy/public-invocation meanings or
 expose a private service implementation.
 
-Canonical `WorkflowProgram` source is authored through the same public structural/value operations
+Default `WorkflowProgram` source is authored through the same public structural/value operations
 from diagrams, outline/forms, Rust/API and agents. Control/data lines project source; the client
 does not retain a second compiler or editable execution graph. Ordered Conditional clauses and
 result mappings replace the r3 graph reconvergence remedy. Parallel completion, usable results
@@ -30,16 +30,19 @@ P07 knowledge assessment/reuse and P08 the combined experience.
 Legacy immutable graphs continue with exact historical meaning, including identifier-determined
 priority. An explicit checked conversion creates new region source only when correspondence is
 established. Unsupported crossings/results/ownership produce a precise refusal, not a lossy save.
-Unconvertible revisions stay readable, executable, replayable and reusable; the selected design
-does **not** promise unrestricted editing of every historical graph. A paused-run conversion or
-repair also preserves completed facts, selected clauses, active governing plans and unresolved
-effects, with exact frontier guards. This compatibility cost must remain visible at decision time.
+Unconvertible revisions also retain supported native graph edits and repairs through the same
+semantic/runtime/control owners. U19 rejects the earlier conversion-gated edit loss. Equivalent
+conversion is optional; prospective adoption separately preserves completed facts, selected clauses,
+active governing plans and unresolved effects under exact frontier guards. Existing graph create,
+import and eligible copy remain, without an invented eligibility registry. Two source forms have
+one source per revision and one execution engine. Retirement requires a later reviewed lifecycle.
 
 P01 must also pass a positive supported corpus: current model-editor/prompt-sequence outputs,
 parallel/pinned calls and permitted protected-root Task-only repair. Blanket refusal is not a
 migration strategy. Blueprint's derived versioned legacy agreement view must preserve the original
 fingerprint/scope obligations while permitting those edits; the current client displays both that
-positive result and precise protected/incompatible refusals.
+positive result and precise protected/incompatible refusals, plus a valid native pending-task repair
+after unrelated conversion refusal. Cancellation and separate new work must not masquerade as repair.
 
 `control::controller::commitment` is the proposed owner of ongoing accepted goals and next-action
 intent. Runtime owns each associated execution. Public WorkCommitment operations create, inspect,
@@ -71,8 +74,10 @@ are not a compatibility result. Current E04 is negative browser evidence only.
 
 The initial paired Branch/ExclusiveMerge source recommendation failed to justify why its compound
 authoring source should be discarded in favor of derived edges. Delta accepted Elin's critique and
-selected canonical regions, preserving the smaller graph correction as the strongest alternative
-when unrestricted graph editing matters. This is a source/operation judgment, not proof that an
+selected canonical regions, preserving the smaller graph correction as the strongest alternative.
+U19 then required a deeper comparison of conversion, native maintenance and graph-canonical design.
+The selected source union retains native adaptability at the explicit cost of two versioned source
+validators/lowerers; it does not need a second scheduler or client compiler. This is a source/operation judgment, not proof that an
 LLM authors regions more reliably or that a particular diagram library renders them well.
 
 The finite goal-planning remedy also failed to meet U18's ongoing continuity. Elin's developed
@@ -87,6 +92,19 @@ renderer can win if actual connected/accessible use disproves the current choice
 setup, retained-data choice, reload/logout, quota and unknown responses with the actual user;
 later compound use must test private services, repair, independent criticism, resources, uncertainty
 and adverse assessment together. No browser implementation or human-use pass was performed for r4.
+
+### 2026-10-10 — Rowan-20261010, U19 integration
+
+Coordinator agent pseudonym, same reopened v3 assignment. User U19 rejected the r4 conversion-gated
+repair loss. Actual source reconciliation and an isolated runtime experiment distinguish equivalent
+conversion from changed-future adoption: native pending-task repair succeeds while an active wait and
+unrelated nonnested structure remain unchanged. F1/r5 therefore exposes native graph editing alongside
+optional conversion, through the existing semantic/runtime/control owners. A historical graph is not
+quietly reduced to read-only; cancellation/new work is not sold as repair. Existing graph command
+versions keep deterministic compilation for replay after a missing outer receipt. New convenience
+defaults change only with explicit version/source selection. The cost of two source validators/lowerers
+and the corrected-graph alternative remain in N1; no diagram can claim a conversion proof. Real browser
+and human usability evidence is still a future requirement.
 
 ## Historical recommendation — F1/r3 and F2/r3
 

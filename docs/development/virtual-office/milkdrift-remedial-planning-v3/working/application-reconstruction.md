@@ -198,11 +198,43 @@ An early real Svelte client may inspect old work and execute complete supported 
 it must not offer advanced gestures that only store layout. The original source/byte identities,
 accepted request results, running occurrence pins, unsettled effects and resource/account facts stay
 authoritative through upgrade. In-place rewriting of old revisions is forbidden. Legacy source that
-cannot convert equivalently remains inspectable/runnable with precise refusal for new-source editing.
-The user can begin explicit new work with selected old evidence; no automatic copy erases an effect.
+cannot convert equivalently remains inspectable/runnable with precise refusal for conversion. Under
+U19 it also retains native graph edits/repair through the shared owner; explicit new work with selected
+old evidence is not an equivalent substitute for that repair. No automatic copy erases an effect.
 
 The closed adoption units are pure source/editor ownership, protocol/control authoring and response
 admission, importer/client migration with deletion, current management reads, and the production
 client. Each must list its actual source readers/writers and focused fault oracles in the implementation
 program. This investigation selects these boundaries; function naming and local factoring remain
 implementation choices. No production changes or new runtime acceptance are claimed here.
+
+## U19 correction — retain supported source operations, remove private ownership
+
+Rowan-20261010, 2026-10-10, coordinator agent pseudonym. The earlier R-only writer recommendation
+confused a canonical owner with a single admitted representation. Existing `ConstructBlueprint`,
+graph import, mutations and ungoverned independent copy are product operations; removing them merely
+to force structured-source adoption has no demonstrated runtime necessity. The selected revision
+keeps their versioned bounded contract. Each immutable revision has one source, GraphNative or
+WorkflowProgram, and both lower through blueprint to the same checked execution plan.
+
+The exact correction to the deletion list matters. Delete daemon-private `ModelWorkflow` ownership
+of semantic construction and recognition, not every pure graph helper required to preserve old
+AddModel/EditModel behavior. Move those helpers under the same blueprint source owner; shared control
+admission dispatches against the actual source family. Existing exact shape refusals need not become
+unbounded inference about arbitrary graphs; generic graph mutation remains available for rich graphs.
+New convenience genesis defaults to Program while the explicit supported graph API remains. Old exact
+command receipts retain bytes/results without rerunning either constructor.
+
+No new graph-eligibility catalog, import exception or invented historical timestamp is justified.
+Current authority decides graph creation/mutation. Copy still refuses identity-bound governed methods;
+conversion cannot become a way to evade that refusal. Native source-family fingerprints remain stable
+when runtime consumers move to a common plan, so normalization cannot accidentally classify every
+unchanged legacy task as changed. Exact selected proposal base is carried explicitly; sorted merge
+parents are ancestry, not proof of which base the proposer edited.
+
+The consequence is real maintenance of two versioned source validators/lowerers and client adapters,
+not two schedulers or independent runtime truth. Corrected graph M would avoid this cost; R earns its
+default position through complete structural operations/results and future-change comparisons, not
+a claim of universal graph convertibility. Retirement remains a later reviewed migration with active,
+uncertain, reusable and external-client evidence, no automatic cutoff in P00–P09. See the substantive
+U19 alternatives and state matrix in the agency/structure/execution reports and adoption plan.

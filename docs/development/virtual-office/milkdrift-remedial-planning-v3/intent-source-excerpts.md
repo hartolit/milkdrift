@@ -199,3 +199,62 @@ is preserved as supplied, rather than treating an investigator's summary as prim
 > Please continue the whiteboard investigation, compare concrete alternatives, and propose the cleanest coherent design. Do not assume the existing architecture or your proposed session model is necessarily correct.
 >
 > This is an important product commitment. Its exact implementation must still earn its place through the broader remedial architecture review.
+
+## U19 — preserve legitimate adaptability while choosing migration
+
+Direct user response on 2026-10-10 to the proposed conversion-gated editing limit. This is an
+instruction to continue the planning investigation, not approval of that loss or of implementation.
+
+> I approve **requiring verified conversion wherever conversion occurs**, but I do not approve automatically narrowing the existing prospective editing and repair contract.
+>
+> The distinction matters.
+>
+> Preserving execution, replay, and inspection is necessary, but it does not fully preserve Milkdrift's intended behavior. The ability to adapt ongoing work is one of its defining features.
+>
+> If introducing a new structured-source representation prevents previously supported workflows from being repaired, that is a significant product tradeoff—not merely an implementation compatibility detail.
+>
+> Before selecting the migration policy, investigate three possibilities:
+>
+> **1. Verified conversion into the new representation**
+>
+> Establish whether existing graphs can be faithfully represented without losing control/data semantics, scopes, agreements, authority, or execution obligations.
+>
+> Separate definition equivalence from live-reconciliation compatibility. A compatible new revision does not need to rewrite historical execution; prospective changes must preserve accepted facts and validate against the current runtime state.
+>
+> Determine whether the proposed conversion requirement is unnecessarily stronger than what safe future editing actually needs.
+>
+> **2. Retained legacy editing through the existing semantic owner**
+>
+> If conversion is impossible for particular supported graphs, investigate retaining a bounded graph-native editing and repair path for existing work.
+>
+> This must use the same authoritative runtime, reconciliation, permission, and history mechanisms—not introduce a second scheduler or independent source of execution truth.
+>
+> Such support need not last indefinitely, but its removal must have a defined lifecycle and must not silently strand accepted active work.
+>
+> **3. Reconsider the proposed structured-source architecture**
+>
+> If legitimate existing workflow structures cannot be represented without extensive exceptions, duplicated semantics, or loss of valuable adaptability, we should reconsider whether the new source representation is the correct canonical model.
+>
+> A representation that makes ordinary authoring easier but substantially reduces supported workflow expressiveness may not be an improvement.
+>
+> Compare these approaches concretely, including maintenance costs, duplicated logic, migration complexity, long-term extensibility, and consequences for active workflows.
+>
+> **Required migration analysis**
+>
+> Distinguish closed historical revisions, reusable inactive definitions, active runs with unentered future work, active runs with started or uncertain effects, and governed/protected workflows.
+>
+> For each, establish what remains executable, inspectable, editable, repairable, reusable, and recoverable.
+>
+> Do not reinterpret accepted events, rewrite historical revision identities, manufacture evidence, reset accounts, or bypass existing authority and reconciliation rules.
+>
+> If a supported workflow cannot be safely converted or repaired, require an explicit refusal with a meaningful explanation and available recovery actions. Do not misrepresent cancellation or creating new work as equivalent to prospective repair.
+>
+> **My preferred outcome** is one coherent execution engine, one authoritative semantic owner, and a migration that preserves legitimate existing adaptability wherever technically possible.
+>
+> I do not require permanent support for obsolete representations. I also do not accept sacrificing important product behavior merely to simplify adopting the replacement.
+>
+> Please investigate these alternatives through the whiteboard and provide a grounded recommendation. If a meaningful capability loss remains unavoidable, identify its actual extent and consequences for my approval before finalizing the implementation program.
+>
+> This is a design decision for the remedial planning investigation—not something to defer to an implementation agent.
+>
+> Continue the investigation without making production changes.

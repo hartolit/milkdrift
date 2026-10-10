@@ -1,5 +1,10 @@
 # Delta — workflow structure, data and prospective change
 
+**Current U19 status:** the [reopened migration comparison](#u19-reopens-representation-and-removes-the-conversion-prerequisite-for-repair)
+withdraws conversion-gated legacy repair and the exclusive new-region-writer requirement below.
+It compares R with supported native graph operations in the same semantic owner against M, based
+on actual topology/reconciliation examination. Earlier selections are retained as decision history.
+
 This is Delta's independent comparison, recorded before reading the reopened reviewers'
 recommendations. It examines source at `ff818e5` and the user-authorized reopening instruction,
 with the [selected original excerpts](../intent-source-excerpts.md), especially U05–U08 and
@@ -760,3 +765,204 @@ replay, stale prospective plans, active nested writer uncertainty, exact child p
 agreement refusal. Current cited tests and E07 do not establish those proposed semantics. Root's
 whole-system comparison must combine this finding with goal-directed work and other owner reviews;
 this specialist analysis does not turn mapped packages into deeply reviewed ones.
+
+## U19 reopens representation and removes the conversion prerequisite for repair
+
+The user's [U19 instruction](../intent-source-excerpts.md#u19--preserve-legitimate-adaptability-while-choosing-migration)
+rejects automatically reducing legitimate prospective editing merely to remove an old writer.
+That changes the recommendation above: the earlier exclusive new-region writer and conversion-gated
+legacy edit policy are withdrawn as selected migration policy. R remains a candidate/default-source
+recommendation under this examination, not a settled permission to strand existing work. Continuing
+an old run or creating new work with selected evidence is not equivalent to repairing its future.
+The additional source/probe work below directly examines this distinction.
+
+### What accepted graphs actually permit
+
+`validate_control_topology` requires one entry, reachability, an acyclic combined control/data graph,
+one incoming control edge except at Join, and exactly one used output for ordinary work. Thus an
+ordinary Task cannot have arbitrary control fanout; the graph is not an unrestricted token network.
+Branch and Fork have explicit single-use output sets. `validate_fork_join` checks an existing owning
+Fork, at most one Join per referenced Fork, existential reachability of an incoming source from each
+branch start, bounded exported references and policy-specific incoming counts/quorum. It does not
+check proper nesting, branch disjointness or that the Join postdominates every branch path. It does
+not require every Fork to have a Join. These are source facts, not a region-conversion proof.
+
+The following concrete graph satisfies those static checks:
+
+```text
+F.a -> G                G.a -> A -> JF
+F.b -> B -> JF          G.b -> C -> JG
+JF -> JG -> done
+JF owns F; JG owns G; both use All
+```
+
+There are eight nodes and nine control edges. `F` starts before `G`, but `JF` precedes `JG` on one
+path. The join intervals cross, so no tree of lexically nested Parallel regions can retain those
+same ownership/continuation relationships and stable source elements. For `JF`, incoming sources
+are `A,B`, with both F branches covered; for `JG`, sources are `JF,C`, with both G branches covered.
+The missing proper-nesting validation is concrete. This does **not** establish valuable extra
+workflow expressiveness: runtime behavior must be inspected separately.
+
+Runtime creates a fresh child scope for each Fork branch. A Join is eligible only in a scope that
+contains its owning Fork occurrence. Branch completion waits for descendant ownership and a
+frontier reaching its own Join, an explicit terminal or a failed/cancelled occurrence. Therefore an
+edge from nested `A` to outer `JF` does not move `A` into the root scope or let it close G's branch
+as though JF belonged to G. In contrast to general BPMN tokens, drawing a crossing control edge
+cannot transfer ownership. Required NodeOutput dependencies also use same/ancestor or directly
+returning branch scope relationships; raw sibling data edges do not create authorized cross-branch
+visibility. WorkspaceValue bindings separately require readable ancestry.
+
+The existing runtime test
+`fork_branches_may_end_at_direct_terminals_without_a_join` is a useful positive counterweight:
+joinless Fork branches really may return directly, and mixed failure/success makes the unjoined
+run fail. Exact unjoined terminal/output-selection meaning remains supported by GraphNative; do
+not silently convert it into an ordinary joined Parallel or invent a historical JoinSatisfied.
+No DirectTerminals compatibility switch is added to R solely to claim total conversion. A new
+method asking to wait for parallel work, fail on any failed branch and choose a stated output can
+use Parallel All-settled, explicit outcome/result handling and Return. That intentionally authored
+method does not claim equivalence with every old terminal-selection rule. The older NP3 text had
+not made this limit explicit. Ordinary nesting, conditional exits, ancestor value references,
+branch result exposure, pins and all join policies examined so far can be expressed structurally.
+No useful successfully executing non-nested capability has yet been established by this review.
+That is a bounded negative search result, not a proof that every accepted definition converts.
+
+### Definition translation and prospective repair are different proofs
+
+The current reconciliation planner compares each node's configuration/dependency fingerprints
+against scoped occurrence history. Unchanged completed/active work is preserved. Changed pending
+work receives a prospective action; active/uncertain changes follow the recorded side-effect and
+reconciliation policy. It does not first demand a wholly equivalent replacement definition, and it
+can retain history whose source nodes no longer appear in the new future definition.
+[Planner](../../../../../crates/runtime/src/reconciliation.rs),
+[engine](../../../../../crates/runtime/src/engine/reconciliation.rs).
+
+Take the crossing graph above, prefix it with a 60-second Wait and an ordinary pending Task, and
+start/pause while that Wait is active. Replace only the unentered Task's requirement, leaving all
+ports/dependencies and the crossing subgraph unchanged. Requiring a whole-graph region conversion
+would reject this repair for a relationship that the repair does not modify. The temporary Rust
+probe requests, approves and applies exactly that native revision through production runtime/redb;
+its outcome is recorded with the other case observations below. This demonstrates the relevant
+question independently of whether the crossing subgraph will later make useful progress.
+
+A converter still must prove definition meaning when it changes representations. Live adoption
+adds scoped correspondence and existing reconciliation checks; it does not permit rewriting accepted
+history. Native repair needs neither a converter nor proof about unchanged unrelated topology.
+The pure LegacyAgreementView described earlier is required only when an old accepted agreement
+is checked against converted program source. Native graph successors can use the existing v1
+agreement validator directly. An inherited child's already-existing adaptation refusal remains a
+separate authority rule, not evidence that ordinary protected-root Task repair may be removed.
+
+The same distinction permits a deliberately changed **program successor**, not just an equivalent
+conversion. In the prefix example, a new program can keep the active Wait and future Task identity
+while correcting the wholly unentered crossed portion to proper nesting. The author is requesting
+a future semantic change, so old/new whole-definition equivalence would be the wrong acceptance
+criterion. The shared owner validates the proposed source, records old revision ancestry and an
+exact source/occurrence correspondence, and asks ordinary reconciliation whether that future is
+safe. It must not claim the defective old graph was equivalently converted. New source may omit
+obsolete completed structure without deleting its history. Started occurrences keep their own
+old plans; opaque old regions need not be embedded as a new R primitive to remember them.
+
+An additional overrestriction must be removed from earlier NP3 prose: the current planner permits
+`ChangedActive` with `FinishCurrentThenAdopt` as `UseNewOnNextInvocation`. Changed completed work
+without consequential side effects can similarly change its future definition while preserving
+the completed occurrence. Immutable execution history does not imply immutable configuration for
+all future uses of that element. Unsafe dependency changes affecting started descendants, inherited
+pins and uncertain effects still follow their existing refusal/authority/remediation rules. New
+source cannot replace those decisions with a blanket “an active node changed” refusal.
+
+### Three complete strategies after U19
+
+| Strategy | Actual representation/editing and operations | Maintenance and capability consequence |
+| --- | --- | --- |
+| R with complete verified conversion before disabling native edits | Prove a total conversion over the supported source language, definition meaning and all legitimate live repair classes; convert explicitly and retain original histories/agreements. | Removes the old authoring path only after a strong proof. That proof does not currently exist; the crossing witness disproves the simpler assumption that the validator already guarantees nested structure. It cannot be the current justified deletion plan. |
+| R as default, versioned graph-native authoring/repair in the same owner | Each immutable revision has exactly one source variant: GraphNative (the existing document schema is v3) or the new Program. Blueprint validates/edits that variant and lowers it to the same checked ExecutionPlan. Control exposes one source-aware application owner; runtime/authority/history/reconciliation remain shared. Conversion is explicit and optional. Existing graph create/import/copy/edit and prospective repair remain, without an eligibility registry or hidden client compiler. | Retains one real old source reader/validator/editor and its tests; the cost is candid. It does not retain a second scheduler, duplicate stored derived graph, second authority path or second canonical source for a revision. New region conveniences can improve normal authoring while old legitimate flexibility remains available. Conversion errors no longer strand otherwise safe edits. |
+| M as the canonical graph with complete compound authoring | Keep nodes/edges as source; add explicit ordered Choice/owned merge/results, general compound operations and one checked ownership/data index. All clients use the shared construction owner. Existing raw graph operations continue naturally; selected modern constructs are validated together. | Lowest representation/conversion risk and one source editor. It retains stored generated plumbing and reconstruction of structural ownership from that graph. This is a substantive cost, but compatibility may justify it. Command receipts containing an input authoring packet are not another executable source, so that earlier criticism must not be overstated. |
+
+For the same optional specialist change, M edits its owned subgraph/result mapping through one
+compound command; R edits its Conditional child/result and lowers it. Both must update validation,
+context/result indexes, prospective adoption and public views. R's default source names order,
+containment and total result contracts directly. M's direct preservation of every old native edit
+is stronger than an unproved inverse transformation. R-plus-native does not get those benefits for
+free: it keeps a version-specific graph editing path. The shared application layer must dispatch
+cleanly by source kind rather than duplicating product policy in two authoring services.
+
+The revised planning recommendation is **R as the preferred new source, with supported graph-native
+operations through the same semantic owner**. It avoids the observed unjustified loss without
+adding broad graph escapes to region semantics merely to preserve a pathological stalled topology.
+The source family remains versioned; “canonical” means one exact authoritative source per revision,
+not that old accepted source must be rewritten before every edit. Existing create/import/copy are
+not gated by an arbitrary date or list of eligible IDs. Pinned reuse can cross source versions.
+A new graph revision is neither an execution-plan edit nor a second source for another revision.
+
+This preference remains conditional on not moving ordinary valuable work into an ever-growing
+legacy-only category. The demanding current/new packets must be available in native program source;
+exact historical direct-terminal rules and native public editing remain supported in the graph
+source family. A newly found useful structure
+that cannot be expressed without losing scopes, cancellation, outcomes or legitimate repair reopens
+R versus M before claiming migration complete. Do not dismiss it as legacy simply because its old
+wire format is the existing graph document. M remains the strongest dissent, with lower maintenance/migration cost;
+this review has not measured authoring success enough to erase that advantage.
+
+### Preservation by state category
+
+| Existing state | Executable, inspectable, editable, reusable and recoverable contract |
+| --- | --- |
+| Closed historical revision/run | Original source bytes, IDs, receipts, events and results remain exact. Historical inspection/replay never converts in place. A successor or independent copy uses its source-aware native owner under existing copy/authority rules; exact reuse remains available. |
+| Reusable inactive definition | Existing run/call/publication qualification and ungoverned copy remain available. Native graph edits create immutable successors; optional verified conversion creates a separately reviewable program revision. Conversion refusal does not remove native editing or exact reuse. |
+| Active run with unentered future work | Native prospective changes use current classification/actions and exact guards. The unrelated rest of the source need not be convertible. Program-native changes and opted-in conversion use the same engine; completed evidence and selected choices remain owned. No mandatory cancel/new-run workaround. |
+| Active run with started or uncertain effects | Started occurrences retain their governing revision; uncertain effects, reservations and physical holds remain. The existing action/policy checks determine which future changes are safe. Representation alone adds no refusal to an otherwise lawful native repair. Unsupported effect reassignment/retroactive change refuses precisely; authorized inspection, cancellation or uncertainty resolution remains available without pretending those actions equal repair. |
+| Governed/protected work | Existing graph-native Task-only root repair uses the original v1 agreement directly and preserves its digest/count/envelope/edge rules. Converted source additionally needs the complete derived v1 view; native program agreements are versioned. Inherited-child pin and protected-boundary refusals stay exact. Conversion cannot weaken an agreement, and inability to convert cannot by itself prohibit a valid native root repair. |
+
+The retained native path has a defined retirement condition, not an automatic expiry: first establish
+that supported native create/import/copy/edit and affected active/reusable work have equivalent
+program operations and live repair behavior, with exact agreements and recovery. Announce any
+supported-writer version change and account for every affected supported owner/client and retained
+callable definition. Only then may a reviewed change remove native authoring. Read/replay/execution
+support for retained historical facts is a separate lifecycle. No retirement is scheduled by this
+program, no eligibility registry is introduced, and inactivity alone does not prove a reusable
+method can lose repair. If those conditions are not met, maintain the path or explicitly reconsider
+M; do not silently turn a future cleanup into a product capability removal.
+
+### Executed outcomes and revised decision
+
+The [exact runtime evidence](compatibility-runtime-evidence.md) embeds the full final Rust source,
+manifest, command, hashes and output. Rowan ran it after two harness corrections, which that file
+distinguishes from product observations. Proper nested All completed; crossed All remained Running
+after 32 ticks with no pending successor scans; crossed Any produced a genuine `InvalidHistory`
+for timer cancellation without its required structured owner fact. Fork without Join succeeded.
+The paused-prefix native Task repair was approved/applied, preserved the active Wait identity and
+left the Task unentered. Final exit 0 reports diagnostic completion with one retained observed
+production error, not a clean acceptance suite.
+
+These results refute both convenient shortcuts: the validator does not make every accepted graph
+a structured tree, and failure of whole-graph conversion does not make a local pending repair
+unsafe. They do not demonstrate a valuable successful crossed-ownership capability that R loses.
+The default R recommendation therefore survives with the corrected source-version/native-repair
+contract, while M remains the lower-maintenance alternative. The new crossing defect becomes a
+named validation/runtime hardening and recovery case, not an excuse to strand native work or to
+make new source deliberately reproduce invalid history. Already accepted evidence is immutable;
+safe future changes and truthful cancellation/uncertainty handling remain prospective.
+
+### Native Program agreement scope after Elin's final challenge
+
+Calling native protected obligations merely “versioned” left a consequential schema choice open.
+Elin challenged that gap; the selected v2 contract is a bounded set of stable named Sequence scopes
+with Task-only direct bodies. Seal the outer source skeleton, scope IDs, immutable input bindings
+and input/output names/schemas/requiredness, replacing editable bodies with scope slots in the
+protected source fingerprint. Allowed requirement envelopes, maximum total tasks and cumulative
+adoptions are fixed. Protected verifiers/effects/acceptance and all structural nodes remain outside
+editable bodies. This hashes authored obligations, not compiler-generated plan identities.
+
+Task configs, internal order/dependencies and mappings of internal values to the fixed scope results
+are editable prospectively. Outer consumers see only scope results; inner tasks read only declared
+scope inputs or internal producers. The sealed result signature cannot change, while its producing
+method can. Reconciliation preserves published results/entered occurrences and applies existing
+started-dependency/uncertainty policies; new source does not make reordered past work happen again.
+The accepted agreement stays identical. Multiple named Task scopes are bounded; a v1 prefix spanning
+arbitrary graph fragments remains v1 through its native validator or checked LegacyAgreementView.
+Conversion does not require or authorize forcing it into this new narrower scope representation.
+
+Finally, the crossed-Any error occurred while applying a proposed event to the candidate projection
+inside `PlanTransition::push_event`, before the event enters the eventual commit list. The diagnostic
+is not evidence of corrupt persisted history. This qualification matters for the defect's recovery
+scope and does not weaken the observed native-repair result.

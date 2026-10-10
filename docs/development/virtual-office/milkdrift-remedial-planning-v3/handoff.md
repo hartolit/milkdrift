@@ -1,5 +1,20 @@
 # V3 planning handoff — reopened investigation
 
+**Current continuation after `816874c`:** U19 rejects automatically narrowing existing prospective
+editing/repair. The conversion-gated loss in that checkpoint is withdrawn as a selected migration
+policy. Compare verified conversion, bounded graph-native editing under the same semantic/runtime
+owners, and reconsideration of canonical source. Delta investigates actual accepted graph
+expressiveness/conversion; Elin separates definition equivalence from live reconciliation; Faris
+develops bounded legacy repair/lifecycle. Rowan integrates the five required state categories and
+revises decisions/program after actual evidence. The rest of the completed comparisons, U17/U18 and
+counterexamples remain useful. This assignment is active, not complete or awaiting implementation.
+
+Completed checkpoints: `94ec7c6` breadth audit; `28b313b` independent comparisons; `816874c` revised
+proposal with then-explicit pending compatibility preference. Integrated documentation target reused
+from unchanged Rust source passed 8/8 against that packet; the later Cargo rebuild was stopped during
+host linker contention, not counted as a pass. No production diff exists. Current U19 edits need their
+own integrated check. Keep the original completion record below historical only.
+
 The user explicitly reopened this assignment under the [critique](reopened-critique.md) after
 `ff818e5`. The earlier completion statement below records that checkpoint, not current acceptance.
 Its whole-product selection was insufficiently supported by comparative investigation. Current

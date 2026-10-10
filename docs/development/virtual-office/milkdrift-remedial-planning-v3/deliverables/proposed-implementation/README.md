@@ -1,7 +1,8 @@
 # Revised implementation program — proposed, not assigned
 
 This program replaces the `ff818e5` candidate after the
-[reopened investigation](../../reopened-critique.md). U17/U18 approve product directions; neither
+[reopened investigation](../../reopened-critique.md). U17/U18 approve product directions and U19 preserves
+legitimate prospective adaptability; neither
 those answers nor this document authorizes production work. Read the [decision brief](../decision-brief.md),
 [adoption plan](../adoption-plan.md) and [shared execution context](context.md). The foundational
 architecture is specified in planning. Implementers inspect current consumers and source drift;
@@ -10,7 +11,7 @@ they do not decide whether a planner, canonical source or knowledge evaluation b
 | Assignment | Complete responsibility | Prerequisite | Usable result and decisive proof |
 | --- | --- | --- | --- |
 | [P00](00-adopt-reviewed-design.md) | Adopt only user-approved directions/architecture/practices and register finite authorization | User review and implementation assignment | Accurate canonical intent, architecture, status and roadmap; no implementation claim. |
-| [P01](01-structured-source-and-shared-authoring.md) | Canonical structured source, one checked plan, complete runtime/result/repair support, shared public authoring and legacy transition | P00, approved P2/N1 | CLI/independent clients author and execute the new source; D1–D8 and exact old meaning; superseded writers/external reducer path removed. |
+| [P01](01-structured-source-and-shared-authoring.md) | Structured default plus supported graph source, one checked plan, complete runtime/result/repair support and shared public authoring | P00, approved P2/N1 | CLI/independent clients author both supported forms; D1–D8, exact old meaning and native repair after conversion refusal; private ownership/external reducer dispatch removed. |
 | [P02](02-first-connected-workflow.md) | Browser transport, maintained standalone Svelte foundation and complete first author/input/run/result/recovery journey | P01, approved A1/F1/F2 | Actual two-owner browser use, graph/outline parity, new source plus legacy inspection, exact lost-reply recovery. |
 | [P03](03-first-human-review.md) | Actual early human use and resulting corrections | P02, real user participation | Product and source-authoring feedback repaired without treating architecture as permanently immune. |
 | [P04](04-ongoing-work-and-response-admission.md) | Work commitment, cumulative account association, source packet/model admission and bounded automatic reconsideration | P03; U18 and approved ownership | New goal and S28 criticism handled without driver orchestration; restart, no-progress, pause/cancel and scope limits through public clients. |
@@ -60,8 +61,10 @@ continuity; P05/P06 own authority, direct/peer/publication and physical lifetime
 and executable evaluation; P08 combines them. P09 verifies the whole approved result.
 
 Concrete superseded paths to remove are assigned, not left as a general audit: daemon private
-ModelWorkflow/new graph writer and operation-only external reducer in P01; driver stage/provenance
+ModelWorkflow semantic ownership and operation-only external reducer dispatch in P01; driver stage/provenance
 orchestration in P04; duplicate fresh serving decisions, redb managed policy and descriptor JSON field
 mutation in P06; compulsory method/publication coupling for knowledge assessment in P07. Preserve
-closed old readers and exact receipts where they own supported history. There is one new source
-writer, one execution engine, one account transition owner and one shared evidence/learning family.
+closed old readers, version-specific shared graph helpers and exact receipts where they own supported
+contracts. There is one source owner with explicit supported source families, one execution engine,
+one account transition owner and one shared evidence/learning family. Graph writer retirement requires
+a separate reviewed migration and is not part of this program.

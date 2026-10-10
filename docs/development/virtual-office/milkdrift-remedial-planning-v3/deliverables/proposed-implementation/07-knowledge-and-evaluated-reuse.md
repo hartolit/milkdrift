@@ -49,8 +49,12 @@ A finite favorable assessment claims only its declared cases/criteria/reviewer b
 Implement separate `ApproveKnowledgeForReuse` (or exact reviewed equivalent) binding knowledge version,
 assessment references, applicability, authority and supersession relationship. It does not mutate an old
 assessment, replace current execution, automatically select the lesson everywhere or acquire publication
-rights. Future packets select eligible knowledge under current read authority and expose its basis.
-Method adoption and publication promotion consume their own stronger qualified evidence and permissions.
+rights. Future packets may select authorized sources, including unapproved, negative or inconclusive
+evidence, with their actual status/basis visible. Reuse approval qualifies the specific 'approved for
+reuse' claim and applicability; it is not a universal read/context gate. Ordinary method adoption
+retains its authority/risk/agreement/reconciliation requirements without a new mandatory learning
+qualification. Protected executable qualification and publication promotion retain their own stronger
+evidence profiles and permissions; knowledge approval cannot satisfy them.
 Remove existing compulsory publication-Promotion coupling for ordinary knowledge approval/supersession.
 
 ## Data, complete consumers and checks

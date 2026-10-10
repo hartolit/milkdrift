@@ -4,10 +4,12 @@
 surviving managed installations because their accepted facts and lifetimes differ. Move managed-use
 policy out of the redb mechanism, consolidate repeated serving admission and descriptor construction,
 and add a control-owned commitment for bounded automatic ongoing work. Complete public inspection
-and build the Svelte client against those shared routes. This is **A1/r4**, the reopened planning
+and build the Svelte client against those shared routes. This is **A1/r5**, the reopened planning
 selection by Faris-20261010 and Rowan-20261010 after independent execution/application reconstruction
 and adversarial review. The user approved the continuous-work behavior in U18, not this architecture
-or production changes. The previous browser choice remains: explicitly configured cross-origin
+or production changes. U19 further requires preserving legitimate graph-native editing and repair;
+NP4 retains its versioned APIs alongside Program default authoring through shared owners.
+The previous browser choice remains: explicitly configured cross-origin
 bearer fetch, with an operator HTTPS proxy for remote deployment to the daemon's loopback listener.
 The actual E04 probe failed authenticated cross-origin reads and the stream request; this is still
 a proposed browser route requiring qualification.
@@ -31,6 +33,21 @@ revisions; the UI must show and let the user select them explicitly. The current
 checks the submitted envelope against that draft's exact base, not a mutable latest-workflow head.
 An actual mismatch refuses without discarding the draft. The proposal adds no hidden overwrite,
 automatic rebase or new head-locking API.
+
+Blueprint owns one typed source family: new convenience authoring defaults to Program, while the
+existing explicit versioned GraphNative construct/genesis, import, copy and edit operations remain
+supported. Each immutable revision has one authoritative source and lowers to one checked plan.
+Graph-v3 keeps its complete bounded vocabulary; it does not acquire every new Program feature.
+There is no age cutoff, eligibility registry or restriction to definitions present during upgrade.
+Existing graph convenience behavior moves into shared blueprint helpers instead of disappearing
+with the private daemon compiler. Graph, outline, agent and API clients use that same contract.
+
+Verified conversion remains useful, but it is optional for a legitimate graph repair. Definition
+equivalence and prospective adoption are separate checks: future-work changes can be intentional,
+while accepted occurrences, scoped authority, agreements, history and unresolved effects retain
+their exact constraints. A refused conversion leaves the supported graph edit/proposal path
+available. An inactive reusable definition retains editing, copy and fresh invocation; a closed
+historical run retains immutable evidence and does not become active through an edit.
 
 | Action | What owns the accepted work | What the user can expect |
 | --- | --- | --- |
@@ -135,7 +152,7 @@ The review does select concrete changes to those retained owners:
 | Managed-use transition policy | `persistence::managed::transition` validates bounded lineage/quiescence evidence and plans the installation/use change; redb loads actual facts and validates/writes under its existing atomic guards | Remove domain policy from redb execution/acquisition/transfer/quiesce/release helpers without moving physical evidence or introducing another resource journal |
 | Fresh serving admission | Private capability-host `FreshServingAdmission` handles common descriptor/generation/operation/deadline admission after direct or peer authentication/replay handling | One common new-entry rule, while original-grant replay, current disclosure and peer-specific checks remain explicit |
 | Descriptor extension construction | Capability owns a checked construction API, consumed by publication and managed-model descriptor producers | Delete JSON object surgery; keep peer descriptor remapping where local identity/trust/resource facts really differ |
-| Application/control composition | Blueprint owns complete source editing/lowering; control owns response admission, evaluation and ongoing-work decisions; daemon owns transport, composition and exact external receipts | Remove private daemon semantic helpers and external-driver stage bookkeeping after all ordinary consumers migrate |
+| Application/control composition | Blueprint owns complete Program and versioned GraphNative editing/lowering; control owns response admission, evaluation and ongoing-work decisions; daemon owns transport, composition and exact external receipts | Move private daemon semantic helpers into shared blueprint owners with their supported version semantics intact; remove duplicate daemon ownership and external-driver stage bookkeeping after ordinary consumers migrate |
 
 Managed transfer still requires evidence of the exact accepted parent/child relationship and
 physical stop or justified non-entry. The new pure policy takes those typed facts, not booleans
@@ -233,14 +250,25 @@ behavior. The browser probe establishes a missing route. Neither substitutes for
 
 The pure managed-policy/admission/descriptor corrections should preserve current semantic bytes;
 prove that against readers and fixtures. The session/account/authority additions and canonical
-source replacement do need explicit versioned contracts. Keep old exact requests, origin digests,
+typed source extension do need explicit versioned contracts. Keep old exact requests, origin digests,
 uncertain effects, artifacts, publication associations and managed holds. New session origins must
 be refused by old writers; never retrofit unrelated entered work into a fresh allowance. Active
-legacy runs continue through their exact old plan reader unless a prospective conversion proves
-its identity and obligation mapping. Rollback is safe only when the older readers accept all
+graph runs continue through their exact source reader and common plan, with their existing
+prospective graph repair path. A deliberate cross-family adoption must prove its accepted-frontier
+and obligation mapping; it cannot reparent entered effects or re-seal a governing agreement.
+Old command versions keep their exact graph compiler semantics even if a lost outer receipt follows
+a committed revision. The same retry must not become a Program revision because a default changed.
+Rollback is safe only when the older readers accept all
 written facts and still preserve replay; restoring an old database while an external effect survives
 can duplicate work. Role removal cannot abandon active obligations. Frontend rollback must preserve
 or safely export newer unresolved local records.
+
+Graph support has no automatic retirement in this program. A future release can remove its writers
+only through an explicit compatibility decision with replacement/verified conversion or approved
+capability loss covering reusable definitions, active/uncertain work, accepted proposals, pins,
+publications, external clients and old imports/backups. Zero active runs is insufficient. Exact
+historical readers, agreement checks, accepted-command recovery and receipts have separate lifetimes
+from the editor; deleting the latter does not discharge the former.
 
 The choice should reverse if browser deployment tests favor a same-origin route for the intended
 users, if human use repeatedly misinterprets common discovery, or if a fully traced structural

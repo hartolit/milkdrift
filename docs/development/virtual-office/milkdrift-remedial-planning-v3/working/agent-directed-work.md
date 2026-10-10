@@ -773,6 +773,23 @@ holding a commitment handle. Authority gains explicit commitment scopes/operatio
 schemas have no such scope and cannot silently authorize new commitment mutation through a
 historical wildcard; new grants must opt into the new versioned scope.
 
+Preparation also closes the authority gap before generated methods exist. Control allocates a
+bounded set of exact workflow-identity slots and presents their purposes in the reviewable packet;
+users do not invent identifiers in a form. Accepted policy fixes maximum slots/associated runs,
+and each slot binds immutably to its workflow identity and purpose. Successive revisions reuse
+that identity; neither a revision nor another slot replenishes the account. Existing allowed
+planner/critic/work methods are named separately. Current `WorkflowRunScope` already supports
+exact workflow identities before any definition exists, so preparation checks the actual needed
+Import/Propose/CreateRun/Start and subsequent operation scopes for the allocated or selected
+identities. Missing scope is a precise retained preparation/refusal result for separate caller/
+operator authorization, not authority minted by the commitment. An existing Any grant may cover
+the slots, while the accepted policy still narrows actions/capabilities. Commitment scopes authorize
+commitment control actions only. Every actual run association obtains ordinary workflow authority;
+being account-bound conveys no new workflow right. Already covered slots do not require human
+permission again for every automatic round. See
+[WorkflowRunScope](../../../../../crates/authority/src/model/resource.rs) and
+[authority evaluation](../../../../../crates/authority/src/evaluator.rs).
+
 Current `ControllerLifecycleOwner::assess` specially accepts an inherited published-invocation
 account only when its whole budget fits the inner marked controller's limits. Extend that exact
 rule to commitment-origin accounts. Otherwise refuse local association before start; do not
@@ -937,6 +954,13 @@ binding an exact item/version, supporting assessments, applicability and limitat
 that item eligible for explicit selected reuse; it does not mutate existing runs, replace the
 current method or grant publication rights. Method selection/adoption and publication remain
 their ordinary separate operations. Automated approval is not inferred from favorable evaluation.
+Eligibility here qualifies the **approved-for-reuse claim**, not ordinary source access. An
+unapproved, negative or disputed artifact remains selectable as evidence under its real read and
+transfer authority, with that status visible. The existing `KnowledgeSelection::approval` is
+optional and must not become a universal context-selection gate. Ordinary proposal/method adoption
+keeps its authority, risk, governing-agreement and reconciliation conditions; it does not acquire
+a mandatory learning-comparison prerequisite. Stronger protected-method qualification and
+Promote/AutoPromote eligibility stay specific to their declared profile/operation.
 An approval may preserve an explicitly bounded negative, disputed or retrospective finding as
 useful guidance, caution or an open question, with its reuse purpose and rationale recorded. It
 cannot relabel the underlying verdict as favorable or remove contrary evidence from its basis.
@@ -957,3 +981,222 @@ remaining discoverable; a favorable knowledge judgment failing to authorize a pr
 and a selected approved lesson entering a later commitment's fresh-context packet with its
 limitations and counterevidence still attached. These test the user's actual evidence semantics,
 not an invented requirement that all knowledge become executable or statistically qualified.
+
+## U19: preserve legitimate repair; conversion is not reconciliation
+
+Elin-20261010, follow-up after [U19](../intent-source-excerpts.md#u19--preserve-legitimate-adaptability-while-choosing-migration).
+This section supersedes my earlier acceptance of “continue the old revision or start new work” as
+an adequate response to a representation-induced repair refusal. The user did not approve that
+capability loss. More significantly, direct rereading of runtime reconciliation establishes that
+whole-definition conversion was an unnecessarily strong gate for many ordinary safe edits. The
+earlier recommendation failed to separate these proofs; this is a correction of that reasoning,
+not merely a change of user preference. No production change, Cargo run or new runtime observation
+was made for this follow-up.
+
+### What the actual reconciliation owner proves
+
+[ReconciliationMatrix and plan_reconciliation](../../../../../crates/runtime/src/reconciliation.rs)
+compare the exact old/new revision in one workflow lineage. They classify node configuration and
+dependency fingerprints against **each scoped occurrence**, not against a whole-definition
+equivalence certificate. A changed revision is expected to mean different future work. The owner
+checks interface/subworkflow compatibility, changed dependencies with started descendants and
+the selected policy; it does not demand that every old graph can first become an editable tree.
+
+| Actual history and edit | Current classification/action and preserved fact |
+| --- | --- |
+| Completed I is unchanged while pending T changes | I is `UnchangedCompleted/Preserve`; T is `ChangedPending/UseNewOnNextInvocation`. The change does not replay I or give it a new governing definition. |
+| Started W is unchanged while unrelated pending T changes | W is `UnchangedActive/Preserve`; T can use its new configuration. W's attempt/structured ownership remains under its original revision. |
+| W has an uncertain write but its configuration/dependencies are unchanged | The classification name is `UnchangedCompleted`, but the action is only `Preserve`: the actual uncertain attempt, usage and holds are not resolved or erased. Editing T does not require remediating unchanged W. |
+| An eligible ordinary T is removed | `RemovedPending/RemoveUnstarted`; the exact unentered occurrence is retired prospectively. An active structured owner is not disguised as an unentered ordinary task. |
+| W itself changes after entry | Policy matters: `FinishCurrentThenAdopt` can leave current work running under its old definition; safe cancellation/restart requires its actual safe-work conditions. Changed completed/uncertain side effects require the existing explicit authority/remediation route or refuse. A new source format cannot waive those conditions. |
+| A dependency change affects an already started descendant | It receives the specific `StartedDescendantDependencyChanged` classification and existing policy/authority treatment, not a blanket safe-edit result because only an edge was changed. |
+
+[reconciliation_history](../../../../../crates/runtime/src/engine/support.rs) reads current scoped
+executions and retained summaries, bounds their number, carries side-effect classification and
+recognizes active structured ownership. A Join whose branch is active is active even if its
+occurrence looks eligible. This matters to graph-to-program transitions: source appearance cannot
+decide that a structured lifetime is safe to remove.
+
+[Revision adoption/application](../../../../../crates/runtime/src/engine/reconciliation.rs) requires
+an active non-draining run, no competing reconciliation, the exact current revision, accepted
+agreement checks and the plan's unchanged event frontier. Intervening events beyond that plan's
+own request/decision facts make it stale. Application persists the chosen actions and
+`ReconciliationApplied` before `RevisionPinned`.
+[RevisionPinned projection](../../../../../crates/runtime/src/projection/apply_lifecycle.rs) changes
+the run's future pin, records adoption and retires specified node epochs; it does not rewrite every
+existing occurrence's `revision`. The retained old source therefore remains necessary even after
+a valid future revision is adopted.
+
+The tests directly distinguish these cases; I read them, not reran them:
+
+- [prospective_revision_adoption_is_persisted_actionable_and_stale_safe](../../../../../crates/runtime/tests/structured_runtime/reconciliation.rs)
+  changes an active wait with `FinishCurrentThenAdopt`, persists/applies the plan, and rejects a
+  different plan made stale by a later pause.
+- `active_branch_frontier_does_not_capture_unowned_post_join_pending_work` in the same file removes
+  an independent eligible node while a branch/attempt is active, then checks the branch's exact
+  ownership and state survive. It does not require the whole enclosing graph to be replaced.
+- [removed_completed_history_is_inert_after_revision_adoption](../../../../../crates/runtime/tests/structured_runtime/reconciliation/retired_history.rs)
+  accepts a revision omitting a completed read-only task while retaining its real history.
+  `removed_side_effecting_history_requires_authority_and_cannot_fabricate_remediation` separately
+  refuses invented remediation when its target is absent and exercises explicit authority.
+- [planner_keeps_every_scoped_occurrence_in_deterministic_execution_order](../../../../../crates/runtime/src/reconciliation/tests.rs)
+  classifies pending, active, completed, completed-effect and uncertain occurrences independently.
+  `dependency_edits_detect_started_descendants` shows even an edge-identity change can matter to
+  an already started descendant. These forbid replacing exact dependency comparison with a loose
+  visual “same diagram” claim.
+
+This is longstanding product meaning, not an incidental new frontend convenience. The planner is
+present from `8bf6b71` (Core domain rebirth); later ownership refactors include `06987be` and
+`0c44d36`. Governed adaptation was added in `cb6697b`. Those historical facts do not prove every
+new lowerer correct, but they contradict treating live adaptability as expendable presentation.
+
+### Protected root repair is not inherited-child substitution
+
+[GoverningAgreement::validate_method](../../../../../crates/blueprint/src/agreement.rs) hashes
+protected interface/metadata/nodes and every edge crossing the editable boundary. Inside the
+declared ID-prefix region, nodes must be ordinary Tasks with allowed requirements and within
+the bounded node count. Internal edges between editable nodes can change. The original agreement
+identity must remain equal during adoption; introducing/removing/replacing it requires another
+run. Accepted cumulative adaptation counts do not reset when source representation changes.
+
+The concrete positive test
+[governed_repair_auto_applies_through_control_and_replays_after_store_reopen](../../../../../crates/control/tests/control_service/agreements.rs)
+replaces `repair.begin`, adds `repair.investigate`, rewires an internal edge, adds another internal
+edge and applies through normal control with the same agreement. It reopens the store and replays
+the exact request, checks the same revision/adoption count, rejects agreement removal and refuses
+another otherwise valid edit once the cumulative adaptation budget is exhausted.
+
+The neighboring `inherited_agreement_blocks_indirect_child_adoption_after_reopen` test proves a
+different refusal. The child's accepted binding has `origin_run` equal to its parent; direct child
+revision adoption refuses even though the child definition can be revised in isolation. The
+parent's protected Call/pin is not an editable Task. U19 does not authorize bypassing that boundary.
+Keeping graph-native root Task repair preserves an existing allowed action; permitting arbitrary
+child substitution would add a different capability and is not part of this correction.
+
+Consequently an accepted graph H0 whose protected enclosing structure cannot currently be proved
+convertible to R can still have a valid root `repair.*` Task edit. Validate the same graph-native
+successor, compare its exact current projection and apply the existing agreement/reconciliation
+rules. Unchanged protected structure does not suddenly require a tree-conversion theorem merely
+because another authoring representation was introduced.
+
+### Separate three operations instead of imposing one conversion gate
+
+1. **Equivalent source conversion.** For an inactive definition or a no-behavior-change source
+   transition, produce a new R revision only with demonstrated ordering, activation, values,
+   ownership and agreement correspondence. Old canonical bytes remain immutable. This claim is
+   stronger than “the new future work is permitted.” Unsupported conversion refuses precisely.
+2. **Prospective revision adoption.** A deliberately different successor, in either supported
+   source form, needs a valid new definition plus exact current-history/authority/agreement
+   compatibility. Completed/active facts keep their original revision. A graph-to-R prospective
+   edit need not reproduce retired read-only work as a fake already-completed region. It must
+   retain genuine value provenance and any live structured ownership needed by the frontier.
+   Cases without a sufficient source/occurrence mapping refuse that *cross-form adoption*.
+3. **Graph-native prospective repair.** When equivalence or cross-form frontier mapping is not
+   established, retain the currently supported graph successor operation under the same source,
+   authority and reconciliation owner. It changes exactly the permitted future work and leaves
+   unrelated graph structure untouched. It is not a second scheduler and does not claim a source
+   conversion occurred. This route makes missing conversion proof nonblocking for legitimate
+   repairs already representable in the old source.
+
+The second operation is not permission to invent a general historical-node placeholder or import
+unknown values into a new context. If a new R successor cannot express the required actual inputs
+or preserve live ownership, use the third operation. Its continued support means we do not have
+to promise a complete cross-form migration proof to preserve today's legitimate adaptability.
+
+### Concrete placement comparison and revised recommendation
+
+| Complete route | S28 with unconvertible surrounding structure and a permitted pending Task repair | Maintenance and long-term consequence |
+| --- | --- | --- |
+| R-only writers after whole equivalent conversion | Blocks T because unrelated H0 structure lacks a conversion proof. Starting new work changes run/history/ownership and can lose the exact ongoing obligation. | One future authoring language, but current evidence does not justify the loss; full conversion proof or explicit capability-loss approval would be required. **Rejected for this program under U19.** |
+| R authoring plus graph-native successors/copies through the existing blueprint/control owner | Produces H1 graph source for the exact same accepted run, uses the existing per-occurrence reconciliation and agreement checks, retains W/I facts and the account. Optional conversion remains available where proved. | Two supported source forms and their pure validators/lowerers, one authoritative source per revision and one checked-plan/runtime boundary. Extra public/source tests and editor dispatch remain; no duplicate scheduler, grant, proposal journal or private compiler is necessary. **Recommended.** |
+| Corrected graph M as the sole future source, with complete blueprint-owned structured authoring operations | Preserves graph-native repair directly and can extend current graph semantics deliberately for new choice/results. | Least source-family migration. Retains graph construction/validation and derived containment for all new work; complete construction operations plus inferred regions still represent authored structure indirectly. Remains the strongest alternative if bidialect cost or unrepresented valued new work outweighs R's explicit-source benefit. |
+
+The recommendation is **R for new complete authoring conveniences, with retained graph-native
+source support in the same owner**, not “remove the graph writer and call every refusal safe.”
+The positive reason for R remains explicit ownership/order/results in methods people and models
+construct, rather than repeated reconstruction from plumbing. The correction retains valuable
+graph expressiveness/adaptability instead of sacrificing it to obtain that benefit. No measured
+model/human authoring advantage is claimed. If the public complete source owner cannot share
+lowered checks/consumers without separate competing behavior, M is the better decision; do not
+hide a second runtime behind a graph leaf to rescue R.
+
+One closed source-family tag belongs to each immutable revision: historical graph or structured
+program. A revision never has two editable canonical definitions. Blueprint owns both versioned
+pure edit/validate/lower functions; control owns one authenticated prepare/validate/save/propose
+surface dispatching by the **stored exact base source**, not a client claim. A GraphNative edit
+uses the existing bounded MutationBatch contract and validation, not the daemon's private finite
+`ModelWorkflow` recognizer. A Program edit uses ProgramEditBatch. The resulting checked plan is
+the single input to runtime, reconciliation, context, risk, authority and inspection. Graph and
+outline project whichever source is actually authoritative; they cannot secretly save the other.
+
+Retain existing versioned graph create/import as well as successors and eligible independent
+copies during this program; default new structured conveniences to R without silently rejecting
+the existing generic API's accepted expressive contract. This costs a maintained source family,
+but avoids an artificial “copy an old graph then change everything” loophole. No new graph-only
+feature family is introduced. The old private model-shape compiler can still be removed: its
+conveniences call the common source owner for the actual base family. Existing exact command replay
+continues at the application receipt owner; a former graph request cannot be replayed as different
+R bytes under the same key.
+
+The deletion boundary is daemon-private semantic ownership, not every pure legacy constructor.
+An existing AddModel/EditModel convenience against a graph base still needs its supported shape
+and refusal contract. Move that finite interpretation into the blueprint-owned graph edit helper
+or replace it with an equivalent complete typed graph operation, preserving unknown/richer graph
+refusal without flattening. Generic native mutations remain the route for richer graphs. A helper
+that reads/constructs the sole canonical graph is not another persisted authoring truth. Deleting
+the helper before its actual old-base consumers migrate would repeat the compatibility mistake.
+
+The current [copy command](../../../../../apps/daemon/src/host/commands/authoring.rs) already
+preserves every graph fact in an independent ungoverned definition with a new workflow identity,
+and records source provenance. It expressly refuses governed copies because the agreement is
+workflow-bound. Conversion-gating all editable copies would therefore remove a second actual
+capability from reusable inactive definitions. Keep that exact allowed/refused distinction.
+
+### Supported-state matrix and retirement lifecycle
+
+| Existing state | Required behavior under the revised recommendation |
+| --- | --- |
+| Closed historical revision/run | Original bytes, events, digests, receipt replay and evidence remain. History is immutable; an authorized successor/copy is a new definition, never an edited past run. |
+| Reusable inactive graph definition | Execute/reuse exact pin, inspect and create legitimate graph-native successors; eligible independent copies retain full source/provenance. Optional equivalent R conversion can add a new source revision. No live-frontier proof is needed merely to save a valid inactive successor. |
+| Active run with completed and unentered future work | Produce graph-native or representable R successor; live adoption compares exact scoped history. Preserve completed evidence and retire/replace only permitted pending occurrences. Full equivalent conversion of past structure is not a gate. |
+| Active run with started or uncertain effects | Preserve original governing revisions/attempts, scope ownership, account reservations and resource claims. Unchanged uncertain work can coexist with an unrelated allowed future edit. Changed started/uncertain work follows the current safe-cancel, finish-current, remediation/authority or refusal rules; no automatic cancellation equivalence. |
+| Governed root | Preserve exact agreement/protected material and current revision limit. Native Task-prefix replacement/addition/internal-edge edits remain available under the current requirements and runtime guards. R conversion/adoption must prove the relevant agreement correspondence; its failure does not remove native repair. |
+| Inherited governed child | Preserve parent's accepted binding and pin; direct child adoption remains refused. Root's allowed editable Task region remains the adaptation route. Creating a separately authorized agreement/run is appropriate only for the genuinely new obligation, not as a substitute for an already allowed root repair. |
+
+No graph writer removal belongs in the current remedial program. Retirement requires a separate
+reviewed version transition with: the actual retained active/uncertain and reusable-definition
+inventory; demonstrated equivalent conversion or safe prospective migration for their needed
+edit/repair/reuse operations; preserved receipts/readers and authority/agreement behavior; public
+client/source migration; and explicit approval of any residual capability loss. Inactivity alone
+does not retire a reusable definition, and closing a run does not erase unknown effects. If these
+conditions are not met, keep the graph-native owner supported. There is no automatic sunset that
+strands a run after it accepted work, nor a claim that legacy support must last forever.
+
+### Consequence for WorkCommitment and acceptance
+
+The selected ongoing commitment can remain the control owner. Its repair packet must identify
+the actual source family, exact base revision/digest, current projection, accepted agreement and
+permitted changes. Authenticated response admission accepts the corresponding typed graph edit
+or program edit through the same owner. Ordinary proposal/risk/approval/adoption applies to the
+same target run and exact account. A conversion failure is an optional route refusal, not an
+instruction to abandon the existing work or establish a fresh allowance.
+
+For S28, let I be completed, W an unchanged uncertain writer and T an unentered investigation
+task in H0. After assessing criticism, the commitment can propose H1 replacing T's TaskConfig
+with the same ports/dependencies or making an allowed internal Task-region repair. H1 retains
+H0's source family if necessary. Source validation, protected digest, current sequence and
+per-occurrence reconciliation decide; W/I are preserved and reporting/resolution remains with
+their original facts. Restart recovers H1's exact proposal/application receipt. The countercase
+which tries to rewrite W, its dependencies, accepted branch/child ownership or protected obligation
+still meets the real current refusal/authority boundary. This preserves continuity rather than
+merely preserving a read-only history card.
+
+Required future tests follow actual operations: generic graph create/import/copy and successor
+round trips; an accepted graph outside the converter's proven class with positive Task repair;
+completed I plus eligible T; unchanged uncertain W plus repaired T; active structured ownership;
+root protected internal Task edits; inherited-child refusal; stale sequence and revoked grant;
+reply loss/restart; unchanged account and resource claims; optional equivalent conversion and
+deliberately nonequivalent but compatible future adoption as different claims. Compare source
+families through one checked-plan consumer and inspect removal of the private daemon recognizer,
+not disappearance of the supported native graph contract. Existing tests above provide concrete
+oracles but do not prove these future implementation combinations.

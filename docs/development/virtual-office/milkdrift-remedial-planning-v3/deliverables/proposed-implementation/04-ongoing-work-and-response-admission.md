@@ -23,11 +23,23 @@ authorized recorded operation; the planner cannot amend its own success obligati
 
 Produce a reviewable immutable packet from actual revisions/projections, selected artifacts and current
 catalog/authority facts. Include provenance/omissions, exact target frontier, allowed source edits,
-protected boundaries and remaining cumulative allowance. Do not trust client-supplied owner facts or
+protected boundaries and remaining cumulative allowance. Preparation allocates a finite reviewed set
+of workflow identity slots before definitions exist, with purpose labels, maximum slots/associated
+runs and allowed existing planner/critic IDs. People review purpose/scope rather than supply internal
+IDs. Each generated definition binds an accepted slot; revisions reuse that workflow identity.
+Verify current import/proposal/create/start permissions against actual identities; a missing scope
+produces a retained preparation refusal and requires separately authorized grant change. Existing Any
+scope can cover them, but policy still narrows work. New commitment scopes authorize commitment
+operations only; they neither mint workflow grants nor turn an account association into permission.
+Already covered rounds need no repeated manual authorization. Do not trust client-supplied owner facts or
 model provenance. A fresh external model receives the exact packet through ordinary retained context
 selection. Closed model results can request clarification, further investigation, method/revision,
 criticism, continuation, retaining the existing plan, conclusion or escalation. Criticism triggers
-assessment; it is not an authenticated instruction or a proven fact.
+assessment; it is not an authenticated instruction or a proven fact. A revision packet includes the
+exact stored source family/base. GraphNative and ProgramEdit responses dispatch through their shared
+blueprint/control owner; equivalent conversion is optional. A failed conversion cannot force a new
+run or reset the account when a valid native future repair exists. Preserve source-specific legacy
+fingerprints and occurrence pins when moving checks onto the common plan.
 
 Authenticate the actual response artifact, producing invocation/profile, context manifest and bytes
 before binding the canonical proposal/decision. Consolidate common checks from daemon learning in this
@@ -46,8 +58,11 @@ Account ceilings stay fixed: policy changes retain used/reserved/unknown totals 
 An exhausted commitment stops/escalates; any separately authorized new allowance is visibly new work.
 A protected agreement change requires its own accepted agreement/new run, never mutation of the old one.
 
-No-progress uses the reviewed bounded normal form of structure/configuration/value references,
-excluding layout, narrative, timestamps and mere generated-ID changes. Evidence progress uses declared
+No-progress uses the reviewed source-version-aware bounded plan form of structure/configuration/value
+references, excluding layout, narrative and timestamps. Materialize legacy lexical branch priority
+as order before normalizing identities; a port rename that changes that priority is not a cosmetic
+change. Alpha-normalize only proven nonsemantic generated IDs, preserving interfaces, operations,
+pins and targeted wait references. Evidence progress uses declared
 finite roles with content/accepted-observation outcome keys, not a fresh ArtifactId or planner assertion.
 Duplicate content/observations do not renew progress. This is a mechanical stop proxy, not a proof of
 arbitrary method equivalence or correctness. Absolute round/time/account ceilings apply regardless.

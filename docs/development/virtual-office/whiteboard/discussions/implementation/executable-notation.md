@@ -1,6 +1,74 @@
 # Which notation truthfully explains executable work?
 
-## Current decision — N1, revision 3, selected for planning
+## Current decision — N1, revision 4, selected for planning
+
+The [NP4 contract](../../../milkdrift-remedial-planning-v3/deliverables/notation-profile.md) responds
+to the user's [U19](../../../milkdrift-remedial-planning-v3/intent-source-excerpts.md#u19--preserve-legitimate-adaptability-while-choosing-migration):
+Program is the preferred new source; supported GraphNative construction/import/copy/edit/repair
+remains in the same blueprint/control owner and lowers to the same checked ExecutionPlan. One
+immutable revision has one exact authoritative source variant, `WorkflowSource::{Program, GraphNative}`.
+There is no second scheduler, execution truth, authority path or persisted derived editable graph.
+The previous exclusive Program writer and whole-conversion prerequisite for native editing are
+withdrawn. This is a revised planning recommendation, not production implementation authorization.
+
+Verified equivalent conversion remains available and must prove control/data/scopes/results and
+agreement correspondence. Refusal leaves native editing and lawful prospective repair available.
+A deliberately changed Program successor is a different operation: validate the proposed future,
+map actual scoped history and apply ordinary reconciliation. It need not reproduce an unrelated
+defective or obsolete portion of the old definition. Accepted history and occurrence pins remain;
+canceling or starting new work is not presented as an equivalent repair.
+
+The [new runtime diagnostic](../../../milkdrift-remedial-planning-v3/working/compatibility-runtime-evidence.md)
+was authored by Delta and run by Rowan against real blueprint/runtime/redb in isolated temporary
+stores. It establishes that validation accepts crossed fork/join ownership, while proper nested
+All completes, crossed All stalls and crossed Any produces a planned-event cancellation-consistency
+error. That last error is not evidence of corrupt persisted history. No useful successful non-nested
+capability was demonstrated. The decisive positive case is a Task replacement before the unchanged
+crossed subgraph: approval/application succeeds, the active Wait's identity remains and the Task
+never enters. Whole-graph conversion is therefore unnecessarily strong as a prerequisite for that
+native repair. The exact source, logs, harness corrections and limits are retained in the evidence.
+
+Fork branches terminating without a Join are a separate supported positive case. Their exact
+unjoined outcome and historical terminal-output rules remain GraphNative unless equivalence is
+proved. NP4 adds no special DirectTerminals mode merely to claim total conversion. The usual new
+intent of waiting for parallel results and choosing a declared outcome/result is expressible with
+Program Parallel/outcome handling/Return; that is not silently substituted for old event semantics.
+
+All five states are explicit in NP4: historical, inactive reusable, active unentered, started or
+uncertain, and governed/protected. Native v1 agreement checks remain available directly. Optional
+conversion under that agreement uses the pure checked LegacyAgreementView; native ProgramAgreement
+v2 seals bounded named Task-only Sequence scope inputs/result signatures and outer skeleton, with
+editable task implementations and internal result mappings. Protected verifiers/effects remain
+outside. Already accepted agreements are never replaced in an existing run.
+
+Current reconciliation also permits changed active definitions under FinishCurrentThenAdopt for
+their next invocation. The present occurrence stays under its old plan; NP4 does not impose a
+blanket active-node-change refusal. Existing dependency, uncertainty, agreement and authority rules
+still decide which proposed actions are allowed. Versioned old command compilers must produce the
+same exact meaning on retry even if Program becomes the new default. An explicit selected base,
+not the first sorted merge parent, governs adoption.
+
+M, the corrected graph with complete compound authoring, remains the strongest alternative. It
+has one source editor and lower migration risk. R names ordinary structure/results directly, but
+retaining native graph editing has a real version-specific maintenance cost. Source kind dispatch
+must not duplicate product policy or require separate UI/API compilers. If valuable newly planned
+work accumulates in a legacy-only category, reconsider R/M; parser acceptance of a stalled graph
+does not by itself prove such valuable loss. No comparative human/model authoring-success result
+settles this judgment.
+
+Native authoring is not removed by this program. A future reviewed retirement requires equivalent
+supported construction/import/copy/edit and legitimate live repair for affected active/reusable work,
+exact agreement/recovery evidence, and an announced writer/client transition. No cutoff or eligibility
+registry is selected. Historical read/replay/execution has a separate lifecycle. P01 must include
+the crossing defect's validation/runtime hardening and preservation tests, with no fabricated old
+events and no loading/repair ban used as a substitute for handling accepted work.
+
+The [U19 comparison](../../../milkdrift-remedial-planning-v3/working/structure-comparison.md#u19-reopens-representation-and-removes-the-conversion-prerequisite-for-repair)
+records this actual change of position, the alternatives and exact state matrix. The standards
+semantics, explicit Program clause priority, shared result handling and pinned Call from r3 remain.
+The history below preserves r3 as a rejected migration policy, not a second current recommendation.
+
+## Historical decision — N1, revision 3
 
 The reopened comparison selects canonical structured program source, with stable identities,
 explicit ordered Conditional clauses/results, Parallel completion/results, Sequence, bounded

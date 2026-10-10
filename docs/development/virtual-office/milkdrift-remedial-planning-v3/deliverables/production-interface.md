@@ -1,9 +1,9 @@
 # A production workbench for inspectable, adaptable work
 
-**F1/r4 and F2/r4** select a maintained standalone Svelte application that consumes the canonical
-structured source in [NP3](notation-profile.md), ongoing work in
+**F1/r5 and F2/r5** select a maintained standalone Svelte application that consumes the versioned
+source family in [NP4](notation-profile.md), ongoing work in
 [Elin's WorkCommitment proposal](../working/agent-directed-work.md#u18-disposition-one-continuous-work-commitment-in-the-existing-controller-owner),
-and the user's [U17/U18 product directions](../intent-source-excerpts.md#u17--human-reviewed-knowledge-and-precise-evidence).
+and the user's [U17/U18/U19 directions](../intent-source-excerpts.md).
 These are implementation proposals. The user approved the product directions, not these particular
 owners or a finished application. There is no human usability pass or positive release-browser
 qualification from writing this specification.
@@ -22,7 +22,7 @@ They do not have to assemble ports, select an account ID or operate receipt plum
 ordinary work. Advanced inspection can explain the exact identities and effects that support a
 decision. Natural-language instructions do not grant authority or silently widen those choices.
 
-## One editable method source through every client
+## One source per revision through every client
 
 P01 must first deliver the complete source/validation/lowering/runtime/public-authoring boundary.
 The P02 workbench then uses `WorkflowProgram` and complete `ProgramEditBatch` operations for
@@ -30,7 +30,10 @@ Sequence, ordered Conditional with clause results, Parallel and its completion/r
 bounded Repeat, pinned Call, Await, Return, tasks and typed value sources. Diagram, accessible
 outline, forms, Rust client/API and agent input submit the same canonical operations. The browser
 owns layout and unfinished drafts; it owns no independent workflow compiler or second editable
-graph. It displays the daemon's validated result and path-specific diagnostics.
+graph. It displays the daemon's validated result and path-specific diagnostics. Existing graph source
+uses its supported versioned shared construction/mutation operations. The diagram/outline identifies
+the source family and offers native repair without making conversion a prerequisite. No browser
+recognizer or layout inference determines semantic equivalence.
 
 Conditional priority is explicit ordered business meaning: first matching clause, then a distinct
 default. IDs remain stable when clauses move or are renamed. Data binding names its source once;
@@ -48,24 +51,24 @@ a reduced document after dropping unknown fields is forbidden.
 | Existing source or action | Visible result and available next action |
 | --- | --- |
 | Open an old graph revision | Exact historical source and execution view, including old port-key branch precedence. Existing execution, replay and authorized reuse continue through the legacy reader into the same checked execution plan. No silent conversion on open. |
-| Edit an old graph | Request `PrepareProgramConversion`; review a new source revision, preserved order/results/ownership and origin. The server validates semantic correspondence before offering a save/adopt action. |
-| Conversion cannot preserve a relationship | Name the exact crossing, control/data relationship, result or ownership rule that prevents conversion; retain the old source unchanged and exportable. Offer continuing/reusing the old revision or creating separate new work with explicitly selected evidence. Do not offer a lossy save or hidden permanent legacy writer. |
+| Edit an old graph | Use the shared graph-native edit operation against its exact base. Offer optional `PrepareProgramConversion` as a separate operation; equivalent conversion and live prospective adoption have distinct checks. Existing versioned create/import/copy conveniences remain available under their actual agreement/authority rules. |
+| Conversion cannot preserve a relationship | Name the exact crossing, control/data relationship, result or ownership rule that prevents conversion; retain the old source and available native edit/repair actions. A permitted pending-task edit can proceed even if unrelated structure does not convert. Do not label cancellation or separate work as equivalent repair. |
 | Adopt converted or edited source into a paused run | Show exact revision/frontier/sequence basis, retained completed results, selected clause and pending changes. Active leaves/calls/waits and uncertain effects retain their governing plan. Pause is not proof of physical stop. |
 | Incompatible or stale adoption | Preserve the candidate and report the changed selected clause, active reparenting, consumed input, result contract, protected agreement or stale sequence. Refresh/reassess under a new reviewed request; never replay old intent with silently updated guards. |
 
-This is a consequential compatibility choice: unrestricted editing of every old accepted graph is
-not established. Unconvertible graphs remain readable, executable, replayable and reusable; their
-region conversion/edit refuses. If preserving arbitrary old graph editing is mandatory, NP3's
-smaller graph correction alternative must be reconsidered. A successful conversion demonstration
-cannot erase this limit. [The comparison and dissent](../working/structure-comparison.md).
+U19 withdraws the conversion-gated loss of existing repair. Native graph operations and their existing
+refusals remain explicit supported paths under the same blueprint/control/runtime owners. No second
+scheduler is created and no removal date is assumed. The corrected-graph alternative remains the
+strongest objection to paying for two source validators/lowerers. [The comparison and dissent](../working/structure-comparison.md).
 
-This qualification does not allow refusing all old edits. The required P01 compatibility corpus
+The required P01 compatibility corpus
 includes current model-editor and prompt-sequence methods, old parallel/pinned calls and permitted
 Task-only repair in a managed protected root. The UI must support those converted methods and
 show successful allowed pending repair under the original agreement. Blueprint derives the exact
 legacy agreement view from checked source/plan plus its origin correspondence; neither the UI nor
-a copied fingerprint may bless altered protected behavior. Unsupported arbitrary graph shapes
-remain a separate compatibility limit, not a reason to omit these positive journeys.
+a copied fingerprint may bless altered protected behavior. It must also show native pending repair
+after a conversion refusal, preserving active/uncertain work and its original account. Closed history,
+inactive reuse, pending work, entered/uncertain work and protected work follow the adoption matrix.
 
 ## Ongoing work is an inspectable commitment
 
@@ -135,7 +138,7 @@ The [prior detailed interface tables](../working/production-interface.md) and
 [engineering contract](../working/frontend-engineering.md) retain useful layout, operation/recovery,
 resource and browser annotations. They describe r3; this r4 supersedes their graph-source/R-C01,
 finite goal-planning/R-FE02, method-only learning and old phase assignments. Those old remedy names
-must not be implemented as parallel owners beside NP3/WorkCommitment/U17. Their preserved browser,
+must not be implemented as parallel owners beside NP4/WorkCommitment/U17. Their preserved browser,
 resource/public-invocation and accessibility requirements apply where compatible with this revision.
 
 The maintained app is `apps/workbench`, a static Svelte client. The r3 SvelteKit/Svelte/TypeScript,

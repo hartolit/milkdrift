@@ -1,12 +1,17 @@
 # What should an author control, and what must the execution model know?
 
-## Current recommendation — P2, revision 3, selected for planning
+## Revised recommendation — P2, revision 4, under U19 review
 
-Rowan-20261010 selects canonical structured method source and a bounded ongoing work commitment
-after the reopened source/history comparison and independent criticism. Requires
+Elin-20261010 recommends structured source as the default for new complete authoring conveniences,
+with graph-native source/editing retained in the same blueprint/control owner and checked-plan
+runtime. This revises P2/r3's source-only writer transition after U19 and direct reconciliation
+inspection; the coordinator's diagnostic comparison is being integrated before final selection. Requires
 [G1/r2](../vision/remedial-purpose.md) and [P1/r3](reuse-service-and-placement.md).
-U17/U18 approve the product's evidence and continuous-work outcomes. This representation and owner
-selection remains a planning recommendation, not approval to implement or a current-product claim.
+U17/U18 approve the product's evidence and continuous-work outcomes.
+[U19](../../../milkdrift-remedial-planning-v3/intent-source-excerpts.md#u19--preserve-legitimate-adaptability-while-choosing-migration)
+requires preserving legitimate existing adaptability wherever technically possible, and rejects
+conversion-gated loss as an automatically acceptable migration policy. Representation and owner
+selection remain planning recommendations, not approval to implement or current-product claims.
 
 “Run both and combine results” can be one meaningful edit, while waiting and transforming data
 remain distinct executable responsibilities. A generic capability task already accepts typed
@@ -26,11 +31,12 @@ adds a definition/run/context boundary that must be visible and cannot be silent
 
 The semantic obligations from N1/r2 survive: normal arm exit differs from run completion/quiescence;
 selected outputs have exact provenance; continuation becomes eligible atomically; and compatible
-pending work inside a selected arm can be repaired. The selected new representation is a canonical
+pending work inside a selected arm can be repaired. The proposed default new representation is a canonical
 structured program with stable element IDs, ordered Conditional clauses and explicit results,
 Parallel completion/exports, bounded Repeat, exact Call and explicit Await. One blueprint-owned
 lowering produces the checked execution plan; the diagram is a projection. Generated ports/edges
-are not a second editable source. Existing authority, remaining allowance and unresolved physical
+of a structured program are not another editable source. A graph-native revision instead keeps its
+own exact graph as its one canonical source and lowers to the same plan. Existing authority, remaining allowance and unresolved physical
 holds still govern entry and maintenance.
 
 The [complete structural comparison](../../../milkdrift-remedial-planning-v3/working/structure-comparison.md)
@@ -50,6 +56,12 @@ exact response provenance and a shared account with a durable owner-local admiss
 Previously accepted remote work remains under its actual serving owner's cancellation/deadline
 rules; stopping the commitment can leave remote entry and usage uncertain. Criticism is assessed
 against actual evidence; it is not automatically accepted as a command to revise.
+
+Control prepares bounded workflow-identity slots and shows their purposes; users need not invent
+IDs. Each accepted slot's identity/purpose and maximum associated-run count are fixed, with revisions
+reusing that lineage. Existing workflow grant scopes authorize the actual operations before a
+definition exists. Missing scope has a precise separate authorization route; a commitment handle
+or shared account cannot grant it. Covered work proceeds automatically without per-round approval.
 
 No-progress uses a bounded control-owned normal form of ordered structure/configuration/value
 references and declared evidence roles/content/outcome keys. Generated identity, layout, timestamp
@@ -75,18 +87,40 @@ can judge one architectural lesson against an explicit criterion without inventi
 workflow. Declared required judgments which conflict remain disputed; missing required evidence
 remains inconclusive. Separate authorized reuse may retain a bounded caution or open question,
 but cannot turn those judgments into favorable verification or silently erase disagreement.
+An approved-for-reuse claim is separate from source selection: authorized unapproved or negative
+evidence can still be selected with its status. Ordinary method adoption retains its actual
+authority/risk/agreement/reconciliation gates; protected publication qualification is not a new
+universal prerequisite for changing future work.
 
-Historical graph definitions, runs, attempts, proposals and receipts keep exact interpretation.
-New writers emit structured source; version-specific readers lower old source into the same checked
-plan. Prospective conversion must prove its active/pending mapping and retain uncertainty, holds
-and accounts. Unsupported conversion refuses before effects and preserves the old accepted run;
-it does not erase history or silently run a second scheduler.
+The [U19 reconciliation reconstruction](../../../milkdrift-remedial-planning-v3/working/agent-directed-work.md#u19-preserve-legitimate-repair-conversion-is-not-reconciliation)
+changes the migration conclusion. Current runtime compares each node's configuration/dependencies
+and scoped execution state. It can preserve completed I and unchanged uncertain W while changing
+pending T; whole-definition equivalence is not its safety rule. Root protected Task-region repair
+even permits Task addition/internal-edge changes within the accepted agreement. Inherited-child
+substitution remains a separate refusal. Starting a new run or cancelling is not equivalent repair.
 
-Strongest remaining objections: a valued graph may not decompose without changing semantics, and
-an authored supervisor may need capabilities beyond the closed commitment policy. Preserve these
-countercases explicitly; do not add a raw-graph escape hatch or hidden client supervisor to claim
-completion. Each new source/commitment operation must show one construction/admission owner and
-an exact recovery path. This choice is based on the worked consequences, not rewrite size.
+Keep versioned graph create/import, legitimate successors and eligible independent copies through
+the same blueprint/control owner during this program. Complete public edits dispatch from the exact
+stored base source family. The graph route uses the existing bounded mutation/validation owner,
+not the private daemon ModelWorkflow recognizer. One canonical source belongs to each immutable
+revision; both lower to the one execution-plan boundary and existing reconciliation/history/account
+owners. New structured conveniences do not maintain a second editable compiled graph.
+
+Equivalent source conversion remains separately verified. Deliberately different prospective
+adoption instead validates the current frontier, governing revisions and obligations; unavailable
+cross-form mapping refuses that route while native graph repair remains available. No graph-writer
+removal belongs in the current proposal. Later retirement needs active/uncertain and reusable data
+coverage, proved needed edit/reuse migration, exact old readers/receipts, client transition and
+explicit approval for any residual loss; inactivity or a deadline is insufficient.
+
+The corrected-graph-only alternative remains serious: it preserves one authored source family and
+the current repair model, while complete construction operations still derive authored containment
+from stored plumbing. Retaining graph-native source alongside structured source has an explicit
+maintenance cost in source validators/lowerers and public tests; it need not duplicate runtime,
+authority or result truth. If valuable new work needs extensive R exceptions or shared consumers
+cannot preserve these distinctions, reconsider R rather than weaken legitimate adaptability.
+The authored-supervisor alternative likewise remains valuable if closed commitment policy becomes
+insufficient. Neither hidden client orchestration nor a second scheduler satisfies these concerns.
 
 ## Purpose questions
 

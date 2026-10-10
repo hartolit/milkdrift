@@ -8,7 +8,9 @@ over stale command examples below.
 
 Audit adoption before testing: every selected outcome has a complete public daemon/workbench path;
 all actual producers/consumers/fixtures/examples/docs use the chosen representation; obsolete
-construction helpers, competing authorities, private client shortcuts and dual writers are removed.
+private semantic construction, competing authorities and client shortcuts are removed. Explicit
+versioned graph and Program encoders remain supported in one blueprint owner; two source forms are
+not two execution authorities. Exact old convenience compilation survives missing-outer-receipt retry.
 Search all workspace code/config/examples, not just changed files. Trace current supported stored
 definitions, layouts, receipts, accepted active/uncertain work and current CLI through upgrade and
 rollback/refusal. No schema conversion silently re-identifies accepted work.
@@ -62,12 +64,27 @@ and NoExternalEntry evidence, refuses unsafe return until exact stop proof, sett
 and replays the old request exactly. Same-binary reopen alone is not upgrade evidence. Admission closure
 must not fabricate a drained resource or terminal child.
 
+Cover all U19 states: immutable closed history, inactive reusable graph, unentered future work,
+started/uncertain effects and protected work. Verify graph creation/import/copy/edit under original
+rules, positive conversion, precise conversion refusal with successful native pending repair, and
+cross-family changed-future adoption without requiring whole-definition equivalence. Preserve legacy
+config/dependency fingerprints and occurrence governing revisions. A changed active task configuration
+may apply to a later invocation where current reconciliation permits; it must not rewrite the entered
+occurrence. Native convenience retry after revision save but before outer receipt must recover the
+same v3 revision, not recompile as Program. Test merge-parent ordering against the explicitly selected
+proposal base. Cancellation/new work never passes as equivalent prospective repair.
+
 Add commitment cancellation after B has accepted work but before its private child enters, with lost
 cancellation; A retains uncertainty/reservation and B enforces its own facts. Test local already-admitted
 effect starting after the local fence, successor policy/carry-forward with unchanged counters and no
 authority rewriting, no-progress stop, and automatic S28 reconsideration after a fresh-client restart.
 Reject human/retrospective knowledge evidence as protected method qualification while preserving its
 honest availability as guidance. These are integrated owner checks, not interface labels.
+Also select unapproved/negative knowledge under actual read authority with truthful status, and adopt
+an ordinary authorized method without falsely requiring protected learning qualification.
+Test prepared exact workflow slots under a restricted grant, scope refusal before effect, no implicit
+grant from commitment association, and reuse of permitted slots across rounds without allowance reset.
+No-progress must distinguish a legacy priority-changing port rename from a harmless Program-ID rename.
 
 Fix every discovered in-scope defect through its owning boundary with independent regression and
 all consumers. Commit meaningful working fixes and preserve diagnostic evidence. Use focused reruns

@@ -8,9 +8,10 @@ Read [shared context](context.md) and the full decision brief/review resolution 
 Inspect Git status/HEAD/recent changes, actual source/constants/readers/tests/manifests and other
 active assignments. Reconcile source drift against the planning baseline; rerun only observations
 whose meaning changed. Preserve user edits. Record exactly which choices were approved, rejected or
-conditional. U17/U18 already approve product directions, not commitment placement or structured-source
-implementation. Resolve the explicitly presented legacy-editing compatibility choice before assigning
-the writer transition. Do not mark excluded extensions approved because a first slice is assigned.
+conditional. U17/U18 approve product directions and U19 requires preserving legitimate adaptation;
+they do not approve commitment placement or structured-source implementation. The proposal now retains
+versioned graph authoring/repair in the same owner. Do not restore the rejected conversion-gated loss
+or mark excluded extensions approved because a first slice is assigned.
 
 Adopt enduring purpose into `docs/product/vision.md`: explain outcomes and remove accidental
 screen/headless-first prescriptions as governing intent. Architecture owns executable responsibilities,
@@ -30,8 +31,8 @@ Correct the confirmed architecture prose drift: current `JoinPolicy::Any` accept
 loser quiescence. Check `try_satisfy_join` and its tests before editing the canonical explanation.
 This correction describes existing behavior and does not authorize changing the policies.
 
-Verify the concrete transition contract already selected in the adoption plan and NP3, including
-LegacyAgreementView, positive conversion corpus, unproved-edit refusal, commitment-origin accounts,
+Verify the concrete transition contract already selected in the adoption plan and NP4, including
+LegacyAgreementView, positive conversion corpus, native repair after conversion refusal, commitment-origin accounts,
 policy successor/carry-forward and historical protected-learning profile. Foundational owners are not
 new implementation discovery assignments. Inventory exact current blueprints/mutations,
 commands/receipts, optional snapshots, layouts, run/event records, active/uncertain work, current CLI
