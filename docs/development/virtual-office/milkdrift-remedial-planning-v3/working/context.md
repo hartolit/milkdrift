@@ -1,4 +1,4 @@
-# Incoming context — C0 intake
+# Incoming context — C1 reviewed planning premises
 
 Coordinator: Rowan-20261010, agent session `/root`. This is a navigation packet, not another
 product authority. The user assigned 00–08 and review iterations, planning only, and explicitly
@@ -27,3 +27,23 @@ implementation planning → 08. Existing code/ADR/test evidence may be reused wi
 Do not assume reuse entails publication, a UI connection creates a peer relationship, a host is a
 workflow owner, a stopped client stops work, or a completed invocation proves accepted output.
 These relationships are being investigated, not selected as architecture by this intake.
+
+## Current planning premises
+
+Use [I1](intent-register.md), [G1/r1 and P1/r2 derived baseline](vision-baseline.md),
+[trial T1](review-method-trial.md), [source traces](behavior-evidence.md) and
+[executed observations E1](observations.md). G1/P1 are selected planning recommendations, not
+user-approved replacements for canonical documents. Original independent accounts and dissent
+remain in `intake-ada`, `intake-bram`, `trial-ada` and `trial-bram`.
+
+P1/r2 supersedes the unqualified common-discovery candidate: remote readability is not a local
+pin; identity-bound agreement copies can refuse; role removal cannot abandon obligations.
+Architecture, notation, frontend and adoption must use those qualifications. Native authenticated
+HTTP works in E04 while the browser's different origin fails; browser support must be implemented
+and qualified before claiming a connected Svelte product. No new layout-digest API is justified:
+the daemon receipt owner already computes author and digest.
+
+Active design work: Ada compares representations/standards, Bram product interactions/frontend,
+Cyra architecture/transport, Rowan integrates concept/scenario coverage and adoption. Their first
+product alternatives are written before reading each other's recommendations. Final cross-review
+must revisit the assembled design, not count these assignments as approval.

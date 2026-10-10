@@ -9,6 +9,8 @@ what belongs here; [the office procedure](../README.md) handles sprint coordinat
 
 | Topic | State | Next action | Assignment | Last evaluated |
 | --- | --- | --- | --- | --- |
+| [Remedial purpose and preserved value](discussions/vision/remedial-purpose.md) | assigned | Challenge dependent designs against G1 and retain user tradeoffs for review. | [V3 planning](../milkdrift-remedial-planning-v3/handoff.md) | 2026-10-10 |
+| [Reuse, service calls and placement](discussions/product-model/reuse-service-and-placement.md) | assigned | Carry P1/r2 target and permission qualifications into notation, interface and adoption; retain discovery dissent. | [V3 planning](../milkdrift-remedial-planning-v3/handoff.md) | 2026-10-10 |
 | [Managed Linux hardware qualification](issues/managed-linux-hardware-qualification.md) | parked | Revisit when an owned Vulkan or active-inference recovery claim is needed, with an approved image, device permissions and a bounded pressure/interruption plan. CPU lifecycle and orderly idle reboot are qualified. | Unassigned | 2026-09-27 |
 | [Configurable generation and thinking policy](discussions/model-generation-policy.md) | open | Establish a workflow need and reliable mapping for thinking controls beyond supported effort and total-output bounds; retain the current design unless that evidence justifies expansion. | Unassigned | 2026-09-16 |
 | [External model configuration provenance](issues/external-model-configuration-provenance.md) | open | Distinguish pre-run inspected defaults from per-request effective settings; scope a controlled thinking comparison only if its claim requires one. | Unassigned | 2026-09-16 |
