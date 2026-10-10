@@ -1,5 +1,10 @@
 # Proposed implementation program — not assigned
 
+The user reopened the underlying investigation after `ff818e5`. This program is a provisional
+candidate to revise or replace, not a constraint on the investigation or authority to execute.
+Foundational questions must be resolved in planning; previous implementation-stage discovery
+instructions do not transfer that responsibility. See the [current handoff](../../handoff.md).
+
 This is the unexecuted route from the inspected Rust product to a real standalone Svelte product.
 The user must first review the planning decisions and authorize a bounded implementation scope.
 Listing a prompt here does not activate it. [Shared execution context](context.md) supplies the

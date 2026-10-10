@@ -9,11 +9,12 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-[Remedial planning v3](milkdrift-remedial-planning-v3/README.md) completed 00–08 and justified
-review iterations under the 2026-10-10 user request and is awaiting user review. The
-[decision packet](milkdrift-remedial-planning-v3/deliverables/README.md) contains the proposal;
-its implementation program is unexecuted and unassigned. Preserve the review context until review
-and adoption. The [handoff](milkdrift-remedial-planning-v3/handoff.md) owns coverage and evidence.
+[Remedial planning v3](milkdrift-remedial-planning-v3/README.md) is reopened under the user's explicit
+follow-up authorization and [critique](milkdrift-remedial-planning-v3/reopened-critique.md).
+The previous completion claim is withdrawn: comparative architecture and agent-directed product
+investigation remain assigned. Preserve existing evidence, dissent and checkpoints. The current
+decision packet and P00–P09 are provisional, unapproved and unexecuted. The
+[handoff](milkdrift-remedial-planning-v3/handoff.md) owns actual coverage and continuation.
 
 The [roadmap](../../product/roadmap.md) owns unfinished work; unrelated whiteboard topics remain separate.
 

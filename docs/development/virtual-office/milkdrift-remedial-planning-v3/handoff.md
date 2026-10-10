@@ -1,4 +1,25 @@
-# V3 planning handoff — stop for review
+# V3 planning handoff — reopened investigation
+
+The user explicitly reopened this assignment under the [critique](reopened-critique.md) after
+`ff818e5`. The earlier completion statement below records that checkpoint, not current acceptance.
+Its whole-product selection was insufficiently supported by comparative investigation. Current
+status: audit prior breadth/depth in the existing dossier, investigate consequential relationships,
+resolve foundational agent/structure/ownership choices, then revise the proposal/program. No
+production/schema/frontend prototype/deployment changes, paid calls, push or P00–P09 execution.
+
+Actual new assignments: Rowan audits every package and owns application/configuration/public
+composition, shared records, observations and commits; fresh reviewer Delta compares workflow
+representations/standards; fresh reviewer Elin resolves agent-directed work/context/evaluation;
+fresh reviewer Faris compares execution/authority/storage/resource ownership. Each records an
+independent first position before reading the others' new conclusions. Old evidence is retained
+with its original scope. Initial audit and investigations are not completion of this assignment.
+
+Next continuation: finish source-grounded comparisons, exchange constructive counterexamples,
+apply justified changes to actual owner-level proposal and implementation program, and obtain
+nonauthor reread of changed foundational decisions. The last complete planning checkpoint is
+`ff818e5`; its prior documentation checks do not qualify pending edits.
+
+## Previous checkpoint at ff818e5
 
 The assigned 00–08 planning sprint and justified review iterations are complete. The outcome is a
 reviewed proposal and complete **unexecuted, unassigned** implementation program. No production

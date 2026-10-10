@@ -1,4 +1,56 @@
-# System dossier — D1
+# System dossier — reopened breadth and depth audit
+
+## What the earlier review actually established
+
+The user reopened the investigation after `ff818e5`; [the critique](../reopened-critique.md) is
+the current assignment. Production source is unchanged. Rowan audited Cargo's actual workspace
+membership (`cargo metadata --no-deps --format-version=1`), prior working evidence and the inspected
+source/consumer references. There are **24 workspace packages**, including evidence and the independent
+Slotbook example. A family/scenario row is coverage, not comparative architectural approval.
+
+Depth below is retrospective at `ff818e5`: **B** means a concrete behavior/producer-consumer path was
+examined (sometimes executed); **M** means mapped with source references but without comparable
+design alternatives; **I** means mainly inherited canonical/historical evidence; **U** marks a
+consequential relationship not resolved. These labels describe the cited scope, not every line in
+the package. None of the old tests makes an adjacent unreviewed relationship approved. The current
+investigation will add its substantive comparison and disposition to each row, not overwrite this
+honest starting point.
+
+| Workspace package / source | Responsibility, neighboring owners and important consumers | Prior depth and unresolved relationship | Reopened investigation |
+| --- | --- | --- | --- |
+| [contracts](../../../../../crates/contracts/src) | Canonical bounded JSON/validated primitives used by every domain and both protocols; domains still decide meaning | M/I: shared mechanics accepted from repository rules; alternative placement not compared | Rowan: actual multi-consumer boundary, numeric/canonical rules and adding an input contract |
+| [capability](../../../../../crates/capability/src) | Requirement/descriptor/selection/effect contracts; blueprint, host, adapters, authority | B for direct selection, M for generic operation/managed contract placement | Faris: selection and invocation-service alternative |
+| [blueprint](../../../../../crates/blueprint/src) | Definitions, revisions, structured graph, agreements, mutations; runtime/control/authoring/importers | B for immutable siblings and merge refusal; M for the whole representation; U identifier-priority rationale | Delta: same authoring packets through current, complete correction and regions/standards |
+| [workspace](../../../../../crates/workspace/src) | Scoped values, artifacts/producers/provenance/budgets; runtime/context/model/persistence/adapters | B selected branch/privacy paths, M for artifact/working-area organization | Elin with Delta: causal evidence versus editable work, continuous fresh context |
+| [authority](../../../../../crates/authority/src) | Grant/resource decisions, frozen basis and secret references; control/runtime/host/protocol adapters | B revoke/replay/protected effects, M for authority/account split and human configuration burden | Faris: acceptance/entry/disclosure/account relationship alternatives |
+| [model](../../../../../crates/model/src) | Provider-neutral task/response/manifest; runtime/model adapters/control parsers | B selected-input path, U actual goal-plan response consumer; M model abstraction breadth | Elin/Faris: response admission and provider contract distinction |
+| [persistence](../../../../../crates/persistence/src) | Durable documents and ports/account transitions; runtime/control/host/redb | B exact replay/uncertainty scope, M for journal/state-owner division | Faris: transaction cuts, invocation unification and managed transition placement |
+| [runtime](../../../../../crates/runtime/src) | Occurrences, scheduling, control, entry, reconciliation, causal context; host executor/control/store | B joins/recovery/future repair, M alternative representation and scheduling ownership | Delta with Elin/Faris: same-case activation/data/recovery/continuous control |
+| [capability-host](../../../../../crates/capability-host/src) | Live generations/prepared entry/serving/workers/resources; adapters/runtime/control continuation | B direct/peer/publication lifetime paths; M unified effect owner alternative | Faris: origin-specific facts versus repeated admission rules |
+| [control](../../../../../crates/control/src) | Proposals, controller/accounts, publication, learning/knowledge; runtime/host/daemon | B publication/recovery, M controller composition; U goal orchestration and general evaluation scope | Elin/Faris: actual orchestration, application commands, evaluated method contract |
+| [prompt-sequence](../../../../../crates/prompt-sequence/src) | Trusted-process sequence import/compile/remediation; daemon/CLI/evidence | M/I ordinary compilation; U duplication with editor/agent constructors and future changes | Rowan/Elin: exact independent import contract and compiler locality |
+| [control-protocol](../../../../../crates/control-protocol/src) | External command/read/layout DTOs/codec/cursors; daemon/client/CLI/future browser | B identity/recovery/stream/layout routes; M transport/domain command duplication | Rowan: concrete public-authoring/configuration change through consumers |
+| [control-client](../../../../../crates/control-client/src) | Authenticated bounded HTTP, safe reads/artifacts/SSE/saved starts; CLI/evidence | B saved start/stream/integer browser implications; M client/domain placement | Rowan: replay ownership, helper dependencies and direct public JSON alternative |
+| [peer-protocol](../../../../../crates/peer-protocol/src) | Session/catalog/execution/artifact wire; host/peer-http/daemon/direct client | B direct versus delegated origin, M control/peer wire boundary | Faris: direct and peer admission convergence without erasing owners |
+| [local-process](../../../../../adapters/local-process/src) | Byte-pinned argv, materialization, process ownership/outputs; host/runtime/daemon | B controlled direct/managed paths, I platform stop evidence; no full mechanism alternative | Faris: narrow platform port and independent process-lifetime oracle |
+| [managed-linux](../../../../../adapters/managed-linux/src) | Linux recipe/Podman/Quadlet effects and adapters; host/persistence/daemon | B child claim behavior, I physical qualification; M lifecycle/policy placement | Faris: mechanism versus managed transition policy, unchanged hardware scope |
+| [model-provider](../../../../../adapters/model-provider/src) | Feature negotiation, provider HTTP/SSE mappings; model/host/daemon | B controlled requests/lost response, I provider-family evidence; M normalization costs | Faris: shared transport versus provider semantics, future feature case |
+| [local-secret](../../../../../adapters/local-secret/src) | Restricted explicit environment/file secret resolution; host/daemon | I/M: no package-level source comparison recorded | Faris: direct minimal port versus embedding resolver in application |
+| [peer-http](../../../../../adapters/peer-http/src) | Configured transport/auth/catalog/remote adapter/artifact frames; host/peer wire/daemon | B two-daemon/replay/direct-origin restrictions, M transport/lifecycle split | Faris: network mechanism versus durable serving owner |
+| [redb-store](../../../../../adapters/redb-store/src) | Transactions/records/indexes/artifacts/admin/recovery; persistence consumers | B revision retention/managed claims/exact replay, M policy in storage and alternative ledgers | Faris: pure transitions, atomic evidence collection, origin of policy placement |
+| [daemon](../../../../../apps/daemon/src) | Config/auth, queue/composition, commands/reads/streams/lifecycle/admin; all adapters and clients | B HTTP/authoring/publication; M application orchestration/config duplication | Rowan: command owner versus conversion layer, composition and configuration alternatives |
+| [cli](../../../../../apps/cli/src) | Terminal inputs/presentation/recovery and local imports; client/protocol/blueprint/sequence | B real workflow/independent-host use; M private construction versus shared application action | Rowan: remove justified duplicate helpers, retain offline import where it earns cost |
+| [evidence](../../../../../tools/evidence/src) | Maintained actual-binary/fixture/operational drivers, leaf only | B executed E01–07 scope; U orchestration supplied by driver but promised as product | Elin/Rowan: product-supporting proof versus hidden operator/planner responsibilities |
+| [adaptive-slotbook](../../../../../examples/adaptive-slotbook/src) | Independent application and deliberate defect; external target for managed evaluation | I scenario evidence, U special-case learning assumptions promoted to general product | Elin/Rowan: example specificity versus product validators/outputs |
+
+The first review's strongest actual design comparison was reuse/reference/copy/publication and
+its permission/placement counterexamples. Its weakest foundations were whole-workflow structure,
+agent orchestration, evaluation breadth and whether storage/application boundaries own rules in the
+right place. Narrow adapters can receive lighter review when their source has one external-mechanism
+purpose and multiple concrete consumers; their platform/quality claims remain limited to retained
+evidence. Broad source coverage does not claim every platform implementation has been requalified.
+
+## Earlier dossier at ff818e5 — preserved provisional analysis
 
 Investigated source: `908e7893f5dadb84d12712573c8daaa946829e39`; production-identical to
 `c016cd3`. Source findings are not newly executed behavior. Current version facts belong to

@@ -1,5 +1,11 @@
 # Milkdrift planning proposal for review
 
+**Reopened:** the user did not accept the previous planning completion or authorize this program.
+The [follow-up critique](../reopened-critique.md) now governs deeper comparative investigation.
+The documents below preserve the `ff818e5` candidate until the reopened findings revise it; selection
+labels are provisional, not conclusions the investigation must defend. Current work and exact
+continuation are in the [handoff](../handoff.md).
+
 The v3 planning sprint investigated the existing product and its source intent, compared alternatives,
 ran isolated observations, and revised the proposal through actual opposing reviews. These documents
 propose a target and complete implementation sequence. They do not authorize or claim implementation.
