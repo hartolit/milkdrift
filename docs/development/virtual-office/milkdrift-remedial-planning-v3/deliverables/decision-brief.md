@@ -31,6 +31,7 @@ that recommendation was not sufficiently earned.
 | One reliable planning round was a sufficient ceiling | U18 explicitly requires bounded automatic reconsideration. A control-owned work commitment coordinates accepted next-work decisions across ordinary runs, with one cumulative account and exact action/run associations. Manual mode remains supported by that owner. |
 | Evaluated reuse meant protected publication repair | Current declarations require managed targets, agreement/verifier facts and repair-reduction measures. U17 requires evaluated knowledge as well. Extend shared evidence/learning ownership with typed subjects, controlled versus retrospective basis, honest reviewer relationships and separate reuse approval. Human assessment cannot replace mandatory verification or publication authority. |
 | Existing storage and application boundaries only needed frontend exposure | Managed-use transition policy lives in redb; descriptor producers perform JSON field surgery; fresh direct/peer admission repeats checks; external reducers duplicate a restricted task path. Move/consolidate those concrete responsibilities and remove superseded paths. |
+| Existing structured cancellation was a fully consistent retained foundation | A new real-runtime probe fails for ordinary nested Any, not only crossed topology. Scheduling sees ancestor cancellation while event validation sees only immediate branch ownership. P01 must unify that exact evidence query and prove valid descendant cancellation plus sibling denial. |
 | A publication listing was simply an incorrectly filtered read | Existing commands retain administrative snapshots. Keep exact historical replay; use current authorized read projections for management and the existing filtered capability catalog for invocation. Do not weaken an admin contract to simulate service discovery. |
 
 ## Selected architecture and the strongest alternative
@@ -120,7 +121,9 @@ E04. The new [priority diagnostic](../working/priority-runtime-evidence.md) exec
 and redb in isolated temporary stores with no external tasks. A second
 [compatibility diagnostic](../working/compatibility-runtime-evidence.md) demonstrated native pending
 repair beside unconvertible topology while preserving an active occurrence; it also exposed a crossed-
-join stall and a cancellation-history error, recorded as limitations requiring owned repair. No useful
+join stall and a cancellation-history error also reproduced in ordinary nested Any, recorded as a
+concrete P01 common-runtime repair. It is a planned-event consistency failure, not proof of a corrupt
+retained journal. No useful
 non-region expressiveness is claimed from those failing shapes. All new architectural alternatives and
 S28 traces are modeled designs. There was no prototype frontend, paid provider call, live deployment,
 production edit or execution of the proposed program. No measured authoring-success, full standard

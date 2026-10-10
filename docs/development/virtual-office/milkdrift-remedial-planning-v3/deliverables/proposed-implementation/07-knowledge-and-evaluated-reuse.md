@@ -29,12 +29,15 @@ uses `MeetsCriterion/DoesNotMeetCriterion/Inconclusive`; `Paired` uses
 `Better/Equivalent/Worse/Inconclusive`. These are attributed judgments, not universal truths.
 The declaration fixes required role/case slots and a closed NamedReviewer or PairedNoRegression rule.
 The latter requires no worse declared case and at least one better case. Compare retains every required
-judgment; contradictory required verdicts produce Disputed, absent requirements Inconclusive and malformed
+judgment; contradictory required verdicts for the same case/criterion produce Disputed, absent
+requirements Inconclusive and malformed
 bindings refuse. Reuse approval can explicitly accept bounded disputed/retrospective evidence with
 rationale/limits; it cannot turn it into a favorable qualification. Label human versus configured agent judgment versus
 automated verification. Self-review is allowed and visible. Enforce independence only when the declaration
 requires it; multiple agreeing reviewers do not automatically count as independent corroboration. Missing
 facts or a stale/different criterion remain refused/inconclusive as specified, never silently favorable.
+Better on one case and Worse on another is an ordinary PairedNoRegression failure, not a reviewer
+contradiction. Freeze the required receipt/role bindings; comparison cannot drop an inconvenient case.
 
 Authentication establishes actor/grant, not biological human identity. HumanJudgment carries the
 authenticated reviewer's explicit attestation; AgentJudgment links its verified producing invocation/

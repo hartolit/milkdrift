@@ -1,5 +1,9 @@
 # Nonauthor program review — Cyra, 2026-10-10
 
+**Current review:** the [U19 combined-proposal reread](#u19-transfer-review-of-the-final-combined-proposal)
+at the end supersedes the earlier transfer verdicts below. Preserve those earlier findings as historical
+evidence, including the withdrawn conversion-gated writer transition. Current decisions are NP4/P2r4/A1r5.
+
 Cyra, actual agent `/root/systems_cyra`, read the completed review packet and revised P00–P09
 after recording [the independent first review](review-first-cyra.md). Rowan authored the synthesis
 and implementation program; Ada authored the notation and Bram the interface/engineering. I did
@@ -385,3 +389,110 @@ Final documentation checks: local Markdown targets in this review, agency recons
 product/value were checked for existence; `git diff --check` passed. No new executable evidence was
 produced. This transfer review is complete as a planning review, with the stated legacy-policy
 decision left visible for the user rather than assigned to implementers.
+
+## U19 transfer review of the final combined proposal
+
+Elin-20261010, actual agent `/root/agency_elin`, 2026-10-10. This follow-up supersedes PR-E4's
+pending compatibility choice and the exclusive-writer recommendation above. [U19](../intent-source-excerpts.md#u19--preserve-legitimate-adaptability-while-choosing-migration)
+explicitly preserves legitimate prospective repair. The final recommendation is NP4's source
+union, not user acceptance of a capability loss. I remain a contributing architecture reviewer,
+not an independent external evaluator of my own agency/knowledge proposal.
+
+I reread the revised [brief](../deliverables/decision-brief.md),
+[NP4](../deliverables/notation-profile.md),
+[P01](../deliverables/proposed-implementation/01-structured-source-and-shared-authoring.md),
+[P04](../deliverables/proposed-implementation/04-ongoing-work-and-response-admission.md),
+[P07](../deliverables/proposed-implementation/07-knowledge-and-evaluated-reuse.md), the final
+[compatibility source/output](compatibility-runtime-evidence.md), and the production reconciliation,
+agreement, authority-scope and cancellation code named below. The earlier transfer read covered
+P02/application receipts; this final read concentrated on changed contracts and counterexamples,
+not a second claim to have re-audited every package. I ran no Cargo, model or browser journey.
+
+### Foundational findings and their actual disposition
+
+| ID | Adversarial case | Final selected contract, checked in the current proposal |
+| --- | --- | --- |
+| **U19-E1** | A valid native graph cannot convert wholly, but pending T can change while I is completed and W is unchanged/uncertain. R-only editing removes legitimate work; a new run is not the same repair. | `WorkflowSource::{Program,GraphNative}` has one source per immutable revision, one blueprint editor/validator/lowerer owner and one checked execution plan/runtime. Native create/import/copy/edit and their real refusal rules remain. Conversion proves definition equivalence; live adoption instead proves the permitted current-frontier change. P01/P04/NP4 now preserve same-run native repair and its account. No registry, expiry or source-family permission gate remains. **Resolved.** |
+| **U19-E2** | Saying “active nodes cannot change” would reject current `ChangedActive + FinishCurrentThenAdopt`, and changed completed read-only work can have a future configuration too. | NP4/P01 keep the entered occurrence's governing revision while allowing `UseNewOnNextInvocation` where the current policy allows. Protected agreements, dependencies, uncertain effects and actual scope ownership still have their specific checks. The restriction is against rewriting accepted facts, not all later edits to an element. **Resolved after source reread.** |
+| **U19-E3** | Removing daemon `ModelWorkflow` can accidentally delete old convenience semantics, or retry an old command as different Program bytes after the inner revision committed but the outer receipt was lost. | Pure blueprint-owned version-specific graph construction/recognition preserves exact old shape/refusal and deterministic command meaning. Generic graph edits still serve richer graphs. New defaults require explicit version/source-family selection. Removal targets private semantic ownership, not every legacy helper or current writer. **Resolved in P01/NP4.** |
+| **U19-E4** | A native Program proposal needs an accepted structural agreement; “version it” leaves a foundational protected-boundary decision open. A normalized old reducer Task must not become v1 editable. | New `ProgramAgreement` v2 seals the outer source and stable Task-only Sequence slots, exact inputs/output signatures/requirements/counts/effect policy. Internal implementation of fixed outputs may change under existing prospective rules. This is explicit newly accepted v2 meaning. Original graph v1 remains native; converted v1 derives a complete checked `LegacyAgreementView` with original protected facts. No auto-upgrade or copied digest. **Resolved in final NP4/P01.** |
+| **U19-E5** | A stricter graph validator added to reject crossed joins can also reject an unchanged crossing when only an unrelated pending Task is repaired. | Keep original GraphNative validation/admission and diagnose the known shape. Program validates its explicit structure independently. No blanket graph hardening or grandfather registry decides eligibility. The positive native repair probe demonstrates why this distinction matters. **Resolved in final P01/NP4.** |
+| **U19-E6** | Nested Any cancellation fails even without crossed joins; attributing the failure to unsupported graph expressiveness hides a concrete shared-runtime defect. | The final diagnostic reproduces proper-nested Any at sequence 40 and crossed Any at 37. P01 owns a bounded accepted-ancestor cancellation evidence query shared by driver/projection timer/wait/retry consumers, retaining other cancellation sources and wrong-sibling/no-source refusal. No synthetic historical event or new cross-scope token language. **Design resolved; implementation and recovery tests remain required.** |
+| **U19-E7** | A commitment needs generated workflow identities before exact-scoped permissions can be checked. A new commitment scope cannot silently grant all future workflow actions. | Control prepares a finite set of exact workflow identity slots and visible purposes before definitions, with accepted maximum slots/associated runs. Revisions reuse the workflow ID. Current exact operation/grant checks use these identities; missing scope requires a separate authorized grant change. The user does not invent internal IDs and already-covered rounds need no repeated approval. **Resolved in P04 and agency/P2/product.** |
+| **U19-E8** | Byte-based no-progress can be evaded by IDs, while indiscriminate ID normalization can erase legacy lexical choice priority. | P04's source-version-aware plan form materializes semantic order before normalizing only nonsemantic generated identity. Pins/interfaces/operations/targeted waits remain significant. Evidence novelty uses declared finite roles and content/accepted-observation keys, with absolute limits regardless. It is a stop proxy, not a theorem of equivalence or truth. **Resolved.** |
+| **U19-E9** | Reuse approval could become a universal evidence-selection gate, or favorable ordinary knowledge could be mistaken for required protected qualification. | P07 permits authorized unapproved/negative/disputed sources with real status visible. `ApproveKnowledgeForReuse` qualifies a specific version/applicability claim; ordinary adoption retains its own authority/risk/agreement/reconciliation route. Protected qualification/promotion preserves its stronger profile. No fake executable method or mandatory managed target is introduced for an architecture lesson. **Resolved.** |
+
+### Source-backed live-work and authority trace
+
+The actual [reconciliation action table](../../../../../crates/runtime/src/reconciliation.rs)
+preserves unchanged scoped work, uses new pending/eligible configurations prospectively, and
+chooses `UseNewOnNextInvocation` for changed active work under `FinishCurrentThenAdopt`. Changed
+side effects and started-descendant dependencies have separate authority/remediation/refusal
+rules. That is why neither a whole conversion certificate nor a blanket active-node freeze is
+the correct compatibility contract. Tests and history supporting the finer distinction are
+recorded in [the agency investigation](agent-directed-work.md#u19-preserve-legitimate-repair-conversion-is-not-reconciliation).
+
+For S28 with a native target, the commitment's exact packet carries actual source family/base,
+history/frontier, allowed edits, protected agreement, remaining allowance and source provenance.
+An authenticated graph edit follows native validation and ordinary proposal/adoption into the
+same target run; preserved old occurrences, uncertainty and resource/account facts remain owned.
+A generated Program target follows the same application route using Program edits. The model
+cannot make an accepted conversion or authority claim true by labeling its output that way.
+Stale target/sequence is a saved refusal, and reply loss replays the accepted proposal/action.
+
+[The current agreement validator](../../../../../crates/blueprint/src/agreement.rs) seals every
+outside node and crossing edge and admits only bounded Tasks with exact allowed requirements
+inside the prefix. An inherited child cannot adopt independently merely because its isolated
+definition can be edited. NP4 preserves both the valid protected-root Task repair and that distinct
+inherited-child refusal. A Program v2 body can alter its internal fixed-output implementation
+because the newly accepted v2 contract says so, not because the old v1 contract was relaxed.
+
+The control-owned commitment remains preferable to the complete root-workflow alternative for
+the selected bounded product: it can assess a paused nonterminal target without first extending
+the runtime with asynchronous owned handles, nonterminal observation and supervisor lifetime
+semantics. That alternative remains achievable with one scheduler and has the real advantage of
+authored reusable supervisory algorithms. The selected commitment is a closed coordination
+policy; it must not claim arbitrary authored supervisory logic. Source-family choice does not
+change that ownership comparison.
+
+I checked the final authority/account clauses against the concrete counterexamples. Existing
+[WorkflowRunScope](../../../../../crates/authority/src/model/resource.rs) supports prepared exact
+identities, not inferred future-descendant permission. The new commitment scope is explicit and
+separate. Local descendants use the cumulative account and atomic gate; current marked-controller
+containment still compares the whole inherited allowance. Independently entered old targets keep
+their visible original account. A policy successor cannot change accepted run authority or raise
+the original ceilings. Remote B acceptance retains its own authority/cancel/deadline boundary;
+A's close cannot prevent B entry before cancellation is observed. Unknown outer usage stays held.
+These are now explicit owner contracts, not questions left to implementation.
+
+### Runtime observation and verification limits
+
+The final coordinator diagnostic observes proper nested All success, fork-with-direct-terminals
+success, crossed All still Running after 32 ticks, two Any cancellation failures and successful
+same-run pending Task repair preserving the active Wait. I read its retained source/log, not
+executed it independently. This is a bounded discriminator, not a full language or runtime pass.
+The direct-terminal behavior stays available through GraphNative; Program's explicit Parallel
+outcome/Return route is not falsely certified equivalent to historical last-terminal selection.
+No useful general crossed-ownership execution or universal conversion is established.
+
+The cancellation finding is supported directly by bounded ancestor traversal in
+[execution_branch_state](../../../../../crates/runtime/src/engine/support.rs), the immediate-owner
+test in [projection helpers](../../../../../crates/runtime/src/projection/helpers.rs), and its
+[timer consumer](../../../../../crates/runtime/src/projection/apply_timer.rs).
+[PlanTransition::push_event](../../../../../crates/runtime/src/engine/transition.rs) applies to a
+prospective projection before appending its event. The observed errors therefore do not establish
+corrupt durable history. Future acceptance must prove the corrected drain/reopen behavior and
+continue to reject unrelated-scope cancellation; the source diagnosis does not substitute for it.
+
+The combined proposal now resolves the foundational choices within this assigned review. R as
+default plus GraphNative costs two maintained source families; corrected graph M remains the
+strongest alternative if valued new work accumulates outside R or shared checks become competing
+owners. No measured human/model advantage is claimed. Shared-authoring implementation, exact
+conversion/frontier coverage, automatic criticism quality, public clients, runtime repair and
+full S28 remain assigned future verification. There is no remaining product-policy question for
+the user in this review, and no authorization to implement follows from this planning verdict.
+
+Final local documentation checks for this follow-up: 79 distinct local Markdown targets across
+this review, the agency investigation, P2 and product/value exist; `git diff --check` passed.
+These checks establish document integrity only. The coordinator owns the separate documentation
+gate and final commit; this reviewer did not run executable suites.

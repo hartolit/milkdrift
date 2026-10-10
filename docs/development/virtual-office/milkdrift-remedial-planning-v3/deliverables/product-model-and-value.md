@@ -8,8 +8,9 @@ bounded automatic reconsideration and precisely labeled human-reviewed knowledge
 proposed architecture and implementation program still require review. Current vision and accepted
 ADRs are implementation evidence and prior judgments, not independent user endorsements. U19
 rejects automatic loss of legitimate prospective repair through conversion gating. P2/r4 therefore
-recommends structured authoring defaults plus graph-native support under one owner, pending the
-coordinator's final diagnostic synthesis; it does not claim a source-only writer transition is approved.
+selects structured authoring defaults plus graph-native support under one owner after the actual
+source/state comparisons and diagnostic synthesis. The architecture is proposed for user review;
+the withdrawn source-only writer transition is not selected or approved.
 
 ## Objects and relationships a user needs
 

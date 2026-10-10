@@ -85,6 +85,9 @@ an ordinary authorized method without falsely requiring protected learning quali
 Test prepared exact workflow slots under a restricted grant, scope refusal before effect, no implicit
 grant from commitment association, and reuse of permitted slots across rounds without allowance reset.
 No-progress must distinguish a legacy priority-changing port rename from a harmless Program-ID rename.
+Include the observed ordinary nested Any cancellation regression: ancestor evidence must be accepted
+consistently by scheduling and timer/wait event validation, with unrelated-sibling/no-source denial.
+Graph admission must not become stricter merely to hide this runtime defect or block native repair.
 
 Fix every discovered in-scope defect through its owning boundary with independent regression and
 all consumers. Commit meaningful working fixes and preserve diagnostic evidence. Use focused reruns

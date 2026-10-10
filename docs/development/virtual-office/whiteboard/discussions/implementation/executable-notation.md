@@ -21,8 +21,9 @@ canceling or starting new work is not presented as an equivalent repair.
 The [new runtime diagnostic](../../../milkdrift-remedial-planning-v3/working/compatibility-runtime-evidence.md)
 was authored by Delta and run by Rowan against real blueprint/runtime/redb in isolated temporary
 stores. It establishes that validation accepts crossed fork/join ownership, while proper nested
-All completes, crossed All stalls and crossed Any produces a planned-event cancellation-consistency
-error. That last error is not evidence of corrupt persisted history. No useful successful non-nested
+All completes and crossed All stalls. Both proper nested Any and crossed Any produce a planned-event
+cancellation-consistency error, so this defect also affects ordinary nesting. Those errors do not
+establish corrupt persisted history. No useful successful non-nested
 capability was demonstrated. The decisive positive case is a Task replacement before the unchanged
 crossed subgraph: approval/application succeeds, the active Wait's identity remains and the Task
 never enters. Whole-graph conversion is therefore unnecessarily strong as a prerequisite for that
@@ -59,9 +60,12 @@ settles this judgment.
 Native authoring is not removed by this program. A future reviewed retirement requires equivalent
 supported construction/import/copy/edit and legitimate live repair for affected active/reusable work,
 exact agreement/recovery evidence, and an announced writer/client transition. No cutoff or eligibility
-registry is selected. Historical read/replay/execution has a separate lifecycle. P01 must include
-the crossing defect's validation/runtime hardening and preservation tests, with no fabricated old
-events and no loading/repair ban used as a substitute for handling accepted work.
+registry is selected. Historical read/replay/execution has a separate lifecycle. Retain GraphNative's
+original validation; do not add blanket stricter admission that strands an unrelated repair.
+P01 replaces disagreeing driver/replay cancellation lookups with one private bounded predicate over
+accepted ancestor-scope cancellation facts, including timer/wait/retry consumers and unrelated-scope
+refusals. Crossed-All stalled topology remains a separate diagnostic; Program has structural
+validation. No fabricated old events or loading/repair ban substitutes for handling accepted work.
 
 The [U19 comparison](../../../milkdrift-remedial-planning-v3/working/structure-comparison.md#u19-reopens-representation-and-removes-the-conversion-prerequisite-for-repair)
 records this actual change of position, the alternatives and exact state matrix. The standards

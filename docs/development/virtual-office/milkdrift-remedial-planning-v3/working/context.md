@@ -64,7 +64,9 @@ production runtime/redb without external calls. Proposed source, ongoing-work an
 remain modeled. No authoring-quality, frontend, hardware, live provider or full-system pass was invented.
 The [compatibility diagnostic](compatibility-runtime-evidence.md) preserves exact source/output for
 successful native pending repair beside unchanged nonnested structure, proper nested/joinless success,
-crossed-All stall and crossed-Any history error. A corrected harness completed all observations;
+crossed-All stall and both crossed/proper-nested Any history errors. The last finding distinguishes
+scheduler ancestor cancellation from immediate-owner projection validation and is a concrete P01 repair.
+A corrected harness completed all observations;
 that completion is not a full-system pass or proof every accepted graph is useful/convertible.
 
 Read the [decision packet](../deliverables/README.md) for the revised proposal and program, and the

@@ -928,7 +928,9 @@ stated criterion, not assertions of objective verification. Each declaration sel
 rule `NamedReviewer` or `PairedNoRegression`, fixing its required reviewer/case slots. The latter
 requires no worse declared case and at least one better case; it makes no statistical claim.
 Missing/unknown required evidence yields `Inconclusive`; incompatible bindings are refused before
-comparison. Contradictory required judgments produce `Disputed`, retaining the exact differences
+comparison. Contradictory required judgments for the same declared case/criterion produce `Disputed`,
+retaining the exact differences. Better on one case and Worse on another instead fails the finite
+PairedNoRegression rule; it is not reviewer contradiction. Keep exact required receipt/role bindings
 rather than manufacturing consensus or picking the latest favorable reply. A declaration whose
 required reviewer slots are not compatible with its finite rule is rejected at declaration time.
 
@@ -1200,3 +1202,56 @@ deliberately nonequivalent but compatible future adoption as different claims. C
 families through one checked-plan consumer and inspect removal of the private daemon recognizer,
 not disappearance of the supported native graph contract. Existing tests above provide concrete
 oracles but do not prove these future implementation combinations.
+
+### Final U19 integration: native agreements and evidence-backed correction
+
+The final [NP4](../deliverables/notation-profile.md) now closes the new Program agreement contract,
+rather than leaving its authority semantics to the implementer. I compared hashing a synthetic
+lowered graph, retaining v1 for every new source, and a separately accepted source-skeleton v2.
+The selected v2 seals the enclosing Program with each disjoint stable Task-only Sequence body
+replaced by a typed scope slot. It fixes scope identity, external input bindings, input/output
+names/schemas/requiredness, exact permitted requirement envelopes, task/adoption bounds and effect
+policy. Only the internal Task body/order/configuration/value references and implementation of
+the fixed scope outputs may change. Outside consumers use those outputs; undeclared external
+reads and direct references into the private body refuse. Verifiers, effects, calls and other
+control remain protected. Existing occurrence/history/reconciliation rules still apply.
+
+This places new agreement meaning on what the author actually accepts, avoiding compiler-generated
+node identities as accidental permission. Mutable internal output implementation is explicitly new
+v2 behavior; it is not equivalent to v1's frozen crossing-edge identity. Native graph successors
+continue the actual v1 validator. A converted v1 revision needs blueprint's checked ephemeral
+`LegacyAgreementView`, accounting for the current protected source/plan and all origin mappings;
+it cannot merely copy the old protected digest. No accepted agreement changes in an existing run.
+This resolves the native-program obligation question without granting general structural repair.
+
+The final commitment progress proxy is likewise source-aware. Before alpha-normalizing proven
+nonsemantic generated identities, the checked plan materializes old lexical branch priority as
+explicit order. A renamed legacy port that changes selection is not an equivalent plan. Interfaces,
+operations, pins and targeted wait references remain material. Declared finite evidence roles use
+content/accepted-observation keys, not fresh artifact identities. The proxy supplies a bounded
+stop rule, not a general equivalence or correctness theorem.
+
+I read the coordinator's retained [compatibility diagnostic](compatibility-runtime-evidence.md)
+and reread the implicated production source; I did not run its Cargo command. Proper nested All
+and direct branch terminals complete, crossed All is still Running after 32 ticks, and both
+proper nested Any and crossed Any reject a planned TimerCancelled. The independent pending-Task
+repair succeeds while preserving its active Wait and unchanged crossed topology. These results
+establish neither useful general nonnested graph execution nor a successful runtime repair.
+
+The Any failure has a narrower source explanation than “crossing graphs are unsupported.”
+[execution_branch_state](../../../../../crates/runtime/src/engine/support.rs) walks bounded scope
+ancestors, whereas [has_execution_cancellation_source](../../../../../crates/runtime/src/projection/helpers.rs)
+checks only the immediate branch owner. [Timer cancellation](../../../../../crates/runtime/src/projection/apply_timer.rs)
+uses the latter for wait/retry events. P01 now assigns one private bounded query for accepted
+ancestor cancellation evidence shared by driver and validation, preserving other cancellation
+sources and refusing an unrelated sibling or mere inactivity. It does not invent old facts.
+[PlanTransition::push_event](../../../../../crates/runtime/src/engine/transition.rs) validates before
+appending its prospective event; the two errors do not prove corrupt history was persisted.
+
+Keep original GraphNative validation/admission, with an exact diagnostic for the known stalled
+shape. A blanket stronger graph validator would recreate U19's defect by rejecting an unchanged
+crossing during an unrelated valid repair. Program's explicit structure may reject that topology
+without imposing the same eligibility restriction on native graph work. This is the selected
+compatibility policy, not an unresolved choice between grandfather registries. Future P01 tests
+must establish the actual cancellation fix, replay/reopen and wrong-scope refusal. No such
+implementation or product acceptance is claimed by this investigation.

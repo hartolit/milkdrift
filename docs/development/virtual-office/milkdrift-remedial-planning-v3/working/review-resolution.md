@@ -1,4 +1,33 @@
-# Combined review and resolution — reopened RR2
+# Combined review and resolution — reopened RR3
+
+## U19 review and consequential corrections
+
+Rowan-20261010 records this actual continuation after `816874c` and the native-repair checkpoint
+`990c936`. U19 is primary instruction, not inferred acceptance of the conversion-gated loss.
+Elin, Delta and Faris are the same real reopened reviewer sessions, now exposed to one another's
+designs; their follow-up work is adversarial rereading, not a new blind independent vote.
+
+| Challenge and actual evidence | Revised decision and consequence | Reread / proof boundary |
+| --- | --- | --- |
+| User: exact execution does not preserve legitimate adaptability | Compare equivalent conversion, graph-native repair and corrected graph M. Select structured defaults plus explicitly supported GraphNative create/import/copy/edit/repair in one blueprint owner/plan/runtime; no retirement in this program. | All three reviewers traced five state categories. Two versioned source validators/lowerers cost real maintenance; M remains strongest dissent. |
+| Whole-definition conversion was stronger than live reconciliation | Production probe changes pending Task while preserving an active Wait and unchanged crossed structure. Separate equivalent conversion from deliberately changed future adoption. | Executed isolated runtime/redb, no Task entered. New cross-source adoption remains modeled and requires exact preserved-fact/obligation correspondence. |
+| Faris's first native-maintenance design added eligibility metadata/cutoffs | Rowan/Elin challenged the need. Retain existing versioned graph APIs and exact authority; no registry or fabricated age/import gate. | Faris records reversal and concrete existing import/copy/old-command consumers. No new narrowing remains selected. |
+| Joinless graph does execute but has exact terminal/output semantics | Retain those semantics as GraphNative rather than adding a Program compatibility-only DirectTerminals mode. | Delta withdrew that mode after challenge; ordinary new parallel outcome/result handling is distinct intentionally authored meaning, not asserted equivalent conversion. |
+| Old command retry can occur after revision commit before outer receipt | Preserve deterministic old-version graph compilation; default Program output requires new version/explicit source choice. Explicit selected proposal base replaces sorted-parent inference. | Faris reread source producers/receipts; P01/P09 carry exact retry and merge-base oracles. |
+| Task plan normalization could change old config/dependency hashes | Preserve source-version fingerprints and exact v1 agreement facts; plan is not a substitute for historical source identity. | Faris reread raw hash producers and reconciliation; converted v1 derives complete LegacyAgreementView. |
+| Native Program agreement was not specified sufficiently | Select explicit v2 sealed source skeleton with bounded Task-only Sequence scopes, exact requirement envelopes/interfaces and mutable internal result implementation. | Elin/Delta worked the contract, Faris reread it. Old graph/converted v1 stay under their exact original agreement, never auto-upgraded. |
+| Knowledge approval could become a universal selection/adoption gate | Unapproved/negative sources remain selectable with status; ordinary method adoption keeps authority/risk/agreement/reconciliation. Protected qualification/promotion keeps its stronger profile. | Elin inspected optional existing selection approval and control submit/apply. P07 and packet corrected. |
+| Commitment scope does not imply rights on generated workflows | Prepare bounded owner-allocated workflow slots and exact existing planner/critic identities; require actual ordinary workflow permissions. Separate new commitment-operation scope; no grant minting. | Source WorkflowRunScope supports exact IDs/Any, not implicit descendants. Scope gaps refuse before effect; covered rounds remain automatic. |
+| ID normalization can erase legacy business priority | Use source-version-aware plan form with materialized lexical order; normalize only proven nonsemantic generated IDs. | Counterexample is the executed priority probe, joined with P04 no-progress contract. |
+| Stricter graph validation would undo valid native repair | Retain GraphNative admission; diagnose known shape limits rather than reject unchanged unrelated topology. | Program has its own structural validation. No new eligibility or violation registry. |
+| Crossing cancellation error might be ordinary nesting defect | Extra proper-nested Any probe reproduced the same error. Scheduling traverses ancestor branches; timer/wait projection accepts only immediate branch evidence. | Concrete common bounded ancestor-cancellation query repair assigned P01, with wrong-sibling/no-source denial and valid-journal recovery tests. No production fix or persisted-corruption claim made. |
+
+The final [program reread](program-review.md) and source reports retain actual review and limitations.
+These corrections change the proposed architecture and implementation responsibilities; no required
+foundational decision is transferred as a future discovery assignment. User review remains the
+implementation boundary. Historical RR2/RR1 reasoning below is preserved where superseded.
+
+## Prior reopened RR2 at 816874c
 
 Rowan-20261010 coordinates this addition. The `ff818e5` RR1 record below is preserved as historical
 exposure, including its insufficient decision to defer the planner-consumer investigation. Current

@@ -58,7 +58,7 @@ changes and limits. Their package-level tables refine this audit rather than giv
 
 | Completed investigation | Package coverage joined here | Comparative depth and resulting direction |
 | --- | --- | --- |
-| [Structure and prospective change](structure-comparison.md) | blueprint; runtime activation/reconciliation; workspace/control/persistence consumers | Concrete current child-choice graph, complete corrected graph, canonical regions and actual BPMN subset on D1–D8. After constructive challenge, select canonical structured source lowered to one checked execution plan. Preserve legacy graph meaning; no asserted universal conversion. Remove operation-only external reducer path in favor of ordinary Task plus explicit collection. |
+| [Structure and prospective change](structure-comparison.md) | blueprint; runtime activation/reconciliation; workspace/control/persistence consumers | Concrete current child-choice graph, complete corrected graph, canonical regions and actual BPMN subset on D1–D8. U19 extends comparison to actual accepted topology and five live-state categories: select structured defaults plus retained versioned graph authoring/repair through one checked plan. No universal conversion claim. Consolidate external reducer execution into ordinary Task plus collection; repair demonstrated ancestor-cancellation predicate mismatch. |
 | [Agency, context and learning](agent-directed-work.md) | control; runtime context/controller; workspace; model; evidence; adaptive-slotbook and daemon learning | Actual producer search establishes missing general planner and managed-publication-only evaluation. External driver, finite round and continuous bounded control compared; U17/U18 resolve product scope, not architecture. Full root-run versus control-owned commitment comparison and shared knowledge-evidence reconstruction supply the selected implementation boundary. |
 | [Execution/resource reconstruction](execution-reconstruction.md) | capability, capability-host, authority, persistence, peer-protocol, model; local-process, model-provider, managed-linux, peer-http, redb-store, local-secret | Same lost-reply/lost-stop/revocation/restart case through current, complete correction and unified invocation service. Retain distinct accepted facts; move managed transition policy out of storage mechanism, converge fresh serving admission and use typed descriptor construction. |
 | [Application reconstruction](application-reconstruction.md) | daemon, cli, control-protocol, control-client, prompt-sequence, contracts; evidence/example relationships | Current raw/template authoring versus shared graph builder versus structured source; exact application/runtime receipt purposes; configuration and contract alternatives. Move pure semantic construction to blueprint and authenticated orchestration to control; preserve independent wire/client/importer boundaries. Correct the old publication-list finding's contract mismatch. |
@@ -73,8 +73,9 @@ is not newly qualified by that conclusion.
 Specific limits remain: no proof every currently accepted graph decomposes into regions; no measured
 human/model authoring advantage; no new live provider/hardware/platform qualification; no complete
 audit of every authority-fact producer, parser path, storage scanner or fairness/overload edge. These
-do not inherit an overall passing grade. The selected compatibility rule supports old graph execution
-without requiring that proof and refuses unsupported source conversion. Existing evidence continues
+do not inherit an overall passing grade. The selected compatibility rule supports old graph execution,
+creation, import, lawful copy and repair without requiring that proof; unsupported conversion refuses
+separately. Existing evidence continues
 to own physical/platform claims. No newly uncovered issue is called a runtime bug merely because a
 modeled contract is more useful.
 
@@ -82,6 +83,17 @@ New executed evidence is the [priority runtime diagnostic](priority-runtime-evid
 guards, fixed destinations and swapped port IDs change the actual selected business route. That
 supports explicit semantic ordering and exact preservation of legacy ordering. It does not execute
 any proposed structured source or continuous-work design. E01–E07 remain the original observations.
+
+U19's [compatibility diagnostic](compatibility-runtime-evidence.md) separately established successful
+native pending-task adoption beside unchanged nonnested topology while preserving an active wait.
+Proper nested All and joinless Fork completed; crossed All stalled after 32 bounded ticks. Both
+crossed and proper-nested Any produced a planned-event cancellation-source error. Source investigation
+shows scheduler ancestor-scope traversal versus projection immediate-owner validation; the program
+assigns that concrete runtime consistency repair without rewriting accepted history or imposing a new
+graph admission cutoff. No useful additional expressiveness is inferred from a failing crossed graph.
+The final source-family/authority/knowledge review also distinguishes equivalent conversion from live
+adoption, source-version hashes from normalized plans, exact workflow slots from commitment authority,
+and ordinary source selection/adoption from approved knowledge/protected-method qualification.
 
 The earlier scenario table below is retained as the `ff818e5` exposure record. Its provisional
 R-C01/P2/NP2 and missing-orchestration claims are superseded by the linked reopened investigations

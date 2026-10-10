@@ -1,11 +1,11 @@
 # What should an author control, and what must the execution model know?
 
-## Revised recommendation — P2, revision 4, under U19 review
+## Revised recommendation — P2, revision 4, selected for planning after U19
 
 Elin-20261010 recommends structured source as the default for new complete authoring conveniences,
 with graph-native source/editing retained in the same blueprint/control owner and checked-plan
 runtime. This revises P2/r3's source-only writer transition after U19 and direct reconciliation
-inspection; the coordinator's diagnostic comparison is being integrated before final selection. Requires
+inspection; the diagnostic comparison and final combined reread are integrated. Requires
 [G1/r2](../vision/remedial-purpose.md) and [P1/r3](reuse-service-and-placement.md).
 U17/U18 approve the product's evidence and continuous-work outcomes.
 [U19](../../../milkdrift-remedial-planning-v3/intent-source-excerpts.md#u19--preserve-legitimate-adaptability-while-choosing-migration)

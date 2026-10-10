@@ -69,13 +69,18 @@ are retained. It establishes legacy lexical priority and motivates explicit new-
 not a user/model authoring experiment or execution of the new representation.
 
 The [compatibility diagnostic](../working/compatibility-runtime-evidence.md) used the same production
-runtime/redb with isolated stores. Proper nested joins and a joinless fork completed; crossed All
-was still running with no pending successors after 32 deterministic ticks; crossed Any raised a real
-InvalidHistory cancellation-owner error. Those accepted definitions do not prove useful irreducible
+runtime/redb with isolated stores. Proper nested All joins and a joinless fork completed; crossed All
+was still running with no pending successors after 32 deterministic ticks. Both proper-nested Any and
+crossed Any raised a real InvalidHistory cancellation-owner error. The additional nested case and
+source trace locate a scheduler/projection disagreement about ancestor cancellation, now assigned
+as a concrete common-runtime repair in P01. No corrupt persisted journal is established: validation
+failed before the proposed event was appended for commit. Crossed definitions do not prove useful irreducible
 expressiveness. In a separate paused run, native pending-task repair succeeded while preserving the
 active wait's identity and unrelated crossed structure, with no external task entered. Earlier harness
 attempts and the corrected final source are distinguished. Diagnostic completion is not a whole-system
-pass; the observed runtime error remains a finding, not hidden by the executable's final exit status.
+pass; both observed errors remain findings, not hidden by the executable's final exit status. Original
+GraphNative admission stays supported; stricter topology rejection cannot substitute for that fix or
+block an unrelated native repair.
 
 All alternative representations, continuous-work handshakes and prospective knowledge shapes are
 modeled proposals. No production Rust/schema/config change, prototype/frontend implementation, live

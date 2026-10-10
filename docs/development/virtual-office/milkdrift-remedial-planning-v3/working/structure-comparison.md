@@ -929,18 +929,22 @@ The [exact runtime evidence](compatibility-runtime-evidence.md) embeds the full 
 manifest, command, hashes and output. Rowan ran it after two harness corrections, which that file
 distinguishes from product observations. Proper nested All completed; crossed All remained Running
 after 32 ticks with no pending successor scans; crossed Any produced a genuine `InvalidHistory`
-for timer cancellation without its required structured owner fact. Fork without Join succeeded.
+for timer cancellation without its required structured owner fact. A final proper-nested-Any
+discriminator also produced the same error, so the defect is not caused only by crossed topology.
+Fork without Join succeeded.
 The paused-prefix native Task repair was approved/applied, preserved the active Wait identity and
-left the Task unentered. Final exit 0 reports diagnostic completion with one retained observed
+left the Task unentered. Final exit 0 reports diagnostic completion with two retained observed
 production error, not a clean acceptance suite.
 
 These results refute both convenient shortcuts: the validator does not make every accepted graph
 a structured tree, and failure of whole-graph conversion does not make a local pending repair
 unsafe. They do not demonstrate a valuable successful crossed-ownership capability that R loses.
 The default R recommendation therefore survives with the corrected source-version/native-repair
-contract, while M remains the lower-maintenance alternative. The new crossing defect becomes a
-named validation/runtime hardening and recovery case, not an excuse to strand native work or to
-make new source deliberately reproduce invalid history. Already accepted evidence is immutable;
+contract, while M remains the lower-maintenance alternative. Retain GraphNative's original validator;
+no stricter admission or eligibility registry may bar unrelated native repair. Crossed-All stalled
+topology is a separate diagnostic. The ordinary nested-cancellation defect gets the shared predicate
+correction below, not a loading ban or requirement for new source to reproduce invalid history.
+Already accepted evidence is immutable;
 safe future changes and truthful cancellation/uncertainty handling remain prospective.
 
 ### Native Program agreement scope after Elin's final challenge
@@ -966,3 +970,21 @@ Finally, the crossed-Any error occurred while applying a proposed event to the c
 inside `PlanTransition::push_event`, before the event enters the eventual commit list. The diagnostic
 is not evidence of corrupt persisted history. This qualification matters for the defect's recovery
 scope and does not weaken the observed native-repair result.
+
+### The final discriminator narrows the cancellation fix
+
+The runtime driver calls `execution_branch_state`, which walks accepted ancestor scopes; projection's
+`has_execution_cancellation_source` checks only the immediate `branch_owner`. Timer and wait
+cancellation use that projection predicate. The source mismatch predicted failure for an ordinary
+properly nested Any race too, and the additional bounded case confirms `InvalidHistory` at sequence
+40 (crossed Any fails at sequence 37). Both fail before the proposed event is added for commit.
+
+Select one private bounded runtime cancellation-source predicate over actual accepted scope ancestry,
+branch cancellation facts and the existing run/reconciliation/child/publication sources. Driver and
+timer/wait/retry replay validation must consume that same owner. A real cancelling ancestor can
+authorize its descendant; an unrelated sibling or missing source cannot. Preserve exact event order,
+existing uncertainty/attempt/hold semantics and bounds. This requires no invented past event, new
+graph mode or caller-supplied permission Boolean. P01 should test the ordinary nested race, crossed
+race, nested signal/retry cancellation and unrelated-scope refusal. The current GraphNative validator
+remains version-correct; Program validates its own structure. Fixing this runtime discrepancy is
+separate from deciding how to diagnose or prospectively repair a stalled crossed-All graph.

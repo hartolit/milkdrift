@@ -175,8 +175,8 @@ pins it. A converter cannot authorize that change; cancellation/new work is not 
 ## Actual non-nested cases and the boundary of R
 
 The [production diagnostic](../working/compatibility-runtime-evidence.md) proves the validator accepts
-crossed fork/join ownership. Proper nesting succeeds; crossed All remains Running after 32 ticks;
-crossed Any raises an `InvalidHistory` cancellation-owner error. These are current defect/stall
+crossed fork/join ownership. Proper nested All succeeds; crossed All remains Running after 32 ticks;
+both proper nested Any and crossed Any raise an `InvalidHistory` cancellation-owner error. These are current defect/stall
 observations, not useful demonstrated extra graph expressiveness. The same diagnostic successfully
 applies a pending Task change before that unchanged crossed graph while preserving an active Wait.
 It directly disproves whole-definition conversion as a necessary condition for that repair.
@@ -192,11 +192,15 @@ DirectTerminals mode is added merely to claim total conversion. New work asking 
 branches, fail on any failed outcome and select a particular result can express that explicitly with
 Parallel outcome handling and Return. It does not inherit an incidental historical last-terminal rule.
 
-P01 must include precise new-construction validation and runtime hardening/recovery cases for the
-crossing defect. Such correction cannot invent accepted cancellation/Join facts, reject loading all
-old affected work, or block an unrelated safe native repair. Unentered topology can be repaired
-prospectively; started/uncertain ownership must retain its actual evidence and ordinary controls.
-No production fix or claim of complete recovery for this diagnostic error has been made in planning.
+Retain original GraphNative validation; there is no blanket stricter admission or eligibility
+registry blocking unrelated native repair. Program validates its own structured source. Crossed-All
+stalled topology remains a precise diagnostic and may be deliberately repaired while unentered;
+accepted scopes cannot be relocated by inference. The Any failure is a separate ordinary nested-
+cancellation defect: the driver sees cancelling ancestors while projection's current predicate
+checks only the immediate branch. P01 must give both one private bounded ancestor-cancellation
+evidence predicate over accepted scope/fact ownership, including timer/wait/retry consumers. Preserve
+existing nonbranch cancellation sources; unrelated scopes must refuse. No invented historical
+cancellation/Join events or loading ban replaces this correction. No production fix was made here.
 
 ## Cost, retirement and required proof
 

@@ -8,15 +8,16 @@ Wait and is never dispatched. No provider, live daemon, deployed store or paid c
 This is current-behavior evidence for the [U19 comparison](structure-comparison.md#u19-reopens-representation-and-removes-the-conversion-prerequisite-for-repair),
 not an implementation of proposed region source, a whole-language conversion proof or acceptance
 of the exposed crossing behavior. Final process exit 0 means all diagnostic cases were attempted;
-its output explicitly reports one observed production error.
+its output explicitly reports two observed production errors.
 
 ## Exact observations
 
 | Case | Construction and real runtime observation | What it establishes |
 | --- | --- | --- |
 | Proper nested All joins | Eight nodes/nine control edges accepted; run reached explicit terminal and succeeded. | Positive control for the same node/configuration family. |
+| Proper nested Any outer join | Accepted definition; `InvalidHistory` at sequence 40 reports the same timer cancellation ownership mismatch. | The cancellation defect affects ordinary valid nesting too; it is not explained by crossed topology. |
 | Crossed All joins | Same counts accepted; after 32 bounded ticks the run remained Running with no pending successor scans and retained branch ownership. | Validator admits non-nested ownership; the runtime does not give it general cross-scope token behavior. This is not useful extra concurrency. |
-| Crossed Any outer join | Accepted definition; runtime returned `InvalidHistory` at sequence 37: timer cancellation lacks a structured owner cancellation fact. | A real current validation/runtime defect boundary, not a modeled risk or legitimate successful expressive capability. No production repair was performed. |
+| Crossed Any outer join | Accepted definition; runtime returned `InvalidHistory` at sequence 37: timer cancellation lacks a structured owner cancellation fact. | Another instance of the common nested-cancellation defect; not a modeled risk or successful expressive capability. No production repair was performed. |
 | Fork with two direct success terminals and no Join | Accepted and succeeded; two branch-terminal facts, no fabricated JoinSatisfied. | Exact supported behavior, also covered by the existing structured-runtime test. It is not automatically equivalent to a new joined Parallel's output semantics. |
 | Paused prefix Wait → pending Task → unchanged crossed All graph | Task requirement replacement produced `ChangedPending / UseNewOnNextInvocation`; Wait was `UnchangedActive / Preserve`; approval and application succeeded. Active Wait execution identity stayed identical; Task remained unentered; crossing structure unchanged. | Safe native future editing can succeed without converting an unrelated non-nested part of the definition. Does not show the later crossing work would complete. |
 
@@ -28,15 +29,25 @@ observation-control corrections, not product fixes. An initial field named `acti
 retained records rather than only active records; the final output correctly says
 `retained_branch_records`. Do not infer four active branches from the first log.
 
-The crossed graph and the safe pending repair need different disposition. Future hardening must
-not rewrite old accepted history or fabricate a Join/terminal/cancellation fact. Precise validation
-for new construction and graph-native prospective repair of unentered topology may prevent the
-crossing; a runtime fix must preserve actual cancellation/ownership evidence for already accepted
-work. Existing active/uncertain scopes cannot be relocated under a guessed region decomposition.
-A store load cannot simply reject all old affected definitions, and an unrelated native Task edit
-cannot be barred as a substitute for investigating the defect. The final implementation program
-must include explicit source/runtime fault oracles, not reproduce this failure as intended new
-region semantics.
+The first complete five-case diagnostic is retained at planning commit `990c936`. Further source
+inspection found a mismatch between the driver's ancestor-scope cancellation lookup and replay's
+immediate-branch-only lookup. The final bounded discriminator adds proper nested Any without
+changing its topology; it reproduces the same error and leaves both positive controls/repair intact.
+
+The crossed graph and cancellation defect need different dispositions. Retain the original
+GraphNative validator/command semantics: there is no blanket stricter admission or registry that
+would block an unrelated native repair. Program has its own structural validation. Crossed-All
+stalled ownership is a precise diagnostic, not a successful capability or grounds to relocate
+accepted scopes. Unentered topology may be deliberately repaired through ordinary reconciliation.
+
+For the independently reproduced nested cancellation defect, P01 must replace the disagreeing
+lookups with one private bounded runtime predicate over actual accepted scope ancestry and
+cancellation facts. The driver and projection's timer/wait/retry cancellation checks consume that
+same owner. An accepted cancelling ancestor can authorize its real descendants; an unrelated sibling
+or invented Boolean cannot. Preserve existing run/reconciliation/child/publication cancellation
+sources, event ordering, attempts, uncertainty and bounds. No synthetic historical cancellation,
+Join or terminal event is inserted. Test ordinary nested Any, crossed Any, signal/retry waits and
+unrelated-scope refusal. This is a selected future correction, not a production fix made here.
 
 `PlanTransition::push_event` in
 [transition.rs](../../../../../crates/runtime/src/engine/transition.rs) applies the proposed event to
@@ -53,7 +64,7 @@ CARGO_TARGET_DIR=/home/hartolit/Projects/dev/milkdrift/target/remedial-planning-
 ```
 
 Environment uses Rust 1.95.0 (`59807616e`, 2026-04-14), Cargo 1.95.0 (`f2d3ce0b`, 2026-03-21),
-Linux repository host. Final incremental compilation took 0.73 seconds. The first build took
+Linux repository host. Final incremental compilation took 1.32 seconds. The first build took
 10.85 seconds. These are diagnostic build times, not runtime or product performance qualification.
 Production source at the planning checkpoint is unchanged; the reproduction paths below bind the
 actual checked-in production crates, with `runtime/test-support` only for the deterministic fixture.
@@ -61,8 +72,9 @@ actual checked-in production crates, with `runtime/test-support` only for the de
 | Retained object | SHA-256 |
 | --- | --- |
 | Final Cargo.toml | `386fe6b59380aae526dcd8680de936bd282b2f037d3413af9b6ad0d1ecbf4f91` |
-| Final src/main.rs | `3bc4bc04636d22286620a850bee5c2a8c352b1a12cc2b835041bb930588f16b4` |
-| Final compatibility-probe.log | `49a095afd3d00986e1f36d99c966475062d5d22c9431c8141451ea5cb6456b44` |
+| Final src/main.rs | `9519a557a2c0f990274525adaa886abcd3931e9d0c12aca32d654a9fecf99616` |
+| Final compatibility-probe.log | `7d3381a4e09a9f09959acfc0d7a5c9da88fb99933a1ae6d91867c8ad946c0651` |
+| Complete log before nested-Any discriminator | `49a095afd3d00986e1f36d99c966475062d5d22c9431c8141451ea5cb6456b44` |
 | Initial log, stopped at crossed Any | `baa37b93c304ae2c7d3a34b4db985189e690f30988f3fbb50c58a3336b599733` |
 | Second log, with parent-storage harness error | `31e1206b22000aed302d7c0a2d7a0f2bba22db1197278c74bfc70479b1de3403` |
 
@@ -263,6 +275,7 @@ fn main() -> Result {
     let mut observed_errors = 0;
     for (name, crossing, policy) in [
         ("proper-nested-all", false, JoinPolicy::All),
+        ("proper-nested-any", false, JoinPolicy::Any),
         ("crossed-all", true, JoinPolicy::All),
         ("crossed-any", true, JoinPolicy::Any),
     ] {
@@ -294,7 +307,7 @@ fn main() -> Result {
 
 ```text
    Compiling milkdrift-compatibility-planning-probe v0.0.0 (/tmp/milkdrift-compatibility-delta)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.73s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.32s
      Running `target/remedial-planning-v3/priority-target/debug/milkdrift-compatibility-planning-probe`
 CASE proper-nested-all: definition=accepted nodes=8 edges=9
 CASE proper-nested-all: lifecycle=Terminal(Succeeded) completed=true pending_successors=0 retained_branch_records=0
@@ -313,6 +326,8 @@ CASE proper-nested-all: lifecycle=Terminal(Succeeded) completed=true pending_suc
   join rule=All selected=2
   eligible node=done scope=ScopeReference { run: RunId("proper-nested-all"), scope: ScopeId("root") }
   run_terminal outcome=Succeeded
+CASE proper-nested-any: definition=accepted nodes=8 edges=9
+OBSERVED_CASE_ERROR case=proper-nested-any error=InvalidHistory("event proper-nested-any-event-61 at sequence 40: timer cancellation lacks a structured owner cancellation fact")
 CASE crossed-all: definition=accepted nodes=8 edges=9
 CASE crossed-all: lifecycle=Running completed=false pending_successors=0 retained_branch_records=4
   eligible node=F scope=ScopeReference { run: RunId("crossed-all"), scope: ScopeId("root") }
@@ -345,5 +360,5 @@ REPAIR item node=Some(NodeId("done")) classification=UnchangedPending action=Pre
 REPAIR item node=Some(NodeId("entry-wait")) classification=UnchangedActive action=Preserve
 REPAIR item node=Some(NodeId("pending-task")) classification=ChangedPending action=UseNewOnNextInvocation
 REPAIR accepted=true active_wait_identity_preserved=true pending_task_unentered=true unrelated_crossing_unchanged=true
-DIAGNOSTIC_FINISHED observed_case_errors=1; completion is not an acceptance pass
+DIAGNOSTIC_FINISHED observed_case_errors=2; completion is not an acceptance pass
 ```

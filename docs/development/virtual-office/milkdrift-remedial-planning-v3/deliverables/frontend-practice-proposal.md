@@ -1,6 +1,7 @@
 # Frontend practice — proposal for adoption
 
-This proposed practice began with Bram's FP1 and is revised by Delta for F1/r4 and F2/r4,
+This proposed practice began with Bram's FP1, was revised by Delta for F1/r4 and F2/r4, and now
+incorporates Rowan/Faris's U19 changes for F1/r5 and F2/r5,
 2026-10-10. Its intended canonical home
 after P00 adoption is `docs/development/practices/frontend.md`, selected through the existing
 practice guide. That canonical file and selector have not been edited in this planning assignment.

@@ -4,6 +4,11 @@
 
 This sprint reviews intentions, actual behavior, competing designs and their consequences. It produces a reviewed proposal and a complete, **unexecuted** remediation and Svelte implementation program. It does not build a prototype or change production behavior. Implementation starts only after the user reviews and approves the result.
 
+The reopened investigation under the [critique](reopened-critique.md), including the U17/U18/U19
+directions, is complete for review. The [current packet](deliverables/README.md) supersedes the earlier
+candidate without erasing its evidence or disagreements. The [handoff](handoff.md) records exact
+coverage, checks and continuation. No implementation is assigned by this planning completion.
+
 ## What v3 changes
 
 V2 already required serious alternatives, preservation of useful abilities and cross-system criticism. V3 adds a missing prerequisite: reconcile which goals still belong to Milkdrift before using them to justify architecture. It also distinguishes a contributor's observation, interpretation and recommendation, and controls when a recommendation can become a premise for other work.

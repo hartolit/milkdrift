@@ -120,13 +120,29 @@ shape from checked source/plan plus complete origin correspondence and apply ori
 rules. Do not blindly copy protected source or trust a supplied digest. Also test an unproved active
 graph where conversion refuses but a legitimate pending-task native repair succeeds and active identity
 remains unchanged. Retain precise uncertainty recovery and agreement refusals. Refusing every
-conversion cannot pass P01, nor can blanket denial of supported graph mutations. Test the observed
-crossed-join stall/history-error as regression/diagnostic cases with explicit expected repair behavior;
-do not silently reinterpret their accepted history while correcting future admission or execution.
+conversion cannot pass P01, nor can blanket denial of supported graph mutations. Retain the existing
+GraphNative validator/admission contract; diagnose known problematic topology without introducing a
+blanket stricter rule that rejects a valid unrelated repair of an already accepted graph. Program
+validates its own structured source. Crossed-All remains a separate stalled-shape diagnostic; no
+general cross-scope token semantics or universal graph conversion is promised.
+
+Repair the independently reproduced nested-cancellation inconsistency in the common runtime boundary.
+`engine::support::execution_branch_state` sees ancestor branch state, but projection
+`has_execution_cancellation_source` checks only immediate ownership. Both proper-nested Any and crossed
+Any currently fail while validating a planned TimerCancelled. Share one bounded ancestor-cancellation
+evidence query for scheduler/TimerCancelled/WaitCancelled validation, preserving each existing run,
+reconciliation, publication and branch source. An ancestor's actually accepted cancellation can justify
+its descendant; a merely inactive branch, unrelated sibling or fabricated event cannot. Preserve
+accepted history and exact replay. This is a required concrete P01 runtime repair, not a new scheduler,
+graph retirement rule or invention of historical cancellation facts.
 For native v2 agreements, prove a permitted body/output-implementation repair and reject changed
 external input sources, scope signatures, requirement envelopes, verifier/effect identity or control
 inside a Task-only scope. Contrast the same change under exact v1 rules; version labels cannot
 launder a previously protected boundary mutation into permission.
+Prove nested Any/FirstSuccess cancellation and orderly drain, including timers/waits, while wrong-
+sibling/no-source cancellation still refuses. Reopen from the retained valid journal before the old
+planned-event failure and continue/repair without duplicate events or external entry. The diagnostic
+does not itself qualify that recovery; this is future implementation acceptance.
 
 Compile actual consumers, run focused blueprint/runtime/context/control/protocol/client/daemon/importer
 suites and strict applicable checks, schema/golden readers and documentation contracts. Inspect the

@@ -1,4 +1,72 @@
-# V3 planning handoff — reopened investigation
+# V3 planning handoff — reopened investigation ready for review
+
+The investigation requested by the [critique](reopened-critique.md), including U17/U18 and U19's
+migration challenge, is complete as a **planning investigation**. Start with the revised
+[decision brief](deliverables/decision-brief.md), [adoption/state matrix](deliverables/adoption-plan.md)
+and [unexecuted implementation program](deliverables/proposed-implementation/README.md). Stop for user
+review. No P00–P09 execution, production Rust/schema/config change, prototype frontend, live deployment,
+unapproved spending or push occurred. Earlier completion/active records below are historical.
+
+## Completed coverage and actual decisions
+
+The [dossier](working/system-dossier.md) audited all 24 packages before the substantive structure,
+agency/knowledge, execution/resources and application comparisons. Depth is explicitly unequal;
+lighter mechanism reviews do not approve every parser, authority producer or platform path. Original
+missing transcripts/v1-v2 material remain missing. Actual source, history, consumers, alternative
+operations, counterexamples, future change costs and concrete owner/deletion units are linked there.
+
+U19 changed R-only conversion into structured defaults plus supported GraphNative create/import/copy/
+edit/repair through one blueprint/control owner and runtime. Equivalent conversion and live adoption
+have separate proofs; native repair needs neither an eligibility registry nor universal conversion.
+No graph retirement or cancellation-as-repair substitute remains selected. Corrected graph M remains
+the strongest maintenance-cost alternative. Native ProgramAgreement v2 is specified separately from
+retained/converted v1. U18's control-owned work commitment and U17's shared knowledge assessment were
+compared against developed alternatives; cumulative account, exact workflow scope, source-version
+evidence, approval and publication boundaries are resolved in the proposal.
+
+Actual reopened reviewers are Rowan-20261010 (`/root`, coordination/application/synthesis),
+Delta-20261010 (`/root/structure_delta`, representation/compatibility), Elin-20261010
+(`/root/agency_elin`, agency/knowledge and combined transfer review), and Faris-20261010
+(`/root/execution_faris`, execution/state ownership and source reread). Fresh initial positions
+preceded exposure to one another's conclusions; later reviews are not claimed blind. [RR3](working/review-resolution.md)
+and [program review](working/program-review.md) preserve changes of mind, actual rereads and dissent.
+The original Ada/Bram/Cyra evidence remains under its historical exposure limits.
+
+## Evidence, checks and local checkpoints
+
+Production baseline remains `908e7893f5dadb84d12712573c8daaa946829e39`, production-identical to `c016cd3`.
+Git diff outside the virtual office is empty. E01–E07 retain their original limits. The new
+[priority](working/priority-runtime-evidence.md) and [compatibility](working/compatibility-runtime-evidence.md)
+Rust probes ran production runtime/redb in isolated stores without external tasks. The first confirmed
+ID-sensitive branch priority. The second demonstrated native pending repair with active identity
+preserved; nested All/joinless Fork completed, crossed All stalled after 32 ticks, and both ordinary
+nested Any and crossed Any rejected planned cancellation events. Source shows ancestor-versus-immediate
+cancellation evidence disagreement. P01 owns that concrete runtime repair. No persisted corruption
+or recovery pass is inferred; final diagnostic exit0 includes two observed errors, not a suite pass.
+
+The documentation suite passed 8/8 at audit/comparison checkpoints. Integrated current-Markdown checks
+reuse the existing all-feature `repository_contracts-62bcef87fef21ecd` executable because Rust sources
+are unchanged; it passed 8/8 for the revised packet and U19 checkpoint. A redundant Cargo rebuild during
+unrelated host linker contention was stopped with exit143, not counted as a pass. Final current-tree
+documentation checks passed 8/8 (`final-review-docs.log`), including local links; diff/staged-diff
+checks passed. No full runtime gate is claimed.
+Raw logs remain under ignored `target/remedial-planning-v3/`; probe source/output/hashes are in the docs.
+
+Local checkpoints: `94ec7c6` depth audit; `28b313b` independent comparisons; `816874c` then-candidate
+with the pending compatibility preference; `990c936` U19 native-repair reconstruction; final closure
+retains the nested-Any discriminator and completed transfer review. Earlier `d7caf6d`, `9878f7a` and
+`ff818e5` survive. No commits were pushed.
+
+## Exact continuation boundary
+
+The next action is user review of the revised proposal and finite implementation scope. No unfinished
+foundational investigation is transferred as implementation discovery. New source/commitment/knowledge
+behavior is modeled; real Svelte usability, automatic S28, source/runtime migration and old-store
+upgrade are required future evidence, not planning passes. If approved, P00 records the exact accepted
+decisions and assignment before canonical adoption. P03/P08 require real human use; P09 owns the final
+full-system gate. Do not infer approval from this handoff or delete the review context/whiteboard.
+
+## Historical active checkpoint following 816874c
 
 **Current continuation after `816874c`:** U19 rejects automatically narrowing existing prospective
 editing/repair. The conversion-gated loss in that checkpoint is withdrawn as a selected migration
