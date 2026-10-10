@@ -1,8 +1,8 @@
-# Executed observations — E1
+# Executed observations — E2
 
 Rowan-20261010 ran these isolated observations on 2026-10-10. Production source is
 `908e7893f5dadb84d12712573c8daaa946829e39` (unchanged from archived `c016cd3`);
-office checkpoint `d7caf6d` changes planning only. Linux x86-64, kernel `7.2.8-arch1-2`,
+office checkpoints through `9878f7a` change planning only. Linux x86-64, kernel `7.2.8-arch1-2`,
 Rust `1.95.0 (59807616e 2026-04-14)`, ordinary unoptimized debug profile.
 Raw output and binary SHA-256 identities are under `target/remedial-planning-v3/`.
 These are controlled providers and temporary stores, not live-model/hardware qualification.
@@ -93,6 +93,39 @@ The proposed transport must make progress without removing daemon authentication
 in URLs. The [Fetch standard](https://fetch.spec.whatwg.org/#http-cors-protocol) and
 [EventSource interface](https://html.spec.whatwg.org/multipage/server-sent-events.html#the-eventsource-interface)
 were checked on 2026-10-10; native EventSource exposes no arbitrary Authorization header option.
+
+Both temporary daemons exited cleanly after the probe, the diagnostic listener was interrupted,
+and the hidden browser tab was closed. No operational installation was changed.
+
+## Managed lifetimes and graph construction
+
+E06: `cargo test --locked -p milkdrift-control --test control_service --all-features published::managed::`
+passed all three selected tests. `publication_hands_editing_to_exact_internal_writers_and_releases_every_hold`
+checks positive transfer/progress. `authorized_return_after_lost_child_stop_retains_wrapper_quiescence`
+and `lost_child_stop_proof_survives_cancel_and_reopen_without_returning_editing` retain uncertainty
+instead of releasing unsafe editing. Log: `managed-publication.log`. This does not exercise every
+future choice/join/resource composition or qualify physical hardware.
+
+E07: Ada supplied a temporary Rust construction probe, which Rowan inspected and ran with
+`cargo run --offline --manifest-path /tmp/milkdrift-merge-ada/Cargo.toml` using an isolated
+`CARGO_TARGET_DIR=target/remedial-planning-v3/merge-build` (absolute path in the execution).
+The complete source/manifest and sanitized result are preserved in
+[merge construction evidence](merge-construction-evidence.md), so the temporary directory is not
+required to inspect the claim. Separate exclusive arms ending in separate terminals validated as
+`rev_f5ff07cabdb4c2e27e1a5a38a33c5d4ed176761a80d7dab433ec68740e7fe2a2`.
+Pointing the same two arms to a shared terminal refused with `AmbiguousControlFlow` at
+`nodes.done-a.control_inputs`: only a Join may receive multiple control edges. The current validator
+therefore prevents this graph; this is a demonstrated authoring restriction, **not** a runtime
+deadlock or corruption observation. R-C01's replacement still needs implementation acceptance.
+
+Binary SHA-256 identities for the executed current-build applications:
+
+| Binary | SHA-256 |
+| --- | --- |
+| milkdrift-daemon | `8478ce50f0be16bc6caf82fcbdf1febb8b776f2eaa6f9f370746371e4a89043b` |
+| milkdrift | `341e0738fe0610a139c46bcf3cda8cf27909b543d4ea7e17d013dcd1ae967de5` |
+| client-workflow-evidence | `3b4d846309f3219599f0895b06dfc3635f56fabc894da0d4293327a6abf94c7e` |
+| headless-cli-evidence | `d219908a84813784f79fd5a8beca7825b07e87efcff9129d6bff82267defd324` |
 
 ## Evidence limits
 

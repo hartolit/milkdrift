@@ -9,16 +9,19 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-[Remedial planning v3](milkdrift-remedial-planning-v3/README.md) is assigned through 00–08,
-including justified review iterations, under the 2026-10-10 user request. Scope is investigation,
-planning and office records; stop for review before production implementation. The
-[handoff](milkdrift-remedial-planning-v3/handoff.md) owns coverage and actual assignments.
+[Remedial planning v3](milkdrift-remedial-planning-v3/README.md) completed 00–08 and justified
+review iterations under the 2026-10-10 user request and is awaiting user review. The
+[decision packet](milkdrift-remedial-planning-v3/deliverables/README.md) contains the proposal;
+its implementation program is unexecuted and unassigned. Preserve the review context until review
+and adoption. The [handoff](milkdrift-remedial-planning-v3/handoff.md) owns coverage and evidence.
 
 The [roadmap](../../product/roadmap.md) owns unfinished work; unrelated whiteboard topics remain separate.
 
 ## Prepared assignments
 
-No prepared assignments.
+The v3 [proposed implementation program](milkdrift-remedial-planning-v3/deliverables/proposed-implementation/README.md)
+is a review proposal, not an active assignment. P00 requires an explicit implementation scope and
+approved decisions; conditional branches and actual human checkpoints remain visible.
 
 ## Start a sprint
 
