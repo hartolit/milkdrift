@@ -1,5 +1,9 @@
 # P00 — Adopt approved design and establish the execution baseline
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 Owner: implementation coordinator. Stop after canonical adoption and assignment setup, before P01
 unless the user assigned the complete implementation program. Requires explicit user approval,
 G1/P1 and the final reviewed P2/A1/N1/F1 revisions, not merely the existence of this proposal.

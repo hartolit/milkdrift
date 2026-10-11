@@ -1,5 +1,9 @@
 # Review, evidence and remaining limits
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 The `ff818e5` planning completion was reopened by the user. Its useful observations and disagreement
 are preserved, but its whole-product recommendation was not sufficiently supported. The
 [dossier](../working/system-dossier.md) begins with an honest retrospective audit of all 24 workspace

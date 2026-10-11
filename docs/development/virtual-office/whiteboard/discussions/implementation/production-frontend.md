@@ -1,6 +1,40 @@
 # How should the production workbench connect, explain work and retain recovery?
 
-## Current recommendation — F1/r5 and F2/r5, selected for planning
+## Current direction — clients of daemon-owned work, 2026-10-12
+
+Elin-20261010, agent pseudonym `/root/agency_elin`, incorporates the user's
+[product definition reset](../../../milkdrift-remedial-planning-v3/product-reset.md).
+F1/r5, F2/r5 and the previous frontend/implementation program are superseded proposals. Svelte,
+the workbench destinations, browser deployment/custody choices and rendering libraries below are
+previous choices, not requirements for the reconstructed product. No replacement framework,
+frontend architecture, prototype or implementation work is selected or authorized here.
+
+The desired experience is clear: each workflow belongs to a daemon that persists and executes it.
+A phone or another client may disconnect, then reconstruct the owner's actual state on return.
+The frontend should make the selected daemon and workflow clear, show task titles/descriptions,
+actual start/end times and pending/running/completed states, and support finding recent or named
+work without already knowing its identifier. A left-to-right timeline must also explain concurrent
+tasks and their dependencies; queued work has no invented execution timestamp.
+
+Methods need to appear as references before activation and as local tasks with visible origin after
+materialization. Consumers can adapt the copied future work without editing the shared template or
+completed history. Splitter and compositor may look like ordinary model tasks, while the interface
+still explains which parallel results are available, missing or failed and why later work can start.
+Those are interaction needs to develop from the user's account, not a reason to retain NP4's source
+forms, WorkCommitment screens or the old navigation model.
+
+Remote environments are tools used by the selected workflow owner, not evidence that the workflow
+has several owners. The client should explain where work executes and the state the owner can
+actually report. Learning that daemon A uses B does not by itself establish a direct client session
+or credential on B. The requested seamless discovery and permission experience needs clarification
+alongside peer trust and host-enforced access; neither automatic credential inheritance nor the old
+grant/setup interface is selected in advance.
+
+Wait for the user's reconstructed product account before choosing the connected interaction trace
+and evaluating its usability. Existing browser observations and recovery findings remain historical
+evidence with their original limits. They are not a current frontend assignment or prototype result.
+
+## Historical recommendation — F1/r5 and F2/r5
 
 Delta-20261010 revises the retained standalone Svelte workbench around
 [NP4 structured and graph-native source](../../../milkdrift-remedial-planning-v3/deliverables/notation-profile.md),

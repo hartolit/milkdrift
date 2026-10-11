@@ -1,5 +1,9 @@
 # P06 — Evolve work while its resources and obligations remain controlled
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 Owner: control/runtime/managed-boundary engineer with real workbench consumer. Requires P05 and
 approved G1/P2/A1/N1/F1 for V03/V07/V09/V11/V12, plus R-A03. Read [shared context](context.md),
 agreement/reconciliation/controller/account owners, managed resource/store/platform owners and

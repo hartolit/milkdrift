@@ -1,5 +1,9 @@
 # A production workbench for inspectable, adaptable work
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 **F1/r5 and F2/r5** select a maintained standalone Svelte application that consumes the versioned
 source family in [NP4](notation-profile.md), ongoing work in
 [Elin's WorkCommitment proposal](../working/agent-directed-work.md#u18-disposition-one-continuous-work-commitment-in-the-existing-controller-owner),

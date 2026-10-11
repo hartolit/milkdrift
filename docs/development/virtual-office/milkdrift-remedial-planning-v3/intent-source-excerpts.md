@@ -4,6 +4,10 @@ These are selected verbatim excerpts from the user messages supplied with this p
 
 The **notes** at the end are the compiler's interpretation, not user quotations. An intake reviewer should write an initial account from the excerpts and available original sources before consulting this package's outcome synthesis or the coordinator's preferred synthesis.
 
+The latest direction is [U20](#u20--product-definition-reset-and-reusable-review-practice), including
+the supplied October 12 product account. Earlier excerpts retain their context; they do not make the
+superseded implementation program binding on a replacement product.
+
 ## U01 — Real frontend, not a prototype
 
 > I also want to clarify that we should not try and build a prototype frontend, as this will make it less likely for us to catch real conceptual bugs. We have to design a real frontend.
@@ -258,3 +262,35 @@ instruction to continue the planning investigation, not approval of that loss or
 > This is a design decision for the remedial planning investigation—not something to defer to an implementation agent.
 >
 > Continue the investigation without making production changes.
+
+## U20 — product-definition reset and reusable review practice
+
+Direct user message, 2026-10-12. The user expressed loss of confidence in the accumulated product
+vision and said they would return after reconstructing it. This is a change in planning direction,
+not authorization to execute P00–P09, delete the codebase or implement a replacement immediately.
+
+> I think we likely need to start over, so I can take the time to actually define the product rather than keep running in these fumes.
+
+> We'll still keep the code with a tag and a separate branch.
+
+> I'd want to have a more generalize practice that's applicable for any new project, which contextualizes our methods.
+
+> I'd definitely use the sprint of sprint planning approach too, which seems to better poke holes in the thesis and be more detailed and complete.
+
+> I'll get back to you when I've reconstructed the actual coherent idea of milkdrift. Then we'll talk how we're going to approach this situation.
+
+The explicit current assignment includes incorporating the attached account:
+
+> I expect you to incorporate these ideas in the planning sprint and discussions as we now have more explicitly defined visions for our project and how to piece them together. Even though there might be a few errors, it's still the most coherent vision that's been provided.
+
+The complete pasted account is preserved byte-for-byte in
+[vision-source-2026-10-12.txt](vision-source-2026-10-12.txt). Original attachment:
+`/home/hartolit/.codex/attachments/be36d248-2749-443e-93f5-d177d1960cfe/pasted-text.txt`.
+SHA-256: `2f52d3779cb58330f933179af78c7fe6014bc8d470619d8aab4edd41ae093345`.
+
+Standing: primary current product direction to incorporate, with explicitly tentative connectivity
+mechanisms and internal corrections preserved. Its final method paragraph takes precedence over the
+earlier description of an unchangeable materialized execution: consumers cannot edit the shared
+template; copied local future work may change. The [current interpretation](product-reset.md)
+separates these outcomes from unsettled implementation choices. No review has established universal
+coherence or feasibility merely because the user supplied a clearer account.

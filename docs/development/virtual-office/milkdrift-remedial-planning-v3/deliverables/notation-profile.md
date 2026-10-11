@@ -1,5 +1,9 @@
 # The proposed executable workflow and diagram language
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 Profile **NP4**, selected planning recommendation under
 [N1/r4](../../whiteboard/discussions/implementation/executable-notation.md), revises NP3 after
 [U19](../intent-source-excerpts.md#u19--preserve-legitimate-adaptability-while-choosing-migration).

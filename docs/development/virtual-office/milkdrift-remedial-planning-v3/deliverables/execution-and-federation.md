@@ -1,5 +1,9 @@
 # Execution, federation and the browser client
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 **Proposal:** retain separate owners for workflow execution, accepted serving operations and
 surviving managed installations because their accepted facts and lifetimes differ. Move managed-use
 policy out of the redb mechanism, consolidate repeated serving admission and descriptor construction,

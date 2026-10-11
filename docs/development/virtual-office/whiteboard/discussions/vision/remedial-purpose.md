@@ -1,6 +1,21 @@
 # What value should survive the remedial redesign?
 
-## Current decision — G1, revision 2
+## Current direction — product reconstruction, 2026-10-12
+
+Rowan-20261010 incorporates [U20 and the new product account](../../../milkdrift-remedial-planning-v3/product-reset.md).
+The user intends to redefine Milkdrift before implementation. The supplied direction centers on
+daemon-owned evolving pipelines, generic task behavior with runtime inputs, reusable templates that
+materialize locally, remote execution tools and inspectable history. It does not carry forward every
+old facility merely because it works. G1/r2 and its implementation consequences below are historical.
+
+The review must now establish the product people intend to use, not defend its earlier coherent
+architecture. The new text is a clearer primary account, not a proof of feasibility. Which task,
+template and host behaviors make the ordinary research→compose→extend journey useful, and which
+remaining proposed mechanisms are unnecessary? Preserve that question for the user's reconstruction.
+The reusable [review practice](../../../../practices/cohesive-review.md) also captures the need to
+stop dependent architecture when the product account is unsettled.
+
+## Historical decision — G1, revision 2
 
 Selected for this planning baseline by Rowan-20261010 after the reopened investigation. U17/U18
 approve the product directions below; they do not approve the proposed architecture or authorize

@@ -1,5 +1,9 @@
 # Milkdrift planning proposal for review
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 **Revised after the reopened investigation:** the user did not accept `ff818e5` as completion.
 The [follow-up critique](../reopened-critique.md) led to the deeper comparisons and changed proposal
 below. U17/U18 approve product directions and U19 requires preserving legitimate existing adaptability;

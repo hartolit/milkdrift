@@ -1,0 +1,84 @@
+Okay this is how I currently see milkdrift:
+
+A lot of our designed parts still have usage.
+
+1. I still see milkdrift as being a daemon being installed on a system, which could then be hooked up to any kind of GUI for visual orchestration.
+2. We should be able to connect any kind of model to do a workflow operation (I call it operation, but it's most likely called a task in our codebase).
+3. We should be able to split a workflow into multiple executions at once and be able to combine the results from the multiple executions. Example we could split our workflow into multiple operations to do research or analysis on different parts of a codebase and then feed all this information into a single operation (combining them) to then make decisions or actions based on the results provided.
+4. Workflow methods should exist, but they shouldn't be dynamic. It should just be a smaller static workflow, which purpose is to reduce a lot of repetition around creating operations/tasks which repeats. Example you could assemble a critique workflow method, which could consist of 5 operations/tasks, which would just be a simple splitter (a splitter calls a model to divide/split work into the suggested operations), and divide work into 3 operations/tasks to then output it's work into a compositor to summerize the given information.
+
+
+
+This is probably where I've failed to actually explain what I mean by operations/tasks especially in a generic method operation like this. I think a prompt/task/operation (there's many names for this) should consists of 2 things, generic behavior (this is just text though written generically to fit around the context input to derive it's behavior and action from that input) and then of course the input itself, which could be undefined until it's actually reached it's execution point. What I'm talking about is structuring the workflow as a definition of pipelines, where our processed input isn't always explicitly known from its definition, but we know how to process this input so that we could form it into various different shapes.&#x20;
+
+So say we make an agent define a workflow, it doesn't know what the finished product looks like or even how it's going to built except from a rough sketch or thought. But it knows what processes/operations to lay down first in order to expand its input and create a certain shape or direction. Example an agent might be told to build and train a machine learning model to be used for dynamic animations within a game and that it should build it using rust. The model would then spend time creating a workflow to address the initial flow and creation of this prompt. It doesn't know the exact input or context an operation/task/prompt is going to get or what it would produce, but it knows enough that it can create a rough sketch consisting of different pipelines and instructions to produce a shape.
+
+Example the agent could start out by creating a splitter dedicating 3 agents to research the area and make each agent output its findings in an .md structured inside a folder for each agent, the research questions could be: what established libraries exists, how does dynamic animations work, what errors should I avoid. Where it's placed a follow a compositor to pickup the researched items and evaluate the next steps, to which it would then further build out the pipeline and define the next set of operations/tasks.
+
+It doesn't know the output of each operation/task, but it knows roughly what to expect, and bases the generic behavior of the operation on information it already knows. Like creating structured folders and .md files for gathering information, it knows what questions to be researched and that it should place a compositor at the end to further analyze the area and produce new operations/tasks based on that information (which it doesn't yet know the context of, but it knows that it has to steer the workflow and create the next set of operations based on this input).
+
+For its next actions the agent might want to use established sets of workflows (our method workflows) so that it uses established workflow that's been more intricately designed to favour a specific set of instructions and structure, rather than creating it's own entire workflow from scratch, which otherwise would create strong variations in output. The best example of this might be how we would want to establish our project structure, architecture, rules, documentation and practices around the project. So the agent might want to call this method workflow to create and establish the desired structure. We don't know what input to expect, but we know the project structure we would like to implement (the generic behavior) and therefor we can create a workflow method that could create our desired project structure tailored to the specific project in question.
+
+
+
+This is quite differently defined than the (I'd say outdated) visions has defined. But this is the most correct methodology and vision of a milkdrift workflow. A workflow method should be static defined rather than dynamic.
+
+
+
+5. Since we've established that a daemon can be used as an execution host to execute commands, setup a server environment and much more, with podman integration I'd want to continue with this idea. But I think the way we've been thinking about this requires very strong corrections and further definition of what a daemon is.
+
+   Forget about combining workflows across daemons and using externally defined method workflows. A workflow should only be daemon specific and the daemon is the one that's in charge of the persistance and execution of a workflow, not some external frontend. That would be a chaotic scene of state and persistance management. This would also fully decouple the frontend. So we would be able to execute a workflow from a phone, close the app and still have it executing the workflow as it's decoupled. It also makes synchronization across devices incredibly simple as the daemon is the single source of truth of which the frontend would just simply fetch its state from.
+
+   &#x20;&#x20;
+
+   Daemons can advertise themselves to be an execution environment, but this is completely separate from that of our workflow execution and management. There's no relation. It's simply just the daemon providing an environment for executing commands. Anyone (if connected) can see and use this daemon in their workflow. It's completely unrelated if that daemon is on another host, or is the host itself and which workflow uses it (it's a completely different domain. This is not a cross-daemon workflow. It is simply just a workflow using a remote tool). The management of this environment should also just be the responsibility of the workflow itself, rather than the daemon providing the environment. By responsibility, I mean that the workflow is in charge of doing its own documentation of the server environment and execution, whether this will be in a project .md file or in the environment itself is up to the workflow using it. We shouldn't spend time developing tools, that could've just been easily defined by the workflow itself. It's the workflow's responsibility to document its usage and state. The beauty is that this remains the agent's task, and is completely decoupled and outside the scope of our project to handle. The project just offers the tools of creating tasks/operations with generalized behavior and structure. It's up to the agent to execute and define those behaviors and structures (or a human operator). Though it's probably good to clarify that the workflow owns the purpose, procedures and documentation of its environment. The execution host enforces the access and limits it actually offers.
+
+   Also since the workflow is daemon specific, we'd have it structured as such in our frontends, so that we can easily see what daemon the workflow is residing and executing from.
+
+   The only reason we made the old complex cross daemon and workflow blend, was mostly just to derive execution surfaces across daemons. We didn't establish that it was a different domain and made it highly dependent on workflows, which resulted in a complex blend of domains.&#x20;
+
+   Now we've identified it as it's own domain, which has resulted in becoming just a general/generic execution surface rather than embedded in complex cross workflows and workflow methods... Any workflow can just simply call and use the advertised execution environment.&#x20;
+
+   I guess I'll have to clarify how we can make this connection between daemon to daemon and how to make it secure (to be adviced this is going into a tangent and could be a faulty implementation, but simply serves as a guide)... We probably already have this defined, but the purpose is to link the daemons together in a peer to peer network using ssh and a LAN or mesh network which is up to the user to define and is outside of the project scope (as is desired). Now how would a user establish this link up? And how would the link up happen? I would think that the user would first link the daemons to their frontend. The daemons would then be able to see each other and asks the user if they should establish a peer to peer connection to execute commands and have independent persisted connection if accepted and authorized (which should be possible to configure from the frontend itself).
+
+   Once daemons have been connected, they'll each save this connection into a table, so when another frontend interface adds one of these daemons (or may already have one added, but not the new daemon connected), they'll automatically get synced up with the new daemon. This makes sense since workflows are syncronized and the daemon is the source of truth. If it trust another daemon, then the frontend is expected to trust this as well. It would also make some ugly visualizations of workflows if the frontend wasn't aware of the execution environment a daemon is using, since it would be asynchronous (daemon is aware of another daemon and executes commands in the trusted environment, but the frontend is not creating unsyncronized behavior). It's expected that the frontend has the same amount of permissions as the daemon has to it's connected peers, since the daemon is the functioning entity and the frontend is only a visual wrapper. That's why it's important that daemons are clearly defined and segregated on the frontend to avoid confusion of permission structures, workflows and daemon settings when going back and forth between daemons and their setup/configuration.
+
+6. I think this might've already been defined, but I'll just repeat it for the sake of it. This is how I imagine workflows are represented and executed.
+
+   Operations/tasks in a workflow is ordered in a timeline from left to right, where left is the beginning and right is the end (when a new operation/task has been created it'll be pushed to the end). Operations/tasks should have a title and a timestamp of execution and end execution. The current on going operation should be clearly highlighted. There should also be a destinction between completed operations/tasks and ongoing operations/tasks. Other than just the visuals, I'd expect the operations/tasks to be searchable by title, small description and indexed in a timetable so that an agent can look up recent changes or inspect a specific without being explicitly linked.
+
+
+
+I'm a bit tired defining these definitions, but it seems to be much more coherent and simpler than what we've established previously.&#x20;
+
+Specifically our tasks/operations, workflow and workflow methods also seems much clearer.&#x20;
+
+Ideally our splitter, compositor and tasks could all just be one generic node instead of explicitly defined, since they contain the exact same data structure... e.g. generic behaviour/instructions, input and output... The only thing that makes them different is how they're linked together and how their flow is defined.&#x20;
+
+
+
+Static method workflow as in the workflow tasks/operations doesn't dynamically change under execution. So an agent can't edit the workflow or add new tasks/operations to the workflow.&#x20;
+
+I think I need to define some new information of method workflows.
+
+You already know this, but a workflow method is just used to define instances of workflows that you want repeated. It gives you the ability to create your own custom instructions that agents can use to apply specific preferences or force a run through of a specific set of operations/tasks/instructions to produce a certain form of output.&#x20;
+
+I imagine that these methods are available globally and can be used across various workflows to set enable specific preferences and standards rather than letting an agent go rogue. It's like planting little seeds to produce a certain outcome and quality.
+
+The workflow methods are able to actively be mutated, as long as they aren't undergoing execution or have already been executed. Once an operation/task has been executed, it should be fixed on that timeline and be immutable (readonly).
+
+The way that I see this working is that a workflow method within a workflow isn't defined until execution. The workflow method is just defined as a usual operation/task with a reference to the workflow method. Once it runs, it'll then materialize the method into it's corresponding operations/tasks that method currently is made up with. Though possibly with the operations/tasks marked with a tag referencing the workflow method it's derived from, so that we can see the operations/tasks are derived from a method as the materialization of the method are just baked into normal operations/tasks (which happens on execution). That way we avoid handling complex state changes and versioning as the methods just turns into whatever operations/tasks they're defining at the current moment at execution and we are able to view them in our timeline as a normal operation/task (though with a tag of origin). The only complexity we'd need is that we can't delete a method workflow as long as it's being referenced by targets that hasn't reached execution (is scheduled for execution in a workflow). Otherwise a workflow might become invalid. This is why the definition of a workflow method is initially just a normal operation/task, as an agent could serve as a guard to ensure a workflow method materializes and do a status report or other sets of operations like stopping the execution of a workflow due to errors or cancelling the execution of the workflow method to pursuit a different path. The beauty is that we don't define the workflow method until it's been executed, but simply just references it to be materialized, meaning that we can update the workflow method as much as we want without worrying about updating every single flow that references the method. It isn't defined until materialization, so the workflow method functions as the single source of truth until it's been materialized.
+
+Now the question is what would this workflow operation/task look like? How would it materialize? And how would we want to map out our data structures? We know that we'd need a tag to reference the method (likely the method name along with a number for uniqueness and small versioning).&#x20;
+
+
+
+Actually I've missed something important regarding workflow methods. I've defined them as static, which would create problems and limits for an agent to pose self corrective implementations and validations should the operations/tasks fail. Though this is quite easy to fix and is just a hidden definition problem between two states. A workflow method definition is inherently static (it has to be in order to be applied across workflows. It is a static template that is being applied to a workflow. Though the template/method can be updated and edited as well. But it is static in the sense that its immutable from consumers), but once it's become materialized and applied inside a workflow, the method is no longer considered static as it is an actual part of the workflow rather than just a reference to a method. It is then mutable in order to accommodate potential issues or criteria posed from the workflow. My explanation is perhaps a bit more complex than it needs to be. It's simply just: the template/method is static, but as soon as you copy it over to your own project/workflow and unpacks it, so it's no longer just a reference, you're free to proceed as you would normally. This flow actually naturally aligns and doesn't seem to have a need for explicitly defined rules, but I figured I'd define the destinction anyways.
+
+
+
+I think this covers most of our concepts. I think everything else not covered is mostly bloat and overly complex behavior.
+
+
+
+I'm quite happy with this definition, even though I might have included a few mixups or logic bugs.

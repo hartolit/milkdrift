@@ -1,5 +1,9 @@
 # P03 — Obtain real user critique and repair its consequences
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 Owner: implementation coordinator and actual user; independent critic reviews resulting decisions.
 Requires the working P02 frontend. Read [shared context](context.md), G1/P1/P2/A1/N1/F1, current
 interface and the user's new feedback. An agent walkthrough is not completion of this checkpoint.

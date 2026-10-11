@@ -1,5 +1,9 @@
 # 00 — Establish the evidence, boundaries and shared review space
 
+**Historical planning prompt — 2026-10-12.** The user's [product-definition reset](product-reset.md)
+supersedes this prompt's original assignment. Retain the investigation and its evidence; do not resume
+the old proposal or begin replacement design from this prompt. The [handoff](handoff.md) is current.
+
 **Owner:** coordinating agent. **Output:** source/intake baseline, whiteboard organization and actual assignments. **Scope:** planning and office records only. Executing this prompt assigns 00; executing the whole planning sprint assigns 00–08 and justified review iterations, ending before implementation.
 
 Read [README](README.md), [context and preservation](context-and-preservation.md), [source excerpts](intent-source-excerpts.md), [deliberation](deliberation-protocol.md), [whiteboard and decisions](whiteboard-and-decisions.md), [the early trial](review-method-trial.md), and [scenarios](scenario-corpus.md). Follow [AGENTS.md](../../../../AGENTS.md), the [practice selector](../../practices/README.md), [implementation](../../practices/implementation.md), [documentation](../../practices/documentation.md), [workflow](../../workflow.md), [office](../README.md) and [whiteboard](../whiteboard/README.md).

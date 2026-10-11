@@ -1,11 +1,21 @@
 # Milkdrift remedial planning — v3
 
+**Current standing — 2026-10-12:** the user has asked to reconstruct the product before deciding its
+implementation. Start with the [product reset](product-reset.md), its preserved primary account and
+the [handoff](handoff.md). The previous proposal and P00–P09 are superseded; no replacement architecture
+or implementation program is selected. The new [cohesive review practice](../../practices/cohesive-review.md)
+extracts the reusable method, including a planning sprint that can stop for product redefinition.
+The user will return with a reconstructed idea. The original remit below and completed review packet
+remain historical context, not authorization to continue the former design.
+
+## Original sprint remit and completed investigation
+
 **Purpose: turn the valuable but inconsistent product we have into a stronger, coherent product and a real human interface.**
 
 This sprint reviews intentions, actual behavior, competing designs and their consequences. It produces a reviewed proposal and a complete, **unexecuted** remediation and Svelte implementation program. It does not build a prototype or change production behavior. Implementation starts only after the user reviews and approves the result.
 
 The reopened investigation under the [critique](reopened-critique.md), including the U17/U18/U19
-directions, is complete for review. The [current packet](deliverables/README.md) supersedes the earlier
+directions, reached the review checkpoint. The [historical packet](deliverables/README.md) superseded the earlier
 candidate without erasing its evidence or disagreements. The [handoff](handoff.md) records exact
 coverage, checks and continuation. No implementation is assigned by this planning completion.
 

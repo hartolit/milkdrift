@@ -1,5 +1,9 @@
 # 07 — Challenge the combined design and the premises that support it
 
+**Historical planning prompt — 2026-10-12.** The user's [product-definition reset](product-reset.md)
+supersedes this prompt's original assignment. Retain the investigation and its evidence; do not resume
+the old proposal or begin replacement design from this prompt. The [handoff](handoff.md) is current.
+
 **Owner:** review coordinator who is not presented as independent from work they authored. **Output:** revised decisions, explicit remaining uncertainty and evidence-linked resolution. **Prerequisite:** usable 01–06 evidence/design packet, including 02's actual trial and working-goal decisions. This is combined review, not the first opportunity to criticize. **Stop:** a reviewed proposal; no production implementation.
 
 Read [the deliberation protocol](deliberation-protocol.md), [context and preservation](context-and-preservation.md), the whole current factual packet, alternatives, ownership/notation/interface designs, and relevant [implementation](../../practices/implementation.md)/[documentation](../../practices/documentation.md) practices. A narrow review lens adds scrutiny; it does not remove surrounding context.

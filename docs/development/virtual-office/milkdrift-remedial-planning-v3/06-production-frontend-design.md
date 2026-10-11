@@ -1,5 +1,9 @@
 # 06 — Specify the real standalone Svelte product and its engineering practice
 
+**Historical planning prompt — 2026-10-12.** The user's [product-definition reset](product-reset.md)
+supersedes this prompt's original assignment. Retain the investigation and its evidence; do not resume
+the old proposal or begin replacement design from this prompt. The [handoff](handoff.md) is current.
+
 **Owner:** product/interaction designer and frontend engineer, cross-reviewed by semantics and authority owners. **Output:** build-ready production interface specification, public-operation remedies, and frontend practice proposal. **Prerequisites:** 01–03 reviewed evidence/goals/product meanings, and initial 04/05 browser/architecture/notation work. This phase revises those proposals through actual interaction requirements; it does not simply decorate a frozen architecture. **Stop:** production design and implementation requirements; no prototype, mock app or production code yet.
 
 Read [context and preservation](context-and-preservation.md), the dossiers/decisions, [scenarios](scenario-corpus.md), [implementation](../../practices/implementation.md)/[documentation](../../practices/documentation.md) practices and [public API policy](../../../reference/public-api-policy.md).

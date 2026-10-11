@@ -1,5 +1,9 @@
 # P07 — Knowledge assessment, reusable evidence and executable qualification
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 Owner: existing control learning/knowledge family, workspace/persistence evidence contracts, daemon
 projection and client interaction. Requires P06, approved U17 and reviewed P2/A1 evidence contract.
 Read [shared context](context.md), [agency/knowledge investigation](../../working/agent-directed-work.md)

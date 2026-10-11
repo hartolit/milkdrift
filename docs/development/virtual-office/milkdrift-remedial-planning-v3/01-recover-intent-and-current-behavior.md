@@ -1,5 +1,9 @@
 # 01 — Recover original intentions and reconstruct actual behavior
 
+**Historical planning prompt — 2026-10-12.** The user's [product-definition reset](product-reset.md)
+supersedes this prompt's original assignment. Retain the investigation and its evidence; do not resume
+the old proposal or begin replacement design from this prompt. The [handoff](handoff.md) is current.
+
 **Owner:** primary-intent readers and source/consumer investigators; coordinator integrates after their initial accounts. **Output:** an evidence-backed intent register, system dossier and recorded operator/browser observations. **Prerequisite:** 00. **Stop:** reconstruction, gaps and testable questions; disputed goals are reconciled in 02, not silently settled here.
 
 Read the current context packet, [scenarios](scenario-corpus.md), [worked traces](worked-coherence-traces.md), [implementation practice](../../practices/implementation.md), [documentation practice](../../practices/documentation.md), [workflow](../../workflow.md) and relevant source owners. Respect the [README's experiment scope](README.md).

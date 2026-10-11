@@ -1,6 +1,34 @@
 # Which notation truthfully explains executable work?
 
-## Current decision — N1, revision 4, selected for planning
+## Current direction — task pipelines and materialized methods, 2026-10-12
+
+Elin-20261010, agent pseudonym `/root/agency_elin`, incorporates the user's
+[product definition reset](../../../milkdrift-remedial-planning-v3/product-reset.md).
+N1/r4, NP4 and the previous implementation program are superseded proposals. Their source findings,
+runtime observations, standards comparisons and disagreements remain below as historical evidence.
+No replacement source language, graph/region representation or execution architecture is selected.
+
+The new account describes tasks through general behavioral instructions and inputs that may become
+known only when they run. Splitter and compositor can be roles of the same model task. Asking a
+model to divide a research question, executing the resulting tasks concurrently, and deciding when
+their results are ready for composition remain different meanings. One visual node format need not
+make model prose the authority for readiness or completed results. Decide those meanings on the
+user's concrete research pipeline before choosing notation or data structures.
+
+The final correction about methods is controlling: the shared template is protected from consumer
+edits, while its materialized local future tasks may be changed. The intended reference uses the
+template current at activation and then becomes ordinary local work with origin information. This
+differs from the old pinned Call and is not supplied merely by relabeling it. The accepted expansion
+must remain identifiable after template edits or interrupted materialization; that consequence does
+not select the old revision hierarchy or a public versioning interface.
+
+The proposed left-to-right timeline should explain pending, running and completed work without
+turning parallel dependencies into a single execution order. Entered history and accepted outputs
+must remain distinguishable from later plans. The next discussion waits for the user's reconstructed
+product account, including the meaning of template activation, parallel completion and future edits.
+There is no notation prototype or replacement implementation assignment here.
+
+## Historical decision — N1, revision 4
 
 The [NP4 contract](../../../milkdrift-remedial-planning-v3/deliverables/notation-profile.md) responds
 to the user's [U19](../../../milkdrift-remedial-planning-v3/intent-source-excerpts.md#u19--preserve-legitimate-adaptability-while-choosing-migration):

@@ -1,4 +1,14 @@
-# Review context — reopened C4
+# Review context
+
+## Current standing — product definition reset, 2026-10-12
+
+Read [product reset](../product-reset.md) and [U20](../intent-source-excerpts.md#u20--product-definition-reset-and-reusable-review-practice)
+before the earlier synthesis below. The user supplied a new product account and will return after
+reconstructing the idea. The previous architecture selection and P00–P09 are superseded. Evidence,
+alternatives and dissent are preserved; no rewrite or replacement implementation plan is assigned.
+The [handoff](../handoff.md) records the archive references, reusable practice and current boundary.
+
+## Historical context — reopened C4
 
 Rowan-20261010, actual coordinator `/root`. The user reopened `ff818e5` under the
 [critique](../reopened-critique.md). The deeper investigation has produced a revised architecture and

@@ -1,5 +1,10 @@
 # Architecture
 
+**Replacement design is not selected.** This document describes the existing implementation and
+its current ownership rules. The [October 12 product reconstruction](development/virtual-office/milkdrift-remedial-planning-v3/product-reset.md)
+reopens which concepts belong in the future product; the old code's contracts remain evidence, not
+automatic requirements for that replacement. No production architecture changes accompany this notice.
+
 Milkdrift separates a reusable method, the history of performing it, and authority to change what
 happens next. In the current workflow composition, a client submits intent to the daemon; runtime
 accepts facts durably and asks external capabilities to perform work. Independent hosting

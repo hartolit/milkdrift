@@ -1,6 +1,21 @@
 # Which owners and browser route should the independent client use?
 
-## Current technical selection — A1, revision 5, selected for planning
+## Current boundary direction — one workflow owner, 2026-10-12
+
+Rowan-20261010 records [the user's replacement direction](../../../milkdrift-remedial-planning-v3/product-reset.md).
+A daemon owns each workflow's execution and persistence. Frontends observe/control that daemon and
+can disconnect. Remote daemons offer tool environments; the workflow owns their purpose/procedures/
+documentation, while the execution host enforces the access and limits it actually offers. This
+separates remote tools from cross-daemon workflow management without assuming all old layers survive.
+
+A1/r5's exact owners, publication composition and commitment architecture are no longer selected.
+The suggested peer onboarding/SSH/table mechanism is exploratory. Seamless topology visibility must
+be worked through with actual actor rights: showing A's use of B need not give every frontend direct
+administration of B. Compare acting through A with explicit direct peer access before choosing trust
+propagation or transport. Retain observed lost-reply/cancellation/host-limit facts as evidence of
+obligations to consider, not a command to reproduce the existing implementation.
+
+## Historical technical selection — A1, revision 5
 
 Faris-20261010 and Rowan-20261010 revise the earlier retention recommendation after the reopened
 execution/application investigation. Retain runtime, serving and managed-resource facts with

@@ -9,19 +9,21 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-[Remedial planning v3](milkdrift-remedial-planning-v3/README.md) has completed the reopened comparative
-investigation under the user's [critique](milkdrift-remedial-planning-v3/reopened-critique.md), including
-U17/U18/U19. Its revised proposal is ready for user review. Preserve evidence, dissent and checkpoints;
-the packet and P00–P09 remain unapproved and unexecuted. The
-[handoff](milkdrift-remedial-planning-v3/handoff.md) owns coverage, actual checks and the review boundary.
+[Remedial planning v3](milkdrift-remedial-planning-v3/README.md) now records the user's
+[product-definition reset](milkdrift-remedial-planning-v3/product-reset.md). The new account supersedes
+the previous proposal and P00–P09; source evidence, disagreement and checkpoints remain available.
+The user will return with a reconstructed product idea before a replacement architecture or program
+is assigned. The reusable [cohesive review practice](../practices/cohesive-review.md) preserves the
+method and its stopping rules. The [handoff](milkdrift-remedial-planning-v3/handoff.md) owns current
+coverage, checks and the continuation boundary.
 
 The [roadmap](../../product/roadmap.md) owns unfinished work; unrelated whiteboard topics remain separate.
 
 ## Prepared assignments
 
-The v3 [proposed implementation program](milkdrift-remedial-planning-v3/deliverables/proposed-implementation/README.md)
-is a review proposal, not an active assignment. P00 requires an explicit implementation scope and
-approved decisions; conditional branches and actual human checkpoints remain visible.
+The v3 [previous implementation program](milkdrift-remedial-planning-v3/deliverables/proposed-implementation/README.md)
+is superseded and retained as history. No implementation assignment is prepared for the reconstructed
+product. Do not resume P00–P09 from its earlier review status.
 
 ## Start a sprint
 

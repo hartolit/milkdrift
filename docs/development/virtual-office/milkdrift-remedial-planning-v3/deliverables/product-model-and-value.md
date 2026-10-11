@@ -1,5 +1,9 @@
 # Product model and value account
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 The reviewed purpose is ongoing useful work with explicit authority, evidence and future change.
 The source is the user's [selected original excerpts](../intent-source-excerpts.md), with origin,
 standing and uncertainty tracked separately in the [intent register](../working/intent-register.md).

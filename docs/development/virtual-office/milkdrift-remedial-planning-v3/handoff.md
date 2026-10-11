@@ -1,4 +1,50 @@
-# V3 planning handoff — reopened investigation ready for review
+# V3 planning handoff
+
+## Current boundary — product definition reset, 2026-10-12
+
+The latest user request changes the assignment. Start with [product reset](product-reset.md) and
+the preserved [primary account](vision-source-2026-10-12.txt), whose original instructions and standing
+are recorded as [U20](intent-source-excerpts.md#u20--product-definition-reset-and-reusable-review-practice).
+The previous proposal and P00–P09 are **superseded**, not waiting to be executed. No replacement
+architecture or implementation program is selected. The user will return with a reconstructed idea.
+
+The update incorporates the new task, daemon, template/materialization, environment and timeline
+meanings into the six whiteboard topics. It preserves the final correction allowing changes to
+materialized local future work without consumer changes to its shared template. Library/update scope,
+admission of proposed future work and connection/actor behavior remain explicit reconstruction
+questions. The existing review's findings and dissent remain available as evidence about that code;
+they are not automatic requirements for its replacement.
+
+The requested [cohesive review practice](../../practices/cohesive-review.md) is now a reusable practice,
+registered in the selector. It covers a finite planning sprint, discriminating investigations,
+criticism and alternatives, cross-system and human consequences, reopening affected decisions,
+complete implementation handoffs where justified, and stopping when product meaning is unresolved.
+It includes a portable kickoff prompt without exporting Milkdrift's architecture. Rowan coordinated
+this update; Delta reviewed the actual draft and Elin traced the new account against source. Both
+had already participated in v3, so their current reviews are informed, not blind independent intake.
+
+Before these edits, branch `codex/milkdrift-pre-product-reset-2026-10-12` and annotated tag
+`milkdrift-pre-product-reset-2026-10-12` were created at
+`f821ce093742246390f17edc77252ceb75672f97`. Both preserve the pre-reset code and completed investigation.
+The working branch remains `main`. No checkout reset, code deletion, production modification,
+frontend prototype, live change, spending or push accompanies this update.
+
+**Exact continuation:** await the user's reconstructed product account, then reconcile it with the
+preserved direction and open choices in `product-reset.md` before assigning dependent design. Do not
+resume P00–P09 or reinterpret this pause as a finished replacement investigation. Any actual data or
+active-work transition must be established if later assigned; the archive is not a migration.
+
+**Verification of this update:** the required
+`cargo test -p milkdrift-evidence --test repository_contracts --all-features documentation::`
+completed successfully, 8/8 tests, including local links and Markdown structure. The current records
+also received an actual transfer review by Delta; its stale historical-continuation heading was
+corrected. The primary account matches its supplied attachment byte-for-byte. Both preservation refs
+resolve to the stated checkpoint. Changes are documentation only; no runtime or full-system gate is
+claimed. Logs are under ignored `target/remedial-planning-v3/product-reset-docs.log`.
+Practice checkpoint: `e8b8912`; the remaining coherent commit records the product reset and status
+changes. Diff checks apply to both. No commits are pushed.
+
+## Historical checkpoint — reopened investigation ready for review
 
 The investigation requested by the [critique](reopened-critique.md), including U17/U18 and U19's
 migration challenge, is complete as a **planning investigation**. Start with the revised
@@ -57,7 +103,7 @@ with the pending compatibility preference; `990c936` U19 native-repair reconstru
 retains the nested-Any discriminator and completed transfer review. Earlier `d7caf6d`, `9878f7a` and
 `ff818e5` survive. No commits were pushed.
 
-## Exact continuation boundary
+## Historical continuation boundary — before the product reset
 
 The next action is user review of the revised proposal and finite implementation scope. No unfinished
 foundational investigation is transferred as implementation discovery. New source/commitment/knowledge
@@ -165,7 +211,7 @@ E07 confirmed validator refusal of shared exclusive reconvergence. They do not q
 merge/browser/frontend behavior, actual human usability, physical multi-host/hardware support,
 model quality or complete S28 composition. Temporary diagnostic daemons/listener/tab were closed.
 
-## Resume correctly
+## Historical resume instructions — ff818e5
 
 Review [the choices](deliverables/decision-brief.md): purpose/direction, initial hosting/custody,
 and any B1–B5 branch made mandatory. Preserve the real direct-route, canonical-region, standard-

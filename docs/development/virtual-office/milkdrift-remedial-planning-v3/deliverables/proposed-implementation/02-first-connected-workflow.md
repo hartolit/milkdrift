@@ -1,5 +1,9 @@
 # P02 — Browser foundation and the first real Svelte workflow
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 Owner: daemon transport and production client team, one coordinator for shared contracts/Cargo.
 Requires P01 and approved A1/F1r4/F2r4. Read [shared context](context.md),
 [production interface](../production-interface.md) and [frontend practice](../frontend-practice-proposal.md).

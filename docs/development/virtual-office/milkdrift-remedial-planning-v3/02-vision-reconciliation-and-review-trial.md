@@ -1,5 +1,9 @@
 # 02 — Reconcile the vision before selecting its mechanisms
 
+**Historical planning prompt — 2026-10-12.** The user's [product-definition reset](product-reset.md)
+supersedes this prompt's original assignment. Retain the investigation and its evidence; do not resume
+the old proposal or begin replacement design from this prompt. The [handoff](handoff.md) is current.
+
 **Owner:** product/intent reviewers and coordinator, with a separate primary-source reader where available. **Output:** a reviewed working vision, sourced tradeoffs and the early review-method result. **Prerequisites:** 00 and sufficient 01 evidence to examine the significant goals; later factual reconstruction can continue in parallel. **Stop:** planning commitments and conditional choices, not new production truth.
 
 Read [user-source excerpts](intent-source-excerpts.md), [context and preservation](context-and-preservation.md), [deliberation](deliberation-protocol.md), [whiteboard and decisions](whiteboard-and-decisions.md), [trial guide](review-method-trial.md), the current intent register and source dossier. Follow [documentation](../../practices/documentation.md), [implementation](../../practices/implementation.md) and [workflow](../../workflow.md) practices. Consult original user context where actually accessible, not invented memories.

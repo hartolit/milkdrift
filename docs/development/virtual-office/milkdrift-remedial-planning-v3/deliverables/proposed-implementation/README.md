@@ -1,5 +1,9 @@
 # Revised implementation program — proposed, not assigned
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 This program replaces the `ff818e5` candidate after the
 [reopened investigation](../../reopened-critique.md). U17/U18 approve product directions and U19 preserves
 legitimate prospective adaptability; neither

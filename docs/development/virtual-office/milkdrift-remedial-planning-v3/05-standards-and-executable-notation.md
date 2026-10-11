@@ -1,5 +1,9 @@
 # 05 — Test UML/BPMN foundations against reviewed product behavior
 
+**Historical planning prompt — 2026-10-12.** The user's [product-definition reset](product-reset.md)
+supersedes this prompt's original assignment. Retain the investigation and its evidence; do not resume
+the old proposal or begin replacement design from this prompt. The [handoff](handoff.md) is current.
+
 **Owner:** standards/notation reviewer with runtime and human/agent authoring reviewers. **Output:** one proposed semantic/notation profile, validated examples and explicit implementation implications. **Prerequisites:** 01 evidence, 02 goals, 03 product meanings and initial 04 ownership/browser analysis. Iterate with 04/06 rather than treating their choices as permanently fixed. **Stop:** production design and evidence, not a diagramming prototype.
 
 Read the current dossier/alternatives, federation decisions, [scenarios](scenario-corpus.md), [deliberation protocol](deliberation-protocol.md), and [implementation](../../practices/implementation.md)/[documentation](../../practices/documentation.md) practices.

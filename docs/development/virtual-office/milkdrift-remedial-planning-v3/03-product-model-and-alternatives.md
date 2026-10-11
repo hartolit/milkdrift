@@ -1,5 +1,9 @@
 # 03 — Define product behavior and compare complete alternatives
 
+**Historical planning prompt — 2026-10-12.** The user's [product-definition reset](product-reset.md)
+supersedes this prompt's original assignment. Retain the investigation and its evidence; do not resume
+the old proposal or begin replacement design from this prompt. The [handoff](handoff.md) is current.
+
 **Owner:** independent outcome/model designers, current-design defender and product-value reviewer, coordinated through the whiteboard. **Output:** credible alternatives, loss-and-gain accounts and concept trials. **Prerequisites:** 01 factual dossier and 02 reviewed working goals/trial result. Unresolved goals block only dependent choices. **Stop:** reasoned candidates and unresolved decisions; no implementation.
 
 Read [context and preservation](context-and-preservation.md), the current factual packet/dossier, [deliberation protocol](deliberation-protocol.md), [scenarios](scenario-corpus.md), [implementation practice](../../practices/implementation.md) and [documentation practice](../../practices/documentation.md). Do not adopt the author's preferred model simply because it appears first.

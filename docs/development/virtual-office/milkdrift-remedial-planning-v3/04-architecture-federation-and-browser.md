@@ -1,5 +1,9 @@
 # 04 — Compare architecture, ownership and the real browser path
 
+**Historical planning prompt — 2026-10-12.** The user's [product-definition reset](product-reset.md)
+supersedes this prompt's original assignment. Retain the investigation and its evidence; do not resume
+the old proposal or begin replacement design from this prompt. The [handoff](handoff.md) is current.
+
 **Owner:** distributed execution/methods investigator, authority/privacy critic and frontend transport reviewer. **Output:** reviewed ownership/lifetime model and browser connection decision. **Prerequisites:** 01 actual paths/browser observations; 02 working goals; 03 product meanings/alternatives. **Stop:** reasoned architecture proposals and public-operation remedies. Joint review with 05/06 is required before architectural choices are endorsed.
 
 Read the current packet and dossiers, [independent-host decision](../../../decisions/0038-independent-host-execution.md), [published-method decision](../../../decisions/0041-published-method-invocation.md), [published-method guide](../../../guides/published-methods.md), [authority guide](../../../operations/authority.md), [control API](../../../reference/control-api.md), and the [implementation](../../practices/implementation.md)/[documentation](../../practices/documentation.md) practices. Trace current owners and tests; an older ADR's version table is not the current wire contract.

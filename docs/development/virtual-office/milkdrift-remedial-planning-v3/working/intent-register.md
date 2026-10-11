@@ -1,5 +1,15 @@
 # Intent register — I1 source reconciliation
 
+**Current standing — 2026-10-12:** [U20](../intent-source-excerpts.md#u20--product-definition-reset-and-reusable-review-practice)
+and the preserved [new primary account](../vision-source-2026-10-12.txt) supersede the earlier direction
+to remediate without a product reset. [Product reset](../product-reset.md) distinguishes the new
+intended outcomes from mechanisms and remaining choices. The final correction allows future changes
+to locally materialized method tasks while protecting the shared template from consumer edits.
+The earlier scope seeds and selections below remain historical interpretations, not requirements
+that a replacement must inherit. No replacement architecture or implementation is approved.
+
+## Historical reconciliation before U20
+
 Source `U01`–`U16` refers to the selected [user excerpts](../intent-source-excerpts.md), not to
 complete original transcripts. The present request explicitly authorizes planning, challenges to
 code and vision, preservation of disagreement and a stop before implementation.

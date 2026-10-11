@@ -1,5 +1,9 @@
 # 08 — Plan complete adoption and review the execution program
 
+**Historical planning prompt — 2026-10-12.** The user's [product-definition reset](product-reset.md)
+supersedes this prompt's original assignment. Retain the investigation and its evidence; do not resume
+the old proposal or begin replacement design from this prompt. The [handoff](handoff.md) is current.
+
 **Owner:** coordinator, with a fresh-context review of the generated assignments. **Output:** user decision packet and unexecuted implementation program. **Prerequisite:** 01–07 with current goal/product/architecture decisions, credible evidence, reviewed dependencies and explicit blockers. **Stop:** user approval; no backend or frontend implementation.
 
 Read the whole current packet, [preservation requirements](context-and-preservation.md), [review method](deliberation-protocol.md), [scenario coverage](scenario-corpus.md), active whiteboard decisions and [workflow](../../workflow.md). Apply the [implementation](../../practices/implementation.md) and [documentation](../../practices/documentation.md) practices to the proposed work.

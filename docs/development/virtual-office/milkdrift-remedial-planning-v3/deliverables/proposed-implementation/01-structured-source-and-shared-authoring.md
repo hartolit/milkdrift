@@ -1,5 +1,9 @@
 # P01 — Structured source, execution and shared authoring
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 Owner: one coordinated blueprint/runtime/control boundary with assigned consumer owners. Requires
 P00 and approved P2/r4, N1/r4/NP4. Read [shared context](context.md),
 [NP4](../notation-profile.md), [structure comparison](../../working/structure-comparison.md) and

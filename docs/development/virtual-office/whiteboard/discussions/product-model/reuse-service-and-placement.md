@@ -1,6 +1,21 @@
 # How should reusable work, services and execution location relate?
 
-## Current assessment — P1, revision 3
+## Current direction — local templates and remote tools, 2026-10-12
+
+Rowan-20261010 records [U20](../../../milkdrift-remedial-planning-v3/product-reset.md): a method is a
+consumer-protected reusable template; its scheduled local reference materializes into ordinary
+workflow tasks, whose future work may then change. A remote execution environment is a tool, not a
+remote method workflow. Prior publication/pinned-child/copy distinctions describe real old contracts
+but no longer prescribe the new reuse product.
+
+The final paragraph of the source corrects its earlier “static” wording. Do not freeze the copied
+instance or let a consumer mutate the shared template. “Global” library scope, current-at-activation
+selection when interfaces change, and deletion of referenced templates need explicit decisions.
+Retain the requested current-template behavior as intent; compare mechanisms without silently
+substituting the old pinned child. Restart must recover the actually accepted expansion, not choose
+new template bytes on each retry. These questions are open for reconstruction, not implementation.
+
+## Historical assessment — P1, revision 3
 
 Rowan-20261010, actual coordinator `/root`, 2026-10-10. The reopened source/ownership comparison
 retains revision 2's distinct committing actions for positive reasons, not because its menu already

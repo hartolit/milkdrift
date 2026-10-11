@@ -1,5 +1,9 @@
 # P04 — Ongoing work commitments and authentic response admission
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 Owner: coordinated control/controller, authority, persistence/runtime association and public-client
 boundary. Requires P03, approved U18 and the reviewed commitment placement in P2/A1. Read
 [shared context](context.md), [agency comparison](../../working/agent-directed-work.md),

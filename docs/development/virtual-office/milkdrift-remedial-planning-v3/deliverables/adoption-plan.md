@@ -1,5 +1,9 @@
 # Reconstruction and adoption plan
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 This specifies complete proposed changes after the deeper review. It is not production authorization.
 The investigated production baseline remains `908e7893f5dadb84d12712573c8daaa946829e39`, identical in
 production bytes to archive `c016cd3`. Current source, constants/readers and actual consumers must be

@@ -1,5 +1,9 @@
 # Frontend practice — proposal for adoption
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 This proposed practice began with Bram's FP1, was revised by Delta for F1/r4 and F2/r4, and now
 incorporates Rowan/Faris's U19 changes for F1/r5 and F2/r5,
 2026-10-10. Its intended canonical home

@@ -1,5 +1,9 @@
 # P08 — Test the product model through demanding combined work
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 Owner: implementation coordinator, actual user and independent challenger. Requires P07 and every
 selected branch; read [shared context](context.md), current decisions and first user-review changes.
 Do not substitute separate successful menu demos for the combined scenario.

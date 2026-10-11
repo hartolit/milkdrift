@@ -1,5 +1,11 @@
 # Roadmap
 
+**Current direction, 2026-10-12:** define the product again before assigning implementation. The
+[new account and preserved questions](../development/virtual-office/milkdrift-remedial-planning-v3/product-reset.md)
+supersede the remedial P00–P09 proposal. The user will return with the reconstructed idea; no rewrite
+or successor implementation is assigned. Preservation requirements below describe maintaining the
+existing implementation, not a requirement to reproduce every facility in a replacement.
+
 Ordered unfinished work; [status](status.md) owns implementation and evidence facts.
 
 The ordinary CLI workflow route is implemented through shared public daemon operations: setup,

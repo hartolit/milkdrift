@@ -1,5 +1,11 @@
 # Milkdrift — product vision
 
+**Product definition under reconstruction, 2026-10-12.** The user has superseded the previous
+remedial proposal and supplied a new direction in the [current planning account](../development/virtual-office/milkdrift-remedial-planning-v3/product-reset.md).
+The vision below records the earlier product model; it must not be treated as an approved requirement
+set for the replacement. Preserve it as context while the user reconstructs the intended product.
+No replacement architecture or implementation program is approved.
+
 > This document owns the enduring product intent of Milkdrift: why it exists, what kind of system it is trying to become, what experience it should create, and which principles must survive implementation changes.
 >
 > It is deliberately not an implementation-status report, milestone ledger, crate map, or API reference. `docs/product/status.md` must say what exists now. `docs/product/roadmap.md` must say what comes next. `docs/architecture.md` must say where responsibilities live and which invariants bind the implementation. This document is the compass those documents are measured against.

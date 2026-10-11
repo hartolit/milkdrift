@@ -1,5 +1,9 @@
 # Shared context for proposed implementation
 
+**Superseded — 2026-10-12.** The user's [product-definition reset](../../product-reset.md) is the current
+direction. This document preserves the previous proposal and its evidence; it is not a current
+recommendation or an instruction to execute P00–P09. No replacement program has been selected.
+
 Read [AGENTS.md](../../../../../../AGENTS.md), the canonical reading order, the
 [practice selector](../../../../practices/README.md), [implementation](../../../../practices/implementation.md),
 [documentation](../../../../practices/documentation.md) and [workflow](../../../../workflow.md).

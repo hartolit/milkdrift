@@ -1,6 +1,21 @@
 # What should an author control, and what must the execution model know?
 
-## Revised recommendation — P2, revision 4, selected for planning after U19
+## Current direction — evolving pipelines, 2026-10-12
+
+Rowan-20261010 incorporates [the new account](../../../milkdrift-remedial-planning-v3/product-reset.md).
+Tasks combine general instructions with runtime inputs. An agent may lay out research, consume its
+results, and add the next useful work without predicting the finished product. Splitter and compositor
+are candidate roles of an ordinary task, not necessarily distinct product node types. Their model
+reasoning remains different from deciding which parallel inputs are ready to consume.
+
+P2/r4, Program/GraphNative, WorkCommitment and the learning/qualification architecture below are
+superseded proposals. The desired workflow can reconsider its future without selecting those owners
+in advance. How does an authorized model result become local future work, and what happens to invalid,
+over-budget or conflicting proposals? Decide that on the user's concrete pipeline, including mutable
+method expansions and fixed executed history, before producing another implementation program.
+U17's evidence distinctions remain useful without mandating a product learning engine.
+
+## Historical recommendation — P2, revision 4
 
 Elin-20261010 recommends structured source as the default for new complete authoring conveniences,
 with graph-native source/editing retained in the same blueprint/control owner and checked-plan
