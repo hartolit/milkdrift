@@ -10,6 +10,7 @@ rules and examples; [AGENTS.md](../../../AGENTS.md) remains the repository entry
 | --- | --- |
 | [Implementation](implementation.md) | Designing, implementing, refactoring, or reviewing code, including Rust mechanisms, ownership, adoption, and module boundaries. |
 | [Documentation](documentation.md) | Developing or reviewing explanations in prose, API docs, comments, package introductions, and examples. |
+| [Cohesive review](cohesive-review.md) | Reassessing a product thesis or the fit between systems, and running a planning sprint that earns a complete implementation sprint or an explicit decision to reframe. Includes a portable kickoff prompt. |
 
 Read the practices relevant to the actual work, including when an assignment omits an explicit
 link. Apply their requirements within the authorized scope. Practices may be used alone or
