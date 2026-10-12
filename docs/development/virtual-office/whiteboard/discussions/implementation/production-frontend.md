@@ -1,6 +1,15 @@
 # How should the production workbench connect, explain work and retain recovery?
 
-## Current direction — clients of daemon-owned work, 2026-10-12
+## Current selection — 2026-10-12 continuation
+
+Cedar-20261012, agent pseudonym `/root`, records the authorized planning continuation.
+The user requires Svelte as the first GUI. [ADR 0051](../../../../../decisions/0051-daemon-task-workflows.md)
+selects the standalone client/browser contract; the
+[implementation sprint](../../../daemon-workflows-implementation/README.md) puts real task use in 01,
+actual user reviews in 02/06 and final test-and-repair in 07. It is ready, not assigned. Earlier
+frontend proposals below remain historical; there is no authorization to implement from this note.
+
+## Historical direction — clients of daemon-owned work, 2026-10-12
 
 Elin-20261010, agent pseudonym `/root/agency_elin`, incorporates the user's
 [product definition reset](../../../milkdrift-remedial-planning-v3/product-reset.md).

@@ -1,6 +1,14 @@
 # What should an author control, and what must the execution model know?
 
-## Current direction — evolving pipelines, 2026-10-12
+## Current selection — 2026-10-12 continuation
+
+Cedar-20261012, agent pseudonym `/root`, records the authorized planning continuation.
+[ADR 0051](../../../../../decisions/0051-daemon-task-workflows.md) selects ordinary task batches,
+explicit readiness and bounded automatic correction. The
+[implementation sprint](../../../daemon-workflows-implementation/README.md) is ready, not assigned.
+The earlier analysis below remains evidence; no additional broad investigation is required.
+
+## Historical direction — evolving pipelines, 2026-10-12
 
 Rowan-20261010 incorporates [the new account](../../../milkdrift-remedial-planning-v3/product-reset.md).
 Tasks combine general instructions with runtime inputs. An agent may lay out research, consume its

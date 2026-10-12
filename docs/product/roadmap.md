@@ -1,46 +1,36 @@
 # Roadmap
 
-**Current direction, 2026-10-12:** define the product again before assigning implementation. The
-[new account and preserved questions](../development/virtual-office/milkdrift-remedial-planning-v3/product-reset.md)
-supersede the remedial P00–P09 proposal. The user will return with the reconstructed idea; no rewrite
-or successor implementation is assigned. Preservation requirements below describe maintaining the
-existing implementation, not a requirement to reproduce every facility in a replacement.
+The product account and technical choices are finished for the
+[daemon-workflows implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md).
+It is **ready for authorization, unassigned and unexecuted**. The user authorized planning and local
+commits, not production implementation. The next explicit instruction may assign prompt 01; it does
+not automatically assign later prompts. The superseded remedial P00–P09 is historical evidence only.
 
-Ordered unfinished work; [status](status.md) owns implementation and evidence facts.
+[Vision](vision.md) owns the intended experience, [ADR 0051](../decisions/0051-daemon-task-workflows.md)
+the selected design, and [status](status.md) the earlier implementation and its qualified evidence.
+The new program delivers these outcomes in order:
 
-The ordinary CLI workflow route is implemented through shared public daemon operations: setup,
-authoring, supplied inputs, exact request recovery, result inspection, supported prospective repair,
-reuse/copy, publication preparation, evaluation and the independent client boundary. Its
-[acceptance and limits](status.md#current-validationevidence-snapshot) are recorded with the
-[reproducible evidence](../development/verification-evidence.md#client-workflow-verification-review).
-There is no automatic successor assignment.
+1. A real standalone Svelte client submits a useful task to its daemon, inspects results and
+   reconnects from a fresh client; the ordinary workflow replacement is adopted end to end.
+2. An actual early user review tests that journey and repairs behavior and usability findings.
+3. Models and humans build parallel research, composition and corrective future work through the
+   same commands, with explicit readiness, authority and cumulative limits.
+4. A daemon-wide method library expands its current saved templates into editable local future tasks,
+   including restart-safe expansion and explicit cross-daemon copies.
+5. Clients administer persistent execution-host connections and see remote operations truthfully;
+   rolling retention protects required inputs, unresolved work and exact replay.
+6. An actual user reviews the combined animation and different-project journeys; findings are repaired.
+7. The named final **test-and-repair** assignment runs the full current Rust/frontend gates and
+   combined product evidence on the repaired code. Earlier focused passes are not system acceptance.
 
-The live-client corrections have their own [stream contract](../reference/control-api.md#cursors-and-sse)
-and [verification evidence](../development/verification-evidence.md#live-client-streams).
+Preserve the existing independent execution-host and Podman mechanisms and their protections. The
+fresh-store replacement may remove obsolete graph, published-workflow and evaluated-learning paths;
+archived code remains available for old stores. Planning did not reset stores, change services, or
+qualify a new deployment. Unexpected active data discovered during implementation requires a bounded
+preservation decision for that data, not a migration framework for hypothetical users.
 
-Svelte remains the first future GUI, and every frontend uses the daemon's public operations.
-GUI implementation needs a separately scoped assignment. Preserve the accepted host,
-managed-resource, protected publication, evaluation and client behavior when planning further work.
-
-The managed resource, protected adaptation, publication and evaluated-learning implementations
-have finite desktop and UM790 qualification. Current coverage and limits belong to
-[status](status.md#current-validationevidence-snapshot). Broader managed Vulkan, active-reboot and
-memory-pressure claims remain separately scoped questions in the
-[hardware qualification issue](../development/virtual-office/whiteboard/issues/managed-linux-hardware-qualification.md).
-
-Use the maintained [Slotbook example](../guides/adaptive-method-example.md) for the operator route.
-A learning outcome may be negative or inconclusive; demonstrating the mechanism does not require
-fabricating a better method. Preserved model failures and uncertainty remain evidence even when an
-authorized assistant supplies a corrected implementation to continue the workflow.
-
-Keep native trusted execution, attached endpoints, ordinary files, external inference, scoped
-knowledge, local-first operation and shared administration. Linux is the first managed mechanism;
-existing portable behavior and future Windows/macOS clients remain part of the product direction.
-No live production deployment, data destruction, or host privilege change follows from this plan.
-
-GUI implementation, an inference engine, new cloud-provider families, a discovery/VPN mesh,
-shared multi-host storage, consensus/failover, a general package manager, custom supervisor,
-second scheduler, global static/dynamic modes, and unrelated graph primitives remain excluded.
-Further implementation needs a bounded assignment; unrelated architectural cleanup needs
-a demonstrated defect or a separately authorized operator need. The whiteboard's generation-policy
-and external-configuration-provenance discussions remain separate work.
+Inference, new provider families, remote workflow ownership, mesh/discovery infrastructure, central
+method services, permanent knowledge/forensic systems and unrelated workflow primitives are excluded.
+The [hardware qualification issue](../development/virtual-office/whiteboard/issues/managed-linux-hardware-qualification.md),
+generation-policy and external-configuration-provenance topics remain separate. Svelte is the selected
+first GUI in this finite sprint; no other frontend or automatic successor is authorized.

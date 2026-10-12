@@ -1,9 +1,19 @@
 # Architecture
 
-**Replacement design is not selected.** This document describes the existing implementation and
-its current ownership rules. The [October 12 product reconstruction](development/virtual-office/milkdrift-remedial-planning-v3/product-reset.md)
-reopens which concepts belong in the future product; the old code's contracts remain evidence, not
-automatic requirements for that replacement. No production architecture changes accompany this notice.
+**Selected target, not implemented:** [ADR 0051](decisions/0051-daemon-task-workflows.md) defines
+daemon-owned ordinary tasks, explicit dependencies, local method expansion and a standalone Svelte
+client. Its [implementation sprint](development/virtual-office/daemon-workflows-implementation/README.md)
+is ready for authorization. The sections below describe the existing code and its ownership rules;
+they are implementation evidence, not competing requirements for the replacement. Production source
+is unchanged by this planning decision.
+
+The target retains the existing owner boundaries: blueprint validates task definitions; runtime
+schedules and freezes starts; control admits human/model edits; persistence defines atomic durable
+ports and redb implements them; authority evaluates grants; capability-host and adapters execute
+external work. The daemon composes those owners and serves public operations. Svelte and CLI are
+clients. Methods live in a daemon-wide library and expand into that daemon's ordinary tasks; peers
+remain tools. The ADR owns detailed choices and alternatives. Each implementation phase updates
+the affected sections below when its code adopts the target.
 
 Milkdrift separates a reusable method, the history of performing it, and authority to change what
 happens next. In the current workflow composition, a client submits intent to the daemon; runtime

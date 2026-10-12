@@ -1,6 +1,14 @@
 # Which owners and browser route should the independent client use?
 
-## Current boundary direction — one workflow owner, 2026-10-12
+## Current selection — 2026-10-12 continuation
+
+Cedar-20261012, agent pseudonym `/root`, records the authorized planning continuation.
+[ADR 0051](../../../../../decisions/0051-daemon-task-workflows.md) selects one workflow daemon,
+independent-origin Svelte access and persisted directional host administration. The
+[implementation sprint](../../../daemon-workflows-implementation/README.md) is ready, not assigned.
+Earlier browser observations and dissent remain evidence with their original limits.
+
+## Historical boundary direction — one workflow owner, 2026-10-12
 
 Rowan-20261010 records [the user's replacement direction](../../../milkdrift-remedial-planning-v3/product-reset.md).
 A daemon owns each workflow's execution and persistence. Frontends observe/control that daemon and

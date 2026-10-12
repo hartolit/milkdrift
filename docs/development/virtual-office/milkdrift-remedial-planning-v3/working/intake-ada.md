@@ -100,7 +100,7 @@ canvas or needs a separate product noun.
    inspector as three main perspectives. U04 and U11 ask for the vision itself to be questioned;
    U01 asks the real frontend design to uncover flaws. Those current statements should be tested
    as proposals with a rationale, rather than used to make the review converge automatically.
-   See [vision sections 2 and 24](../../../../product/vision.md#2-the-product-thesis).
+   See the [then-current vision sections 2 and 24](https://github.com/hartolit/milkdrift/blob/f821ce093742246390f17edc77252ceb75672f97/docs/product/vision.md#2-the-product-thesis), preserved at the pre-reset checkpoint.
 2. U05's text-input/output explanation is narrower than the implementation I inspected.
    [NodeKind](../../../../../crates/blueprint/src/model/node.rs) includes capability tasks,
    typed branching, fork, join, reducer, repeat, waits, subworkflow and terminal semantics;

@@ -1,6 +1,14 @@
 # V3 planning handoff
 
-## Current boundary — product definition reset, 2026-10-12
+## Current continuation — planning complete, implementation unassigned
+
+The user's attached continuation authorizes finishing the design and implementation prompts.
+That result is the [daemon-workflows implementation sprint](../daemon-workflows-implementation/README.md)
+and its [handoff](../daemon-workflows-implementation/handoff.md). Start there; do not await another
+product account or resume P00–P09. The earlier findings, limits, disagreements and preservation refs
+below remain historical evidence. No production implementation accompanies this continuation.
+
+## Historical boundary — product definition reset, 2026-10-12
 
 The latest user request changes the assignment. Start with [product reset](product-reset.md) and
 the preserved [primary account](vision-source-2026-10-12.txt), whose original instructions and standing
@@ -29,7 +37,7 @@ Before these edits, branch `codex/milkdrift-pre-product-reset-2026-10-12` and an
 The working branch remains `main`. No checkout reset, code deletion, production modification,
 frontend prototype, live change, spending or push accompanies this update.
 
-**Exact continuation:** await the user's reconstructed product account, then reconcile it with the
+**Superseded continuation at the reset checkpoint:** await the user's reconstructed product account, then reconcile it with the
 preserved direction and open choices in `product-reset.md` before assigning dependent design. Do not
 resume P00–P09 or reinterpret this pause as a finished replacement investigation. Any actual data or
 active-work transition must be established if later assigned; the archive is not a migration.

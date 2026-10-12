@@ -1,0 +1,122 @@
+# Finish Milkdrift’s implementation sprint
+
+## Assignment and authorization
+
+The product direction is sufficiently defined. Finish the planning so we can build and use it.
+
+You are authorized to inspect the relevant source, resolve remaining technical choices, update planning and product documentation, and make regular local commits. **Do not begin another broad investigation, produce another planning-of-planning sprint, or implement production code in this assignment.** Deliver the finished implementation sprint and the exact instruction to start it.
+
+The previous P00–P09 proposal is superseded. Preserve its useful evidence, findings and disagreements, but do not treat its architecture as a requirement or force this product into its assignments.
+
+Start with `AGENTS.md`, the applicable practices, the current worktree and:
+
+- `docs/development/virtual-office/milkdrift-remedial-planning-v3/product-reset.md`
+- `docs/development/virtual-office/milkdrift-remedial-planning-v3/vision-source-2026-10-12.txt`
+- `docs/development/virtual-office/milkdrift-remedial-planning-v3/handoff.md`
+- `docs/development/practices/cohesive-review.md`
+- `docs/development/workflow.md`
+
+The supplied reference is `750ebb26607c910ae96c6f6b0f0b3ea12228180c`, not an instruction to reset the checkout. Preserve newer work and the pre-reset archive/tag/branch. Correct stale instructions saying to await another product account: this assignment supplies the continuation. Do not discard genuine unresolved findings.
+
+## The product to build
+
+### Daemon-owned workflows and an independent Svelte client
+
+Each workflow belongs to one daemon. That daemon stores its tasks and results, runs the work, accepts changes and reports progress. Closing a phone or desktop client must not stop execution. Another authorized client can reconnect and discover the same work without possessing a local recovery file or already knowing its ID.
+
+**Svelte remains the first GUI.** It is a standalone client that can connect to several daemons and keeps their workflows, settings and permissions clearly separated. It uses public daemon operations, not CLI subprocesses, database access or its own execution rules.
+
+### Ordinary tasks, with inputs supplied later
+
+A task combines behavioral instructions with input bindings. The instructions can be written before the eventual input exists. Inputs may include text, files or earlier results. Tasks select configured models and permitted tools; Milkdrift does not perform inference itself.
+
+Research, splitting assignments, criticism and composition should normally be uses of the same task model—not separate specialized products. A splitter can ask a model to produce assignments. The daemon checks and creates the requested tasks. A compositor is an ordinary task that receives selected results and reasons over them.
+
+Instructions describe the work. Explicit dependencies tell the daemon when it can run. Do not let prose, screen position or timestamps secretly determine scheduling. Decide how missing and failed inputs affect readiness, and give the user a clear way to continue or repair.
+
+### A workflow can grow as it runs
+
+An agent can begin with a partial plan, examine results, add work and revise tasks that have not started. Users have the same supported editing path. Work may continue through criticism and correction without a person manually launching every next round, within the access and limits the user has granted. Specify when it finishes, waits for user input, or stops because of repeated failure or exhausted limits.
+
+Freeze the instructions and inputs actually used once a task starts. Its progress and status can still change. A correction is new or revised future work, not a rewrite of an earlier execution. Decide how a running task is stopped or replaced without pretending a cancellation request proves it stopped.
+
+### Methods are reusable templates, expanded locally
+
+Methods reduce repeated authoring and let users encode preferred procedures. They are available across workflows, not restricted to one project. A template’s owner can edit it; consumers cannot alter the shared template merely by using it.
+
+A queued method use refers to a template. **When that use activates, expand the current saved template into ordinary tasks in the owning workflow.** Record which template content produced that expansion. Later template edits affect future expansions, not existing copies. Materialized future tasks can be adapted like other future work.
+
+This is neither a remote workflow service nor a permanently linked child run. Do not replace it with definition-time pinning or force every use into a separate workflow.
+
+Prevent deletion of a method while queued references still require it, unless those references are deliberately removed or replaced. Settle incompatible input changes, naming/identity, nested references and interrupted expansion. Expansion must not insert tasks twice or change its selected template after an interrupted accepted expansion.
+
+Pick the simplest library arrangement that provides cross-workflow reuse. Explain sharing between daemons without introducing remote workflow ownership or an unnecessary central service. Retain enough origin information to inspect a copied task; do not recreate the old versioning hierarchy merely for this.
+
+### Remote environments are tools
+
+Keep the execution-host and Podman direction. A workflow can use an advertised local or remote environment to run commands and set up services. Its own daemon remains the workflow owner. Remote hosts enforce their offered access and limits and report the operations they execute.
+
+The workflow maintains project-specific procedures, environment explanations and documentation through ordinary files and tools. Milkdrift need not implement a specialized documentation, deployment or knowledge product for those tasks. It still must know enough operational state to avoid treating a lost connection as proof that a command never ran.
+
+Store configured execution-host connections on the daemon, so its authorized clients see the same available tools and reported state. The GUI must support connection administration without requiring each client to rediscover the topology. Seeing a remote host through daemon A must not automatically distribute credentials or grant direct administration of that host. Choose a secure, straightforward connection flow; the operator supplies LAN/mesh connectivity. The earlier SSH suggestion is not a requirement to invent a new transport.
+
+### A useful timeline, not a permanent knowledge system
+
+Show work from left to right with titles, short descriptions, actual start/end times and clear queued, running, completed, failed and stopped states. Explain parallel work and dependencies. Method-derived tasks show their origin; follow-up work links to what it addresses.
+
+Humans and agents can search and browse recent tasks and inspect their results without being given exact IDs. Keep this on the selected daemon’s authorized public path.
+
+Use configurable rolling retention for completed history and context. Do not discard unfinished work, unresolved remote operations or inputs still required by pending tasks simply because they are old. Explain what expires and what remains protected while needed.
+
+**Project knowledge lives primarily in ordinary Markdown files and Git.** Agents maintain architecture, rules and practices as part of their work. The product does not need permanent forensic history, a specialized lesson database, mandatory evaluated learning or a documentation interface. Git does not replace the minimal state needed to manage running operations.
+
+## Finish the remaining choices yourself
+
+Turn the above behavior into one concrete design. Resolve task creation and readiness, model-produced additions, concurrent edits, template expansion and failure, library scope, connection setup, permissions, retention, and minimal restart/recovery behavior. Do not send back a list of these same questions.
+
+For each consequential choice, briefly record the selected behavior, why it fits this account, and the relevant alternative or limitation. Distinguish the user’s requirements from your engineering choices. Reuse existing evidence and inspect source where it changes the answer. Do not repeat the whole-codebase audit.
+
+Ask the user only when every viable choice would materially change an explicit product requirement, remove a wanted ability, weaken a protection, require unapproved spending, or affect real data/services without authority. Continue unaffected work. Ordinary technical defaults and implementation organization are your responsibility.
+
+Do not let archived compatibility requirements dictate the replacement. Establish whether there is actual data or active work to preserve. Where a fresh store and archived old code are sufficient, specify that instead of designing migration for hypothetical users. Do not reset stores or touch running services during planning.
+
+## Check one complete path
+
+Use the user’s example as the connected test of the plan:
+
+> A user asks for a Rust-based approach to learned animation. A planning task creates three research tasks. They write findings into separate project folders. A composition task reads the results and adds the next tasks, including a project-setup method. The method expands from its current saved definition. A later review finds a problem and adds corrective work. One task uses a remote environment. The user closes the phone client and later reconnects to see progress and find an earlier result.
+
+Specify task inputs, outputs, dependencies, files, ownership and visible actions. Include a failed research task, a template edit before expansion, a restart during expansion, an interrupted remote command and a reconnect from a fresh client. These are tests of the same journey, not separate products.
+
+Use controlled models/tools for repeatable tests where appropriate. They must not secretly perform the task creation, scheduling or recovery the daemon is supposed to provide. Separate tests of the plumbing from claims about real model quality. Also check a different project brief so reusable methods are not hardcoded to this example.
+
+## Produce the implementation sprint
+
+Create one new, clearly named sprint directory under `docs/development/virtual-office/`. Update the office index and current planning references so no agent mistakes the superseded program for the active direction. Keep implementation marked ready for authorization, not already assigned.
+
+Deliver:
+
+1. **A short product and design account.** State the chosen behavior and component responsibilities in plain language. Update or link the current product documents without copying competing versions everywhere. Keep proposed behavior separate from implemented status.
+2. **A concrete code-change map.** Identify what existing code will be reused, corrected, moved, replaced or removed, with its callers and tests. Avoid both a mandatory rewrite and layers added solely to protect obsolete designs.
+3. **A sprint README and full execution prompts.** Include prerequisites, clear outcomes, affected owners and consumers, important failure cases, tests, documentation and commit checkpoints. Use as many coherent assignments as needed; neither preserve the old ten prompts nor expand the count for appearances. Do not leave foundational choices as “investigate this during implementation.”
+
+Plan real Svelte use early. The first connected slice must let the user submit meaningful work, inspect its result and reconnect. Keep that production code and extend it through automatic task construction, parallel research, method expansion, corrective work and remote tools. Do not spend the entire program rebuilding the backend before the user sees anything.
+
+Include an actual user-review checkpoint after the early working journey and another after the combined advanced journey. These are opportunities to fix behavior, not only colors. No mock frontend, fabricated successful state, or prototype counts as product delivery. Test fixtures remain acceptable as tests.
+
+Every implementation assignment must finish its behavior across the daemon and relevant clients, including underlying corrections it discovers. Remove superseded paths when the replacement is adopted. Do not leave a thin GUI hiding incompatible backend concepts or create a second workflow engine in the frontend.
+
+Carry forward the established working rules:
+
+- Run focused checks with each change; fix known problems when found.
+- Commit coherent, tested changes regularly, not one giant commit per prompt. Preserve checkpoints; no automatic squashing, rebasing or pushing.
+- Put the full-system checks and combined product journey in one named final **test-and-repair** assignment. Fix its findings and verify the resulting code. Do not repeat the full gate after every phase or weaken CI.
+- Use current project tooling and the frontend’s appropriate checks. Plan evidence for real browser behavior, not merely native HTTP tests.
+
+## Final review and stop
+
+Have another agent, when available, read the resulting prompts against this product account. Ask them to trace the complete journey, identify unsupported assumptions, missing work and unnecessary subsystems, and check that a fresh implementer can follow it. Correct concrete gaps; do not launch another indefinite debate. Describe a sole-agent review honestly.
+
+Finish with a concise handoff: the recommended design, important defaults, what changes in the code, sprint path and order, checks actually run, remaining genuine approval choices, and the exact command/instruction to start its first prompt.
+
+**The result must be an implementation sprint we can begin—not another investigation proposal, a list of future design questions, or an announcement that you agree with the direction. Stop after delivering it. Production implementation requires the user’s next instruction.**

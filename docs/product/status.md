@@ -3,6 +3,14 @@
 This document owns current implementation, limitations, exact versions, and qualified evidence.
 [Architecture](../architecture.md) owns semantics and source ownership; Git and CI retain chronology.
 
+The [selected replacement design](../decisions/0051-daemon-task-workflows.md) and
+[seven-assignment implementation sprint](../development/virtual-office/daemon-workflows-implementation/README.md)
+are planning deliverables, ready for authorization. No production implementation accompanied them.
+The existing features and evidence below describe the earlier model. In particular there is no
+Svelte client, activation-time local method expansion, or complete new task journey yet. Previous
+qualification does not qualify the proposed replacement; its focused and final acceptance must run
+on the resulting code. Old stores and preserved code remain untouched.
+
 ## Implemented now
 
 - The headless Rust workspace provides immutable blueprints/mutations; task, branch, fork/join,

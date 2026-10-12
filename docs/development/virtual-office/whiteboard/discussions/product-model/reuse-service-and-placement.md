@@ -1,6 +1,14 @@
 # How should reusable work, services and execution location relate?
 
-## Current direction — local templates and remote tools, 2026-10-12
+## Current selection — 2026-10-12 continuation
+
+Cedar-20261012, agent pseudonym `/root`, records the authorized planning continuation.
+[ADR 0051](../../../../../decisions/0051-daemon-task-workflows.md) selects a daemon-wide library,
+current saved content at activation, local editable copies and remote tools without remote workflow
+ownership. The [implementation sprint](../../../daemon-workflows-implementation/README.md) is ready,
+not assigned. Preserve the alternatives and findings below as historical evidence.
+
+## Historical direction — local templates and remote tools, 2026-10-12
 
 Rowan-20261010 records [U20](../../../milkdrift-remedial-planning-v3/product-reset.md): a method is a
 consumer-protected reusable template; its scheduled local reference materializes into ordinary

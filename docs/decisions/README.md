@@ -10,6 +10,10 @@ for supported versions and qualification, and [architecture](../architecture.md)
 ownership model. Controller installation remains an explicit operator configuration; ADR 0033 and
 status record the accepted activation scope rather than inferring it from a decision's existence.
 
+[0051](0051-daemon-task-workflows.md) selects the replacement task product and explicitly supersedes
+the former workflow hierarchy, publication and evaluated-learning requirements for that replacement.
+It does not change current readers or erase the evidence behind earlier decisions.
+
 ADRs 0038–0041 adopt the adaptive-host direction. Their stated assignment owners must implement and
 verify it; these decisions do not change current readers, configuration options or support claims.
 
@@ -60,3 +64,4 @@ verify it; these decisions do not change current readers, configuration options 
 - [0045 — Supplied run inputs and exact client recovery](0045-supplied-run-inputs-and-recovery.md)
 - [0049 — Discover revisions within the authorized workflow collection](0049-authorized-workflow-discovery.md)
 - [0050 — Framed editor edge identities and retained connections](0050-editor-edge-identities.md)
+- [0051 — Daemon-owned tasks and locally expanded methods](0051-daemon-task-workflows.md)

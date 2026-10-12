@@ -1,5 +1,15 @@
 # Product definition reset — 2026-10-12
 
+**Continuation supplied:** the user subsequently authorized finishing planning and technical choices.
+The [current sprint](../daemon-workflows-implementation/README.md) is complete and ready for explicit
+implementation authorization. [Vision](../../../product/vision.md) and
+[ADR 0051](../../../decisions/0051-daemon-task-workflows.md) own the chosen product and design.
+The three decision areas recorded below are resolved there: local library/snapshot expansion,
+shared task admission and directional daemon-owned connections. Preserve the findings and prior
+disagreements. This reset record is historical; its instructions to await another account no longer apply.
+
+## Historical reset account
+
 The user has asked to step back, preserve the existing work, and reconstruct the product before
 deciding how to implement it. The [new primary account](vision-source-2026-10-12.txt) is the current
 direction to develop, including its final correction about editable materialized methods. It is
@@ -10,7 +20,7 @@ The previous decision packet and P00–P09 are **superseded as the current propo
 findings, executed observations, alternatives and disagreement remain available. Do not execute or
 incrementally patch that program into the new product. The user will return with a reconstructed
 idea; this update incorporates the supplied direction and preserves questions for that conversation.
-It neither starts a rewrite nor finishes a replacement architecture.
+At that checkpoint it neither started a rewrite nor finished a replacement architecture.
 
 ## What the new account establishes
 
@@ -63,7 +73,7 @@ parallel work and remote uncertainty, rather than reconstructing a workflow from
 This trace expresses the supplied intent and exposes missing choices. It is not a claim that the old
 code already performs it, a schema design, or a new implementation assignment.
 
-## Decisions to carry into the user's reconstruction
+## Historical questions resolved by the continuation
 
 1. **Method library scope and publication of edits.** Is the library per daemon, or can templates be
    distributed/copied between daemons? Does saving an owner edit immediately affect every unmaterialized
@@ -82,8 +92,9 @@ code already performs it, a schema design, or a new implementation assignment.
    person to reconstruct hidden topology, but the same peer link must not accidentally authorize a
    different user or client. SSH versus existing transports follows that decision, not vice versa.
 
-These are retained questions for the user's return, not a questionnaire blocking this documentation
-assignment. No replacement implementation program is declared complete while they remain open.
+These were the retained questions at the reset checkpoint. ADR 0051 now resolves them and the current
+sprint assigns their implementation. Preserve the original alternatives below as evidence; do not
+send this list back to the user or restart dependent planning.
 
 ## What survives, and what no longer constrains the design
 

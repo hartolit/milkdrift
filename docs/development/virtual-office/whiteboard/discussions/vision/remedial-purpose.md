@@ -1,6 +1,14 @@
 # What value should survive the remedial redesign?
 
-## Current direction — product reconstruction, 2026-10-12
+## Current selection — 2026-10-12 continuation
+
+Cedar-20261012, agent pseudonym `/root`, records the authorized planning continuation.
+[Vision](../../../../../product/vision.md) and [ADR 0051](../../../../../decisions/0051-daemon-task-workflows.md)
+now select the product and its technical choices. The
+[implementation sprint](../../../daemon-workflows-implementation/README.md) is ready, not assigned.
+The account below preserves the reset and earlier disagreement; it no longer blocks on another user account.
+
+## Historical direction — product reconstruction, 2026-10-12
 
 Rowan-20261010 incorporates [U20 and the new product account](../../../milkdrift-remedial-planning-v3/product-reset.md).
 The user intends to redefine Milkdrift before implementation. The supplied direction centers on

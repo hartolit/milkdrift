@@ -1,6 +1,14 @@
 # Which notation truthfully explains executable work?
 
-## Current direction — task pipelines and materialized methods, 2026-10-12
+## Current selection — 2026-10-12 continuation
+
+Cedar-20261012, agent pseudonym `/root`, records the authorized planning continuation.
+[ADR 0051](../../../../../decisions/0051-daemon-task-workflows.md) selects one ordinary task/dependency
+representation in existing Rust owners; no region language, GraphNative mode or new notation product.
+The [implementation sprint](../../../daemon-workflows-implementation/README.md) is ready, not assigned.
+Retain NP4 and earlier source observations below as superseded evidence, not implementation instructions.
+
+## Historical direction — task pipelines and materialized methods, 2026-10-12
 
 Elin-20261010, agent pseudonym `/root/agency_elin`, incorporates the user's
 [product definition reset](../../../milkdrift-remedial-planning-v3/product-reset.md).

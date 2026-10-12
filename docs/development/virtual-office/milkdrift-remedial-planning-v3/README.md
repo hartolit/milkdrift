@@ -1,12 +1,11 @@
 # Milkdrift remedial planning — v3
 
-**Current standing — 2026-10-12:** the user has asked to reconstruct the product before deciding its
-implementation. Start with the [product reset](product-reset.md), its preserved primary account and
-the [handoff](handoff.md). The previous proposal and P00–P09 are superseded; no replacement architecture
-or implementation program is selected. The new [cohesive review practice](../../practices/cohesive-review.md)
-extracts the reusable method, including a planning sprint that can stop for product redefinition.
-The user will return with a reconstructed idea. The original remit below and completed review packet
-remain historical context, not authorization to continue the former design.
+**Current standing — 2026-10-12:** this investigation and its P00–P09 proposal are superseded.
+The user's continuation has produced the selected
+[daemon-workflows implementation sprint](../daemon-workflows-implementation/README.md), ready for
+authorization and not executed. Start there. The [product reset](product-reset.md), primary account,
+findings and disagreements remain useful evidence. The original remit and packet below are historical,
+not instructions to restart investigation or wait for another product account.
 
 ## Original sprint remit and completed investigation
 

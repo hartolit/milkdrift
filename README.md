@@ -5,10 +5,11 @@ durable workflow runtime coordinates AI endpoints, coding agents, tools, humans,
 An operator can inspect execution, pause it, and revise future work while retaining the history
 and evidence needed to understand each decision. Models and tools run outside the core.
 
-The pre-1.0 headless kernel supplies the current workflow implementation. Independent hosting,
-managed resources, protected adaptation, and callable methods are authorized additions in the roadmap;
-their design is adopted, and their implementation remains unfinished.
-There is no UI or storage migration. Local processes run with the daemon account's privileges;
+The pre-1.0 headless kernel supplies the current implementation, including independent hosting and
+managed resources. A new daemon-owned task model and standalone Svelte client have a
+[complete implementation sprint](docs/development/virtual-office/daemon-workflows-implementation/README.md),
+ready for authorization; production work has not started. There is no UI or storage migration.
+Local processes run with the daemon account's privileges;
 they are not sandboxed. Continuous controllers require explicit daemon activation and retain
 cumulative final-entry admission limits. Controller activation is disabled by default.
 [Status](docs/product/status.md) owns exact versions, limitations, and evidence;

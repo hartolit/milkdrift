@@ -9,21 +9,23 @@ The [whiteboard](whiteboard/README.md) retains broader issues and discussions ac
 
 ## Current sprints
 
-[Remedial planning v3](milkdrift-remedial-planning-v3/README.md) now records the user's
-[product-definition reset](milkdrift-remedial-planning-v3/product-reset.md). The new account supersedes
-the previous proposal and P00–P09; source evidence, disagreement and checkpoints remain available.
-The user will return with a reconstructed product idea before a replacement architecture or program
-is assigned. The reusable [cohesive review practice](../practices/cohesive-review.md) preserves the
-method and its stopping rules. The [handoff](milkdrift-remedial-planning-v3/handoff.md) owns current
-coverage, checks and the continuation boundary.
+[Daemon workflows implementation](daemon-workflows-implementation/README.md) is the completed
+planning result: selected design, source-change map, connected journey and seven full execution
+prompts. It is ready for authorization, unassigned and unexecuted. Its
+[handoff](daemon-workflows-implementation/handoff.md) owns planning checks and the exact next instruction.
+
+[Remedial planning v3](milkdrift-remedial-planning-v3/README.md) is retained as the superseded
+investigation/reset archive. Preserve its source evidence, disagreements and Git checkpoints.
+The user's continuation supplied the product account and authorized finishing technical choices;
+do not wait for another reconstruction or restart that investigation.
 
 The [roadmap](../../product/roadmap.md) owns unfinished work; unrelated whiteboard topics remain separate.
 
 ## Prepared assignments
 
-The v3 [previous implementation program](milkdrift-remedial-planning-v3/deliverables/proposed-implementation/README.md)
-is superseded and retained as history. No implementation assignment is prepared for the reconstructed
-product. Do not resume P00–P09 from its earlier review status.
+Use the ordered [01–07 prompts](daemon-workflows-implementation/README.md#ordered-assignments).
+The v3 [previous program](milkdrift-remedial-planning-v3/deliverables/proposed-implementation/README.md)
+remains superseded history. No implementation starts without the user's next instruction.
 
 ## Start a sprint
 

@@ -1,0 +1,114 @@
+# Daemon workflows — implementation sprint
+
+**Ready for authorization; unassigned and unexecuted.** Planning is complete. This is the replacement
+implementation sprint requested on 2026-10-12, not another investigation. The user authorized its
+design, documentation and local commits; production implementation needs the next instruction.
+The former remedial P00–P09 is superseded and must not be resumed.
+
+## Outcome and design
+
+A person starts meaningful work in standalone Svelte, closes the client, then reconnects and finds
+its results. The owning daemon accepts model-created research, composition and corrective tasks,
+expands the current saved method locally, and uses remote environments as tools. A timeline explains
+actual progress, dependency blocks, method origins and unresolved effects. Ordinary project files
+and Git hold project knowledge; recent daemon history has bounded rolling retention.
+
+Read [vision](../../../product/vision.md) for the short product account and
+[ADR 0051](../../../decisions/0051-daemon-task-workflows.md) for the selected technical defaults,
+alternatives and responsibilities. [Architecture](../../../architecture.md) labels existing code
+separately from this target. [Code-change map](code-change-map.md) names source, consumers, reuse and
+removal. [Journey](journey.md) supplies one connected acceptance trace and a different project brief.
+These are complementary owners, not competing versions of the design.
+
+The first assignment replaces the ordinary workflow boundary in the existing Rust owners and
+connects a production Svelte client. This is substantial: the old graph/publication/learning callers
+must retire, while host/Podman effect safety survives. Its first usable checkpoint is an actual
+browser-submitted task; it cannot spend the whole assignment on backend cleanup before showing work.
+The following phases extend that maintained code. No mock frontend or fabricated success is delivery.
+
+## Prerequisites and standing
+
+Start from the current worktree, preserving newer work. The supplied reference is
+`750ebb26607c910ae96c6f6b0f0b3ea12228180c`; it is not a reset target. Branch
+`codex/milkdrift-pre-product-reset-2026-10-12` and annotated tag
+`milkdrift-pre-product-reset-2026-10-12` preserve `f821ce093742246390f17edc77252ceb75672f97`.
+Keep them and the prior v3 evidence/disagreements. [Planning handoff](handoff.md) records checks and
+review of this packet; it is not implementation evidence.
+
+Implementation uses a new named development store. Bounded local inspection found no identified
+active Milkdrift daemon/user store, but retained 197 test/evidence stores under ignored `target`.
+Leave those and existing external services alone. Prompt 01 rechecks for actual preservation
+obligations; any newly found live state needs a narrow transition decision. There is no planned
+old-store converter, in-place reset or second engine.
+
+Use the pinned Rust toolchain and existing repository tools. Prompt 01 introduces the frontend's
+locked package/tool versions, typed client and checks. Actual user participation is required in 02
+and 06. Controlled Rust model/tool endpoints are available as fixtures only; real model use requires
+an already configured authorized endpoint/allowance. Do not invent credentials, paid usage or live
+service permissions. Missing real-user/external prerequisites remain explicit evidence gaps.
+
+## Ordered assignments
+
+All rows are prepared, with no implementer assigned. Assigning one prompt authorizes its whole
+responsibility and local coherent commits; it does not silently assign its successor.
+
+| Order | Full execution prompt | Prerequisite | Usable outcome |
+| --- | --- | --- | --- |
+| 01 | [Connected task and Svelte client](01-connected-task-and-svelte.md) | Explicit implementation instruction | Real task submission/output/discovery/reconnect, canonical fresh-store task path, affected legacy paths removed. |
+| 02 | [Early user review and repair](02-early-user-review.md) | 01 focused checks; actual user | A person completes the first journey; functional and usability findings are repaired. |
+| 03 | [Evolving work and parallel research](03-evolving-work.md) | 02 reviewed result | Ordinary model tasks admit parallel research, composition, correction and bounded continuation through the same commands as humans. |
+| 04 | [Reusable methods](04-local-methods.md) | 03 | Current saved templates expand locally, with input repair, owner rights, import/export and exact interrupted recovery. |
+| 05 | [Remote tools and retention](05-remote-tools-and-retention.md) | 04 | Persistent connection administration, remote uncertainty/recovery and protected rolling retention across clients. |
+| 06 | [Combined user review and repair](06-combined-user-review.md) | 05; actual user | The full animation journey and different-project reuse work in production UI; consequential feedback is fixed. |
+| 07 | [Final full-system test and repair](07-final-test-and-repair.md) | 06 and all focused checks | Full current Rust/frontend gates and combined journey pass on repaired code; accurate limits and handoff. |
+
+## Working and verification rules
+
+Every prompt reads [AGENTS](../../../../AGENTS.md), canonical docs and the relevant
+[implementation](../../practices/implementation.md), [documentation](../../practices/documentation.md)
+and [workflow](../../workflow.md) guidance. Review prompts also use
+[cohesive review](../../practices/cohesive-review.md). Each assignment completes implementation,
+refusal/recovery, all affected daemon/client consumers, removed superseded paths, tests, docs and
+evidence. Listed files/cases do not limit in-scope correction. No foundational choice is deferred to
+implementation discovery; inspect source to implement the selected responsibilities and catch drift.
+
+Run focused checks with every changed boundary and fix known failures immediately. Compile affected
+packages/callers, test intended filters using discovery, run applicable documentation/example checks,
+and inspect the diff. Commit coherent tested changes regularly, with explicit staging and
+`git diff --cached --check`; preserve checkpoints without squashing, rebasing or pushing.
+One coordinator owns shared files and Cargo jobs when agents work in parallel.
+
+This is the explicit multi-phase schedule permitted by
+[verification policy](../../workflow.md#explicit-multi-phase-sprint-schedule): **07 is the sole named
+local full-system test-and-repair assignment.** Earlier prompts run complete focused checks, not
+repeated workspace gates; they are not full-system acceptance. CI remains enabled and equally strict.
+Do not defer a known phase defect to 07 or weaken CI, assertions, discovery or tests to fit the plan.
+
+Frontend checks introduced in 01 are `npm ci`, `npm run check`, `npm run lint`, `npm run test:unit`,
+`npm run build` and `npm run test:browser` from `apps/web`. These are planned package scripts, not
+commands available at this planning checkpoint. Use Svelte/TypeScript checks, accessibility and
+focused component tests plus Playwright for actual browser behavior. Node scripts are confined to
+frontend build/test work; Rust owns backend fixtures, daemon launch/fault harnesses and protocol
+code generation. A browser driver may click or assert UI, but never supply daemon scheduling/recovery.
+
+Keep raw output in ignored `target/daemon-workflows/` and browser artifact paths excluded from Git.
+Record source identity, command, discovered/executed cases, environment and limits in the canonical
+[verification evidence](../../verification-evidence.md) only when evidence is actually produced.
+Update status/architecture/reference/operator docs as their behavior changes. Keep temporary handoff
+in this sprint; no progress diaries or duplicate status pages elsewhere.
+
+## Boundaries and start instruction
+
+No production work, live deployment, spending, host privilege change or data deletion is authorized
+by this planning deliverable. The planned GUI, task engine changes and local test fixtures are within
+scope when their prompt is explicitly assigned. Inference, new provider families, network mesh,
+remote workflow ownership, permanent knowledge systems and unrelated primitives remain excluded.
+Do not ask the user to choose routine implementation organization already settled by this packet.
+
+Exact next instruction:
+
+> Execute `docs/development/virtual-office/daemon-workflows-implementation/01-connected-task-and-svelte.md`.
+> You are authorized to implement that prompt end to end and make regular tested local commits.
+> Follow this sprint's focused-check schedule; prompt 07 owns final full-system acceptance.
+> Preserve existing stores, services and Git checkpoints. Stop at the prompt 01 handoff, ready for
+> the actual early user review in prompt 02; do not start later prompts automatically.
